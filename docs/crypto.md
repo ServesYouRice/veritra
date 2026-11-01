@@ -1762,8 +1762,29 @@ message. Fields: `rev` (int, previous + 1), `owner` (account id), `roles`
 `{account, roles[]}`), `overrides` (list of `{channel_id, target_kind`
 `"role"|"account", target, allow[], deny[]}`). The sender is the
 MLS-authenticated account (D25). A receiver applies a record only if
-`validateTransition(local, record, sender)` accepts it; otherwise it drops it
-and keeps its state. Limits: 32 roles, 256 overrides, role names at most 32
-UTF-16 units. Unknown switch strings are preserved. The first record (`rev`
-0) is implicit: the creator is owner, with the genesis roles. Until a joiner
-holds a snapshot it fails closed to member defaults.
+`validateTransition(local, record, sender, members:)` accepts it; otherwise it
+drops it and keeps its state. Limits: 32 roles, 256 overrides, role names at
+most 32 UTF-16 units. Unknown switch strings are preserved, in roles and in
+overrides; only known group-wide switches are refused in an override. The
+first record (`rev` 0) is implicit: the creator is owner, with the genesis
+roles.
+
+Rules added by the 2026-11-01 review (details in the design's "Review"):
+
+- `members` is the MLS roster at the record's place in sync order, never
+  the server's cached roster. Channel existence is not an input: an override
+  for a channel a device does not know is kept and has no effect.
+- When an MLS commit removes an account's last device, every device applies
+  `GovernanceState.removeAccount` at that place in sync order (no record, no
+  `rev` change): the account's assignments and own overrides go, and an
+  absent owner is succeeded by the strongest remaining account (lowest
+  rank, then smallest account id).
+- A sender applies its own record only when it comes back at its place in
+  sync order, never at send time.
+- A device without a verified state does not fall back to member defaults
+  (those allow posting, pinning and renaming). It holds governed effects
+  until it has the state.
+- Before this lands on the wire: freeze the genesis roles, ranks and
+  switches here, add a rules-version field (a newer version stops the
+  device applying records instead of diverging), and settle ordering and
+  joiner hand-off (design owner questions 2 and 3).

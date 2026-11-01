@@ -8,7 +8,6 @@ void main() {
   const bob = 'acct_bob';
   const carol = 'acct_carol';
   const members = {owner, admin, mod, bob, carol};
-  const channels = {'chan_a', 'chan_news'};
 
   GovernanceState base() {
     final g = GovernanceState.genesis(owner);
@@ -23,15 +22,29 @@ void main() {
   GovernanceCheck check(
     GovernanceState prev,
     GovernanceState next,
-    String who,
-  ) =>
-      validateTransition(
-        prev,
-        next,
-        who,
-        members: members,
-        channelIds: channels,
+    String who, {
+    Set<String> roster = members,
+  }) =>
+      validateTransition(prev, next, who, members: roster);
+
+  ChannelOverride ov(
+    String channel,
+    String target, {
+    bool role = true,
+    Set<String> allow = const {},
+    Set<String> deny = const {},
+  }) =>
+      ChannelOverride(
+        channelId: channel,
+        targetIsRole: role,
+        targetId: target,
+        allow: allow,
+        deny: deny,
       );
+
+  Map<String, ChannelOverride> keyed(Iterable<ChannelOverride> list) => {
+        for (final o in list) o.key: o,
+      };
 
   GovernanceState bump(
     GovernanceState s, {
@@ -420,6 +433,232 @@ void main() {
       expect(check(s, first, admin).ok, isTrue);
       // Applied in server order, the second now sees rev+1 already taken.
       expect(check(first, second, admin).reject, GovernanceReject.badRev);
+    });
+  });
+
+  group('review 2026-11-01: escalation', () {
+    // A "muted" role carrying a channel deny, Discord style.
+    GovernanceState muted() {
+      final s = base();
+      return s.copyWith(
+        roles: {
+          ...s.roles,
+          'muted': const Role('muted', 'Muted', 900, {}),
+          'fan': const Role('fan', 'Fan', 800, {Perm.react}),
+        },
+        assignments: {
+          ...s.assignments,
+          carol: {'muted', 'fan'},
+        },
+        overrides: keyed([
+          ov('chan_a', 'muted', deny: {Perm.post})
+        ]),
+      );
+    }
+
+    test('dropping your own role that carries a channel deny is refused', () {
+      final s = muted();
+      expect(s.can(carol, Perm.post, channelId: 'chan_a'), isFalse);
+      final unmute = bump(
+        s,
+        assignments: {
+          ...s.assignments,
+          carol: {'fan'},
+        },
+      );
+      expect(check(s, unmute, carol).reject, GovernanceReject.grantsMore);
+      // A role whose loss gains nothing may still be given up.
+      final dropFan = bump(
+        s,
+        assignments: {
+          ...s.assignments,
+          carol: {'muted'},
+        },
+      );
+      expect(check(s, dropFan, carol).ok, isTrue);
+      expect(check(s, unmute, mod).reject, GovernanceReject.notAllowed);
+      expect(check(s, unmute, admin).ok, isTrue);
+    });
+
+    test('taking a role that carries a channel allow you lack is refused', () {
+      final s0 = base();
+      final s = s0.copyWith(
+        roles: {
+          ...s0.roles,
+          'roleman': const Role('roleman', 'Roleman', 50, {Perm.manageRoles}),
+          'poster': const Role('poster', 'Poster', 100, {Perm.viewChannel}),
+        },
+        assignments: {
+          ...s0.assignments,
+          bob: {'roleman'},
+        },
+        overrides: keyed([
+          ov('chan_news', memberRoleId, deny: {Perm.post}),
+          ov('chan_news', 'poster', allow: {Perm.post}),
+        ]),
+      );
+      expect(s.can(bob, Perm.post, channelId: 'chan_news'), isFalse);
+      final self = bump(
+        s,
+        assignments: {
+          ...s.assignments,
+          bob: {'roleman', 'poster'},
+        },
+      );
+      expect(check(s, self, bob).reject, GovernanceReject.grantsMore);
+      final other = bump(
+        s,
+        assignments: {
+          ...s.assignments,
+          carol: {'poster'},
+        },
+      );
+      expect(check(s, other, bob).reject, GovernanceReject.grantsMore);
+      expect(check(s, other, admin).ok, isTrue);
+    });
+
+    test('nobody writes an override for its own account', () {
+      final s0 = base();
+      final s = s0.copyWith(
+        roles: {
+          ...s0.roles,
+          'moderator': Role('moderator', 'Moderator', 20, {
+            ...s0.roles['moderator']!.perms,
+            Perm.manageChannels,
+          }),
+        },
+      );
+      final self = bump(
+        s,
+        overrides: keyed([
+          ov('chan_news', mod, role: false, allow: {Perm.post}),
+        ]),
+      );
+      expect(check(s, self, mod).reject, GovernanceReject.hierarchy);
+      final onBob = bump(
+        s,
+        overrides: keyed([
+          ov('chan_news', bob, role: false, allow: {Perm.post}),
+        ]),
+      );
+      expect(check(s, onBob, mod).ok, isTrue);
+    });
+
+    test('mayActOn needs the switch and a strictly higher rank', () {
+      final s = base();
+      expect(s.mayActOn(mod, bob, Perm.kick), isTrue);
+      expect(s.mayActOn(mod, admin, Perm.kick), isFalse);
+      expect(s.mayActOn(admin, owner, Perm.ban), isFalse);
+      expect(s.mayActOn(mod, mod, Perm.kick), isFalse);
+      expect(s.mayActOn(bob, carol, Perm.kick), isFalse);
+      expect(s.mayActOn(owner, admin, Perm.ban), isTrue);
+    });
+  });
+
+  group('review 2026-11-01: determinism and liveness', () {
+    test('unknown switches in overrides are kept; group-wide refused', () {
+      final s = base();
+      final future = bump(
+        s,
+        overrides: keyed([
+          ov('chan_a', memberRoleId, deny: {'post_polls'}),
+        ]),
+      );
+      expect(check(s, future, admin).ok, isTrue);
+      final wide = bump(
+        s,
+        overrides: keyed([
+          ov('chan_a', memberRoleId, allow: {Perm.manageRoles}),
+        ]),
+      );
+      expect(check(s, wide, admin).reject, GovernanceReject.badShape);
+    });
+
+    test('an override for a channel this device does not know is kept', () {
+      final s = base();
+      final next = bump(
+        s,
+        overrides: keyed([
+          ov('chan_not_synced_yet', memberRoleId, deny: {Perm.post}),
+        ]),
+      );
+      expect(check(s, next, admin).ok, isTrue);
+    });
+
+    test('a departed admin is pruned, so others can still write records', () {
+      final s = base().copyWith(
+        assignments: {
+          admin: {'admin'},
+          carol: {'admin'},
+          mod: {'moderator'},
+        },
+      );
+      const after = {owner, admin, mod, bob};
+      final edit = bump(
+        s,
+        assignments: {
+          ...s.assignments,
+          bob: {'moderator'},
+        },
+      );
+      // Without the prune every later record names carol and is refused.
+      expect(
+        check(s, edit, admin, roster: after).reject,
+        GovernanceReject.notMember,
+      );
+      final pruned = s.removeAccount(carol, remaining: after);
+      expect(pruned.rev, s.rev);
+      expect(pruned.assignments.containsKey(carol), isFalse);
+      final edit2 = bump(
+        pruned,
+        assignments: {
+          ...pruned.assignments,
+          bob: {'moderator'},
+        },
+      );
+      expect(check(pruned, edit2, admin, roster: after).ok, isTrue);
+      // Invited back, carol is a plain member.
+      expect(pruned.isAdmin(carol), isFalse);
+    });
+
+    test('pruning drops the account override of the departed account', () {
+      final s = base().copyWith(
+        overrides: keyed([
+          ov('chan_a', bob, role: false, deny: {Perm.post}),
+          ov('chan_a', memberRoleId, deny: {Perm.attach}),
+        ]),
+      );
+      final pruned = s.removeAccount(bob, remaining: {owner, admin, mod});
+      expect(pruned.overrides.length, 1);
+      expect(pruned.overrides.values.single.targetId, memberRoleId);
+    });
+
+    test('when the owner leaves, the strongest account inherits', () {
+      final s = base().copyWith(
+        assignments: {
+          admin: {'admin'},
+          'acct_aaa': {'admin'},
+          mod: {'moderator'},
+        },
+      );
+      const after = {admin, 'acct_aaa', mod, bob};
+      final next = s.removeAccount(owner, remaining: after);
+      // Both hold rank 10; the smaller account id wins.
+      expect(next.owner, 'acct_aaa');
+      expect(next.assignments.containsKey('acct_aaa'), isFalse);
+      expect(next.assignments[admin], {'admin'});
+      final rec = bump(
+        next,
+        assignments: {
+          ...next.assignments,
+          bob: {'moderator'},
+        },
+      );
+      expect(check(next, rec, 'acct_aaa', roster: after).ok, isTrue);
+      // With no roles left, the smallest account id inherits.
+      final plain = GovernanceState.genesis(owner)
+          .removeAccount(owner, remaining: {carol, bob});
+      expect(plain.owner, bob);
     });
   });
 }

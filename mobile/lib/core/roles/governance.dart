@@ -245,6 +245,65 @@ class GovernanceState {
 
   bool can(String account, String perm, {String? channelId}) =>
       permissionsIn(account, channelId: channelId).contains(perm);
+
+  /// Whether [actor] may use [perm] against [target] (C5 kick, ban and
+  /// timeout; C1 removals): it holds the switch and strictly outranks the
+  /// target. Nobody acts on the owner or on itself through this.
+  bool mayActOn(
+    String actor,
+    String target,
+    String perm, {
+    String? channelId,
+  }) =>
+      actor != target &&
+      can(actor, perm, channelId: channelId) &&
+      topRank(actor) < topRank(target);
+
+  /// The state after [account] left the group (its last device removed by
+  /// an MLS commit). Every device applies this at that commit's place in
+  /// sync order, so it needs no record and keeps [rev]. Dropping the
+  /// account's assignments and own overrides means a kicked admin who is
+  /// invited back is a plain member, and later records are not refused for
+  /// naming a departed account. If the owner left, ownership passes to the
+  /// strongest remaining account ([topRank], then the smallest account id),
+  /// which gives up its assignments and own overrides. [remaining] is the
+  /// MLS roster after the commit.
+  GovernanceState removeAccount(
+    String account, {
+    required Set<String> remaining,
+  }) {
+    Map<String, ChannelOverride> withoutOwn(
+      Map<String, ChannelOverride> from,
+      String who,
+    ) =>
+        {
+          for (final e in from.entries)
+            if (e.value.targetIsRole || e.value.targetId != who) e.key: e.value,
+        };
+    final pruned = copyWith(
+      assignments: {
+        for (final e in assignments.entries)
+          if (e.key != account) e.key: {...e.value},
+      },
+      overrides: withoutOwn(overrides, account),
+    );
+    if (account != owner) return pruned;
+    final heirs = remaining.where((a) => a != account).toList();
+    if (heirs.isEmpty) return pruned;
+    heirs.sort((a, b) {
+      final r = pruned.topRank(a).compareTo(pruned.topRank(b));
+      return r != 0 ? r : a.compareTo(b);
+    });
+    final heir = heirs.first;
+    return pruned.copyWith(
+      owner: heir,
+      assignments: {
+        for (final e in pruned.assignments.entries)
+          if (e.key != heir) e.key: e.value,
+      },
+      overrides: withoutOwn(pruned.overrides, heir),
+    );
+  }
 }
 
 /// Why [validateTransition] refused a record. Stable codes for logs and tests.
@@ -268,16 +327,17 @@ class GovernanceCheck {
 }
 
 /// Decides whether [actor], the MLS-authenticated sender of [next], may move
-/// the group from [prev] to [next]. [members] are the group's current
-/// accounts (assignments to others are refused); [channelIds] are the
-/// channels that exist (overrides for others are refused). Deterministic:
-/// every honest device with the same [prev] reaches the same answer.
+/// the group from [prev] to [next]. [members] are the accounts in the MLS
+/// roster at the record's place in sync order, never the server's cached
+/// roster, so every honest device with the same [prev] reaches the same
+/// answer. Channel existence is server metadata that devices can see
+/// differently, so it is not an input: an override for an unknown channel is
+/// kept and has no effect.
 GovernanceCheck validateTransition(
   GovernanceState prev,
   GovernanceState next,
   String actor, {
   required Set<String> members,
-  required Set<String> channelIds,
 }) {
   GovernanceCheck no(GovernanceReject r) => GovernanceCheck.no(r);
   if (next.rev != prev.rev + 1) return no(GovernanceReject.badRev);
@@ -314,8 +374,11 @@ GovernanceCheck validateTransition(
     }
   }
   if (!members.contains(next.owner)) return no(GovernanceReject.notMember);
-  for (final o in next.overrides.values) {
-    if (!channelIds.contains(o.channelId)) return no(GovernanceReject.badShape);
+  for (final e in next.overrides.entries) {
+    final o = e.value;
+    if (e.key != o.key || o.channelId.isEmpty || o.targetId.isEmpty) {
+      return no(GovernanceReject.badShape);
+    }
     if (o.allow.intersection(o.deny).isNotEmpty) {
       return no(GovernanceReject.badShape);
     }
@@ -397,15 +460,41 @@ GovernanceCheck validateTransition(
       if (r == null || r.rank <= actorRank) {
         return no(GovernanceReject.hierarchy);
       }
-    } else if (o.targetId != actor && prev.topRank(o.targetId) <= actorRank) {
+    } else if (prev.topRank(o.targetId) <= actorRank) {
+      // Includes the actor itself: an allow it writes for itself now would
+      // outlive a later restriction of its roles.
       return no(GovernanceReject.hierarchy);
     }
     final touched = {...?a?.allow, ...?a?.deny, ...?b?.allow, ...?b?.deny};
-    if (!touched.every(Perm.channelScoped.contains)) {
+    // Group-wide switches have no channel meaning. Unknown strings are kept
+    // (a newer app may define them), so app versions do not disagree.
+    if (touched.any(Perm.groupScoped.contains)) {
       return no(GovernanceReject.badShape);
     }
     if (!holds(touched, channelId: o.channelId)) {
       return no(GovernanceReject.grantsMore);
+    }
+  }
+
+  // No escalation, measured on effective switches: every switch any member
+  // gains, group-wide or in a channel, the actor already held there. This
+  // catches what the per-entry checks cannot see, such as dropping one's own
+  // role that carries a channel deny, or taking a role that carries a
+  // channel allow. The actor itself can therefore never gain a switch.
+  if (!actorAdmin) {
+    final scopes = <String?>{
+      null,
+      for (final o in prev.overrides.values) o.channelId,
+      for (final o in next.overrides.values) o.channelId,
+    };
+    for (final scope in scopes) {
+      final mine = prev.permissionsIn(actor, channelId: scope);
+      for (final m in members) {
+        final gained = next
+            .permissionsIn(m, channelId: scope)
+            .difference(prev.permissionsIn(m, channelId: scope));
+        if (!mine.containsAll(gained)) return no(GovernanceReject.grantsMore);
+      }
     }
   }
   return const GovernanceCheck.ok();
