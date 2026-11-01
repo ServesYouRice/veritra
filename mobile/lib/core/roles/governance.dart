@@ -116,7 +116,8 @@ class GovernanceState {
   /// removing commit must carry exactly this (or a valid change from it), so
   /// a kicked admin who is invited back is a member. If the owner left, the
   /// oldest admin still in [remaining] (smallest [admins] value, then the
-  /// smallest account id) becomes owner; with no admin left, nobody does.
+  /// smallest account id by `String.compareTo`; ids are ASCII, so byte
+  /// order) becomes owner; with no admin left, nobody does.
   /// [remaining] is the roster after the commit. [rev] is kept.
   GovernanceState removeAccount(
     String account, {

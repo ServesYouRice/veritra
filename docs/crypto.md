@@ -1821,8 +1821,9 @@ only if `validateCommit` accepts:
 
 - Accounts whose last device the commit removes are pruned first
   (`removeAccount`): their role goes; if the owner left, the oldest admin
-  still present (smallest `since_rev`, then smallest account id in byte
-  order) becomes owner, and with no admin nobody does. `rev` is kept. A
+  still present (smallest `since_rev`, then the smallest account id by
+  UTF-16 code-unit order, as Dart's `String.compareTo`; account ids are
+  ASCII today, where this equals byte order) becomes owner, and with no admin nobody does. `rev` is kept. A
   record equal to that result is valid from any committer; a removal that
   leaves a departed account named is invalid.
 - Any other difference is a change by the committer, checked by
@@ -1835,6 +1836,13 @@ only if `validateCommit` accepts:
 
 The check does not judge whether a removal was allowed; that is C1/C5's
 receiver check on the commit.
+
+**Sending a commit.** Every path that stages a commit (D68 reconcile,
+revocation removals, device replacement, role changes) computes the pruned
+record for its own commit, carries it as the proposal when it differs, and
+runs `validateCommit` on the result before staging. Producers are wired
+before or with the receiver check, or the first kick of an admin stops
+every receiver's sync.
 
 **Using it.** C2: a post is accepted where `mayPost` holds, and posting is
 restricted where this record or the server says so. C1/C5: `mayActOn`. A

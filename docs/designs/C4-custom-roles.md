@@ -93,6 +93,15 @@ needs the independent review before it lands):
 A commit that `validateCommit` refuses is an invalid MLS control message:
 sync stops on it under I33, as for any invalid commit today.
 
+Every commit **producer** changes with it, not only receivers: D68
+pending-changes reconcile, revocation removals, device replacement and any
+other path that stages a commit. The committer computes the pruned record
+for its own commit, adds it as the proposal when it differs, and runs
+`validateCommit` on the result before staging. Otherwise the first kick of
+an admin or moderator after receivers are wired stops every member's sync,
+while the sender merges its own commit once the server accepts it. Wire the
+producers before (or with) the receiver check.
+
 ## Rules
 
 They mirror the server (`ManageConversationMember`,
@@ -115,7 +124,10 @@ They mirror the server (`ManageConversationMember`,
 Checks for other packages: `mayPost(sender, channelId:)` (C2: owner and
 admin only where restricted) and `mayActOn(actor, target)` (C1/C5 kick,
 ban, timeout, delete-others: moderator or above, strictly outranking, never
-itself).
+itself). W8 pins, D58 and D59 use the server's cached role today
+(`ConversationAuthority.roleOf`, `pinAllowed` in
+`mobile/lib/crypto/native_crypto_service.dart`); once the record exists they
+switch to `GovernanceState.roleOf`.
 
 ### Removal and succession
 
