@@ -1748,3 +1748,22 @@ Also required:
    Telegram uses more). They are easy to change.
 4. **Who may pin in groups.** This design allows moderator roles only.
    The alternative is any member until C4 adds a permission switch.
+
+## Group governance record (C4)
+
+Proposed, not implemented on the wire. Design:
+`docs/designs/C4-custom-roles.md`. Rules engine:
+`mobile/lib/core/roles/governance.dart`.
+
+A W7 v2 application payload of type `governance` (new registry entry; group
+and `community_shared` conversations only), sent as an MLS application
+message. Fields: `rev` (int, previous + 1), `owner` (account id), `roles`
+(list of `{id, name, rank, perms[]}`), `assignments` (list of
+`{account, roles[]}`), `overrides` (list of `{channel_id, target_kind`
+`"role"|"account", target, allow[], deny[]}`). The sender is the
+MLS-authenticated account (D25). A receiver applies a record only if
+`validateTransition(local, record, sender)` accepts it; otherwise it drops it
+and keeps its state. Limits: 32 roles, 256 overrides, role names at most 32
+UTF-16 units. Unknown switch strings are preserved. The first record (`rev`
+0) is implicit: the creator is owner, with the genesis roles. Until a joiner
+holds a snapshot it fails closed to member defaults.
