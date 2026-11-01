@@ -93,7 +93,7 @@ read any backup it later got hold of. Sealing to `rk_pub` leaves devices
 holding nothing that opens a backup, so a removal needs no rotation. No
 current consumer needs a device to read a backup without the user.
 
-## Algorithms (no new dependencies)
+## Algorithms (one new direct dependency: `ed25519-dalek`, D78)
 
 | Use | Choice | Library already in the tree |
 |---|---|---|
