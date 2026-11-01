@@ -246,11 +246,12 @@ One shared function must compute what each kind of commit has to change
 committer and every receiver. Any mismatch is a refused commit and stops
 the group's sync under I33.
 
-### Owner questions
+### Admins but no electors (D82)
 
-- **Admins but no electors** (the owner never promoted or confirmed any
-  admin): default, nobody inherits. Alternative: every admin in the roster
-  votes, which lets an admin made by another admin vote.
+If no elector is in the roster when an election opens (the owner never
+promoted or confirmed any admin still present), the snapshot holds **every
+admin in the roster** instead (owner decision D82). The rest is unchanged:
+same waits, the owner can cancel, more than half of the snapshot must agree.
 
 ### Residuals (accepted)
 
@@ -263,6 +264,10 @@ the group's sync under I33.
 - A rogue elector can keep opening (or closing) elections. Each automatic
   cancel tells the server roughly when the owner was online; the random
   delay blurs this but does not hide it.
+- With no elector present (D82), a rogue admin can promote stand-ins and
+  outvote the other admins after the waits. The owner can still cancel
+  any time before the win, and confirming even one admin as an elector
+  closes this path.
 - If the electors themselves are inactive, no majority forms; the group
   keeps its absent owner.
 
