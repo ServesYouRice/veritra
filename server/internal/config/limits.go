@@ -51,7 +51,7 @@ const (
 	LegacyInstanceStorageMiB    = 10240 // the cap the derived default never exceeds
 	DefaultAccountBlobs         = 10000
 	DefaultDevicesPerAccount    = 10
-	DefaultConversationMembers  = 100
+	DefaultConversationMembers  = 250
 	DefaultConversationsPerAcct = 1000
 	// DefaultKeyPackageClaimsPerTarget is half the 50 packages a device may
 	// hold: one account can take at most half the pool of a device per day,
