@@ -482,6 +482,11 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 		}
 		completion.RevokedEventIDs = append(completion.RevokedEventIDs, eventID)
 	}
+	// Account-only sessions (restore sessions, no device) belong to the old
+	// owner of the account too.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ? AND device_id IS NULL`, record.AccountID); err != nil {
+		return RecoveryCompletion{}, err
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
 		record.DeviceID, record.AccountID, record.DeviceName, record.keyPackage, record.signingKey, record.deviceAuthHash, nowText); err != nil {
 		return RecoveryCompletion{}, err

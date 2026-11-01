@@ -5,6 +5,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"private-messenger/server/internal/auth"
 )
 
 // K0 R2 review follow-ups: storage rules.
@@ -43,6 +45,43 @@ func TestRecoveryDecoyKeyIsCreatedOnceAndReadWithoutTheWriter(t *testing.T) {
 	again, err := store.recoveryDecoyKey(short)
 	if err != nil || !bytes.Equal(again, first) {
 		t.Fatalf("decoy key while the writer is busy = %x, err = %v, want %x", again, err, first)
+	}
+}
+
+// Completion ends account-only (restore) sessions as well as the old
+// devices' sessions; another account's are untouched.
+func TestRecoveryCompletionDeletesAccountOnlySessions(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := registerTestMember(t, ctx, store, invite.Code, "bob")
+	now := time.Now().UTC()
+	for _, row := range []struct{ token, accountID string }{
+		{"owner-restore", owner.Account.ID},
+		{"bob-restore", bob.Account.ID},
+	} {
+		if _, err := store.db.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at)
+			VALUES(?, ?, NULL, ?, ?, ?, ?, ?)`, auth.HashToken(row.token), row.accountID, formatTime(now.Add(time.Hour)), formatTime(now), formatTime(now), formatTime(now), formatTime(now.Add(time.Hour))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	claim := claimTestRecovery(t, ctx, store, owner, 0)
+	if _, err := store.CompleteRecovery(ctx, claim.request.ID, claim.claimTokenHash, auth.HashToken("recovered")); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM sessions WHERE account_id = ? AND device_id IS NULL`, owner.Account.ID); n != 0 {
+		t.Fatalf("recovered account kept %d account-only sessions", n)
+	}
+	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM sessions WHERE account_id = ? AND device_id IS NULL`, bob.Account.ID); n != 1 {
+		t.Fatalf("another account's account-only sessions = %d, want 1", n)
+	}
+	if n := testRowCount(t, ctx, store, `SELECT COUNT(*) FROM sessions WHERE token_hash = ?`, auth.HashToken("recovered")); n != 1 {
+		t.Fatal("the recovered session is missing")
 	}
 }
 
