@@ -1771,3 +1771,45 @@ Also required:
    Telegram uses more). They are easy to change.
 4. **Who may pin in groups.** This design allows moderator roles only.
    The alternative is any member until C4 adds a permission switch.
+
+## Group governance record (C4)
+
+Proposed, not implemented on the wire. Design:
+`docs/designs/C4-custom-roles.md`. Rules engine:
+`mobile/lib/core/roles/governance.dart`.
+
+A W7 v2 application payload of type `governance` (new registry entry; group
+and `community_shared` conversations only), sent as an MLS application
+message. Fields: `rev` (int, previous + 1), `owner` (account id), `roles`
+(list of `{id, name, rank, perms[]}`), `assignments` (list of
+`{account, roles[]}`), `overrides` (list of `{channel_id, target_kind`
+`"role"|"account", target, allow[], deny[]}`). The sender is the
+MLS-authenticated account (D25). A receiver applies a record only if
+`validateTransition(local, record, sender, members:)` accepts it; otherwise it
+drops it and keeps its state. Limits: 32 roles, 256 overrides, role names at
+most 32 UTF-16 units. Unknown switch strings are preserved, in roles and in
+overrides; only known group-wide switches are refused in an override. The
+first record (`rev` 0) is implicit: the creator is owner, with the genesis
+roles.
+
+Rules added by the 2026-11-01 review (details in the design's "Review"):
+
+- `members` is the MLS roster at the record's place in sync order, never
+  the server's cached roster. Channel existence is not an input: an override
+  for a channel a device does not know is kept and has no effect.
+- When an MLS commit removes an account's last device, every device applies
+  `GovernanceState.removeAccount` at that place in sync order (no record, no
+  `rev` change): the account's assignments and own overrides go, and an
+  absent owner is succeeded by the strongest remaining account (lowest
+  rank, then the smallest account id by UTF-16 code-unit order, as Dart's
+  `String.compareTo`; account ids are ASCII today, where this equals byte
+  order). The rule awaits the owner's confirmation (design owner question 4).
+- A sender applies its own record only when it comes back at its place in
+  sync order, never at send time.
+- A device without a verified state does not fall back to member defaults
+  (those allow posting, pinning and renaming). It holds governed effects
+  until it has the state.
+- Before this lands on the wire: freeze the genesis roles, ranks and
+  switches here, add a rules-version field (a newer version stops the
+  device applying records instead of diverging), and settle ordering and
+  joiner hand-off (design owner questions 2 and 3).
