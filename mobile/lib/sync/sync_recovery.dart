@@ -48,6 +48,13 @@ enum SyncFailureKind {
   /// unreadable database, a refused write). Nothing was lost: the event is
   /// applied again once the device storage works. Relinking would not fix it.
   localStorage,
+
+  /// Applying the event would make one sealed record of the MLS state
+  /// larger than its cap (D70, native error -8). Nothing was stored. With a
+  /// [SyncRecovery.conversationId], the record is that conversation's group:
+  /// leaving the conversation lets the rest of sync go on, since the server
+  /// then no longer sends its events.
+  recordLimit,
 }
 
 /// A typed failure raised while applying one sync event.
@@ -87,6 +94,11 @@ enum SyncRecoveryChoice {
 
   /// Restore an encrypted backup taken before the failure.
   restoreBackup,
+
+  /// Leave the conversation the failure names (D70 record limit), then
+  /// apply events again. Its events are no longer sent, so none is skipped
+  /// on this device's word.
+  leaveConversation,
 }
 
 /// The durable record of a device that stopped syncing (card I33).
@@ -135,6 +147,17 @@ class SyncRecovery {
         ];
       case SyncFailureKind.localStorage:
         return const <SyncRecoveryChoice>[SyncRecoveryChoice.retry];
+      case SyncFailureKind.recordLimit:
+        return conversationId == null
+            ? const <SyncRecoveryChoice>[
+                SyncRecoveryChoice.retry,
+                SyncRecoveryChoice.relink,
+              ]
+            : const <SyncRecoveryChoice>[
+                SyncRecoveryChoice.leaveConversation,
+                SyncRecoveryChoice.retry,
+                SyncRecoveryChoice.relink,
+              ];
       case SyncFailureKind.transient:
       case SyncFailureKind.auth:
       case SyncFailureKind.mlsControlMissing:
@@ -171,6 +194,10 @@ class SyncRecovery {
         return l10n.syncErrorCryptoUnavailable;
       case SyncFailureKind.localStorage:
         return l10n.syncErrorLocalStorage;
+      case SyncFailureKind.recordLimit:
+        return conversationId == null
+            ? l10n.syncErrorRecordLimitDevice
+            : l10n.syncErrorRecordLimit;
       case SyncFailureKind.transient:
       case SyncFailureKind.auth:
         return l10n.syncErrorStopped;

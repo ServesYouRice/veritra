@@ -209,7 +209,10 @@ lets a Welcome replace a stored group that is inactive, which only a state
 restored from before the drop can hold. `pm_crypto_group_delete` is for a
 chat the user deletes, and only for that: the app never calls it on a
 removal, a server event or a Welcome, so the server cannot use it to make a
-device drop an active group. The Welcome then has the trust of any fresh join, which
+device drop an active group. A leave the app has not yet applied locally
+(it runs at the start of the next foreground sync pass) may also run
+when a Welcome for that conversation arrives, but only as the user's own
+deferred leave, never on the Welcome's word. The Welcome then has the trust of any fresh join, which
 includes the L1 gap above: the core checks its structure, not who may be in
 the group or who may invite.
 
@@ -411,11 +414,15 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **Migration.** One way, at activation, in one compare-and-swap
     transaction that does not move the sync cursor. A build before ABI 10
     cannot read the migrated state; it reports `stateFormatUnsupported`.
-  - **Not wired yet (S4).** `NativeCryptoService.pruneExpiredKeyPackages`
-    and `deleteConversationState` store their changes, but nothing in the
-    app calls them yet (prune after a caught-up sync; delete from C1's
-    leave). There is no screen for `PM_CRYPTO_RECORD_LIMIT`: the operation
-    fails and rolls back.
+  - **App wiring (S4, 2026-11-01).** A caught-up foreground sync pass
+    prunes expired key packages (at most every 6 hours); replenishment
+    prunes first and keeps a partial batch, so the 1,000 cap never blocks
+    it for good. Leaving a conversation notes it durably; the next
+    foreground pass (or a Welcome for that conversation, foreground only)
+    calls `deleteConversationState`, which also settles its queued MLS
+    messages. `PM_CRYPTO_RECORD_LIMIT` rolls back and shows a localized
+    message; in sync it is a `recordLimit` stop that names the
+    conversation and offers to leave it.
   - Tests: `crypto/rust/src/mls/records_tests.rs`,
     `crypto/rust/src/ffi/records_tests.rs`,
     `crypto/rust/tests/rejoin_after_removal.rs`,
