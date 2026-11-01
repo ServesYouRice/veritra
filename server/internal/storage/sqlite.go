@@ -30,6 +30,7 @@ var (
 	ErrInviteInvalid       = errors.New("invite is invalid, expired, revoked, or fully used")
 	ErrUnauthorized        = errors.New("unauthorized")
 	ErrForbidden           = errors.New("forbidden")
+	ErrPostingRestricted   = errors.New("posting is limited to admins")
 	ErrNotFound            = errors.New("not found")
 	ErrNotMember           = errors.New("account is not a conversation member")
 	ErrInvalidInput        = errors.New("invalid input")

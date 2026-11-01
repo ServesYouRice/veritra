@@ -187,6 +187,9 @@ type Conversation struct {
 	CreatedBy        string    `json:"created_by"`
 	RetentionSeconds *int64    `json:"retention_seconds,omitempty"`
 	CreatedAt        time.Time `json:"created_at"`
+	// PostingRestricted is true when only owners and admins may post (an
+	// announcement channel or a group set to admins only, C2).
+	PostingRestricted bool `json:"posting_restricted,omitempty"`
 	// LastMessageAt and UnreadCount are populated by ListConversations so the
 	// client can order by recent activity and show unread badges. They are
 	// zero/omitted on single-conversation responses (create, retention).
@@ -305,6 +308,12 @@ type AccountExport struct {
 }
 
 func CanManageInvites(role string) bool {
+	return role == RoleOwner || role == RoleAdmin
+}
+
+// CanPostRestricted says whether a role may post where posting is limited to
+// admins (C2). Moderators may not: they manage members, not announcements.
+func CanPostRestricted(role string) bool {
 	return role == RoleOwner || role == RoleAdmin
 }
 

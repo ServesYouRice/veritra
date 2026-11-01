@@ -474,6 +474,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnauthorized, "unauthorized")
 	case errors.Is(err, storage.ErrNotMember), errors.Is(err, storage.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, storage.ErrPostingRestricted):
+		writeError(w, http.StatusForbidden, "posting_restricted")
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, storage.ErrMessageExpired):
