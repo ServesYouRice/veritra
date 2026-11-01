@@ -123,3 +123,8 @@ visibility, C1 for per-conversation sync halting, and C5 for blob deletion.
    end-to-end)?
 5. New ABI function for credential-key signing: acceptable, or require
    L1's account-level signing key first?
+
+## Owner decisions (2026-11-01)
+
+- The history setting may be changed later by admins (needs re-keying rules; revisit the design).
+- Accepted: history copies double stored bytes for full-history channels, and history is lost if every key holder is gone.
