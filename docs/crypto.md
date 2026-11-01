@@ -342,7 +342,8 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
   reactions, pins, starred messages, conversation preferences and the K2
   history namespace. Nothing else.
 - **Never carried:** the bearer token, the device secret, the session's
-  device id, the sealed MLS state, its state key, the plain and MLS
+  device id, the sealed MLS state (the format 4 root and its
+  `local_crypto_records` rows, D70), its state key, the plain and MLS
   outboxes, pending pin commands and the sync cursor. A stolen backup and
   its recovery code therefore cannot sign in, and cannot act as the device
   that made it in any MLS group. `mobile/test/backup_no_credentials_test.dart`
@@ -354,7 +355,10 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
   rows: it is not a credential, and without the device secret it signs
   nothing in.
 - **Restore makes no device.** It writes the history and an account-only
-  session (empty token, no device), sync cursor 0 and no MLS state.
+  session (empty token, no device), sync cursor 0 and no MLS state. Any
+  root and records already on the device are deleted in the same
+  transaction, so none are left or mixed
+  (`mobile/test/d70_backup_records_test.dart`).
   Outgoing rows still pending are not restored: without the outboxes they
   could never be sent. Sync does not start. The device then joins the
   account as a new device. Today that means a device link from a

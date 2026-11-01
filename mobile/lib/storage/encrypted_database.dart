@@ -349,10 +349,9 @@ class LocalCryptoStates extends Table {
 
 /// Per-record sealed MLS state (D70, format 4): one row per sealed record
 /// (device, group or key package), listed by the root that
-/// [LocalCryptoStates.sealedState] will hold. Inert until the ABI-10 package
-/// (D70 S3) writes it. Until then, and after, every transaction that deletes
-/// the [LocalCryptoStates] singleton also deletes these rows, so records
-/// never outlive their root.
+/// [LocalCryptoStates.sealedState] holds. Every transaction that deletes the
+/// [LocalCryptoStates] singleton also deletes these rows, so records never
+/// outlive their root. Like the root, they never go into a backup (D73).
 class LocalCryptoRecords extends Table {
   /// The record kind from the sealed header (1 device, 2 group, 3 kp).
   IntColumn get kind => integer()();
