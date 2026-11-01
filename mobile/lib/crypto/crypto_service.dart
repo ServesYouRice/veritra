@@ -199,6 +199,46 @@ abstract interface class RecoveryCryptoService {
   Future<void> abandonPendingEnrollment();
 }
 
+/// C6 reports (docs/designs/C6-reports-franking.md, D80): the HPKE seal a
+/// report travels in, sealed to the recipient's key so the server carries
+/// ciphertext only, and the franking commitment that proves a reported
+/// message. Kept apart from [CryptoService] so a build without the native
+/// library is never asked: [UnavailableCryptoService] implements it only to
+/// refuse. Nothing here stores, sends or logs a seed, a report or a payload.
+abstract interface class ReportCryptoService {
+  /// A fresh 32-byte report key seed. The caller owns it, keeps it only in
+  /// protected storage and wipes every copy once used.
+  Future<Uint8List> generateReportKeySeed();
+
+  /// The 32-byte X25519 report public key for [seed].
+  Future<Uint8List> reportPublicKey(Uint8List seed);
+
+  /// Seals [plaintext] to [recipientPublicKey] with [aad] bound.
+  Future<Uint8List> sealReport({
+    required List<int> recipientPublicKey,
+    required List<int> aad,
+    required Uint8List plaintext,
+  });
+
+  /// Opens [sealed] with [seed]; throws unless it is unaltered and [aad]
+  /// matches. The caller wipes the result.
+  Future<Uint8List> openReport({
+    required Uint8List seed,
+    required List<int> aad,
+    required List<int> sealed,
+  });
+
+  /// The franking commitment over the canonical payload bytes [payload]
+  /// (`docs/crypto.md`, "Franking v1").
+  Future<Uint8List> frankCommit({
+    required Uint8List key,
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+    required Uint8List payload,
+  });
+}
+
 /// A change would make one sealed record of the MLS state larger than its
 /// cap (D70, native `PM_CRYPTO_RECORD_LIMIT`). Nothing was stored and the
 /// operation was rolled back. [conversationId] names the conversation when
@@ -248,11 +288,44 @@ class CryptoStateFormatUnsupported implements Exception {
   String toString() => 'protected MLS state format is unsupported';
 }
 
-/// Fails closed: no recovery key, proof or pending identity exists without
-/// the reviewed native engine (`PM_CRYPTO_UNAVAILABLE`).
-class UnavailableCryptoService implements CryptoService, RecoveryCryptoService {
+/// Fails closed: no recovery key, proof, pending identity, report key, sealed
+/// report or franking commitment exists without the reviewed native engine
+/// (`PM_CRYPTO_UNAVAILABLE`).
+class UnavailableCryptoService
+    implements CryptoService, RecoveryCryptoService, ReportCryptoService {
   static Never _recoveryUnavailable() =>
       throw StateError('Account recovery is unavailable');
+  static Never _reportsUnavailable() =>
+      throw StateError('Reporting is unavailable');
+
+  @override
+  Future<Uint8List> generateReportKeySeed() async => _reportsUnavailable();
+  @override
+  Future<Uint8List> reportPublicKey(Uint8List seed) async =>
+      _reportsUnavailable();
+  @override
+  Future<Uint8List> sealReport({
+    required List<int> recipientPublicKey,
+    required List<int> aad,
+    required Uint8List plaintext,
+  }) async =>
+      _reportsUnavailable();
+  @override
+  Future<Uint8List> openReport({
+    required Uint8List seed,
+    required List<int> aad,
+    required List<int> sealed,
+  }) async =>
+      _reportsUnavailable();
+  @override
+  Future<Uint8List> frankCommit({
+    required Uint8List key,
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+    required Uint8List payload,
+  }) async =>
+      _reportsUnavailable();
 
   @override
   Future<Uint8List> generateRecoveryKey() async => _recoveryUnavailable();

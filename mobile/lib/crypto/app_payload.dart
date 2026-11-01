@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'franking.dart';
+
 const int appPayloadVersion = 2;
 const int _headerLength = 8;
 const int _paddingBucket = 256;
@@ -96,16 +98,57 @@ class AppPayloadCodec {
         ? 2
         : 1;
     _validateBody(type, body, version: version);
-    final encoded = utf8.encode(jsonEncode(<String, Object?>{
-      'v': version,
-      'type': type.name,
-      'conversation_id': conversationId,
-      'sender_device_id': senderDeviceId,
-      'action_id': actionId,
-      if (channelId != null) 'channel_id': channelId,
-      if (hidden) 'hidden': true,
-      'body': body,
-    }));
+    return _frame(_innerJson(version, type, conversationId, senderDeviceId,
+        actionId, body, channelId, hidden));
+  }
+
+  /// Encodes a franked payload (C6, `docs/crypto.md` "Franking v1"). Always
+  /// `v: 2`, because a v1 receiver refuses any seventh top-level key.
+  /// [canonical] is the inner JSON exactly as [encode] would write it at v2,
+  /// which the franking commitment covers; the wire JSON is [canonical] with
+  /// the `frank` member appended last ([frankWireJson]). Not sent yet: the
+  /// sender and receiver wiring is a later, reviewed step.
+  ({Uint8List padded, Uint8List canonical}) encodeFranked({
+    required AppPayloadType type,
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+    required Map<String, Object?> body,
+    required Uint8List frankKey,
+    String? channelId,
+    bool hidden = false,
+  }) {
+    validateContext(conversationId, senderDeviceId, actionId);
+    _validateBody(type, body, version: 2);
+    final canonical = _innerJson(2, type, conversationId, senderDeviceId,
+        actionId, body, channelId, hidden);
+    return (
+      padded: _frame(frankWireJson(canonical, frankKey)),
+      canonical: canonical
+    );
+  }
+
+  static Uint8List _innerJson(
+          int version,
+          AppPayloadType type,
+          String conversationId,
+          String senderDeviceId,
+          String actionId,
+          Map<String, Object?> body,
+          String? channelId,
+          bool hidden) =>
+      utf8.encode(jsonEncode(<String, Object?>{
+        'v': version,
+        'type': type.name,
+        'conversation_id': conversationId,
+        'sender_device_id': senderDeviceId,
+        'action_id': actionId,
+        if (channelId != null) 'channel_id': channelId,
+        if (hidden) 'hidden': true,
+        'body': body,
+      }));
+
+  Uint8List _frame(Uint8List encoded) {
     if (encoded.length > _maxPayloadBytes - _headerLength) {
       throw const FormatException('application payload is too large');
     }
