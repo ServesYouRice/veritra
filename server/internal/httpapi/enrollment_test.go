@@ -9,6 +9,7 @@ import (
 
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 func TestOwnerEnrollmentBindsReservedIdentityAndCredentialSignature(t *testing.T) {
@@ -32,7 +33,7 @@ func TestOwnerEnrollmentBindsReservedIdentityAndCredentialSignature(t *testing.T
 		"username":           "owner",
 		"password":           "owner-password-123",
 		"device_name":        "owner phone",
-		"device_key_package": make([]byte, 64),
+		"device_key_package": mlswiretest.KeyPackage(),
 	}
 	addEnrollmentProof(body, enrollment)
 	validSignature := append([]byte(nil), body["challenge_signature"].([]byte)...)

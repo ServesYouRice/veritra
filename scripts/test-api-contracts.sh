@@ -19,6 +19,7 @@ trap cleanup EXIT INT TERM
 (cd "$ROOT/server" && go build -trimpath -o "$TEMP_ROOT/veritra-server" ./cmd/messenger-server)
 (cd "$ROOT/crypto/rust" && cargo build --locked --release)
 
+PRIVATE_MESSENGER_ENV=development \
 PRIVATE_MESSENGER_SETUP_TOKEN=contract-setup-token \
 PRIVATE_MESSENGER_LOG_LEVEL=error \
 "$TEMP_ROOT/veritra-server" serve \

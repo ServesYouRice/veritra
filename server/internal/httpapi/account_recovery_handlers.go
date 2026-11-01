@@ -185,7 +185,7 @@ func (a *API) claimAccountRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "non_production_device_key_package")
 		return
 	}
-	if len(req.DeviceKeyPackage) < 64 || len(req.DeviceKeyPackage) > 48<<10 {
+	if !validDeviceKeyPackage(req.DeviceKeyPackage) {
 		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
 		return
 	}

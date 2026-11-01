@@ -182,8 +182,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [ ] 162 `TASK-162` Apply the chosen password-verification timing policy across stored hash profiles without creating a password-outcome oracle
   - Comment only (6108aaa, 2037787): the password timing residual is worded as open, not accepted. No policy change; the timing policy is still an open technical choice.
 - [x] 163 `TASK-163` Serialize backup-status writers and make replacement atomic and durable
-- [ ] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
-  - Skipped: every option breaks a dev workflow; open technical choice.
+- [x] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
+  - Owner decision: unset or empty means production. Dev, contract-test and demo e2e launchers set development explicitly. The demo e2e started its server that way and got through setup, register and link; it then times out at demo_e2e_test.dart:259, as f1b4a36 also does (pre-existing flake, see results.json foundWhileFixing).
 - [x] 165 `TASK-165` Resolve DataDir/backups symlinks before ownership checks
 - [x] 166 `TASK-166` Reject non-regular secret files without blocking on open
 - [x] 167 `TASK-167` Commit admin status changes and invite revocations atomically with their audit rows
@@ -196,8 +196,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 172 `TASK-173` Stop mapping transient TouchSession failures to 401 in withAuth
 - [x] 173 `TASK-176` Prevent third parties from locking a known user out of login via the username-only backoff key
 - [x] 174 `TASK-178` Return the device-link transcript from the consuming transaction in claim-status
-- [ ] 175 `TASK-172` Structurally validate device key packages on setup, registration, device-link claim and key-package publish
-  - Not attempted.
+- [x] 175 `TASK-172` Structurally validate device key packages on setup, registration, device-link claim and key-package publish
+  - Also on the v3 link claim and the recovery claim. Structural only: signatures and credential binding stay open (Q-1).
 - [x] 176 `TASK-174` Re-validate the session after WebSocket hub registration to close the revocation race
 - [x] 177 `TASK-175` Aggregate IPv6 clients to /64 for the realtime per-IP connection limit
 - [x] 178 `TASK-177` Make login backoff eviction respect accumulated failure counts
@@ -224,7 +224,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 199 `TASK-199` Tie-break the unread-count bound on (created_at, id)
 - [x] 200 `TASK-200` Make conversation-list pagination use an immutable keyset cursor
 - [ ] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
-  - Skipped.
+  - Blocked on owner question Q-002 (remedy and window). Characterization test added; the orphan can still sign in with password + its device secret. Only revoke-at-expiry (sweeper, MLS revocations) or creating the device at consume meets VAL-253.
 - [x] 202 `TASK-202` Scope device-less push subscriptions with a NULL-safe device match
 - [x] 203 `TASK-203` Disable a push target only if it still matches the failed registration
 - [x] 204 `TASK-204` Enforce state_counter monotonicity and capability rotation for device-less backups

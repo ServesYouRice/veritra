@@ -80,6 +80,10 @@ func (a *API) claimDeviceLinkV3(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "non_production_device_key_package")
 		return
 	}
+	if !validDeviceKeyPackage(req.DeviceKeyPackage) {
+		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
+		return
+	}
 	link, err := a.Store.ClaimDeviceLinkV3(r.Context(), req)
 	if err != nil {
 		a.deviceLinkV3Error(w, err)

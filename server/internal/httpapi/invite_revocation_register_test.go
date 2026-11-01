@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 // C-1193b73013e5: a revoked invite must be refused for being revoked. The
@@ -29,7 +31,7 @@ func TestRegisterWithRevokedInviteIsRefusedForTheInvite(t *testing.T) {
 			"username":           username,
 			"password":           "member-password-123",
 			"device_name":        username + " phone",
-			"device_key_package": make([]byte, 64),
+			"device_key_package": mlswiretest.KeyPackage(),
 		}
 	}
 	// Reserved while the invite is live, used after it is revoked.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"net"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,89 @@ func TestValidateServeProductionPosture(t *testing.T) {
 	cfg.ManagementAddr = "0.0.0.0:9090"
 	if err := cfg.ValidateServe(); err == nil {
 		t.Fatal("expected public production metrics listener to fail")
+	}
+}
+
+// setEnvironment sets PRIVATE_MESSENGER_ENV, or removes it entirely when
+// unset is true; t.Setenv restores the previous value after the test.
+func setEnvironment(t *testing.T, value string, unset bool) {
+	t.Helper()
+	t.Setenv("PRIVATE_MESSENGER_ENV", value)
+	if unset {
+		if err := os.Unsetenv("PRIVATE_MESSENGER_ENV"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// An omitted PRIVATE_MESSENGER_ENV means production (owner decision,
+// TASK-164), so a deployment that forgets it keeps every production check;
+// local workflows must say development explicitly. Unknown values fail.
+func TestLoadEnvironmentPolicy(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		unset bool
+		want  string // "" means Load must fail
+	}{
+		{name: "unset", unset: true, want: "production"},
+		{name: "empty", value: "", want: "production"},
+		{name: "whitespace", value: "  ", want: "production"},
+		{name: "development", value: "development", want: "development"},
+		{name: "production", value: "production", want: "production"},
+		{name: "mixed case", value: " Production ", want: "production"},
+		{name: "unknown", value: "prod", want: ""},
+		{name: "typo", value: "developement", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PRIVATE_MESSENGER_SETUP_TOKEN", "")
+			setEnvironment(t, tc.value, tc.unset)
+			cfg, err := Load()
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("PRIVATE_MESSENGER_ENV=%q accepted as %q", tc.value, cfg.Environment)
+				}
+				return
+			}
+			if err != nil || cfg.Environment != tc.want {
+				t.Fatalf("PRIVATE_MESSENGER_ENV=%q: environment=%q err=%v, want %q", tc.value, cfg.Environment, err, tc.want)
+			}
+		})
+	}
+}
+
+// With the variable unset, the production checks apply: a placeholder setup
+// token fails Load, and a non-loopback listener without a trusted proxy
+// fails ValidateServe. An explicit development setting keeps both working.
+func TestUnsetEnvironmentKeepsProductionChecks(t *testing.T) {
+	t.Setenv("PRIVATE_MESSENGER_ADDR", ":8080")
+	t.Setenv("PRIVATE_MESSENGER_TRUSTED_PROXIES", "")
+	for _, unset := range []bool{true, false} {
+		setEnvironment(t, "", unset)
+		t.Setenv("PRIVATE_MESSENGER_SETUP_TOKEN", "change-me")
+		if _, err := Load(); err == nil {
+			t.Fatalf("unset=%v: placeholder setup token accepted", unset)
+		}
+		t.Setenv("PRIVATE_MESSENGER_SETUP_TOKEN", "")
+		setEnvironment(t, "", unset)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := cfg.ValidateServe(); err == nil {
+			t.Fatalf("unset=%v: non-loopback listener without a trusted proxy accepted", unset)
+		}
+	}
+
+	setEnvironment(t, "development", false)
+	t.Setenv("PRIVATE_MESSENGER_SETUP_TOKEN", "change-me")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("explicit development rejected a local setup token: %v", err)
+	}
+	if err := cfg.ValidateServe(); err != nil {
+		t.Fatalf("explicit development rejected a local listener: %v", err)
 	}
 }
 

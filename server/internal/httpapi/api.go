@@ -18,6 +18,7 @@ import (
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/messaging"
+	"private-messenger/server/internal/mlswire"
 	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -380,6 +381,14 @@ func validRetention(seconds *int64) bool {
 	}
 	const tenYears int64 = 10 * 365 * 24 * 60 * 60
 	return *seconds >= 0 && *seconds <= tenYears
+}
+
+// validDeviceKeyPackage reports whether keyPackage is one RFC 9420
+// KeyPackage in the client's encoding, within the 64 B to 48 KiB transport
+// bound. The check is structural only: signatures and the credential's
+// binding to the enrollment signing key are not verified.
+func validDeviceKeyPackage(keyPackage []byte) bool {
+	return mlswire.ValidateKeyPackage(keyPackage) == nil
 }
 
 func isReservedNonProductionKeyPackage(keyPackage []byte) bool {

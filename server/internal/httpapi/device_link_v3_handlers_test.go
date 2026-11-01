@@ -16,6 +16,7 @@ import (
 
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/auth"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 	"private-messenger/server/internal/storage"
 )
 
@@ -81,7 +82,7 @@ func newV3APIFixture(t *testing.T) *v3APIFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.claim = storage.DeviceLinkV3ClaimInput{Code: f.link.Code, ProtocolVersion: storage.DeviceLinkV3Protocol, ServerOrigin: f.link.ServerOrigin, ReservationRequestID: strings.Repeat("1", 64), EnrollmentReservationID: reservation.ID, DeviceName: "HTTP linked phone", DeviceKeyPackage: bytes.Repeat([]byte{3}, 64), SigningKey: public, TransferPublicKey: bytes.Repeat([]byte{4}, 32), TranscriptHash: bytes.Repeat([]byte{5}, 32), ClaimTag: bytes.Repeat([]byte{6}, 32), ClaimTokenHash: auth.HashToken(f.claimToken), DeviceSecretHash: auth.HashToken(f.deviceSecret), InitialSessionTokenHash: auth.HashToken(f.sessionToken)}
+	f.claim = storage.DeviceLinkV3ClaimInput{Code: f.link.Code, ProtocolVersion: storage.DeviceLinkV3Protocol, ServerOrigin: f.link.ServerOrigin, ReservationRequestID: strings.Repeat("1", 64), EnrollmentReservationID: reservation.ID, DeviceName: "HTTP linked phone", DeviceKeyPackage: mlswiretest.KeyPackage(), SigningKey: public, TransferPublicKey: bytes.Repeat([]byte{4}, 32), TranscriptHash: bytes.Repeat([]byte{5}, 32), ClaimTag: bytes.Repeat([]byte{6}, 32), ClaimTokenHash: auth.HashToken(f.claimToken), DeviceSecretHash: auth.HashToken(f.deviceSecret), InitialSessionTokenHash: auth.HashToken(f.sessionToken)}
 	// Client-side proof assembly is independent of the server builder.
 	requestID, _ := hex.DecodeString(f.claim.ReservationRequestID)
 	proof := []byte("veritra-device-link-enrollment-v3")
