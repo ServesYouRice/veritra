@@ -1888,8 +1888,6 @@ upgraded first); where `frank_commit` is stored (a write-once envelope
 column, not `crypto_metadata`, which the legacy edit and delete routes
 overwrite); and retention of that row for the report window.
 
-## Group governance record (C4)
-
 ## Group role state (C4)
 
 Proposed, not implemented: no ABI, codec or payload exists yet. Design:
