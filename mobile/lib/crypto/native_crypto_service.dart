@@ -30,7 +30,8 @@ class NativeCryptoService
         ConversationAuthorityConsumer,
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
-        NoticeCaptureConsumer {
+        NoticeCaptureConsumer,
+        RecoveryCryptoService {
   NativeCryptoService({
     required this.bindings,
     required this.localStore,
@@ -114,6 +115,121 @@ class NativeCryptoService
         _firstState = null;
         return device.createEnrollmentCredential(reservation.challenge);
       });
+
+  // K0 recovery (ABI 11). The bindings are synchronous; each call is
+  // serialized with the MLS operations only where it touches the device.
+
+  @override
+  Future<Uint8List> generateRecoveryKey() async =>
+      bindings.generateRecoveryKey();
+
+  @override
+  Future<String> encodeRecoveryKey(Uint8List entropy) async =>
+      bindings.encodeRecoveryKey(entropy);
+
+  @override
+  Future<Uint8List> decodeRecoveryKey(String text) async =>
+      bindings.decodeRecoveryKey(text);
+
+  @override
+  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy) async {
+    final derived = bindings.deriveRecoveryKey(entropy);
+    return RecoveryKeyValues(
+        rkPub: derived.rkPub, rkId: derived.rkId, rkAuthPub: derived.rkAuthPub);
+  }
+
+  @override
+  Future<Uint8List> signRecoveryProof({
+    required Uint8List entropy,
+    required List<int> challenge,
+    required List<int> signingKey,
+    required List<int> keyPackage,
+    required String origin,
+  }) async =>
+      bindings.signRecoveryProof(
+          entropy: entropy,
+          challenge: challenge,
+          signingKey: signingKey,
+          keyPackage: keyPackage,
+          origin: origin);
+
+  @override
+  Future<StoredCryptoState> sealPendingEnrollment() => _serial(() async {
+        final device = _device;
+        if (!_pendingEnrollment || device == null) {
+          throw StateError('no pending enrollment identity');
+        }
+        // Sealed once: a second seal would move the generation, so the
+        // activation stores exactly this state (as for [_firstState]).
+        final first = _firstState ??= () {
+          final key = _randomBytes(32);
+          return _sealedState(1, key, device.sealChanges(key, 1));
+        }();
+        return _copyState(first);
+      });
+
+  @override
+  Future<void> resumePendingEnrollment({
+    required String accountId,
+    required String deviceId,
+    required StoredCryptoState state,
+  }) =>
+      _serial(() async {
+        if (state.counter != 1 || state.stateKey.length != 32) {
+          throw StateError('pending enrollment state is invalid');
+        }
+        final restored = _formatChecked(() => bindings.restoreRecords(accountId,
+                deviceId, state.stateKey, state.counter, state.sealedState, [
+              for (final change in state.changes)
+                if (change.sealed != null) change.sealed!
+            ]));
+        if (restored.generation != state.counter) {
+          restored.device.close();
+          throw StateError('MLS rollback counter mismatch');
+        }
+        noticeCaptureEnabled = false;
+        _noticeOrigin = null;
+        _device?.close();
+        _device = restored.device;
+        _deviceCounter = null;
+        _accountId = accountId;
+        _deviceId = deviceId;
+        _pendingEnrollment = true;
+        _firstState = _copyState(state);
+      });
+
+  @override
+  Future<void> abandonPendingEnrollment() => _serial(() async {
+        if (!_pendingEnrollment) return;
+        _device?.close();
+        _device = null;
+        _deviceCounter = null;
+        final first = _firstState;
+        if (first != null) {
+          first.stateKey.fillRange(0, first.stateKey.length, 0);
+        }
+        _firstState = null;
+        _accountId = null;
+        _deviceId = null;
+        _pendingEnrollment = false;
+      });
+
+  static StoredCryptoState _copyState(StoredCryptoState state) =>
+      StoredCryptoState(
+        counter: state.counter,
+        stateKey: List<int>.from(state.stateKey),
+        sealedState: List<int>.from(state.sealedState),
+        changes: <CryptoRecordChange>[
+          for (final change in state.changes)
+            CryptoRecordChange(
+              kind: change.kind,
+              recordId: List<int>.from(change.recordId),
+              generation: change.generation,
+              sealed:
+                  change.sealed == null ? null : List<int>.from(change.sealed!),
+            ),
+        ],
+      );
 
   @override
   Future<void> activateSession(Session session) => _serial(() async {

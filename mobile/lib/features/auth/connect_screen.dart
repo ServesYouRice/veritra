@@ -12,10 +12,14 @@ import '../../ui/about.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/veritra_mark.dart';
+import 'account_recovery_screen.dart';
 import 'qr_scan_screen.dart';
 import '../../l10n/l10n.dart';
 
 enum AuthMode { owner, signIn, join, linkDevice }
+
+/// The placeholder origin shown in server fields; never translated.
+const exampleServerOrigin = 'https://chat.example.org';
 
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({required this.state, super.key});
@@ -196,7 +200,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       autovalidateMode: AutovalidateMode.onUserInteraction,
                       validator: _validateUrl,
                       decoration: const InputDecoration(
-                        hintText: 'https://chat.example.org',
+                        hintText: exampleServerOrigin,
                         prefixIcon: Icon(Icons.dns_outlined),
                       ),
                     ),
@@ -265,6 +269,36 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         onPressed: () =>
                             showRestoreBackupDialog(context, widget.state),
                         child: Text(context.l10n.connectRestoreBackup),
+                      ),
+                    ),
+                  // K0 R4: someone who lost every device recovers with the
+                  // password and recovery key.
+                  if (widget.state.recoveryAvailable)
+                    Center(
+                      child: TextButton(
+                        key: const ValueKey<String>('connect-lost-devices'),
+                        onPressed: widget.state.busy
+                            ? null
+                            : () => Navigator.of(context).push(
+                                  MaterialPageRoute<void>(
+                                    builder: (_) => AccountRecoveryStartScreen(
+                                      state: widget.state,
+                                      initialServer: url.text.trim(),
+                                    ),
+                                  ),
+                                ),
+                        child: Text(context.l10n.connectLostAllDevices),
+                      ),
+                    ),
+                  if (widget.state.errorFor(Ops.accountRecovery)
+                      case final recoveryError?)
+                    Padding(
+                      padding: const EdgeInsets.only(top: BoneSpacing.sm),
+                      child: Text(
+                        recoveryError,
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.bodySmall
+                            ?.copyWith(color: theme.colorScheme.error),
                       ),
                     ),
                 ],

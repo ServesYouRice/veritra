@@ -1902,7 +1902,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get backupRestoredLinkToFinish =>
-      'Ваше поруке и подешавања су враћени на овај уређај. Да бисте завршили, повежите овај уређај са другог уређаја који је пријављен на ваш налог. Завршетак без другог уређаја још није доступан.';
+      'Ваше поруке и подешавања су враћени на овај уређај. Да бисте завршили, повежите овај уређај са другог уређаја који је пријављен на ваш налог. Ако сте изгубили све уређаје, користите „Изгубили сте све уређаје?” са лозинком и кључем за опоравак.';
 
   @override
   String get syncErrorCursorExpired =>
@@ -2595,6 +2595,219 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get k2HistoryEmpty =>
       'У овом разговору није остала ниједна копирана порука.';
+
+  @override
+  String get settingsRecoveryKey => 'Кључ за опоравак';
+
+  @override
+  String get recoveryUnavailableHere =>
+      'Опоравак налога није доступан у овој верзији апликације.';
+
+  @override
+  String get recoveryKeyTitle => 'Кључ за опоравак';
+
+  @override
+  String get recoveryKeyIntro =>
+      'Ако изгубите све уређаје, лозинка и овај кључ за опоравак враћају ваш налог на нови уређај. Чувајте кључ на папиру, на сигурном месту. Он не враћа историју порука.';
+
+  @override
+  String recoveryKeyStatusSet(String date) {
+    return 'Постављен $date';
+  }
+
+  @override
+  String get recoveryKeyStatusNotSet => 'Није постављен';
+
+  @override
+  String get recoveryKeyStatusUnknown => 'Стање тренутно није доступно';
+
+  @override
+  String get recoveryKeyStatusOff => 'Овај сервер има искључен опоравак налога';
+
+  @override
+  String get recoveryKeyCreate => 'Направи кључ за опоравак';
+
+  @override
+  String get recoveryKeyReplace => 'Замени кључ за опоравак';
+
+  @override
+  String get recoveryKeyReplaceNote =>
+      'Нови кључ одмах замењује стари и отказује опоравак који чека.';
+
+  @override
+  String get recoveryKeyShowTitle => 'Запишите кључ за опоравак';
+
+  @override
+  String get recoveryKeyShowDetail =>
+      'Запишите ова 52 знака на папир и чувајте га на сигурном. Свако ко има овај кључ и вашу лозинку може да преузме ваш налог. Не правите снимак екрана и не чувајте га у разговору.';
+
+  @override
+  String get recoveryKeyWritten => 'Кључ је записан';
+
+  @override
+  String get recoveryKeyConfirmTitle => 'Унесите кључ за опоравак';
+
+  @override
+  String get recoveryKeyConfirmDetail =>
+      'Унесите цео кључ са папира да бисте га проверили. Цртице и размаци нису битни.';
+
+  @override
+  String get recoveryKeyField => 'Кључ за опоравак';
+
+  @override
+  String get recoveryKeyRequired => 'Унесите кључ за опоравак.';
+
+  @override
+  String get recoveryKeyMismatch =>
+      'То није приказани кључ. Проверите папир и покушајте поново.';
+
+  @override
+  String get recoveryKeyShowAgain => 'Прикажи кључ поново';
+
+  @override
+  String get recoveryKeySave => 'Сачувај кључ за опоравак';
+
+  @override
+  String get recoveryKeySaved => 'Кључ за опоравак је сачуван.';
+
+  @override
+  String get recoveryFollowUpTitle => 'Завршите опоравак налога';
+
+  @override
+  String get recoveryFollowUpKeyDetail =>
+      'Ваш налог је враћен на овај уређај, а ваши други уређаји су одјављени. Пре него што се разговори отворе, замените кључ за опоравак, а затим лозинку: можда их неко други зна.';
+
+  @override
+  String get recoveryFollowUpPasswordDetail =>
+      'Последњи корак: изаберите нову лозинку.';
+
+  @override
+  String get connectLostAllDevices => 'Изгубили сте све уређаје?';
+
+  @override
+  String get recoveryStartTitle => 'Опоравак налога';
+
+  @override
+  String get recoveryStartDetail =>
+      'Користите ово само ако сте изгубили сваки уређај пријављен на ваш налог. Потребни су вам лозинка и кључ за опоравак. Ако је неки ваш уређај коришћен у последњих 7 дана, овај уређај се придружује тек после 7 дана, а ти уређаји могу да откажу опоравак. Историја порука се враћа само из резервне копије враћене на овај уређај.';
+
+  @override
+  String get recoveryStartSubmit => 'Започни опоравак';
+
+  @override
+  String get recoveryKeyUnreadable =>
+      'Тај кључ за опоравак није исправан. Проверите да ли има грешака у куцању.';
+
+  @override
+  String get recoveryClaimRefused =>
+      'Лозинка или кључ за опоравак није исправан, адреса сервера се разликује од записане, или овај налог не може да се опорави.';
+
+  @override
+  String get recoveryBackupOtherAccount =>
+      'Резервна копија враћена на овај уређај припада другом налогу или серверу. Овде опоравите тај налог или прво ресетујте овај уређај.';
+
+  @override
+  String get recoverySignedInAlready => 'Овај уређај је већ пријављен.';
+
+  @override
+  String get recoveryAlreadyPending => 'Опоравак већ чека на овом уређају.';
+
+  @override
+  String get recoveryWaitingTitle => 'Опоравак чека';
+
+  @override
+  String recoveryWaitingDetail(String date) {
+    return 'Овај уређај се придружује вашем налогу после $date. Апликација сама проверава док је отворена. Ваши други уређаји могу да откажу овај опоравак.';
+  }
+
+  @override
+  String get recoveryReadyDetail =>
+      'Чекање је завршено. Проверите сада да бисте завршили.';
+
+  @override
+  String get recoveryCheckNow => 'Провери сада';
+
+  @override
+  String get recoveryAbandon => 'Прекини опоравак';
+
+  @override
+  String get recoveryAbandonTitle => 'Прекинути опоравак на овом уређају?';
+
+  @override
+  String get recoveryAbandonMessage =>
+      'Овај уређај заборавља захтев. Да бисте покушали поново, поново су вам потребни лозинка и кључ за опоравак.';
+
+  @override
+  String get recoveryRequestEnded =>
+      'Овај опоравак је отказан или је истекао. Отказује га промена лозинке или кључа за опоравак, или неки ваш уређај. Можете да почнете поново.';
+
+  @override
+  String get recoveryLoginTitle => 'Пријавите се да бисте завршили';
+
+  @override
+  String get recoveryLoginDetail =>
+      'Ваш налог је опорављен на овом уређају, али одговор није стигао. Унесите лозинку да бисте завршили.';
+
+  @override
+  String get recoveryLoginSubmit => 'Пријави се';
+
+  @override
+  String recoveryAccountLabel(String username) {
+    return 'Налог: $username';
+  }
+
+  @override
+  String recoveryPendingNotice(String device, String date) {
+    return 'Неко опоравља ваш налог на уређају „$device”, до $date. Нисте ви? Откажите или промените лозинку или кључ за опоравак.';
+  }
+
+  @override
+  String get recoveryPendingCancel => 'Откажи опоравак';
+
+  @override
+  String get recoveryCancelTitle => 'Отказати овај опоравак?';
+
+  @override
+  String get recoveryCancelMessage =>
+      'Нови уређај се неће придружити вашем налогу. Ако то нисте били ви, промените и лозинку.';
+
+  @override
+  String get recoveryCancelled => 'Опоравак је отказан.';
+
+  @override
+  String get passwordLeakNotice =>
+      'Ваша лозинка је много пута употребљена са погрешним кључем за опоравак. Промените лозинку.';
+
+  @override
+  String get passwordLeakDismiss => 'Затвори';
+
+  @override
+  String get apiErrorRecoveryNotConfigured =>
+      'Овај сервер није укључио опоравак налога.';
+
+  @override
+  String get apiErrorRecoveryBackoff =>
+      'Превише покушаја. Сачекајте мало, па покушајте поново.';
+
+  @override
+  String get apiErrorInvalidRecoveryKey =>
+      'Сервер је одбио овај кључ за опоравак. Направите нови.';
+
+  @override
+  String get recoveryAlreadyEnded =>
+      'Овај опоравак је већ завршен или га је заменио новији.';
+
+  @override
+  String get apiErrorPasswordUnchanged =>
+      'Изаберите лозинку која се разликује од тренутне.';
+
+  @override
+  String get recoveryKeyServerAddress => 'Уз њега запишите и адресу сервера:';
+
+  @override
+  String recoveryKeyOriginMismatch(String current, String origin) {
+    return 'Овај уређај користи $current, али адреса сервера за опоравак је $origin. Опоравак ради само преко адресе $origin.';
+  }
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4495,7 +4708,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get backupRestoredLinkToFinish =>
-      'Vaše poruke i podešavanja su vraćeni na ovaj uređaj. Da biste završili, povežite ovaj uređaj sa drugog uređaja koji je prijavljen na vaš nalog. Završetak bez drugog uređaja još nije dostupan.';
+      'Vaše poruke i podešavanja su vraćeni na ovaj uređaj. Da biste završili, povežite ovaj uređaj sa drugog uređaja koji je prijavljen na vaš nalog. Ako ste izgubili sve uređaje, koristite „Izgubili ste sve uređaje?” sa lozinkom i ključem za oporavak.';
 
   @override
   String get syncErrorCursorExpired =>
@@ -5191,4 +5404,218 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get k2HistoryEmpty =>
       'U ovom razgovoru nije ostala nijedna kopirana poruka.';
+
+  @override
+  String get settingsRecoveryKey => 'Ključ za oporavak';
+
+  @override
+  String get recoveryUnavailableHere =>
+      'Oporavak naloga nije dostupan u ovoj verziji aplikacije.';
+
+  @override
+  String get recoveryKeyTitle => 'Ključ za oporavak';
+
+  @override
+  String get recoveryKeyIntro =>
+      'Ako izgubite sve uređaje, lozinka i ovaj ključ za oporavak vraćaju vaš nalog na novi uređaj. Čuvajte ključ na papiru, na sigurnom mestu. On ne vraća istoriju poruka.';
+
+  @override
+  String recoveryKeyStatusSet(String date) {
+    return 'Postavljen $date';
+  }
+
+  @override
+  String get recoveryKeyStatusNotSet => 'Nije postavljen';
+
+  @override
+  String get recoveryKeyStatusUnknown => 'Stanje trenutno nije dostupno';
+
+  @override
+  String get recoveryKeyStatusOff =>
+      'Ovaj server ima isključen oporavak naloga';
+
+  @override
+  String get recoveryKeyCreate => 'Napravi ključ za oporavak';
+
+  @override
+  String get recoveryKeyReplace => 'Zameni ključ za oporavak';
+
+  @override
+  String get recoveryKeyReplaceNote =>
+      'Novi ključ odmah zamenjuje stari i otkazuje oporavak koji čeka.';
+
+  @override
+  String get recoveryKeyShowTitle => 'Zapišite ključ za oporavak';
+
+  @override
+  String get recoveryKeyShowDetail =>
+      'Zapišite ova 52 znaka na papir i čuvajte ga na sigurnom. Svako ko ima ovaj ključ i vašu lozinku može da preuzme vaš nalog. Ne pravite snimak ekrana i ne čuvajte ga u razgovoru.';
+
+  @override
+  String get recoveryKeyWritten => 'Ključ je zapisan';
+
+  @override
+  String get recoveryKeyConfirmTitle => 'Unesite ključ za oporavak';
+
+  @override
+  String get recoveryKeyConfirmDetail =>
+      'Unesite ceo ključ sa papira da biste ga proverili. Crtice i razmaci nisu bitni.';
+
+  @override
+  String get recoveryKeyField => 'Ključ za oporavak';
+
+  @override
+  String get recoveryKeyRequired => 'Unesite ključ za oporavak.';
+
+  @override
+  String get recoveryKeyMismatch =>
+      'To nije prikazani ključ. Proverite papir i pokušajte ponovo.';
+
+  @override
+  String get recoveryKeyShowAgain => 'Prikaži ključ ponovo';
+
+  @override
+  String get recoveryKeySave => 'Sačuvaj ključ za oporavak';
+
+  @override
+  String get recoveryKeySaved => 'Ključ za oporavak je sačuvan.';
+
+  @override
+  String get recoveryFollowUpTitle => 'Završite oporavak naloga';
+
+  @override
+  String get recoveryFollowUpKeyDetail =>
+      'Vaš nalog je vraćen na ovaj uređaj, a vaši drugi uređaji su odjavljeni. Pre nego što se razgovori otvore, zamenite ključ za oporavak, a zatim lozinku: možda ih neko drugi zna.';
+
+  @override
+  String get recoveryFollowUpPasswordDetail =>
+      'Poslednji korak: izaberite novu lozinku.';
+
+  @override
+  String get connectLostAllDevices => 'Izgubili ste sve uređaje?';
+
+  @override
+  String get recoveryStartTitle => 'Oporavak naloga';
+
+  @override
+  String get recoveryStartDetail =>
+      'Koristite ovo samo ako ste izgubili svaki uređaj prijavljen na vaš nalog. Potrebni su vam lozinka i ključ za oporavak. Ako je neki vaš uređaj korišćen u poslednjih 7 dana, ovaj uređaj se pridružuje tek posle 7 dana, a ti uređaji mogu da otkažu oporavak. Istorija poruka se vraća samo iz rezervne kopije vraćene na ovaj uređaj.';
+
+  @override
+  String get recoveryStartSubmit => 'Započni oporavak';
+
+  @override
+  String get recoveryKeyUnreadable =>
+      'Taj ključ za oporavak nije ispravan. Proverite da li ima grešaka u kucanju.';
+
+  @override
+  String get recoveryClaimRefused =>
+      'Lozinka ili ključ za oporavak nije ispravan, adresa servera se razlikuje od zapisane, ili ovaj nalog ne može da se oporavi.';
+
+  @override
+  String get recoveryBackupOtherAccount =>
+      'Rezervna kopija vraćena na ovaj uređaj pripada drugom nalogu ili serveru. Ovde oporavite taj nalog ili prvo resetujte ovaj uređaj.';
+
+  @override
+  String get recoverySignedInAlready => 'Ovaj uređaj je već prijavljen.';
+
+  @override
+  String get recoveryAlreadyPending => 'Oporavak već čeka na ovom uređaju.';
+
+  @override
+  String get recoveryWaitingTitle => 'Oporavak čeka';
+
+  @override
+  String recoveryWaitingDetail(String date) {
+    return 'Ovaj uređaj se pridružuje vašem nalogu posle $date. Aplikacija sama proverava dok je otvorena. Vaši drugi uređaji mogu da otkažu ovaj oporavak.';
+  }
+
+  @override
+  String get recoveryReadyDetail =>
+      'Čekanje je završeno. Proverite sada da biste završili.';
+
+  @override
+  String get recoveryCheckNow => 'Proveri sada';
+
+  @override
+  String get recoveryAbandon => 'Prekini oporavak';
+
+  @override
+  String get recoveryAbandonTitle => 'Prekinuti oporavak na ovom uređaju?';
+
+  @override
+  String get recoveryAbandonMessage =>
+      'Ovaj uređaj zaboravlja zahtev. Da biste pokušali ponovo, ponovo su vam potrebni lozinka i ključ za oporavak.';
+
+  @override
+  String get recoveryRequestEnded =>
+      'Ovaj oporavak je otkazan ili je istekao. Otkazuje ga promena lozinke ili ključa za oporavak, ili neki vaš uređaj. Možete da počnete ponovo.';
+
+  @override
+  String get recoveryLoginTitle => 'Prijavite se da biste završili';
+
+  @override
+  String get recoveryLoginDetail =>
+      'Vaš nalog je oporavljen na ovom uređaju, ali odgovor nije stigao. Unesite lozinku da biste završili.';
+
+  @override
+  String get recoveryLoginSubmit => 'Prijavi se';
+
+  @override
+  String recoveryAccountLabel(String username) {
+    return 'Nalog: $username';
+  }
+
+  @override
+  String recoveryPendingNotice(String device, String date) {
+    return 'Neko oporavlja vaš nalog na uređaju „$device”, do $date. Niste vi? Otkažite ili promenite lozinku ili ključ za oporavak.';
+  }
+
+  @override
+  String get recoveryPendingCancel => 'Otkaži oporavak';
+
+  @override
+  String get recoveryCancelTitle => 'Otkazati ovaj oporavak?';
+
+  @override
+  String get recoveryCancelMessage =>
+      'Novi uređaj se neće pridružiti vašem nalogu. Ako to niste bili vi, promenite i lozinku.';
+
+  @override
+  String get recoveryCancelled => 'Oporavak je otkazan.';
+
+  @override
+  String get passwordLeakNotice =>
+      'Vaša lozinka je mnogo puta upotrebljena sa pogrešnim ključem za oporavak. Promenite lozinku.';
+
+  @override
+  String get passwordLeakDismiss => 'Zatvori';
+
+  @override
+  String get apiErrorRecoveryNotConfigured =>
+      'Ovaj server nije uključio oporavak naloga.';
+
+  @override
+  String get apiErrorRecoveryBackoff =>
+      'Previše pokušaja. Sačekajte malo, pa pokušajte ponovo.';
+
+  @override
+  String get apiErrorInvalidRecoveryKey =>
+      'Server je odbio ovaj ključ za oporavak. Napravite novi.';
+
+  @override
+  String get recoveryAlreadyEnded =>
+      'Ovaj oporavak je već završen ili ga je zamenio noviji.';
+
+  @override
+  String get apiErrorPasswordUnchanged =>
+      'Izaberite lozinku koja se razlikuje od trenutne.';
+
+  @override
+  String get recoveryKeyServerAddress => 'Uz njega zapišite i adresu servera:';
+
+  @override
+  String recoveryKeyOriginMismatch(String current, String origin) {
+    return 'Ovaj uređaj koristi $current, ali adresa servera za oporavak je $origin. Oporavak radi samo preko adrese $origin.';
+  }
 }

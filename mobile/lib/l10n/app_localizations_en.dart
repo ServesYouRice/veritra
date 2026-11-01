@@ -1887,7 +1887,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get backupRestoredLinkToFinish =>
-      'Your messages and settings are restored on this device. To finish, link this device from another device that is signed in to your account. Finishing without another device is not available yet.';
+      'Your messages and settings are restored on this device. To finish, link this device from another device that is signed in to your account. If you lost every device, use “Lost all your devices?” with your password and recovery key.';
 
   @override
   String get syncErrorCursorExpired =>
@@ -2578,4 +2578,219 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get k2HistoryEmpty =>
       'No copied messages are left in this conversation.';
+
+  @override
+  String get settingsRecoveryKey => 'Recovery key';
+
+  @override
+  String get recoveryUnavailableHere =>
+      'Account recovery is not available in this build.';
+
+  @override
+  String get recoveryKeyTitle => 'Recovery key';
+
+  @override
+  String get recoveryKeyIntro =>
+      'If you lose every device, your password and this recovery key get your account back on a new device. Keep the key on paper, somewhere safe. It does not bring back your message history.';
+
+  @override
+  String recoveryKeyStatusSet(String date) {
+    return 'Set on $date';
+  }
+
+  @override
+  String get recoveryKeyStatusNotSet => 'Not set';
+
+  @override
+  String get recoveryKeyStatusUnknown => 'Status unavailable right now';
+
+  @override
+  String get recoveryKeyStatusOff =>
+      'This server has account recovery turned off';
+
+  @override
+  String get recoveryKeyCreate => 'Create a recovery key';
+
+  @override
+  String get recoveryKeyReplace => 'Replace the recovery key';
+
+  @override
+  String get recoveryKeyReplaceNote =>
+      'A new key replaces the old one at once and cancels any recovery that is waiting.';
+
+  @override
+  String get recoveryKeyShowTitle => 'Write down your recovery key';
+
+  @override
+  String get recoveryKeyShowDetail =>
+      'Write these 52 characters on paper and keep it safe. Anyone with this key and your password can take over your account. Do not take a screenshot or keep it in a chat.';
+
+  @override
+  String get recoveryKeyWritten => 'I wrote it down';
+
+  @override
+  String get recoveryKeyConfirmTitle => 'Type your recovery key';
+
+  @override
+  String get recoveryKeyConfirmDetail =>
+      'Type the whole key from your paper to check it. Dashes and spaces do not matter.';
+
+  @override
+  String get recoveryKeyField => 'Recovery key';
+
+  @override
+  String get recoveryKeyRequired => 'Enter the recovery key.';
+
+  @override
+  String get recoveryKeyMismatch =>
+      'That is not the key shown. Check your paper and try again.';
+
+  @override
+  String get recoveryKeyShowAgain => 'Show the key again';
+
+  @override
+  String get recoveryKeySave => 'Save recovery key';
+
+  @override
+  String get recoveryKeySaved => 'Recovery key saved.';
+
+  @override
+  String get recoveryFollowUpTitle => 'Finish recovering your account';
+
+  @override
+  String get recoveryFollowUpKeyDetail =>
+      'Your account is back on this device, and your other devices were signed out. Before your chats open, replace your recovery key and then your password: someone else may know them.';
+
+  @override
+  String get recoveryFollowUpPasswordDetail =>
+      'Last step: choose a new password.';
+
+  @override
+  String get connectLostAllDevices => 'Lost all your devices?';
+
+  @override
+  String get recoveryStartTitle => 'Recover your account';
+
+  @override
+  String get recoveryStartDetail =>
+      'Use this only if you lost every device signed in to your account. You need your password and your recovery key. If any of your devices was used in the last 7 days, this device joins only after 7 days, and those devices can cancel it. Your message history comes back only from a backup restored on this device.';
+
+  @override
+  String get recoveryStartSubmit => 'Start recovery';
+
+  @override
+  String get recoveryKeyUnreadable =>
+      'That recovery key is not valid. Check it for a typo.';
+
+  @override
+  String get recoveryClaimRefused =>
+      'The password or recovery key is wrong, the server address differs from the one you wrote down, or this account cannot be recovered.';
+
+  @override
+  String get recoveryBackupOtherAccount =>
+      'The backup restored on this device belongs to another account or server. Recover that account here, or reset this device first.';
+
+  @override
+  String get recoverySignedInAlready => 'This device is already signed in.';
+
+  @override
+  String get recoveryAlreadyPending =>
+      'A recovery is already waiting on this device.';
+
+  @override
+  String get recoveryWaitingTitle => 'Recovery is waiting';
+
+  @override
+  String recoveryWaitingDetail(String date) {
+    return 'This device joins your account after $date. The app checks by itself while it is open. Your other devices can cancel this recovery.';
+  }
+
+  @override
+  String get recoveryReadyDetail => 'The wait is over. Check now to finish.';
+
+  @override
+  String get recoveryCheckNow => 'Check now';
+
+  @override
+  String get recoveryAbandon => 'Stop recovery';
+
+  @override
+  String get recoveryAbandonTitle => 'Stop recovery on this device?';
+
+  @override
+  String get recoveryAbandonMessage =>
+      'This device forgets the request. To try again you need your password and recovery key again.';
+
+  @override
+  String get recoveryRequestEnded =>
+      'This recovery was cancelled or has expired. A password or recovery key change, or one of your devices, cancels it. You can start again.';
+
+  @override
+  String get recoveryLoginTitle => 'Sign in to finish';
+
+  @override
+  String get recoveryLoginDetail =>
+      'Your account was recovered on this device, but the answer did not arrive. Enter your password to finish.';
+
+  @override
+  String get recoveryLoginSubmit => 'Sign in';
+
+  @override
+  String recoveryAccountLabel(String username) {
+    return 'Account: $username';
+  }
+
+  @override
+  String recoveryPendingNotice(String device, String date) {
+    return 'Someone is recovering your account on “$device”, finishing $date. Not you? Cancel, or change your password or recovery key.';
+  }
+
+  @override
+  String get recoveryPendingCancel => 'Cancel recovery';
+
+  @override
+  String get recoveryCancelTitle => 'Cancel this recovery?';
+
+  @override
+  String get recoveryCancelMessage =>
+      'The new device will not join your account. If it was not you, change your password too.';
+
+  @override
+  String get recoveryCancelled => 'Recovery cancelled.';
+
+  @override
+  String get passwordLeakNotice =>
+      'Your password was used with a wrong recovery key many times. Change your password.';
+
+  @override
+  String get passwordLeakDismiss => 'Dismiss';
+
+  @override
+  String get apiErrorRecoveryNotConfigured =>
+      'This server has not turned on account recovery.';
+
+  @override
+  String get apiErrorRecoveryBackoff =>
+      'Too many attempts. Wait a while, then try again.';
+
+  @override
+  String get apiErrorInvalidRecoveryKey =>
+      'The server refused this recovery key. Create a new one.';
+
+  @override
+  String get recoveryAlreadyEnded =>
+      'This recovery had already ended or was replaced by a newer one.';
+
+  @override
+  String get apiErrorPasswordUnchanged =>
+      'Choose a password different from your current one.';
+
+  @override
+  String get recoveryKeyServerAddress =>
+      'Write down the server address with it:';
+
+  @override
+  String recoveryKeyOriginMismatch(String current, String origin) {
+    return 'This device uses $current, but the server\'s recovery address is $origin. Recovery works only from $origin.';
+  }
 }

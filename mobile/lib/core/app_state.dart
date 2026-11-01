@@ -43,6 +43,11 @@ import 'models.dart';
 import 'receipts_state.dart';
 import 'typing_state.dart';
 import '../l10n/l10n.dart';
+import 'account_recovery.dart';
+
+export 'account_recovery.dart';
+
+part 'app_state_recovery.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -158,6 +163,11 @@ class Ops {
   static const members = 'members';
   static const blocks = 'blocks';
   static const mute = 'mute';
+
+  /// K0: setting the recovery key (R3), and a recovery claim or its cancel
+  /// (R4).
+  static const recoveryKey = 'recovery_key';
+  static const accountRecovery = 'account_recovery';
 
   /// Refresh failures of the conversation and device lists. The lists keep
   /// their last good contents while this holds an error (card T44A).
@@ -358,6 +368,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   DeviceLinkClaim? pendingDeviceLinkClaim;
+
+  /// K0 recovery (app_state_recovery.dart). [recoveryKeyStatus] is the
+  /// server's view of this account's recovery key and any waiting recovery;
+  /// [pendingAccountRecovery] is this device's own waiting claim;
+  /// [recoveryFollowUp] is the step a recovered device must finish before
+  /// its chats open.
+  RecoveryKeyStatus? recoveryKeyStatus;
+  PendingAccountRecovery? pendingAccountRecovery;
+  RecoveryFollowUpStep? recoveryFollowUp;
+  String? _passwordLeakDay;
+  Timer? _recoveryPollTimer;
+  DateTime? _recoveryStatusReadAt;
   String? error;
   bool busy = false;
   // Distinguishes "still fetching the first page" from "genuinely empty" so
@@ -559,6 +581,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (state == AppLifecycleState.resumed ||
         (!wasForeground && _isForeground)) {
       unawaited(_resumeForegroundSync());
+      _resumeAccountRecovery();
     }
   }
 
@@ -1362,6 +1385,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
+        await _loadPendingAccountRecovery();
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
         return;
@@ -1376,12 +1400,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         role: stored.role,
       );
       if (restored.token.isEmpty) {
+        await _loadPendingAccountRecovery();
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
         return;
       }
       session = restored;
       _replaceApi(restored.baseUrl);
+      await _resumeRecoveredIdentity(restored);
       await _mlsCrypto?.activateSession(restored);
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final records = await localStore.pendingEnvelopeRecords();
@@ -1435,6 +1461,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       unawaited(_startSync());
       unawaited(_ensureKeyPackageSupply().catchError((Object _) {}));
       unawaited(_scheduleExpiryPurge());
+      await _loadSignedInRecoveryState();
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
     } catch (error) {
@@ -1642,6 +1669,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// for [_run] to report. A rejected session (401) starts nothing: [_run]
   /// clears it.
   Future<void> _finishSignIn(Future<void> Function() steps) async {
+    unawaited(_loadSignedInRecoveryState());
     try {
       await steps();
     } catch (err) {
@@ -4006,6 +4034,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       await client.changePassword(current.token, newPassword);
+      await _afterPasswordChanged();
     });
   }
 
@@ -4789,6 +4818,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   void _deferProjectionRefresh(SyncEvent event) {
     final type = event.type;
+    // Local only: the status is read again on the next resume.
+    if (type.startsWith('account.') && _noteAccountSyncEvent(event)) {
+      _recoveryStatusReadAt = null;
+    }
     if (type.startsWith('device.') ||
         type.startsWith('membership.') ||
         type.startsWith('conversation.')) {
@@ -5492,6 +5525,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// only when an event in the run names it.
   Future<void> _refreshProjectionForSyncEvents(List<SyncEvent> events) async {
     var devices = false;
+    var recoveryStatus = false;
     var conversationList = false;
     var selectedMessages = false;
     final receipts = <String>{};
@@ -5523,6 +5557,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             receipts.add(event.conversationId!);
           }
         }
+      } else if (type.startsWith('account.')) {
+        if (_noteAccountSyncEvent(event)) recoveryStatus = true;
       } else if (type != 'mls.revocation.pending' &&
           type != 'mls.revocation.completed' &&
           _failsClosedEvent(type)) {
@@ -5531,6 +5567,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
     }
     if (devices) await _refreshDevices();
+    if (recoveryStatus) await refreshRecoveryKeyStatus();
     if (conversationList) {
       await _refreshConversations(notify: false, persist: false);
     }
@@ -5986,6 +6023,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     invitesLoadFailed = false;
     devicesLoaded = false;
     devices = <Device>[];
+    recoveryKeyStatus = null;
+    recoveryFollowUp = null;
+    _passwordLeakDay = null;
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
     composerDrafts.clear();
@@ -7755,6 +7795,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   @override
   void dispose() {
     _disposed = true;
+    _recoveryPollTimer?.cancel();
+    _recoveryPollTimer = null;
     _orphanSweeper?.stop();
     _orphanSweeper = null;
     _clearLinkSecret();

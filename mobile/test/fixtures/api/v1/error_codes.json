@@ -97,6 +97,7 @@
     "owner_create_failed": "server",
     "password_hash_failed": "server",
     "password_hashing_busy": "unavailable",
+    "password_unchanged": "invalidRequest",
     "plaintext_message_fields_forbidden": "encryption",
     "push_provider_unavailable": "unavailable",
     "push_subscription_failed": "server",

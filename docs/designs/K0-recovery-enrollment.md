@@ -80,7 +80,7 @@ I45 download credential route). In `ClassifyRoute`:
 | Route | Auth | Does |
 |---|---|---|
 | `PUT /api/v1/account/recovery-key` | `withRecentAuth` | Set or replace `{rk_auth_pub, rk_id}`. In the same transaction it cancels any waiting request; sync event; audit `account.recovery_key_set` |
-| `GET /api/v1/account/recovery-key` | `withAuth` | `{available, configured, rk_id, set_at, pending_request?}` |
+| `GET /api/v1/account/recovery-key` | `withAuth` | `{available, configured, rk_id, set_at, pending_request?, public_origin?}` (`public_origin` only while available; shown, never signed) |
 | `POST …/account-recovery/enrollment` | none | `{username}` → reservation `{id, account_id, device_id, challenge, expires_at}`, kind `recovery`. This is the **only** route that takes a username |
 | `POST …/account-recovery/claim` | none | `{enrollment_reservation_id, password, device_name, device_key_package, signing_key, challenge_signature, recovery_signature}`, **no username**. The account is the reservation's `account_id`. Returns 202 `{request_id, claim_token, device_secret, state, ready_at}`, or 401 `invalid_credentials` |
 | `GET …/account-recovery/{id}/status` | `X-Veritra-Claim-Token` | 202 `{state:"waiting", ready_at}`; when ready, 200 `{state:"completed", account, device, token}` the first time, then 200 `{state:"completed", account, device}` with no token; 410 `recovery_cancelled` |

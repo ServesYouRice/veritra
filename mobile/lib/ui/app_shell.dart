@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 
 import '../core/app_state.dart';
+import '../features/auth/account_recovery_screen.dart';
 import '../features/auth/connect_screen.dart';
+import '../features/auth/recovery_follow_up_screen.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/communities/community_screen.dart';
 import '../features/settings/settings_screen.dart';
 import 'tokens.dart';
+import 'widgets/account_recovery_banner.dart';
 import 'widgets/connection_banner.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
@@ -103,9 +106,14 @@ class _AppShellState extends State<AppShell> {
     // The shell depends only on where the session stands. Each page listens
     // to the state for what it shows itself (T49C-1), so a notification does
     // not rebuild a page that is hidden or unaffected.
-    return ListenableSelector<(SessionLifecycle, bool)>(
+    return ListenableSelector<(SessionLifecycle, bool, bool, bool)>(
       listenable: widget.state,
-      select: () => (widget.state.lifecycle, widget.state.connected),
+      select: () => (
+        widget.state.lifecycle,
+        widget.state.connected,
+        widget.state.pendingAccountRecovery != null,
+        widget.state.recoveryFollowUp != null,
+      ),
       builder: (context, _, __) {
         final content = _buildContent(context);
         if (!widget.state.config.demo) return content;
@@ -127,7 +135,16 @@ class _AppShellState extends State<AppShell> {
       return _RecoveryState(state: widget.state);
     }
     if (!widget.state.connected) {
+      // A device waiting on a recovery claim (K0 R4) shows that, not sign-in.
+      if (widget.state.pendingAccountRecovery != null) {
+        return AccountRecoveryWaitingScreen(state: widget.state);
+      }
       return ConnectScreen(state: widget.state);
+    }
+    // A recovered device replaces its recovery key and password before any
+    // chat opens (K0 design, client flow step 6).
+    if (widget.state.recoveryFollowUp != null) {
+      return RecoveryFollowUpScreen(state: widget.state);
     }
     final layout = shellLayoutFor(MediaQuery.sizeOf(context).width);
     final wide = layout != ShellLayout.compact;
@@ -147,6 +164,7 @@ class _AppShellState extends State<AppShell> {
           child: Column(
             children: <Widget>[
               ConnectionBanner(state: widget.state),
+              AccountRecoveryBanner(state: widget.state),
               Expanded(
                 child: Row(
                   children: <Widget>[
@@ -179,6 +197,7 @@ class _AppShellState extends State<AppShell> {
         child: Column(
           children: <Widget>[
             ConnectionBanner(state: widget.state),
+            AccountRecoveryBanner(state: widget.state),
             Expanded(child: pages[index]),
           ],
         ),
