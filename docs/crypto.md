@@ -57,10 +57,11 @@ enabled.
 
 The state is no longer one blob. It is a root, kept in the existing
 singleton row, and one record per owner in `local_crypto_records` (schema
-16): the device record (kind 1: signer, key pairs no group owns, K2
+16): the device record (kind 1: signer, K2
 transfers), one record per group (kind 2, id = conversation id) and one per
-key package (kind 3, id = hash reference). Design:
-[D70](designs/D70-per-group-sealed-state.md).
+key package (kind 3, id = hash reference). Key pairs that no group owns are
+dropped at migration; seal refuses them and restore rejects them in the
+device record. Design: [D70](designs/D70-per-group-sealed-state.md).
 
 - **Record.** `"PMMLSST1" || u16 4 || u8 kind || u64 generation ||
   u16 account_len || account || u16 device_len || device || u16 id_len ||
