@@ -12,6 +12,10 @@ const String _recoveryFollowUpSetting = 'k0.recovery_follow_up';
 const String _passwordLeakSetting = 'k0.password_leak_day';
 const String _passwordLeakDismissedSetting = 'k0.password_leak_dismissed';
 
+/// Marks this device as one a completed recovery enrolled, for K0 step 8.
+/// Scoped to the account and device, like the follow-up.
+const String _recoveredDeviceSetting = 'k0.recovered_device';
+
 /// A leak warning from a day further back than this is history (a sync from
 /// cursor 0 replays old events), not news.
 const Duration _passwordLeakNoticeWindow = Duration(days: 7);
@@ -518,6 +522,9 @@ extension AccountRecoveryActions on AppState {
     }
     await _saveRecoveryFollowUp(RecoveryFollowUpStep.recoveryKey,
         owner: recovered);
+    await localStore.saveSetting(_recoveredDeviceSetting,
+        '${recovered.accountId}\u0000${recovered.deviceId}');
+    _recoveredDevice = true;
     await _recoveryCrypto.resumePendingEnrollment(
       accountId: pending.accountId,
       deviceId: pending.deviceId,
@@ -626,10 +633,17 @@ extension AccountRecoveryActions on AppState {
       final dismissed = _scopedLeakDay(
           await localStore.loadSetting(_passwordLeakDismissedSetting), current);
       _passwordLeakDay = _currentLeakDay(day, dismissed);
+      _recoveredDevice =
+          await localStore.loadSetting(_recoveredDeviceSetting) ==
+              '${current.accountId}\u0000${current.deviceId}';
     } catch (_) {
       // Unreadable settings: nothing to show.
     }
     if (!identical(session, current)) return;
+    if (_recoveredDevice) {
+      await _refreshGroupless(conversations.map((item) => item.id));
+      if (!identical(session, current)) return;
+    }
     notifyListeners();
     if (recoveryAvailable) await refreshRecoveryKeyStatus();
   }
@@ -739,5 +753,77 @@ extension AccountRecoveryActions on AppState {
     if (pendingAccountRecovery != null && !pendingAccountRecovery!.needsLogin) {
       unawaited(checkAccountRecovery());
     }
+  }
+
+  // -------------------------------------------------- K0 step 8, no peer ---
+
+  /// Whether [conversationId] is read-only because no one can add this
+  /// device to it (design, client flow step 7; K0 step 8). It holds on a
+  /// device a completed recovery enrolled, for a conversation it has no MLS
+  /// group for, whose loaded member list names no other account: the
+  /// recovery revoked every other device of this account, and a group
+  /// changes only through a commit by a member device. The history stays
+  /// readable; the composer is replaced by a notice. A Welcome makes it a
+  /// normal conversation again.
+  ///
+  /// Until the member list has loaded this reads false, so a conversation a
+  /// peer is about to re-add this device to never shows the notice; the send
+  /// guard ([_readOnlyWithoutPeer]) refuses in that window anyway. A member
+  /// account whose devices are all gone still counts as a peer: the app
+  /// cannot see other accounts' devices, and with no group nothing can be
+  /// encrypted there either.
+  bool readOnlyWithoutPeer(String conversationId) =>
+      _recoveredDevice &&
+      _grouplessConversations.contains(conversationId) &&
+      membersByConversation.containsKey(conversationId) &&
+      !_hasOtherMemberAccount(conversationId);
+
+  bool _hasOtherMemberAccount(String conversationId) {
+    final self = session?.accountId;
+    return membersFor(conversationId).any((member) => member.accountId != self);
+  }
+
+  /// The send guard: read again now, and closed when unsure. An unreadable
+  /// group counts as none, and a member list not yet loaded as one with no
+  /// other account.
+  Future<bool> _readOnlyWithoutPeer(String conversationId) async {
+    if (!_recoveredDevice) return false;
+    final mls = _mlsCrypto;
+    if (mls == null) return false;
+    bool groupless;
+    try {
+      groupless = await mls.groupEpoch(conversationId) == null;
+    } catch (_) {
+      groupless = true;
+    }
+    if (groupless) {
+      _grouplessConversations.add(conversationId);
+    } else {
+      _grouplessConversations.remove(conversationId);
+    }
+    return groupless && !_hasOtherMemberAccount(conversationId);
+  }
+
+  /// Reads which of [conversationIds] this recovered device holds no group
+  /// for, and redraws when that changed.
+  Future<void> _refreshGroupless(Iterable<String> conversationIds) async {
+    final mls = _mlsCrypto;
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (!_recoveredDevice || mls == null || owner == null) return;
+    var changed = false;
+    for (final id in conversationIds.toList(growable: false)) {
+      bool groupless;
+      try {
+        groupless = await mls.groupEpoch(id) == null;
+      } catch (_) {
+        groupless = true;
+      }
+      if (_disposed || !_refreshOwned(owner, generation)) return;
+      changed |= groupless
+          ? _grouplessConversations.add(id)
+          : _grouplessConversations.remove(id);
+    }
+    if (changed) notifyListeners();
   }
 }

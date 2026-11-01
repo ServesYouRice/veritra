@@ -323,7 +323,10 @@ class _ChatScreenState extends State<ChatScreen> {
         }
         final messages = widget.state.timelineFor(widget.conversationId);
         final pending = widget.state.pendingFor(widget.conversationId);
-        final replyTarget = _replyTarget();
+        // K0 step 8: history only, with a notice in place of the composer.
+        final readOnly = conversation != null &&
+            widget.state.readOnlyWithoutPeer(conversation.id);
+        final replyTarget = readOnly ? null : _replyTarget();
         if (_jumpKey != null) _scheduleJump();
         return ChatShortcuts(
           onEscape: _onEscape,
@@ -391,8 +394,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
               body: ChatDropZone(
-                enabled:
-                    conversation != null && widget.state.attachmentsAvailable,
+                enabled: conversation != null &&
+                    !readOnly &&
+                    widget.state.attachmentsAvailable,
                 onFiles: _addFiles,
                 child: Column(
                   children: <Widget>[
@@ -437,7 +441,9 @@ class _ChatScreenState extends State<ChatScreen> {
                             )
                           : _messagesPane(conversation.id, messages, pending),
                     ),
-                    if (conversation != null &&
+                    if (readOnly)
+                      const _NoPeerReadOnlyNotice()
+                    else if (conversation != null &&
                         widget.state.mlsConversationFailed(conversation.id))
                       const _PausedConversationNotice()
                     else if (conversation != null &&
@@ -452,31 +458,32 @@ class _ChatScreenState extends State<ChatScreen> {
                         preview: quotedPreview(context.l10n, replyTarget),
                         onCancel: () => _setReplyTarget(null),
                       ),
-                    if (widget.state.attachmentsAvailable)
+                    if (!readOnly && widget.state.attachmentsAvailable)
                       AttachmentTray(tray: _attachments),
-                    _Composer(
-                      enabled: conversation != null,
-                      controller: composer,
-                      // Scoped to the send operation: an unrelated background task
-                      // no longer disables the composer.
-                      // A send held for a member's removal (D68) is still
-                      // pending: no second send of the same text meanwhile.
-                      busy: widget.state.isBusy(Ops.send) ||
-                          widget.state
-                              .sendHeldForRemoval(widget.conversationId),
-                      onSend: _send,
-                      attaching: widget.state.isBusy(Ops.attachment),
-                      onAttach: widget.state.attachmentsAvailable
-                          ? () => pickAttachmentFiles(
-                              context, widget.state, _attachments)
-                          : null,
-                      onPasteFiles: widget.state.attachmentsAvailable
-                          ? _pasteFiles
-                          : null,
-                      onEditLast: widget.state.messageActionsAvailable
-                          ? _editLast
-                          : null,
-                    ),
+                    if (!readOnly)
+                      _Composer(
+                        enabled: conversation != null,
+                        controller: composer,
+                        // Scoped to the send operation: an unrelated background task
+                        // no longer disables the composer.
+                        // A send held for a member's removal (D68) is still
+                        // pending: no second send of the same text meanwhile.
+                        busy: widget.state.isBusy(Ops.send) ||
+                            widget.state
+                                .sendHeldForRemoval(widget.conversationId),
+                        onSend: _send,
+                        attaching: widget.state.isBusy(Ops.attachment),
+                        onAttach: widget.state.attachmentsAvailable
+                            ? () => pickAttachmentFiles(
+                                context, widget.state, _attachments)
+                            : null,
+                        onPasteFiles: widget.state.attachmentsAvailable
+                            ? _pasteFiles
+                            : null,
+                        onEditLast: widget.state.messageActionsAvailable
+                            ? _editLast
+                            : null,
+                      ),
                   ],
                 ),
               ),
@@ -645,6 +652,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final actionable = message.deletedAt == null &&
         const [LocalMessageKind.text, LocalMessageKind.attachment]
             .contains(message.kind);
+    // K0 step 8: in a read-only conversation only what stays on this device
+    // (copy, forward elsewhere, star, hide) is offered.
+    final sendable = !state.readOnlyWithoutPeer(conversationId);
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -653,7 +663,7 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            if (actionable)
+            if (actionable && sendable)
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: BoneSpacing.md),
                 child: Wrap(
@@ -675,7 +685,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-            if (actionable)
+            if (actionable && sendable)
               ListTile(
                 leading: const Icon(Icons.reply),
                 title: Text(context.l10n.chatReply),
@@ -704,12 +714,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 leading: const Icon(Icons.hide_source),
                 title: Text(context.l10n.w8DeleteForMe),
                 onTap: () => Navigator.of(sheetContext).pop('hide')),
-            if (actionable && state.canPinMessages(conversationId))
+            if (actionable && sendable && state.canPinMessages(conversationId))
               ListTile(
                   leading: const Icon(Icons.push_pin_outlined),
                   title: Text(context.l10n.w8Pin),
                   onTap: () => Navigator.of(sheetContext).pop('pin')),
-            if (mine) ...<Widget>[
+            if (mine && sendable) ...<Widget>[
               if (message.kind == LocalMessageKind.text &&
                   message.deletedAt == null)
                 ListTile(
@@ -984,6 +994,7 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.l10n,
     state.isMuted(conversationId),
     state.mlsConversationFailed(conversationId),
+    state.readOnlyWithoutPeer(conversationId),
     state.sendHeldForRemoval(conversationId),
     state.isBusy(Ops.send),
     state.isBusy(Ops.attachment),
@@ -2197,6 +2208,44 @@ class _PausedConversationNotice extends StatelessWidget {
         child: Text(
           context.l10n.chatPausedNotice,
           style: TextStyle(color: scheme.onErrorContainer),
+        ),
+      ),
+    );
+  }
+}
+
+/// K0 step 8: a recovered device no one can add back to this conversation
+/// reads its history but cannot send. It shows in place of the composer.
+class _NoPeerReadOnlyNotice extends StatelessWidget {
+  const _NoPeerReadOnlyNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        key: const ValueKey('no-peer-read-only'),
+        width: double.infinity,
+        color: scheme.surfaceContainerHighest,
+        padding: const EdgeInsets.symmetric(
+          horizontal: BoneSpacing.gutter,
+          vertical: BoneSpacing.md,
+        ),
+        child: SafeArea(
+          top: false,
+          child: Row(
+            children: <Widget>[
+              Icon(Icons.lock_clock_outlined, color: scheme.onSurfaceVariant),
+              const SizedBox(width: BoneSpacing.md),
+              Expanded(
+                child: Text(
+                  context.l10n.chatNoPeerReadOnly,
+                  style: TextStyle(color: scheme.onSurfaceVariant),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
