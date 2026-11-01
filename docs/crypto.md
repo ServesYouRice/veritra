@@ -1772,44 +1772,79 @@ Also required:
 4. **Who may pin in groups.** This design allows moderator roles only.
    The alternative is any member until C4 adds a permission switch.
 
-## Group governance record (C4)
+## Group role state (C4)
 
-Proposed, not implemented on the wire. Design:
-`docs/designs/C4-custom-roles.md`. Rules engine:
+Proposed, not implemented: no ABI, codec or payload exists yet. Design:
+`docs/designs/C4-custom-roles.md` (built-in roles only, D80). Rules engine:
 `mobile/lib/core/roles/governance.dart`.
 
-A W7 v2 application payload of type `governance` (new registry entry; group
-and `community_shared` conversations only), sent as an MLS application
-message. Fields: `rev` (int, previous + 1), `owner` (account id), `roles`
-(list of `{id, name, rank, perms[]}`), `assignments` (list of
-`{account, roles[]}`), `overrides` (list of `{channel_id, target_kind`
-`"role"|"account", target, allow[], deny[]}`). The sender is the
-MLS-authenticated account (D25). A receiver applies a record only if
-`validateTransition(local, record, sender, members:)` accepts it; otherwise it
-drops it and keeps its state. Limits: 32 roles, 256 overrides, role names at
-most 32 UTF-16 units. Unknown switch strings are preserved, in roles and in
-overrides; only known group-wide switches are refused in an override. The
-first record (`rev` 0) is implicit: the creator is owner, with the genesis
-roles.
+**Why it exists.** Apps must not trust the server-reported role (D80), and
+no MLS data names one: leaves carry Basic credentials with account and
+device ids only, the group context carries no Veritra extension, and the
+creator cannot be proven to a joiner. So the server's four built-in roles
+are also kept in a signed record that the group's members agree on. It
+replaces the proposed `governance` application payload for custom roles,
+which is withdrawn.
 
-Rules added by the 2026-11-01 review (details in the design's "Review"):
+**Carrier.** A GroupContext extension of type `0xF0C4` (private-use range;
+proposed), listed in every leaf's capabilities and in the group's required
+capabilities. It changes only through a commit carrying one
+GroupContextExtensions proposal with this extension alone, so MLS orders
+every change and a Welcome gives a joiner the current state. The creator
+writes the genesis record (itself as owner, nothing else) at group creation.
+Groups and a community's shared group carry it; a private channel's group
+does not, and is judged against the shared group's record (C0).
 
-- `members` is the MLS roster at the record's place in sync order, never
-  the server's cached roster. Channel existence is not an input: an override
-  for a channel a device does not know is kept and has no effect.
-- When an MLS commit removes an account's last device, every device applies
-  `GovernanceState.removeAccount` at that place in sync order (no record, no
-  `rev` change): the account's assignments and own overrides go, and an
-  absent owner is succeeded by the strongest remaining account (lowest
-  rank, then the smallest account id by UTF-16 code-unit order, as Dart's
-  `String.compareTo`; account ids are ASCII today, where this equals byte
-  order). The rule awaits the owner's confirmation (design owner question 4).
-- A sender applies its own record only when it comes back at its place in
-  sync order, never at send time.
-- A device without a verified state does not fall back to member defaults
-  (those allow posting, pinning and renaming). It holds governed effects
-  until it has the state.
-- Before this lands on the wire: freeze the genesis roles, ranks and
-  switches here, add a rules-version field (a newer version stops the
-  device applying records instead of diverging), and settle ordering and
-  joiner hand-off (design owner questions 2 and 3).
+**Format, version 1** (big-endian, canonical; any other byte string is
+invalid):
+
+```
+u8  version = 1
+u64 rev
+u8  flags            bit 0: admins_only_posting; other bits zero
+u16 owner_len || owner                         0 = no owner
+u16 admin_count     { u16 len || account || u64 since_rev }*
+u16 moderator_count { u16 len || account }*
+u16 channel_count   { u16 len || channel_id }*  announcement channels
+```
+
+Lists are sorted by bytes with no duplicates; ids are 1 to 255 bytes; the
+owner is in no list and no account is in both lists; at most 500 channels;
+nothing follows the last field. A record that does not decode, or a version
+this app does not know, makes the commit invalid (sync stops under I33); it
+is never guessed at.
+
+**Receiving a commit.** Rust stages it and hands Dart the committer
+account, the account roster before and after, and the record before and
+after (the record before, when the commit carries no proposal). Dart merges
+only if `validateCommit` accepts:
+
+- Accounts whose last device the commit removes are pruned first
+  (`removeAccount`): their role goes; if the owner left, the oldest admin
+  still present (smallest `since_rev`, then the smallest account id by
+  UTF-16 code-unit order, as Dart's `String.compareTo`; account ids are
+  ASCII today, where this equals byte order) becomes owner, and with no admin nobody does. `rev` is kept. A
+  record equal to that result is valid from any committer; a removal that
+  leaves a departed account named is invalid.
+- Any other difference is a change by the committer, checked by
+  `validateTransition` against the pruned record: `rev` + 1; everything
+  named is in the roster after the commit; role changes as on the server
+  (moderator or above; target strictly below the actor; new role at most
+  the actor's); stepping down is free; only the owner transfers ownership,
+  and only to a current admin; posting fields need admin or above; a new
+  admin's `since_rev` is the new `rev`, and an admin's stays unchanged.
+
+The check does not judge whether a removal was allowed; that is C1/C5's
+receiver check on the commit.
+
+**Sending a commit.** Every path that stages a commit (D68 reconcile,
+revocation removals, device replacement, role changes) computes the pruned
+record for its own commit, carries it as the proposal when it differs, and
+runs `validateCommit` on the result before staging. Producers are wired
+before or with the receiver check, or the first kick of an admin stops
+every receiver's sync.
+
+**Using it.** C2: a post is accepted where `mayPost` holds, and posting is
+restricted where this record or the server says so. C1/C5: `mayActOn`. A
+group without the extension (demo groups made before it) has no verified
+roles: every account is a member to the app.

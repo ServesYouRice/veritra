@@ -10,7 +10,8 @@ Security-sensitive: needs the second-opinion review before building.
 
 - **Private channel = its own MLS group** (C0). Who can see it is exactly
   who is in that group. C3 adds the rules for listing, naming and key
-  delivery; C4 decides which roles and overrides put a member in the group.
+  delivery. Admins pick the members; there are no per-channel role
+  overrides (C4 is built-in roles only, D80).
 - **Names, topics and icons** of the community, each category and each
   channel live in **encrypted info records**, one per subject. This is
   W11's record mechanism with three more subject kinds. The server stores
@@ -25,7 +26,7 @@ Security-sensitive: needs the second-opinion review before building.
 | Seen | Not seen |
 |---|---|
 | Community, category and channel IDs; which channels belong to which community | Names, topics, icons, keys |
-| Channel kind: open/announcement (shared conversation) or private (own conversation) | Why a channel is private, which role overrides apply |
+| Channel kind: open/announcement (shared conversation) or private (own conversation) | Why a channel is private |
 | **Who is in each private channel** (its group's device list). Same as every conversation today; C3 tells users so | |
 | Record size bucket (4 KiB, or 256 KiB with an icon: **icon presence is visible**), version, key ID | The icon |
 
@@ -92,23 +93,27 @@ by adding the three kinds: no second table, no second mechanism.
 - The channel list returns open channels to all members and a private
   channel only to members of its conversation, with IDs, kind and
   `conversation_id` but no name. Sync does the same.
-- The server checks only built-in roles. Custom roles (C4) sit in encrypted
-  group state, so see [Authorship](#authorship).
+- The server checks built-in roles from its own table. Apps check the same
+  roles from C4's signed role state, never the server's word (D80); see
+  [Authorship](#authorship).
 - New sync event `info.updated` `{subject_kind, subject_id, version, key_id}`
   to the read audience; it ships only after W7 step 0 (P5).
 
 ## Authorship
 
-A record is encrypted under a key every member holds, and the server cannot
-check custom roles. So each accepted change is **announced in MLS**:
+A record is encrypted under a key every member holds, and apps do not trust
+the server's role check. So each accepted change is **announced in MLS**:
 
 - New W7 payload `info_update`: `{subject_kind, subject_id, revision,
   key_id, record_sha256}`, sent by the editing device into the group that
   holds the key.
 - A receiver accepts a fetched record only if its SHA-256 matches an
-  `info_update` from a sender that its own C4 state allows to edit that
-  subject (until C4 ships: `owner` or `admin`). MLS sender binding (D25)
-  makes the announcement authentic.
+  `info_update` from a sender allowed to edit that subject under the C4
+  role state of the community's shared group. MLS sender binding (D25)
+  makes the announcement authentic. Per the owner decision below, channel
+  names and topics are open to any member unless admins restrict them; that
+  restrict flag must be added to the C4 record when C3 is built, or it is
+  trusted to the server (C4 keeps the record to what C2 needs today).
 - Otherwise the record is ignored and the last good one stays shown. A
   server-substituted or member-forged record is never displayed.
 - Receivers accept only a `revision` above the one they hold (rollback).
@@ -130,7 +135,7 @@ New W7 payloads `info_key` `{subject_kind, subject_id, key_id, key}` and
 ## Private channel lifecycle
 
 - **Create:** an admin device makes the conversation and group (C0), creates
-  the channel key and record, then adds the members C4 allows. The legacy
+  the channel key and record, then adds the members the admin picks. The legacy
   `channels.name` and `conversations.title` are sent empty.
 - **Add a member:** add commit in the private group, then `info_key`.
 - **Remove a member:** remove commit, then an **immediate channel key
@@ -139,8 +144,8 @@ New W7 payloads `info_key` `{subject_kind, subject_id, key_id, key}` and
   they already saw and cannot read later edits.
 - **Open to private, private to open** (C0 "Moving a channel"): the record
   is re-encrypted under the target key and the new `info_key` delivered.
-- **Visibility change (C4):** only the private group's membership changes;
-  the server sees an add or remove of devices.
+- **Who can see it changes:** an admin adds or removes members of the
+  private group; the server sees an add or remove of devices.
 
 ## Migration from today
 
