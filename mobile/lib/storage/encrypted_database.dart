@@ -15,6 +15,7 @@ import '../crypto/message_format.dart' show pinLimitPerChat;
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
+part 'pending_enrollment_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -552,7 +553,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 16;
+  static const currentSchemaVersion = 17;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -762,6 +763,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await migrator.createAll();
             await _createHistoryNamespace();
             await _createNoticeOutbox();
+            await _createPendingEnrollment();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -778,6 +780,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
           _upgradeStarted = true;
           await transaction(() async {
+            // K2/K0: the pending device enrollment. The waiting K0 claim
+            // moves out of its schema 16 setting in this same transaction.
+            if (from < 17) {
+              await _createPendingEnrollment();
+              await _movePendingRecoverySetting();
+            }
             // D70: per-record sealed MLS state. New table only.
             if (from < 16) await migrator.createTable(localCryptoRecords);
             if (from < 15) await _createNoticeOutbox();
@@ -2161,6 +2169,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localCryptoRecords).go();
         await delete(localAccounts).go();
         await delete(localMetadata).go();
+        await _clearPendingEnrollment();
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();

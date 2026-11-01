@@ -78,10 +78,10 @@ void main() {
       mlsState: StoredCryptoState(
           counter: 1, stateKey: stateKey, sealedState: sealed),
     );
-    await store.saveSetting('k0.pending_recovery', pending.encode());
+    await store.savePendingEnrollment(pending.toEnrollment());
     expect(
-        PendingAccountRecovery.decode(
-                await store.loadSetting('k0.pending_recovery'))
+        PendingAccountRecovery.fromEnrollment(
+                await store.loadPendingEnrollment())
             ?.claimToken,
         claimToken);
 

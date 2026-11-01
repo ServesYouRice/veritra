@@ -194,6 +194,102 @@ class StoredCryptoRecord {
   final List<int> sealed;
 }
 
+/// A device enrollment that is not an active session yet (schema 17): a K0
+/// account recovery claim, or a K2 v3 device link before promotion. It
+/// holds bearer credentials ([payloadJson]) and the new identity's sealed
+/// MLS state, so it stays in the encrypted local store and is never in a
+/// backup or a history snapshot (D71, D73). A device holds at most one.
+class PendingEnrollment {
+  const PendingEnrollment({
+    required this.kind,
+    required this.origin,
+    required this.accountId,
+    required this.deviceId,
+    required this.payloadJson,
+    this.state,
+  });
+
+  static const kindAccountRecovery = pendingEnrollmentKindAccountRecovery;
+  static const kindDeviceLinkV3 = pendingEnrollmentKindDeviceLinkV3;
+
+  final String kind;
+
+  /// The canonical server origin the enrollment was made with.
+  final String origin;
+  final String accountId;
+  final String deviceId;
+
+  /// The kind's own fields, credentials included. Never log it.
+  final String payloadJson;
+
+  /// The new identity's sealed MLS state, with its records in
+  /// [StoredCryptoState.changes]; null before the identity exists (a K2
+  /// reservation). Frozen once stored.
+  final StoredCryptoState? state;
+
+  PendingEnrollmentRow _toRow() {
+    final state = this.state;
+    return PendingEnrollmentRow(
+      kind: kind,
+      origin: origin,
+      accountId: accountId,
+      deviceId: deviceId,
+      payloadJson: payloadJson,
+      state: state == null
+          ? null
+          : PendingEnrollmentState(
+              counter: state.counter,
+              stateKey: List<int>.from(state.stateKey),
+              root: List<int>.from(state.sealedState),
+              records: [
+                for (final change in state.changes)
+                  (
+                    kind: change.kind,
+                    recordId: List<int>.from(change.recordId),
+                    generation: change.generation,
+                    sealed: change.sealed == null
+                        ? null
+                        : List<int>.from(change.sealed!),
+                  ),
+              ],
+            ),
+    );
+  }
+
+  static PendingEnrollment? _fromRow(PendingEnrollmentRow? row) {
+    if (row == null) return null;
+    final state = row.state;
+    return PendingEnrollment(
+      kind: row.kind,
+      origin: row.origin,
+      accountId: row.accountId,
+      deviceId: row.deviceId,
+      payloadJson: row.payloadJson,
+      state: state == null
+          ? null
+          : StoredCryptoState(
+              counter: state.counter,
+              stateKey: List<int>.from(state.stateKey),
+              sealedState: List<int>.from(state.root),
+              changes: [
+                for (final record in state.records)
+                  CryptoRecordChange(
+                    kind: record.kind,
+                    recordId: List<int>.from(record.recordId),
+                    generation: record.generation,
+                    sealed: record.sealed == null
+                        ? null
+                        : List<int>.from(record.sealed!),
+                  ),
+              ],
+            ),
+    );
+  }
+
+  @override
+  String toString() => 'PendingEnrollment($kind)';
+}
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -528,6 +624,21 @@ abstract class LocalStore {
     String? resolvedMlsOutboxKey,
   });
   Future<StoredCryptoState?> loadCryptoState();
+
+  /// The device's pending enrollment, or null. Kept by sign-out with a kept
+  /// device, an identity change and a backup restore (as schema 16 kept the
+  /// K0 claim's setting); dropped by [clear].
+  Future<PendingEnrollment?> loadPendingEnrollment();
+
+  /// Stores [enrollment]. Throws [PendingEnrollmentConflict] while another
+  /// one (kind, origin, account or device) is pending, or when it would
+  /// change a stored MLS state; one without a state keeps the stored state.
+  Future<void> savePendingEnrollment(PendingEnrollment enrollment);
+
+  /// Deletes the pending enrollment if it is of [kind] (and [deviceId],
+  /// when given). Returns whether one was deleted.
+  Future<bool> deletePendingEnrollment(
+      {required String kind, String? deviceId});
 
   /// The sealed MLS records (D70), ordered by kind, then id. Cleared with
   /// the crypto state.
@@ -1095,6 +1206,31 @@ class MemoryLocalStore implements LocalStore {
   Future<StoredCryptoState?> loadCryptoState() async =>
       _cryptoState == null ? null : _copyCryptoState(_cryptoState!);
 
+  PendingEnrollmentRow? _pendingEnrollment;
+
+  @override
+  Future<PendingEnrollment?> loadPendingEnrollment() async =>
+      PendingEnrollment._fromRow(_pendingEnrollment);
+
+  @override
+  Future<void> savePendingEnrollment(PendingEnrollment enrollment) async {
+    _pendingEnrollment =
+        mergePendingEnrollment(_pendingEnrollment, enrollment._toRow());
+  }
+
+  @override
+  Future<bool> deletePendingEnrollment(
+      {required String kind, String? deviceId}) async {
+    final existing = _pendingEnrollment;
+    if (existing == null ||
+        existing.kind != kind ||
+        (deviceId != null && existing.deviceId != deviceId)) {
+      return false;
+    }
+    _pendingEnrollment = null;
+    return true;
+  }
+
   @override
   Future<List<StoredCryptoRecord>> loadCryptoRecords() async {
     final keys = _cryptoRecords.keys.toList()..sort();
@@ -1348,6 +1484,7 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> clear() async {
     _noticeState = LocalNoticeState();
+    _pendingEnrollment = null;
     _session = null;
     _cryptoState = null;
     _cryptoRecords.clear();
@@ -2347,6 +2484,21 @@ class SecureLocalStore implements LocalStore {
     _validateCryptoState(state);
     return state;
   }
+
+  @override
+  Future<PendingEnrollment?> loadPendingEnrollment() async =>
+      PendingEnrollment._fromRow(
+          await (await _database()).readPendingEnrollment());
+
+  @override
+  Future<void> savePendingEnrollment(PendingEnrollment enrollment) async =>
+      (await _database()).writePendingEnrollment(enrollment._toRow());
+
+  @override
+  Future<bool> deletePendingEnrollment(
+          {required String kind, String? deviceId}) async =>
+      (await _database())
+          .deletePendingEnrollment(kind: kind, deviceId: deviceId);
 
   @override
   Future<List<StoredCryptoRecord>> loadCryptoRecords() async => [

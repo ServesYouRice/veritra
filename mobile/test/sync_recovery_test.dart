@@ -650,8 +650,9 @@ void main() {
           (await database.customSelect('PRAGMA page_count').getSingle())
               .read<int>('page_count');
       // No room to grow: the trigger's insert needs hundreds of new pages and
-      // SQLite reports SQLITE_FULL from inside the background isolate.
-      await database.customStatement('PRAGMA max_page_count = $pages');
+      // SQLite reports SQLITE_FULL from inside the background isolate. A few
+      // pages spare let the trigger's own schema entry be written.
+      await database.customStatement('PRAGMA max_page_count = ${pages + 4}');
       await database.customStatement(
           'CREATE TRIGGER fill_up BEFORE INSERT ON local_mls_transitions '
           "BEGIN INSERT INTO local_metadata (name, value) "

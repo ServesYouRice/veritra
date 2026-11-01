@@ -2702,6 +2702,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'A recovery is already waiting on this device.';
 
   @override
+  String get recoveryDeviceLinkInProgress =>
+      'A device link is in progress on this device, so an account recovery cannot start here.';
+
+  @override
   String get recoveryWaitingTitle => 'Recovery is waiting';
 
   @override

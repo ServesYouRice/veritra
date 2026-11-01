@@ -6,8 +6,8 @@ part of 'app_state.dart';
 // device shows. Recovery key entropy is wiped as soon as it is used; no key,
 // password, token or device secret is ever logged.
 
-/// Settings in the encrypted local metadata. None is in a backup (D71).
-const String _pendingRecoverySetting = 'k0.pending_recovery';
+/// Settings in the encrypted local metadata. None is in a backup (D71). The
+/// waiting claim itself is the device's pending enrollment (schema 17).
 const String _recoveryFollowUpSetting = 'k0.recovery_follow_up';
 const String _passwordLeakSetting = 'k0.password_leak_day';
 const String _passwordLeakDismissedSetting = 'k0.password_leak_dismissed';
@@ -253,6 +253,20 @@ extension AccountRecoveryActions on AppState {
         if (pendingAccountRecovery != null) {
           throw UserFacingException(l10n.recoveryAlreadyPending);
         }
+        // A stored enrollment the app did not load would refuse the claim
+        // only after the server took it, so it is settled before any
+        // network call: a readable claim is shown, an unreadable one is
+        // dropped, and another kind (a device link) refuses.
+        final stored = await _storedAccountRecovery();
+        if (stored.claim != null) {
+          pendingAccountRecovery = stored.claim;
+          notifyListeners();
+          _scheduleRecoveryPoll();
+          throw UserFacingException(l10n.recoveryAlreadyPending);
+        }
+        if (stored.otherKind) {
+          throw UserFacingException(l10n.recoveryDeviceLinkInProgress);
+        }
         final Uint8List entropy;
         try {
           entropy = await crypto
@@ -316,8 +330,7 @@ extension AccountRecoveryActions on AppState {
             readyAt: claim.readyAt,
             mlsState: sealed,
           );
-          await localStore.saveSetting(
-              _pendingRecoverySetting, pending.encode());
+          await localStore.savePendingEnrollment(pending.toEnrollment());
           enrolling = false;
           pendingAccountRecovery = pending;
           _scheduleRecoveryPoll();
@@ -392,10 +405,13 @@ extension AccountRecoveryActions on AppState {
   Future<void> _abandonAccountRecoveryNow() async {
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
+    final pending = pendingAccountRecovery;
     pendingAccountRecovery = null;
     notifyListeners();
     try {
-      await localStore.saveSetting(_pendingRecoverySetting, '');
+      await localStore.deletePendingEnrollment(
+          kind: PendingEnrollment.kindAccountRecovery,
+          deviceId: pending?.deviceId);
     } catch (_) {}
     if (cryptoService case final RecoveryCryptoService crypto) {
       try {
@@ -468,7 +484,7 @@ extension AccountRecoveryActions on AppState {
         final readyAt = status.readyAt;
         if (readyAt != null && readyAt != pending.readyAt) {
           final next = pending.copyWith(readyAt: readyAt);
-          await localStore.saveSetting(_pendingRecoverySetting, next.encode());
+          await localStore.savePendingEnrollment(next.toEnrollment());
           pendingAccountRecovery = next;
           _scheduleRecoveryPoll();
         }
@@ -478,7 +494,7 @@ extension AccountRecoveryActions on AppState {
           throw StateError('Recovery identity was substituted');
         }
         final next = pending.copyWith(needsLogin: true);
-        await localStore.saveSetting(_pendingRecoverySetting, next.encode());
+        await localStore.savePendingEnrollment(next.toEnrollment());
         pendingAccountRecovery = next;
         _recoveryPollTimer?.cancel();
         _recoveryPollTimer = null;
@@ -532,7 +548,9 @@ extension AccountRecoveryActions on AppState {
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
     pendingAccountRecovery = null;
-    await localStore.saveSetting(_pendingRecoverySetting, '');
+    await localStore.deletePendingEnrollment(
+        kind: PendingEnrollment.kindAccountRecovery,
+        deviceId: pending.deviceId);
     await _finishSignIn(() async {
       await _publishInitialMlsKeyPackages();
       await _refreshConversations(notify: true);
@@ -565,8 +583,7 @@ extension AccountRecoveryActions on AppState {
     if (!recoveryAvailable) return;
     PendingAccountRecovery? pending;
     try {
-      pending = PendingAccountRecovery.decode(
-          await localStore.loadSetting(_pendingRecoverySetting));
+      pending = (await _storedAccountRecovery()).claim;
     } catch (_) {
       return;
     }
@@ -576,6 +593,25 @@ extension AccountRecoveryActions on AppState {
     }
   }
 
+  /// The stored K0 claim, if readable. An unreadable K0 row is deleted (it
+  /// could never be resumed and would block every later recovery);
+  /// [otherKind] reports an enrollment of another kind, which stays.
+  Future<({PendingAccountRecovery? claim, bool otherKind})>
+      _storedAccountRecovery() async {
+    final stored = await localStore.loadPendingEnrollment();
+    if (stored == null) return (claim: null, otherKind: false);
+    if (stored.kind != PendingEnrollment.kindAccountRecovery) {
+      return (claim: null, otherKind: true);
+    }
+    final claim = PendingAccountRecovery.fromEnrollment(stored);
+    if (claim == null) {
+      await localStore.deletePendingEnrollment(
+          kind: PendingEnrollment.kindAccountRecovery,
+          deviceId: stored.deviceId);
+    }
+    return (claim: claim, otherKind: false);
+  }
+
   /// A recovered session whose MLS state did not reach the store before the
   /// app stopped: the pending identity is opened again, so activation
   /// stores it.
@@ -583,8 +619,8 @@ extension AccountRecoveryActions on AppState {
     if (!recoveryAvailable) return;
     final PendingAccountRecovery? pending;
     try {
-      pending = PendingAccountRecovery.decode(
-          await localStore.loadSetting(_pendingRecoverySetting));
+      pending = PendingAccountRecovery.fromEnrollment(
+          await localStore.loadPendingEnrollment());
     } catch (_) {
       return;
     }
@@ -603,7 +639,9 @@ extension AccountRecoveryActions on AppState {
       await _mlsCrypto?.activateSession(restored);
       await localStore.saveSyncCursor(0);
     }
-    await localStore.saveSetting(_pendingRecoverySetting, '');
+    await localStore.deletePendingEnrollment(
+        kind: PendingEnrollment.kindAccountRecovery,
+        deviceId: pending.deviceId);
   }
 
   /// Reads the follow-up step, the leak warning and the server's recovery

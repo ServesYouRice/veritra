@@ -922,6 +922,7 @@
   "recoveryBackupOtherAccount": "The backup restored on this device belongs to another account or server. Recover that account here, or reset this device first.",
   "recoverySignedInAlready": "This device is already signed in.",
   "recoveryAlreadyPending": "A recovery is already waiting on this device.",
+  "recoveryDeviceLinkInProgress": "A device link is in progress on this device, so an account recovery cannot start here.",
   "recoveryWaitingTitle": "Recovery is waiting",
   "recoveryWaitingDetail": "This device joins your account after {date}. The app checks by itself while it is open. Your other devices can cancel this recovery.",
   "@recoveryWaitingDetail": {

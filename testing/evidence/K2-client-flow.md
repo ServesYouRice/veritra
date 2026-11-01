@@ -130,3 +130,42 @@ then the clone path stays as it is.
   read from the server code; an integration test against
   `device_history_transfer_handlers.go` should be added with the
   orchestration.
+
+## 2026-11-01: pending-enrollment storage (local schema 17)
+
+Built step 1 above, storage only (no flow uses the K2 kind yet).
+
+- Tables `local_pending_enrollment` (one row: kind `k0_recovery` or
+  `k2_link_v3`, canonical origin, account, device, kind-specific payload
+  JSON holding the credentials, optional sealed MLS state: counter, key,
+  root) and `local_pending_enrollment_records` (the state's record changes
+  in seal order). Raw SQL in `storage/pending_enrollment_sql.dart`; no Drift
+  regeneration.
+- Rules (`LocalStore.savePendingEnrollment`): another kind, origin,
+  account or device while one is pending is refused
+  (`PendingEnrollmentConflict`); a stored MLS state is frozen (a different
+  one is refused; a write without a state keeps it). Kept across sign-out
+  with a kept device, an identity change and a backup restore, dropped by
+  `clear()` — the same lifetime the K0 setting had. The in-memory store
+  follows the same rules.
+- K0: the waiting claim moved from the encrypted setting
+  `k0.pending_recovery` into the table (the K0 design says to use K2's
+  storage). The 16→17 upgrade moves it in the upgrade transaction using the
+  K0 loader's own decoder; values the loader ignored (abandoned `''`,
+  unreadable) are deleted and never echoed.
+- Not in 17: K2 transfer progress (download offset, ciphertext path,
+  handoff) and the promotion ledger. They belong with the orchestration,
+  which writes them.
+
+Checks: `k2_pending_enrollment_test.dart` 29 passed: fresh create; 16→17
+with no claim; with a waiting claim and with a `needsLogin` claim (every
+field, key, root and record compared); four unreadable values dropped while
+the open succeeds; a crash after each upgrade statement leaves schema 16
+with the setting byte for byte, then the next open moves it; 15→17; SQL
+clear paths; memory and SQLite store rules; a sentinel claim absent from
+`exportBackup` and `exportHistorySnapshot` bytes. Disabling the move fails
+12 of them. K0 recovery tests now read the table.
+
+The NativeCryptoService orchestration was not started: its receiver half
+begins at the v3 claim, which the v3 link screens drive, and it needs the
+transfer-progress tables above.
