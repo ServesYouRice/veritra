@@ -202,6 +202,8 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D77** (2026-10-31, owner) | Until K0's recovery enrollment (password + recovery key) exists, a backup restore finishes only by linking from another signed-in device; someone who lost every device cannot restore yet. K0 recovery enrollment is the next follow-up. D66 no longer applies: a restore no longer brings back a server session. |
 | **D78** (2026-10-31, owner; K0 recovery design `docs/designs/K0-recovery-enrollment.md`) | O1: keep the 15-minute I45 backup window until K1. O2: add `ed25519-dalek` (BSD-3) as a direct crypto dependency for the recovery-key proof. O3: 7-day activity window, 7-day wait, 50 failures/day per username. O4: the passphrase option comes after K1. |
 | **D79** (2026-10-31, owner; K0 review) | The recovery failure cap (50/day) counts only right-password-wrong-recovery-key attempts, keyed by account or decoy id, answers the same 401 over the cap, and warns the account's devices that the password appears leaked. |
+| **D80** (2026-11-01, owner; C4) | A group or community owner cannot leave until they hand ownership to someone else. If the owner is inactive for more than a month, ownership passes on automatically (who receives it — e.g. the longest-serving admin — is set in the C4 design; owner may confirm) |
+| **D81** (2026-11-01, owner; C7) | History for newcomers is a per-channel setting that admins may switch on or off at any time, not only at creation |
 
 ## Roadmap
 
@@ -288,10 +290,10 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 | C1 | Join and manage members | For groups and communities: invite links whose secret stays after the `#`, join requests an admin approves, leave, remove, rename, and member lists with usernames, all in the app | Opus review |
 | C2 | Admin-only posting | In announcement channels and in groups set to admins only, only allowed roles can post: members' apps drop other posts and the server refuses them | Opus review |
 | C3 | Private channels and community info | Channels only some roles can see; community, channel and category names, topics and icons stored encrypted, so the server sees IDs only | Opus designs |
-| C4 | Custom roles | Roles with permission switches and per-channel overrides, kept in each group's encrypted state and checked by every app | Opus designs |
+| C4 | Custom roles | Roles with permission switches and per-channel overrides, kept in each group's encrypted state and checked by every app; ownership transfer and the inactive-owner handover (D80) | Opus designs |
 | C5 | Moderation | Kick, ban with no rejoin, timeout, slow mode, admins deleting others' messages (in groups too), an audit log, and pausing invites | Opus review |
 | C6 | Reports | A member reports a message with a proof that it is genuine (message franking): in a community to its moderators, and from a DM or group to the instance owner | Opus designs |
-| C7 | History for new members | Each channel sets at creation whether newcomers read old posts; members hand over a channel history key; a new key when someone leaves; posts are signed | Opus designs (after K0, C0) |
+| C7 | History for new members | Each channel has a setting, changeable by admins (D81), for whether newcomers read old posts; members hand over a channel history key; a new key when someone leaves; posts are signed | Opus designs (after K0, C0) |
 | C8 | Bigger communities | The 100-member limit rises in steps, each with a measurement in `testing/evidence/` | Sonnet |
 
 ### Phase 3: the remaining basics
