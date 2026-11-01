@@ -183,7 +183,7 @@ Tick a task when it is done and verified; note anything left open under it.
   - Comment only (6108aaa, 2037787): the password timing residual is worded as open, not accepted. No policy change; the timing policy is still an open technical choice.
 - [x] 163 `TASK-163` Serialize backup-status writers and make replacement atomic and durable
 - [x] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
-  - Owner decision: unset or empty means production. Dev, contract-test and demo e2e launchers set development explicitly. Demo e2e not run here.
+  - Owner decision: unset or empty means production. Dev, contract-test and demo e2e launchers set development explicitly. The demo e2e started its server that way and got through setup, register and link; it then times out at demo_e2e_test.dart:259, as f1b4a36 also does (pre-existing flake, see results.json foundWhileFixing).
 - [x] 165 `TASK-165` Resolve DataDir/backups symlinks before ownership checks
 - [x] 166 `TASK-166` Reject non-regular secret files without blocking on open
 - [x] 167 `TASK-167` Commit admin status changes and invite revocations atomically with their audit rows
