@@ -5598,6 +5598,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
+          // Joined again: a leave noted earlier must not drop the new group
+          // (D70 S4). Best effort.
+          try {
+            await _changeLeftConversations(current,
+                (ids) => ids.difference(<String>{message.conversationId}));
+          } catch (_) {}
           // The leaf key came from a key package published earlier: update
           // it soon. Only noted here; staging waits for a foreground pass.
           await _noteSelfUpdate(

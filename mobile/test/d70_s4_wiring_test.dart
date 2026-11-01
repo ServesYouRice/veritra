@@ -96,6 +96,36 @@ void main() {
     harness.dispose();
   });
 
+  test('a Welcome after a leave clears the note, so the new group stays',
+      () async {
+    final api = _ScriptedApi();
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.deleteFailures = 2);
+    final state = harness.state;
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    expect(await state.leaveConversation('conv_1'), isTrue);
+    await harness.waitFor(() => harness.crypto.deleteAttempts == 1);
+
+    // Added back: the next pass still tries the old group first (and
+    // fails again here), then applies the Welcome.
+    api.events = <SyncEvent>[_welcomeEvent(4, 'conv_1')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 4);
+    expect(harness.crypto.joined, <String>['conv_1']);
+    expect(harness.crypto.deleteAttempts, 2);
+    expect(await harness.store.loadSetting('mls.left_conversations'),
+        isNot(contains('conv_1')));
+
+    // Later passes leave the joined group alone.
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => state.syncError == null);
+    await harness.settle();
+    expect(harness.crypto.deleteAttempts, 2);
+    expect(harness.crypto.deleted, isEmpty);
+    harness.dispose();
+  });
+
   test('a leave the server refuses keeps the group', () async {
     final api = _ScriptedApi()..refuseLeave = true;
     final harness = await _Harness.start(api);
@@ -261,6 +291,14 @@ SyncEvent _envelopeEvent(int id, String messageId,
       createdAt: DateTime.utc(2026, 9, 24),
     );
 
+SyncEvent _welcomeEvent(int id, String conversationId) => SyncEvent(
+      id: id,
+      type: 'mls.message.created',
+      conversationId: conversationId,
+      payload: <String, Object?>{'mls_message_id': 'mls_$id'},
+      createdAt: DateTime.utc(2026, 9, 24),
+    );
+
 class _Harness {
   _Harness(this.state, this.store, this.crypto);
 
@@ -366,6 +404,37 @@ class _ScriptedApi extends ApiClient {
   Future<ReceivedMessageEnvelope> message(
           String token, String messageId) async =>
       throw ApiException(404, '{"error":"not_found"}');
+
+  MlsMessage _mls(SyncEvent event) => MlsMessage(
+        id: (event.payload as Map)['mls_message_id'] as String,
+        conversationId: event.conversationId!,
+        senderAccountId: 'acct_peer',
+        senderDeviceId: 'dev_peer',
+        kind: 'welcome',
+        payload: const <int>[1],
+        idempotencyKey: 'idem_${event.id}',
+        syncEventId: event.id,
+        createdAt: DateTime.utc(2026, 9, 24),
+        recipientDeviceId: _session.deviceId,
+      );
+
+  @override
+  Future<List<MlsMessage>> mlsMessages(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      <MlsMessage>[
+        for (final event in events)
+          if (event.type == 'mls.message.created' && event.id > after)
+            _mls(event),
+      ].take(limit).toList(growable: false);
+
+  @override
+  Future<MlsMessage> mlsMessage(String token, String messageId) async =>
+      _mls(events.firstWhere((event) =>
+          event.type == 'mls.message.created' &&
+          (event.payload as Map)['mls_message_id'] == messageId));
 }
 
 class _FakeMlsCrypto
@@ -397,6 +466,19 @@ class _FakeMlsCrypto
       cursor: syncEventId,
     ));
     return null;
+  }
+
+  final List<String> joined = <String>[];
+
+  @override
+  Future<void> processMlsMessage(MlsMessage message) async {
+    joined.add(message.conversationId);
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: 'mls:${message.syncEventId}:${message.id}',
+      conversationId: message.conversationId,
+      expectedCursor: await store.loadSyncCursor(),
+      cursor: message.syncEventId,
+    ));
   }
 
   @override
