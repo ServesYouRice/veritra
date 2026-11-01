@@ -7,14 +7,17 @@
 use openmls::prelude::*;
 use openmls::treesync::LeafNodeParameters;
 use openmls_basic_credential::SignatureKeyPair;
-use openmls_rust_crypto::OpenMlsRustCrypto;
-use openmls_traits::{signatures::Signer, OpenMlsProvider};
+use openmls_traits::{signatures::Signer, storage::StorageProvider as _, OpenMlsProvider};
 use sha2::{Digest, Sha256, Sha512};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
 #[allow(dead_code)]
 pub(crate) mod link_v3;
+mod records;
 mod state;
+mod storage;
+pub use records::{ChangeSet, RecordChange, RestoreLoader, SealError};
+pub(crate) use records::{MAX_SEALED_RECORD_BYTES, MAX_SEALED_ROOT_BYTES};
 #[allow(dead_code)]
 pub(crate) mod transfer;
 
@@ -47,6 +50,11 @@ pub enum MlsError {
     /// version is read before authentication: a hint for the recovery path,
     /// never a reason to relax a check.
     UnsupportedFormat,
+    /// A Welcome names no key package this device holds, or the one it
+    /// names has expired (D74). Nothing was consumed. Refusing it forks
+    /// nothing: the device is just not in the group, and someone has to
+    /// add it again.
+    KeyPackageUnavailable,
 }
 
 /// One MLS device identity and its private provider state.
@@ -56,12 +64,14 @@ pub enum MlsError {
 /// envelope, its rollback counter, and the sync cursor under Keystore/Keychain
 /// protection.
 pub struct MlsDevice {
-    provider: OpenMlsRustCrypto,
+    provider: storage::VeritraProvider,
     signer: SignatureKeyPair,
     credential: CredentialWithKey,
     account_id: Vec<u8>,
     device_id: Vec<u8>,
     pending_transfers: transfer::PendingTransfers,
+    /// What was last sealed or restored in format 4 (D70).
+    sealed: records::SealedState,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -90,7 +100,7 @@ impl MlsDevice {
 
     pub fn new(account_id: &[u8], device_id: &[u8]) -> Result<Self, MlsError> {
         let identity = encode_device_identity(account_id, device_id)?;
-        let provider = OpenMlsRustCrypto::default();
+        let provider = storage::VeritraProvider::default();
         let signer = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm())
             .map_err(|_| MlsError::KeyGeneration)?;
         signer
@@ -107,10 +117,16 @@ impl MlsDevice {
             account_id: account_id.to_vec(),
             device_id: device_id.to_vec(),
             pending_transfers: Default::default(),
+            sealed: Default::default(),
         })
     }
 
     pub fn create_key_package(&self) -> Result<Vec<u8>, MlsError> {
+        // A full pool is refused at creation, so the sealed state never
+        // carries more key packages than restore accepts (D70).
+        if self.provider.storage().key_package_count()? >= records::MAX_KEY_PACKAGES {
+            return Err(MlsError::InvalidState);
+        }
         let bundle = KeyPackage::builder()
             .build(
                 CIPHERSUITE,
@@ -210,23 +226,38 @@ impl MlsDevice {
         if group_id.is_empty() || group_id.len() > MAX_ID_BYTES {
             return Err(MlsError::InvalidIdentity);
         }
-        MlsGroup::new_with_group_id(
-            &self.provider,
-            &self.signer,
-            &group_create_config(),
-            GroupId::from_slice(group_id),
-            self.credential.clone(),
-        )
-        .map_err(|_| MlsError::GroupOperation)
+        self.in_group(group_id, || {
+            MlsGroup::new_with_group_id(
+                &self.provider,
+                &self.signer,
+                &group_create_config(),
+                GroupId::from_slice(group_id),
+                self.credential.clone(),
+            )
+            .map_err(|_| MlsError::GroupOperation)
+        })
+    }
+
+    /// Runs one group operation with storage scoped to `group_id` (D70):
+    /// a storage call for any other group fails it with
+    /// [`MlsError::Storage`].
+    fn in_group<T>(
+        &self,
+        group_id: &[u8],
+        operation: impl FnOnce() -> Result<T, MlsError>,
+    ) -> Result<T, MlsError> {
+        self.provider.storage().scoped(group_id, operation)
     }
 
     pub fn load_group(&self, group_id: &[u8]) -> Result<MlsGroup, MlsError> {
         if group_id.is_empty() || group_id.len() > MAX_ID_BYTES {
             return Err(MlsError::InvalidIdentity);
         }
-        MlsGroup::load(self.provider.storage(), &GroupId::from_slice(group_id))
-            .map_err(|_| MlsError::Storage)?
-            .ok_or(MlsError::InvalidState)
+        self.in_group(group_id, || {
+            MlsGroup::load(self.provider.storage(), &GroupId::from_slice(group_id))
+                .map_err(|_| MlsError::Storage)?
+                .ok_or(MlsError::InvalidState)
+        })
     }
 
     pub fn add_member(
@@ -249,9 +280,12 @@ impl MlsDevice {
             return Err(MlsError::InvalidKeyPackage);
         }
         ensure_added_identities_unique(&roster_identities(group, &[]), &[expected_identity])?;
-        let (commit, welcome, _) = group
-            .add_members(&self.provider, &self.signer, &[key_package])
-            .map_err(|_| MlsError::GroupOperation)?;
+        let id = group.group_id().as_slice().to_vec();
+        let (commit, welcome, _) = self.in_group(&id, || {
+            group
+                .add_members(&self.provider, &self.signer, &[key_package])
+                .map_err(|_| MlsError::GroupOperation)
+        })?;
         let commit = commit
             .tls_serialize_detached()
             .map_err(|_| MlsError::GroupOperation)?;
@@ -304,21 +338,24 @@ impl MlsDevice {
         removed.dedup();
         ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
         let epoch = group.epoch().as_u64();
-        let bundle = group
-            .commit_builder()
-            .propose_adds(key_packages)
-            .propose_removals(removed)
-            .load_psks(self.provider.storage())
-            .map_err(|_| MlsError::GroupOperation)?
-            .build(
-                self.provider.rand(),
-                self.provider.crypto(),
-                &self.signer,
-                |_| true,
-            )
-            .map_err(|_| MlsError::GroupOperation)?
-            .stage_commit(&self.provider)
-            .map_err(|_| MlsError::GroupOperation)?;
+        let id = group.group_id().as_slice().to_vec();
+        let bundle = self.in_group(&id, || {
+            group
+                .commit_builder()
+                .propose_adds(key_packages)
+                .propose_removals(removed)
+                .load_psks(self.provider.storage())
+                .map_err(|_| MlsError::GroupOperation)?
+                .build(
+                    self.provider.rand(),
+                    self.provider.crypto(),
+                    &self.signer,
+                    |_| true,
+                )
+                .map_err(|_| MlsError::GroupOperation)?
+                .stage_commit(&self.provider)
+                .map_err(|_| MlsError::GroupOperation)
+        })?;
         let (commit, welcome, _) = bundle.into_messages();
         let commit = commit
             .tls_serialize_detached()
@@ -358,27 +395,34 @@ impl MlsDevice {
             return Err(MlsError::InvalidState);
         }
         let epoch = group.epoch().as_u64();
-        let bundle = group
-            .commit_builder()
-            .consume_proposal_store(false)
-            .force_self_update(true)
-            .load_psks(self.provider.storage())
-            .map_err(|_| MlsError::GroupOperation)?
-            .build(
-                self.provider.rand(),
-                self.provider.crypto(),
-                &self.signer,
-                |_| false,
-            )
-            .map_err(|_| MlsError::GroupOperation)?
-            .stage_commit(&self.provider)
-            .map_err(|_| MlsError::GroupOperation)?;
+        let id = group.group_id().as_slice().to_vec();
+        let bundle = self.in_group(&id, || {
+            group
+                .commit_builder()
+                .consume_proposal_store(false)
+                .force_self_update(true)
+                .load_psks(self.provider.storage())
+                .map_err(|_| MlsError::GroupOperation)?
+                .build(
+                    self.provider.rand(),
+                    self.provider.crypto(),
+                    &self.signer,
+                    |_| false,
+                )
+                .map_err(|_| MlsError::GroupOperation)?
+                .stage_commit(&self.provider)
+                .map_err(|_| MlsError::GroupOperation)
+        })?;
         let path_only = group.pending_commit().is_some_and(|staged| {
             staged.queued_proposals().next().is_none() && staged.update_path_leaf_node().is_some()
         });
         let (commit, welcome, _) = bundle.into_messages();
         if !path_only || welcome.is_some() {
-            let _ = group.clear_pending_commit(self.provider.storage());
+            let _ = self.in_group(&id, || {
+                group
+                    .clear_pending_commit(self.provider.storage())
+                    .map_err(|_| MlsError::Storage)
+            });
             return Err(MlsError::GroupOperation);
         }
         let commit = commit
@@ -393,9 +437,12 @@ impl MlsDevice {
 
     /// Drops a staged commit the server did not accept.
     pub fn clear_pending_commit(&self, group: &mut MlsGroup) -> Result<(), MlsError> {
-        group
-            .clear_pending_commit(self.provider.storage())
-            .map_err(|_| MlsError::Storage)
+        let id = group.group_id().as_slice().to_vec();
+        self.in_group(&id, || {
+            group
+                .clear_pending_commit(self.provider.storage())
+                .map_err(|_| MlsError::Storage)
+        })
     }
 
     pub fn has_pending_commit(&self, group: &MlsGroup) -> bool {
@@ -407,9 +454,12 @@ impl MlsDevice {
     }
 
     pub fn merge_pending_commit(&self, group: &mut MlsGroup) -> Result<(), MlsError> {
-        group
-            .merge_pending_commit(&self.provider)
-            .map_err(|_| MlsError::GroupOperation)
+        let id = group.group_id().as_slice().to_vec();
+        self.in_group(&id, || {
+            group
+                .merge_pending_commit(&self.provider)
+                .map_err(|_| MlsError::GroupOperation)
+        })
     }
 
     /// Builds and stages an update commit; the FFI caller merges it at once.
@@ -417,9 +467,12 @@ impl MlsDevice {
     /// accepts the commit can fork the group. Periodic updates go through
     /// [`Self::stage_self_update`].
     pub fn self_update(&self, group: &mut MlsGroup) -> Result<Vec<u8>, MlsError> {
-        let bundle = group
-            .self_update(&self.provider, &self.signer, LeafNodeParameters::default())
-            .map_err(|_| MlsError::GroupOperation)?;
+        let id = group.group_id().as_slice().to_vec();
+        let bundle = self.in_group(&id, || {
+            group
+                .self_update(&self.provider, &self.signer, LeafNodeParameters::default())
+                .map_err(|_| MlsError::GroupOperation)
+        })?;
         let (commit, _, _) = bundle.into_contents();
         commit
             .tls_serialize_detached()
@@ -434,9 +487,12 @@ impl MlsDevice {
         if members.is_empty() {
             return Err(MlsError::InvalidIdentity);
         }
-        let (commit, _, _) = group
-            .remove_members(&self.provider, &self.signer, members)
-            .map_err(|_| MlsError::GroupOperation)?;
+        let id = group.group_id().as_slice().to_vec();
+        let (commit, _, _) = self.in_group(&id, || {
+            group
+                .remove_members(&self.provider, &self.signer, members)
+                .map_err(|_| MlsError::GroupOperation)
+        })?;
         commit
             .tls_serialize_detached()
             .map_err(|_| MlsError::GroupOperation)
@@ -447,6 +503,56 @@ impl MlsDevice {
             .map_err(|_| MlsError::InvalidMessage)?
             .try_into_protocol_message()
             .map_err(|_| MlsError::InvalidMessage)?;
+        let id = group.group_id().as_slice().to_vec();
+        self.in_group(&id, || {
+            self.process_commit_in_scope(group, protocol_message)
+        })?;
+        // Own removal applied: the group can never be used again, so its
+        // whole store goes now, past-epoch key pairs included (D70). A
+        // later Welcome for this id is a fresh join.
+        if !group.is_active() {
+            self.provider.storage().drop_group(&id)?;
+        }
+        Ok(())
+    }
+
+    /// Drops a group and every record it holds. Only for a user's action
+    /// (leaving or deleting a chat), never on a server's word: a server
+    /// could otherwise clear an active group and plant a forked Welcome
+    /// (docs/crypto.md, "Rejoining a conversation"). Returns whether the
+    /// group was stored.
+    pub fn delete_group(&self, group_id: &[u8]) -> Result<bool, MlsError> {
+        if group_id.is_empty() || group_id.len() > MAX_ID_BYTES {
+            return Err(MlsError::InvalidIdentity);
+        }
+        self.provider.storage().drop_group(group_id)
+    }
+
+    /// Drops every key package whose `not_after` passed more than 24 hours
+    /// before `now_unix_seconds` (D70). Returns how many went.
+    pub fn prune_key_packages(&self, now_unix_seconds: u64) -> Result<usize, MlsError> {
+        let storage = self.provider.storage();
+        let mut removed = 0;
+        for (id, not_after) in storage.key_package_expiries()? {
+            if not_after.saturating_add(records::KEY_PACKAGE_GRACE_SECONDS) < now_unix_seconds
+                && storage.drop_key_package(&id)?
+            {
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
+    /// The number of key packages this device holds.
+    pub fn key_package_count(&self) -> Result<usize, MlsError> {
+        self.provider.storage().key_package_count()
+    }
+
+    fn process_commit_in_scope(
+        &self,
+        group: &mut MlsGroup,
+        protocol_message: ProtocolMessage,
+    ) -> Result<(), MlsError> {
         let processed = group
             .process_message(&self.provider, protocol_message)
             .map_err(|_| MlsError::InvalidMessage)?;
@@ -524,12 +630,23 @@ impl MlsDevice {
         // A device removed and later re-added still holds the old group
         // under this id. Only an inactive one (its own removal applied) may
         // go; an active one is refused here, before the key package is used.
+        self.in_group(expected_group_id, || {
+            self.join_group_in_scope(expected_group_id, welcome)
+        })
+    }
+
+    fn join_group_in_scope(
+        &self,
+        expected_group_id: &[u8],
+        welcome: Welcome,
+    ) -> Result<MlsGroup, MlsError> {
         let group_id = GroupId::from_slice(expected_group_id);
         let stored =
             MlsGroup::load(self.provider.storage(), &group_id).map_err(|_| MlsError::Storage)?;
         if let Some(stored) = &stored {
             ensure_replaceable(stored)?;
         }
+        self.ensure_welcome_key_package(&welcome)?;
         // Staging decrypts the Welcome (and consumes the key package) but
         // stores no group; into_group persists it, so every check runs first.
         let builder = StagedWelcome::build_from_welcome(
@@ -569,6 +686,32 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
+    /// D74: the Welcome must name a key package this device still holds,
+    /// and that package must not have expired. Checked before anything is
+    /// consumed; OpenMLS would refuse both anyway (its join verifies leaf
+    /// lifetimes), but only as a generic failure that stops sync.
+    fn ensure_welcome_key_package(&self, welcome: &Welcome) -> Result<(), MlsError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| MlsError::InvalidState)?
+            .as_secs();
+        for secrets in welcome.secrets() {
+            let bundle: Option<KeyPackageBundle> = self
+                .provider
+                .storage()
+                .key_package(&secrets.new_member())
+                .map_err(|_| MlsError::Storage)?;
+            if let Some(bundle) = bundle {
+                return if bundle.key_package().life_time().not_after() <= now {
+                    Err(MlsError::KeyPackageUnavailable)
+                } else {
+                    Ok(())
+                };
+            }
+        }
+        Err(MlsError::KeyPackageUnavailable)
+    }
+
     /// The structural checks a Welcome must pass before its group is stored:
     /// every leaf holds a well-formed, unique device identity; this device's
     /// leaf carries its own identity and signing key; the sender is another
@@ -597,11 +740,14 @@ impl MlsDevice {
     }
 
     pub fn encrypt(&self, group: &mut MlsGroup, plaintext: &[u8]) -> Result<Vec<u8>, MlsError> {
-        group
-            .create_message(&self.provider, &self.signer, plaintext)
-            .map_err(|_| MlsError::GroupOperation)?
-            .tls_serialize_detached()
-            .map_err(|_| MlsError::GroupOperation)
+        let id = group.group_id().as_slice().to_vec();
+        self.in_group(&id, || {
+            group
+                .create_message(&self.provider, &self.signer, plaintext)
+                .map_err(|_| MlsError::GroupOperation)
+        })?
+        .tls_serialize_detached()
+        .map_err(|_| MlsError::GroupOperation)
     }
 
     /// Decrypts one application message and binds it to its sender.
@@ -624,9 +770,12 @@ impl MlsDevice {
             .map_err(|_| MlsError::InvalidMessage)?
             .try_into_protocol_message()
             .map_err(|_| MlsError::InvalidMessage)?;
-        let processed = group
-            .process_message(&self.provider, protocol_message)
-            .map_err(|_| MlsError::InvalidMessage)?;
+        let id = group.group_id().as_slice().to_vec();
+        let processed = self.in_group(&id, || {
+            group
+                .process_message(&self.provider, protocol_message)
+                .map_err(|_| MlsError::InvalidMessage)
+        })?;
         let sender_matches = processed.credential().serialized_content() == expected_identity;
         // Two past epochs stay decryptable (I51), so a device removed at
         // epoch N could keep writing in epoch N by never applying its
@@ -1165,6 +1314,24 @@ mod tests {
 
     /// Parses a device's own key package, so a test can add it through
     /// OpenMLS directly and bypass this wrapper's checks.
+    /// Runs a direct OpenMLS call on `group` inside its storage scope, as
+    /// every `MlsDevice` method does (D70).
+    fn in_scope<T>(
+        device: &MlsDevice,
+        group: &mut MlsGroup,
+        call: impl FnOnce(&mut MlsGroup) -> T,
+    ) -> T {
+        let id = group.group_id().as_slice().to_vec();
+        let mut out = None;
+        device
+            .in_group(&id, || {
+                out = Some(call(group));
+                Ok(())
+            })
+            .unwrap();
+        out.unwrap()
+    }
+
     fn raw_key_package(device: &MlsDevice) -> KeyPackage {
         KeyPackageIn::tls_deserialize_exact(device.create_key_package().unwrap())
             .unwrap()
@@ -1296,8 +1463,8 @@ mod tests {
         let mut group = alice.create_group(b"conv_twins").unwrap();
         // Duplicates can only come in through another client (or a test
         // that calls OpenMLS directly).
-        group
-            .add_members(
+        in_scope(&alice, &mut group, |g| {
+            g.add_members(
                 &alice.provider,
                 &alice.signer,
                 &[
@@ -1306,7 +1473,8 @@ mod tests {
                     raw_key_package(&carol),
                 ],
             )
-            .unwrap();
+        })
+        .unwrap();
         alice.merge_pending_commit(&mut group).unwrap();
         assert_eq!(group.members().count(), 4);
 
@@ -1328,13 +1496,14 @@ mod tests {
 
         // The single-device FFI path removes every leaf too.
         let mut group = alice.create_group(b"conv_twins_ffi").unwrap();
-        group
-            .add_members(
+        in_scope(&alice, &mut group, |g| {
+            g.add_members(
                 &alice.provider,
                 &alice.signer,
                 &[raw_key_package(&bob), raw_key_package(&twin)],
             )
-            .unwrap();
+        })
+        .unwrap();
         alice.merge_pending_commit(&mut group).unwrap();
         let indices = alice
             .member_indices(&group, b"acct_bob", b"dev_bob")
@@ -1486,13 +1655,14 @@ mod tests {
         let (devices, mut groups) = three_members(b"conv_bad_add");
         let commit = {
             let [_, bob, _] = &devices;
-            let (commit, _, _) = groups[1]
-                .add_members(
+            let (commit, _, _) = in_scope(bob, &mut groups[1], |g| {
+                g.add_members(
                     &bob.provider,
                     &bob.signer,
                     &[forged_key_package(b"garbage")],
                 )
-                .unwrap();
+            })
+            .unwrap();
             commit.tls_serialize_detached().unwrap()
         };
         assert_refused_then_recovers(&devices, &mut groups, b"conv_bad_add", &commit);
@@ -1504,13 +1674,14 @@ mod tests {
         let carol_identity = encode_device_identity(b"acct_carol", b"dev_carol").unwrap();
         let commit = {
             let [_, bob, _] = &devices;
-            let (commit, _, _) = groups[1]
-                .add_members(
+            let (commit, _, _) = in_scope(bob, &mut groups[1], |g| {
+                g.add_members(
                     &bob.provider,
                     &bob.signer,
                     &[forged_key_package(&carol_identity)],
                 )
-                .unwrap();
+            })
+            .unwrap();
             commit.tls_serialize_detached().unwrap()
         };
         assert_refused_then_recovers(&devices, &mut groups, b"conv_twin_add", &commit);
@@ -1519,13 +1690,14 @@ mod tests {
         let dave = encode_device_identity(b"acct_dave", b"dev_dave").unwrap();
         let commit = {
             let [_, bob, _] = &devices;
-            let (commit, _, _) = groups[1]
-                .add_members(
+            let (commit, _, _) = in_scope(bob, &mut groups[1], |g| {
+                g.add_members(
                     &bob.provider,
                     &bob.signer,
                     &[forged_key_package(&dave), forged_key_package(&dave)],
                 )
-                .unwrap();
+            })
+            .unwrap();
             commit.tls_serialize_detached().unwrap()
         };
         assert_refused_then_recovers(&devices, &mut groups, b"conv_twin_add", &commit);
@@ -1547,13 +1719,14 @@ mod tests {
             let parameters = LeafNodeParameters::builder()
                 .with_credential_with_key(disguise)
                 .build();
-            groups[1]
-                .self_update(&bob.provider, &bob.signer, parameters)
-                .unwrap()
-                .into_contents()
-                .0
-                .tls_serialize_detached()
-                .unwrap()
+            in_scope(bob, &mut groups[1], |g| {
+                g.self_update(&bob.provider, &bob.signer, parameters)
+            })
+            .unwrap()
+            .into_contents()
+            .0
+            .tls_serialize_detached()
+            .unwrap()
         };
         assert_refused_then_recovers(&devices, &mut groups, b"conv_rename", &commit);
     }
@@ -1581,9 +1754,10 @@ mod tests {
     fn assert_welcome_refused(group_id: &[u8], bob: &MlsDevice, packages: &[KeyPackage]) {
         let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
         let mut group = alice.create_group(group_id).unwrap();
-        let (_, welcome, _) = group
-            .add_members(&alice.provider, &alice.signer, packages)
-            .unwrap();
+        let (_, welcome, _) = in_scope(&alice, &mut group, |g| {
+            g.add_members(&alice.provider, &alice.signer, packages)
+        })
+        .unwrap();
         let welcome = welcome.tls_serialize_detached().unwrap();
         assert!(bob.join_group(group_id, &welcome).is_err());
         assert_eq!(bob.load_group(group_id).err(), Some(MlsError::InvalidState));

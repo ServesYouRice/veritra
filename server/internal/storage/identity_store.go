@@ -392,13 +392,31 @@ func (s *Store) HasLegacyPasswordHashes(ctx context.Context) (bool, error) {
 	return present, err
 }
 
+// UpgradePasswordHash replaces an account's password hash with a rehash of
+// the same password. A waiting recovery request that verified the old hash
+// moves forward with it in the same transaction, so the rehash is not taken
+// for a password change and does not void the recovery.
 func (s *Store) UpgradePasswordHash(ctx context.Context, accountID, currentHash, updatedHash string) (bool, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE accounts SET password_hash = ? WHERE id = ? AND password_hash = ? AND deleted_at IS NULL`, updatedHash, accountID, currentHash)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE accounts SET password_hash = ? WHERE id = ? AND password_hash = ? AND deleted_at IS NULL`, updatedHash, accountID, currentHash)
 	if err != nil {
 		return false, err
 	}
 	rows, err := result.RowsAffected()
-	return rows == 1, err
+	if err != nil || rows != 1 {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE account_recovery_requests SET verified_password_hash = ? WHERE account_id = ? AND state = 'waiting' AND verified_password_hash = ?`, updatedHash, accountID, currentHash); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // TouchSession extends a valid session's idle expiry. The write is throttled to
@@ -525,6 +543,9 @@ func (s *Store) ChangePassword(ctx context.Context, accountID, keepTokenHash, ne
 	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET recent_auth_at = ?, previous_token_hash = NULL, previous_expires_at = NULL WHERE token_hash = ?`, nowString(), keepTokenHash); err != nil {
 		return err
 	}
+	if _, _, err := cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledPasswordChanged, nowString()); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -545,6 +566,9 @@ func (s *Store) ResetOwnerPassword(ctx context.Context, username, newPasswordHas
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {
+		return err
+	}
+	if _, _, err := cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledPasswordReset, nowString()); err != nil {
 		return err
 	}
 	metadata, _ := json.Marshal(map[string]string{"account_id": accountID, "method": "offline_owner_recovery"})
@@ -606,6 +630,22 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 		return 0, err
 	}
 	defer tx.Rollback()
+	eventID, err := revokeDeviceTx(ctx, tx, accountID, deviceID, eventType, now)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return eventID, nil
+}
+
+// revokeDeviceTx runs every step of a device revocation in the caller's
+// transaction: it marks the device revoked, deletes its sessions, retires
+// its v3 links and, when eventType is set, records the event, queues its
+// MLS revocations and releases the confirmations it owed. Recovery
+// completion runs it for each old device.
+func revokeDeviceTx(ctx context.Context, tx *sql.Tx, accountID, deviceID, eventType, now string) (int64, error) {
 	result, err := tx.ExecContext(ctx, `UPDATE devices SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND account_id = ?`, now, deviceID, accountID)
 	if err != nil {
 		return 0, err
@@ -636,9 +676,6 @@ func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType
 			return 0, err
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
 	return eventID, nil
 }
 
@@ -655,9 +692,14 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 	// Without a roster only a legacy group (pre-I51: it has MLS messages, the
 	// test CreateMLSCommitBundle uses) gets one. A conversation whose group
 	// was never created has no leaf to remove, and a revoked device is never
-	// added to a group created later.
+	// added to a group created later. In a legacy group the stored
+	// coordinator and the required confirmers are devices with evidence of a
+	// leaf (mlsLegacyLeafEvidence), so a revocation never waits on a device
+	// with none; the coordinator falls back to the lowest device only when
+	// no device shows evidence, and mlsRevocationCoordinator re-checks it.
 	rows, err := tx.QueryContext(ctx, `
-		SELECT m.conversation_id, MIN(d.id)
+		SELECT m.conversation_id,
+		       COALESCE(MIN(CASE WHEN `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+` THEN d.id END), MIN(d.id))
 		FROM memberships m
 		JOIN memberships participants ON participants.conversation_id = m.conversation_id
 		JOIN devices d ON d.account_id = participants.account_id
@@ -714,7 +756,8 @@ func queueMLSRevocations(ctx context.Context, tx *sql.Tx, accountID, deviceID, n
 			SELECT ?, ?, d.id FROM memberships m
 			JOIN devices d ON d.account_id = m.account_id
 			WHERE m.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
-			  AND (NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
+			  AND ((NOT EXISTS (SELECT 1 FROM conversation_mls_groups g WHERE g.conversation_id = m.conversation_id)
+			        AND `+mlsLegacyLeafEvidence("m.conversation_id", "d.id", "d.created_at")+`)
 			       OR EXISTS (SELECT 1 FROM conversation_mls_devices r WHERE r.conversation_id = m.conversation_id
 			                  AND r.device_id = d.id AND r.removed_after_event_id IS NULL))`,
 			item.conversationID, deviceID, item.conversationID, deviceID); err != nil {

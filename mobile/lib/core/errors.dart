@@ -5,7 +5,8 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 
 import 'api_client.dart';
 import '../crypto/backup_service.dart';
-import '../crypto/crypto_service.dart' show CryptoStateFormatUnsupported;
+import '../crypto/crypto_service.dart'
+    show CryptoRecordLimitExceeded, CryptoStateFormatUnsupported;
 import '../storage/local_store.dart';
 import '../l10n/l10n.dart';
 
@@ -97,6 +98,11 @@ String describeError(
   }
   if (error is CryptoStateFormatUnsupported) {
     return strings.errorCryptoStateFormatUnsupported;
+  }
+  if (error is CryptoRecordLimitExceeded) {
+    return error.conversationId == null
+        ? strings.errorCryptoRecordLimit
+        : strings.errorConversationTooLarge;
   }
   if (error is UserFacingException) {
     return error.message;

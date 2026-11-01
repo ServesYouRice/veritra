@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../features/chat/chat_list_screen.dart' show conversationTitle;
 import '../../features/settings/backup_screen.dart';
 import '../../sync/sync_recovery.dart';
 import '../format.dart';
@@ -142,6 +143,7 @@ class _SyncRecoveryBanner extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final choices = recovery.choices;
+    final leaveTitle = _leaveTitle(context);
     return Semantics(
       liveRegion: true,
       container: true,
@@ -175,13 +177,27 @@ class _SyncRecoveryBanner extends StatelessWidget {
                 ],
               ),
               Text(
-                recovery.localizedMessage(context.l10n),
+                leaveTitle != null &&
+                        recovery.kind == SyncFailureKind.recordLimit
+                    ? context.l10n.syncErrorRecordLimitNamed(leaveTitle)
+                    : recovery.localizedMessage(context.l10n),
                 style: theme.textTheme.bodySmall
                     ?.copyWith(color: scheme.onErrorContainer),
               ),
               Wrap(
                 spacing: BoneSpacing.sm,
                 children: <Widget>[
+                  // D70: the named conversation outgrew what this device
+                  // can store; leaving it lets the others go on.
+                  if (choices.contains(SyncRecoveryChoice.leaveConversation))
+                    TextButton(
+                      onPressed: state.busy
+                          ? null
+                          : () => _confirmLeave(context, leaveTitle),
+                      child: Text(leaveTitle == null
+                          ? context.l10n.detailsLeave
+                          : context.l10n.bannerLeaveNamed(leaveTitle)),
+                    ),
                   if (choices.contains(SyncRecoveryChoice.retry))
                     TextButton(
                       onPressed: state.busy ? null : state.retrySyncRecovery,
@@ -213,6 +229,49 @@ class _SyncRecoveryBanner extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// The title of the conversation the failure names, when this device
+  /// lists it; null otherwise (a -8 from a Welcome, say), and the generic
+  /// wording is used.
+  String? _leaveTitle(BuildContext context) {
+    final id = recovery.conversationId;
+    if (id == null) return null;
+    final conversation =
+        state.conversations.where((c) => c.id == id).firstOrNull;
+    return conversation == null
+        ? null
+        : conversationTitle(context.l10n, conversation);
+  }
+
+  Future<void> _confirmLeave(BuildContext context, String? title) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title == null
+            ? context.l10n.detailsLeaveTitle
+            : context.l10n.bannerLeaveNamedTitle(title)),
+        content: Text(context.l10n.detailsLeaveMessage),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(context.l10n.commonCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(context.l10n.detailsLeaveConfirm),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final left =
+        await state.leaveConversationAfterSyncRecovery(confirmed: true);
+    final error = state.errorFor(Ops.members);
+    if (!left && error != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
   Future<void> _confirmRelink(BuildContext context) async {

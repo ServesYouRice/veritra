@@ -90,7 +90,7 @@ void main() {
     partial().writeAsBytesSync(ciphertext);
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     // The one request asked to continue past the end; nothing downloaded
     // again.
     expect(server.rangeStarts, <int>[ciphertext.length]);
@@ -105,7 +105,7 @@ void main() {
     server.stored = null;
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 
@@ -117,7 +117,7 @@ void main() {
     partial().writeAsBytesSync(stale);
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     // Its frame 0 does not open with this code: no range request, exactly
     // one download from the start.
     expect(server.rangeStarts, <int>[0]);

@@ -647,9 +647,7 @@ mod tests {
         }
         fn restart_recipient(&mut self) {
             let old = unsafe { &*self.recipient };
-            let sealed = old.device.lock().unwrap().seal_state(&[7; 32], 31).unwrap();
-            let (d, _) =
-                MlsDevice::restore_state(b"account", b"recipient", &[7; 32], 31, &sealed).unwrap();
+            let d = old.device.lock().unwrap().reload_for_test(&[7; 32]);
             unsafe { pm_crypto_device_destroy(self.recipient) };
             self.recipient = Box::into_raw(Box::new(PmCryptoHandle {
                 device: Arc::new(Mutex::new(d)),

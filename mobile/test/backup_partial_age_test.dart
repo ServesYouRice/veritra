@@ -88,7 +88,7 @@ void main() {
     server.stored = null;
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
-    expect((await target.loadSession())?.deviceId, 'dev_1');
+    expect((await target.loadSession())?.accountId, 'acct_1');
     expect(scratch.listSync(), isEmpty);
   }, skip: skip);
 

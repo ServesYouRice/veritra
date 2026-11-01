@@ -403,11 +403,10 @@ void main() {
         expect(state.session, isNull);
         expect((await store.loadDrafts())['conv_1']?.text, 'typed just before');
         state.dispose();
-        // UQ-003: keepDrafts means the same person signs in again to their
-        // drafts, so a pending edit should be flushed, not dropped. Today
-        // _clearLocalSessionSteps cancels the draft timers first and the
-        // older saved text comes back. The fix is in app_state.dart.
-      }, skip: 'pending draft edits are dropped at session expiry (TASK-103)');
+        // D65 (UQ-003): keepDrafts means the same person signs in again to
+        // their drafts, so a pending edit is flushed before the data is
+        // cleared, not dropped.
+      });
 
       test(
           '${entry.key}: a rejected session keeps the drafts and the next '

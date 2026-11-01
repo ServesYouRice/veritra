@@ -58,17 +58,21 @@ void main() {
   Matcher failure(BackupFailureKind kind) =>
       isA<BackupException>().having((error) => error.kind, 'kind', kind);
 
-  test('a backup restores identity, MLS state and decrypted history', () async {
+  test('a backup restores the account and decrypted history, not the device',
+      () async {
     final code = await makeBackup();
     expect(code, startsWith('v1.'));
     final target = MemoryLocalStore();
     await serviceFor(target).recover(code);
 
+    // D71, D73: no token, device or MLS state; the cursor starts over.
     final session = await target.loadSession();
     expect(session?.accountId, 'acct_1');
-    expect(session?.deviceId, 'dev_1');
-    expect((await target.loadCryptoState())?.counter, 2);
-    expect(await target.loadSyncCursor(), 7);
+    expect(session?.deviceId, isNull);
+    expect(session?.token, isEmpty);
+    expect(session?.deviceSecret, isNull);
+    expect(await target.loadCryptoState(), isNull);
+    expect(await target.loadSyncCursor(), 0);
     final history = await target.loadMessages('conv_1');
     expect(history.single.body, 'kept across devices');
     expect(scratch.listSync(), isEmpty);

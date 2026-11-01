@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 9 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 11 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 9. That version defines:
+`PM_CRYPTO_ABI_VERSION` at 11. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -45,12 +45,79 @@ Key-package size checks mirror the server transport boundary (64 bytes through
 
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
-compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Sealed state
-reads envelope formats 2 and 3 and writes format 3, including through existing
-ABI v7 state-sealing calls. Genuine format 2 state preserves its signer and live
-groups during migration. Version 1 blobs written under OpenMLS 0.8.1 and unknown
-versions fail closed, with their own restore code since ABI 9. No debug feature that exposes
-message content or cryptographic material is enabled.
+compatible license choices recorded in `THIRD_PARTY_NOTICES.md`. Since ABI 10
+(D70) sealed state is format 4: a root plus one record per owner, described
+in "Sealed state, format 4" below. Format 2 and 3 blobs are read only by the
+one-way migration at activation. Version 1 blobs written under OpenMLS 0.8.1
+and unknown versions fail closed, with their own restore code since ABI 9.
+No debug feature that exposes message content or cryptographic material is
+enabled.
+
+### Sealed state, format 4 (ABI 10, D70)
+
+The state is no longer one blob. It is a root, kept in the existing
+singleton row, and one record per owner in `local_crypto_records` (schema
+16): the device record (kind 1: signer, K2
+transfers), one record per group (kind 2, id = conversation id) and one per
+key package (kind 3, id = hash reference). Key pairs that no group owns are
+dropped at migration; seal refuses them and restore rejects them in the
+device record. Design: [D70](designs/D70-per-group-sealed-state.md).
+
+- **Record.** `"PMMLSST1" || u16 4 || u8 kind || u64 generation ||
+  u16 account_len || account || u16 device_len || device || u16 id_len ||
+  id || nonce12`, then `u32 len || AES-256-GCM ciphertext` under the
+  existing state key, with the whole header as AAD. Kind 0 is the root.
+- **Root.** Lists the signer's public key and, for every record, its kind,
+  id, generation and the SHA-256 of the sealed record. It is resealed in
+  every transaction at the new generation, which must be the stored counter
+  plus one.
+- **Writes.** `pm_crypto_device_seal_changes` returns the root and only the
+  records that changed (upserts and deletes). The app applies them in the
+  same SQLite transaction as the root and the change that caused them
+  (message, cursor, outbox). Every write that replaces the root applies its
+  changes, including rollbacks and the D54 retry. A full write
+  (`saveCryptoState`) replaces all records.
+- **Restore.** The app reads the root and every record in one transaction,
+  then `pm_crypto_restore_begin` (generation at least the minimum, and the
+  app requires it to equal the stored counter), `pm_crypto_restore_add` per
+  record, `pm_crypto_restore_finish`. A missing, extra, duplicate, stale,
+  foreign (other account or device), altered or wrong-key record fails the
+  whole restore. `finish` and `pm_crypto_restore_abort` spend the token.
+- **Caps (plaintext).** Root 16 MiB and 200,000 entries; device record
+  1 MiB; group record 32 MiB, 4 MiB per value, 10,000 values; key package
+  record 256 KiB; at most 1,000 key packages. A sealed record may be up to
+  4 KiB larger. A record over its cap fails the seal with
+  `PM_CRYPTO_RECORD_LIMIT` (-8), which names its kind and id; nothing is
+  sealed and the app restores the committed state. The change-set output
+  is bounded at 128 MiB.
+- **Migration (one way).** At activation only, a format 2 or 3 blob goes
+  through `pm_crypto_device_migrate_v3`: every check of the old restore, the
+  counter must equal the stored one, inactive groups and key pairs no group
+  owns are dropped, and the result is checked against the input. The app
+  then seals every record at counter + 1 and stores the new root and all
+  records in one compare-and-swap transaction (`commitCryptoMigration`:
+  the old blob must still be stored, unchanged), deleting any records found
+  beside the old blob. The device is then restored from what was stored.
+  A crash at any step leaves either the old blob or the full new state.
+  Older builds refuse a format 4 root (`stateFormatUnsupported`).
+- **Groups that end.** Applying its own removal drops a device's group and,
+  with the next seal, its record. `pm_crypto_group_delete` drops a group
+  the user deleted. A missing group behaves as an inactive one did before:
+  a peer message to it is a D54 placeholder, `groupEpoch` answers null, and
+  a commit bundle for it settles.
+- **Key packages.** `pm_crypto_device_prune_key_packages` drops packages
+  whose `not_after` passed more than 24 hours ago. A Welcome for a key
+  package this device does not hold, or one that expired, fails with
+  `PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE` (-9, D74) before anything is
+  consumed; the app records an `invalid` row keyed
+  `welcome-unavailable:<syncEventId>:<mlsMessageId>`, shown as "Couldn't
+  join this chat. Ask a member to add you again.", and sync moves on.
+
+**OpenMLS upgrade checklist.** Any OpenMLS (or `openmls_rust_crypto` /
+`openmls_memory_storage`) version bump must re-check the storage labels
+and key shapes in `LABELS` (`crypto/rust/src/mls/storage.rs`) and the
+storage-method list in its routing test. A label the classifier does not
+know makes every restore fail closed with `InvalidState`.
 
 Before production message sending:
 
@@ -135,12 +202,17 @@ compare signing keys.
 ### Rejoining a conversation
 
 A device removed from a conversation and later re-added (an account that
-leaves and is invited back) still stores the old group under the same id:
-OpenMLS keeps a group after its own removal, marked inactive.
-`join_group` (`pm_crypto_group_join`, no ABI change) lets a Welcome replace
-a stored group only when that group is inactive, that is, the device has
-applied its own removal commit. The old group's state is deleted before the
-new one is stored. The Welcome then has the trust of any fresh join, which
+leaves and is invited back) no longer stores the old group: since ABI 10
+(D70) applying its own removal commit drops the group and its record, so
+the Welcome is a fresh join. `join_group` (`pm_crypto_group_join`) still
+lets a Welcome replace a stored group that is inactive, which only a state
+restored from before the drop can hold. `pm_crypto_group_delete` is for a
+chat the user deletes, and only for that: the app never calls it on a
+removal, a server event or a Welcome, so the server cannot use it to make a
+device drop an active group. A leave the app has not yet applied locally
+(it runs at the start of the next foreground sync pass) may also run
+when a Welcome for that conversation arrives, but only as the user's own
+deferred leave, never on the Welcome's word. The Welcome then has the trust of any fresh join, which
 includes the L1 gap above: the core checks its structure, not who may be in
 the group or who may invite.
 
@@ -161,6 +233,46 @@ is refused, and the device's sync stops under I33. The server change is
 pending.
 
 Tests: `crypto/rust/tests/rejoin_after_removal.rs`.
+
+## Member removal send hold (D68)
+
+After a member is removed, application sends to that conversation wait,
+unencrypted, until the MLS commit that removes the member's devices is
+applied on this device, so nothing is encrypted to them. A hold starts when
+this device removes a member, when the server's pending-changes list
+(`GET /api/v1/mls/pending-changes`) shows a removal, or while a queued
+commit bundle removes a member. Holds are kept per device across restarts
+(`_removalHolds` in `mobile/lib/core/app_state.dart`).
+
+**Release.** A hold set before a pending-changes read is released when that
+read no longer lists the conversation (the unlisted marker records the
+first such read), and a complete sync fetch that started after that read has
+finished, and no MLS work for it is queued. Then it is released when the
+group is gone, the local epoch is past the listed one (or the server never
+listed it), or every removed account is a member again. A read the server
+cut at its overall cap may leave conversations out, so it releases nothing
+it leaves out. The response says so in the top-level `list_truncated` flag.
+One conversation over its own cap is flagged `truncated` on its item only
+and does not hold the others. Without the flag (an older server) a read
+whose items are all `truncated` is taken as cut. A conversation whose group
+state cannot be read keeps its hold; the others are still looked at.
+
+**Premises.** The release is sound only while all three hold:
+
+1. The server writes a commit, its sync event, the roster change and the new
+   epoch in one transaction. A read that no longer lists a removal means its
+   commit's event is already in the stream.
+2. Reconcile reads pending changes and updates holds in one serialized pass,
+   and a hold is compared only after a full sync fetch that began after the
+   read. That fetch then brought in every commit the server held at it.
+3. An MLS control message that cannot be applied stops sync at its event
+   (I33). The fetch then never completes, so the hold stays.
+
+**Residual.** The release trusts the server's roster. Device revocation and
+account deletion drop a removed device from the roster without a commit, and
+no FFI call lists a group's members, so the client cannot confirm the device
+really left the group. A malicious server could release a hold early this
+way. The L1 gap above covers the same trust.
 
 ## Message size
 
@@ -223,10 +335,142 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
   because the server accepts only that value; the magic tells the formats
   apart.
 
+### What the plaintext holds (backup JSON v6, D71, D73)
+
+- **Carried:** the account (server origin, account id, username, role),
+  the cached conversation list and envelopes, the decrypted history and
+  reactions, pins, starred messages, conversation preferences and the K2
+  history namespace. Nothing else.
+- **Never carried:** the bearer token, the device secret, the session's
+  device id, the sealed MLS state (the format 4 root and its
+  `local_crypto_records` rows, D70), its state key, the plain and MLS
+  outboxes, pending pin commands and the sync cursor. A stolen backup and
+  its recovery code therefore cannot sign in, and cannot act as the device
+  that made it in any MLS group. `mobile/test/backup_no_credentials_test.dart`
+  scans the plaintext for each of them.
+- **The old device id still appears as data.** History rows keep their
+  `senderDeviceId`, and message keys are `<sender device id>:<action id>`,
+  so the old device's id is in the history of the messages it sent (and
+  in K2 history provenance as `source_device_id`). It only labels those
+  rows: it is not a credential, and without the device secret it signs
+  nothing in.
+- **Restore makes no device.** It writes the history and an account-only
+  session (empty token, no device), sync cursor 0 and no MLS state. Any
+  root and records already on the device are deleted in the same
+  transaction, so none are left or mixed
+  (`mobile/test/d70_backup_records_test.dart`).
+  Outgoing rows still pending are not restored: without the outboxes they
+  could never be sent. Sync does not start. The device then joins the
+  account as a new device. Today that means a device link from a
+  signed-in device. Saving the linked
+  session over the account-only one keeps the restored history when the
+  server and account match; any other account drops it. The linked device
+  starts fresh MLS state and publishes key packages. Its groups add it by
+  reconcile (I51), and D54 placeholders cover what it cannot decrypt. A
+  second restore over an account-only session is refused
+  (`deviceNotEmpty`).
+- **Password-only finish (D71) is not built yet.** Password sign-in needs
+  the device's id and secret (`login` in `auth_handlers.go`), which a
+  backup no longer has. Finishing a restore with a password alone needs
+  K0's recovery-enrollment route (`docs/designs/K0-long-lived-key.md`, "All
+  devices lost").
+- **Older backups (v1-v5)** still restore. Their session must still bind
+  to their `account_id` and `device_id`. After that check, the token,
+  device secret, MLS state and key, outboxes, pending pin commands and
+  cursor are dropped unread. A restore never keeps them.
+- `state_counter` in the upload's `crypto_metadata` is still the device's
+  MLS counter, so the server's monotonic check is unchanged. It is a
+  number, not state.
+
 ## Change log since the Stage 1 freeze
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **K0 R1, recovery key and recovery proof, ABI 11 (2026-11-01):**
+  additive; the Dart binding and the header now pin ABI 11 exactly. Design:
+  [`K0-recovery-enrollment.md`](designs/K0-recovery-enrollment.md) (D78).
+  - **New symbols.** `pm_crypto_recovery_key_generate` (30 bytes of OS
+    entropy), `_encode` and `_decode` (52 Crockford base32 characters of
+    entropy ‖ `SHA-256("veritra-k0-rk-check-v1" ‖ entropy)[0..2]`; decode is
+    case-insensitive, reads O as 0 and I/L as 1, ignores `-` and spaces, and
+    refuses any other symbol, a wrong check or non-zero padding bits),
+    `pm_crypto_recovery_key_derive` (`rk_pub`, `rk_id`, `rk_auth_pub`) and
+    `pm_crypto_recovery_proof_sign`.
+  - **Derivation.** PRK = HKDF-Extract(SHA-256, salt `veritra-k0-v1`, ikm
+    entropy). `HKDF-Expand(PRK, "veritra-k0 recovery-hpke", 32)` feeds RFC
+    9180 DeriveKeyPair (DHKEM X25519) for `rk_pub`; `rk_id =
+    SHA-256("veritra-k0-rk-id-v1" ‖ rk_pub)[0..16]`; `HKDF-Expand(PRK,
+    "veritra-k0 recovery-auth", 32)` is the Ed25519 seed of `rk_auth_pub`.
+    `L` stays reserved and unused. No private key or seed crosses the ABI;
+    the entropy does (owned, zero-on-free buffers), because the app shows it.
+  - **Proof.** Ed25519 by the RK auth key over exactly what
+    `recoveryProofMessage` (`account_recovery_handlers.go`) rebuilds:
+    `"veritra-k0-recovery-proof-v1" | lp(challenge) | signing_key (32) |
+    SHA-256(key_package) | lp(origin)`, lp a u16 big-endian length. The label
+    is fixed in Rust, so the key signs nothing else. Bounds: challenge 1 to
+    4096 bytes, key package 1 byte to 48 KiB, origin 1 to 2048 bytes of UTF-8
+    with no control or space characters; anything else is
+    `PM_CRYPTO_INVALID_ARGUMENT`.
+  - **Known-answer vector.** `testing/vectors/k0-recovery-v1.json`, checked
+    by `crypto/rust/src/recovery_tests.rs`, by
+    `server/internal/httpapi/account_recovery_vector_test.go` (which derives
+    the display, `rk_pub`, `rk_id` and `rk_auth_pub` again with Go's own
+    HKDF, X25519 and Ed25519, rebuilds the message with the production
+    `recoveryProofMessage`, verifies the signature and reproduces it byte for
+    byte) and by `mobile/test/k0_recovery_native_test.dart`.
+  - **Dependency.** `ed25519-dalek` 2.2.0 (BSD-3-Clause) becomes a direct
+    dependency (D78); it was already built through `openmls_basic_credential`
+    and `openmls_rust_crypto`, so only the direct edge is added to
+    `Cargo.lock`.
+  - No server, payload or schema change. The app does not call these yet:
+    R3 (setup) and R4 (recovery) wire them.
+
+- **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
+  ABI, payload or schema change. In a legacy group (no recorded roster),
+  the `coordinator_device_id` that `GET /api/v1/mls/revocations` reports now
+  skips devices with no evidence of a leaf. Evidence means the device sent
+  an MLS message in the conversation, received a Welcome there, or is no
+  newer than the oldest retained MLS message. Revocations queued in a legacy
+  group store such a coordinator and require confirmations only from such
+  devices. A device recovered through K0 has no leaf, so it is skipped while
+  the group keeps an MLS message older than the device. Known limit
+  (accepted; legacy groups come only from pre-I51 data and there are no real
+  users, D55): once sync retention prunes every older message, the third
+  rule admits it again and a revocation can wait on it. A durable per-group
+  low-water mark would close this and needs a schema change.
+
+- **D70 S3, per-record sealed state, ABI 10 (2026-10-31):** sealed state
+  format 4 (see "Sealed state, format 4" above). ABI 10 removes
+  `pm_crypto_device_restore` and `pm_crypto_device_seal_state` and adds
+  `pm_crypto_device_seal_changes`, `pm_crypto_restore_begin`, `_add`,
+  `_finish` and `_abort`, `pm_crypto_device_migrate_v3`,
+  `pm_crypto_group_delete`, `pm_crypto_device_prune_key_packages`, and the
+  codes `PM_CRYPTO_RECORD_LIMIT` (-8) and
+  `PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE` (-9, D74). The Dart bindings
+  pin ABI 10 exactly. No server or payload change; schema 16 (S2) holds the
+  records.
+  - **Behaviour changes.** A device that applies its own removal no longer
+    keeps an inactive group: `groupEpoch` is null and later messages are
+    D54 placeholders. A Welcome for a missing or expired key package is a
+    notice row instead of a sync stop. Key packages are capped at 1,000.
+  - **Migration.** One way, at activation, in one compare-and-swap
+    transaction that does not move the sync cursor. A build before ABI 10
+    cannot read the migrated state; it reports `stateFormatUnsupported`.
+  - **App wiring (S4, 2026-11-01).** A caught-up foreground sync pass
+    prunes expired key packages (at most every 6 hours); replenishment
+    prunes first and keeps a partial batch, so the 1,000 cap never blocks
+    it for good. Leaving a conversation notes it durably; the next
+    foreground pass (or a Welcome for that conversation, foreground only)
+    calls `deleteConversationState`, which also settles its queued MLS
+    messages. `PM_CRYPTO_RECORD_LIMIT` rolls back and shows a localized
+    message; in sync it is a `recordLimit` stop that names the
+    conversation and offers to leave it.
+  - Tests: `crypto/rust/src/mls/records_tests.rs`,
+    `crypto/rust/src/ffi/records_tests.rs`,
+    `crypto/rust/tests/rejoin_after_removal.rs`,
+    `mobile/test/d70_crypto_records_changes_test.dart`,
+    `mobile/test/d70_native_records_service_test.dart`.
 
 - **D54, undecryptable peer messages (2026-10-31, owner decision):** no
   ABI, payload, schema or server change. A peer's application message or
@@ -386,8 +630,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     above, migration 0044). Before, it skipped that check by asking from
     event 0.
   - **Tests.** `mobile/test/sync_recovery_test.dart` ("signing in again
-    as the same identity") covers both stores. The demo e2e covers a
-    restore after sign-out followed by sign-in.
+    as the same identity") covers both stores. Since D71 the demo e2e
+    covers a restore that finishes by linking from another device.
 
 - **Periodic self-update (2026-10-31, research round 2):** no payload or
   local schema change, no new symbol and no ABI number change; server

@@ -9,6 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
+import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
@@ -134,11 +135,159 @@ class StoredCryptoState {
     required this.counter,
     required this.stateKey,
     required this.sealedState,
+    this.changes = const <CryptoRecordChange>[],
   });
 
   final int counter;
   final List<int> stateKey;
+
+  /// The root (format 4) or, before migration, the whole format 2/3 state.
   final List<int> sealedState;
+
+  /// The record writes and deletes that go with [sealedState] (D70). They
+  /// are applied in the same transaction as the root, never on their own.
+  /// A loaded state carries none: the records are read separately.
+  final List<CryptoRecordChange> changes;
+}
+
+/// Record kinds of the sealed MLS state (D70): 1 the device record, 2 one
+/// group, 3 one key package. Kind 0 is the root, kept in the singleton.
+const int cryptoRecordKindDevice = 1;
+const int cryptoRecordKindGroup = 2;
+const int cryptoRecordKindKeyPackage = 3;
+
+/// The largest sealed record the native library writes or reads: a 32 MiB
+/// group plus the record overhead (D70 caps).
+const int maxSealedCryptoRecordBytes = 32 * 1024 * 1024 + 4096;
+const int _maxCryptoRecordIdBytes = 255;
+
+/// One change to a sealed MLS record: an upsert of [sealed], or a delete
+/// when [sealed] is null.
+class CryptoRecordChange {
+  const CryptoRecordChange({
+    required this.kind,
+    required this.recordId,
+    required this.generation,
+    required this.sealed,
+  });
+
+  final int kind;
+  final List<int> recordId;
+  final int generation;
+  final List<int>? sealed;
+}
+
+/// One sealed MLS record of the per-record state (D70, format 4), as the
+/// root in [StoredCryptoState.sealedState] lists it. Every path that drops
+/// the crypto state drops them with it.
+class StoredCryptoRecord {
+  StoredCryptoRecord({
+    required this.kind,
+    required this.recordId,
+    required this.generation,
+    required this.sealed,
+  });
+
+  final int kind;
+  final List<int> recordId;
+  final int generation;
+  final List<int> sealed;
+}
+
+/// A device enrollment that is not an active session yet (schema 17): a K0
+/// account recovery claim, or a K2 v3 device link before promotion. It
+/// holds bearer credentials ([payloadJson]) and the new identity's sealed
+/// MLS state, so it stays in the encrypted local store and is never in a
+/// backup or a history snapshot (D71, D73). A device holds at most one.
+class PendingEnrollment {
+  const PendingEnrollment({
+    required this.kind,
+    required this.origin,
+    required this.accountId,
+    required this.deviceId,
+    required this.payloadJson,
+    this.state,
+  });
+
+  static const kindAccountRecovery = pendingEnrollmentKindAccountRecovery;
+  static const kindDeviceLinkV3 = pendingEnrollmentKindDeviceLinkV3;
+
+  final String kind;
+
+  /// The canonical server origin the enrollment was made with.
+  final String origin;
+  final String accountId;
+  final String deviceId;
+
+  /// The kind's own fields, credentials included. Never log it.
+  final String payloadJson;
+
+  /// The new identity's sealed MLS state, with its records in
+  /// [StoredCryptoState.changes]; null before the identity exists (a K2
+  /// reservation). Frozen once stored.
+  final StoredCryptoState? state;
+
+  PendingEnrollmentRow _toRow() {
+    final state = this.state;
+    return PendingEnrollmentRow(
+      kind: kind,
+      origin: origin,
+      accountId: accountId,
+      deviceId: deviceId,
+      payloadJson: payloadJson,
+      state: state == null
+          ? null
+          : PendingEnrollmentState(
+              counter: state.counter,
+              stateKey: List<int>.from(state.stateKey),
+              root: List<int>.from(state.sealedState),
+              records: [
+                for (final change in state.changes)
+                  (
+                    kind: change.kind,
+                    recordId: List<int>.from(change.recordId),
+                    generation: change.generation,
+                    sealed: change.sealed == null
+                        ? null
+                        : List<int>.from(change.sealed!),
+                  ),
+              ],
+            ),
+    );
+  }
+
+  static PendingEnrollment? _fromRow(PendingEnrollmentRow? row) {
+    if (row == null) return null;
+    final state = row.state;
+    return PendingEnrollment(
+      kind: row.kind,
+      origin: row.origin,
+      accountId: row.accountId,
+      deviceId: row.deviceId,
+      payloadJson: row.payloadJson,
+      state: state == null
+          ? null
+          : StoredCryptoState(
+              counter: state.counter,
+              stateKey: List<int>.from(state.stateKey),
+              sealedState: List<int>.from(state.root),
+              changes: [
+                for (final record in state.records)
+                  CryptoRecordChange(
+                    kind: record.kind,
+                    recordId: List<int>.from(record.recordId),
+                    generation: record.generation,
+                    sealed: record.sealed == null
+                        ? null
+                        : List<int>.from(record.sealed!),
+                  ),
+              ],
+            ),
+    );
+  }
+
+  @override
+  String toString() => 'PendingEnrollment($kind)';
 }
 
 class MlsStateTransition {
@@ -257,23 +406,49 @@ class OutgoingApplicationStateTransition {
   final List<MessageEffect> messageEffects;
 }
 
-const int backupFormatVersion = 5;
+/// The backup plaintext format. Version 6 (D71, D73) carries the account
+/// and the local history only: no bearer token, no device id or secret, no
+/// MLS state or its key, no outboxes and no sync cursor, so a stolen backup
+/// cannot sign in or act as the device that made it. Versions 1 to 5 still
+/// restore; their credentials, MLS state, outboxes and cursor are dropped
+/// (see [restoredAccountSession]).
+const int backupFormatVersion = 6;
+
+/// The session a restore leaves: the account a backup belongs to, signed
+/// out, with no device. Its history waits for this device to be enrolled
+/// into the same account (today by a device link); [LocalStore.saveSession]
+/// keeps the history for that account and drops it for any other.
+Session restoredAccountSession({
+  required String baseUrl,
+  required String accountId,
+  String? username,
+  String? role,
+}) =>
+    Session(
+      baseUrl: baseUrl,
+      token: '',
+      accountId: accountId,
+      username: username,
+      role: role,
+    );
+
+/// Whether [session] is what a restore left ([restoredAccountSession]).
+bool isRestoredAccountSession(Session session) =>
+    session.token.isEmpty &&
+    (session.deviceId?.isEmpty ?? true) &&
+    (session.deviceSecret?.isEmpty ?? true) &&
+    (session.accountId?.isNotEmpty ?? false);
 
 class LocalBackupData {
   const LocalBackupData({
     required this.session,
-    required this.cursor,
     required this.conversations,
     required this.messages,
-    required this.outbox,
-    required this.mlsOutbox,
-    required this.cryptoState,
     this.history = const <LocalMessage>[],
     this.reactions = const <LocalMessageReaction>[],
     this.formatVersion = backupFormatVersion,
     this.expiryBackfillIds = const <String>{},
     this.pins = const [],
-    this.pendingPins = const [],
     this.starred = const {},
     this.conversationPrefs = const [],
     this.historyNamespace,
@@ -285,7 +460,6 @@ class LocalBackupData {
   /// an entry that carries the key, null or not, is taken as it is.
   final Set<String> expiryBackfillIds;
   final List<LocalPin> pins;
-  final List<LocalPendingPin> pendingPins;
   final Map<String, int> starred;
   final List<LocalConversationPref> conversationPrefs;
   final HistoryNamespace? historyNamespace;
@@ -298,13 +472,11 @@ class LocalBackupData {
   final List<LocalMessage> history;
   final List<LocalMessageReaction> reactions;
 
+  /// When writing, the active session (only its account fields are
+  /// written). When read, always a [restoredAccountSession].
   final Session session;
-  final int cursor;
   final List<Conversation> conversations;
   final Map<String, List<ReceivedMessageEnvelope>> messages;
-  final List<MessageEnvelope> outbox;
-  final List<PendingMlsMessage> mlsOutbox;
-  final StoredCryptoState cryptoState;
 }
 
 class PendingEnvelopeRecord {
@@ -452,6 +624,42 @@ abstract class LocalStore {
     String? resolvedMlsOutboxKey,
   });
   Future<StoredCryptoState?> loadCryptoState();
+
+  /// The device's pending enrollment, or null. Kept by sign-out with a kept
+  /// device, an identity change and a backup restore (as schema 16 kept the
+  /// K0 claim's setting); dropped by [clear].
+  Future<PendingEnrollment?> loadPendingEnrollment();
+
+  /// Stores [enrollment]. Throws [PendingEnrollmentConflict] while another
+  /// one (kind, origin, account or device) is pending, or when it would
+  /// change a stored MLS state; one without a state keeps the stored state.
+  Future<void> savePendingEnrollment(PendingEnrollment enrollment);
+
+  /// Deletes the pending enrollment if it is of [kind] (and [deviceId],
+  /// when given). Returns whether one was deleted.
+  Future<bool> deletePendingEnrollment(
+      {required String kind, String? deviceId});
+
+  /// The sealed MLS records (D70), ordered by kind, then id. Cleared with
+  /// the crypto state.
+  Future<List<StoredCryptoRecord>> loadCryptoRecords();
+
+  /// The crypto state and its records, read together so a restore never
+  /// mixes two states (D70).
+  Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
+      loadCryptoSnapshot();
+
+  /// The one-way format 2/3 to format 4 migration (D70 section 5): replaces
+  /// the stored state only if it is still [expectedSealedState] at
+  /// [expectedCounter], drops any records left beside it, and writes
+  /// [state] (one counter on, every record in [StoredCryptoState.changes])
+  /// in one transaction. The sync cursor does not move.
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required StoredCryptoState state,
+    void Function()? checkCanCommit,
+  });
   Future<List<int>> exportHistorySnapshot();
   Future<void> importHistorySnapshot(
       List<int> encoded, HistoryImportContext context);
@@ -542,6 +750,11 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, PendingEnvelopeRecord> _outboxRecords =
       <String, PendingEnvelopeRecord>{};
   StoredCryptoState? _cryptoState;
+
+  /// Sealed MLS records (D70) by `kind:hex(recordId)`. Dropped wherever
+  /// [_cryptoState] is.
+  final Map<String, StoredCryptoRecord> _cryptoRecords =
+      <String, StoredCryptoRecord>{};
   final Set<String> _processedMlsMessages = <String>{};
   final Map<String, PendingMlsMessage> _mlsOutbox =
       <String, PendingMlsMessage>{};
@@ -592,10 +805,11 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<void> saveSession(Session session) async {
-    if (_session != null && _identity(_session!) != _identity(session)) {
+    if (_session != null && _identityChanged(_session!, session)) {
       await clearCachedState();
       _syncCursor = 0;
       _cryptoState = null;
+      _cryptoRecords.clear();
       _processedMlsMessages.clear();
       _mlsOutbox.clear();
       _peerVerifications.clear();
@@ -738,8 +952,28 @@ class MemoryLocalStore implements LocalStore {
     if (_cryptoState != null && state.counter <= _cryptoState!.counter) {
       throw StateError('crypto state counter must increase');
     }
-    _cryptoState = _copyCryptoState(state);
+    _cryptoRecords.clear();
+    _setCryptoState(state);
     _syncCursor = syncCursor;
+  }
+
+  /// Stores [state] and applies its record changes, as one step.
+  void _setCryptoState(StoredCryptoState state) {
+    for (final change in state.changes) {
+      final key = _cryptoRecordKey(change.kind, change.recordId);
+      final sealed = change.sealed;
+      if (sealed == null) {
+        _cryptoRecords.remove(key);
+      } else {
+        _cryptoRecords[key] = StoredCryptoRecord(
+          kind: change.kind,
+          recordId: List<int>.from(change.recordId),
+          generation: change.generation,
+          sealed: List<int>.from(sealed),
+        );
+      }
+    }
+    _cryptoState = _copyCryptoState(state);
   }
 
   @override
@@ -796,7 +1030,7 @@ class MemoryLocalStore implements LocalStore {
     _noticeState = nextNotices;
     _history = nextHistory;
     _historyNamespace = nextNamespace;
-    _cryptoState = _copyCryptoState(transition.state);
+    _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     final resolved = transition.resolvedMlsOutboxKey;
     if (resolved != null) _mlsOutbox.remove(resolved);
@@ -892,7 +1126,7 @@ class MemoryLocalStore implements LocalStore {
         .any((message) => _mlsOutbox.containsKey(message.idempotencyKey))) {
       throw StateError('duplicate MLS outbox idempotency key');
     }
-    _cryptoState = _copyCryptoState(transition.state);
+    _setCryptoState(transition.state);
     for (final message in transition.messages) {
       _mlsOutbox[message.idempotencyKey] = message;
     }
@@ -939,7 +1173,7 @@ class MemoryLocalStore implements LocalStore {
       throw const OutboxFullException();
     }
     _applyHistoryEffects(transition.messageEffects);
-    _cryptoState = _copyCryptoState(transition.state);
+    _setCryptoState(transition.state);
     final sentText = transition.draftText;
     final draft = _drafts[transition.envelope.conversationId];
     if (sentText != null &&
@@ -964,13 +1198,80 @@ class MemoryLocalStore implements LocalStore {
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
-    _cryptoState = _copyCryptoState(state);
+    _setCryptoState(state);
     if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
   @override
   Future<StoredCryptoState?> loadCryptoState() async =>
       _cryptoState == null ? null : _copyCryptoState(_cryptoState!);
+
+  PendingEnrollmentRow? _pendingEnrollment;
+
+  @override
+  Future<PendingEnrollment?> loadPendingEnrollment() async =>
+      PendingEnrollment._fromRow(_pendingEnrollment);
+
+  @override
+  Future<void> savePendingEnrollment(PendingEnrollment enrollment) async {
+    _pendingEnrollment =
+        mergePendingEnrollment(_pendingEnrollment, enrollment._toRow());
+  }
+
+  @override
+  Future<bool> deletePendingEnrollment(
+      {required String kind, String? deviceId}) async {
+    final existing = _pendingEnrollment;
+    if (existing == null ||
+        existing.kind != kind ||
+        (deviceId != null && existing.deviceId != deviceId)) {
+      return false;
+    }
+    _pendingEnrollment = null;
+    return true;
+  }
+
+  @override
+  Future<List<StoredCryptoRecord>> loadCryptoRecords() async {
+    final keys = _cryptoRecords.keys.toList()..sort();
+    return [for (final k in keys) _copyCryptoRecord(_cryptoRecords[k]!)];
+  }
+
+  @override
+  Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
+      loadCryptoSnapshot() async =>
+          (state: await loadCryptoState(), records: await loadCryptoRecords());
+
+  @override
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required StoredCryptoState state,
+    void Function()? checkCanCommit,
+  }) async {
+    checkCanCommit?.call();
+    _validateCryptoMigration(state);
+    final current = _cryptoState;
+    if (current == null ||
+        current.counter != expectedCounter ||
+        state.counter != expectedCounter + 1 ||
+        !_bytesEqual(current.sealedState, expectedSealedState) ||
+        !_bytesEqual(current.stateKey, state.stateKey)) {
+      throw StateError('stale or changed crypto state migration');
+    }
+    _cryptoRecords.clear();
+    _setCryptoState(state);
+  }
+
+  /// Puts records in place directly, so tests can check that every
+  /// crypto-state clear drops them (D70 S2).
+  @visibleForTesting
+  void seedCryptoRecordsForTest(Iterable<StoredCryptoRecord> records) {
+    for (final r in records) {
+      _cryptoRecords[_cryptoRecordKey(r.kind, r.recordId)] =
+          _copyCryptoRecord(r);
+    }
+  }
 
   void _applyHistoryEffects(List<MessageEffect> effects) {
     final next = _history.copy();
@@ -1102,12 +1403,8 @@ class MemoryLocalStore implements LocalStore {
     final nowMs = now.millisecondsSinceEpoch;
     return _encodeBackup(LocalBackupData(
       session: activeSession,
-      cursor: _syncCursor,
       conversations: _snapshot?.conversations ?? const <Conversation>[],
       messages: _withoutExpired(_snapshot?.messagesByConversation, now),
-      outbox: List<MessageEnvelope>.from(_outbox),
-      mlsOutbox: _mlsOutbox.values.toList(growable: false),
-      cryptoState: _copyCryptoState(state),
       history: _history
           .allMessages()
           .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
@@ -1115,7 +1412,6 @@ class MemoryLocalStore implements LocalStore {
       reactions: _history.allReactions(),
       pins: _history.pins.values.toList(),
       starred: _history.starred,
-      pendingPins: _history.pendingPins.values.toList(),
       conversationPrefs: _conversationPrefs.values.toList(),
       historyNamespace: _historyNamespace,
     ));
@@ -1124,44 +1420,32 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> restoreBackup(List<int> encoded) async {
     final backup = _decodeBackup(encoded);
-    final historyCounter =
-        _session != null && _identity(_session!) == _identity(backup.session)
-            ? _historyNamespace.counter
-            : 0;
-    if (_cryptoState != null &&
-        backup.cryptoState.counter < _cryptoState!.counter) {
-      throw StateError('backup would roll MLS state backward');
-    }
+    // Like a freshly linked device (D71, D73): no MLS state, no outboxes,
+    // and sync starts from the beginning once a device is enrolled.
     _session = backup.session;
-    _syncCursor = backup.cursor;
+    _syncCursor = 0;
     _snapshot = CachedSnapshot(
-        cursor: backup.cursor,
+        cursor: 0,
         conversations: backup.conversations,
         messagesByConversation: backup.messages);
-    _outbox
-      ..clear()
-      ..addAll(backup.outbox);
-    _outboxRecords
-      ..clear()
-      ..addEntries(backup.outbox.map((item) => MapEntry(
-          item.idempotencyKey,
-          PendingEnvelopeRecord(
-              envelope: item, attemptCount: 0, terminal: false))));
-    _mlsOutbox
-      ..clear()
-      ..addEntries(
-          backup.mlsOutbox.map((item) => MapEntry(item.idempotencyKey, item)));
-    _cryptoState = _copyCryptoState(backup.cryptoState);
+    _outbox.clear();
+    _outboxRecords.clear();
+    _mlsOutbox.clear();
+    _cryptoState = null;
+    _cryptoRecords.clear();
     _processedMlsMessages.clear();
-    _history.replace(backup.history, backup.reactions);
+    _peerVerifications.clear();
+    final kept = withoutPendingHistory(
+        history: backup.history,
+        reactions: backup.reactions,
+        pins: backup.pins,
+        starred: backup.starred);
+    _history.replace(kept.history, kept.reactions);
     _noticeState = LocalNoticeState();
     _historyNamespace = backup.historyNamespace?.copy() ?? HistoryNamespace();
-    if (_historyNamespace.counter < historyCounter)
-      _historyNamespace.counter = historyCounter;
-    _history.pins.addEntries(backup.pins.map((p) => MapEntry(p.targetKey, p)));
-    _history.pendingPins
-        .addEntries(backup.pendingPins.map((p) => MapEntry(p.actionKey, p)));
-    _history.starred.addAll(backup.starred);
+    _history.pins.addEntries(kept.pins.map((p) => MapEntry(p.targetKey, p)));
+    _history.pendingPins.clear();
+    _history.starred.addAll(kept.starred);
     _conversationPrefs
       ..clear()
       ..addEntries(
@@ -1200,8 +1484,10 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> clear() async {
     _noticeState = LocalNoticeState();
+    _pendingEnrollment = null;
     _session = null;
     _cryptoState = null;
+    _cryptoRecords.clear();
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
     _peerVerifications.clear();
@@ -1817,8 +2103,7 @@ class SecureLocalStore implements LocalStore {
   Future<void> saveSession(Session session) async {
     final database = await _database();
     final previous = _sessionFromJson(await database.readSessionJson());
-    final changed =
-        previous != null && _identity(previous) != _identity(session);
+    final changed = previous != null && _identityChanged(previous, session);
     await database.writeSessionJson(
       jsonEncode(_sessionJson(session)),
       clearIdentityState: changed,
@@ -1996,6 +2281,7 @@ class SecureLocalStore implements LocalStore {
       stateKey: state.stateKey,
       sealedState: state.sealedState,
       cursor: syncCursor,
+      recordChanges: _recordWrites(state),
     );
   }
 
@@ -2024,6 +2310,7 @@ class SecureLocalStore implements LocalStore {
               ))
           .toList(growable: false),
       deletedEnvelopeIds: transition.deletedEnvelopeIds,
+      recordChanges: _recordWrites(transition.state),
       messageEffects: transition.messageEffects,
       failureInjector: _mlsCommitFailureInjector,
       leaseKey: _syncLeaseKey,
@@ -2086,6 +2373,7 @@ class SecureLocalStore implements LocalStore {
                 payload: message.payload,
               ))
           .toList(growable: false),
+      recordChanges: _recordWrites(transition.state),
       leaseKey: _syncLeaseKey,
     );
   }
@@ -2152,6 +2440,7 @@ class SecureLocalStore implements LocalStore {
         maxEntries: maxPendingEnvelopes,
         draftText: transition.draftText,
         messageEffects: transition.messageEffects,
+        recordChanges: _recordWrites(transition.state),
         leaseKey: _syncLeaseKey,
       );
     } on StateError catch (error) {
@@ -2177,6 +2466,7 @@ class SecureLocalStore implements LocalStore {
       counter: state.counter,
       stateKey: state.stateKey,
       sealedState: state.sealedState,
+      recordChanges: _recordWrites(state),
       leaseKey: _syncLeaseKey,
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
     );
@@ -2194,6 +2484,86 @@ class SecureLocalStore implements LocalStore {
     _validateCryptoState(state);
     return state;
   }
+
+  @override
+  Future<PendingEnrollment?> loadPendingEnrollment() async =>
+      PendingEnrollment._fromRow(
+          await (await _database()).readPendingEnrollment());
+
+  @override
+  Future<void> savePendingEnrollment(PendingEnrollment enrollment) async =>
+      (await _database()).writePendingEnrollment(enrollment._toRow());
+
+  @override
+  Future<bool> deletePendingEnrollment(
+          {required String kind, String? deviceId}) async =>
+      (await _database())
+          .deletePendingEnrollment(kind: kind, deviceId: deviceId);
+
+  @override
+  Future<List<StoredCryptoRecord>> loadCryptoRecords() async => [
+        for (final row in await (await _database()).readCryptoRecords())
+          _storedRecord(row),
+      ];
+
+  @override
+  Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
+      loadCryptoSnapshot() async {
+    final snapshot = await (await _database()).readCryptoSnapshot();
+    final row = snapshot.state;
+    StoredCryptoState? state;
+    if (row != null) {
+      state = StoredCryptoState(
+        counter: row.counter,
+        stateKey: row.stateKey,
+        sealedState: row.sealedState,
+      );
+      _validateCryptoState(state);
+    }
+    return (
+      state: state,
+      records: [for (final r in snapshot.records) _storedRecord(r)],
+    );
+  }
+
+  @override
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required StoredCryptoState state,
+    void Function()? checkCanCommit,
+  }) async {
+    _validateCryptoMigration(state);
+    await (await _database()).commitCryptoMigration(
+      expectedCounter: expectedCounter,
+      expectedSealedState: expectedSealedState,
+      counter: state.counter,
+      stateKey: state.stateKey,
+      sealedState: state.sealedState,
+      recordChanges: _recordWrites(state),
+      leaseKey: _syncLeaseKey,
+      failureInjector: _mlsCommitFailureInjector,
+      checkCanCommit: checkCanCommit,
+    );
+  }
+
+  static StoredCryptoRecord _storedRecord(LocalCryptoRecord row) =>
+      StoredCryptoRecord(
+        kind: row.kind,
+        recordId: List<int>.from(row.recordId),
+        generation: row.generation,
+        sealed: List<int>.from(row.sealed),
+      );
+
+  static List<CryptoRecordWrite> _recordWrites(StoredCryptoState state) => [
+        for (final change in state.changes)
+          (
+            kind: change.kind,
+            recordId: change.recordId,
+            generation: change.generation,
+            sealed: change.sealed,
+          ),
+      ];
 
   @override
   Future<List<LocalNoticeReference>> pendingNoticeReferences(
@@ -2260,35 +2630,25 @@ class SecureLocalStore implements LocalStore {
         throw StateError('complete authenticated crypto state is required');
       }
       // Rows past their expiry are not written to the backup, even when the
-      // purge has not removed them yet (W2).
+      // purge has not removed them yet (W2). The MLS state, the outboxes and
+      // the cursor stay on this device (D71, D73).
       final now = DateTime.now().toUtc();
       final nowMs = now.millisecondsSinceEpoch;
       return _encodeBackup(LocalBackupData(
         session: activeSession,
-        cursor: await loadSyncCursor(),
         conversations: snapshot?.conversations ?? const <Conversation>[],
         messages: _withoutExpired(snapshot?.messagesByConversation, now),
-        outbox: await pendingEnvelopes(),
-        mlsOutbox: await pendingMlsMessages(),
-        cryptoState: state,
-        history: (await (await _database()).readAllMessages())
+        history: (await database.readAllMessages())
             .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
             .toList(growable: false),
-        reactions: await (await _database()).readAllReactions(),
-        pins: await (await _database())
-            .select((await _database()).localPins)
-            .get(),
-        pendingPins: await (await _database())
-            .select((await _database()).localPendingPins)
-            .get(),
+        reactions: await database.readAllReactions(),
+        pins: await database.select(database.localPins).get(),
         starred: {
-          for (final row in await (await _database())
-              .select((await _database()).localStarred)
-              .get())
+          for (final row in await database.select(database.localStarred).get())
             row.messageKey: row.starredAt
         },
         conversationPrefs: await loadConversationPrefs(),
-        historyNamespace: await (await _database()).readHistoryNamespace(),
+        historyNamespace: await database.readHistoryNamespace(),
       ));
     });
   }
@@ -2296,10 +2656,6 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> restoreBackup(List<int> encoded) async {
     final backup = _decodeBackup(encoded);
-    final current = await loadCryptoState();
-    if (current != null && backup.cryptoState.counter < current.counter) {
-      throw StateError('backup would roll MLS state backward');
-    }
     await (await _database()).restoreBackupState(
       sessionJson: jsonEncode(_sessionJson(backup.session)),
       conversations: backup.conversations
@@ -2320,38 +2676,10 @@ class SecureLocalStore implements LocalStore {
               payloadJson: jsonEncode(entry.value[index].toJson())
             ),
       ],
-      outbox: backup.outbox
-          .map((item) => (
-                idempotencyKey: item.idempotencyKey,
-                conversationId: item.conversationId,
-                payloadJson: jsonEncode(item.toJson()),
-              ))
-          .toList(),
-      mlsOutbox: backup.mlsOutbox
-          .map((item) => (
-                idempotencyKey: item.idempotencyKey,
-                conversationId: item.conversationId,
-                kind: item.kind,
-                recipientDeviceId: item.recipientDeviceId,
-                revocationDeviceId: item.revocationDeviceId,
-                payload: item.payload,
-                attemptCount: item.attemptCount,
-                nextAttemptAt: item.nextAttemptAt?.millisecondsSinceEpoch,
-                failureClass: item.failureClass,
-                terminal: item.terminal,
-              ))
-          .toList(),
-      cryptoState: (
-        counter: backup.cryptoState.counter,
-        stateKey: backup.cryptoState.stateKey,
-        sealedState: backup.cryptoState.sealedState
-      ),
-      cursor: backup.cursor,
       history: backup.history,
       reactions: backup.reactions,
       backfillExpiryFor: backup.expiryBackfillIds,
       pins: backup.pins,
-      pendingPins: backup.pendingPins,
       starred: backup.starred,
       conversationPrefs: backup.conversationPrefs,
       historyNamespace: backup.historyNamespace,
@@ -3211,6 +3539,28 @@ bool _bytesEqual(List<int> left, List<int> right) {
 String _identity(Session session) =>
     '${session.baseUrl}|${session.accountId ?? ''}|${session.deviceId ?? ''}';
 
+/// Whether saving [next] over [previous] changes the identity, which drops
+/// that identity's local state. A restored account (no device yet, D71)
+/// keeps its restored history when a device of the same account on the
+/// same server is enrolled over it; any other account still drops it.
+bool _identityChanged(Session previous, Session next) {
+  if (isRestoredAccountSession(previous)) {
+    // The link canonicalizes the origin, so compare it the same way.
+    return _comparableOrigin(previous.baseUrl) !=
+            _comparableOrigin(next.baseUrl) ||
+        previous.accountId != next.accountId;
+  }
+  return _identity(previous) != _identity(next);
+}
+
+String _comparableOrigin(String baseUrl) {
+  try {
+    return canonicalizeServerOrigin(baseUrl);
+  } on FormatException {
+    return baseUrl;
+  }
+}
+
 Map<String, Object?> _sessionJson(Session session) => <String, Object?>{
       'base_url': session.baseUrl,
       'token': session.token,
@@ -3280,60 +3630,56 @@ StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
       sealedState: List<int>.from(state.sealedState),
     );
 
-List<int> _encodeBackup(LocalBackupData data) => utf8.encode(jsonEncode(
-      <String, Object?>{
-        'version': backupFormatVersion,
-        'history_namespace':
-            (data.historyNamespace ?? HistoryNamespace()).toJson(),
-        // Decrypted history (D27). Local only: the backup is encrypted with
-        // a key the server never sees.
-        'history': data.history.map((item) => item.toJson()).toList(),
-        'reactions': data.reactions.map((item) => item.toJson()).toList(),
-        'pins': data.pins.map((p) => p.toJson()).toList(),
-        'pending_pins': data.pendingPins.map((p) => p.toJson()).toList(),
-        'starred': data.starred,
-        'conversation_prefs':
-            data.conversationPrefs.map((p) => p.toJson()).toList(),
-        'account_id': data.session.accountId,
-        'device_id': data.session.deviceId,
-        'session': _sessionJson(data.session),
-        'cursor': data.cursor,
-        'conversations':
-            data.conversations.map((item) => item.toJson()).toList(),
-        'messages': <String, Object?>{
-          for (final entry in data.messages.entries)
-            entry.key: entry.value.map((item) => item.toJson()).toList(),
-        },
-        'outbox': data.outbox.map((item) => item.toJson()).toList(),
-        'mls_outbox': data.mlsOutbox
-            .map((item) => <String, Object?>{
-                  'idempotency_key': item.idempotencyKey,
-                  'conversation_id': item.conversationId,
-                  'kind': item.kind,
-                  if (item.recipientDeviceId != null)
-                    'recipient_device_id': item.recipientDeviceId,
-                  if (item.revocationDeviceId != null)
-                    'revocation_device_id': item.revocationDeviceId,
-                  'payload': base64Encode(item.payload),
-                  // Delivery state (I34): a terminal item keeps blocking its
-                  // conversation and a backed-off one keeps its wait. Older
-                  // backups lack these keys; they decode to the defaults.
-                  'attempt_count': item.attemptCount,
-                  if (item.nextAttemptAt != null)
-                    'next_attempt_at':
-                        item.nextAttemptAt!.toUtc().millisecondsSinceEpoch,
-                  if (item.failureClass != null)
-                    'failure_class': item.failureClass,
-                  'terminal': item.terminal,
-                })
-            .toList(),
-        'crypto_state': <String, Object?>{
-          'counter': data.cryptoState.counter,
-          'state_key': base64Encode(data.cryptoState.stateKey),
-          'sealed_state': base64Encode(data.cryptoState.sealedState),
-        },
+StoredCryptoRecord _copyCryptoRecord(StoredCryptoRecord r) =>
+    StoredCryptoRecord(
+      kind: r.kind,
+      recordId: List<int>.from(r.recordId),
+      generation: r.generation,
+      sealed: List<int>.from(r.sealed),
+    );
+
+/// Sorts like SQLite's (kind, record_id BLOB) order: hex keeps byte order.
+String _cryptoRecordKey(int kind, List<int> recordId) =>
+    '${kind.toString().padLeft(5, '0')}:'
+    '${recordId.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
+
+List<int> _encodeBackup(LocalBackupData data) {
+  final accountId = data.session.accountId;
+  if (accountId == null || accountId.isEmpty) {
+    throw StateError('backup needs an account');
+  }
+  return utf8.encode(jsonEncode(
+    <String, Object?>{
+      'version': backupFormatVersion,
+      'history_namespace':
+          (data.historyNamespace ?? HistoryNamespace()).toJson(),
+      // Decrypted history (D27). Local only: the backup is encrypted with
+      // a key the server never sees.
+      'history': data.history.map((item) => item.toJson()).toList(),
+      'reactions': data.reactions.map((item) => item.toJson()).toList(),
+      'pins': data.pins.map((p) => p.toJson()).toList(),
+      'starred': data.starred,
+      'conversation_prefs':
+          data.conversationPrefs.map((p) => p.toJson()).toList(),
+      // The account only (D71): never the bearer token, the device id or
+      // the device secret, so the backup cannot sign in as this device.
+      'account': <String, Object?>{
+        'base_url': data.session.baseUrl,
+        'account_id': accountId,
+        if (data.session.username != null) 'username': data.session.username,
+        if (data.session.role != null) 'role': data.session.role,
       },
-    ));
+      'conversations': data.conversations.map((item) => item.toJson()).toList(),
+      'messages': <String, Object?>{
+        for (final entry in data.messages.entries)
+          entry.key: entry.value.map((item) => item.toJson()).toList(),
+      },
+      // No MLS state or its key (D73), no outboxes (their payloads belong
+      // to that state) and no sync cursor: a restored device re-joins its
+      // groups like a freshly linked one.
+    },
+  ));
+}
 
 LocalBackupData _decodeBackup(List<int> encoded) {
   if (encoded.isEmpty || encoded.length > 64 * 1024 * 1024) {
@@ -3366,16 +3712,8 @@ LocalBackupData _decodeBackup(List<int> encoded) {
             .map((item) => LocalMessageReaction.fromJson(
                 Map<String, dynamic>.from(item as Map)))
             .toList(growable: false);
-    final session = _sessionFrom(root['session']);
-    final crypto = _cryptoStateFrom(root['crypto_state']);
-    if (session == null ||
-        crypto == null ||
-        session.accountId == null ||
-        session.deviceId == null ||
-        root['account_id'] != session.accountId ||
-        root['device_id'] != session.deviceId) {
-      throw const FormatException('backup identity binding mismatch');
-    }
+    final session =
+        version < 6 ? _legacyBackupAccount(root) : _backupAccount(root);
     final conversations = (root['conversations'] as List)
         .map((item) =>
             Conversation.fromJson(Map<String, Object?>.from(item as Map)))
@@ -3388,47 +3726,13 @@ LocalBackupData _decodeBackup(List<int> encoded) {
               Map<String, Object?>.from(item as Map)))
           .toList(growable: false);
     }
-    final outbox = (root['outbox'] as List)
-        .map((item) =>
-            MessageEnvelope.fromJson(Map<String, Object?>.from(item as Map)))
-        .toList(growable: false);
-    final mlsOutbox = (root['mls_outbox'] as List).map((item) {
-      final value = Map<String, Object?>.from(item as Map);
-      return PendingMlsMessage(
-        idempotencyKey: value['idempotency_key'] as String,
-        conversationId: value['conversation_id'] as String,
-        kind: value['kind'] as String,
-        recipientDeviceId: value['recipient_device_id'] as String?,
-        revocationDeviceId: value['revocation_device_id'] as String?,
-        payload: base64Decode(value['payload'] as String),
-        attemptCount: _optionalBackupInt(value, 'attempt_count') ?? 0,
-        nextAttemptAt: switch (_optionalBackupInt(value, 'next_attempt_at')) {
-          null => null,
-          final millis =>
-            DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true),
-        },
-        failureClass: switch (value['failure_class']) {
-          null => null,
-          final String failureClass => failureClass,
-          _ => throw const FormatException('invalid backup failure class'),
-        },
-        terminal: switch (value['terminal']) {
-          null => false,
-          final bool terminal => terminal,
-          _ => throw const FormatException('invalid backup terminal flag'),
-        },
-      );
-    }).toList(growable: false);
-    final cursor = (root['cursor'] as num).toInt();
-    if (cursor < 0) throw const FormatException('invalid backup cursor');
+    // Versions 1 to 5 also carry the outboxes, pending pin commands, the
+    // cursor and the MLS state with its key. They belong to the device that
+    // made the backup and are dropped unread (D71, D73).
     return LocalBackupData(
         session: session,
-        cursor: cursor,
         conversations: conversations,
         messages: messages,
-        outbox: outbox,
-        mlsOutbox: mlsOutbox,
-        cryptoState: crypto,
         history: history,
         reactions: reactions,
         formatVersion: version,
@@ -3441,32 +3745,6 @@ LocalBackupData _decodeBackup(List<int> encoded) {
                 .map((p) =>
                     LocalPin.fromJson(Map<String, dynamic>.from(p as Map)))
                 .toList(),
-        pendingPins: version < 4
-            ? const []
-            : (root['pending_pins'] as List)
-                .map((p) => LocalPendingPin.fromJson(
-                    Map<String, dynamic>.from(p as Map)))
-                .where((p) {
-                if (p.pinned &&
-                    !const [86400, 604800, 2592000].contains(p.durationSeconds))
-                  throw const FormatException('invalid backup pin command');
-                return p.accountId == session.accountId &&
-                    p.actionKey.startsWith('${session.deviceId}:') &&
-                    (outbox.any((o) =>
-                            '${session.deviceId}:${o.idempotencyKey}' ==
-                                p.actionKey &&
-                            o.conversationId == p.conversationId) ||
-                        history.any((m) =>
-                            m.key == p.actionKey &&
-                            m.senderAccountId == session.accountId &&
-                            m.senderDeviceId == session.deviceId &&
-                            m.conversationId == p.conversationId &&
-                            m.channelId == p.channelId &&
-                            m.kind == LocalMessageKind.action &&
-                            m.state == LocalMessageState.pending &&
-                            m.hiddenAt == null &&
-                            m.deletedAt == null));
-              }).toList(),
         starred: version < 4
             ? const {}
             : Map<String, int>.from(root['starred'] as Map),
@@ -3483,15 +3761,46 @@ LocalBackupData _decodeBackup(List<int> encoded) {
   }
 }
 
-/// A non-negative integer under [name] in a backup entry, or null when the
-/// key is absent (an older backup).
-int? _optionalBackupInt(Map<String, Object?> value, String name) {
-  final raw = value[name];
-  if (raw == null) return null;
-  if (raw is! int || raw < 0) {
-    throw FormatException('invalid backup $name');
+/// The account of a version 6 backup, as a [restoredAccountSession].
+Session _backupAccount(Map<String, Object?> root) {
+  final account = Map<String, Object?>.from(root['account'] as Map);
+  final baseUrl = account['base_url'];
+  final accountId = account['account_id'];
+  final username = account['username'];
+  final role = account['role'];
+  if (baseUrl is! String ||
+      baseUrl.isEmpty ||
+      accountId is! String ||
+      accountId.isEmpty ||
+      (username != null && username is! String) ||
+      (role != null && role is! String)) {
+    throw const FormatException('invalid backup account');
   }
-  return raw;
+  return restoredAccountSession(
+      baseUrl: baseUrl,
+      accountId: accountId,
+      username: username as String?,
+      role: role as String?);
+}
+
+/// The account of a version 1 to 5 backup. Its session must still bind to
+/// the backup's account and device as before, but its token, device id and
+/// device secret are dropped: the result is a [restoredAccountSession].
+Session _legacyBackupAccount(Map<String, Object?> root) {
+  final session = _sessionFrom(root['session']);
+  if (session == null ||
+      session.accountId == null ||
+      session.accountId!.isEmpty ||
+      session.deviceId == null ||
+      root['account_id'] != session.accountId ||
+      root['device_id'] != session.deviceId) {
+    throw const FormatException('backup identity binding mismatch');
+  }
+  return restoredAccountSession(
+      baseUrl: session.baseUrl,
+      accountId: session.accountId!,
+      username: session.username,
+      role: session.role);
 }
 
 void _validateCryptoState(StoredCryptoState state) {
@@ -3500,6 +3809,31 @@ void _validateCryptoState(StoredCryptoState state) {
       state.sealedState.isEmpty ||
       state.sealedState.length > 32 * 1024 * 1024) {
     throw const FormatException('invalid protected crypto state');
+  }
+  // Each change belongs to this state's generation, and names one record
+  // once (D70).
+  final seen = <String>{};
+  for (final change in state.changes) {
+    final sealed = change.sealed;
+    if (change.kind < cryptoRecordKindDevice ||
+        change.kind > cryptoRecordKindKeyPackage ||
+        change.generation != state.counter ||
+        change.recordId.length > _maxCryptoRecordIdBytes ||
+        (change.kind == cryptoRecordKindDevice) != change.recordId.isEmpty ||
+        (sealed != null &&
+            (sealed.isEmpty || sealed.length > maxSealedCryptoRecordBytes)) ||
+        !seen.add(_cryptoRecordKey(change.kind, change.recordId))) {
+      throw const FormatException('invalid protected crypto record');
+    }
+  }
+}
+
+/// A migration writes a complete state: a device record, and no deletes.
+void _validateCryptoMigration(StoredCryptoState state) {
+  _validateCryptoState(state);
+  if (state.changes.any((change) => change.sealed == null) ||
+      !state.changes.any((change) => change.kind == cryptoRecordKindDevice)) {
+    throw const FormatException('invalid crypto state migration');
   }
 }
 

@@ -63,6 +63,8 @@ func (s *Store) RetentionBacklogWithSyncRetention(ctx context.Context, now time.
 		{"device_history_transfers", `state='active' AND expires_at <= ?`, `expires_at`, []interface{}{current}, 0},
 		{"enrollment_reservations", `expires_at < ?`, `expires_at`, []interface{}{current}, 0},
 		{"enrollment_reservations", `expires_at >= ? AND consumed_at IS NOT NULL AND consumed_at < ?`, `consumed_at`, []interface{}{current, cutoff}, grace},
+		{"account_recovery_requests", `expires_at < ?`, `expires_at`, []interface{}{cutoff}, grace},
+		{"recovery_attempts", `day < ?`, `day || 'T00:00:00Z'`, []interface{}{recoveryAttemptsCutoffDay(now)}, recoveryAttemptsRetention + 24*time.Hour},
 		{"push_subscriptions", `disabled_at IS NOT NULL AND disabled_at < ?`, `disabled_at`, []interface{}{cutoff}, grace},
 		{"device_key_packages", `expires_at < ?`, `expires_at`, []interface{}{current}, 0},
 		{"device_key_packages", `expires_at >= ? AND claimed_at IS NOT NULL AND claimed_at < ?`, `claimed_at`, []interface{}{current, cutoff}, grace},

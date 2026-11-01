@@ -90,6 +90,7 @@ class Conversation {
     this.peerAccountId,
     this.peerUsername,
     this.createdBy,
+    this.existedOnServer = false,
   });
 
   final String id;
@@ -112,6 +113,10 @@ class Conversation {
   final String? peerUsername;
   // Account that started the conversation; decides whether a DM is a request.
   final String? createdBy;
+  // Set only on the answer to creating a conversation: the server returned a
+  // DM the pair already had (200, not 201; D67), so its MLS group may exist
+  // and this device must not build another. Never stored or sent.
+  final bool existedOnServer;
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';

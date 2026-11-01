@@ -61,6 +61,14 @@ type API struct {
 	// MaxAttachmentBytes is the operator's per-file cap (plaintext); zero
 	// means the default. The setup status tells clients, the upload enforces it.
 	MaxAttachmentBytes int64
+	// PublicOrigin is the canonical origin recovery proofs are checked
+	// against (config.PublicOrigin). Empty turns account recovery off.
+	PublicOrigin string
+	// RecoveryActiveWindow, RecoveryWait and RecoveryFailureCap tune K0
+	// recovery (D78, D79); zero means the default.
+	RecoveryActiveWindow time.Duration
+	RecoveryWait         time.Duration
+	RecoveryFailureCap   int
 }
 
 // passwordService returns the account password verifier. PasswordCost is the
@@ -103,6 +111,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/device-links/claim-enrollment", a.reserveDeviceLinkEnrollment)
 	mux.HandleFunc("POST /api/v1/device-links/claim", a.claimDeviceLink)
 	a.registerDeviceLinkV3Routes(mux)
+	a.registerAccountRecoveryRoutes(mux)
 	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.withWriteBudget(a.createCommunity)))
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.withWriteBudget(a.createConversation)))

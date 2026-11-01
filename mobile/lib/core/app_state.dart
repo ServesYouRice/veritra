@@ -43,6 +43,11 @@ import 'models.dart';
 import 'receipts_state.dart';
 import 'typing_state.dart';
 import '../l10n/l10n.dart';
+import 'account_recovery.dart';
+
+export 'account_recovery.dart';
+
+part 'app_state_recovery.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -158,6 +163,11 @@ class Ops {
   static const members = 'members';
   static const blocks = 'blocks';
   static const mute = 'mute';
+
+  /// K0: setting the recovery key (R3), and a recovery claim or its cancel
+  /// (R4).
+  static const recoveryKey = 'recovery_key';
+  static const accountRecovery = 'account_recovery';
 
   /// Refresh failures of the conversation and device lists. The lists keep
   /// their last good contents while this holds an error (card T44A).
@@ -344,6 +354,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (current == null || client == null) return;
     final members = await client.conversationMembers(current.token, id);
     membersByConversation = {...membersByConversation, id: members};
+    _noteRosterPeers(id);
   }
 
   List<int>? _activeLinkSecret;
@@ -358,6 +369,32 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   DeviceLinkClaim? pendingDeviceLinkClaim;
+
+  /// K0 recovery (app_state_recovery.dart). [recoveryKeyStatus] is the
+  /// server's view of this account's recovery key and any waiting recovery;
+  /// [pendingAccountRecovery] is this device's own waiting claim;
+  /// [recoveryFollowUp] is the step a recovered device must finish before
+  /// its chats open.
+  RecoveryKeyStatus? recoveryKeyStatus;
+  PendingAccountRecovery? pendingAccountRecovery;
+  RecoveryFollowUpStep? recoveryFollowUp;
+  String? _passwordLeakDay;
+  // K0 step 8: whether this device came from a completed recovery, and the
+  // conversations it was last found to have no MLS group for.
+  bool _recoveredDevice = false;
+  // The session generation [_recoveredDevice] was read for; until it is the
+  // current one, sends wait for the read (and refuse if it fails).
+  int _recoveredMarkGeneration = -1;
+  Future<void>? _recoveredMarkLoad;
+  final Set<String> _grouplessConversations = <String>{};
+  // Conversations whose group was read once; the list refresh reads only
+  // new ones, and a Welcome clears the group-less mark.
+  final Set<String> _grouplessChecked = <String>{};
+  // The last loaded member list said no other account: kept while a
+  // membership event drops the list until it is read again.
+  final Set<String> _lastKnownNoPeer = <String>{};
+  Timer? _recoveryPollTimer;
+  DateTime? _recoveryStatusReadAt;
   String? error;
   bool busy = false;
   // Distinguishes "still fetching the first page" from "genuinely empty" so
@@ -488,6 +525,37 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   final Set<String> _mlsReconcileNow = <String>{};
   bool _mlsReconcileRequested = true;
 
+  /// D68: conversations whose application sends wait, unencrypted, until
+  /// the MLS commit removing a member is applied locally. Kept in a local
+  /// setting per device, so a restart keeps this device's own removals
+  /// held before the server's pending-changes list is read again.
+  final Map<String, _RemovalHold> _removalHolds = <String, _RemovalHold>{};
+
+  /// Bumped whenever a hold is set; a pending-changes read releases only
+  /// holds set before it started (D68).
+  int _removalHoldSeq = 0;
+
+  /// The session generation whose stored holds were loaded.
+  int? _removalHoldsLoaded;
+
+  /// Pending-changes reads applied to the holds so far (D68).
+  int _removalReadCount = 0;
+
+  /// The highest [_removalReadCount] a complete sync fetch started after.
+  /// Every commit the server held at that read has then been applied: the
+  /// server writes a commit's sync event, its roster change and the new
+  /// epoch in one transaction, and an MLS control message that cannot be
+  /// applied stops sync at its event (I33), so that fetch never completes.
+  int _removalFetchedAfterRead = 0;
+
+  /// Completed and replaced whenever [_removalHolds], a paused conversation
+  /// or the session changes, so waiting sends look again. Never polled.
+  Completer<void> _removalHoldsChanged = Completer<void>();
+
+  /// Per conversation, the latest send waiting on a removal hold: a later
+  /// send queues behind it, so held sends go out in the order made.
+  final Map<String, Future<void>> _heldSendTails = <String, Future<void>>{};
+
   /// Periodic self-update state (MlsSelfUpdatePolicy), loaded for the
   /// session's account and device on first use.
   MlsSelfUpdatePolicy? _selfUpdatePolicy;
@@ -528,6 +596,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (state == AppLifecycleState.resumed ||
         (!wasForeground && _isForeground)) {
       unawaited(_resumeForegroundSync());
+      _resumeAccountRecovery();
     }
   }
 
@@ -590,13 +659,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return code;
   }
 
-  /// Restores a backup onto this empty device and signs it in (card I45).
-  /// Returns false with a typed error under [Ops.restore]; an interrupted
-  /// download continues on the next attempt. True once the restored session
-  /// is up (which includes running offline from its cache), and also when
-  /// the backup's identity and history are restored but its session expired
-  /// or was revoked: the device then shows sign-in and a password sign-in
-  /// finishes it.
+  /// Restores a backup onto this empty device (card I45). Returns false with
+  /// a typed error under [Ops.restore]; an interrupted download continues on
+  /// the next attempt.
+  ///
+  /// A backup carries no token, device secret or MLS state (D71, D73), so a
+  /// restore never signs in: it leaves the account's history and settings
+  /// on this device, signed out and with no device yet, and reports under
+  /// [Ops.restore] how to finish. The device then joins the account as a
+  /// new one (today by a device link, which keeps the restored history),
+  /// with fresh MLS state, cursor 0 and new key packages, and its groups
+  /// add it like any freshly linked device. There is no restored session a
+  /// server could reject, so D66's failed-restore case cannot arise; true
+  /// is kept for a session that is somehow up after the restore.
   Future<bool> restoreFromBackup(String recoveryCode) {
     return _runScoped(Ops.restore, () async {
       final service = backupService;
@@ -620,13 +695,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } catch (_) {
           // Reported as a storage failure below.
         }
-        if (stored != null &&
-            stored.token.isEmpty &&
-            (stored.deviceId?.isNotEmpty ?? false)) {
-          // The backup's session expired or was revoked. Its identity and
-          // history are on this device: the restore is done and a password
-          // sign-in finishes it.
-          return;
+        if (stored != null && isRestoredAccountSession(stored)) {
+          // The history is on this device; it still has to join the
+          // account as a new device (D71, D73).
+          throw UserFacingException(l10n.backupRestoredLinkToFinish);
         }
       }
       // The local store or keystore failed (the recovery screen says how),
@@ -1328,6 +1400,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
+        await _loadPendingAccountRecovery();
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
         return;
@@ -1342,12 +1415,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         role: stored.role,
       );
       if (restored.token.isEmpty) {
+        await _loadPendingAccountRecovery();
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
         return;
       }
       session = restored;
       _replaceApi(restored.baseUrl);
+      await _resumeRecoveredIdentity(restored);
       await _mlsCrypto?.activateSession(restored);
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final records = await localStore.pendingEnvelopeRecords();
@@ -1401,6 +1476,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       unawaited(_startSync());
       unawaited(_ensureKeyPackageSupply().catchError((Object _) {}));
       unawaited(_scheduleExpiryPurge());
+      await _loadSignedInRecoveryState();
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
     } catch (error) {
@@ -1608,6 +1684,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// for [_run] to report. A rejected session (401) starts nothing: [_run]
   /// clears it.
   Future<void> _finishSignIn(Future<void> Function() steps) async {
+    unawaited(_loadSignedInRecoveryState());
     try {
       await steps();
     } catch (err) {
@@ -1789,6 +1866,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     composerDrafts.retainOnly(conversations.map((item) => item.id));
     conversationsLoaded = true;
     _opErrors.remove(Ops.conversations);
+    if (_recoveredDevice) {
+      await _refreshGroupless(conversations.map((item) => item.id));
+      if (!_refreshOwned(current, generation)) return;
+    }
     if (persist) await _persistSnapshot();
     if (!_refreshOwned(current, generation)) return;
     if (notify) {
@@ -1985,13 +2066,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       final conversation = created!;
       // The server hands back the existing DM for a pair instead of making a
-      // second one. One the peer created already has its group, and this
-      // device joins it through the peer's Welcome; one whose group this
-      // device already holds needs nothing either. Only a new conversation
-      // gets a group here.
+      // second one, and says so with 200 instead of 201 (D67). Its group was
+      // built by whoever created it (the peer, or another device of this
+      // account), and this device joins it through that Welcome; one whose
+      // group this device already holds needs nothing either. Only a new
+      // conversation gets a group here. The creator and local-group checks
+      // stay for a server that answers 201 either way.
       final mls = _mlsCrypto;
       final existingDm = conversation.isDm &&
-          ((conversation.createdBy != null &&
+          (conversation.existedOnServer ||
+              (conversation.createdBy != null &&
                   conversation.createdBy != current.accountId) ||
               (mls != null && await mls.groupEpoch(conversation.id) != null));
       if (!existingDm) await _setUpConversationGroup(conversation.id);
@@ -2123,6 +2207,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!membershipChangesAvailable) {
         throw StateError('adding members is not available in this build');
       }
+      // K0 step 8: an added member's devices join only through a commit by
+      // a group device, and here there is none: the add would wait forever.
+      final refusal = await _noPeerRefusal(conversationId);
+      if (refusal != null) throw UserFacingException(refusal);
       await client.addConversationMember(
         current.token,
         conversationId,
@@ -2152,11 +2240,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         ...membersByConversation,
         conversationId: members,
       };
+      _noteRosterPeers(conversationId);
     });
   }
 
-  /// Removes another member. Server membership only — MLS removal is a
-  /// separate, still-pending commit, which the UI must state plainly.
+  /// Removes another member. The server drops the membership at once; their
+  /// devices leave the MLS group through a separate commit that reconcile
+  /// stages and sends (card I51). Until this device has applied that commit,
+  /// application sends to the conversation wait unencrypted and then go out
+  /// in order (D68), so nothing is encrypted to the removed devices.
   Future<bool> removeConversationMember(
     String conversationId,
     String accountId,
@@ -2167,11 +2259,45 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null) {
         return;
       }
+      if (!membershipChangesAvailable) {
+        throw StateError('removing members is not available in this build');
+      }
       await client.removeConversationMember(
         current.token,
         conversationId,
         accountId,
       );
+      // D68: hold sends until the removal commit is applied. Reconcile
+      // releases the hold; without MLS nothing would, and nothing is
+      // encrypted to a group either. The session queue keeps sends out
+      // until the hold is set.
+      final mls = _mlsCrypto;
+      if (mls != null) {
+        final generation = _sessionGeneration;
+        await _loadRemovalHolds();
+        ({int epoch, bool pending})? local;
+        var unreadable = false;
+        try {
+          local = await mls.groupEpoch(conversationId);
+        } catch (_) {
+          // Held anyway, at epoch 0: reconcile releases it once the group
+          // is readable again, or drops it when there is no local group.
+          unreadable = true;
+        }
+        if (generation == _sessionGeneration && (local != null || unreadable)) {
+          final epoch = local?.epoch ?? 0;
+          final hold = _removalHolds.putIfAbsent(
+              conversationId, () => _RemovalHold(epoch: epoch));
+          hold
+            ..seq = ++_removalHoldSeq
+            // A read before this removal proves nothing about its commit.
+            ..unlistedAt = null
+            ..accounts.add(accountId);
+          if (epoch > hold.epoch) hold.epoch = epoch;
+          await _saveRemovalHolds();
+          _removalHoldsUpdated();
+        }
+      }
       // Their devices leave the MLS group through reconcile (card I51). The
       // change is new, so an earlier one's backoff does not hold it.
       _mlsReconcileRequested = true;
@@ -2203,6 +2329,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       conversations = conversations
           .where((conversation) => conversation.id != conversationId)
           .toList(growable: false);
+      // Sends held for a removal there (D68) end: the conversation is gone.
+      if (_removalHolds.remove(conversationId) != null) {
+        await _saveRemovalHolds();
+      }
+      _removalHoldsUpdated();
       messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
         for (final entry in messagesByConversation.entries)
           if (entry.key != conversationId) entry.key: entry.value,
@@ -2221,7 +2352,169 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         selectedConversationId = null;
       }
       await _persistSnapshot();
+      await _afterLeftConversation(current, conversationId);
     });
+  }
+
+  /// The user left [conversationId] (D70 S4). Its unsent messages can no
+  /// longer go, so they are dropped. Its MLS group is dropped by the next
+  /// foreground sync pass, before it reads events ([_dropLeftConversations]):
+  /// a pass already under way may still apply events of the conversation
+  /// from before the leave, and the server sends none after it. The note is
+  /// durable, so a restart still drops the group. A local failure here does
+  /// not undo or fail the leave.
+  Future<void> _afterLeftConversation(
+      Session current, String conversationId) async {
+    try {
+      for (final record in await localStore.pendingEnvelopeRecords()) {
+        if (record.envelope.conversationId == conversationId) {
+          await _removeFromOutboxByKey(record.envelope.idempotencyKey);
+        }
+      }
+    } catch (_) {
+      // Left queued, they fail at the server, which no longer takes them.
+    }
+    if (_mlsCrypto is! MlsStateMaintenanceCryptoService) return;
+    try {
+      await _changeLeftConversations(
+          current, (ids) => <String>{...ids, conversationId});
+    } catch (_) {
+      // Not noted: the group stays until a removal commit or the user
+      // leaves again. Nothing is weaker for it.
+      return;
+    }
+    unawaited(_catchUpSyncEvents());
+  }
+
+  // Conversations the user left whose MLS group is still to be dropped
+  // (D70 S4). One local setting, scoped to the origin, account and device
+  // like [_keyPackageNeedSetting]; a record of another identity counts as
+  // nothing. Only [leaveConversation], a user action, adds to it.
+  static const _leftConversationsSetting = 'mls.left_conversations';
+
+  /// Most conversations the record holds (D38's default conversation cap).
+  static const _leftConversationsCap = 1000;
+  Future<void> _leftConversationsLock = Future<void>.value();
+
+  Future<Set<String>> _readLeftConversations(Session owner) async {
+    final raw = await localStore.loadSetting(_leftConversationsSetting);
+    if (raw == null || raw.isEmpty) return <String>{};
+    try {
+      final record = jsonDecode(raw);
+      if (record is! Map || record['scope'] != _keyPackageScope(owner)) {
+        return <String>{};
+      }
+      final ids = record['ids'];
+      return ids is List
+          ? <String>{...ids.whereType<String>().where((id) => id.isNotEmpty)}
+          : <String>{};
+    } on FormatException {
+      return <String>{};
+    }
+  }
+
+  /// One read-modify-write of [owner]'s record; they never interleave.
+  /// Returns the set as stored.
+  Future<Set<String>> _changeLeftConversations(
+      Session owner, Set<String> Function(Set<String> ids) change) {
+    final done = _leftConversationsLock.then((_) async {
+      final current = await _readLeftConversations(owner);
+      final next = change(current);
+      if (!setEquals(current, next)) {
+        await localStore.saveSetting(
+            _leftConversationsSetting,
+            jsonEncode(<String, Object?>{
+              'scope': _keyPackageScope(owner),
+              // The newest leaves are kept at the cap.
+              'ids': next
+                  .skip(max(0, next.length - _leftConversationsCap))
+                  .toList(growable: false),
+            }));
+      }
+      return next;
+    });
+    _leftConversationsLock =
+        done.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    return done;
+  }
+
+  /// Drops the MLS group of every conversation the user left (D70 S4), and
+  /// with it that conversation's queued MLS control messages. Runs inside
+  /// a foreground sync pass before it reads events, so no event of the
+  /// conversation is being applied meanwhile. Best effort: a failure keeps
+  /// the note for the next pass and never stops sync.
+  Future<void> _dropLeftConversations(
+      Session current, int ownerGeneration) async {
+    final Object? mls = _mlsCrypto;
+    if (mls is! MlsStateMaintenanceCryptoService) return;
+    final Set<String> left;
+    try {
+      left = await _readLeftConversations(current);
+    } catch (_) {
+      return;
+    }
+    for (final conversationId in left) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      try {
+        await mls.deleteConversationState(conversationId);
+        await _changeLeftConversations(
+            current, (ids) => ids.difference(<String>{conversationId}));
+      } catch (err) {
+        // Body-free: no conversation id.
+        developer.log('mls_left_group_drop_failed ${err.runtimeType}',
+            name: 'veritra.sync');
+      }
+    }
+  }
+
+  /// A Welcome to this device for a conversation the user left whose group
+  /// was not dropped yet (D70 S4): the user's own deferred leave runs first,
+  /// so the old group never blocks the new join, and the note is cleared
+  /// only by that drop, never by a join (a D74 Welcome joins nothing). A
+  /// failed drop stops sync at this event with Retry, as a storage failure;
+  /// a background pass hands the event to the foreground.
+  Future<void> _dropLeftBeforeWelcome(Session current, String conversationId,
+      {required WakeRunContext? wake,
+      required SyncEventFailure Function(SyncFailureKind kind, [Object? cause])
+          failure}) async {
+    final Object? mls = _mlsCrypto;
+    if (mls is! MlsStateMaintenanceCryptoService) return;
+    try {
+      if (!(await _readLeftConversations(current)).contains(conversationId)) {
+        return;
+      }
+      if (wake != null) throw const WakeWorkCancelled();
+      await mls.deleteConversationState(conversationId);
+      await _changeLeftConversations(
+          current, (ids) => ids.difference(<String>{conversationId}));
+    } on WakeWorkCancelled {
+      rethrow;
+    } catch (err) {
+      if (_isTransientSyncError(err)) rethrow;
+      throw failure(SyncFailureKind.localStorage, err);
+    }
+  }
+
+  /// How often a caught-up foreground pass drops expired key packages
+  /// (D70 S4). They expire over days; replenishment also prunes first, so
+  /// a full pool never waits for this.
+  static const _keyPackagePruneInterval = Duration(hours: 6);
+  DateTime? _keyPackagePruneAt;
+
+  Future<void> _maybePruneKeyPackages() async {
+    final Object? mls = _mlsCrypto;
+    if (mls is! MlsStateMaintenanceCryptoService) return;
+    final now = DateTime.now();
+    final due = _keyPackagePruneAt;
+    if (due != null && now.isBefore(due)) return;
+    // Set first: a failure waits for the next interval too.
+    _keyPackagePruneAt = now.add(_keyPackagePruneInterval);
+    try {
+      await mls.pruneExpiredKeyPackages(now);
+    } catch (err) {
+      developer.log('mls_key_package_prune_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }
   }
 
   Future<void> refreshBlocks() async {
@@ -2415,6 +2708,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     for (final id in pending) {
       _draftTimers.remove(id)?.cancel();
       unawaited(_persistDraft(id));
+    }
+  }
+
+  /// Writes every pending draft and waits for the writes. Runs while the
+  /// session that owns the drafts is still current, before a session end
+  /// clears local data (D65): an expired session keeps the newest text, and
+  /// sign-out wipes it with the rest instead of a late timer writing it back.
+  Future<void> _flushDraftsBeforeSessionEnd() async {
+    final pending = _draftTimers.keys.toList(growable: false);
+    _cancelDraftTimers();
+    for (final id in pending) {
+      await _persistDraft(id);
     }
   }
 
@@ -2671,6 +2976,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // The roster names message senders in group chats; a failure here only
     // falls back to shortened account IDs.
     unawaited(loadConversationMembers(conversationId));
+    unawaited(_refreshGroupless(<String>[conversationId], force: true));
   }
 
   /// Encrypts, queues, and delivers one message. Scoped to [Ops.send] so a
@@ -2835,6 +3141,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     notifyListeners();
     PreparedEncryptedAttachment? prepared;
     try {
+      // K0 step 8: nothing is encrypted or uploaded for a conversation no
+      // one can add this device to.
+      final refusal = await _noPeerRefusal(conversationId);
+      if (refusal != null) throw UserFacingException(refusal);
       final name = safeAttachmentName(fileName);
       // Padding stops at the server's cap, so a file just under it is not
       // refused for its padding (docs/crypto.md, attachment padding).
@@ -2977,17 +3287,311 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return maxPlaintextAttachmentBytes;
   }
 
+  /// Whether sends to [conversationId] wait for a member's removal commit
+  /// (D68). The composer offers no second send meanwhile.
+  bool sendHeldForRemoval(String conversationId) =>
+      _removalHolds.containsKey(conversationId);
+
+  /// Holds sends to [conversationId] as a removal would, for widget tests.
+  @visibleForTesting
+  void debugHoldSendsForRemoval(String conversationId) {
+    _removalHolds[conversationId] = _RemovalHold(epoch: 0)
+      ..seq = ++_removalHoldSeq;
+    _removalHoldsUpdated();
+  }
+
+  /// Sends one payload. After a member removal (D68) it first waits, before
+  /// anything is encrypted, until the removal commit is applied; sends to
+  /// the same conversation then go out in the order they were made.
   Future<bool> _sendPayload(
     String conversationId,
     AppPayloadType type,
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
     String? draftText,
-  }) {
+  }) async {
     final owner = session;
     final ownerGeneration = _sessionGeneration;
-    if (owner == null) return Future.value(false);
+    if (owner == null) return false;
+    // Every send takes its place in its conversation's line, and the next
+    // one waits until this one is queued, refused or given up: a send held
+    // inside the session queue cannot be overtaken by a later one.
+    final previous = _heldSendTails[conversationId];
+    final tail = Completer<void>();
+    _heldSendTails[conversationId] = tail.future;
+    try {
+      // With no send ahead and no hold, it joins the session queue at once.
+      var wait = previous != null || _removalHolds.containsKey(conversationId);
+      if (previous != null) await previous;
+      while (true) {
+        if (wait &&
+            !await _awaitRemovalHold(conversationId, owner, ownerGeneration)) {
+          return false;
+        }
+        final sent = await _sendPayloadOnce(
+            owner, ownerGeneration, conversationId, type, body,
+            attachmentRefs: attachmentRefs, draftText: draftText);
+        if (sent != null) return sent;
+        wait = true;
+      }
+    } finally {
+      tail.complete();
+      if (identical(_heldSendTails[conversationId], tail.future)) {
+        _heldSendTails.remove(conversationId);
+      }
+    }
+  }
+
+  /// Waits until [conversationId] has no removal hold. False when the
+  /// session ended meanwhile; a paused conversation ends the wait too, and
+  /// the send then reports the pause.
+  Future<bool> _awaitRemovalHold(
+      String conversationId, Session owner, int ownerGeneration) async {
+    while (true) {
+      if (_disposed || !_syncOwnerActive(owner, ownerGeneration)) return false;
+      // A paused or departed conversation ends the wait; the attempt then
+      // reports the pause or sends nothing.
+      if (mlsConversationFailed(conversationId) ||
+          !conversations.any((item) => item.id == conversationId)) {
+        return true;
+      }
+      final changed = _removalHoldsChanged.future;
+      final bool held;
+      try {
+        held = await _heldForRemoval(conversationId);
+      } catch (_) {
+        // Unreadable outbox: the attempt checks again inside the session
+        // queue, where the failure is reported and nothing is encrypted.
+        return !_disposed && _syncOwnerActive(owner, ownerGeneration);
+      }
+      if (!held) {
+        return !_disposed && _syncOwnerActive(owner, ownerGeneration);
+      }
+      await changed;
+    }
+  }
+
+  /// Whether sends to [conversationId] must wait for a removal commit
+  /// (D68): a removal this device made or the server lists, or a queued
+  /// commit bundle that removes a member. A revocation's bundle does not
+  /// hold sends: it removes a device, not a member, and is not settled
+  /// through pending changes.
+  Future<bool> _heldForRemoval(String conversationId) async {
+    if (_mlsCrypto == null) return false;
+    await _loadRemovalHolds();
+    if (_removalHolds.containsKey(conversationId)) return true;
+    for (final message in await localStore.pendingMlsMessages()) {
+      if (message.conversationId != conversationId ||
+          message.kind != MlsCommitBundle.kind) {
+        continue;
+      }
+      final bundle = MlsCommitBundle.decode(message.payload);
+      if (bundle.removed.isEmpty || bundle.revocationDeviceId != null) {
+        continue;
+      }
+      // Released by reconcile once the commit is applied, not merely when
+      // the bundle leaves the queue: a refused one leaves the removal open.
+      _removalHolds[conversationId] = _RemovalHold(
+        epoch: bundle.epoch,
+        listed: true,
+        seq: ++_removalHoldSeq,
+      )..accounts.addAll(bundle.removed.map((item) => item.accountId));
+      await _saveRemovalHolds();
+      _removalHoldsUpdated();
+      return true;
+    }
+    return false;
+  }
+
+  void _removalHoldsSettled() {
+    final previous = _removalHoldsChanged;
+    _removalHoldsChanged = Completer<void>();
+    previous.complete();
+  }
+
+  /// Wakes held sends and redraws the composer after a hold changed.
+  void _removalHoldsUpdated() {
+    _removalHoldsSettled();
+    if (!_disposed) notifyListeners();
+  }
+
+  static String _removalHoldsSetting(String deviceId) =>
+      'mls_removal_holds:$deviceId';
+
+  /// Loads this device's stored holds once per session. A stored hold
+  /// counts as set now, so no read already in flight releases it.
+  Future<void> _loadRemovalHolds() async {
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (owner == null || _removalHoldsLoaded == generation) return;
+    String? stored;
+    try {
+      stored = await localStore
+          .loadSetting(_removalHoldsSetting(owner.deviceId ?? ''));
+    } catch (_) {
+      return;
+    }
+    if (generation != _sessionGeneration || _removalHoldsLoaded == generation) {
+      return;
+    }
+    _removalHoldsLoaded = generation;
+    if (stored == null) return;
+    try {
+      final decoded = jsonDecode(stored) as Map<String, Object?>;
+      for (final entry in decoded.entries) {
+        final hold = _RemovalHold.fromJson(entry.value as Map<String, Object?>)
+          ..seq = ++_removalHoldSeq;
+        _removalHolds.putIfAbsent(entry.key, () => hold);
+      }
+    } catch (_) {
+      // An unreadable entry holds nothing; the server's list sets it again.
+    }
+    if (_removalHolds.isNotEmpty) _removalHoldsUpdated();
+  }
+
+  /// Best effort: a failed write only loses the restart-safety of a hold.
+  Future<void> _saveRemovalHolds() async {
+    final owner = session;
+    if (owner == null || _removalHoldsLoaded != _sessionGeneration) return;
+    try {
+      await localStore.saveSetting(
+        _removalHoldsSetting(owner.deviceId ?? ''),
+        jsonEncode(<String, Object?>{
+          for (final entry in _removalHolds.entries)
+            entry.key: entry.value.toJson(),
+        }),
+      );
+    } catch (_) {}
+  }
+
+  /// Updates the holds from one pending-changes read that started when
+  /// [_removalHoldSeq] was [readSeq]. A hold set after the read started is
+  /// left alone. A listed removal holds its conversation; one not listed is
+  /// released when no MLS message of it is queued, no commit is staged, a
+  /// complete sync fetch started after an earlier read that already left it
+  /// out (so a removal commit the server held then has been applied: not
+  /// being listed alone does not prove that), and either a commit was
+  /// applied since the epoch it was listed at, the server never listed it
+  /// (nothing to commit), or every removed account is a member again (the
+  /// removal was withdrawn). A conversation that is gone, or has no local
+  /// group, holds nothing. A read the server cut at its cap releases only
+  /// holds of conversations that are gone.
+  Future<void> _updateRemovalHolds(
+    List<MlsPendingChange> changes,
+    int readSeq,
+    Session current,
+    ApiClient client,
+    MlsConversationCryptoService mls,
+  ) async {
+    final generation = _sessionGeneration;
+    await _loadRemovalHolds();
+    if (!_syncOwnerActive(current, generation)) return;
+    final read = ++_removalReadCount;
+    var followUp = false;
+    var changed = false;
+    final listed = <String, MlsPendingChange>{
+      for (final change in changes)
+        if (change.remove.isNotEmpty) change.conversationId: change,
+    };
+    for (final change in listed.values) {
+      final hold = _removalHolds.putIfAbsent(change.conversationId, () {
+        changed = true;
+        return _RemovalHold(epoch: change.epoch);
+      });
+      final accounts = change.remove.map((item) => item.accountId);
+      if (!hold.listed ||
+          hold.epoch < change.epoch ||
+          !hold.accounts.containsAll(accounts)) {
+        changed = true;
+      }
+      hold
+        ..listed = true
+        ..unlistedAt = null
+        // A stale read never lowers the epoch a release compares against.
+        ..epoch = max(hold.epoch, change.epoch)
+        ..accounts.addAll(accounts);
+    }
+    // A read the server cut at its overall cap may leave whole conversations
+    // out: one missing from it proves nothing. The server says so in a
+    // response-level flag; an item's own truncated flag may only mean that
+    // conversation hit its own cap, which must not hold every other one.
+    // A server without the flag flags every item of a cut read: fail closed.
+    final serverCut = changes is MlsPendingChanges ? changes.cut : null;
+    final cut = serverCut ??
+        (changes.isNotEmpty && changes.every((item) => item.truncated));
+    for (final conversationId in _removalHolds.keys.toList()) {
+      if (listed.containsKey(conversationId)) continue;
+      final hold = _removalHolds[conversationId];
+      if (hold == null || hold.seq > readSeq) continue;
+      var release = !conversations.any((item) => item.id == conversationId);
+      if (!release && cut) continue;
+      if (!release) {
+        // The first read to leave it out asks for one more pass, whose
+        // fetch then brings in any commit the server held at this read.
+        final unlistedAt = hold.unlistedAt ??= read;
+        if (unlistedAt == read) followUp = true;
+        final ({int epoch, bool pending})? local;
+        try {
+          if (await _hasPendingMlsWork(conversationId)) continue;
+          local = await mls.groupEpoch(conversationId);
+        } catch (err) {
+          // One unreadable conversation keeps its hold; the others are
+          // still looked at, and the pass still asks for a follow-up.
+          if (!_syncOwnerActive(current, generation)) return;
+          // Body-free: no conversation, device or crypto text.
+          developer.log('mls_removal_hold_epoch_failed ${err.runtimeType}',
+              name: 'veritra.sync');
+          continue;
+        }
+        if (local == null) {
+          release = true;
+        } else if (local.pending || _removalFetchedAfterRead < unlistedAt) {
+          continue;
+        } else if (!hold.listed || local.epoch > hold.epoch) {
+          release = true;
+        } else if (hold.accounts.isNotEmpty) {
+          try {
+            final members =
+                await client.conversationMembers(current.token, conversationId);
+            release = hold.accounts.every((account) =>
+                members.any((member) => member.accountId == account));
+          } catch (err) {
+            if (err is ApiException && err.statusCode == 401) rethrow;
+          }
+        }
+      }
+      if (!_syncOwnerActive(current, generation)) return;
+      // A removal made while this conversation was being looked at stays.
+      if (!release ||
+          !identical(_removalHolds[conversationId], hold) ||
+          hold.seq > readSeq) {
+        continue;
+      }
+      _removalHolds.remove(conversationId);
+      changed = true;
+    }
+    // A hold still open is looked at again on the next catch-up.
+    if (_removalHolds.isNotEmpty) _mlsReconcileRequested = true;
+    if (followUp) _syncOwner?.markRequested();
+    if (changed) {
+      await _saveRemovalHolds();
+      _removalHoldsUpdated();
+    }
+  }
+
+  /// One attempt to encrypt and queue a payload. Null when a removal hold
+  /// appeared before encryption: nothing was encrypted and the caller waits.
+  Future<bool?> _sendPayloadOnce(
+    Session owner,
+    int ownerGeneration,
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const <String>[],
+    String? draftText,
+  }) {
     var queued = false;
+    var held = false;
     return _runScoped(Ops.send, () async {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final current = session;
@@ -2997,6 +3601,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null || conversation == null) {
         return;
       }
+      // K0 step 8: a recovered device that no one can add to this
+      // conversation sends nothing, not even the acceptance below.
+      final refusal = await _noPeerRefusal(conversation.id);
+      if (refusal != null) throw UserFacingException(refusal);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       // Replying counts as accepting.
       if (isMessageRequest(conversation)) {
         await _acceptConversation(conversation);
@@ -3010,6 +3619,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         throw const ConversationPausedException();
       }
       final mls = _mlsCrypto;
+      // D68: checked again inside the queue, right before encryption.
+      if (mls != null && await _heldForRemoval(conversation.id)) {
+        held = true;
+        return;
+      }
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final MessageEnvelope encrypted;
       if (mls != null) {
         encrypted = await mls.encryptPayload(conversation.id, type, body,
@@ -3037,7 +3652,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // Durable acceptance is the send result. Network delivery is owned by
       // the single retry worker, so a slow connection never holds the draft.
       unawaited(_flushOutbox());
-    }).then((succeeded) => succeeded && queued);
+    }).then((succeeded) => succeeded && held ? null : succeeded && queued);
   }
 
   /// Marks [idempotencyKey] for an immediate retry and runs the delivery
@@ -3453,6 +4068,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       await client.changePassword(current.token, newPassword);
+      await _afterPasswordChanged();
     });
   }
 
@@ -4236,6 +4852,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   void _deferProjectionRefresh(SyncEvent event) {
     final type = event.type;
+    // Local only: the status is read again on the next resume.
+    if (type.startsWith('account.') && _noteAccountSyncEvent(event)) {
+      _recoveryStatusReadAt = null;
+    }
     if (type.startsWith('device.') ||
         type.startsWith('membership.') ||
         type.startsWith('conversation.')) {
@@ -4437,6 +5057,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             <ReceivedMessageEnvelope>[], current, ownerGeneration);
       } catch (_) {}
       if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+      if (wake == null) {
+        await _dropLeftConversations(current, ownerGeneration);
+        if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+      }
+      // Pending-changes reads finished before this fetch starts (D68).
+      final fetchAfterRead = _removalReadCount;
       var pageCursor = await localStore.loadSyncCursor();
       const pageSize = 200;
       while (true) {
@@ -4556,6 +5182,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         pageCursor = await localStore.loadSyncCursor();
         if (events.length < pageSize) break;
       }
+      // Every event up to the end of the stream is applied.
+      if (fetchAfterRead > _removalFetchedAfterRead) {
+        _removalFetchedAfterRead = fetchAfterRead;
+      }
       if (wake != null) {
         // Revocations and membership reconcile send commits; a background
         // pass only receives. Native acknowledges the wake from the result.
@@ -4594,6 +5224,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           // A self-update is optional; it never blocks sync.
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // Caught up: expired key packages may go (D70 S4).
+        await _maybePruneKeyPackages();
         if (!_syncOwnerActive(current, ownerGeneration)) return;
       }
       await _acknowledgePendingWake(current, ownerGeneration: ownerGeneration);
@@ -4737,6 +5370,42 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     await _catchUpSyncEvents();
   }
 
+  /// The record-limit recovery (D70 S4): leaves the conversation whose
+  /// group outgrew its cap, then applies events again. The server sends
+  /// none of its events after the leave, so the stopped one is not skipped
+  /// on this device's word. The UI must get explicit confirmation first.
+  /// Returns whether the conversation was left.
+  Future<bool> leaveConversationAfterSyncRecovery(
+      {required bool confirmed}) async {
+    if (!confirmed) {
+      throw ArgumentError.value(
+          confirmed, 'confirmed', 'leaving a conversation needs confirmation');
+    }
+    final recovery = syncRecovery;
+    final conversationId = recovery?.conversationId;
+    if (recovery == null ||
+        conversationId == null ||
+        !recovery.choices.contains(SyncRecoveryChoice.leaveConversation)) {
+      return false;
+    }
+    if (!await leaveConversation(conversationId)) return false;
+    // Cleared only if still the same stop: the dialog may have stayed open
+    // meanwhile.
+    final stored = await localStore.loadSyncRecovery();
+    if (stored != null &&
+        (stored.kind != recovery.kind || stored.eventId != recovery.eventId)) {
+      return true;
+    }
+    await localStore.saveSyncRecovery(null);
+    syncRecovery = null;
+    deviceRecoveryRequired = false;
+    syncError = null;
+    _setConnectionStatus(ConnectionStatus.connecting);
+    notifyListeners();
+    await _catchUpSyncEvents();
+    return true;
+  }
+
   /// The destructive recovery: signs out and removes this device's identity,
   /// encryption state and local history, so it can be linked again from
   /// another device. The UI must get explicit confirmation first.
@@ -4799,6 +5468,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// drained.
   void _enterDamagedStorageRecovery() {
     _sessionGeneration++;
+    _removalHolds.clear();
+    _removalHoldsLoaded = null;
+    _removalHoldsSettled();
     _syncStartFailed = null;
     final owner = _syncOwner;
     _syncOwner = null;
@@ -4887,6 +5559,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// only when an event in the run names it.
   Future<void> _refreshProjectionForSyncEvents(List<SyncEvent> events) async {
     var devices = false;
+    var recoveryStatus = false;
     var conversationList = false;
     var selectedMessages = false;
     final receipts = <String>{};
@@ -4918,6 +5591,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             receipts.add(event.conversationId!);
           }
         }
+      } else if (type.startsWith('account.')) {
+        if (_noteAccountSyncEvent(event)) recoveryStatus = true;
       } else if (type != 'mls.revocation.pending' &&
           type != 'mls.revocation.completed' &&
           _failsClosedEvent(type)) {
@@ -4926,6 +5601,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
     }
     if (devices) await _refreshDevices();
+    if (recoveryStatus) await refreshRecoveryKeyStatus();
     if (conversationList) {
       await _refreshConversations(notify: false, persist: false);
     }
@@ -4965,6 +5641,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             eventType: event.type,
             conversationId: event.conversationId,
             damagedStorage: cause != null && _isDamagedStorage(cause));
+    // A record over its cap (D70) names the record's conversation, which
+    // may not be the event's (a Welcome, the device record).
+    SyncEventFailure recordLimit(CryptoRecordLimitExceeded err) =>
+        SyncEventFailure(SyncFailureKind.recordLimit,
+            eventId: event.id,
+            eventType: event.type,
+            conversationId: err.conversationId);
     switch (event.type) {
       case 'mls.message.created':
         // Control messages are never skipped: missing, malformed or
@@ -4986,6 +5669,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await _queuedPathCommit(message.idempotencyKey);
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
+          await _dropLeftBeforeWelcome(current, message.conversationId,
+              wake: wake, failure: failure);
           // Write-ahead (TASK-028): a Welcome uses up one of this device's
           // published key packages, so its replacement is owed durably
           // before the Welcome commits. Counted once per Welcome; one that
@@ -5004,6 +5689,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           if (_isDurableStorageError(err)) {
             throw failure(SyncFailureKind.localStorage, err);
           }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
@@ -5022,6 +5708,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               current,
               (policy) =>
                   policy.recordJoined(message.conversationId, DateTime.now()));
+          // K0 step 8: the conversation is no longer read-only.
+          _grouplessChecked.add(message.conversationId);
+          if (_grouplessConversations.remove(message.conversationId) &&
+              !_disposed) {
+            notifyListeners();
+          }
           if (wake != null) {
             // Publishing is an outbound write; the foreground does it.
             _replenishAfterWake = true;
@@ -5081,6 +5773,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await _commitExpiredTombstone(event, id, wake);
             return null;
           }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         return resolved;
@@ -5111,6 +5804,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             await _commitExpiredTombstone(event, call.id, wake);
             return null;
           }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         if (signal != null) _callSignals.add(IncomingCallSignal(call, signal));
@@ -5294,7 +5988,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (cryptoService case final NoticeCaptureConsumer capture) {
       capture.noticeCaptureEnabled = false;
     }
-    _cancelDraftTimers();
+    await _flushDraftsBeforeSessionEnd();
     final previousOwner = _syncOwner;
     _syncOwner = null;
     previousOwner?.dispose();
@@ -5369,6 +6063,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     invitesLoadFailed = false;
     devicesLoaded = false;
     devices = <Device>[];
+    recoveryKeyStatus = null;
+    recoveryFollowUp = null;
+    _passwordLeakDay = null;
+    _recoveredDevice = false;
+    _recoveredMarkGeneration = -1;
+    _recoveredMarkLoad = null;
+    _grouplessConversations.clear();
+    _grouplessChecked.clear();
+    _lastKnownNoPeer.clear();
     messagesByConversation = <String, List<ReceivedMessageEnvelope>>{};
     _history.clear();
     composerDrafts.clear();
@@ -5394,6 +6097,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _manualRetryKey = null;
     _refreshAfterWake = false;
     _replenishAfterWake = false;
+    _keyPackagePruneAt = null;
     _unpublishedReceived.clear();
     _unpublishedGeneration = null;
     _loadingMessageConversations.clear();
@@ -5966,6 +6670,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         _mlsAcceptedUnfinished.remove(message.idempotencyKey);
         if (isBundle) {
           final bundle = MlsCommitBundle.decode(message.payload);
+          // Sends held for this removal (D68) go once reconcile confirms it.
+          if (bundle.removed.isNotEmpty &&
+              _removalHolds.containsKey(message.conversationId)) {
+            _mlsReconcileRequested = true;
+            unawaited(_catchUpSyncEvents());
+          }
           // A self-update, and any commit that removes someone, carries an
           // update path: this device's leaf key is fresh again.
           if (bundle.isUpdateOnly || bundle.removed.isNotEmpty) {
@@ -5980,6 +6690,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _failedMlsConversations
         ..clear()
         ..addAll(failed);
+      // A held send to a paused conversation reports the pause.
+      _removalHoldsSettled();
       notifyListeners();
     }
   }
@@ -6028,6 +6740,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> _reconcileMlsMembershipOnce(Session current, ApiClient client,
       MlsConversationCryptoService mls) async {
     final ownerGeneration = _sessionGeneration;
+    // Holds set after this point are newer than the list (D68).
+    final holdSeq = _removalHoldSeq;
     final changes = await client.mlsPendingChanges(current.token);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
@@ -6099,6 +6813,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             change.conversationId == conversationId &&
             change.epoch == retry.epoch));
     if (failed) _mlsReconcileRequested = true;
+    try {
+      await _updateRemovalHolds(changes, holdSeq, current, client, mls);
+    } catch (err) {
+      // The holds stay as they were and are looked at on the next pass; a
+      // commit staged above still goes out.
+      if (err is ApiException && err.statusCode == 401) rethrow;
+      _mlsReconcileRequested = true;
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     if (staged) await _flushMlsOutbox();
   }
 
@@ -6286,6 +7009,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _mlsRetryWake = null;
     _mlsChangeRetries.clear();
     _mlsStepRetries.clear();
+    // Held sends belong to the session that ended: they wake and give up.
+    // The stored holds stay for this device's next session.
+    _removalHolds.clear();
+    _removalHoldsLoaded = null;
+    _removalHoldsSettled();
   }
 
   /// A floor on retry timers, so an item a pass cannot send yet never
@@ -7113,6 +7841,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   @override
   void dispose() {
     _disposed = true;
+    _recoveryPollTimer?.cancel();
+    _recoveryPollTimer = null;
     _orphanSweeper?.stop();
     _orphanSweeper = null;
     _clearLinkSecret();
@@ -7341,4 +8071,38 @@ String _randomHexId() {
   final random = Random.secure();
   return List<String>.generate(
       16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+}
+
+/// One conversation's D68 send hold.
+class _RemovalHold {
+  _RemovalHold({required this.epoch, this.listed = false, this.seq = 0});
+
+  factory _RemovalHold.fromJson(Map<String, Object?> json) => _RemovalHold(
+        epoch: json['epoch'] as int,
+        listed: json['listed'] as bool? ?? true,
+      )..accounts.addAll(
+          (json['accounts'] as List? ?? const <Object?>[]).cast<String>());
+
+  /// The epoch the removal was made or last listed at.
+  int epoch;
+
+  /// Whether the server listed the removal as a change to commit.
+  bool listed;
+
+  /// [AppState._removalHoldSeq] when the hold was last set.
+  int seq;
+
+  /// The removed accounts.
+  final Set<String> accounts = <String>{};
+
+  /// The pending-changes read that first left this removal out, since it
+  /// was last set or listed. Not stored: after a restart a read sets it
+  /// again.
+  int? unlistedAt;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+        'epoch': epoch,
+        'listed': listed,
+        'accounts': accounts.toList()..sort(),
+      };
 }

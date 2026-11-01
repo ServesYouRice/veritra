@@ -310,7 +310,7 @@ void main() {
     });
   });
 
-  group('TASK-038: a restore reports a session that did not come up', () {
+  group('TASK-038, D71: a restore never signs in by itself', () {
     Future<_Harness> restored(_BackupMode mode,
         {_FaultStore? store, _Api? api}) async {
       final faults = store ?? _FaultStore();
@@ -319,34 +319,21 @@ void main() {
       return h;
     }
 
-    test('a session that comes up is a success', () async {
-      final h = await restored(_BackupMode.session);
-      expect(await h.state.restoreFromBackup('v1.code'), isTrue);
-      expect(h.state.errorFor(Ops.restore), isNull);
-      expect(h.state.session?.token, _owner.token);
-      expect(h.state.lifecycle, SessionLifecycle.ready);
-      h.dispose();
-    });
-
-    test('an unreachable server still restores from the cache', () async {
-      final api = _Api()..conversationsFailure = const SocketException('x');
-      final h = await restored(_BackupMode.session, api: api);
-      expect(await h.state.restoreFromBackup('v1.code'), isTrue);
-      expect(h.state.errorFor(Ops.restore), isNull);
-      expect(h.state.session?.token, _owner.token);
-      h.dispose();
-    });
-
-    test('a session the server rejects restores for a password sign-in',
+    test('a restore keeps the history and asks to finish by linking (D71)',
         () async {
-      final api = _Api()
-        ..conversationsFailure = ApiException(401, '{"error":"unauthorized"}');
-      final h = await restored(_BackupMode.session, api: api);
-      expect(await h.state.restoreFromBackup('v1.code'), isTrue);
+      final h = await restored(_BackupMode.session);
+      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
+      // No session comes back: the backup holds no token or device.
       expect(h.state.session, isNull);
-      expect(h.state.errorFor(Ops.restore), isNull);
-      // The identity stays for that sign-in.
-      expect((await h.store.loadSession())?.deviceId, _owner.deviceId);
+      expect(h.state.lifecycle, SessionLifecycle.ready);
+      expect(h.state.errorFor(Ops.restore), contains('link this device'));
+      final stored = await h.store.loadSession();
+      expect(isRestoredAccountSession(stored!), isTrue);
+      expect(stored.accountId, _owner.accountId);
+      // A password alone cannot sign in a device the server does not know.
+      await h.state.login(_origin, 'owner', 'password');
+      expect(h.state.session, isNull);
+      expect(h.state.error, isNotNull);
       h.dispose();
     });
 
@@ -1083,7 +1070,8 @@ class _Api extends ApiClient {
 enum _BackupMode { session, nothing }
 
 /// Stands in for the download and decryption: a successful recover leaves
-/// the backup's session in the store, or (with [_BackupMode.nothing]) none.
+/// the backup's account, signed out with no device (D71), in the store, or
+/// (with [_BackupMode.nothing]) nothing.
 class _Backups implements BackupService {
   _Backups(this.store, this.mode);
 
@@ -1092,7 +1080,12 @@ class _Backups implements BackupService {
 
   @override
   Future<void> recover(String recoveryCode) async {
-    if (mode == _BackupMode.session) await store.saveSession(_owner);
+    if (mode == _BackupMode.session) {
+      await store.saveSession(restoredAccountSession(
+          baseUrl: _owner.baseUrl,
+          accountId: _owner.accountId!,
+          username: _owner.username));
+    }
   }
 
   @override

@@ -15,9 +15,13 @@ import '../crypto/message_format.dart' show pinLimitPerChat;
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
+part 'pending_enrollment_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
+
+  /// The sealed MLS records (D70) are written; the root singleton is not.
+  afterRecords,
   afterState,
   afterEnvelopes,
   afterMessageEffects,
@@ -26,6 +30,24 @@ enum MlsCommitStage {
 }
 
 typedef MlsCommitFailureInjector = Future<void> Function(MlsCommitStage stage);
+
+bool _sameBytes(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  for (var i = 0; i < left.length; i++) {
+    if (left[i] != right[i]) return false;
+  }
+  return true;
+}
+
+/// One change to the sealed MLS records (D70, format 4): an upsert of
+/// [sealed] under ([kind], [recordId]) at [generation], or a delete when
+/// [sealed] is null.
+typedef CryptoRecordWrite = ({
+  int kind,
+  List<int> recordId,
+  int generation,
+  List<int>? sealed,
+});
 
 /// How a decrypted or locally sent application message changes local history
 /// (decisions D22, D23). Effects are applied inside the same transaction as
@@ -89,6 +111,54 @@ abstract final class LocalMessageState {
 
   /// Imported own-device snapshot state, never delivery or original MLS proof.
   static const restored = 'restored';
+}
+
+/// Backup history without the outgoing rows still [LocalMessageState.pending]
+/// and the reactions, pins and stars on them. A restore drops the outboxes
+/// and the MLS state (D71, D73), so such a row could never be sent or
+/// resolve. Edits, deletes and reactions a pending action already applied to
+/// other rows stay, as in a history snapshot (`captureHistory`).
+({
+  List<LocalMessage> history,
+  List<LocalMessageReaction> reactions,
+  List<LocalPin> pins,
+  Map<String, int> starred,
+}) withoutPendingHistory({
+  required List<LocalMessage> history,
+  required List<LocalMessageReaction> reactions,
+  required List<LocalPin> pins,
+  required Map<String, int> starred,
+}) {
+  final dropped = <String>{
+    for (final message in history)
+      if (message.state == LocalMessageState.pending) message.key
+  };
+  if (dropped.isEmpty) {
+    return (
+      history: history,
+      reactions: reactions,
+      pins: pins,
+      starred: starred
+    );
+  }
+  return (
+    history: [
+      for (final message in history)
+        if (message.state != LocalMessageState.pending) message
+    ],
+    reactions: [
+      for (final reaction in reactions)
+        if (!dropped.contains(reaction.targetKey)) reaction
+    ],
+    pins: [
+      for (final pin in pins)
+        if (!dropped.contains(pin.targetKey)) pin
+    ],
+    starred: {
+      for (final entry in starred.entries)
+        if (!dropped.contains(entry.key)) entry.key: entry.value
+    },
+  );
 }
 
 final class InsertMessageEffect extends MessageEffect {
@@ -278,6 +348,27 @@ class LocalCryptoStates extends Table {
   Set<Column<Object>> get primaryKey => {singleton};
 }
 
+/// Per-record sealed MLS state (D70, format 4): one row per sealed record
+/// (device, group or key package), listed by the root that
+/// [LocalCryptoStates.sealedState] holds. Every transaction that deletes the
+/// [LocalCryptoStates] singleton also deletes these rows, so records never
+/// outlive their root. Like the root, they never go into a backup (D73).
+class LocalCryptoRecords extends Table {
+  /// The record kind from the sealed header (1 device, 2 group, 3 kp).
+  IntColumn get kind => integer()();
+
+  /// The raw record id: a group id or key-package hash ref; empty for the
+  /// device record.
+  BlobColumn get recordId => blob()();
+
+  /// The generation (root counter) the record was last sealed at.
+  IntColumn get generation => integer()();
+  BlobColumn get sealed => blob()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {kind, recordId};
+}
+
 class LocalMetadata extends Table {
   TextColumn get name => text()();
   TextColumn get value => text()();
@@ -445,6 +536,7 @@ class LocalConversationMutes extends Table {
   LocalSyncStates,
   LocalOutboxEntries,
   LocalCryptoStates,
+  LocalCryptoRecords,
   LocalMetadata,
   LocalMlsTransitions,
   LocalMlsOutboxEntries,
@@ -461,7 +553,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 15;
+  static const currentSchemaVersion = 17;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -671,6 +763,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await migrator.createAll();
             await _createHistoryNamespace();
             await _createNoticeOutbox();
+            await _createPendingEnrollment();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -687,6 +780,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
           _upgradeStarted = true;
           await transaction(() async {
+            // K2/K0: the pending device enrollment. The waiting K0 claim
+            // moves out of its schema 16 setting in this same transaction.
+            if (from < 17) {
+              await _createPendingEnrollment();
+              await _movePendingRecoverySetting();
+            }
+            // D70: per-record sealed MLS state. New table only.
+            if (from < 16) await migrator.createTable(localCryptoRecords);
             if (from < 15) await _createNoticeOutbox();
             if (from < 14) await _createHistoryNamespace();
             // Older expiry/backfill steps read through current generated rows.
@@ -829,6 +930,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                     ])))
               .go();
           await delete(localCryptoStates).go();
+          await delete(localCryptoRecords).go();
           // The cursor went with the MLS state it was committed with. An
           // upsert of only the key would keep the old value.
           await into(localSyncStates).insertOnConflictUpdate(
@@ -876,6 +978,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
         await delete(localCryptoStates).go();
+        await delete(localCryptoRecords).go();
         await delete(localAccounts).go();
         if (sessionJson != null) {
           await into(localAccounts).insert(
@@ -953,37 +1056,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               String payloadJson
             })>
         envelopes,
-    required List<
-            ({
-              String idempotencyKey,
-              String conversationId,
-              String payloadJson
-            })>
-        outbox,
-    required List<
-            ({
-              String idempotencyKey,
-              String conversationId,
-              String kind,
-              String? recipientDeviceId,
-              String? revocationDeviceId,
-              List<int> payload,
-              int attemptCount,
-              int? nextAttemptAt,
-              String? failureClass,
-              bool terminal
-            })>
-        mlsOutbox,
-    required ({
-      int counter,
-      List<int> stateKey,
-      List<int> sealedState
-    }) cryptoState,
-    required int cursor,
     List<LocalMessage> history = const <LocalMessage>[],
     List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
     List<LocalPin> pins = const [],
-    List<LocalPendingPin> pendingPins = const [],
     Map<String, int> starred = const {},
     List<LocalConversationPref> conversationPrefs = const [],
     HistoryNamespace? historyNamespace,
@@ -994,6 +1069,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     Set<String> backfillExpiryFor = const <String>{},
   }) =>
       transaction(() async {
+        final kept = withoutPendingHistory(
+            history: history,
+            reactions: reactions,
+            pins: pins,
+            starred: starred);
+        history = kept.history;
+        reactions = kept.reactions;
+        pins = kept.pins;
+        starred = kept.starred;
         await clearNoticeOutbox();
         final previousSession = await readSessionJson();
         final replacementNamespace =
@@ -1014,7 +1098,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localDrafts).go();
         await delete(localConversationMutes).go();
         // Decrypted history travels in the backup (D27, I45); a version 1
-        // backup without it restores an empty history.
+        // backup without it restores an empty history. The MLS state, its
+        // outbox and the plain outbox do not (D71, D73): the device starts
+        // like a freshly linked one, with no group state and cursor 0.
         await _clearHistoryNamespace();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
@@ -1035,9 +1121,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         for (final pin in pins) {
           await into(localPins).insert(pin);
         }
-        for (final pin in pendingPins) {
-          await into(localPendingPins).insert(pin);
-        }
         for (final entry in starred.entries) {
           await into(localStarred).insert(LocalStarredCompanion.insert(
               messageKey: entry.key, starredAt: entry.value));
@@ -1049,6 +1132,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         await delete(localCryptoStates).go();
+        await delete(localCryptoRecords).go();
         await delete(localAccounts).go();
         await into(localAccounts).insert(
           LocalAccountsCompanion.insert(
@@ -1074,39 +1158,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         await _purgeExpiredInTransaction(
             DateTime.now().toUtc().millisecondsSinceEpoch);
-        final queuedAt = DateTime.now().microsecondsSinceEpoch;
-        for (final item in outbox) {
-          await into(localOutboxEntries).insert(
-              LocalOutboxEntriesCompanion.insert(
-                  idempotencyKey: item.idempotencyKey,
-                  conversationId: item.conversationId,
-                  queuedAt: queuedAt,
-                  payloadJson: item.payloadJson));
-        }
-        await into(localCryptoStates).insert(LocalCryptoStatesCompanion.insert(
-            singleton: const Value(1),
-            counter: cryptoState.counter,
-            stateKey: Uint8List.fromList(cryptoState.stateKey),
-            sealedState: Uint8List.fromList(cryptoState.sealedState)));
-        for (final (index, item) in mlsOutbox.indexed) {
-          await into(localMlsOutboxEntries).insert(
-              LocalMlsOutboxEntriesCompanion.insert(
-                  idempotencyKey: item.idempotencyKey,
-                  conversationId: item.conversationId,
-                  kind: item.kind,
-                  recipientDeviceId: Value(item.recipientDeviceId),
-                  revocationDeviceId: Value(item.revocationDeviceId),
-                  payload: Uint8List.fromList(item.payload),
-                  stateCounter: cryptoState.counter,
-                  queuedAt: queuedAt + index,
-                  attemptCount: Value(item.attemptCount),
-                  nextAttemptAt: Value(item.nextAttemptAt),
-                  failureClass: Value(item.failureClass),
-                  terminal: Value(item.terminal)));
-        }
         await into(localSyncStates).insertOnConflictUpdate(
             LocalSyncStatesCompanion.insert(
-                singleton: const Value(1), cursor: Value(cursor)));
+                singleton: const Value(1), cursor: const Value(0)));
       });
 
   Future<int> readCursor() async {
@@ -1401,11 +1455,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             .go();
       });
 
+  /// Writes a complete crypto state: the root and every record it lists
+  /// ([recordChanges]). Records from before are dropped in the same
+  /// transaction, so none can outlive the root they belonged to.
   Future<void> writeCryptoState({
     required int counter,
     required List<int> stateKey,
     required List<int> sealedState,
     required int cursor,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
   }) =>
       transaction(() async {
         final previous = await (select(localCryptoStates)
@@ -1414,6 +1472,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (previous != null && counter <= previous.counter) {
           throw StateError('crypto state counter must increase');
         }
+        await delete(localCryptoRecords).go();
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1440,6 +1500,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required List<({String id, String conversationId, String payloadJson})>
         upsertedEnvelopes,
     required List<String> deletedEnvelopeIds,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     List<LocalNoticeReference> noticeReferences = const [],
     MlsCommitFailureInjector? failureInjector,
@@ -1476,6 +1537,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         await failureInjector?.call(MlsCommitStage.afterValidation);
         checkCanCommit?.call();
+        await _applyCryptoRecordChanges(recordChanges);
+        await failureInjector?.call(MlsCommitStage.afterRecords);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1727,6 +1790,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               List<int> payload,
             })>
         messages,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -1743,6 +1807,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             messages.isEmpty) {
           throw StateError('stale or incomplete outgoing MLS transition');
         }
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1782,6 +1847,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String? draftText,
     required int maxEntries,
     List<MessageEffect> messageEffects = const <MessageEffect>[],
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -1807,6 +1873,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (await outboxCount() >= maxEntries) {
           throw StateError('outbox_full');
         }
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1848,6 +1915,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required int counter,
     required List<int> stateKey,
     required List<int> sealedState,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
     String? resolvedMlsOutboxKey,
   }) =>
@@ -1864,6 +1932,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter != expectedCounter + 1) {
           throw StateError('stale local MLS transition');
         }
+        await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
             singleton: const Value(1),
@@ -1977,6 +2046,98 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     );
   }
 
+  /// Every sealed MLS record (D70), ordered by kind and id.
+  Future<List<LocalCryptoRecord>> readCryptoRecords() =>
+      (select(localCryptoRecords)
+            ..orderBy([
+              (t) => OrderingTerm(expression: t.kind),
+              (t) => OrderingTerm(expression: t.recordId)
+            ]))
+          .get();
+
+  /// The root singleton and every record, read in one transaction so the
+  /// restore never mixes two states (D70).
+  Future<
+      ({
+        ({int counter, List<int> stateKey, List<int> sealedState})? state,
+        List<LocalCryptoRecord> records,
+      })> readCryptoSnapshot() => transaction(() async {
+        final state = await readCryptoState();
+        final records = await readCryptoRecords();
+        return (state: state, records: records);
+      });
+
+  /// The one-way format 2/3 to format 4 migration commit (D70 section 5), a
+  /// compare-and-swap: the singleton must still hold [expectedSealedState]
+  /// at [expectedCounter] under [stateKey]. Records found next to that old
+  /// blob are leftovers (an older build opened this database and rewrote
+  /// its version), so they are deleted; then every migrated record and the
+  /// new root are written at [counter], which must be one more. The sync
+  /// cursor does not move.
+  Future<void> commitCryptoMigration({
+    required int expectedCounter,
+    required List<int> expectedSealedState,
+    required int counter,
+    required List<int> stateKey,
+    required List<int> sealedState,
+    required List<CryptoRecordWrite> recordChanges,
+    String? leaseKey,
+    MlsCommitFailureInjector? failureInjector,
+    void Function()? checkCanCommit,
+  }) =>
+      transaction(() async {
+        checkCanCommit?.call();
+        await _assertSyncLeaseInTransaction(leaseKey);
+        final previous = await (select(localCryptoStates)
+              ..where((table) => table.singleton.equals(1)))
+            .getSingleOrNull();
+        if (previous == null ||
+            previous.counter != expectedCounter ||
+            counter != expectedCounter + 1 ||
+            !_sameBytes(previous.sealedState, expectedSealedState) ||
+            !_sameBytes(previous.stateKey, stateKey) ||
+            recordChanges.any((change) => change.sealed == null)) {
+          throw StateError('stale or changed crypto state migration');
+        }
+        await failureInjector?.call(MlsCommitStage.afterValidation);
+        await delete(localCryptoRecords).go();
+        await _applyCryptoRecordChanges(recordChanges);
+        await failureInjector?.call(MlsCommitStage.afterRecords);
+        checkCanCommit?.call();
+        await into(localCryptoStates).insertOnConflictUpdate(
+          LocalCryptoStatesCompanion.insert(
+            singleton: const Value(1),
+            counter: counter,
+            stateKey: Uint8List.fromList(stateKey),
+            sealedState: Uint8List.fromList(sealedState),
+          ),
+        );
+        await failureInjector?.call(MlsCommitStage.afterState);
+      });
+
+  Future<void> _applyCryptoRecordChanges(
+      List<CryptoRecordWrite> changes) async {
+    for (final change in changes) {
+      final sealed = change.sealed;
+      final id = Uint8List.fromList(change.recordId);
+      if (sealed == null) {
+        await (delete(localCryptoRecords)
+              ..where(
+                  (t) => t.kind.equals(change.kind) & t.recordId.equals(id)))
+            .go();
+      } else {
+        await into(localCryptoRecords).insertOnConflictUpdate(
+          LocalCryptoRecordsCompanion.insert(
+            kind: change.kind,
+            recordId: id,
+            generation: change.generation,
+            sealed: Uint8List.fromList(sealed),
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> clearCachedState(
           {bool preserveOutbox = false, bool keepDrafts = false}) =>
       transaction(() async {
@@ -2005,8 +2166,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
         await delete(localCryptoStates).go();
+        await delete(localCryptoRecords).go();
         await delete(localAccounts).go();
         await delete(localMetadata).go();
+        await _clearPendingEnrollment();
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();

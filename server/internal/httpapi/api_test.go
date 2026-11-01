@@ -778,7 +778,7 @@ func TestDMAndGroupMembershipLifecycleAPI(t *testing.T) {
 		"kind":               "dm",
 		"member_account_ids": []string{ownerID},
 	})
-	if status != http.StatusCreated {
+	if status != http.StatusOK {
 		t.Fatalf("retry DM status=%d body=%s", status, response)
 	}
 	var retriedDM struct {

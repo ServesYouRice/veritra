@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
+import 'native_state_round_trip.dart';
+
 class _Linked {
   _Linked(String path) {
     bindings = NativeCryptoBindings.open(path);
@@ -164,11 +166,9 @@ void main() {
       receiver.close();
       receiver = null;
       final key = List.filled(32, 7);
-      final sealed = linked.recipient.sealState(key, 31);
-      linked.recipient.close();
-      linked.recipient = linked.bindings
-          .restoreDevice('account', 'recipient', key, 31, sealed)
-          .device;
+      linked.recipient = reopenFreshDevice(
+          linked.bindings, linked.recipient, 'account', 'recipient',
+          stateKey: key, generation: 1);
       receiver = linked.recipient
           .k2ReceiveBeginBundle(linked.id, metadata.handoff,
               now: 100, plaintextVersion: 4)

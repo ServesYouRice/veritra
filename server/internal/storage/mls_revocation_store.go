@@ -8,18 +8,41 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
+// mlsLegacyLeafEvidence is true when device (SQL text: its id), created at
+// createdAt (SQL text), shows evidence of a leaf in the legacy group (no
+// roster) of conversation (SQL text): it sent an MLS message there, it is
+// the recipient of a Welcome there, or it is no newer than the oldest
+// retained MLS message of the conversation. Pruning removes the oldest
+// messages first, and a device with a leaf created after the oldest
+// retained message got it from a Welcome (or its own commit) newer than
+// that message, which is still retained. A device with no leaf (a
+// recovered device, say) passes none of the three, and later commits do
+// not change that. A conversation with no retained MLS message has no
+// evidence for any device.
+func mlsLegacyLeafEvidence(conversation, device, createdAt string) string {
+	return `(EXISTS (SELECT 1 FROM conversation_mls_messages xs
+		         WHERE xs.conversation_id = ` + conversation + ` AND xs.sender_device_id = ` + device + `)
+		 OR EXISTS (SELECT 1 FROM conversation_mls_messages xw
+		         WHERE xw.conversation_id = ` + conversation + ` AND xw.kind = 'welcome' AND xw.recipient_device_id = ` + device + `)
+		 OR ` + createdAt + ` <= (SELECT MIN(xm.created_at) FROM conversation_mls_messages xm
+		         WHERE xm.conversation_id = ` + conversation + `))`
+}
+
 // mlsRevocationEligibleDevice is true when device (SQL text: a column) may
 // commit revocation r (SQL text: a table alias): it is not the revoked
 // device, it is not revoked itself, its account is a member of the
-// conversation and, in a rostered group (card I51), it is an active group
-// device.
+// conversation and it has a leaf in the group: in a rostered group (card
+// I51) it is an active group device, and in a legacy group (no roster,
+// which records no leaves) it shows evidence of one
+// (mlsLegacyLeafEvidence).
 func mlsRevocationEligibleDevice(r, device string) string {
 	return `EXISTS (SELECT 1 FROM devices ed
 		JOIN memberships em ON em.account_id = ed.account_id AND em.conversation_id = ` + r + `.conversation_id
 		WHERE ed.id = ` + device + ` AND ed.revoked_at IS NULL AND ed.id <> ` + r + `.revoked_device_id
-		  AND (NOT EXISTS (SELECT 1 FROM conversation_mls_groups eg WHERE eg.conversation_id = ` + r + `.conversation_id)
-		       OR EXISTS (SELECT 1 FROM conversation_mls_devices er WHERE er.conversation_id = ` + r + `.conversation_id
-		                  AND er.device_id = ed.id AND er.removed_after_event_id IS NULL)))`
+		  AND (EXISTS (SELECT 1 FROM conversation_mls_devices er WHERE er.conversation_id = ` + r + `.conversation_id
+		                  AND er.device_id = ed.id AND er.removed_after_event_id IS NULL)
+		       OR (NOT EXISTS (SELECT 1 FROM conversation_mls_groups eg WHERE eg.conversation_id = ` + r + `.conversation_id)
+		           AND ` + mlsLegacyLeafEvidence(r+`.conversation_id`, `ed.id`, `ed.created_at`) + `)))`
 }
 
 // mlsRevocationTargetInGroup is true when revocation r (SQL text: a table

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../core/models.dart';
 import '../core/server_origin.dart';
 import '../storage/encrypted_database.dart'
@@ -27,14 +29,20 @@ class NativeCryptoService
         BoundedMlsConversationCryptoService,
         ConversationAuthorityConsumer,
         MlsSelfUpdateCryptoService,
-        NoticeCaptureConsumer {
+        MlsStateMaintenanceCryptoService,
+        NoticeCaptureConsumer,
+        RecoveryCryptoService {
   NativeCryptoService({
     required this.bindings,
     required this.localStore,
-  });
+    DateTime Function()? clock,
+  }) : _clock = clock ?? DateTime.now;
 
   final NativeCryptoBindings bindings;
   final LocalStore localStore;
+
+  /// The time key-package expiry is judged by (D70).
+  final DateTime Function() _clock;
   @override
   set conversationAuthority(ConversationAuthority value) => _authority = value;
   ConversationAuthority? _authority;
@@ -75,6 +83,15 @@ class NativeCryptoService
   }
 
   bool _pendingEnrollment = false;
+
+  /// The enrolling device's first sealed state, kept until it is stored: a
+  /// seal moves the device's generation, so a retried activation must store
+  /// this same state rather than seal again (D70).
+  StoredCryptoState? _firstState;
+
+  /// Whether the first sealed state (and its state key) is still held.
+  @visibleForTesting
+  bool get holdsFirstState => _firstState != null;
   Future<void> _operationTail = Future<void>.value();
 
   @override
@@ -95,8 +112,124 @@ class NativeCryptoService
         _accountId = reservation.accountId;
         _deviceId = reservation.deviceId;
         _pendingEnrollment = true;
+        _firstState = null;
         return device.createEnrollmentCredential(reservation.challenge);
       });
+
+  // K0 recovery (ABI 11). The bindings are synchronous; each call is
+  // serialized with the MLS operations only where it touches the device.
+
+  @override
+  Future<Uint8List> generateRecoveryKey() async =>
+      bindings.generateRecoveryKey();
+
+  @override
+  Future<String> encodeRecoveryKey(Uint8List entropy) async =>
+      bindings.encodeRecoveryKey(entropy);
+
+  @override
+  Future<Uint8List> decodeRecoveryKey(String text) async =>
+      bindings.decodeRecoveryKey(text);
+
+  @override
+  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy) async {
+    final derived = bindings.deriveRecoveryKey(entropy);
+    return RecoveryKeyValues(
+        rkPub: derived.rkPub, rkId: derived.rkId, rkAuthPub: derived.rkAuthPub);
+  }
+
+  @override
+  Future<Uint8List> signRecoveryProof({
+    required Uint8List entropy,
+    required List<int> challenge,
+    required List<int> signingKey,
+    required List<int> keyPackage,
+    required String origin,
+  }) async =>
+      bindings.signRecoveryProof(
+          entropy: entropy,
+          challenge: challenge,
+          signingKey: signingKey,
+          keyPackage: keyPackage,
+          origin: origin);
+
+  @override
+  Future<StoredCryptoState> sealPendingEnrollment() => _serial(() async {
+        final device = _device;
+        if (!_pendingEnrollment || device == null) {
+          throw StateError('no pending enrollment identity');
+        }
+        // Sealed once: a second seal would move the generation, so the
+        // activation stores exactly this state (as for [_firstState]).
+        final first = _firstState ??= () {
+          final key = _randomBytes(32);
+          return _sealedState(1, key, device.sealChanges(key, 1));
+        }();
+        return _copyState(first);
+      });
+
+  @override
+  Future<void> resumePendingEnrollment({
+    required String accountId,
+    required String deviceId,
+    required StoredCryptoState state,
+  }) =>
+      _serial(() async {
+        if (state.counter != 1 || state.stateKey.length != 32) {
+          throw StateError('pending enrollment state is invalid');
+        }
+        final restored = _formatChecked(() => bindings.restoreRecords(accountId,
+                deviceId, state.stateKey, state.counter, state.sealedState, [
+              for (final change in state.changes)
+                if (change.sealed != null) change.sealed!
+            ]));
+        if (restored.generation != state.counter) {
+          restored.device.close();
+          throw StateError('MLS rollback counter mismatch');
+        }
+        noticeCaptureEnabled = false;
+        _noticeOrigin = null;
+        _device?.close();
+        _device = restored.device;
+        _deviceCounter = null;
+        _accountId = accountId;
+        _deviceId = deviceId;
+        _pendingEnrollment = true;
+        _firstState = _copyState(state);
+      });
+
+  @override
+  Future<void> abandonPendingEnrollment() => _serial(() async {
+        if (!_pendingEnrollment) return;
+        _device?.close();
+        _device = null;
+        _deviceCounter = null;
+        final first = _firstState;
+        if (first != null) {
+          first.stateKey.fillRange(0, first.stateKey.length, 0);
+        }
+        _firstState = null;
+        _accountId = null;
+        _deviceId = null;
+        _pendingEnrollment = false;
+      });
+
+  static StoredCryptoState _copyState(StoredCryptoState state) =>
+      StoredCryptoState(
+        counter: state.counter,
+        stateKey: List<int>.from(state.stateKey),
+        sealedState: List<int>.from(state.sealedState),
+        changes: <CryptoRecordChange>[
+          for (final change in state.changes)
+            CryptoRecordChange(
+              kind: change.kind,
+              recordId: List<int>.from(change.recordId),
+              generation: change.generation,
+              sealed:
+                  change.sealed == null ? null : List<int>.from(change.sealed!),
+            ),
+        ],
+      );
 
   @override
   Future<void> activateSession(Session session) => _serial(() async {
@@ -117,20 +250,23 @@ class NativeCryptoService
               _device == null) {
             throw StateError('protected MLS state is unavailable');
           }
-          final key = _randomBytes(32);
-          final sealed = _device!.sealState(key, 1);
+          final first = _firstState ??= () {
+            final key = _randomBytes(32);
+            return _sealedState(1, key, _device!.sealChanges(key, 1));
+          }();
           await localStore.saveCryptoState(
-            StoredCryptoState(counter: 1, stateKey: key, sealedState: sealed),
+            first,
             await localStore.loadSyncCursor(),
           );
+          _firstState = null;
           _deviceCounter = 1;
         } else {
+          // A state is stored, so the first save committed (its outcome
+          // may have been lost): the copy and its key are never needed.
+          _firstState = null;
           _device?.close();
-          final restored = _restoreDevice(accountId, deviceId, stored);
-          if (restored.counter != stored.counter) {
-            restored.device.close();
-            throw StateError('MLS rollback counter mismatch');
-          }
+          _device = null;
+          final restored = await _openStored(accountId, deviceId, stored);
           _device = restored.device;
           _deviceCounter = restored.counter;
         }
@@ -166,13 +302,11 @@ class NativeCryptoService
           _adoptNoticeOrigin(origin, accountId, deviceId);
           return;
         }
-        final restored = _restoreDevice(accountId, deviceId, stored);
+        final restored = await _openStored(accountId, deviceId, stored,
+            checkCanCommit: checkCanCommit);
         var adopted = false;
         try {
           checkCanCommit();
-          if (restored.counter != stored.counter) {
-            throw StateError('MLS rollback counter mismatch');
-          }
           _device?.close();
           _device = restored.device;
           _deviceCounter = restored.counter;
@@ -193,10 +327,24 @@ class NativeCryptoService
         }
         final previous = await _requiredState();
         try {
-          final packages = <List<int>>[
-            for (var index = 0; index < count; index++)
-              _requiredDevice().createKeyPackage(),
-          ];
+          final device = _requiredDevice();
+          // The pool holds at most 1,000 packages (D70). Expired ones are
+          // dropped first, so a full pool frees up as they expire instead
+          // of refusing every replenishment until a later sync prunes.
+          device.pruneKeyPackages(_clock());
+          final packages = <List<int>>[];
+          for (var index = 0; index < count; index++) {
+            try {
+              packages.add(device.createKeyPackage());
+            } on NativeCryptoException {
+              // The pool is full (or a key failed): keep the packages
+              // already made, so a pool with a few free places still
+              // fills them. The caller settles only what it gets; the rest
+              // stays owed.
+              if (packages.isEmpty || !_handleAnswers()) rethrow;
+              break;
+            }
+          }
           await _commitLocalMutation(previous);
           return packages;
         } catch (_) {
@@ -307,7 +455,23 @@ class NativeCryptoService
         try {
           if (bundle.hasCommit) {
             final device = _requiredDevice();
-            final before = device.groupEpoch(item.conversationId);
+            final ({int epoch, bool pending}) before;
+            try {
+              before = device.groupEpoch(item.conversationId);
+            } on NativeCryptoException {
+              // The group is gone: the user left or deleted the chat (D70),
+              // or this device was removed. Nothing is left to merge, and
+              // the entry settles instead of failing on every retry. A
+              // group that is stored but failed to load is not gone.
+              if (!await _groupGone(previous, item.conversationId)) rethrow;
+              await localStore.commitLocalMlsState(
+                expectedCounter: previous.counter,
+                expectedCursor: await localStore.loadSyncCursor(),
+                state: _sealNext(previous),
+                resolvedMlsOutboxKey: item.idempotencyKey,
+              );
+              return;
+            }
             if (before.pending) device.mergePendingCommit(item.conversationId);
             final after = device.groupEpoch(item.conversationId);
             // Fail closed if the group is not where the accepted commit
@@ -338,12 +502,23 @@ class NativeCryptoService
         try {
           if (bundle.hasCommit) {
             final device = _requiredDevice();
-            final status = device.groupEpoch(item.conversationId);
+            ({int epoch, bool pending})? status;
+            try {
+              status = device.groupEpoch(item.conversationId);
+            } on NativeCryptoException {
+              // The group is gone (this device was removed, or the chat
+              // deleted, D70): nothing is pending, and the entry settles.
+              // A group that is stored but failed to load is not gone.
+              if (!await _groupGone(previous, item.conversationId)) rethrow;
+              status = null;
+            }
             // Only a commit pending on the bundle's own epoch is this
             // bundle's. Sync may have applied another device's winning
             // commit meanwhile without settling this entry, and a commit
             // staged after that is newer: keep it.
-            if (status.pending && status.epoch == bundle.epoch) {
+            if (status != null &&
+                status.pending &&
+                status.epoch == bundle.epoch) {
               device.clearPendingCommit(item.conversationId);
             }
           }
@@ -357,6 +532,50 @@ class NativeCryptoService
           await _restorePrevious(previous);
           rethrow;
         }
+      });
+
+  /// Drops key packages that expired more than 24 hours before [now] and
+  /// stores the change (D70). Returns how many went. AppState calls it
+  /// after a caught-up foreground sync pass (S4).
+  @override
+  Future<int> pruneExpiredKeyPackages(DateTime now) => _serial(() async {
+        final previous = await _requiredState();
+        try {
+          final removed = _requiredDevice().pruneKeyPackages(now);
+          if (removed > 0) await _commitLocalMutation(previous);
+          return removed;
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  /// Drops this device's state for a conversation the user left or
+  /// deleted (D70), stores the change, then settles that conversation's
+  /// queued MLS control messages: with no group, a queued commit could only
+  /// fail. Only a user action may call this, never a server event: a
+  /// removal already dropped the group. Returns whether a group was stored.
+  @override
+  Future<bool> deleteConversationState(String conversationId) =>
+      _serial(() async {
+        final previous = await _requiredState();
+        final bool deleted;
+        try {
+          deleted = _requiredDevice().deleteGroup(conversationId);
+          if (deleted) await _commitLocalMutation(previous);
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+        // After the group is gone. A crash in between leaves entries that
+        // settle on their own: [completeCommitBundle] and
+        // [abandonCommitBundle] settle a bundle whose group is missing.
+        for (final queued in await localStore.pendingMlsMessages()) {
+          if (queued.conversationId == conversationId) {
+            await localStore.removePendingMlsMessage(queued.idempotencyKey);
+          }
+        }
+        return deleted;
       });
 
   /// Whether [item] is still an unsettled entry of the MLS outbox. Run only
@@ -392,6 +611,32 @@ class NativeCryptoService
           return null;
         }
       });
+
+  /// Whether a group lookup that failed means the group is truly gone: the
+  /// handle answers, it holds the committed state ([previous]), and the
+  /// stored records have no group record for [conversationId]. Anything
+  /// else (a poisoned or stale handle, a stored group that failed to load)
+  /// is not a missing group.
+  Future<bool> _groupGone(
+      StoredCryptoState previous, String conversationId) async {
+    if (!_handleAnswers() || _deviceCounter != previous.counter) return false;
+    final stored = await localStore.loadCryptoState();
+    if (stored == null || stored.counter != previous.counter) return false;
+    // The bytes the bindings send as the group id: the low byte of each
+    // code unit (they refuse an id with a unit above 0xff before any call).
+    final id = [for (final unit in conversationId.codeUnits) unit & 0xff];
+    return !(await localStore.loadCryptoRecords()).any((record) =>
+        record.kind == cryptoRecordKindGroup &&
+        _sameBytes(record.recordId, id));
+  }
+
+  static bool _sameBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
 
   /// Whether the device handle still answers a call that takes its lock
   /// (`with_device` in `crypto/rust/src/ffi.rs`). A native panic poisons that
@@ -534,7 +779,40 @@ class NativeCryptoService
               if (message.recipientDeviceId != _deviceId) {
                 throw StateError('MLS Welcome recipient mismatch');
               }
-              device.joinGroup(message.conversationId, message.payload);
+              try {
+                device.joinGroup(message.conversationId, message.payload);
+              } on NativeCryptoException catch (error) {
+                if (error.kind !=
+                    NativeCryptoError.welcomeKeyPackageUnavailable) {
+                  rethrow;
+                }
+                // The Welcome is for a key package this device no longer
+                // holds, or one that expired (D74). Nothing was consumed
+                // and nothing can be: sync moves on, and the chat says to
+                // ask to be added again.
+                await localStore.commitMlsTransition(MlsStateTransition(
+                  checkCanCommit: checkCanCommit,
+                  messageId: marker,
+                  conversationId: message.conversationId,
+                  expectedCounter: previous.counter,
+                  expectedCursor: previousCursor,
+                  state: _sealNext(previous),
+                  cursor: message.syncEventId,
+                  messageEffects: <MessageEffect>[
+                    InsertMessageEffect(
+                      key: 'welcome-unavailable:'
+                          '${message.syncEventId}:${message.id}',
+                      conversationId: message.conversationId,
+                      senderAccountId: message.senderAccountId,
+                      senderDeviceId: message.senderDeviceId,
+                      kind: LocalMessageKind.invalid,
+                      createdAt: message.createdAt.millisecondsSinceEpoch,
+                      state: LocalMessageState.received,
+                    ),
+                  ],
+                ));
+                return;
+              }
               break;
             case 'commit':
               // Another device's commit won this epoch. Any commit this
@@ -1215,13 +1493,18 @@ class NativeCryptoService
     return device;
   }
 
+  /// Seals what changed since the committed state as the next state: the
+  /// root and the changed records, stored together by the caller (D70).
   StoredCryptoState _sealNext(StoredCryptoState previous) {
     final nextCounter = previous.counter + 1;
-    final next = StoredCryptoState(
-      counter: nextCounter,
-      stateKey: List<int>.from(previous.stateKey),
-      sealedState: _requiredDevice().sealState(previous.stateKey, nextCounter),
-    );
+    final NativeChangeSet sealed;
+    try {
+      sealed = _requiredDevice().sealChanges(previous.stateKey, nextCounter);
+    } on NativeRecordLimitException catch (error) {
+      // Nothing was sealed; the caller rolls back (D70).
+      throw recordLimitFromNative(error);
+    }
+    final next = _sealedState(nextCounter, previous.stateKey, sealed);
     // The in-memory group now matches [next]. Callers that fail to commit it
     // call [_restorePrevious], which resets this.
     _deviceCounter = nextCounter;
@@ -1281,11 +1564,10 @@ class NativeCryptoService
     _deviceCounter = null;
     ({NativeCryptoDevice device, int counter}) restored;
     try {
-      restored = _restoreDevice(_accountId!, _deviceId!, previous);
-      if (restored.counter != previous.counter) {
-        restored.device.close();
-        throw StateError('failed to restore the previous MLS state');
-      }
+      // The committed state, which is [previous] unless a commit landed
+      // whose outcome was lost; never an older one.
+      restored = await _restoreCommitted(_accountId!, _deviceId!,
+          minimumCounter: previous.counter);
     } catch (_) {
       _device?.close();
       _device = null;
@@ -1296,14 +1578,97 @@ class NativeCryptoService
     _deviceCounter = restored.counter;
   }
 
-  /// Restores sealed state, turning an unsupported format into
-  /// [CryptoStateFormatUnsupported] so the app can offer re-linking. Every
-  /// other failure is rethrown unchanged; both stay fail-closed.
-  ({NativeCryptoDevice device, int counter}) _restoreDevice(
-      String accountId, String deviceId, StoredCryptoState stored) {
+  static StoredCryptoState _sealedState(
+          int counter, List<int> stateKey, NativeChangeSet sealed) =>
+      StoredCryptoState(
+        counter: counter,
+        stateKey: List<int>.from(stateKey),
+        sealedState: sealed.root,
+        changes: <CryptoRecordChange>[
+          for (final change in sealed.changes)
+            CryptoRecordChange(
+              kind: change.kind,
+              recordId: change.id,
+              generation: change.generation,
+              sealed: change.sealed,
+            ),
+        ],
+      );
+
+  /// Whether [sealed] is a whole-state blob of format 2 or 3 (the version
+  /// follows the 8-byte magic). Unauthenticated: it only picks the
+  /// migration, which runs every check of the old restore.
+  static bool _isLegacyFormat(List<int> sealed) =>
+      sealed.length > 10 &&
+      sealed[8] == 0 &&
+      (sealed[9] == 2 || sealed[9] == 3);
+
+  /// Opens the stored state at activation. A format 2/3 blob is migrated
+  /// to records first, one way, in one compare-and-swap commit (D70
+  /// section 5); the device then comes from what was stored, so the
+  /// migrated records are read back before anything builds on them.
+  Future<({NativeCryptoDevice device, int counter})> _openStored(
+      String accountId, String deviceId, StoredCryptoState stored,
+      {void Function()? checkCanCommit}) async {
+    if (_isLegacyFormat(stored.sealedState)) {
+      final migrated = _formatChecked(() => bindings.migrateLegacyState(
+          accountId,
+          deviceId,
+          stored.stateKey,
+          stored.counter,
+          stored.sealedState));
+      try {
+        final next = stored.counter + 1;
+        final sealed = migrated.device.sealChanges(stored.stateKey, next);
+        checkCanCommit?.call();
+        await localStore.commitCryptoMigration(
+          expectedCounter: stored.counter,
+          expectedSealedState: stored.sealedState,
+          state: _sealedState(next, stored.stateKey, sealed),
+          checkCanCommit: checkCanCommit,
+        );
+      } finally {
+        migrated.device.close();
+      }
+    }
+    return _restoreCommitted(accountId, deviceId,
+        minimumCounter: stored.counter);
+  }
+
+  /// Restores the committed state: the root and every record, read in one
+  /// transaction. Its generation must equal the stored counter, which must
+  /// be at least [minimumCounter].
+  Future<({NativeCryptoDevice device, int counter})> _restoreCommitted(
+      String accountId, String deviceId,
+      {required int minimumCounter}) async {
+    final snapshot = await localStore.loadCryptoSnapshot();
+    final state = snapshot.state;
+    if (state == null) {
+      throw StateError('protected MLS state is unavailable');
+    }
+    if (state.counter < minimumCounter) {
+      throw StateError('MLS rollback counter mismatch');
+    }
+    final restored = _formatChecked(() => bindings.restoreRecords(
+        accountId,
+        deviceId,
+        state.stateKey,
+        state.counter,
+        state.sealedState,
+        [for (final record in snapshot.records) record.sealed]));
+    if (restored.generation != state.counter) {
+      restored.device.close();
+      throw StateError('MLS rollback counter mismatch');
+    }
+    return (device: restored.device, counter: restored.generation);
+  }
+
+  /// Turns an unsupported format into [CryptoStateFormatUnsupported] so the
+  /// app can offer re-linking. Every other failure is rethrown unchanged;
+  /// both stay fail-closed.
+  T _formatChecked<T>(T Function() open) {
     try {
-      return bindings.restoreDevice(accountId, deviceId, stored.stateKey,
-          stored.counter, stored.sealedState);
+      return open();
     } on NativeCryptoException catch (error) {
       if (error.kind == NativeCryptoError.stateFormatUnsupported) {
         throw const CryptoStateFormatUnsupported();
@@ -1331,10 +1696,20 @@ class NativeCryptoService
         _device?.close();
         _device = null;
         _deviceCounter = null;
+        _firstState = null;
         _accountId = null;
         _deviceId = null;
       });
 }
+
+/// The app-level form of a native record-limit error: names the
+/// conversation when the record is its group (kind 2), else nothing.
+CryptoRecordLimitExceeded recordLimitFromNative(
+        NativeRecordLimitException error) =>
+    CryptoRecordLimitExceeded(
+        conversationId: error.recordKind == 2 && error.recordId.isNotEmpty
+            ? String.fromCharCodes(error.recordId)
+            : null);
 
 List<int> _randomBytes(int length) {
   final random = Random.secure();

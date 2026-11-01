@@ -917,6 +917,23 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request, principal d
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+	// A new password equal to the current one changes nothing, yet the
+	// client would report the account secured again (K0 forced follow-up
+	// after recovery, D79). Refuse it against the stored hash.
+	currentHash, _, err := a.Store.ReauthenticationRecord(r.Context(), principal.AccountID, principal.DeviceID)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	same, err := a.passwordService().Verify(r.Context(), auth.SignedIn, currentHash, req.NewPassword)
+	if err != nil {
+		writePasswordHashFailure(w, err)
+		return
+	}
+	if same.OK {
+		writeError(w, http.StatusBadRequest, "password_unchanged")
+		return
+	}
 	hash, err := auth.HashPasswordContext(r.Context(), auth.SignedIn, req.NewPassword)
 	if err != nil {
 		writePasswordHashFailure(w, err)

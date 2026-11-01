@@ -472,6 +472,7 @@ void main() {
         await insert(store, 'direct');
         final backup = await store.exportBackup();
         await store.restoreBackup(backup);
+        await _reenroll(store);
         var ns = await store.loadHistoryNamespace();
         expect(ns.provenance.keys, {'source:imported'});
         expect(ns.imports, hasLength(1));
@@ -489,12 +490,24 @@ void main() {
             as Map<String, dynamic>;
         legacy['version'] = 4;
         legacy.remove('history_namespace');
+        // Versions 1 to 5 carried the device's session, bound to it.
+        legacy
+          ..['session'] = <String, Object?>{
+            'base_url': origin,
+            'token': 'receiver-token',
+            'account_id': 'alice',
+            'device_id': 'receiver',
+          }
+          ..['account_id'] = 'alice'
+          ..['device_id'] = 'receiver';
         await store.restoreBackup(utf8.encode(jsonEncode(legacy)));
+        await _reenroll(store);
         ns = await store.loadHistoryNamespace();
         expect(ns.imports, isEmpty);
         expect(ns.provenance, isEmpty);
         expect(ns.conversations, isEmpty);
-        expect(ns.counter, 2);
+        // A restore makes a new device (D73): its export counter starts over.
+        expect(ns.counter, 0);
       });
 
       test('server ID conflicts fail even when target already exists',
@@ -573,6 +586,7 @@ void main() {
         ]);
         final backup = await store.exportBackup();
         await store.restoreBackup(backup);
+        await _reenroll(store);
         expect((await store.loadHistoryNamespace()).deferred, hasLength(4));
         expect(utf8.decode(await store.exportHistorySnapshot()),
             isNot(contains('new authenticated edit')));
@@ -693,6 +707,7 @@ void main() {
         expect(ns.provenance.containsKey(row.key), false);
         expect(await store.searchMessages('conflicting'), isEmpty);
         await store.restoreBackup(await store.exportBackup());
+        await _reenroll(store);
         ns = await store.loadHistoryNamespace();
         expect(ns.quarantine, hasLength(1));
         expect(utf8.decode(await store.exportHistorySnapshot()),
@@ -836,4 +851,19 @@ class _QuietSync implements SyncService {
   Future<void> connect() async {}
   @override
   Future<void> dispose() async {}
+}
+
+/// A restore leaves no device or MLS state (D71, D73); these tests go on
+/// as the same receiving device, enrolled again.
+Future<void> _reenroll(LocalStore store) async {
+  await store.saveSession(const Session(
+      baseUrl: origin,
+      token: 'receiver-token',
+      accountId: 'alice',
+      deviceId: 'receiver',
+      deviceSecret: 'receiver-secret'));
+  await store.saveCryptoState(
+      StoredCryptoState(
+          counter: 1, stateKey: List.filled(32, 7), sealedState: [8]),
+      0);
 }

@@ -16,11 +16,12 @@ mod ffi;
 #[allow(dead_code)]
 mod history;
 pub mod mls;
+pub mod recovery;
 
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 9;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 11;
 
 #[cfg(test)]
 mod test_memory;

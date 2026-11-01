@@ -846,6 +846,8 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 		{`DELETE FROM device_links WHERE id IN (SELECT id FROM device_links WHERE expires_at < ? AND state IN ('consumed', 'revoked') ORDER BY expires_at, id LIMIT 500)`, []interface{}{cutoff}},
 		{`DELETE FROM device_links_v3 WHERE id IN (SELECT id FROM device_links_v3 WHERE COALESCE(transfer_expires_at,expires_at) < ? ORDER BY COALESCE(transfer_expires_at,expires_at), id LIMIT 500)`, []interface{}{cutoff}},
 		{`DELETE FROM enrollment_reservations WHERE id IN (SELECT id FROM enrollment_reservations WHERE expires_at < ? OR (consumed_at IS NOT NULL AND consumed_at < ?) ORDER BY COALESCE(consumed_at, expires_at), id LIMIT 500)`, []interface{}{formatTime(now.UTC()), cutoff}},
+		{`DELETE FROM account_recovery_requests WHERE id IN (SELECT id FROM account_recovery_requests WHERE expires_at < ? ORDER BY expires_at, id LIMIT 500)`, []interface{}{cutoff}},
+		{`DELETE FROM recovery_attempts WHERE rowid IN (SELECT rowid FROM recovery_attempts WHERE day < ? ORDER BY day LIMIT 500)`, []interface{}{recoveryAttemptsCutoffDay(now)}},
 		{`DELETE FROM push_subscriptions WHERE id IN (SELECT id FROM push_subscriptions WHERE disabled_at IS NOT NULL AND disabled_at < ? ORDER BY disabled_at, id LIMIT 500)`, []interface{}{cutoff}},
 		{`DELETE FROM device_key_packages WHERE id IN (SELECT id FROM device_key_packages WHERE expires_at < ? OR (claimed_at IS NOT NULL AND claimed_at < ?) ORDER BY COALESCE(claimed_at, expires_at), id LIMIT 500)`, []interface{}{formatTime(now.UTC()), cutoff}},
 	}

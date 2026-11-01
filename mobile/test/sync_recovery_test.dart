@@ -486,42 +486,6 @@ void main() {
       });
 
       test(
-          '${entry.key}: after a clone restore whose session was revoked, '
-          'sign-in resumes from the backup cursor', () async {
-        final api = _ScriptedApi()
-          ..events = <SyncEvent>[
-            _mlsEvent(1, 'mls_1'),
-            _mlsEvent(2, 'mls_2'),
-            _mlsEvent(3, 'mls_3'),
-          ];
-        final store = await device();
-        final harness = await _Harness.start(api, store: store);
-        await harness.waitFor(() async => await store.loadSyncCursor() == 3);
-
-        // The backup carries the MLS state and its cursor, not which events
-        // were applied: restoring it drops those markers (I45).
-        await store.restoreBackup(await store.exportBackup());
-        expect(await store.loadSyncCursor(), 3);
-        await expire(harness, api);
-
-        api.events = <SyncEvent>[...api.events, _mlsEvent(4, 'mls_4')];
-        api.syncAfters.clear();
-        await harness.state.login('https://localhost:8080', 'me', 'password');
-        await harness.waitFor(() async => await store.loadSyncCursor() == 4);
-
-        expect(api.syncAfters.first, 3);
-        expect(harness.state.syncRecovery, isNull);
-        expect(harness.state.deviceRecoveryRequired, isFalse);
-        expect(harness.crypto.processedMls, <String>[
-          'mls_1',
-          'mls_2',
-          'mls_3',
-          'mls_4',
-        ]);
-        await finish(harness);
-      });
-
-      test(
           '${entry.key}: when the server pruned events the device could see, '
           'sign-in stores the expired-cursor recovery', () async {
         final api = _ScriptedApi()
@@ -686,8 +650,9 @@ void main() {
           (await database.customSelect('PRAGMA page_count').getSingle())
               .read<int>('page_count');
       // No room to grow: the trigger's insert needs hundreds of new pages and
-      // SQLite reports SQLITE_FULL from inside the background isolate.
-      await database.customStatement('PRAGMA max_page_count = $pages');
+      // SQLite reports SQLITE_FULL from inside the background isolate. A few
+      // pages spare let the trigger's own schema entry be written.
+      await database.customStatement('PRAGMA max_page_count = ${pages + 4}');
       await database.customStatement(
           'CREATE TRIGGER fill_up BEFORE INSERT ON local_mls_transitions '
           "BEGIN INSERT INTO local_metadata (name, value) "
