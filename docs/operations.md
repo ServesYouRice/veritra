@@ -235,15 +235,16 @@ entries each (IPv6 sources count per /64). When a table is full, a new key
 first replaces an expired bucket, then the least used live bucket that has
 used no credential and no enrollment budget; those two budgets are never
 reset before their minute ends. Only if every sampled bucket has used one
-does the new key share an overflow bucket, one of 256 chosen by a salted hash
-of its network (a /48 for IPv6, a /24 for IPv4), so a network that fills the
-table and burns its overflow bucket affects itself and the few networks that
-hash alongside it, not everyone's first request. One account seen from many
+does the new key share the table's one overflow bucket, which has the same
+limits as any other. Every key in it shares that budget, so while a flood
+keeps the table full of credential-using buckets and spends the overflow,
+other new addresses are refused until its minute ends; clients already in
+the table are not affected. One account seen from many
 addresses evicts only other account budgets, never an address's credential
 budget. `veritra_rate_limit_buckets` counts both tables.
 `veritra_rate_limit_evictions_total` counts each time a new key found its
 table full of live buckets, whether it evicted a credential-free bucket or
-went to an overflow bucket; it does not count reset credential budgets. A
+went to the overflow bucket; it does not count reset credential budgets. A
 steady rise means a table is under pressure (an address flood or very many
 networks). Monitor `veritra_rate_limit_buckets`,
 `veritra_rate_limit_evictions_total`, `veritra_login_backoff_entries` and

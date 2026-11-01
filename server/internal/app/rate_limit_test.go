@@ -243,11 +243,13 @@ func TestRateLimiterFullAccountTableKeepsLiveBuckets(t *testing.T) {
 	}
 }
 
-// One routed IPv6 /48 holds 65,536 /64 keys. An attacker that fills the
-// address table with credential-using buckets and then burns its network's
-// overflow bucket must not be able to refuse everyone else's first login
-// (the shared overflow bucket let it).
-func TestRateLimiterOverflowIsPerNetwork(t *testing.T) {
+// A full table of credential-using buckets sends every new key, from any
+// network, to the table's one shared overflow bucket with the ordinary
+// limits (owner decision). The table never grows past its cap, and no
+// exhausted credential budget in it is reset. The accepted cost: once a
+// flood has spent the overflow, other new keys are refused until its minute
+// ends or a table entry frees up.
+func TestRateLimiterOverflowIsOneSharedBucketPerTable(t *testing.T) {
 	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{general: 100, auth: 3, enrollment: 3, account: 100, signedIn: 100})
 	if err != nil {
 		t.Fatalf("new limiter: %v", err)
@@ -263,34 +265,53 @@ func TestRateLimiterOverflowIsPerNetwork(t *testing.T) {
 		handler.ServeHTTP(recorder, request)
 		return recorder.Code
 	}
-	// The attacker owns 2001:db8:a::/48: eight /64s fill the table with
-	// buckets that have used a credential budget, then more /64s of the same
-	// /48 land in the overflow and exhaust it.
+	tableSize := func() int {
+		limiter.mu.Lock()
+		defer limiter.mu.Unlock()
+		return len(limiter.buckets)
+	}
+	// Eight /64s fill the table with buckets that have used a credential
+	// budget; the first of them spends its whole credential budget.
 	for i := 0; i < 8; i++ {
 		if code := login(fmt.Sprintf("2001:db8:a:%x::1", i)); code != http.StatusNoContent {
-			t.Fatalf("attacker login %d status=%d", i, code)
+			t.Fatalf("filler login %d status=%d", i, code)
 		}
 	}
-	limited := 0
-	for i := 0; i < 12; i++ {
-		if login(fmt.Sprintf("2001:db8:a:%x::1", 0x100+i)) == http.StatusTooManyRequests {
-			limited++
+	for i := 0; i < 2; i++ {
+		login("2001:db8:a:0::1")
+	}
+	if code := login("2001:db8:a:0::1"); code != http.StatusTooManyRequests {
+		t.Fatalf("fourth login from one /64 status=%d, want 429", code)
+	}
+	// New keys from two unrelated networks share the one overflow bucket:
+	// three logins pass in all, whoever sends them, and the fourth is
+	// refused.
+	newKeys := []string{"2001:db8:b::1", "198.51.100.1", "2001:db8:c::1", "203.0.113.1"}
+	for i, ip := range newKeys[:3] {
+		if code := login(ip); code != http.StatusNoContent {
+			t.Fatalf("overflow login %d from %s status=%d", i, ip, code)
 		}
 	}
-	if limited == 0 {
-		t.Fatal("the attacker's own overflow bucket never ran out; the test is not exercising the overflow")
+	if code := login(newKeys[3]); code != http.StatusTooManyRequests {
+		t.Fatalf("login past the shared overflow budget from %s status=%d, want 429", newKeys[3], code)
 	}
-	attackerShard := limiter.overflowShard(rateLimitHost("2001:db8:a:1::1"))
-	for _, victim := range []string{"2001:db8:b::1", "2001:db8:c::1", "2001:db8:d::1"} {
-		if limiter.overflowShard(rateLimitHost(victim)) == attackerShard {
-			continue // a 1-in-256 salt collision; try the next network
-		}
-		if code := login(victim); code != http.StatusNoContent {
-			t.Fatalf("an unrelated client's first login from %s was refused: %d", victim, code)
-		}
-		return
+	limiter.mu.Lock()
+	overflowAuth := limiter.overflow.auth
+	accountOverflowUsed := limiter.accountOverflow.general
+	limiter.mu.Unlock()
+	if overflowAuth != 4 {
+		t.Fatalf("shared overflow counted %d logins, want 4", overflowAuth)
 	}
-	t.Fatal("no victim network avoided the attacker's shard")
+	if accountOverflowUsed != 0 {
+		t.Fatal("address keys were charged to the account table's overflow")
+	}
+	if size := tableSize(); size != limiter.maxEntries {
+		t.Fatalf("address table holds %d buckets, want its cap %d", size, limiter.maxEntries)
+	}
+	// The exhausted credential budget in the table was not reset.
+	if code := login("2001:db8:a:0::1"); code != http.StatusTooManyRequests {
+		t.Fatalf("exhausted credential budget was reset under table pressure: status=%d", code)
+	}
 }
 
 // A full table prefers to evict the least used bucket with no credential or
@@ -308,7 +329,7 @@ func TestRateLimiterEvictsLeastUsedBucketWithoutCredentialUse(t *testing.T) {
 	limiter.buckets["busy"] = &bucket{general: 50, reset: live}
 	limiter.buckets["quiet"] = &bucket{general: 1, reset: live}
 	limiter.mu.Lock()
-	b := limiter.bucketLocked(limiter.buckets, &limiter.overflow, "198.51.100.1", "fresh", now)
+	b := limiter.bucketLocked(limiter.buckets, &limiter.overflow, "fresh", now)
 	_, hasQuiet := limiter.buckets["quiet"]
 	_, hasFresh := limiter.buckets["fresh"]
 	size := len(limiter.buckets)
@@ -321,39 +342,17 @@ func TestRateLimiterEvictsLeastUsedBucketWithoutCredentialUse(t *testing.T) {
 			t.Fatalf("bucket %q was evicted", key)
 		}
 	}
-	// With nothing evictable left, the next key uses its network's overflow.
+	// With nothing evictable left, every next key uses the table's one
+	// overflow bucket.
 	limiter.buckets["busy"].auth = 1
 	limiter.buckets["fresh"].auth = 1
 	limiter.mu.Lock()
-	shared := limiter.bucketLocked(limiter.buckets, &limiter.overflow, "198.51.100.1", "another", now)
+	shared := limiter.bucketLocked(limiter.buckets, &limiter.overflow, "another", now)
+	again := limiter.bucketLocked(limiter.buckets, &limiter.overflow, "yet-another", now)
 	size = len(limiter.buckets)
 	limiter.mu.Unlock()
-	if size != 4 || shared != &limiter.overflow[limiter.overflowShard("198.51.100.1")] {
-		t.Fatalf("expected the overflow bucket of 198.51.100.0/24, size=%d", size)
-	}
-}
-
-func TestOverflowShardGroupsByNetwork(t *testing.T) {
-	limiter, err := newRateLimiter(httpapi.NewClientIdentityResolver(nil), rateLimits{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	same := [][2]string{
-		{"2001:db8:a:1::1", "2001:db8:a:ffff::9"}, // one /48
-		{"198.51.100.1", "198.51.100.254"},        // one /24
-		{"::ffff:198.51.100.1", "198.51.100.77"},  // mapped form
-	}
-	for _, pair := range same {
-		if a, b := limiter.overflowShard(rateLimitHost(pair[0])), limiter.overflowShard(rateLimitHost(pair[1])); a != b {
-			t.Errorf("%s and %s are in different shards: %d, %d", pair[0], pair[1], a, b)
-		}
-	}
-	seen := map[int]bool{}
-	for i := 0; i < 64; i++ {
-		seen[limiter.overflowShard(rateLimitHost(fmt.Sprintf("2001:db8:%x::1", 0x1000+i)))] = true
-	}
-	if len(seen) < 32 {
-		t.Errorf("64 networks landed in only %d of %d shards", len(seen), overflowShards)
+	if size != 4 || shared != &limiter.overflow || again != shared {
+		t.Fatalf("expected the shared overflow bucket, size=%d", size)
 	}
 }
 

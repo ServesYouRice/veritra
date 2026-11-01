@@ -93,6 +93,26 @@ func TestValidateKeyPackageRejectsMalformedFields(t *testing.T) {
 	}
 }
 
+// FuzzValidateKeyPackage checks that no input panics the parser and that
+// whatever it accepts stops being accepted once a byte is added or removed.
+func FuzzValidateKeyPackage(f *testing.F) {
+	f.Add(mlswiretest.OpenMLSKeyPackage())
+	f.Add(mlswiretest.KeyPackage())
+	f.Add(build(nil))
+	f.Add(make([]byte, 64))
+	f.Fuzz(func(t *testing.T, b []byte) {
+		if mlswire.ValidateKeyPackage(b) != nil {
+			return
+		}
+		if mlswire.ValidateKeyPackage(append(append([]byte(nil), b...), 0)) == nil {
+			t.Fatal("accepted package still accepted with a trailing byte")
+		}
+		if mlswire.ValidateKeyPackage(b[:len(b)-1]) == nil {
+			t.Fatal("accepted package still accepted with its last byte removed")
+		}
+	})
+}
+
 type keyPackage struct {
 	version, suite, credentialType uint16
 	initKey, encryptionKey         []byte
