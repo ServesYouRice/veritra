@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -10,6 +11,79 @@ import (
 )
 
 // K0 R2 review follow-ups: storage rules.
+
+// A revocation pending in a legacy group (no roster) whose coordinator is
+// an old device of an account that then recovers: the coordinator role
+// falls back to the lowest eligible device, and the recovered device, which
+// has the lowest id but no leaf in the group, must not be it.
+func TestRecoveredDeviceNeverCoordinatesAPendingLegacyRevocation(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := registerTestMember(t, ctx, store, invite.Code, "bob")
+	conversation, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID, MemberAccountIDs: []string{bob.Account.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	addTestDevice(t, ctx, store, bob.Account.ID, coordBob)
+	const tablet = "dev-z-owner-tablet"
+	addTestDevice(t, ctx, store, owner.Account.ID, tablet)
+	makeLegacyMLSGroup(t, ctx, store, conversation.ID, owner)
+	if _, err := store.RevokeDeviceWithSyncEvent(ctx, owner.Account.ID, tablet); err != nil {
+		t.Fatal(err)
+	}
+	var stored string
+	if err := store.db.QueryRowContext(ctx, `SELECT coordinator_device_id FROM mls_revocations WHERE conversation_id = ? AND revoked_device_id = ?`,
+		conversation.ID, tablet).Scan(&stored); err != nil || stored != coordBob {
+		t.Fatalf("stored coordinator = %q, err = %v, want %q", stored, err, coordBob)
+	}
+
+	claim := claimTestRecovery(t, ctx, store, bob, 0)
+	const lowest = "dev-0-recovered"
+	if _, err := store.db.ExecContext(ctx, `UPDATE account_recovery_requests SET device_id = ? WHERE id = ?`, lowest, claim.request.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CompleteRecovery(ctx, claim.request.ID, claim.claimTokenHash, auth.HashToken("legacy-recovered")); err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	coordinatorOf := func(accountID, deviceID string) string {
+		t.Helper()
+		items, err := store.ListMLSRevocations(ctx, accountID, deviceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range items {
+			if item.ConversationID == conversation.ID && item.RevokedDeviceID == tablet {
+				return item.CoordinatorDeviceID
+			}
+		}
+		return ""
+	}
+	if got := coordinatorOf(bob.Account.ID, lowest); got == lowest {
+		t.Fatalf("the recovered device coordinates the tablet's revocation")
+	}
+	_, _, err = store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+		ConversationID: conversation.ID, SenderAccountID: bob.Account.ID, SenderDeviceID: lowest,
+		Kind: "commit", Payload: []byte("commit-recovered"), IdempotencyKey: "recovered", RevocationDeviceID: tablet,
+	})
+	if !errors.Is(err, ErrForbidden) {
+		t.Fatalf("commit by the recovered device: err = %v, want %v", err, ErrForbidden)
+	}
+	if got := coordinatorOf(owner.Account.ID, owner.Device.ID); got != owner.Device.ID {
+		t.Fatalf("coordinator after recovery = %q, want the owner's device %q", got, owner.Device.ID)
+	}
+	if _, _, err := store.CreateMLSMessage(ctx, CreateMLSMessageInput{
+		ConversationID: conversation.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
+		Kind: "commit", Payload: []byte("commit-owner"), IdempotencyKey: "owner-fallback", RevocationDeviceID: tablet,
+	}); err != nil {
+		t.Fatalf("commit by the owner's device: %v", err)
+	}
+}
 
 // An instance set up after migration 0045 gets its decoy key lazily, from
 // crypto/rand, once; later calls read it without the writer.
