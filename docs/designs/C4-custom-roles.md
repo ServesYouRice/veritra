@@ -4,7 +4,9 @@
 against `main` at `f1b4a36`. Code: `mobile/lib/core/roles/governance.dart`,
 tests `mobile/test/governance_test.dart`. Wire record: `docs/crypto.md`,
 "Group governance record (C4)". C2, C3 and C5 call
-`GovernanceState.can(account, perm, channelId:)` and nothing else.
+`GovernanceState.can(account, perm, channelId:)`, and `mayActOn` for
+actions on another account; membership wiring calls `removeAccount` at a
+removing commit.
 
 ## Decision
 
@@ -40,13 +42,15 @@ each record through `validateTransition`, and checks every action with `can`.
 
 ## Who may change what
 
-`validateTransition(prev, next, actor)` is deterministic. `rev` is exactly
+`validateTransition(prev, next, actor, members:)` is deterministic when
+`members` is the MLS roster at the record's sync position. `rev` is exactly
 `prev.rev + 1`; shape and limits hold; role edits need `manage_roles`;
-overrides need `manage_channels`; the actor may only touch roles ranked
-strictly below its own top rank and may not grant a switch it does not hold;
-assignments go only to current members and known roles; a role holder may
-drop its own roles without permission. Rejections are stable codes
-(`GovernanceReject`).
+overrides need `manage_channels`; the actor may only touch roles and
+accounts (itself included, for overrides) ranked strictly below its own top
+rank and may not grant a switch it does not hold, checked on effective
+switches in every scope; assignments go only to current members and known
+roles; a role holder may drop its own roles without permission if that
+gains it nothing. Rejections are stable codes (`GovernanceReject`).
 
 ## Concurrency and ordering
 
@@ -203,4 +207,7 @@ Fixes are on `agent/C4-review`; `flutter test test/governance_test.dart`
    can change without a protocol change. The server owner must move with
    it, and no server transfer exists today. The automatic succession in
    `removeAccount` (strongest remaining account, then smallest id) is also
-   the owner's to confirm.
+   the owner's to confirm. One case to weigh: only the owner can create a
+   role ranked 0 to 9; a cosmetic role there ("VIP" with just `post`)
+   outranks every admin, so its holder would inherit. "Administrators
+   first, then rank, then id" may be the better default.

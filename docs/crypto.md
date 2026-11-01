@@ -1778,7 +1778,9 @@ Rules added by the 2026-11-01 review (details in the design's "Review"):
   `GovernanceState.removeAccount` at that place in sync order (no record, no
   `rev` change): the account's assignments and own overrides go, and an
   absent owner is succeeded by the strongest remaining account (lowest
-  rank, then smallest account id).
+  rank, then the smallest account id by UTF-16 code-unit order, as Dart's
+  `String.compareTo`; account ids are ASCII today, where this equals byte
+  order). The rule awaits the owner's confirmation (design owner question 4).
 - A sender applies its own record only when it comes back at its place in
   sync order, never at send time.
 - A device without a verified state does not fall back to member defaults
