@@ -371,12 +371,15 @@ extension AccountRecoveryActions on AppState {
   /// on its own; only a signed-in device can cancel it there.
   ///
   /// Runs in the session-transition queue, after any poll in flight: a
-  /// claim that completed meanwhile (its token is single-use) or a newer
-  /// claim than [requestId] is kept, never wiped.
+  /// claim that completed meanwhile (its token is single-use, or it now
+  /// needs a login with the claim's device secret) or a newer claim than
+  /// [requestId] is kept, never wiped.
   Future<void> abandonAccountRecovery({String? requestId}) =>
       _enqueueSessionTransition(() async {
         final pending = pendingAccountRecovery;
-        if (pending == null || session != null) return;
+        // A claim the server completed (its answer lost) needs the device
+        // secret to log in, and the old devices are already revoked.
+        if (pending == null || session != null || pending.needsLogin) return;
         if (requestId != null && pending.requestId != requestId) return;
         await _abandonAccountRecoveryNow();
       });
