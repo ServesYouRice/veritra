@@ -22,6 +22,19 @@ import zlib
 from pathlib import Path
 
 
+def _rmtree(path, ignore_errors=False):
+    """rmtree that also removes read-only repository objects on Windows."""
+
+    def clear_readonly(func, target, _exc):
+        os.chmod(target, 0o700)
+        func(target)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, ignore_errors=ignore_errors, onexc=clear_readonly)
+    else:
+        shutil.rmtree(path, ignore_errors=ignore_errors, onerror=clear_readonly)
+
+
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts/check-release-evidence.py"
 # Set by fixture() to real commits of the fixture's own git repository.
@@ -822,7 +835,7 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
             expect_blocked(root, manifest, "approvals commit is not in this repository",
                            extra=("--approvals-commit", outside, "--preflight"), env=redirect)
     finally:
-        shutil.rmtree(other)
+        _rmtree(other)
 
     # Approvals for another commit, or at another commit's path.
     check(approved(production_crypto=approval_record("production_crypto", reviewed_commit=OTHER_COMMIT)),
@@ -1752,7 +1765,7 @@ def release_readiness_cases() -> None:
         assert result.returncode != 0 and "production MLS crypto is not wired" in result.stderr, result.stderr
         assert "gates passed" not in result.stdout, result.stdout
     finally:
-        shutil.rmtree(temp)
+        _rmtree(temp)
 
 
 def main() -> int:
@@ -1778,7 +1791,7 @@ def main() -> int:
         assert not errors, errors
         assert repo_policy["schema_version"] == 3
     finally:
-        shutil.rmtree(root)
+        _rmtree(root)
     print("release evidence adversarial tests passed")
     return 0
 
