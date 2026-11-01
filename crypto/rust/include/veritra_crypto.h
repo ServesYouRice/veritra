@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (11u)
+#define PM_CRYPTO_ABI_VERSION (12u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -140,6 +140,33 @@ int32_t pm_crypto_recovery_proof_sign(PmByteSlice entropy,
                                       PmByteSlice key_package,
                                       PmByteSlice origin,
                                       PmOwnedBuffer *out_signature);
+/* ABI 12 (C6 reports, D80). The report key is a 32-byte seed the recipient
+ * app keeps secret; key_public derives the X25519 public key through
+ * HKDF-SHA256 (salt "veritra-c6-report-key-v1", info
+ * "veritra-c6 report-hpke") and RFC 9180 DeriveKeyPair. No private key
+ * crosses the ABI. Seal is RFC 9180 base mode, DHKEM(X25519, HKDF-SHA256),
+ * HKDF-SHA256, AES-256-GCM, info "veritra-c6-report-v1" fixed in Rust; aad is
+ * 1 to 1024 bytes and required; plaintext 1 byte to 256 KiB. Output is
+ * "VRP1" || enc (32) || ciphertext. A bad or low-order public key is
+ * PM_CRYPTO_INVALID_ARGUMENT; open of altered bytes, a wrong aad or a wrong
+ * key is PM_CRYPTO_ERROR. frank_commit returns HMAC-SHA256(key,
+ * "veritra-frank-v1" | lp(conversation_id) | lp(sender_device_id) |
+ * lp(action_id) | lp(payload)), lp a u32 big-endian length; key 32 bytes,
+ * ids 1 to 128 bytes, payload 1 byte to 64 KiB. Vector:
+ * testing/vectors/c6-franking-v1.json. */
+int32_t pm_crypto_report_key_generate(PmOwnedBuffer *out_seed);
+int32_t pm_crypto_report_key_public(PmByteSlice seed,
+                                    PmOwnedBuffer *out_public);
+int32_t pm_crypto_report_seal(PmByteSlice recipient_public, PmByteSlice aad,
+                              PmByteSlice plaintext,
+                              PmOwnedBuffer *out_sealed);
+int32_t pm_crypto_report_open(PmByteSlice seed, PmByteSlice aad,
+                              PmByteSlice sealed,
+                              PmOwnedBuffer *out_plaintext);
+int32_t pm_crypto_frank_commit(PmByteSlice key, PmByteSlice conversation_id,
+                               PmByteSlice sender_device_id,
+                               PmByteSlice action_id, PmByteSlice payload,
+                               PmOwnedBuffer *out_commit);
 /* ABI 8 control frames: PK2Q/PK2R v1, u16-BE operation, bounded64KiB.
  * See docs/designs/K2-abi8-boundary.md for exact fields and persistence rules.
  * Each success returns one owned buffer. Failure resets out to null/zero.

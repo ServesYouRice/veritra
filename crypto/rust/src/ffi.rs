@@ -4,7 +4,7 @@ use crate::{
         ChangeSet, MemberAdd, MemberIdentity, MlsDevice, MlsError, RestoreLoader, SealError,
         MAX_SEALED_RECORD_BYTES, MAX_SEALED_ROOT_BYTES,
     },
-    recovery, PmByteSlice,
+    recovery, report, PmByteSlice,
 };
 use core::ptr;
 use std::{
@@ -660,6 +660,135 @@ pub unsafe extern "C" fn pm_crypto_recovery_proof_sign(
                 recovery::RecoveryError::Crypto => PM_CRYPTO_ERROR,
             })?;
         unsafe { output(out_signature, signature.to_vec()) }
+    })
+}
+
+fn report_error(error: report::ReportError) -> i32 {
+    match error {
+        report::ReportError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
+        report::ReportError::Authentication | report::ReportError::Crypto => PM_CRYPTO_ERROR,
+    }
+}
+
+/// ABI 12 (C6): a fresh 32-byte report key seed from the OS RNG. The
+/// recipient app keeps it secret; no X25519 private key crosses the ABI.
+///
+/// # Safety
+/// `out_seed` must point to writable buffer storage.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_report_key_generate(out_seed: *mut PmOwnedBuffer) -> i32 {
+    ffi_call(|| {
+        if out_seed.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let seed = report::generate_seed().map_err(report_error)?;
+        unsafe { output(out_seed, seed.as_slice().to_vec()) }
+    })
+}
+
+/// ABI 12: the 32-byte X25519 report public key derived from `seed`.
+///
+/// # Safety
+/// `seed` must be readable and `out_public` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_report_key_public(
+    seed: PmByteSlice,
+    out_public: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_public.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let seed = unsafe { borrowed(seed, report::SEED_BYTES)? };
+        let public = report::public_key(seed).map_err(report_error)?;
+        unsafe { output(out_public, public.to_vec()) }
+    })
+}
+
+/// ABI 12: seals `plaintext` to a report public key: RFC 9180 base mode,
+/// DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM, info fixed in Rust
+/// as `"veritra-c6-report-v1"`. Output: `"VRP1" || enc (32) || ciphertext`.
+/// `aad` (1 to 1024 bytes) is required. An invalid or low-order public key
+/// is `PM_CRYPTO_INVALID_ARGUMENT`.
+///
+/// # Safety
+/// Every slice must be readable and `out_sealed` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_report_seal(
+    recipient_public: PmByteSlice,
+    aad: PmByteSlice,
+    plaintext: PmByteSlice,
+    out_sealed: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_sealed.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let recipient_public = unsafe { borrowed(recipient_public, report::PUBLIC_KEY_BYTES)? };
+        let aad = unsafe { borrowed(aad, report::MAX_AAD_BYTES)? };
+        let plaintext = unsafe { borrowed(plaintext, report::MAX_PLAINTEXT_BYTES)? };
+        let sealed = report::seal(recipient_public, aad, plaintext).map_err(report_error)?;
+        unsafe { output(out_sealed, sealed) }
+    })
+}
+
+/// ABI 12: opens a sealed report with the recipient's seed. A change to the
+/// sealed bytes, the aad or the key is `PM_CRYPTO_ERROR`; nothing is
+/// written then.
+///
+/// # Safety
+/// Every slice must be readable and `out_plaintext` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_report_open(
+    seed: PmByteSlice,
+    aad: PmByteSlice,
+    sealed: PmByteSlice,
+    out_plaintext: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_plaintext.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let seed = unsafe { borrowed(seed, report::SEED_BYTES)? };
+        let aad = unsafe { borrowed(aad, report::MAX_AAD_BYTES)? };
+        let sealed = unsafe { borrowed(sealed, report::MAX_SEALED_BYTES)? };
+        let plaintext = report::open(seed, aad, sealed).map_err(report_error)?;
+        // output() takes the Vec into a zero-on-free buffer; the
+        // SecretVLBytes copy is wiped when it drops here.
+        unsafe { output(out_plaintext, plaintext.as_slice().to_vec()) }
+    })
+}
+
+/// ABI 12: the C6 franking commitment
+/// `HMAC-SHA256(key, "veritra-frank-v1" || lp(conversation_id) ||
+/// lp(sender_device_id) || lp(action_id) || lp(payload))`, lp a u32
+/// big-endian length, over the canonical payload bytes. Key 32 bytes, ids 1
+/// to 128 bytes, payload 1 byte to 64 KiB. Returns the 32-byte commitment.
+///
+/// # Safety
+/// Every slice must be readable and `out_commit` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_frank_commit(
+    key: PmByteSlice,
+    conversation_id: PmByteSlice,
+    sender_device_id: PmByteSlice,
+    action_id: PmByteSlice,
+    payload: PmByteSlice,
+    out_commit: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_commit.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let key = unsafe { borrowed(key, report::FRANK_KEY_BYTES)? };
+        let conversation_id = unsafe { borrowed(conversation_id, report::MAX_FRANK_ID_BYTES)? };
+        let sender_device_id = unsafe { borrowed(sender_device_id, report::MAX_FRANK_ID_BYTES)? };
+        let action_id = unsafe { borrowed(action_id, report::MAX_FRANK_ID_BYTES)? };
+        let payload = unsafe { borrowed(payload, report::MAX_FRANK_PAYLOAD_BYTES)? };
+        let commit =
+            report::frank_commit(key, conversation_id, sender_device_id, action_id, payload)
+                .map_err(report_error)?;
+        unsafe { output(out_commit, commit.to_vec()) }
     })
 }
 

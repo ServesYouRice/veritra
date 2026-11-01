@@ -1,6 +1,7 @@
 # C6: reports with message franking
 
-**Status: proposed; only the commitment primitive is built.** Written
+**Status: proposed; the commitment, the report seal (ABI 12) and the
+franking v1 byte rules are built, nothing is wired.** Written
 2026-11-01 against `main` at `f1b4a36`. Needs an independent security review
 and the owner answers below before any wire change ships.
 
@@ -89,7 +90,11 @@ Recommendation: A for both.
 
 ## Build order
 
-1. `server/internal/franking`: commit and verify (done, tested).
+1. `server/internal/franking`: commit and verify (done, tested). ABI 12
+   (done, review pending): `pm_crypto_report_*` HPKE seal and open,
+   `pm_crypto_frank_commit`, the Dart `ReportCryptoService`, and the
+   franking v1 byte rules (`docs/crypto.md`, "Franking v1") with a shared
+   vector.
 2. Rust/Dart: generate `kf`, add `frank` and `frank_commit`, verify on
    receive. Depends on the W7 receive policy; adds a reserved context key as C0
    did for `channel_id`. Wire change, review first.
@@ -105,6 +110,8 @@ Recommendation: A for both.
    acks, or add a server stamp later?
 3. **Canonical bytes.** `P` needs one fixed serialization and a franking
    vector in the W7 test vectors. Wire format: second-opinion review.
+   Proposed and built (not sent): `docs/crypto.md`, "Franking v1", and
+   `testing/vectors/c6-franking-v1.json`.
 4. **Edits.** An edit carries its own `frank`; reporting an edited message
    reveals the original and, if wanted, the edit.
 5. **Attachments.** The manifest is reportable; file bytes are not committed

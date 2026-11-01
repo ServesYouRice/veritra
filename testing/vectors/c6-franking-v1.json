@@ -1,0 +1,19 @@
+{
+  "description": "C6 franking v1 and report sealing known-answer vector (docs/crypto.md, change log ABI 12, and the Franking v1 section). Checked by crypto/rust/src/report_tests.rs, server/internal/franking/franking_test.go and mobile/test/c6_report_crypto_test.dart.",
+  "commitment": {
+    "key_hex": "0707070707070707070707070707070707070707070707070707070707070707",
+    "conversation_id": "conv_11111111111111111111111111111111",
+    "sender_device_id": "dev_22222222222222222222222222222222",
+    "action_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "payload": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"}}",
+    "wire_json": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"}}",
+    "commit_hex": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a"
+  },
+  "report_hpke": {
+    "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_hex": "8dcbee9a985dc115462bcbbb8239e673e4fa5c2e0e4426bda93639e173b7661d",
+    "aad": "veritra-c6-vector-aad",
+    "plaintext": "report vector",
+    "sealed_hex": "565250319f721efe1f0b885c8afbd616c5f3a660e4debf2498d543c737ec555d157fc716e7b3a4f8a6157ae3b0494f42a81759c46ca35d103648fe7196a1b936a0"
+  }
+}

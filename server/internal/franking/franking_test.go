@@ -3,6 +3,9 @@ package franking
 import (
 	"bytes"
 	"encoding/hex"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -55,8 +58,45 @@ func TestCommitRejectsBadKey(t *testing.T) {
 	}
 }
 
-// Logs a fixed vector for the Rust and Dart implementations to match.
-func TestVector(t *testing.T) {
-	c, _ := Commit(key(), ctx, []byte("hello"))
-	t.Logf("vector: %s", hex.EncodeToString(c))
+// TestSharedVector checks testing/vectors/c6-franking-v1.json, which the
+// Rust core (report_tests.rs) and the Dart binding check too. A missing or
+// unreadable vector fails; it never skips.
+func TestSharedVector(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "testing", "vectors", "c6-franking-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vector struct {
+		Commitment struct {
+			KeyHex         string `json:"key_hex"`
+			ConversationID string `json:"conversation_id"`
+			SenderDeviceID string `json:"sender_device_id"`
+			ActionID       string `json:"action_id"`
+			Payload        string `json:"payload"`
+			CommitHex      string `json:"commit_hex"`
+		} `json:"commitment"`
+	}
+	if err := json.Unmarshal(raw, &vector); err != nil {
+		t.Fatal(err)
+	}
+	v := vector.Commitment
+	kf, err := hex.DecodeString(v.KeyHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := hex.DecodeString(v.CommitHex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := Context{ConversationID: v.ConversationID, SenderDeviceID: v.SenderDeviceID, ActionID: v.ActionID}
+	got, err := Commit(kf, c, []byte(v.Payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("commit %x, vector %x", got, want)
+	}
+	if !Verify(want, kf, c, []byte(v.Payload)) {
+		t.Fatal("vector commit does not verify")
+	}
 }

@@ -205,6 +205,10 @@ typedef _RecoveryProofNative = Int32 Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RecoveryProofDart = int Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _ThreeSlicesOutputNative = Int32 Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _ThreeSlicesOutputDart = int Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 
 /// The public values derived from a K0 recovery key (ABI 11). None is
 /// secret against the device. `rkPub` is integrity-critical and never goes
@@ -276,6 +280,17 @@ class NativeCryptoBindings {
         _recoveryProof =
             library.lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
                 'pm_crypto_recovery_proof_sign'),
+        _reportKeyGenerate = library.lookupFunction<_OutputNative, _OutputDart>(
+            'pm_crypto_report_key_generate'),
+        _reportKeyPublic = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_report_key_public'),
+        _reportSeal = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_report_seal'),
+        _reportOpen = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_report_open'),
+        _frankCommit =
+            library.lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
+                'pm_crypto_frank_commit'),
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
@@ -318,7 +333,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 11) {
+    if (_abiVersion() != 12) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -368,6 +383,11 @@ class NativeCryptoBindings {
   final _LocatorDart _recoveryDecode;
   final _RecoveryDeriveDart _recoveryDerive;
   final _RecoveryProofDart _recoveryProof;
+  final _OutputDart _reportKeyGenerate;
+  final _LocatorDart _reportKeyPublic;
+  final _ThreeSlicesOutputDart _reportSeal;
+  final _ThreeSlicesOutputDart _reportOpen;
+  final _RecoveryProofDart _frankCommit;
 
   /// K0 recovery key entropy length (ABI 11).
   static const recoveryKeyEntropyBytes = 30;
@@ -481,6 +501,137 @@ class NativeCryptoBindings {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
     return Uint8List.fromList(signature);
+  }
+
+  /// C6 report key seed length (ABI 12).
+  static const reportKeySeedBytes = 32;
+
+  /// X25519 report public key length (ABI 12).
+  static const reportPublicKeyBytes = 32;
+
+  /// Largest report plaintext the native seal accepts (ABI 12).
+  static const maxReportPlaintextBytes = 256 * 1024;
+
+  /// Largest report associated data (ABI 12). It is required.
+  static const maxReportAadBytes = 1024;
+
+  /// Largest sealed report: `VRP1`, enc, plaintext and tag.
+  static const maxSealedReportBytes = 4 + 32 + maxReportPlaintextBytes + 16;
+
+  /// Largest canonical payload a franking commitment covers (ABI 12).
+  static const maxFrankPayloadBytes = 64 * 1024;
+
+  /// A fresh report key seed from the OS RNG (ABI 12). The caller owns it:
+  /// keep it only in protected storage and wipe every Dart copy once used.
+  /// Never log or send it.
+  Uint8List generateReportKeySeed() => _secretOutput(
+      _output((out) => _reportKeyGenerate(out), maximum: reportKeySeedBytes),
+      reportKeySeedBytes);
+
+  /// The 32-byte report public key for [seed] (ABI 12).
+  Uint8List reportPublicKey(Uint8List seed) {
+    _bounded(seed, reportKeySeedBytes, exact: true);
+    final public = _withSlice(
+        seed,
+        (slice) => _output((out) => _reportKeyPublic(slice, out),
+            maximum: reportPublicKeyBytes));
+    if (public.length != reportPublicKeyBytes) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(public);
+  }
+
+  /// Seals [plaintext] to [recipientPublicKey] (ABI 12): RFC 9180 base
+  /// mode, X25519 / HKDF-SHA256 / AES-256-GCM, with the info label fixed in
+  /// Rust. [aad] is required and must be rebuilt identically by the
+  /// recipient. A bad or low-order key is [NativeCryptoError.invalidArgument].
+  Uint8List sealReport({
+    required List<int> recipientPublicKey,
+    required List<int> aad,
+    required Uint8List plaintext,
+  }) {
+    _bounded(recipientPublicKey, reportPublicKeyBytes, exact: true);
+    _bounded(aad, maxReportAadBytes);
+    _bounded(plaintext, maxReportPlaintextBytes);
+    final sealed = _withSlice(
+        plaintext,
+        (plain) => _withByteLists(
+            <List<int>>[recipientPublicKey, aad],
+            (slices) => _output(
+                (out) => _reportSeal(slices[0], slices[1], plain, out),
+                maximum: maxSealedReportBytes)));
+    if (sealed.length != plaintext.length + 4 + 32 + 16) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(sealed);
+  }
+
+  /// Opens a sealed report with the recipient's [seed] (ABI 12). Altered
+  /// bytes, another [aad] or another key throw
+  /// [NativeCryptoError.operationFailed]. The caller wipes the result.
+  Uint8List openReport({
+    required Uint8List seed,
+    required List<int> aad,
+    required List<int> sealed,
+  }) {
+    _bounded(seed, reportKeySeedBytes, exact: true);
+    _bounded(aad, maxReportAadBytes);
+    _bounded(sealed, maxSealedReportBytes);
+    final opened = _withSlice(
+        seed,
+        (seedSlice) => _withByteLists(
+            <List<int>>[aad, sealed],
+            (slices) => _output(
+                (out) => _reportOpen(seedSlice, slices[0], slices[1], out),
+                maximum: maxReportPlaintextBytes)));
+    return _secretOutput(opened, sealed.length - 4 - 32 - 16);
+  }
+
+  /// The C6 franking commitment over the canonical payload bytes [payload]
+  /// (ABI 12, `docs/crypto.md` "Franking v1"). [key] is the 32-byte `kf`.
+  Uint8List frankCommit({
+    required Uint8List key,
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+    required Uint8List payload,
+  }) {
+    _bounded(key, 32, exact: true);
+    final ids = <List<int>>[
+      utf8.encode(conversationId),
+      utf8.encode(senderDeviceId),
+      utf8.encode(actionId),
+    ];
+    for (final id in ids) {
+      _bounded(id, 128);
+    }
+    _bounded(payload, maxFrankPayloadBytes);
+    final commit = _withSlice(
+        key,
+        (keySlice) => _withSlice(
+            payload,
+            (payloadSlice) => _withByteLists(
+                ids,
+                (slices) => _output(
+                    (out) => _frankCommit(keySlice, slices[0], slices[1],
+                        slices[2], payloadSlice, out),
+                    maximum: 32))));
+    if (commit.length != 32) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(commit);
+  }
+
+  /// Hands a secret owned-buffer copy over without another Dart copy.
+  Uint8List _secretOutput(List<int> bytes, int length) {
+    if (bytes.length != length) {
+      _wipe(bytes);
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    if (bytes is Uint8List) return bytes;
+    final copy = Uint8List.fromList(bytes);
+    _wipe(bytes);
+    return copy;
   }
 
   Uint8List _recoveryEntropy(List<int> bytes) {
