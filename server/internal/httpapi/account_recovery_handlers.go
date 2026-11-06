@@ -306,6 +306,7 @@ func (a *API) claimAccountRecovery(w http.ResponseWriter, r *http.Request) {
 	}
 	a.publishCommittedEvent(r.Context(), []string{request.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery.pending", ID: claimed.PendingEventID, Payload: map[string]interface{}{"request_id": request.ID, "device_name": request.DeviceName, "ready_at": request.ReadyAt}, CreatedAt: now})
 	a.recordAuditEvent(r.Context(), &request.AccountID, "account.recovery_requested", map[string]interface{}{"request_id": request.ID, "device_id": request.DeviceID, "waits": claimed.ActiveDeviceSeen})
+	a.wakeAccountDevices(request.AccountID, "")
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusAccepted, map[string]interface{}{
 		"request_id":    request.ID,
@@ -376,6 +377,7 @@ func (a *API) cancelAccountRecovery(w http.ResponseWriter, r *http.Request, prin
 	}
 	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery.cancelled", ID: eventID, Payload: map[string]string{"request_id": requestID, "reason": storage.RecoveryCancelledByOwner}, CreatedAt: time.Now().UTC()})
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.recovery_cancelled", map[string]string{"request_id": requestID, "reason": storage.RecoveryCancelledByOwner, "device_id": principal.DeviceID})
+	a.wakeAccountDevices(principal.AccountID, principal.DeviceID)
 	writeJSON(w, http.StatusOK, map[string]string{"state": "cancelled"})
 }
 
