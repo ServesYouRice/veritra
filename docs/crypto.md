@@ -231,6 +231,20 @@ deferred leave, never on the Welcome's word. The Welcome then has the trust of a
 includes the L1 gap above: the core checks its structure, not who may be in
 the group or who may invite.
 
+A Welcome from before the user's own leave is not a re-add. The app notes,
+at leave, the server's newest sync event id (`latest_event_id`, which is at
+or above the leave's own event) as that conversation's floor, in the local
+setting `mls.left_floors` (scoped like the leave note, no schema change). A
+Welcome for this device at or below the floor is skipped: the sync cursor
+moves past it, nothing joins, and its key package is still replaced. This
+closes the race where a pass that fetched the add-Welcome before the leave
+applied it after the group was dropped and the note cleared. A floor
+is forgotten once the committed cursor reaches it. If the server cannot be
+asked, the newest event id the running pass has fetched stands in: it covers
+the page the pass holds, not events it has yet to fetch or a fetch still in
+flight. A Welcome created after the leave but before the app reads the bound
+would also be skipped; the window is one request long.
+
 An active stored group is never replaced, whoever sends the Welcome and
 whatever its epoch. A Welcome cannot prove the device was removed. If it
 could replace an active group, a malicious server together with any
