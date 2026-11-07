@@ -220,7 +220,11 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 		a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), conversationID), realtime.Event{Version: "v1", Type: eventType, ID: events.RemainingMembersEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.publishCommittedEvent(r.Context(), []string{targetAccountID}, realtime.Event{Version: "v1", Type: eventType, ID: events.RemovedMemberEventID, ConversationID: conversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "conversation.member.removed", map[string]string{"conversation_id": conversationID})
-		writeJSON(w, http.StatusOK, map[string]string{"status": "membership_removed", "mls_coordination": "pending"})
+		// event_id is the removed member's own sync event (the leaver's
+		// membership.left for a leave). Welcomes are stored only for member
+		// devices, in the transaction that adds them, so a Welcome with a
+		// lower id predates this removal and a higher one is a real re-add.
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "membership_removed", "mls_coordination": "pending", "event_id": events.RemovedMemberEventID})
 		return
 	}
 	if len(parts) != 2 {

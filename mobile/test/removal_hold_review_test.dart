@@ -234,16 +234,17 @@ class _Api extends ApiClient {
   Future<void> logout(String token) async {}
 
   @override
-  Future<void> removeConversationMember(
+  Future<int?> removeConversationMember(
       String token, String conversationId, String accountId) async {
     await _network();
     if (accountId == 'me') {
       members.remove(conversationId);
-      return;
+      return null;
     }
     membersOf(conversationId).remove(accountId);
     if (listRemovals) pendingRemovals.add(conversationId);
     fetchSteps.addAll(stepsOnRemove);
+    return null;
   }
 
   @override
