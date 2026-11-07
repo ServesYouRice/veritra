@@ -42,10 +42,14 @@ func NewPasskeyService(cfg config.PasskeyConfig) (*PasskeyService, error) {
 		opaque = append(opaque, app.Origin())
 	}
 	wa, err := webauthn.New(&webauthn.Config{
-		RPID:                  cfg.RPID,
-		RPDisplayName:         "Veritra",
-		RPOrigins:             origins,
-		RPOpaqueOrigins:       opaque,
+		RPID:            cfg.RPID,
+		RPDisplayName:   "Veritra",
+		RPOrigins:       origins,
+		RPOpaqueOrigins: opaque,
+		Timeouts: webauthn.TimeoutsConfig{
+			Login:        webauthn.TimeoutConfig{Timeout: storage.PasskeyCeremonyLifetime, TimeoutUVD: storage.PasskeyCeremonyLifetime},
+			Registration: webauthn.TimeoutConfig{Timeout: storage.PasskeyCeremonyLifetime, TimeoutUVD: storage.PasskeyCeremonyLifetime},
+		},
 		AttestationPreference: protocol.PreferNoAttestation,
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			RequireResidentKey: protocol.ResidentKeyRequired(),
@@ -345,7 +349,10 @@ func (a *API) passkeyLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "session_create_failed")
 		return
 	}
-	a.LoginBackoff.SucceededAny(check.source, check.accountDevice)
+	// Only the passkey source key clears. The account-device budget is the
+	// cross-address limit on password guessing for a secret holder, so a
+	// passkey success (which needs only the phone's PIN) must not reset it.
+	a.LoginBackoff.SucceededAny(check.source)
 	a.recordAuditEvent(r.Context(), &device.AccountID, "session.login", map[string]string{"device_id": device.DeviceID, "method": "passkey"})
 	writeJSON(w, http.StatusOK, map[string]interface{}{"token": token, "account_id": device.AccountID, "device_id": device.DeviceID, "role": device.Role})
 }

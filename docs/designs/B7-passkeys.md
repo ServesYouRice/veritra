@@ -197,7 +197,7 @@ Failures count against these `LoginBackoff` keys (`loginBackoffKeys` in
   method gains nothing. Someone without the secret cannot touch this bucket,
   so they cannot lock the owner out, which is the same rule as `login`.
 
-A success clears both keys, as `SucceededAny` does for password sign-in.
+A success clears only the passkey source key: the account-device key limits password guessing across addresses, and a passkey success (which needs only the phone PIN) must not reset it.
 
 **The writer transaction (race fence).** It mirrors `CreateLoginSession`'s
 `password_hash` fence and is all-or-nothing:

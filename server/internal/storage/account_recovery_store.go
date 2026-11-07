@@ -490,8 +490,17 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 	// Completion means the user lost every device: passkeys registered on a
 	// lost phone, or by whoever held it, do not outlive it (B7, O5). A synced
 	// passkey is added again after the forced password change.
+	var removedPasskeys int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM passkey_credentials WHERE account_id = ?`, record.AccountID).Scan(&removedPasskeys); err != nil {
+		return RecoveryCompletion{}, err
+	}
 	if err := deleteAccountPasskeysTx(ctx, tx, record.AccountID); err != nil {
 		return RecoveryCompletion{}, err
+	}
+	if removedPasskeys > 0 {
+		if err := insertAuditEvent(ctx, tx, &record.AccountID, "passkey.removed_by_recovery", map[string]int{"count": removedPasskeys}); err != nil {
+			return RecoveryCompletion{}, err
+		}
 	}
 	// Account-only sessions (restore sessions, no device) belong to the old
 	// owner of the account too.

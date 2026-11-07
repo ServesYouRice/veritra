@@ -860,3 +860,23 @@ func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return fmt.Sprintf("%x", sum)
 }
+
+// A passkey success must not reset the password-guessing budget of a secret
+// holder (review B1).
+func TestPasskeySuccessDoesNotResetPasswordBackoff(t *testing.T) {
+	e := newPasskeyEnv(t, true)
+	a := newTestAuthenticator(t, false)
+	e.registerPasskey(a, "Passkey 1")
+	wrong := map[string]string{"username": "owner", "password": "wrong-password", "device_id": e.deviceID, "device_secret": e.deviceSecret}
+	for i := 0; i < 2; i++ {
+		if status, _ := e.do(http.MethodPost, "/api/v1/auth/login", "", wrong); status != http.StatusUnauthorized {
+			t.Fatalf("failure %d: %d", i, status)
+		}
+	}
+	if status, body := e.signIn(a); status != http.StatusOK {
+		t.Fatalf("passkey sign in: %d %s", status, body)
+	}
+	if status, body := e.do(http.MethodPost, "/api/v1/auth/login", "", wrong); status != http.StatusTooManyRequests {
+		t.Fatalf("third password failure after a passkey success: %d %s", status, body)
+	}
+}
