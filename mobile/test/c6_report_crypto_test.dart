@@ -96,25 +96,9 @@ void main() {
     });
 
     test('any other spelling of frank is malformed, never unfranked', () {
-      final text = utf8.decode(wire);
-      final b64 = base64.encode(key);
-      final cases = <String>[
-        // Whitespace, member order, extra members.
-        text.replaceFirst(',"frank":', ', "frank":'),
-        text.replaceFirst('{"k":"', '{ "k":"'),
-        text.replaceFirst('"}}', '","x":1}}'),
-        '{"frank":{"k":"$b64"},${text.substring(1, text.indexOf(',"frank"'))}}',
-        // Base64url, unpadded, wrong length, bad trailing bits.
-        text.replaceFirst(b64, base64Url.encode(List<int>.filled(32, 0xfb))),
-        text.replaceFirst(b64, b64.replaceFirst('=', '')),
-        text.replaceFirst(b64, base64.encode(List<int>.filled(31, 7))),
-        text.replaceFirst(b64, '${b64.substring(0, 42)}d='),
-        // Not an object; frank nested in body only is unfranked (below).
-        '[1]',
-        'not json',
-        // A second top-level frank inside P.
-        text.replaceFirst('"body"', '"frank":{"k":"$b64"},"body"'),
-      ];
+      // The cases live in the shared vector; Rust and Go check them too.
+      final cases = (vector['malformed_frank'] as List).cast<String>();
+      expect(cases.length, greaterThanOrEqualTo(11));
       for (final candidate in cases) {
         expect(
           splitFrank(utf8.encode(candidate)),
@@ -123,10 +107,24 @@ void main() {
         );
       }
       // `frank` inside the body is not the reserved top-level member.
-      final nested = text
-          .substring(0, text.indexOf(',"frank"'))
-          .replaceFirst('"hi"}', '"hi","frank":{"k":"$b64"}}');
-      expect(splitFrank(utf8.encode('$nested}')), isA<Unfranked>());
+      final nested = vector['unfranked_frank_in_body'] as List;
+      for (final candidate in nested.cast<String>()) {
+        expect(splitFrank(utf8.encode(candidate)), isA<Unfranked>());
+      }
+    });
+
+    test('extra commitment cases split and rebuild byte for byte', () {
+      for (final raw in vector['commitment_cases'] as List) {
+        final c = raw as Map<String, dynamic>;
+        final split = splitFrank(utf(c['wire_json']));
+        expect(split, isA<Franked>(), reason: c['name'] as String);
+        expect((split as Franked).canonical, utf(c['payload']));
+        expect(split.key, hex(c['key_hex']));
+        expect(
+          frankWireJson(utf(c['payload']), split.key),
+          utf(c['wire_json']),
+        );
+      }
     });
 
     test('frankWireJson refuses bad input', () {
@@ -135,6 +133,11 @@ void main() {
         throwsFormatException,
       );
       expect(() => frankWireJson(wire, key), throwsFormatException);
+      // An empty object would produce `{,"frank":...}`, which is not JSON.
+      expect(
+        () => frankWireJson(utf8.encode('{}'), key),
+        throwsFormatException,
+      );
       expect(
         () => frankWireJson(utf8.encode('[1]'), key),
         throwsFormatException,
@@ -209,6 +212,33 @@ void main() {
             sealed: hex(report['sealed_hex']),
           ),
           utf(report['plaintext']),
+        );
+        for (final raw in vector['commitment_cases'] as List) {
+          final c = raw as Map<String, dynamic>;
+          expect(
+            bindings.frankCommit(
+              key: hex(c['key_hex']),
+              conversationId: c['conversation_id'] as String,
+              senderDeviceId: c['sender_device_id'] as String,
+              actionId: c['action_id'] as String,
+              payload: utf(c['payload']),
+            ),
+            hex(c['commit_hex']),
+            reason: c['name'] as String,
+          );
+        }
+        // Sealed by Go's crypto/hpke; Rust and Dart open it.
+        final goSealed =
+            vector['report_hpke_go_sealed'] as Map<String, dynamic>;
+        final goSeed = hex(goSealed['seed_hex']);
+        expect(bindings.reportPublicKey(goSeed), hex(goSealed['public_hex']));
+        expect(
+          bindings.openReport(
+            seed: goSeed,
+            aad: utf(goSealed['aad']),
+            sealed: hex(goSealed['sealed_hex']),
+          ),
+          utf(goSealed['plaintext']),
         );
       },
       skip: nativeCryptoSkip(),

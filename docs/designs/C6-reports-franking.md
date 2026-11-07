@@ -1,7 +1,8 @@
 # C6: reports with message franking
 
 **Status: proposed; the commitment, the report seal (ABI 12) and the
-franking v1 byte rules are built, nothing is wired.** Written
+franking v1 byte rules are built and independently reviewed (no blockers,
+findings fixed, conditions G1 to G6 below), nothing is wired.** Written
 2026-11-01 against `main` at `f1b4a36`. Needs an independent security review
 and the owner answers below before any wire change ships.
 
@@ -61,9 +62,11 @@ A report body is plaintext to its receiver, so the server must not read it
 unless the owner allows that.
 
 - **A. Sealed to a recipient key.** HPKE (X25519) to a per-community moderator
-  inbox key (distributed through C4 roles) or to the owner's account key. The
-  server stores and routes ciphertext only. Needs an HPKE seal/open call in
-  the Rust ABI (a crypto change) and C4 for the moderator key.
+  inbox key (distributed through C4 roles) or to the owner's report key. The
+  report key is a separate 32-byte seed the recipient app keeps (ABI 12,
+  `pm_crypto_report_key_*`); it is not the account's MLS or identity key. The
+  server stores and routes ciphertext only. The HPKE seal/open calls are built
+  (ABI 12); C4 is still needed for the moderator key.
 - **B. Plaintext to the server over TLS.** The server checks `c` at intake and
   can reject forged reports. Simpler, but a deliberate server-side plaintext
   path for reported messages, which crosses an AGENTS.md boundary. Only the
@@ -119,6 +122,45 @@ Recommendation: A for both.
 6. **False reports.** Rate limits only in v1; no automatic action.
 7. **Dependencies, not edited here.** C4 (moderator key), C5 (actions), W7
    (reserved key, receive policy).
+8. **Moderator inbox key distribution and rotation (C4).** Who holds the
+   inbox seed, how it reaches a new moderator, and what happens when a
+   moderator is removed. A removed moderator keeps the seed they already
+   hold and can open any report sealed to it that they still see, so removal
+   must rotate the inbox key (new seed, new public key published through C4)
+   and the server must route new reports only to the new key. Reports
+   already sealed to the old key stay readable by the removed moderator;
+   decide whether that is acceptable or the old inbox is re-sealed.
+
+## Conditions for the wiring steps (independent review of step 1, 2026-11-06)
+
+The review of build step 1 (`testing/evidence/C6-step1-review.md`) found no
+blockers. Steps 2 and 3 must meet these before they ship; each wiring review
+checks them.
+
+- **G1. Attribution rests on an honest server row.** `c` proves the sender
+  committed to this text only if the `frank_commit`, sender and conversation
+  the verifier reads from the server are the ones recorded at send time. A
+  malicious server could substitute them. State this in the app's report
+  screens: a "verified" label that used only server-held data says so, and
+  moderators who are members verify against their own MLS copy of the
+  message, not only the reveal.
+- **G2. Commitment context from authenticated sources only.** On receive,
+  `conversation_id`, `sender_device_id` and `action_id` for `c` come from the
+  authenticated MLS context and the envelope the receiver already
+  validates, never from fields inside the sender's payload.
+- **G3. `frank_commit` is write-once, in its own column.** Not inside
+  `crypto_metadata`, and never updated after insert.
+- **G4. The report's aad binds routing.** The `aad` of the sealed report
+  covers the recipient inbox, `conversation_id`, `envelope_id` and the
+  reporter, so a sealed report cannot be replayed into another inbox or
+  attributed to another reporter.
+- **G5. Decide refusal of unfranked payloads.** Once franking is on, decide
+  whether a receiver treats a payload without `frank` as `invalid` or
+  accepts it as unreportable, and plan the rollout across old and new
+  apps.
+- **G6. Duplicate JSON keys.** If a verifier other than the Dart app will
+  exist, the wire rules must reject duplicate JSON keys (Dart's parser keeps
+  the last one), or the two readers can disagree about `P`.
 
 ## Owner decisions (2026-11-01)
 

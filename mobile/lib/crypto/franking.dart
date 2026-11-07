@@ -33,13 +33,13 @@ Uint8List generateFrankKey({Random? random}) {
 }
 
 /// The wire JSON for [canonical] carrying [key]. Throws [FormatException]
-/// unless [canonical] is a JSON object without a top-level `frank` member
-/// and [key] is 32 bytes.
+/// unless [canonical] is a non-empty JSON object without a top-level `frank`
+/// member and [key] is 32 bytes.
 Uint8List frankWireJson(Uint8List canonical, List<int> key) {
   if (key.length != frankKeyBytes ||
       canonical.length < 2 ||
       canonical.last != 0x7d /* } */ ||
-      _objectWithoutFrank(canonical) == null) {
+      (_objectWithoutFrank(canonical)?.isEmpty ?? true)) {
     throw const FormatException('invalid franking input');
   }
   final encodedKey = ascii.encode(base64.encode(key));
