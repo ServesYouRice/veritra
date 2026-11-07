@@ -23,6 +23,12 @@ rust_sysroot=$(cd "$ROOT" && rustc --print sysroot) || fail "rustc not found"
 RUSTFLAGS="--remap-path-prefix=$ROOT=/veritra --remap-path-prefix=${CARGO_HOME:-$HOME/.cargo}=/cargo --remap-path-prefix=$rust_sysroot=/rustc"
 if [ "$(uname -s)" = Linux ]; then RUSTFLAGS="$RUSTFLAGS -C link-arg=-Wl,--build-id=none"; fi
 export RUSTFLAGS
+# The Linux plugins and runner are C/C++ (CMake): same idea for them.
+if [ "$(uname -s)" = Linux ]; then
+  export CFLAGS="-ffile-prefix-map=$ROOT=/veritra"
+  export CXXFLAGS="-ffile-prefix-map=$ROOT=/veritra"
+  export LDFLAGS="-Wl,--build-id=none"
+fi
 
 # Toolchains the release is allowed to use. Edit these together with
 # rust-toolchain.toml, pubspec.yaml and CI.
