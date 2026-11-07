@@ -409,6 +409,21 @@ class _FaultyBindings implements NativeCryptoBindings {
   }
 
   @override
+  Uint8List frankCommit({
+    required Uint8List key,
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+    required Uint8List payload,
+  }) =>
+      real.frankCommit(
+          key: key,
+          conversationId: conversationId,
+          senderDeviceId: senderDeviceId,
+          actionId: actionId,
+          payload: payload);
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 

@@ -36,8 +36,15 @@ all packages ok (includes the new report, migration and aad tests).
 `dart format --set-exit-if-changed` over `mobile/lib` and `mobile/test` with
 the Dart 3.13 SDK and language version 3.4 (as CI): clean.
 
-Not run locally: `flutter analyze` and `flutter test` (no Flutter toolchain);
-the Dart tests above run in the GitHub CI mobile job with the native library.
+Not run locally: `flutter analyze` and `flutter test` (no Flutter toolchain).
+The Dart tests above have not run anywhere yet: the GitHub CI mobile,
+mobile-ios and desktop-* jobs fail at `flutter pub get --enforce-lockfile`
+on this head and on main (`intl 0.20.3` in `mobile/pubspec.yaml` against the
+`0.20.2` that Flutter 3.44.0's `flutter_localizations` pins). Until a fix for
+that lands on main and this branch is rebased with the mobile job green, the
+Dart side of C6 is unverified. A review found two Dart failures that this gap
+hid (fake bindings without `frankCommit`; 11 unmapped server error codes); both
+are fixed here but still await a green CI run.
 The demo e2e job is known to time out waiting for sync on several branches.
 
 ## Not wired (blockers for later steps)
