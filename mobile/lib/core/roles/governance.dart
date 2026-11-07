@@ -109,11 +109,18 @@ String? _longestServing(
   return candidates.first;
 }
 
+/// Whether [account] was added at or before [ownerRev] (a claimant must be).
+bool _joinedByOwnerRev(Map<String, int> joined, String account, int ownerRev) {
+  final at = joined[account];
+  return at != null && at <= ownerRev;
+}
+
 /// One group's role state. Accounts not named are members.
 class GovernanceState {
   GovernanceState({
     required this.rev,
     required this.owner,
+    required this.ownerRev,
     Map<String, int> admins = const {},
     Set<String> moderators = const {},
     this.adminsOnlyPosting = false,
@@ -129,8 +136,8 @@ class GovernanceState {
 
   /// The first state, written when the creator makes the MLS group: the
   /// creator owns it, nobody else holds a role, nothing is restricted.
-  factory GovernanceState.genesis(String creator) =>
-      GovernanceState(rev: 0, owner: creator, joined: {creator: 0});
+  factory GovernanceState.genesis(String creator) => GovernanceState(
+      rev: 0, owner: creator, ownerRev: 0, joined: {creator: 0});
 
   /// Previous + 1 on every written change. A pruning at a removal keeps it.
   final int rev;
@@ -139,6 +146,17 @@ class GovernanceState {
   /// is no longer in the roster, which counts as inactivity and nothing more.
   /// Null only in a malformed or legacy state; no rule here produces it.
   final String? owner;
+
+  /// The [rev] of the owner's last commit (any commit the owner made, so every
+  /// one rewrites the record, see [requiredRecord]); a win or a claim stamps
+  /// its own rev, because the new owner's tenure starts there. Only the
+  /// owner's own commits move it, and it never moves backwards. Owner
+  /// decision 2026-11-07: an election opened from the D82 fallback (no elector
+  /// present) lets only admins vote whose `since` is at or before it, and a
+  /// claimant must have joined at or before it. Whoever the owner left in
+  /// place when it last spoke still counts; accounts put in power afterwards,
+  /// while it was silent, never do. Receivers can check this without a clock.
+  final int ownerRev;
 
   /// Admin account to the [rev] at which it became admin (seniority).
   final Map<String, int> admins;
@@ -171,6 +189,7 @@ class GovernanceState {
     int? rev,
     String? owner,
     bool clearOwner = false,
+    int? ownerRev,
     Map<String, int>? admins,
     Set<String>? moderators,
     bool? adminsOnlyPosting,
@@ -183,6 +202,7 @@ class GovernanceState {
       GovernanceState(
         rev: rev ?? this.rev,
         owner: clearOwner ? null : (owner ?? this.owner),
+        ownerRev: ownerRev ?? this.ownerRev,
         admins: admins ?? this.admins,
         moderators: moderators ?? this.moderators,
         adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
@@ -252,6 +272,7 @@ class GovernanceState {
       other is GovernanceState &&
       other.rev == rev &&
       other.owner == owner &&
+      other.ownerRev == ownerRev &&
       _mapEq(other.admins, admins) &&
       _setEq(other.moderators, moderators) &&
       other.adminsOnlyPosting == adminsOnlyPosting &&
@@ -264,6 +285,7 @@ class GovernanceState {
   int get hashCode => Object.hash(
         rev,
         owner,
+        ownerRev,
         admins.length,
         moderators.length,
         adminsOnlyPosting,
@@ -310,12 +332,16 @@ class GovernanceCheck {
 ///
 /// Ownership (D81, D82) moves in two ways. The owner transfers it to a
 /// current admin. Or an election wins: any commit by the owner while one is
-/// open must clear it; an account may open one (an elector, else every admin;
-/// with no admin in the roster the longest-serving member claims), vote once
-/// for an admin in the roster, or close it if it is in the snapshot; the
+/// open must clear it; an account may open one (an elector, else every admin
+/// who was admin by `ownerRev`; with no admin in the roster the
+/// longest-serving member claims), vote once for an admin in the roster, or
+/// close it if it is in the snapshot; the
 /// commit holding the vote of more than half of the snapshot must itself set
 /// the owner and clear the election. Waiting periods are local
-/// ([mayOpenElectionNow], [mayVoteNow]).
+/// ([mayOpenElectionNow], [mayVoteNow]); what receivers can check instead is
+/// `ownerRev`: the D82 snapshot holds only admins who were admin by then, and
+/// a claimant must have joined by then. An owner commit sets it to its own
+/// rev, a win sets it to the winning rev, nothing else moves it.
 GovernanceCheck validateTransition(
   GovernanceState prev,
   GovernanceState next,
@@ -336,6 +362,9 @@ GovernanceCheck validateTransition(
     return no(GovernanceReject.badShape);
   }
   if (!next.electors.every(next.admins.containsKey)) {
+    return no(GovernanceReject.badShape);
+  }
+  if (next.ownerRev < 0 || next.ownerRev > next.rev) {
     return no(GovernanceReject.badShape);
   }
   if (next.announcementChannels.length > maxAnnouncementChannels ||
@@ -440,6 +469,13 @@ GovernanceCheck validateTransition(
     if (r != null) return no(r);
   }
 
+  // The owner's last commit. Only the owner's own commits (and a win, which
+  // starts a new owner's tenure) move it, and each must move it to this rev.
+  // Else a rogue admin would stamp it itself and make its stand-ins old
+  // enough to vote.
+  final expectedOwnerRev = ownerActs || handover ? next.rev : prev.ownerRev;
+  if (next.ownerRev != expectedOwnerRev) return no(GovernanceReject.badShape);
+
   // Role changes. A won election moves exactly the roles `_checkWin` fixed.
   if (handover) return const GovernanceCheck.ok();
   final accounts = {
@@ -497,7 +533,8 @@ GovernanceReject? _checkWin(
   } else if (el.electorate.length != 1 ||
       winner != actor ||
       el.votes.isNotEmpty ||
-      _longestServing(next.joined, members, prev.owner) != actor) {
+      _longestServing(next.joined, members, prev.owner) != actor ||
+      !_joinedByOwnerRev(next.joined, actor, prev.ownerRev)) {
     // A claim: no admin in the roster and the sole claimant takes it itself.
     return GovernanceReject.ownerChange;
   }
@@ -543,7 +580,9 @@ GovernanceReject? _checkElection(
     final Set<String> electorate;
     if (admins.isEmpty) {
       final claimant = _longestServing(next.joined, members, prev.owner);
-      if (claimant == null || claimant != actor) {
+      if (claimant == null ||
+          claimant != actor ||
+          !_joinedByOwnerRev(next.joined, claimant, prev.ownerRev)) {
         return GovernanceReject.election;
       }
       electorate = {claimant};
@@ -552,7 +591,15 @@ GovernanceReject? _checkElection(
         for (final a in prev.electors)
           if (members.contains(a)) a,
       };
-      electorate = electors.isNotEmpty ? electors : admins;
+      // D82: with no elector present every admin in the roster votes, but only
+      // those already admin when the owner last committed (`ownerRev`). The
+      // admins put in power since then, while the owner was silent, never do.
+      electorate = electors.isNotEmpty
+          ? electors
+          : {
+              for (final a in admins)
+                if (prev.admins[a]! <= prev.ownerRev) a,
+            };
       if (!electorate.contains(actor)) return GovernanceReject.election;
     }
     return _setEq(now.electorate, electorate)
@@ -585,9 +632,9 @@ GovernanceReject? _checkElection(
 /// every account whose last device the commit removes is pruned
 /// ([GovernanceState.removeAccount]); an election with nobody from its
 /// snapshot left in the roster is cleared (nobody could close it, and no new
-/// one could open); both keep `rev`. Then an add stamps `joined`, and an owner
-/// commit clears an open election; each of those rewrites the record at
-/// `rev + 1`. Commit producers use this to build their record, and
+/// one could open); both keep `rev`. Then an add stamps `joined`, and every
+/// owner commit stamps `ownerRev` and clears an open election; each of those
+/// rewrites the record at `rev + 1`. Commit producers use this to build their record, and
 /// [validateCommit] checks against it, so the two cannot drift.
 GovernanceState requiredRecord(
   GovernanceState prev,
@@ -597,7 +644,8 @@ GovernanceState requiredRecord(
 }) =>
     _required(prev, committer, before: before, after: after).record;
 
-({GovernanceState base, GovernanceState record, bool cancel}) _required(
+({GovernanceState base, GovernanceState record, bool cancel, bool ownerActs})
+    _required(
   GovernanceState prev,
   String committer, {
   required Set<String> before,
@@ -612,17 +660,18 @@ GovernanceState requiredRecord(
     base = base.copyWith(clearElection: true);
   }
   final added = after.difference(before);
-  final cancel =
-      prev.owner != null && committer == prev.owner && base.election != null;
+  final ownerActs = prev.owner != null && committer == prev.owner;
+  final cancel = ownerActs && base.election != null;
   var record = base;
-  if (added.isNotEmpty || cancel) {
+  if (added.isNotEmpty || ownerActs) {
     record = base.copyWith(
       rev: base.rev + 1,
+      ownerRev: ownerActs ? base.rev + 1 : null,
       clearElection: cancel,
       joined: {...base.joined, for (final a in added) a: base.rev + 1},
     );
   }
-  return (base: base, record: record, cancel: cancel);
+  return (base: base, record: record, cancel: cancel, ownerActs: ownerActs);
 }
 
 /// The whole check for one MLS commit. [prev] is the state before it,
@@ -637,7 +686,7 @@ GovernanceCheck validateCommit(
   required Set<String> before,
   required Set<String> after,
 }) {
-  final (:base, record: expected, :cancel) = _required(
+  final (:base, record: expected, :cancel, :ownerActs) = _required(
     prev,
     committer,
     before: before,
@@ -648,9 +697,11 @@ GovernanceCheck validateCommit(
     return GovernanceCheck.no(
       cancel
           ? GovernanceReject.election
-          : base != prev
-              ? GovernanceReject.notPruned
-              : GovernanceReject.badRev,
+          : ownerActs
+              ? GovernanceReject.badRev
+              : base != prev
+                  ? GovernanceReject.notPruned
+                  : GovernanceReject.badRev,
     );
   }
   return validateTransition(

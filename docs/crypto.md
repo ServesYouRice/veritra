@@ -1942,8 +1942,19 @@ only if `validateCommit` accepts:
   roster is cleared. `rev` is kept (`requiredRecord` computes all of this
   for committers and receivers alike). A record equal to that result is valid from
   any committer; a removal that leaves a departed account named is invalid.
-  An add must stamp `joined` and an owner commit must clear an open election;
-  each rewrites the record at `rev` + 1 (record format v2, not built).
+  An add must stamp `joined`, and every owner commit must stamp `owner_rev`
+  (the committer's own `rev`) and clear an open election; each rewrites the
+  record at `rev` + 1 (record format v2, not built). A commit by anyone else
+  must keep `owner_rev`, and a won election or claim sets it to its own `rev`.
+  Owner decision 2026-11-07 (C4 doc, "The owner's last commit"): `owner_rev`
+  is the `rev` of the owner's last commit, and receivers use it in place of a
+  clock the phone cannot check. A D82 election (no elector in the roster)
+  snapshots only admins whose `since_rev` is at or before it, and a claimant
+  must have `joined` at or before it, so admins promoted, or members added,
+  after the owner went quiet never vote or claim. Residuals: an owner
+  commit made after a rogue admin's promotions (an automatic cancel, an
+  Update) makes them old enough; and an admin who was already admin by then
+  and is the whole snapshot wins at once. Both are listed in the C4 doc.
 - Any other difference is a change by the committer, checked by
   `validateTransition` against the pruned record: `rev` + 1; everything
   named is in the roster after the commit; role changes as on the server
@@ -1957,10 +1968,11 @@ receiver check on the commit.
 
 **Sending a commit.** Every path that stages a commit (D68 reconcile,
 revocation removals, device replacement, role changes) computes the pruned
-record for its own commit, carries it as the proposal when it differs, and
-runs `validateCommit` on the result before staging. Producers are wired
-before or with the receiver check, or the first kick of an admin stops
-every receiver's sync.
+record for its own commit (for the owner's, with `owner_rev` stamped, so the
+owner's commit always carries a record), carries it as the proposal when it
+differs, and runs `validateCommit` on the result before staging. Producers
+are wired before or with the receiver check, or the first kick of an admin
+stops every receiver's sync.
 
 **Using it.** C2: a post is accepted where `mayPost` holds, and posting is
 restricted where this record or the server says so. C1/C5: `mayActOn`. A
