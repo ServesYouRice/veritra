@@ -53,7 +53,16 @@ Future<void> stripCryptoRecordsSchema(EncryptedLocalDatabase database) async {
 /// fixture.
 Future<void> stripPendingEnrollmentSchema(
     EncryptedLocalDatabase database) async {
+  await stripK2TransferSchema(database);
   for (final table in PendingEnrollmentSql.tables) {
+    await database.customStatement('DROP TABLE IF EXISTS $table');
+  }
+}
+
+/// Remove schema18's promotion ledger and history transfer progress (K2)
+/// from a historical fixture.
+Future<void> stripK2TransferSchema(EncryptedLocalDatabase database) async {
+  for (final table in K2TransferSql.tables) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
   }
 }

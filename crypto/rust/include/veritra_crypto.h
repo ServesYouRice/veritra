@@ -152,8 +152,9 @@ int32_t pm_crypto_recovery_proof_sign(PmByteSlice entropy,
  * key is PM_CRYPTO_ERROR. frank_commit returns HMAC-SHA256(key,
  * "veritra-frank-v1" | lp(conversation_id) | lp(sender_device_id) |
  * lp(action_id) | lp(payload)), lp a u32 big-endian length; key 32 bytes,
- * ids 1 to 128 bytes, payload 1 byte to 64 KiB. Vector:
- * testing/vectors/c6-franking-v1.json. */
+ * ids 1 to 128 bytes, payload 1 byte to 64 KiB. On any failure *out is left
+ * untouched (the caller's null/zero buffer stays null/zero); only a success
+ * writes an owned buffer. Vector: testing/vectors/c6-franking-v1.json. */
 int32_t pm_crypto_report_key_generate(PmOwnedBuffer *out_seed);
 int32_t pm_crypto_report_key_public(PmByteSlice seed,
                                     PmOwnedBuffer *out_public);

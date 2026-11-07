@@ -779,7 +779,7 @@ class _FakeApi extends ApiClient {
       members;
 
   @override
-  Future<void> removeConversationMember(
+  Future<int?> removeConversationMember(
     String token,
     String conversationId,
     String accountId,
@@ -788,6 +788,7 @@ class _FakeApi extends ApiClient {
       throw ApiException(503, 'unavailable');
     }
     removedMembers.add(accountId);
+    return null;
   }
 
   @override

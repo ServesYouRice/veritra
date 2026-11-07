@@ -893,16 +893,26 @@ func newTestHandlerWithOwner(t *testing.T) (http.Handler, string, string) {
 // newTestAppWithOwner also returns the app, for tests that watch its hub.
 func newTestAppWithOwner(t *testing.T) (*app.App, http.Handler, string, string) {
 	t.Helper()
+	return newTestAppWithOwnerConfig(t, nil)
+}
+
+// newTestAppWithOwnerConfig lets a test change the config before the app starts.
+func newTestAppWithOwnerConfig(t *testing.T, mutate func(*config.Config)) (*app.App, http.Handler, string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "private-messenger.db")
-	application, err := app.New(context.Background(), config.Config{
+	cfg := config.Config{
 		Addr:         ":0",
 		DataDir:      dir,
 		DatabasePath: dbPath,
 		StoragePath:  filepath.Join(dir, "blobs"),
 		InstanceName: "Test Messenger",
 		SetupToken:   "test-setup-token",
-	}, nil)
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	application, err := app.New(context.Background(), cfg, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}

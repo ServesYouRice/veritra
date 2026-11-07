@@ -244,6 +244,34 @@ deferred leave, never on the Welcome's word. The Welcome then has the trust of a
 includes the L1 gap above: the core checks its structure, not who may be in
 the group or who may invite.
 
+A Welcome from before the user's own leave is not a re-add. The app notes,
+at leave, a floor for that conversation in the local setting
+`mls.left_floors` (scoped like the leave note, no schema change). The floor
+is the id of the leaver's own `membership.left` sync event, which the server
+returns as `event_id` in the `DELETE /members/me` response (an additive
+field). Welcomes are stored only for member devices, in the transaction that
+adds them, so a Welcome with a lower id predates the leave and one with a
+higher id is a real re-add: the floor is exact, and a re-add is never
+skipped. A Welcome for this device at or below the floor is skipped: the sync
+cursor moves past it, nothing joins, and its key package is still replaced.
+This closes the race where a pass that fetched the add-Welcome before the
+leave applied it after the group was dropped and the note cleared.
+
+A server that returns no `event_id` (an older one) is asked for its newest
+sync event id instead (`latest_event_id` on an empty page), which is at or
+above the leave's own event. That floor is not exact: a Welcome created after
+the leave but before the app reads the bound would also be skipped, a window
+of one request. If that read fails too, the newest event id the running pass
+of the same session has fetched stands in: it covers the page the pass holds,
+not events it has yet to fetch or a fetch still in flight, and a pass from
+another session is ignored.
+
+A floor is dropped lazily: each write of the floors (the next leave) removes
+every floor at or below the committed sync cursor, since a pass skips events
+at or below the cursor and such a floor can no longer matter. Until then a
+reached floor stays stored; that is harmless, as no event at or below the
+cursor is applied again.
+
 An active stored group is never replaced, whoever sends the Welcome and
 whatever its epoch. A Welcome cannot prove the device was removed. If it
 could replace an active group, a malicious server together with any
@@ -461,6 +489,15 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     key with Go's own HKDF and `crypto/hpke` DeriveKeyPair and opens the
     Rust-sealed report with `crypto/hpke`, an independent RFC 9180
     implementation (test only; the server never opens reports).
+    The vector also holds extra commitment cases (a `channel_id` and
+    `hidden` payload, escaped and multi-byte UTF-8 text), one report sealed
+    by Go's `crypto/hpke` that Rust and Dart open, and the malformed `frank`
+    spellings, which Rust and Go check with a strict test-side reader and
+    Dart with `splitFrank`. Review fixes (2026-11-06, no ABI change):
+    `franking.Commit` now has the Rust size bounds; `report_seal` refuses
+    every low-order X25519 point (including non-canonical spellings) as
+    invalid input and maps any other seal failure to `PM_CRYPTO_ERROR`;
+    `frankWireJson` refuses an empty object.
   - **Dart.** `ReportCryptoService` (`crypto_service.dart`), implemented by
     `NativeCryptoService`; `UnavailableCryptoService` refuses every method
     with `StateError`. `mobile/lib/crypto/franking.dart` holds the `P` and
@@ -1949,18 +1986,18 @@ after (the record before, when the commit carries no proposal). Dart merges
 only if `validateCommit` accepts:
 
 - Accounts whose last device the commit removes are pruned first
-  (`removeAccount`): their role goes; if the owner left, the oldest admin
-  still present (smallest `since_rev`, then the smallest account id by
-  UTF-16 code-unit order, as Dart's `String.compareTo`; account ids are
-  ASCII today, where this equals byte order) becomes owner, and with no admin nobody does. `rev` is kept. A
-  record equal to that result is valid from any committer; a removal that
-  leaves a departed account named is invalid.
+  (`removeAccount`): their role, elector flag, `joined` entry and votes go.
+  The owner is never pruned (D81): it stays owner even out of the roster, and
+  nobody inherits. `rev` is kept. A record equal to that result is valid from
+  any committer; a removal that leaves a departed account named is invalid.
+  An add must stamp `joined` and an owner commit must clear an open election;
+  each rewrites the record at `rev` + 1 (record format v2, not built).
 - Any other difference is a change by the committer, checked by
   `validateTransition` against the pruned record: `rev` + 1; everything
   named is in the roster after the commit; role changes as on the server
   (moderator or above; target strictly below the actor; new role at most
   the actor's); stepping down is free; only the owner transfers ownership,
-  and only to a current admin; posting fields need admin or above; a new
+  and only to a current admin, or a won election sets it (D81, D82); posting fields need admin or above; a new
   admin's `since_rev` is the new `rev`, and an admin's stays unchanged.
 
 The check does not judge whether a removal was allowed; that is C1/C5's

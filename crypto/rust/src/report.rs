@@ -126,6 +126,56 @@ fn check_aad(aad: &[u8]) -> Result<(), ReportError> {
     Ok(())
 }
 
+/// The X25519 points of order 1, 2, 4 and 8, as u-coordinates (RFC 7748 §6.1
+/// ignores bit 255; the three values at or above p are non-canonical spellings
+/// of 0, 1 and p - 1 and count too). The same list libsodium rejects.
+const LOW_ORDER_POINTS: [[u8; 32]; 7] = [
+    [0; 32],
+    {
+        let mut one = [0u8; 32];
+        one[0] = 1;
+        one
+    },
+    [
+        0xe0, 0xeb, 0x7a, 0x7c, 0x3b, 0x41, 0xb8, 0xae, 0x16, 0x56, 0xe3, 0xfa, 0xf1, 0x9f, 0xc4,
+        0x6a, 0xda, 0x09, 0x8d, 0xeb, 0x9c, 0x32, 0xb1, 0xfd, 0x86, 0x62, 0x05, 0x16, 0x5f, 0x49,
+        0xb8, 0x00,
+    ],
+    [
+        0x5f, 0x9c, 0x95, 0xbc, 0xa3, 0x50, 0x8c, 0x24, 0xb1, 0xd0, 0xb1, 0x55, 0x9c, 0x83, 0xef,
+        0x5b, 0x04, 0x44, 0x5c, 0xc4, 0x58, 0x1c, 0x8e, 0x86, 0xd8, 0x22, 0x4e, 0xdd, 0xd0, 0x9f,
+        0x11, 0x57,
+    ],
+    {
+        // p - 1
+        let mut v = [0xffu8; 32];
+        v[0] = 0xec;
+        v[31] = 0x7f;
+        v
+    },
+    {
+        // p
+        let mut v = [0xffu8; 32];
+        v[0] = 0xed;
+        v[31] = 0x7f;
+        v
+    },
+    {
+        // p + 1
+        let mut v = [0xffu8; 32];
+        v[0] = 0xee;
+        v[31] = 0x7f;
+        v
+    },
+];
+
+fn is_low_order(public: &[u8]) -> bool {
+    let mut masked = [0u8; 32];
+    masked.copy_from_slice(public);
+    masked[31] &= 0x7f;
+    LOW_ORDER_POINTS.contains(&masked)
+}
+
 /// Seals `plaintext` to `recipient_public` (RFC 9180 base mode, fixed info).
 pub fn seal(recipient_public: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, ReportError> {
     check_aad(aad)?;
@@ -135,11 +185,14 @@ pub fn seal(recipient_public: &[u8], aad: &[u8], plaintext: &[u8]) -> Result<Vec
     {
         return Err(ReportError::InvalidInput);
     }
+    // A low-order point gives an all-zero shared secret (RFC 9180 §7.1.4):
+    // refuse it here as bad input. Every other seal failure is internal.
+    if is_low_order(recipient_public) {
+        return Err(ReportError::InvalidInput);
+    }
     let sealed = RustCrypto::default()
         .hpke_seal(suite(), recipient_public, INFO, aad, plaintext)
-        // A public key that is not a valid X25519 point (or a low-order point,
-        // whose shared secret is all zeros) fails here (RFC 9180 §7.1.4).
-        .map_err(|_| ReportError::InvalidInput)?;
+        .map_err(|_| ReportError::Crypto)?;
     let enc = sealed.kem_output.as_slice();
     let ciphertext = sealed.ciphertext.as_slice();
     if enc.len() != ENC_BYTES || ciphertext.len() != plaintext.len() + TAG_BYTES {

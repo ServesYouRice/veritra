@@ -711,6 +711,13 @@ message with an encrypted action message instead, which the server cannot
 tell apart from any other message; that message's original ciphertext stays
 until it expires or sync-event retention removes it.
 
+**Scoped sync (C1, off by default).** `PRIVATE_MESSENGER_SCOPED_SYNC=1` adds
+`GET /sync/account-events` and `GET /conversations/{id}/sync-events`. They
+serve the same events as `/sync/events`, split into an account stream and one
+stream per conversation. No released client uses them yet; leave the switch
+off. When a conversation stream falls behind retention it answers 409
+`conversation_recovery_required` and only that conversation pauses.
+
 **Sync cursors after retention.** `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS`
 (30 by default) also limits how long a device can be away. Pruning records
 the highest pruned event id for each account and device and for each

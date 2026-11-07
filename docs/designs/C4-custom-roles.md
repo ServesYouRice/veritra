@@ -113,7 +113,8 @@ They mirror the server (`ManageConversationMember`,
   actor's. So a moderator may make a moderator and an admin an admin, as
   the server allows today.
 - Anyone may step down (gains nothing). The owner must transfer first.
-- Only the owner moves ownership, and only to a current admin (D80). The
+- Only the owner moves ownership, and only to a current admin (D80), or an
+  election wins it (D81, D82, below). The
   old owner becomes an admin (seniority restarts) or steps further down.
   Ownership cannot be vacated by a record.
 - Posting restrictions need admin or above.
@@ -135,13 +136,14 @@ switch to `GovernanceState.roleOf`.
 > question 1.** See "Owner handover (D81)" below.
 
 A commit that removes an account's last device must also carry the pruned
-state (`removeAccount`): the account loses its role, so a kicked admin who
-is invited back is a member. If the owner left, the **oldest admin still in
-the group** (smallest `admins` value, then smallest account id) becomes
-owner (D80). With no admin left, nobody inherits (owner question 1).
-Pruning alone needs no role, so any committer may carry it; a removal that
-does not prune is refused (`notPruned`). `validateCommit` prunes first, then
-checks any further change against the pruned state.
+state (`removeAccount`): the account loses its role, its elector flag, its
+`joined` entry, and its votes and votes for it. The **owner is never pruned**
+(D81): a removed owner stays owner, and nobody inherits. Pruning alone needs
+no role, so any committer may carry it; a removal that does not prune is
+refused (`notPruned`). `validateCommit` prunes first, then checks any further
+change against the pruned state. Two commits also rewrite the record at
+`rev + 1`: an add stamps `joined`, and an owner commit clears an open
+election. The check refuses anything else.
 
 `validateCommit` does not judge whether the removal itself was allowed.
 That is C1/C5's receiver check (`mayActOn(committer, target)` for a kick). A
@@ -151,9 +153,10 @@ and with it a succession.
 
 ## Owner handover (D81)
 
-**Status: design only, revision 2** (after an independent review). The
-merged rules engine still implements "oldest admin inherits" and must change
-to this before it is wired.
+**Status: design revision 2** (after an independent review); the rules
+engine implements it (record fields `electors`, `election`, `joined`; the
+codec, ABI and wiring are not built). Choices where this text was silent are
+in the engine's tests and listed in the C4 package report.
 
 The owner decided (D81): the owner cannot leave without transferring first.
 If the owner is inactive for more than a month, the other admins vote, and
@@ -273,9 +276,10 @@ same waits, the owner can cancel, more than half of the snapshot must agree.
 
 ## Built and not built
 
-Built: the rules engine and 21 tests (posting, hierarchy as on the server,
-step-down, ownership transfer, seniority, pruning, succession, the
-commit-level check). Not built: the ABI above, the record codec (format in
+Built: the rules engine and 45 tests (posting, hierarchy as on the server,
+step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
+open, cancel, close, vote, win, claim, electors, `joined`; the local waits as
+pure helpers; the commit-level check). Not built: the ABI above, the record codec (format in
 `docs/crypto.md`), wiring into commit processing, local storage (none is
 needed beyond MLS state), UI, and the server half of the ownership rules
 (below).

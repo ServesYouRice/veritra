@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import '../core/models.dart';
+import '../storage/encrypted_database.dart'
+    show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
 import 'mls_commit_bundle.dart';
 import 'app_payload.dart';
@@ -197,6 +199,28 @@ abstract interface class RecoveryCryptoService {
 
   /// Drops a pending (not yet activated) enrollment identity.
   Future<void> abandonPendingEnrollment();
+}
+
+/// K2/K0 (local schema 18): the one step that makes the pending identity
+/// this device's active one, with a promotion-ledger row, so its frozen
+/// pre-join MLS state can never become active again (review finding 4 on
+/// schema 17). Implemented by the native engine only; callers check for it
+/// like the other capabilities.
+abstract interface class EnrollmentPromotionCryptoService {
+  /// Promotes the pending enrollment of [kind] this service holds open
+  /// (after [RecoveryCryptoService.resumePendingEnrollment] or a fresh
+  /// enrollment) as [session], in one local transaction. [promotionId] is
+  /// the K2 claim request digest or the K0 request ID; a retry with the
+  /// same one after a lost outcome answers
+  /// [EnrollmentPromotionOutcome.alreadyPromoted] and opens the stored
+  /// state, never the frozen one. [transfer] is an incoming K2 transfer to
+  /// start with the identity.
+  Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
+    Session session, {
+    required String kind,
+    required String promotionId,
+    HistoryTransferProgress? transfer,
+  });
 }
 
 /// C6 reports (docs/designs/C6-reports-franking.md, D80): the HPKE seal a

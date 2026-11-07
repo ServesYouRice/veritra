@@ -17,11 +17,21 @@ const (
 	// CommitSize is the size of the commitment c.
 	CommitSize = sha256.Size
 
+	// MaxIDSize is the largest context field, as in the Rust core
+	// (MAX_FRANK_ID_BYTES in crypto/rust/src/report.rs).
+	MaxIDSize = 128
+	// MaxPayloadSize is the largest canonical payload (MAX_FRANK_PAYLOAD_BYTES).
+	MaxPayloadSize = 64 * 1024
+
 	label = "veritra-frank-v1"
 )
 
 // ErrKeySize reports a franking key of the wrong length.
 var ErrKeySize = errors.New("franking: key must be 32 bytes")
+
+// ErrInvalidInput reports a context field or payload outside the bounds the
+// Rust core enforces: ids 1 to 128 bytes, payload 1 byte to 64 KiB.
+var ErrInvalidInput = errors.New("franking: id or payload size out of bounds")
 
 // Context is what the commitment binds besides the payload.
 type Context struct {
@@ -32,10 +42,19 @@ type Context struct {
 
 // Commit returns c = HMAC-SHA256(kf, label || ctx || payload) with each
 // context field and the payload length-prefixed (uint32 big endian). payload
-// is the canonical payload bytes with the "frank" member removed.
+// is the canonical payload bytes with the "frank" member removed. The size
+// bounds match the Rust core, so both sides refuse the same inputs.
 func Commit(kf []byte, ctx Context, payload []byte) ([]byte, error) {
 	if len(kf) != KeySize {
 		return nil, ErrKeySize
+	}
+	for _, id := range []string{ctx.ConversationID, ctx.SenderDeviceID, ctx.ActionID} {
+		if len(id) == 0 || len(id) > MaxIDSize {
+			return nil, ErrInvalidInput
+		}
+	}
+	if len(payload) == 0 || len(payload) > MaxPayloadSize {
+		return nil, ErrInvalidInput
 	}
 	m := hmac.New(sha256.New, kf)
 	m.Write([]byte(label))

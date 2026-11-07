@@ -176,9 +176,10 @@ void main() {
     test('a fresh database has the pending-enrollment tables', () async {
       final db = EncryptedLocalDatabase(NativeDatabase(await _tempFile()));
       addTearDown(db.close);
-      expect(EncryptedLocalDatabase.currentSchemaVersion, 17);
+      expect(EncryptedLocalDatabase.currentSchemaVersion,
+          greaterThanOrEqualTo(17));
       expect(await db.readPendingEnrollment(), isNull);
-      expect(await _version(db), 17);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
 
     test('16 to 17 with no claim keeps the device state', () async {
@@ -191,7 +192,7 @@ void main() {
       expect(await db.readCursor(), 8);
       expect(await db.readSessionJson(), _sessionJson);
       expect(await db.readMetadata('setting:k0.recovery_follow_up'), 'kept');
-      expect(await _version(db), 17);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
 
     for (final needsLogin in [false, true]) {
@@ -213,7 +214,7 @@ void main() {
         expect(await db.readMetadata(_legacyName), isNull);
         expect(await db.readMetadata('setting:k0.recovery_follow_up'), 'kept');
         expect((await db.readCryptoState())?.counter, 4);
-        expect(await _version(db), 17);
+        expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
       });
     }
 
@@ -234,7 +235,7 @@ void main() {
         expect(await db.readPendingEnrollment(), isNull);
         expect(await db.readMetadata(_legacyName), isNull);
         expect((await db.readCryptoState())?.counter, 4);
-        expect(await _version(db), 17);
+        expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
       });
     }
 
@@ -280,7 +281,7 @@ void main() {
                 _enrollment(await db.readPendingEnrollment())),
             claim);
         expect(await db.readMetadata(_legacyName), isNull);
-        expect(await _version(db), 17);
+        expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
       });
     }
 
@@ -356,7 +357,7 @@ void main() {
               _enrollment(await db.readPendingEnrollment())),
           claim);
       expect(await db.readMetadata(_legacyName), isNull);
-      expect(await _version(db), 17);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
 
     test('a downgrade with only a setting moves it on re-upgrade', () async {
@@ -402,7 +403,7 @@ void main() {
       addTearDown(db.close);
       expect(await db.readPendingEnrollment(), isNull);
       expect((await db.readCryptoState())?.counter, 2);
-      expect(await _version(db), 17);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
   });
 

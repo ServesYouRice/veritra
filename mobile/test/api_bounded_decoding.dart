@@ -368,6 +368,29 @@ void boundedDecodingTests() {
     }
   });
 
+  test('a leave reads the removed member\'s event id, or none', () async {
+    final removal = _map(_fixture('responses.json')['member_removed']);
+    expect(removal['event_id'], 12);
+    final bodies = <Map<String, Object?>>[
+      removal,
+      // An older server: no field.
+      <String, Object?>{
+        for (final entry in removal.entries)
+          if (entry.key != 'event_id') entry.key: entry.value,
+      },
+      for (final bad in <Object?>['12', 0, -3, 1.5, null])
+        <String, Object?>{...removal, 'event_id': bad},
+    ];
+    final server = await _ScriptedServer.start(
+        (request, index) => _respondJson(request, bodies[index]));
+    final client = await _clientFor(server);
+    final seen = <int?>[
+      for (var i = 0; i < bodies.length; i++)
+        await client.removeConversationMember('token', 'conv_1', 'me'),
+    ];
+    expect(seen, <int?>[12, null, null, null, null, null, null]);
+  });
+
   test('invalid base64 never echoes the field into the error', () {
     const sentinel = 'SENTINEL_CIPHERTEXT!!';
     expect(

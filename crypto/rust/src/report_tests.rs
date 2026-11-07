@@ -176,14 +176,21 @@ fn info_label_separates_reports_from_other_hpke_uses() {
 #[test]
 fn seal_refuses_bad_keys_and_sizes() {
     let public = public_key(&[3u8; SEED_BYTES]).unwrap();
-    // All-zero and other low-order points give an all-zero DH output.
-    let low_order: [[u8; 32]; 2] = [[0u8; 32], {
-        let mut one = [0u8; 32];
-        one[0] = 1;
-        one
-    }];
-    for key in low_order {
-        assert_eq!(seal(&key, b"aad", b"x"), Err(ReportError::InvalidInput));
+    // Every low-order X25519 point, canonical or not, with and without the
+    // ignored bit 255: u = 0, 1, the two order-8 points, p - 1, p and p + 1.
+    for key in LOW_ORDER_POINTS {
+        for high in [0x00u8, 0x80] {
+            let mut key = key;
+            key[31] |= high;
+            assert_eq!(seal(&key, b"aad", b"x"), Err(ReportError::InvalidInput));
+        }
+    }
+    // The library agrees on each point (an all-zero DH output fails), so the
+    // explicit list is not hiding a gap or a mismatch.
+    for key in LOW_ORDER_POINTS {
+        assert!(RustCrypto::default()
+            .hpke_seal(suite(), &key, INFO, b"aad", b"x")
+            .is_err());
     }
     let too_big = vec![0u8; MAX_PLAINTEXT_BYTES + 1];
     let long_aad = vec![0u8; MAX_AAD_BYTES + 1];
@@ -386,5 +393,118 @@ fn ffi_fails_closed_and_writes_nothing() {
                 "case {index} null out"
             );
         }
+    }
+}
+
+#[test]
+fn frank_commit_matches_the_extra_vector_cases() {
+    let v = vector();
+    let cases = v["commitment_cases"].as_array().expect("cases");
+    assert!(cases.len() >= 2);
+    for c in cases {
+        let commit = frank_commit(
+            &hex(&c["key_hex"]),
+            text(&c["conversation_id"]),
+            text(&c["sender_device_id"]),
+            text(&c["action_id"]),
+            text(&c["payload"]),
+        )
+        .unwrap();
+        assert_eq!(commit.to_vec(), hex(&c["commit_hex"]), "{}", c["name"]);
+    }
+}
+
+#[test]
+fn go_sealed_report_opens_with_the_rust_core() {
+    // Sealed by Go's crypto/hpke (generated once, stored in the vector).
+    let v = vector();
+    let r = &v["report_hpke_go_sealed"];
+    let seed = hex(&r["seed_hex"]);
+    assert_eq!(public_key(&seed).unwrap().to_vec(), hex(&r["public_hex"]));
+    let opened = open(&seed, text(&r["aad"]), &hex(&r["sealed_hex"])).unwrap();
+    assert_eq!(opened.as_slice(), text(&r["plaintext"]));
+    unsafe {
+        let mut out = PmOwnedBuffer::default();
+        assert_eq!(
+            pm_crypto_report_open(
+                slice(&seed),
+                slice(text(&r["aad"])),
+                slice(&hex(&r["sealed_hex"])),
+                &mut out
+            ),
+            PM_CRYPTO_OK
+        );
+        assert_eq!(take(out), text(&r["plaintext"]));
+    }
+}
+
+/// Strict reference for the franking v1 wire rule (docs/crypto.md): the last
+/// member is exactly `,"frank":{"k":"<44 chars>"}}`, standard padded base64
+/// of 32 bytes in canonical form, and the rest is an object without a
+/// top-level `frank`. Dart's `splitFrank` is the shipped parser; this checks
+/// the shared malformed cases on a second implementation.
+fn split_frank(wire: &str) -> Option<(String, Vec<u8>)> {
+    const PREFIX: &str = ",\"frank\":{\"k\":\"";
+    const TAIL: &str = "\"}}";
+    if wire.len() <= PREFIX.len() + 44 + TAIL.len() || !wire.ends_with(TAIL) {
+        return None;
+    }
+    let start = wire.len() - PREFIX.len() - 44 - TAIL.len();
+    if !wire.is_char_boundary(start) || !wire[start..].starts_with(PREFIX) {
+        return None;
+    }
+    let text = &wire[start + PREFIX.len()..wire.len() - TAIL.len()];
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let bytes = text.as_bytes();
+    // 32 bytes: 43 base64 characters, then one `=`; the last character
+    // carries four data bits, so its low two bits must be zero.
+    if bytes.len() != 44 || bytes[43] != b'=' {
+        return None;
+    }
+    let mut key = Vec::new();
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for (index, c) in bytes[..43].iter().enumerate() {
+        let value = alphabet.iter().position(|a| a == c)? as u32;
+        if index == 42 && value & 0x3 != 0 {
+            return None;
+        }
+        acc = (acc << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            key.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    if key.len() != FRANK_KEY_BYTES {
+        return None;
+    }
+    let payload = format!("{}}}", &wire[..start]);
+    let value: serde_json::Value = serde_json::from_str(&payload).ok()?;
+    if value.as_object()?.contains_key("frank") {
+        return None;
+    }
+    Some((payload, key))
+}
+
+#[test]
+fn shared_vector_frank_wire_cases() {
+    let v = vector();
+    let mut valid = vec![&v["commitment"]];
+    valid.extend(v["commitment_cases"].as_array().unwrap().iter());
+    for case in valid {
+        let (payload, key) = split_frank(case["wire_json"].as_str().unwrap()).expect("valid wire");
+        assert_eq!(payload.as_bytes(), text(&case["payload"]));
+        assert_eq!(key, hex(&case["key_hex"]));
+    }
+    let malformed = v["malformed_frank"].as_array().unwrap();
+    assert!(malformed.len() >= 11);
+    for case in malformed {
+        let wire = case.as_str().unwrap();
+        assert!(split_frank(wire).is_none(), "accepted: {wire}");
+    }
+    // `frank` nested in the body is not the reserved member.
+    for case in v["unfranked_frank_in_body"].as_array().unwrap() {
+        assert!(split_frank(case.as_str().unwrap()).is_none());
     }
 }

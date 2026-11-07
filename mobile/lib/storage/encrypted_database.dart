@@ -11,11 +11,13 @@ import 'message_search.dart';
 import 'history_snapshot.dart';
 import 'notice_outbox.dart';
 import '../core/models.dart' show Conversation, Session;
+import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
 part 'pending_enrollment_sql.dart';
+part 'k2_transfer_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -553,7 +555,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 17;
+  static const currentSchemaVersion = 18;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -764,6 +766,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createHistoryNamespace();
             await _createNoticeOutbox();
             await _createPendingEnrollment();
+            await _createK2Transfer();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -886,6 +889,13 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               await _createSearchIndex();
               await _rebuildSearchIndex();
             }
+            // K2: the promotion ledger and history transfer progress. Last,
+            // so every older table exists: a pending enrollment that schema
+            // 17 code already activated goes into the ledger here.
+            if (from < 18) {
+              await _createK2Transfer();
+              await _ledgerActivatedPendingEnrollment();
+            }
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -931,6 +941,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               .go();
           await delete(localCryptoStates).go();
           await delete(localCryptoRecords).go();
+          // Their native half went with the MLS state; the promotion ledger
+          // stays (finding 4).
+          await _clearHistoryTransfers();
           // The cursor went with the MLS state it was committed with. An
           // upsert of only the key would keep the old value.
           await into(localSyncStates).insertOnConflictUpdate(
@@ -979,6 +992,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localOutboxEntries).go();
         await delete(localCryptoStates).go();
         await delete(localCryptoRecords).go();
+        await _clearHistoryTransfers();
         await delete(localAccounts).go();
         if (sessionJson != null) {
           await into(localAccounts).insert(
@@ -1133,6 +1147,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversations).go();
         await delete(localCryptoStates).go();
         await delete(localCryptoRecords).go();
+        // Transfers go with the MLS state that holds their native half. The
+        // promotion ledger and a pending enrollment stay: a restored device
+        // must still never reactivate an identity it already promoted.
+        await _clearHistoryTransfers();
         await delete(localAccounts).go();
         await into(localAccounts).insert(
           LocalAccountsCompanion.insert(
@@ -1919,35 +1937,55 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     String? leaseKey,
     String? resolvedMlsOutboxKey,
   }) =>
-      transaction(() async {
-        await _assertSyncLeaseInTransaction(leaseKey);
-        final previousState = await (select(localCryptoStates)
-              ..where((table) => table.singleton.equals(1)))
-            .getSingleOrNull();
-        final previousCursor = await (select(localSyncStates)
-              ..where((table) => table.singleton.equals(1)))
-            .getSingleOrNull();
-        if ((previousState?.counter ?? 0) != expectedCounter ||
-            (previousCursor?.cursor ?? 0) != expectedCursor ||
-            counter != expectedCounter + 1) {
-          throw StateError('stale local MLS transition');
-        }
-        await _applyCryptoRecordChanges(recordChanges);
-        await into(localCryptoStates).insertOnConflictUpdate(
-          LocalCryptoStatesCompanion.insert(
-            singleton: const Value(1),
+      transaction(() => _commitLocalMlsStateInTransaction(
+            expectedCounter: expectedCounter,
+            expectedCursor: expectedCursor,
             counter: counter,
-            stateKey: Uint8List.fromList(stateKey),
-            sealedState: Uint8List.fromList(sealedState),
-          ),
-        );
-        if (resolvedMlsOutboxKey != null) {
-          await (delete(localMlsOutboxEntries)
-                ..where((table) =>
-                    table.idempotencyKey.equals(resolvedMlsOutboxKey)))
-              .go();
-        }
-      });
+            stateKey: stateKey,
+            sealedState: sealedState,
+            recordChanges: recordChanges,
+            leaseKey: leaseKey,
+            resolvedMlsOutboxKey: resolvedMlsOutboxKey,
+          ));
+
+  Future<void> _commitLocalMlsStateInTransaction({
+    required int expectedCounter,
+    required int expectedCursor,
+    required int counter,
+    required List<int> stateKey,
+    required List<int> sealedState,
+    List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
+    String? leaseKey,
+    String? resolvedMlsOutboxKey,
+  }) async {
+    await _assertSyncLeaseInTransaction(leaseKey);
+    final previousState = await (select(localCryptoStates)
+          ..where((table) => table.singleton.equals(1)))
+        .getSingleOrNull();
+    final previousCursor = await (select(localSyncStates)
+          ..where((table) => table.singleton.equals(1)))
+        .getSingleOrNull();
+    if ((previousState?.counter ?? 0) != expectedCounter ||
+        (previousCursor?.cursor ?? 0) != expectedCursor ||
+        counter != expectedCounter + 1) {
+      throw StateError('stale local MLS transition');
+    }
+    await _applyCryptoRecordChanges(recordChanges);
+    await into(localCryptoStates).insertOnConflictUpdate(
+      LocalCryptoStatesCompanion.insert(
+        singleton: const Value(1),
+        counter: counter,
+        stateKey: Uint8List.fromList(stateKey),
+        sealedState: Uint8List.fromList(sealedState),
+      ),
+    );
+    if (resolvedMlsOutboxKey != null) {
+      await (delete(localMlsOutboxEntries)
+            ..where(
+                (table) => table.idempotencyKey.equals(resolvedMlsOutboxKey)))
+          .go();
+    }
+  }
 
   Future<
       List<
@@ -2170,6 +2208,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localAccounts).go();
         await delete(localMetadata).go();
         await _clearPendingEnrollment();
+        await _clearEnrollmentPromotions();
+        await _clearHistoryTransfers();
         await delete(localMlsTransitions).go();
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();

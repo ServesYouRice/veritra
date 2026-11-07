@@ -238,6 +238,192 @@ void main() {
     expect(harness.crypto.groups, contains('conv_1'));
     harness.dispose();
   });
+  test('a leave racing a pass that holds an older add-Welcome keeps no group',
+      () async {
+    // The add-Welcome (event 5) was fetched by a pass that is still under
+    // way when the user leaves; the server's leave event is 6. Without the
+    // floor the pass joins the group after the leave cleared its note.
+    final gate = Completer<void>();
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
+      ..latestEventId = 6
+      ..mlsGate = gate;
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.groups.remove('conv_1'));
+    final state = harness.state;
+    await api.mlsGateReached.future;
+    expect(harness.crypto.joined, isEmpty);
+
+    expect(await state.leaveConversation('conv_1'), isTrue);
+    expect(api.left, <String>['conv_1']);
+    gate.complete();
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    await harness.settle();
+
+    // Skipped: nothing joined, and no group left behind by the pass.
+    expect(harness.crypto.joined, isEmpty);
+    expect(harness.crypto.groups, isNot(contains('conv_1')));
+    expect(state.syncRecovery, isNull);
+    // The key package it used is still replaced.
+    expect(await harness.store.loadSetting('mls.key_package_need'),
+        contains('"welcome":"mls_5"'));
+
+    // A re-add after the leave (event 8) is not older and joins.
+    api.events = <SyncEvent>[...api.events, _welcomeEvent(8, 'conv_1')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 8);
+    expect(harness.crypto.joined, <String>['conv_1']);
+    expect(harness.crypto.groups, contains('conv_1'));
+    // The rejoined group stays.
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => state.syncError == null);
+    await harness.settle();
+    expect(harness.crypto.groups, contains('conv_1'));
+    harness.dispose();
+  });
+
+  test('the leave event id is the exact floor: a re-add above it joins',
+      () async {
+    // The leave response reports event 6. The server's newest event is 9
+    // by the time anything else is asked, and a re-add Welcome (event 8)
+    // sits above the leave but at or below that bound: the old bound
+    // would have skipped it, the exact floor does not.
+    final gate = Completer<void>();
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
+      ..leaveEventId = 6
+      ..latestEventId = 9
+      ..mlsGate = gate;
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.groups.remove('conv_1'));
+    final state = harness.state;
+    await api.mlsGateReached.future;
+    expect(await state.leaveConversation('conv_1'), isTrue);
+    expect(await harness.store.loadSetting('mls.left_floors'),
+        contains('"conv_1":6'));
+    gate.complete();
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    await harness.waitFor(() => state.lastSyncedAt != null);
+    await harness.settle();
+    // The older Welcome (5) is skipped.
+    expect(harness.crypto.joined, isEmpty);
+    expect(harness.crypto.groups, isNot(contains('conv_1')));
+
+    api.events = <SyncEvent>[...api.events, _welcomeEvent(8, 'conv_1')];
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 8);
+    expect(harness.crypto.joined, <String>['conv_1']);
+    expect(harness.crypto.groups, contains('conv_1'));
+    harness.dispose();
+  });
+
+  test('the leave event id stands alone: no bound read, no fetched page',
+      () async {
+    // The bound request fails, and the pass holds a page up to event 12,
+    // above the leave (6). Neither may raise the floor above the leave.
+    final gate = Completer<void>();
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_welcomeEvent(12, 'conv_1')]
+      ..leaveEventId = 6
+      ..latestFails = true
+      ..mlsGate = gate;
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.groups.remove('conv_1'));
+    await api.mlsGateReached.future;
+    expect(await harness.state.leaveConversation('conv_1'), isTrue);
+    expect(await harness.store.loadSetting('mls.left_floors'),
+        contains('"conv_1":6'));
+    gate.complete();
+    // A Welcome above the leave is a re-add, so it joins.
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 12);
+    expect(harness.crypto.joined, <String>['conv_1']);
+    harness.dispose();
+  });
+
+  test('a pass fetched page counts only for the session it ran under', () {
+    // Same session: the page the pass holds stands in for the bound.
+    expect(
+        passFetchedFloor(
+            fetchedThrough: 5, fetchedGeneration: 3, sessionGeneration: 3),
+        5);
+    // The session changed since: that pass says nothing about this one.
+    expect(
+        passFetchedFloor(
+            fetchedThrough: 5, fetchedGeneration: 3, sessionGeneration: 4),
+        0);
+    // No pass has run yet.
+    expect(
+        passFetchedFloor(
+            fetchedThrough: 0, fetchedGeneration: -1, sessionGeneration: 1),
+        0);
+  });
+
+  test('when the server cannot date the leave, the held page sets the floor',
+      () async {
+    // The bound request fails, so the newest id the pass fetched (5, beyond
+    // the committed cursor 0) stands in for it.
+    final gate = Completer<void>();
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')]
+      ..latestFails = true
+      ..mlsGate = gate;
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.groups.remove('conv_1'));
+    await api.mlsGateReached.future;
+    expect(await harness.state.leaveConversation('conv_1'), isTrue);
+    gate.complete();
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    expect(harness.crypto.joined, isEmpty);
+    expect(harness.crypto.groups, isNot(contains('conv_1')));
+    harness.dispose();
+  });
+
+  test('a leave does not skip another conversation\'s Welcome', () async {
+    final gate = Completer<void>();
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_2')]
+      ..latestEventId = 6
+      ..mlsGate = gate;
+    final harness = await _Harness.start(api,
+        configure: (crypto) => crypto.groups.remove('conv_2'));
+    await api.mlsGateReached.future;
+    expect(await harness.state.leaveConversation('conv_1'), isTrue);
+    gate.complete();
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    expect(harness.crypto.joined, <String>['conv_2']);
+    harness.dispose();
+  });
+
+  test('the leave floor survives a restart', () async {
+    final api = _ScriptedApi()..latestEventId = 6;
+    final harness = await _Harness.start(api);
+    await harness.waitFor(() => harness.state.lastSyncedAt != null);
+    expect(await harness.state.leaveConversation('conv_1'), isTrue);
+    expect(await harness.store.loadSetting('mls.left_floors'),
+        contains('"conv_1":6'));
+    harness.dispose();
+
+    // A new process on the same store: the older Welcome is still skipped.
+    final again = _ScriptedApi()
+      ..latestEventId = 6
+      ..events = <SyncEvent>[_welcomeEvent(5, 'conv_1')];
+    final restarted = await _Harness.start(again,
+        store: harness.store as MemoryLocalStore,
+        configure: (crypto) => crypto.groups.remove('conv_1'));
+    await restarted
+        .waitFor(() async => await restarted.store.loadSyncCursor() == 5);
+    expect(restarted.crypto.joined, isEmpty);
+    restarted.dispose();
+  });
+
   test('a leave the server refuses keeps the group', () async {
     final api = _ScriptedApi()..refuseLeave = true;
     final harness = await _Harness.start(api);
@@ -478,6 +664,20 @@ class _ScriptedApi extends ApiClient {
 
   List<SyncEvent> events = <SyncEvent>[];
   int syncCalls = 0;
+
+  /// What the server reports as its newest event, once a leave is taken
+  /// (the leave's own event included). Unset, it is the newest listed event.
+  int? latestEventId;
+  bool latestFails = false;
+
+  /// The leaver's own `membership.left` event id the leave response
+  /// reports (`event_id`). Unset, the server is an older one that says none.
+  int? leaveEventId;
+
+  /// While set, [mlsMessages] waits for it: a pass is held after fetching
+  /// its page and before applying the Welcome in it.
+  Completer<void>? mlsGate;
+  final Completer<void> mlsGateReached = Completer<void>();
   bool refuseLeave = false;
   final List<String> left = <String>[];
   void Function(String conversationId)? onLeave;
@@ -514,12 +714,20 @@ class _ScriptedApi extends ApiClient {
   }
 
   @override
-  Future<void> removeConversationMember(
+  Future<int> syncLatestEventId(String token) async {
+    if (latestFails) throw ApiException(503, '{"error":"unavailable"}');
+    return latestEventId ??
+        events.fold<int>(0, (top, event) => event.id > top ? event.id : top);
+  }
+
+  @override
+  Future<int?> removeConversationMember(
       String token, String conversationId, String accountId) async {
     if (refuseLeave) throw ApiException(403, '{"error":"forbidden"}');
     expect(accountId, 'me');
     left.add(conversationId);
     onLeave?.call(conversationId);
+    return leaveEventId;
   }
 
   @override
@@ -556,12 +764,18 @@ class _ScriptedApi extends ApiClient {
     String token, {
     int after = 0,
     int limit = 100,
-  }) async =>
-      <MlsMessage>[
-        for (final event in events)
-          if (event.type == 'mls.message.created' && event.id > after)
-            _mls(event),
-      ].take(limit).toList(growable: false);
+  }) async {
+    final gate = mlsGate;
+    if (gate != null) {
+      if (!mlsGateReached.isCompleted) mlsGateReached.complete();
+      await gate.future;
+    }
+    return <MlsMessage>[
+      for (final event in events)
+        if (event.type == 'mls.message.created' && event.id > after)
+          _mls(event),
+    ].take(limit).toList(growable: false);
+  }
 
   @override
   Future<MlsMessage> mlsMessage(String token, String messageId) async =>

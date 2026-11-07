@@ -7,23 +7,24 @@ void main() {
   const mod = 'acct_mod';
   const bob = 'acct_bob';
   const carol = 'acct_carol';
+  const dave = 'acct_dave';
+  const eve = 'acct_eve';
   const members = {owner, admin, mod, bob, carol};
 
   // rev 3: admin since rev 1, moderator since rev 2.
   GovernanceState base() => GovernanceState(
-        rev: 3,
-        owner: owner,
-        admins: {admin: 1},
-        moderators: {mod},
-      );
+    rev: 3,
+    owner: owner,
+    admins: {admin: 1},
+    moderators: {mod},
+  );
 
   GovernanceCheck check(
     GovernanceState prev,
     GovernanceState next,
     String who, {
     Set<String> roster = members,
-  }) =>
-      validateTransition(prev, next, who, members: roster);
+  }) => validateTransition(prev, next, who, members: roster);
 
   GovernanceState bump(
     GovernanceState s, {
@@ -32,15 +33,22 @@ void main() {
     Set<String>? moderators,
     bool? adminsOnlyPosting,
     Set<String>? announcementChannels,
-  }) =>
-      s.copyWith(
-        rev: s.rev + 1,
-        owner: owner,
-        admins: admins,
-        moderators: moderators,
-        adminsOnlyPosting: adminsOnlyPosting,
-        announcementChannels: announcementChannels,
-      );
+    Set<String>? electors,
+    Election? election,
+    bool clearElection = false,
+    Map<String, int>? joined,
+  }) => s.copyWith(
+    rev: s.rev + 1,
+    owner: owner,
+    admins: admins,
+    moderators: moderators,
+    adminsOnlyPosting: adminsOnlyPosting,
+    announcementChannels: announcementChannels,
+    electors: electors,
+    election: election,
+    clearElection: clearElection,
+    joined: joined,
+  );
 
   group('roles and posting', () {
     test('genesis: the creator owns the group, nobody else has a role', () {
@@ -49,6 +57,8 @@ void main() {
       expect(g.roleOf(owner), BuiltInRole.owner);
       expect(g.roleOf(bob), BuiltInRole.member);
       expect(g.isRestricted(), isFalse);
+      expect(g.joined, {owner: 0});
+      expect(g.election, isNull);
     });
 
     test('ranks mirror the server (owner 4 .. member 1)', () {
@@ -248,7 +258,7 @@ void main() {
         check(s, bump(s, moderators: {mod, bob}), admin, roster: after).reject,
         GovernanceReject.notMember,
       );
-      final pruned = s.removeAccount(carol, remaining: after);
+      final pruned = s.removeAccount(carol);
       expect(pruned.rev, s.rev);
       expect(pruned.roleOf(carol), BuiltInRole.member);
       expect(
@@ -262,40 +272,61 @@ void main() {
       );
     });
 
-    test('the oldest admin inherits; ties go to the smaller account id', () {
-      final s = base().copyWith(admins: {admin: 2, 'acct_aaa': 2, carol: 1});
-      // carol is oldest but left in the same commit.
-      const after = {admin, 'acct_aaa', mod, bob};
-      final next = s.removeAccount(owner, remaining: after);
-      expect(next.owner, 'acct_aaa');
-      expect(next.admins.containsKey('acct_aaa'), isFalse);
-      expect(next.admins[admin], 2);
-      const withCarol = {admin, 'acct_aaa', carol, mod, bob};
-      expect(s.removeAccount(owner, remaining: withCarol).owner, carol);
-      // A moderator never inherits, however long it has been there.
-      expect(next.roleOf(mod), BuiltInRole.moderator);
-    });
-
-    test('with no admin left, nobody inherits and nobody can claim it', () {
-      final s = base().copyWith(admins: const {});
-      final next = s.removeAccount(owner, remaining: {mod, bob, carol});
-      expect(next.owner, isNull);
-      expect(next.roleOf(mod), BuiltInRole.moderator);
-      final claim = bump(next, owner: mod, moderators: const {});
-      expect(
-        check(next, claim, mod, roster: {mod, bob, carol}).reject,
-        GovernanceReject.ownerChange,
-      );
-      // Moderators keep working.
+    test('the owner is never pruned and nobody inherits (D81)', () {
+      final s = base().copyWith(admins: {admin: 1, carol: 2});
+      const after = {admin, carol, mod, bob};
+      final next = s.removeAccount(owner);
+      expect(next.owner, owner);
+      expect(next.admins, s.admins);
+      expect(next.moderators, s.moderators);
+      // The absent owner stays valid: the others carry on without it.
       expect(
         check(
           next,
           bump(next, moderators: {mod, bob}),
-          mod,
-          roster: {mod, bob, carol},
+          admin,
+          roster: after,
         ).ok,
         isTrue,
       );
+    });
+
+    test('with no admin left, the owner stays and no record can vacate it', () {
+      final s = base().copyWith(admins: const {});
+      final next = s.removeAccount(owner);
+      const roster = {mod, bob, carol};
+      expect(next.owner, owner);
+      final claim = bump(next, owner: mod, moderators: const {});
+      expect(
+        check(next, claim, mod, roster: roster).reject,
+        GovernanceReject.ownerChange,
+      );
+      final vacate = next.copyWith(rev: next.rev + 1, clearOwner: true);
+      expect(
+        check(next, vacate, mod, roster: roster).reject,
+        GovernanceReject.ownerChange,
+      );
+    });
+
+    test('pruning drops roles, electors, joined, votes by and for', () {
+      final s = base().copyWith(
+        admins: {admin: 1, carol: 2, dave: 3},
+        electors: {admin, carol},
+        joined: {owner: 0, admin: 1, carol: 2, dave: 3},
+        election: Election(
+          opened: 4,
+          electorate: {admin, carol},
+          votes: {admin: carol, carol: dave},
+        ),
+      );
+      final gone = s.removeAccount(carol);
+      expect(gone.admins.containsKey(carol), isFalse);
+      expect(gone.electors, {admin});
+      expect(gone.joined.containsKey(carol), isFalse);
+      // The snapshot keeps its size; the vote by carol and for carol go.
+      expect(gone.election!.electorate, {admin, carol});
+      expect(gone.election!.votes, isEmpty);
+      expect(gone.rev, s.rev);
     });
   });
 
@@ -307,7 +338,7 @@ void main() {
         validateCommit(s, s, bob, before: members, after: after).reject,
         GovernanceReject.notPruned,
       );
-      final pruned = s.removeAccount(mod, remaining: after);
+      final pruned = s.removeAccount(mod);
       // Pruning alone needs no role: any committer may carry it.
       expect(
         validateCommit(s, pruned, bob, before: members, after: after).ok,
@@ -326,42 +357,66 @@ void main() {
       );
     });
 
-    test('removing the owner must carry the succession', () {
+    test('a forced removal of the owner keeps it owner; nobody inherits', () {
       final s = base();
       const after = {admin, mod, bob, carol};
-      final expected = s.removeAccount(owner, remaining: after);
-      expect(expected.owner, admin);
+      final expected = s.removeAccount(owner);
+      expect(expected.owner, owner);
       expect(
         validateCommit(s, expected, mod, before: members, after: after).ok,
         isTrue,
       );
-      // Naming anyone else as owner is a change the committer cannot make.
-      final wrong = s.copyWith(owner: mod, moderators: const {});
-      expect(
-        validateCommit(s, wrong, mod, before: members, after: after).ok,
-        isFalse,
-      );
+      // Handing the owner's place to anyone is a change nobody can make.
+      for (final heir in [admin, mod]) {
+        final wrong = expected.copyWith(
+          rev: s.rev + 1,
+          owner: heir,
+          admins: const {},
+          moderators: const {},
+        );
+        expect(
+          validateCommit(s, wrong, mod, before: members, after: after).ok,
+          isFalse,
+        );
+      }
     });
 
     test('an add with a role is checked as a grant by the committer', () {
       final s = base();
       const after = {...members, 'acct_new'};
-      final asMod = bump(s, moderators: {mod, 'acct_new'});
+      final stamp = {'acct_new': s.rev + 1};
+      final asMod = bump(s, moderators: {mod, 'acct_new'}, joined: stamp);
       expect(
         validateCommit(s, asMod, admin, before: members, after: after).ok,
         isTrue,
       );
-      final asAdmin = bump(s, admins: {admin: 1, 'acct_new': s.rev + 1});
+      final asAdmin = bump(
+        s,
+        admins: {admin: 1, 'acct_new': s.rev + 1},
+        joined: stamp,
+      );
       expect(
         validateCommit(s, asAdmin, mod, before: members, after: after).reject,
         GovernanceReject.hierarchy,
+      );
+      // An add that is not stamped with its rev is refused.
+      final unstamped = bump(s, moderators: {mod, 'acct_new'});
+      expect(
+        validateCommit(
+          s,
+          unstamped,
+          admin,
+          before: members,
+          after: after,
+        ).reject,
+        GovernanceReject.badShape,
       );
     });
 
     test('prune and change in one commit', () {
       final s = base().copyWith(admins: {admin: 1, carol: 2});
       const after = {owner, admin, mod, bob};
-      final pruned = s.removeAccount(carol, remaining: after);
+      final pruned = s.removeAccount(carol);
       final change = bump(pruned, moderators: {mod, bob});
       expect(
         validateCommit(s, change, admin, before: members, after: after).ok,
@@ -372,6 +427,486 @@ void main() {
       expect(
         validateCommit(s, stale, admin, before: members, after: after).reject,
         GovernanceReject.notMember,
+      );
+    });
+  });
+
+  group('owner handover (D81, D82)', () {
+    const crew = {owner, admin, carol, dave, eve, mod, bob};
+    const joinedAt = {
+      owner: 0,
+      admin: 1,
+      carol: 2,
+      dave: 3,
+      eve: 4,
+      mod: 5,
+      bob: 6,
+    };
+
+    // rev 10. Admins admin, carol, dave, eve; the owner chose the first
+    // three (electors). eve was made admin by another admin.
+    GovernanceState council({Set<String>? electors, Election? election}) =>
+        GovernanceState(
+          rev: 10,
+          owner: owner,
+          admins: {admin: 1, carol: 2, dave: 3, eve: 4},
+          moderators: {mod},
+          electors: electors ?? {admin, carol, dave},
+          election: election,
+          joined: joinedAt,
+        );
+
+    Election poll({
+      Map<String, String> votes = const {},
+      Set<String> who = const {admin, carol, dave},
+    }) => Election(opened: 11, electorate: who, votes: votes);
+
+    // The council with an election open since rev 11.
+    GovernanceState opened({Map<String, String> votes = const {}}) =>
+        council(election: poll(votes: votes)).copyWith(rev: 11);
+
+    // The commit that sets [heir] as owner and clears the election.
+    GovernanceState won(GovernanceState s, String heir) => s.copyWith(
+      rev: s.rev + 1,
+      owner: heir,
+      admins: {
+        for (final e in s.admins.entries)
+          if (e.key != heir) e.key: e.value,
+        owner: s.rev + 1,
+      },
+      electors: s.electors.difference({heir}),
+      clearElection: true,
+    );
+
+    GovernanceCheck run(
+      GovernanceState s,
+      GovernanceState next,
+      String who, {
+      Set<String> roster = crew,
+    }) => validateTransition(s, next, who, members: roster);
+
+    test('the owner cannot leave until it transfers', () {
+      expect(base().mayLeave(owner), isFalse);
+      expect(base().mayLeave(admin), isTrue);
+      expect(base().mayLeave(bob), isTrue);
+    });
+
+    test(
+      'local waits: 30 days of owner silence, then 7 days after opening',
+      () {
+        final now = DateTime.utc(2026, 12, 31);
+        final day30 = now.subtract(const Duration(days: 30));
+        final day29 = now.subtract(const Duration(days: 29));
+        expect(mayOpenElectionNow(now: now, lastOwnerActivity: day30), isTrue);
+        expect(mayOpenElectionNow(now: now, lastOwnerActivity: day29), isFalse);
+        final day7 = now.subtract(const Duration(days: 7));
+        final day6 = now.subtract(const Duration(days: 6));
+        expect(
+          mayVoteNow(now: now, openedSeen: day7, lastOwnerActivity: day30),
+          isTrue,
+        );
+        expect(
+          mayVoteNow(now: now, openedSeen: day6, lastOwnerActivity: day30),
+          isFalse,
+        );
+        // The owner spoke after the opening: no vote.
+        expect(
+          mayVoteNow(now: now, openedSeen: day7, lastOwnerActivity: day29),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'open: an elector only; the snapshot is the electors in the roster',
+      () {
+        final s = council();
+        final next = bump(s, election: poll());
+        expect(run(s, next, admin).ok, isTrue);
+        expect(run(s, next, carol).ok, isTrue);
+        // An admin the owner did not choose, a moderator, a member.
+        expect(run(s, next, eve).reject, GovernanceReject.election);
+        expect(run(s, next, mod).reject, GovernanceReject.election);
+        expect(run(s, next, bob).reject, GovernanceReject.election);
+        // The owner never opens one against itself.
+        expect(run(s, next, owner).reject, GovernanceReject.election);
+        // The snapshot cannot be widened, narrowed or opened at another rev.
+        final wide = bump(s, election: poll(who: {admin, carol, dave, eve}));
+        expect(run(s, wide, admin).reject, GovernanceReject.election);
+        final narrow = bump(s, election: poll(who: {admin}));
+        expect(run(s, narrow, admin).reject, GovernanceReject.election);
+        final stale = bump(
+          s,
+          election: Election(opened: 10, electorate: {admin}),
+        );
+        expect(run(s, stale, admin).reject, GovernanceReject.election);
+        // An elector who has left the roster is not in the snapshot.
+        final gone = council().removeAccount(dave);
+        final fewer = bump(gone, election: poll(who: {admin, carol}));
+        const roster = {owner, admin, carol, eve, mod, bob};
+        expect(run(gone, fewer, admin, roster: roster).ok, isTrue);
+      },
+    );
+
+    test('open only when no election is open', () {
+      final o = opened();
+      final again = bump(
+        o,
+        election: Election(opened: 12, electorate: {admin}),
+      );
+      expect(run(o, again, carol).reject, GovernanceReject.election);
+    });
+
+    test('D82: with no elector in the roster every admin is the snapshot', () {
+      final s = council(electors: const {});
+      final all = {admin, carol, dave, eve};
+      final next = bump(s, election: poll(who: all));
+      expect(run(s, next, eve).ok, isTrue);
+      expect(run(s, next, admin).ok, isTrue);
+      expect(run(s, next, bob).reject, GovernanceReject.election);
+      expect(run(s, next, mod).reject, GovernanceReject.election);
+      final narrow = bump(s, election: poll(who: {admin, carol}));
+      expect(run(s, narrow, admin).reject, GovernanceReject.election);
+      // Electors who have all left count as none.
+      final gone = council(electors: {dave}).removeAccount(dave);
+      const roster = {owner, admin, carol, eve, mod, bob};
+      final open = bump(gone, election: poll(who: {admin, carol, eve}));
+      expect(run(gone, open, eve, roster: roster).ok, isTrue);
+    });
+
+    test('opening changes no admin and no elector', () {
+      final s = council();
+      final sneaky = bump(
+        s,
+        election: poll(),
+        admins: {...s.admins, bob: s.rev + 1},
+      );
+      expect(run(s, sneaky, admin).reject, GovernanceReject.election);
+    });
+
+    test('an owner commit must clear the election', () {
+      final o = opened();
+      final keep = bump(o, moderators: {mod, bob});
+      expect(run(o, keep, owner).reject, GovernanceReject.election);
+      final clear = bump(o, moderators: {mod, bob}, clearElection: true);
+      expect(run(o, clear, owner).ok, isTrue);
+      // An owner commit that leaves the record as it is cannot pass either.
+      expect(
+        validateCommit(o, o, owner, before: crew, after: crew).reject,
+        GovernanceReject.election,
+      );
+      // An owner's add must carry the cancel and the stamp.
+      const after = {...crew, 'acct_new'};
+      final stamp = {...joinedAt, 'acct_new': o.rev + 1};
+      final cancel = bump(o, clearElection: true, joined: stamp);
+      expect(
+        validateCommit(o, cancel, owner, before: crew, after: after).ok,
+        isTrue,
+      );
+      // Anyone else's add leaves the election alone.
+      final others = bump(o, joined: stamp);
+      expect(
+        validateCommit(o, others, admin, before: crew, after: after).ok,
+        isTrue,
+      );
+      expect(
+        validateCommit(o, cancel, admin, before: crew, after: after).ok,
+        isTrue,
+      );
+    });
+
+    test('close: any account in the snapshot, nobody else', () {
+      final o = opened();
+      final close = bump(o, clearElection: true);
+      expect(run(o, close, carol).ok, isTrue);
+      expect(run(o, close, eve).reject, GovernanceReject.election);
+      expect(run(o, close, bob).reject, GovernanceReject.election);
+    });
+
+    test('vote: once, for an admin in the roster, from the snapshot', () {
+      final o = opened();
+      final one = bump(o, election: poll(votes: {admin: carol}));
+      expect(run(o, one, admin).ok, isTrue);
+      // Not for a member who is no admin.
+      final toBob = bump(o, election: poll(votes: {admin: bob}));
+      expect(run(o, toBob, admin).reject, GovernanceReject.election);
+      // Not by an account outside the snapshot.
+      final byEve = bump(o, election: poll(votes: {eve: carol}));
+      expect(run(o, byEve, eve).reject, GovernanceReject.badShape);
+      // Not in someone else's name, nor two at once.
+      final forCarol = bump(o, election: poll(votes: {carol: dave}));
+      expect(run(o, forCarol, admin).reject, GovernanceReject.election);
+      final two = bump(o, election: poll(votes: {admin: carol, carol: dave}));
+      expect(run(o, two, admin).reject, GovernanceReject.election);
+      // A vote cannot be changed or repeated.
+      final voted = opened(votes: {admin: carol});
+      final change = bump(voted, election: poll(votes: {admin: dave}));
+      expect(run(voted, change, admin).reject, GovernanceReject.election);
+      // Another account votes on top of it.
+      final second = bump(
+        voted,
+        election: poll(votes: {admin: carol, dave: dave}),
+      );
+      expect(run(voted, second, dave).ok, isTrue);
+    });
+
+    test('a vote that makes a majority must set the owner in that commit', () {
+      final voted = opened(votes: {admin: carol});
+      final stays = bump(
+        voted,
+        election: poll(votes: {admin: carol, carol: carol}),
+      );
+      expect(run(voted, stays, carol).reject, GovernanceReject.election);
+    });
+
+    test(
+      'win: the deciding vote sets the owner; the old owner becomes admin',
+      () {
+        final voted = opened(votes: {admin: carol});
+        final next = won(voted, carol);
+        expect(run(voted, next, carol).ok, isTrue);
+        expect(run(voted, next, dave).ok, isTrue);
+        expect(next.roleOf(carol), BuiltInRole.owner);
+        expect(next.roleOf(owner), BuiltInRole.admin);
+        expect(next.admins[owner], next.rev);
+        expect(next.election, isNull);
+        expect(next.electors, {admin, dave});
+        // Not by an account outside the snapshot, nor by one that voted.
+        expect(run(voted, next, eve).reject, GovernanceReject.ownerChange);
+        expect(run(voted, next, admin).reject, GovernanceReject.election);
+        // Not for a member who is no admin.
+        final toBob = won(voted, bob);
+        expect(run(voted, toBob, dave).reject, GovernanceReject.ownerChange);
+        // Nothing else may ride along.
+        final extra = next.copyWith(moderators: {mod, bob});
+        expect(run(voted, extra, dave).reject, GovernanceReject.badShape);
+        final posting = next.copyWith(adminsOnlyPosting: true);
+        expect(run(voted, posting, dave).reject, GovernanceReject.badShape);
+        // The old owner's seniority starts at this rev.
+        final keeps = next.copyWith(admins: {...next.admins, owner: 0});
+        expect(run(voted, keeps, dave).reject, GovernanceReject.badShape);
+      },
+    );
+
+    test(
+      'win: below a majority, or with no election, ownership cannot move',
+      () {
+        final o = opened();
+        final early = won(o, carol);
+        expect(run(o, early, carol).reject, GovernanceReject.ownerChange);
+        final s = council();
+        final none = won(s, carol).copyWith(election: poll());
+        expect(run(s, none, carol).reject, GovernanceReject.ownerChange);
+        final bare = won(s, carol);
+        expect(run(s, bare, carol).reject, GovernanceReject.ownerChange);
+      },
+    );
+
+    test('win: an old owner out of the roster is not named', () {
+      final voted = opened(votes: {admin: carol});
+      const roster = {admin, carol, dave, eve, mod, bob};
+      final out = voted.removeAccount(owner);
+      final next = won(
+        out,
+        carol,
+      ).copyWith(admins: {admin: 1, dave: 3, eve: 4});
+      expect(run(out, next, carol, roster: roster).ok, isTrue);
+      // Naming it as an admin while it is out of the roster is refused.
+      final named = won(out, carol);
+      expect(
+        run(out, named, carol, roster: roster).reject,
+        GovernanceReject.notMember,
+      );
+      // The owner is still the owner while it is out.
+      expect(out.owner, owner);
+    });
+
+    test('removals never lower the threshold', () {
+      // The snapshot is three. Dave and carol leave; admin alone is not a
+      // majority of three.
+      final o = opened();
+      const roster = {owner, admin, eve, mod, bob};
+      final pruned = o.removeAccount(dave).removeAccount(carol);
+      final alone = won(pruned, admin);
+      expect(
+        run(pruned, alone, admin, roster: roster).reject,
+        GovernanceReject.ownerChange,
+      );
+      // With one earlier vote, two of three still decide after dave leaves.
+      final voted = opened(votes: {admin: carol}).removeAccount(dave);
+      const rest = {owner, admin, carol, eve, mod, bob};
+      expect(run(voted, won(voted, carol), carol, roster: rest).ok, isTrue);
+    });
+
+    test('electors: only the owner sets or clears the flag', () {
+      final s = council();
+      final withBob = {...s.admins, bob: s.rev + 1};
+      // An admin promotes: bob is an admin, not an elector.
+      final plain = bump(s, admins: withBob);
+      expect(run(s, plain, carol).ok, isTrue);
+      expect(plain.electors, s.electors);
+      final flagged = bump(s, admins: withBob, electors: {...s.electors, bob});
+      expect(run(s, flagged, carol).reject, GovernanceReject.notAllowed);
+      // The owner promotes with the flag, or confirms an admin later.
+      expect(run(s, flagged, owner).ok, isTrue);
+      final confirm = bump(s, electors: {...s.electors, eve});
+      expect(run(s, confirm, owner).ok, isTrue);
+      expect(run(s, confirm, carol).reject, GovernanceReject.notAllowed);
+      // The owner may withdraw it; nobody else.
+      final withdraw = bump(s, electors: {admin, carol});
+      expect(run(s, withdraw, owner).ok, isTrue);
+      expect(run(s, withdraw, dave).reject, GovernanceReject.notAllowed);
+      // It goes with the admin role, and only an admin can hold it.
+      final demoted = bump(
+        s,
+        admins: {admin: 1, dave: 3, eve: 4},
+        electors: {admin, dave},
+      );
+      expect(run(s, demoted, owner).ok, isTrue);
+      final stale = bump(s, admins: {admin: 1, dave: 3, eve: 4});
+      expect(run(s, stale, owner).reject, GovernanceReject.badShape);
+      // A transfer never makes the old owner an elector.
+      final handed = bump(
+        s,
+        owner: carol,
+        admins: {admin: 1, dave: 3, eve: 4, owner: s.rev + 1},
+        electors: {admin, dave, owner},
+      );
+      expect(run(s, handed, owner).reject, GovernanceReject.notAllowed);
+      final fine = bump(
+        s,
+        owner: carol,
+        admins: {admin: 1, dave: 3, eve: 4, owner: s.rev + 1},
+        electors: {admin, dave},
+      );
+      expect(run(s, fine, owner).ok, isTrue);
+    });
+
+    group('no admin left: the longest-serving member claims', () {
+      const four = {owner, bob, carol, mod};
+      // bob joined first after the owner.
+      GovernanceState solo({Map<String, int>? joined}) => GovernanceState(
+        rev: 10,
+        owner: owner,
+        moderators: {mod},
+        joined: joined ?? {owner: 0, bob: 1, carol: 2, mod: 3},
+      );
+      Election alone(String who) => Election(opened: 11, electorate: {who});
+
+      test('only that member opens, with a snapshot of itself', () {
+        final s = solo();
+        final claim = bump(s, election: alone(bob));
+        expect(run(s, claim, bob, roster: four).ok, isTrue);
+        final byCarol = run(s, claim, carol, roster: four);
+        expect(byCarol.reject, GovernanceReject.election);
+        final byMod = run(s, claim, mod, roster: four);
+        expect(byMod.reject, GovernanceReject.election);
+        final other = bump(s, election: alone(carol));
+        final asCarol = run(s, other, carol, roster: four);
+        expect(asCarol.reject, GovernanceReject.election);
+      });
+
+      test('a tie goes to the smaller account id; the owner never claims', () {
+        final s = solo(joined: {owner: 0, bob: 1, carol: 1, mod: 3});
+        final claim = bump(s, election: alone(bob));
+        expect(run(s, claim, bob, roster: four).ok, isTrue);
+        final c = bump(s, election: alone(carol));
+        expect(
+          run(s, c, carol, roster: four).reject,
+          GovernanceReject.election,
+        );
+      });
+
+      test('a member with no joined entry blocks the claim', () {
+        final s = solo();
+        const roster = {...four, eve};
+        final claim = bump(s, election: alone(bob));
+        expect(
+          run(s, claim, bob, roster: roster).reject,
+          GovernanceReject.election,
+        );
+      });
+
+      test('with an admin in the roster there is no claim', () {
+        final s = solo().copyWith(admins: {carol: 2});
+        final claim = bump(s, election: alone(bob));
+        expect(
+          run(s, claim, bob, roster: four).reject,
+          GovernanceReject.election,
+        );
+      });
+
+      test('the claimant takes ownership; the old owner becomes admin', () {
+        final c = solo().copyWith(rev: 11, election: alone(bob));
+        final next = c.copyWith(
+          rev: 12,
+          owner: bob,
+          admins: {owner: 12},
+          clearElection: true,
+        );
+        expect(run(c, next, bob, roster: four).ok, isTrue);
+        expect(
+          run(c, next, carol, roster: four).reject,
+          GovernanceReject.ownerChange,
+        );
+        // An away owner is not named.
+        const away = {bob, carol, mod};
+        final gone = c.removeAccount(owner);
+        final noOwner = gone.copyWith(
+          rev: 12,
+          owner: bob,
+          admins: const {},
+          clearElection: true,
+        );
+        expect(run(gone, noOwner, bob, roster: away).ok, isTrue);
+      });
+
+      test('a moderator claimant leaves the moderator list', () {
+        final s = solo(joined: {owner: 0, mod: 1, bob: 2, carol: 3});
+        final c = s.copyWith(rev: 11, election: alone(mod));
+        final stays = c.copyWith(
+          rev: 12,
+          owner: mod,
+          admins: {owner: 12},
+          clearElection: true,
+        );
+        expect(
+          run(c, stays, mod, roster: four).reject,
+          GovernanceReject.badShape,
+        );
+        final next = stays.copyWith(moderators: const {});
+        expect(run(c, next, mod, roster: four).ok, isTrue);
+      });
+    });
+
+    test('adding an account stamps its joined rev', () {
+      final s = council();
+      const after = {...crew, 'acct_new'};
+      final stamped = bump(s, joined: {...joinedAt, 'acct_new': s.rev + 1});
+      expect(
+        validateCommit(s, stamped, bob, before: crew, after: after).ok,
+        isTrue,
+      );
+      final wrong = bump(s, joined: {...joinedAt, 'acct_new': 3});
+      expect(
+        validateCommit(s, wrong, bob, before: crew, after: after).reject,
+        GovernanceReject.badShape,
+      );
+      // An existing entry cannot be rewritten.
+      final rewrite = bump(s, joined: {...joinedAt, bob: 1});
+      expect(run(s, rewrite, admin).reject, GovernanceReject.badShape);
+      // A removal drops it, so a re-added member starts again.
+      final back = s.removeAccount(bob);
+      expect(back.joined.containsKey(bob), isFalse);
+    });
+
+    test('a forced removal of the owner leaves the election to the others', () {
+      final voted = opened(votes: {admin: carol});
+      const after = {admin, carol, dave, eve, mod, bob};
+      final pruned = voted.removeAccount(owner);
+      expect(
+        validateCommit(voted, pruned, bob, before: crew, after: after).ok,
+        isTrue,
       );
     });
   });

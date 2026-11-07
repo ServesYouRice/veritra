@@ -15,13 +15,15 @@ import (
 )
 
 type Config struct {
-	Addr             string
-	DataDir          string
-	DatabasePath     string
-	StoragePath      string
-	InstanceName     string
-	SetupToken       string
-	EnableMetrics    bool
+	Addr          string
+	DataDir       string
+	DatabasePath  string
+	StoragePath   string
+	InstanceName  string
+	SetupToken    string
+	EnableMetrics bool
+	// ScopedSync serves the per-scope sync routes (C1). Off by default.
+	ScopedSync       bool
 	ManagementAddr   string
 	TrustedProxies   []*net.IPNet
 	VAPIDSubscriber  string
@@ -117,6 +119,7 @@ func Load() (Config, error) {
 		InstanceName:     getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
 		SetupToken:       secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
+		ScopedSync:       getenv("PRIVATE_MESSENGER_SCOPED_SYNC", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
 		VAPIDSubscriber:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),

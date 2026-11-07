@@ -14,6 +14,24 @@ stream equal the legacy stream for the blocker, blocked sender and
 bystander, including a Welcome-like event; outsiders get `ErrForbidden`;
 pruning one conversation expires only that conversation's cursor.
 
+## Built: scoped routes behind a switch (server only, default off)
+
+`GET /api/v1/sync/account-events` and `GET /api/v1/conversations/{id}/sync-events`
+(`httpapi/scoped_sync_handlers.go`). Served only with
+`PRIVATE_MESSENGER_SCOPED_SYNC=1`; off, they are not registered and answer 404.
+Envelope: `scope`, `scope_id`, `events`, `sync_epoch`, `oldest_event_id`,
+`latest_event_id`. A scope behind its retention gets 409 with the same
+envelope minus `events`: `device_recovery_required` for the account scope
+(device-wide, as the design keeps it), `conversation_recovery_required` for a
+conversation scope (pauses only that conversation; a client must never relink
+the device over it). Non-members and unknown conversations both get 403.
+Bounds are the account's, as in the legacy stream: a scoped client must not
+read them as one scope's progress, floor or "caught up" mark (per-scope
+bounds would need a new store query and review). Delivery receipts
+are recorded as in the legacy route. Handler tests: auth, outsider 403,
+envelope, switch off, and account + conversation equal to the legacy stream.
+No client uses the routes; no migration.
+
 ## Design finding: no new retention-floor table
 
 The sync-isolation design proposes `sync_retention_floors`. Migration 0044
@@ -26,9 +44,6 @@ silent gap. Splitting account marks by conversation would need a migration.
 
 ## Not built, and why
 
-- HTTP routes `/sync/account-events` and `/conversations/{id}/sync-events`:
-  inactive routes need coordinator review; the stream envelope (`scope`,
-  `scope_id`, `sync_epoch`, bounds) is specified in the sync-isolation design.
 - Client scoped cursors, recovery table, `ScopedMlsTransition`, native
   changes: they touch `app_state.dart`, `local_store.dart` and the local
   schema, owned by W8/K2/coordinator, and need an independent review first.
