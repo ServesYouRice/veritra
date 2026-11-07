@@ -3,8 +3,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{json, Value};
 
 /// `testing/vectors/c7-primitives-v1.json`: known answers for the C7 crypto
-/// primitives. Checked by Rust only for now; the Go and Dart checks arrive
-/// with the server (step 3) and app (step 4) halves. The exporter root
+/// primitives. Rust checks all of it; Dart checks the stateless calls
+/// (`mobile/test/c7_primitives_test.dart`); the Go check arrives with the
+/// server (step 3). The exporter root
 /// itself cannot be pinned here (OpenMLS offers no way to start a group from
 /// fixed secrets); `mls.rs` tests pin it as "the staged export equals the
 /// post-merge export, in every group", and this file pins the label and

@@ -83,13 +83,28 @@ release.** This file is the brief for that review.
    commit processing never fails on a group the core accepts. The commit
    calls impose no C7 limit on other inputs.
 
+## Effects on the plain receive path
+
+- `inspect_commit` now also compares the signature key on an Update or
+  update path, for every group, not only C7 groups. A grep of all Rust
+  sources found no non-test code that rotates a signature key through an
+  Update (`self_update_with_new_signer`, `NewSignerBundle`,
+  `with_credential_with_key` appear only in tests), so no sender path would
+  now be refused.
+- The plain `process_commit` now goes through the same code as the C7 call
+  and so computes, then drops (zeroized), an exporter root for every removal
+  commit that keeps this device. A failure of that export would now fail a
+  commit that used to apply; the export cannot fail for a staged commit that
+  keeps this device in OpenMLS 0.9.2, and every removal test in the suite
+  exercises it.
+
 ## Deferred (not in this step)
 
 - Ordering-row, window and implicit-genesis vectors, and the 512-byte VAP1
   slack check (Dart-side JSON sizes): steps 3 and 4.
-- Go and Dart checks of the shared vector beyond the Dart binding test
-  (`mobile/test/c7_primitives_test.dart`, skipped without the native
-  library): the Go check comes with the server step.
+- The Go check of the shared vector (comes with the server step). The Dart
+  test (`mobile/test/c7_primitives_test.dart`) covers the stateless calls
+  and is skipped without the native library.
 - A fixed-input exporter vector: OpenMLS has no way to start a group from
   fixed secrets, so the label and context bytes are in the vector and the
   root is pinned by the staged-versus-merged equality tests.

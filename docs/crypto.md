@@ -450,8 +450,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   into send, receive, the server or the schema, and no payload type is
   registered. **Every piece below needs the independent crypto review before
   release; the exporter use first.** Vector:
-  `testing/vectors/c7-primitives-v1.json` (Rust checks it; Go and Dart
-  follow with steps 3 and 4). Code: `crypto/rust/src/c7.rs`, `mls.rs`,
+  `testing/vectors/c7-primitives-v1.json` (Rust checks all of it, Dart the
+  stateless calls; Go follows with step 3). Code: `crypto/rust/src/c7.rs`, `mls.rs`,
   `ffi.rs`.
   - **Commit calls return what happened.** `pm_crypto_group_c7_process_commit`
     and `pm_crypto_group_c7_merge_pending_commit` (the plain calls stay)
@@ -509,8 +509,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     signed-field builders and the record hash. They check structure only;
     the ordering table, freshness and authority stay with the app (step 4).
   - **Not in this step.** The ordering-row, window and implicit-genesis
-    vectors, the 512-byte VAP1 slack check and the Go and Dart checks of the
-    vector wait for steps 3 and 4. The exporter root cannot be pinned as a
+    vectors, the 512-byte VAP1 slack check and the Go check of the vector
+    wait for steps 3 and 4. The exporter root cannot be pinned as a
     constant (OpenMLS cannot start a group from fixed secrets); tests pin
     it as "the staged export equals the export of the merged epoch" for
     another device's commit and for this device's own, in several groups
