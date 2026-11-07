@@ -52,6 +52,8 @@ func (s *Store) exportAssociatedData(ctx context.Context, accountID string) (map
 	queries := map[string]string{
 		"memberships":              `SELECT json_object('community_id', community_id, 'conversation_id', conversation_id, 'role', role, 'created_at', created_at) FROM memberships WHERE account_id = ? ORDER BY created_at, id`,
 		"invites":                  `SELECT json_object('id', id, 'max_uses', max_uses, 'uses', uses, 'expires_at', expires_at, 'created_at', created_at, 'revoked_at', revoked_at) FROM invites WHERE created_by = ? ORDER BY created_at, id`,
+		"membership_invites":       `SELECT json_object('id', id, 'community_id', community_id, 'conversation_id', conversation_id, 'max_uses', max_uses, 'uses', uses, 'expires_at', expires_at, 'created_at', created_at, 'revoked_at', revoked_at) FROM membership_invites WHERE created_by = ? ORDER BY created_at, id`,
+		"join_requests":            `SELECT json_object('id', id, 'community_id', community_id, 'conversation_id', conversation_id, 'status', status, 'created_at', created_at, 'decided_at', decided_at) FROM membership_join_requests WHERE account_id = ? ORDER BY created_at, id`,
 		"attachments":              `SELECT json_object('id', id, 'conversation_id', conversation_id, 'ciphertext_sha256', ciphertext_sha256, 'size_bytes', size_bytes, 'crypto_metadata', json(crypto_metadata_json), 'created_at', created_at) FROM attachment_envelopes WHERE owner_account_id = ? ORDER BY created_at, id`,
 		"reactions":                `SELECT json_object('id', id, 'message_id', message_id, 'ciphertext_hex', hex(reaction_ciphertext), 'created_at', created_at) FROM reactions WHERE account_id = ? ORDER BY created_at, id`,
 		"read_receipts":            `SELECT json_object('conversation_id', conversation_id, 'message_id', message_id, 'read_at', read_at, 'shared_message_id', shared_message_id) FROM read_receipts WHERE account_id = ? ORDER BY read_at, conversation_id`,
@@ -158,6 +160,14 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE invites SET revoked_at = COALESCE(revoked_at, ?) WHERE created_by = ?`, now, accountID); err != nil {
+		return nil, err
+	}
+	// Their membership invitations stop working, their pending requests with
+	// them, and their own requests go.
+	if err := revokeInviteTx(ctx, tx, `created_by = ?`, now, accountID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM membership_join_requests WHERE account_id = ?`, accountID); err != nil {
 		return nil, err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {

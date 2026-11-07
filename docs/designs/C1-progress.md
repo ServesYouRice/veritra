@@ -53,9 +53,11 @@ silent gap. Splitting account marks by conversation would need a migration.
 
 ## Owner questions
 
-1. Approve the invitation wire format and proof (secret after `#`, binding
-   to target, account and device keys). Needs an independent design review;
-   not guessed here.
+1. Approved by D90 (secret after `#`; binding to target, account and device
+   keys built before merge). The binding is a secret-keyed tag, built in
+   `C1-invite-format.md`; it still needs an independent design review, and a
+   v2 needs C7's ABI 13 signature and a key commitment the
+   server cannot replace; a link the server can read gets no protection.
 2. Allow a migration splitting account prune marks by conversation, or
    accept the conservative pause?
 3. Which agent owns `app_state.dart`, `models.dart`, `api_client.dart` and
@@ -71,3 +73,23 @@ is not the design's account stream and per-scope cursors; see
 stays inert unless `PRIVATE_MESSENGER_SCOPED_SYNC` is on. The D92 answers
 stand: the conservative prune pause stays and the C1 client steps own the
 shared client files.
+
+## 2026-11-07 round 2: invites, requests, leave and remove
+
+Owner approved the invite format (secret after `#`, requests an admin
+approves). Built, server and app: migration 0048, link with fragment secret,
+join requests and approval, community leave and remove, community member
+list with usernames, and the Flutter screens. Format, rules and limits are in
+[C1-invite-format](C1-invite-format.md). C1 is still **not** done:
+
+- Rename is not built. Group and community names must be encrypted metadata
+  (W11, C3), and neither exists; no plaintext rename route was added.
+- Approval records membership; encrypted access still follows the existing
+  staged MLS commits. C0 shared groups are not built, so a community join is
+  still one commit per channel.
+- Approval-gated invites are not the "open invites" that C0 blocks on the I33
+  halt, but per-conversation halting is still outstanding.
+- The server does not notify admins of a new request; they see it when they
+  open the list.
+- Not tested on a device. Dart analyzer, formatter and the new tests ran
+  locally on Flutter 3.44.0 (see `testing/evidence/C1-membership.md`).

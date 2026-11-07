@@ -676,7 +676,14 @@ func (s *Store) ListCommunityMembers(ctx context.Context, communityID, accountID
 	if _, err := s.CommunityMemberRole(ctx, communityID, accountID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT account_id, role, created_at FROM memberships WHERE community_id = ? ORDER BY created_at, account_id`, communityID)
+	// The requester is a member (checked above), so the username join exposes
+	// nothing beyond shared membership, as in ListConversationMembers.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT m.account_id, m.role, m.created_at, COALESCE(a.username, '')
+		FROM memberships m
+		LEFT JOIN accounts a ON a.id = m.account_id
+		WHERE m.community_id = ?
+		ORDER BY m.created_at, m.account_id`, communityID)
 	if err != nil {
 		return nil, err
 	}
@@ -685,7 +692,7 @@ func (s *Store) ListCommunityMembers(ctx context.Context, communityID, accountID
 	for rows.Next() {
 		var member domain.Membership
 		var created string
-		if err := rows.Scan(&member.AccountID, &member.Role, &created); err != nil {
+		if err := rows.Scan(&member.AccountID, &member.Role, &created, &member.Username); err != nil {
 			return nil, err
 		}
 		member.CreatedAt = parseTime(created)
@@ -703,6 +710,20 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 		return nil, err
 	}
 	defer tx.Rollback()
+	eventIDs, err := s.manageCommunityMemberTx(ctx, tx, communityID, actorAccountID, targetAccountID, role)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return eventIDs, nil
+}
+
+// manageCommunityMemberTx is ManageCommunityMember inside the caller's
+// transaction, which the caller commits. role must be valid.
+func (s *Store) manageCommunityMemberTx(ctx context.Context, tx *sql.Tx, communityID, actorAccountID, targetAccountID, role string) ([]int64, error) {
+	var err error
 	var actorRole string
 	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE community_id = ? AND account_id = ?`, communityID, actorAccountID).Scan(&actorRole); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -741,6 +762,9 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		if err := s.checkNewCommunityMember(ctx, tx, communityID, targetAccountID); err != nil {
+			return nil, err
+		}
+		if err := cancelPendingJoinRequestsTx(ctx, tx, MembershipTarget{Kind: domain.InviteTargetCommunity, ID: communityID}, targetAccountID); err != nil {
 			return nil, err
 		}
 	}
@@ -782,9 +806,6 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 		return nil, err
 	}
 	eventIDs = append(eventIDs, privateEventIDs...)
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
 	return eventIDs, nil
 }
 
@@ -1089,6 +1110,20 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 		return 0, err
 	}
 	defer tx.Rollback()
+	eventID, err := s.manageConversationMemberTx(ctx, tx, conversationID, actorAccountID, targetAccountID, role)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return eventID, nil
+}
+
+// manageConversationMemberTx is ManageConversationMember inside the caller's
+// transaction, which the caller commits. role must not be empty.
+func (s *Store) manageConversationMemberTx(ctx context.Context, tx *sql.Tx, conversationID, actorAccountID, targetAccountID, role string) (int64, error) {
+	var err error
 	var actorRole, conversationKind string
 	var conversationCommunityID sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT m.role, c.kind, c.community_id FROM memberships m JOIN conversations c ON c.id = m.conversation_id WHERE m.conversation_id = ? AND m.account_id = ?`, conversationID, actorAccountID).Scan(&actorRole, &conversationKind, &conversationCommunityID); err != nil {
@@ -1150,6 +1185,9 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 		if err := s.checkNewConversationMember(ctx, tx, conversationID, targetAccountID); err != nil {
 			return 0, err
 		}
+		if err := cancelPendingJoinRequestsTx(ctx, tx, MembershipTarget{Kind: domain.InviteTargetGroup, ID: conversationID}, targetAccountID); err != nil {
+			return 0, err
+		}
 	}
 	id, err := domain.NewID("mbr")
 	if err != nil {
@@ -1162,9 +1200,6 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 	payload := map[string]string{"conversation_id": conversationID, "account_id": targetAccountID, "role": role, "mls_coordination": "pending"}
 	eventID, err := insertSyncEvent(ctx, tx, "membership.updated", nil, conversationID, payload, createdAt)
 	if err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return eventID, nil

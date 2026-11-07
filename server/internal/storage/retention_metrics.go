@@ -57,6 +57,8 @@ func (s *Store) RetentionBacklogWithSyncRetention(ctx context.Context, now time.
 		// PruneOperationalRows.
 		{"sessions", `expires_at <= ?`, `expires_at`, []interface{}{current}, 0},
 		{"invites", `(expires_at IS NOT NULL AND expires_at < ?) OR (revoked_at IS NOT NULL AND revoked_at < ?)`, `MIN(COALESCE(expires_at, revoked_at), COALESCE(revoked_at, expires_at))`, []interface{}{cutoff, cutoff}, grace},
+		{"membership_invites", `expires_at < ? OR (revoked_at IS NOT NULL AND revoked_at < ?)`, `MIN(expires_at, COALESCE(revoked_at, expires_at))`, []interface{}{cutoff, cutoff}, grace},
+		{"membership_join_requests", `decided_at IS NOT NULL AND decided_at < ?`, `decided_at`, []interface{}{cutoff}, grace},
 		{"device_links", `expires_at < ? AND state IN ('consumed', 'revoked')`, `expires_at`, []interface{}{cutoff}, grace},
 		{"device_links_v3", `COALESCE(transfer_expires_at,expires_at) < ?`, `COALESCE(transfer_expires_at,expires_at)`, []interface{}{cutoff}, grace},
 		{"device_history_upload_intents", `expires_at <= ?`, `expires_at`, []interface{}{current}, 0},

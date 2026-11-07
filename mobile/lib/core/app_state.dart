@@ -39,6 +39,8 @@ import 'device_link_v3_models.dart';
 import 'history_transfer_client.dart';
 import 'composer_drafts.dart';
 import 'errors.dart';
+import 'membership_invite_link.dart';
+import 'membership_models.dart';
 import '../storage/message_search.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart'
@@ -58,7 +60,10 @@ import '../l10n/l10n.dart';
 import 'account_recovery.dart';
 
 export 'account_recovery.dart';
+export 'membership_invite_link.dart';
+export 'membership_models.dart';
 
+part 'app_state_membership.dart';
 part 'app_state_recovery.dart';
 part 'app_state_link_v3.dart';
 
@@ -174,6 +179,9 @@ class Ops {
   static const backup = 'backup';
   static const restore = 'restore';
   static const members = 'members';
+
+  /// C1: invitations, join requests and community membership.
+  static const membership = 'membership';
   static const blocks = 'blocks';
   static const mute = 'mute';
 
@@ -2398,43 +2406,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         conversationId,
         accountId,
       );
-      // D68: hold sends until the removal commit is applied. Reconcile
-      // releases the hold; without MLS nothing would, and nothing is
-      // encrypted to a group either. The session queue keeps sends out
-      // until the hold is set.
-      final mls = _mlsCrypto;
-      if (mls != null) {
-        final generation = _sessionGeneration;
-        await _loadRemovalHolds();
-        ({int epoch, bool pending})? local;
-        var unreadable = false;
-        try {
-          local = await mls.groupEpoch(conversationId);
-        } catch (_) {
-          // Held anyway, at epoch 0: reconcile releases it once the group
-          // is readable again, or drops it when there is no local group.
-          unreadable = true;
-        }
-        if (generation == _sessionGeneration && (local != null || unreadable)) {
-          final epoch = local?.epoch ?? 0;
-          final hold = _removalHolds.putIfAbsent(
-              conversationId, () => _RemovalHold(epoch: epoch));
-          hold
-            ..seq = ++_removalHoldSeq
-            // A read before this removal proves nothing about its commit.
-            ..unlistedAt = null
-            ..accounts.add(accountId);
-          if (epoch > hold.epoch) hold.epoch = epoch;
-          await _saveRemovalHolds();
-          _removalHoldsUpdated();
-        }
-      }
-      // Their devices leave the MLS group through reconcile (card I51). The
-      // change is new, so an earlier one's backoff does not hold it.
-      _mlsReconcileRequested = true;
-      _mlsReconcileNow.add(conversationId);
-      _mlsChangeRetries.remove(conversationId);
-      unawaited(_catchUpSyncEvents());
+      await _afterMemberRemoved(conversationId, accountId);
       membersByConversation = <String, List<ConversationMember>>{
         ...membersByConversation,
         conversationId: membersFor(conversationId)
@@ -2442,6 +2414,50 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             .toList(growable: false),
       };
     });
+  }
+
+  /// What follows the server dropping [accountId] from [conversationId]:
+  /// sends wait for the removal commit (D68) and reconcile stages it (card
+  /// I51). Also used for each channel when a community removes a member.
+  Future<void> _afterMemberRemoved(
+      String conversationId, String accountId) async {
+    // D68: hold sends until the removal commit is applied. Reconcile
+    // releases the hold; without MLS nothing would, and nothing is
+    // encrypted to a group either. The session queue keeps sends out
+    // until the hold is set.
+    final mls = _mlsCrypto;
+    if (mls != null) {
+      final generation = _sessionGeneration;
+      await _loadRemovalHolds();
+      ({int epoch, bool pending})? local;
+      var unreadable = false;
+      try {
+        local = await mls.groupEpoch(conversationId);
+      } catch (_) {
+        // Held anyway, at epoch 0: reconcile releases it once the group
+        // is readable again, or drops it when there is no local group.
+        unreadable = true;
+      }
+      if (generation == _sessionGeneration && (local != null || unreadable)) {
+        final epoch = local?.epoch ?? 0;
+        final hold = _removalHolds.putIfAbsent(
+            conversationId, () => _RemovalHold(epoch: epoch));
+        hold
+          ..seq = ++_removalHoldSeq
+          // A read before this removal proves nothing about its commit.
+          ..unlistedAt = null
+          ..accounts.add(accountId);
+        if (epoch > hold.epoch) hold.epoch = epoch;
+        await _saveRemovalHolds();
+        _removalHoldsUpdated();
+      }
+    }
+    // Their devices leave the MLS group through reconcile (card I51). The
+    // change is new, so an earlier one's backoff does not hold it.
+    _mlsReconcileRequested = true;
+    _mlsReconcileNow.add(conversationId);
+    _mlsChangeRetries.remove(conversationId);
+    unawaited(_catchUpSyncEvents());
   }
 
   /// Leaves a conversation and drops its local state.
@@ -2457,41 +2473,51 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         conversationId,
         'me',
       );
-      // A pause (C1 P1) stays until the group is dropped, so a pass that
-      // already holds later events of the conversation still holds them
-      // back ([_dropLeftConversations] lifts it). Without that drop there
-      // is nothing to wait for.
-      if (_mlsCrypto is! MlsStateMaintenanceCryptoService) {
-        await _dropConversationPause(conversationId);
-      }
-      conversations = conversations
-          .where((conversation) => conversation.id != conversationId)
-          .toList(growable: false);
-      // Sends held for a removal there (D68) end: the conversation is gone.
-      if (_removalHolds.remove(conversationId) != null) {
-        await _saveRemovalHolds();
-      }
-      _removalHoldsUpdated();
-      messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
-        for (final entry in messagesByConversation.entries)
-          if (entry.key != conversationId) entry.key: entry.value,
-      };
-      membersByConversation = <String, List<ConversationMember>>{
-        for (final entry in membersByConversation.entries)
-          if (entry.key != conversationId) entry.key: entry.value,
-      };
-      _historyCursors.remove(conversationId);
-      _mutes.remove(conversationId);
-      unawaited(localStore
-          .saveConversationMute(conversationId, muted: false)
-          .catchError((Object _) {}));
-      composerDrafts.remove(conversationId);
-      if (selectedConversationId == conversationId) {
-        selectedConversationId = null;
-      }
-      await _persistSnapshot();
-      await _afterLeftConversation(current, conversationId, leaveEventId);
+      await _dropLeftConversationLocally(current, conversationId, leaveEventId);
     });
+  }
+
+  /// Drops the local state of a conversation the server has just taken this
+  /// account out of: after leaving it, and after leaving its community.
+  Future<void> _dropLeftConversationLocally(
+    Session current,
+    String conversationId,
+    int? leaveEventId,
+  ) async {
+    // A pause (C1 P1) stays until the group is dropped, so a pass that
+    // already holds later events of the conversation still holds them
+    // back ([_dropLeftConversations] lifts it). Without that drop there
+    // is nothing to wait for.
+    if (_mlsCrypto is! MlsStateMaintenanceCryptoService) {
+      await _dropConversationPause(conversationId);
+    }
+    conversations = conversations
+        .where((conversation) => conversation.id != conversationId)
+        .toList(growable: false);
+    // Sends held for a removal there (D68) end: the conversation is gone.
+    if (_removalHolds.remove(conversationId) != null) {
+      await _saveRemovalHolds();
+    }
+    _removalHoldsUpdated();
+    messagesByConversation = <String, List<ReceivedMessageEnvelope>>{
+      for (final entry in messagesByConversation.entries)
+        if (entry.key != conversationId) entry.key: entry.value,
+    };
+    membersByConversation = <String, List<ConversationMember>>{
+      for (final entry in membersByConversation.entries)
+        if (entry.key != conversationId) entry.key: entry.value,
+    };
+    _historyCursors.remove(conversationId);
+    _mutes.remove(conversationId);
+    unawaited(localStore
+        .saveConversationMute(conversationId, muted: false)
+        .catchError((Object _) {}));
+    composerDrafts.remove(conversationId);
+    if (selectedConversationId == conversationId) {
+      selectedConversationId = null;
+    }
+    await _persistSnapshot();
+    await _afterLeftConversation(current, conversationId, leaveEventId);
   }
 
   /// The user left [conversationId] (D70 S4). Its unsent messages can no

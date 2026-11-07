@@ -44,6 +44,13 @@ func (a *API) listCommunities(w http.ResponseWriter, r *http.Request, principal 
 
 func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/communities/"), "/")
+	if a.membershipTargetRoute(w, r, principal, domain.InviteTargetCommunity, parts) {
+		return
+	}
+	if len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodDelete {
+		a.removeCommunityMember(w, r, principal, parts[0], parts[2])
+		return
+	}
 	if len(parts) == 2 && parts[1] == "members" && r.Method == http.MethodGet {
 		members, err := a.Store.ListCommunityMembers(r.Context(), parts[0], principal.AccountID)
 		if err != nil {
@@ -197,6 +204,9 @@ func (a *API) listConversations(w http.ResponseWriter, r *http.Request, principa
 
 func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/conversations/"), "/")
+	if a.membershipTargetRoute(w, r, principal, domain.InviteTargetGroup, parts) {
+		return
+	}
 	if len(parts) == 3 && parts[1] == "members" && r.Method == http.MethodDelete {
 		conversationID := parts[0]
 		targetAccountID := strings.TrimSpace(parts[2])
