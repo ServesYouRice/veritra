@@ -2,23 +2,36 @@
 
 Status 2026-11-07. Built on the owner's approval of the format (secret after
 the `#`, requests an admin approves; bound to the target, account and device
-keys by D90, see "Binding" below). Server migration 0048. Read with
+keys by D90, see "Binding" below). Server migrations 0048 and 0052 (v2).
+Format v2 (owner decision 2026-11-07: close the collusion residual with a
+real device signature). Read with
 [C1-membership-plan](C1-membership-plan.md) and
 [C1-progress](C1-progress.md).
 
 ## The link
 
 ```
-<server origin>/join#v1.<secret>
+<server origin>/join#v2.<secret>.<key commitment>
 ```
 
 `secret` is 32 random bytes, base64url without padding (43 characters). It is
-made on the creating device and exists only in the link. A fragment is never
-sent in an HTTP request, and the app never puts it in a path, query, body,
-log line or error text. `MembershipInviteLink.tryParse` accepts a link only
-for the server the user is signed in to, with path exactly `/join`, no query,
-no credentials and a canonical secret; it returns null otherwise and never
-echoes the input.
+made on the creating device and exists only in the link. `key commitment` is
+the first 16 bytes of
+`SHA-256("veritra/membership-invite/v2/key-commit\0" || inviter_signing_key)`,
+base64url without padding (22 characters): a commitment to the inviting
+device's key that the server never needs to see (see "Binding"). A fragment is
+never sent in an HTTP request, and the app never puts it in a path, query,
+body, log line or error text. `MembershipInviteLink.tryParse` accepts a link
+only for the server the user is signed in to, with path exactly `/join`, no
+query, no credentials and a canonical secret and commitment; it returns null
+otherwise and never echoes the input.
+
+**v1 links are not read.** v1 (`#v1.<secret>`, secret-keyed MAC only) has no
+key commitment and no signature, and nothing was released with it (the release
+gate is closed and C1 had not merged to a release), so there is no
+compatibility to keep: a v1 link is "invalid", a v1 invitation row (made
+before migration 0052) is refused by the joiner as "no longer works" and
+expires like any invitation. Nothing rewrites those rows.
 
 ## What the server sees
 
@@ -44,109 +57,154 @@ server's membership record. Membership never means encrypted access: that
 follows the existing staged MLS commits (card I51). What ties the link to its
 target is the binding below.
 
-## Binding to the target, account and device keys (D90)
+## Binding to the target, account and device keys (D90, v2)
 
 Status 2026-11-07. Decision D90: the invitation is bound to the inviter's
-target, account and device keys before merge. The joiner checks the binding
-from the link secret, so a server that never saw the secret cannot swap the
-target, the inviting account or the inviting device's key without the check
-failing.
+target, account and device keys before merge. v1 did it with a MAC keyed by
+the link secret, which anyone holding the link can compute, so a server that
+colluded with a link holder could swap the target. v2 (owner decision
+2026-11-07) adds what v1 lacked: a signature by the inviting device and an
+anchor for the key it is checked against. v2 keeps v1's tag and adds the two.
 
 ```
 binding_key = SHA-256("veritra/membership-invite/v1/binding-key\0" || secret)
-message     = "veritra/membership-invite/v1/binding\0"
-              || lp(origin) || lp(target_kind) || lp(target_id)
+fields      = lp(origin) || lp(target_kind) || lp(target_id)
               || lp(inviter_account_id) || lp(inviter_device_id)
               || lp(inviter_signing_key)
-tag         = hex(HMAC-SHA256(binding_key, message))
+tag         = hex(HMAC-SHA256(binding_key, "veritra/membership-invite/v1/binding\0" || fields))
+message     = fields || lp(locator)              (locator as its 64 ASCII hex characters)
+signature   = Ed25519(inviter credential key, "veritra-invite-binding-v2" || message)
+commitment  = SHA-256("veritra/membership-invite/v2/key-commit\0" || inviter_signing_key)[0..16]
 ```
 
 `lp(x)` is a 16-bit big-endian length and the bytes, so adjacent fields
 cannot trade characters. `origin` is the canonical server origin of the link.
 `target_kind` is `group` or `community`. `inviter_signing_key` is the 32-byte
 Ed25519 public key of the inviting device's MLS credential, the same key the
-server holds as `devices.signing_key`. The key label differs from the locator
-label, so the locator the server sees is no key and gives no tag. Both sides
-pin one vector: `mobile/test/membership_invite_link_test.dart` and
-`TestInviteBindingTagVector` (HMAC-SHA256 cases from RFC 4231 are pinned on the
-Dart side, where the HMAC is written on the existing SHA-256).
+server holds as `devices.signing_key`. The key labels differ from the locator
+label, so the locator the server sees is no key and gives no tag. The signed
+message ends with the link's own locator, so a signature the inviter made for
+one link is no answer for another link of the same inviter (a server that
+holds a genuine signed binding for link B cannot present it for link A).
+
+**The signing domain.** `veritra-invite-binding-v2` is a new entry in the ABI
+13 sign and verify allowlist (`crypto/rust/src/c7.rs`, `SIGN_DOMAINS`), next
+to the two C7 domains. Rust prepends the label itself, so no one can ask the
+engine to sign chosen bytes under another protocol's label, and a signature of
+one domain never verifies in another (a test pins that no label is a prefix of
+another). It is an allowlist entry only: no function, length, struct or ABI
+number changed (counters stay ABI 13), and a library without the entry refuses
+the domain, so the app fails closed. The Dart side adds bindings for the
+already exported `pm_crypto_c7_sign` and `pm_crypto_group_member_signature_key`
+behind a new capability interface (`InviteBindingCryptoService`) that only the
+native engine implements; `UnavailableCryptoService` is untouched.
+
+Vectors: `testing/vectors/invite-binding-v2.json` (a fixed secret and signing
+seed, the locator, the commitment, the signed message, the signature and the
+link fragment). Ed25519 is deterministic, so Rust
+(`crypto/rust/src/invite_binding_tests.rs`, from the written layout), Go
+(`TestInviteBindingV2Vector`, standard-library `crypto/ed25519`, no new
+dependency) and Dart (`membership_invite_link_test.dart`, the message and
+commitment; `invite_binding_native_test.dart`, the signature through the
+engine) all reproduce or verify the same bytes. The v1 MAC vectors stay
+(`TestInviteBindingTagVector`, the RFC 4231 cases).
 
 **Creating.** The app reads its own device's signing key from the native
-engine (the existing `pm_crypto_device_signing_public_key`, behind a small
-Dart interface; builds without the engine, including
-`UnavailableCryptoService`, make no invitation), generates the secret, and
-sends `locator`, `signing_key` and `binding_tag` in the body. The device and
-account are the session's, never fields of the request. The server stores the
-creating device's id and the key it holds on record for it, and refuses (400
+engine (`pm_crypto_device_signing_public_key`; builds without the engine,
+including `UnavailableCryptoService`, make no invitation), generates the
+secret, builds the link with the key commitment, signs `message` with the
+device (`pm_crypto_c7_sign`), checks its own signature with the strict
+verifier, and sends `locator`, `signing_key`, `binding_tag` and
+`binding_signature` (base64, 64 bytes) in the body. The device and account are
+the session's, never fields of the request. The server stores the creating
+device's id and the key it holds on record for it, and refuses (400
 `invalid_input`) a body whose key differs from that record, a session with no
-device, and a tag that is not 64 lowercase hex characters. It cannot check the
-tag: that needs the secret. An invitation is bound to its device, so it stops
-working when that device is revoked.
+device, a tag that is not 64 lowercase hex characters, and a signature that is
+not 64 bytes. It cannot check the tag (that needs the secret) or the signature
+(it does not know the origin the link names): it stores them for the joiner. An
+invitation is bound to its device, so it stops working when that device is
+revoked. Migration 0052 adds `membership_invites.binding_signature` (nullable
+BLOB, 64 bytes when set); `binding_tag` and every other column are unchanged.
 
 **Joining.** `POST /membership-invites/preview` returns `binding` (target
-kind and id, inviter account id, inviter device id, inviter signing key, tag)
-and `POST /membership-invites/requests` returns it again on the answer. The
-app recomputes the tag from the link and compares in constant time, and
-checks that the kind it shows equals the bound kind.
+kind and id, inviter account id, inviter device id, inviter signing key, tag
+and `signature`) and `POST /membership-invites/requests` returns it again on
+the answer. Before it shows the target, and again before it keeps a request,
+the app checks all of this and **fails closed** on any miss
+(`AppState._inviteBindingHolds`):
 
-- On preview: a mismatch, a missing binding or a key of the wrong length
-  shows the ordinary "this link no longer works" message and files nothing.
-- On request: the answer must carry the binding of this very link. Otherwise
-  the app withdraws the request (best effort) and shows the same message, so a
-  server cannot show the genuine target at preview and file against another.
+1. The kind it shows equals the bound kind; the key is 32 bytes and its
+   commitment equals the one in the link; the signature is 64 bytes; the tag
+   is the one the secret makes (`MembershipInviteLink.matches`).
+2. The signature verifies, strictly, under that key over the message the link
+   rebuilds, in the invitation domain (`pm_crypto_c7_verify`). A build without
+   the engine accepts nothing.
+3. The roster. For every conversation this device holds an MLS group for, it
+   reads the signature key of the inviting device (account and device id from
+   the binding) from the group's current tree
+   (`pm_crypto_group_member_signature_key`). A group that has no such member
+   says nothing; a group that names a key other than the binding's refuses the
+   link.
 
-What this proves, against a server that never saw the link: whoever made the
-link named exactly this target, inviting account, device and device key, and
-the server did not change any of them. It proves nothing against a server that
-holds the link (see the limits below). It adds no round trip and no new key
-material, and needs no change to the crypto ABI.
+- On preview: a miss shows the ordinary "this link no longer works" message and
+  files nothing.
+- On request: the answer must carry the binding of this very link and pass the
+  same checks. Otherwise the app withdraws the request (best effort) and shows
+  the same message, so a server cannot show the genuine target at preview and
+  file against another.
+
+What this proves: whoever made the link named exactly this target, inviting
+account and device, signed it with the key the link commits to, and neither the
+server nor a second holder of the link changed any of them. This closes the
+collusion case v1 left open. A server that colludes with someone who holds the
+link knows the secret, so it can recompute the MAC, but it cannot sign with the
+inviter's key, and it cannot name another key that fits the commitment in the
+joiner's copy of the link.
+
+The anchor is the commitment, not the roster, and that is a deliberate
+departure from "verify against the MLS roster": a person joining through an
+invitation is, by definition, not in the target group, and often shares no group
+with the inviter, so the target group's roster does not exist on their device.
+Requiring a roster hit would refuse nearly every invitation. The roster is used
+where it exists (it also anchors a link that reached the joiner through a path
+the server could rewrite, for an inviter the joiner already knows through a
+shared group), and the commitment carries every other case. **Open owner
+question:** whether to also refuse an invitation from a stranger (no shared
+group) outright; the owner's brief said "fail closed" and this build reads it as
+"refuse on any failed or missing check", not "refuse when no roster exists".
 
 Limits, stated plainly:
 
-- **No signature.** The tag is a MAC keyed by the link secret, not a
-  signature by the device. Anyone holding the link can compute tags. So a
-  server that holds the link (it colludes with a recipient, or it is the
-  recipient) can swap the target, the inviting account or the device key and
-  recompute a valid tag, and the joiner cannot tell. The binding protects
-  only against a server that never saw the secret.
-- **The device key comes from the server and is not cross-checked.** The
-  joiner learns the inviting device's key from the server, and the tag is
-  computed over that key, so the tag does not vouch for it. Checking it
-  against the account's signed device list needs L1, and against the MLS
-  roster needs C7's member signature-key read. Until then the key is bound to
-  the link, not proven to belong to the inviting account.
-- **Public links.** Any link the server operator can read gives no protection
-  against the server. That includes a link posted in a public community, a
-  main use case given a use limit of up to 1000: the server reads the link
-  where it is posted, can compute the locator and the tag, and can answer
-  with any target or key it likes. The binding is meaningful only for a link
-  that reaches the joiner through a channel the server does not see. Joining
-  a community through a link the server can read is trust in the server, and
-  the app must not describe it as verified.
-- **v2 must close both gaps together.** A signature alone does not close the
-  collusion case: the joiner still gets the inviter's key from the server, so
-  a server holding the link can substitute its own key, sign a swapped target
-  with it and recompute the HMAC over that key, since it has the secret.
-  v2 is an ABI-13 credential-key signature over the same `lp()` fields, plus
-  a key commitment the server cannot replace. Candidates for the commitment:
-  a truncated SHA-256 of the inviter key placed in the link fragment (the
-  server never sees the fragment, but this only helps when the link itself
-  did not pass through the server); an L1 signed-device-list check; or C7's
-  roster signature-key read. The signature itself needs a verifier in the
-  crypto ABI, which ABI 12 does not have on purpose (TASK-007 removed the raw
-  signer; the enrollment-proof signer has its own domain and mints a key
-  package). C7's reserved ABI 13 adds credential-key sign and verify over a
-  domain allowlist, with a new domain label, and the format version moves to
-  `v2`. For a link the server can read (see "Public links") even v2 gives no
-  protection against the server, because the server can also rewrite a
-  fragment commitment it can see.
+- **The link must reach the joiner out of the server's sight.** The
+  commitment lives in the fragment. A server never receives the fragment from
+  the app, but if the link passed through the server (a link posted in a public
+  community, a main use case given a use limit of up to 1000, or sent in a
+  message the server relays and could rewrite, though messages are end-to-end
+  encrypted), the server can read it, can swap in its own key, recompute the
+  commitment, the tag and a signature under that key, and the joiner cannot
+  tell. The only anchor that survives that is the roster, and only for an
+  inviter the joiner already shares a group with. Joining a community through a
+  link the server can read is trust in the server, and the app must not
+  describe it as verified.
+- **The roster read covers local groups only.** It does not ask the server and
+  it skips a conversation whose group cannot be read (no group on this device,
+  a poisoned handle, leaves of one identity with different keys). A server
+  cannot hide a shared group from it by editing a cache: it tries every local
+  conversation.
+- **Shared-group conversations.** Community channels may share one MLS group
+  (C0). The scan uses each conversation's own id as the group id, as the rest
+  of the app does for a plain group, so a channel whose group has another id
+  is read as "no group". This can only weaken the extra roster check, never
+  make a check pass that failed.
 - **Names are not bound.** The target name and the inviter's username are
   server-supplied text shown for orientation; the bound target is the id.
   Encrypted names wait for W11 and C3.
 - **Existing devices.** A device registered without a signing key (before
   enrollment proofs) cannot create an invitation.
 - **Needs independent review.** This is a security decision; D90 and AGENTS.md
-  ask for one before the invitation format is final.
+  ask for one before the invitation format is final. Not done here (no review
+  agent was available in this run): the ABI 13 domain addition, the message
+  layout and the commitment choice need the review.
 
 ## Rules
 

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -7,6 +8,9 @@ import 'package:private_messenger/core/membership_invite_link.dart';
 import 'package:private_messenger/core/membership_models.dart';
 import 'package:private_messenger/core/sha256.dart';
 
+import 'invite_binding_fixtures.dart';
+import 'test_crypto_service.dart';
+
 /// Secret 00 01 .. 1f, and the locator and link derived from it. The locator
 /// is SHA-256 of "veritra/membership-invite/v1/locator\0" and the secret,
 /// computed independently with Python's hashlib.
@@ -14,6 +18,12 @@ const _secretText = 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8';
 const _locator =
     '4437d01b5bc6825b22a3de68051fee45b5809368049546cf0a8169cdb2ddcc52';
 const _origin = 'https://chat.example.org';
+
+/// The key commitment of the default inviter key (40 41 .. 5f): the first 16
+/// bytes of SHA-256 of "veritra/membership-invite/v2/key-commit\0" and the
+/// key, base64url, computed independently with Python's hashlib.
+const _commitText = 'bnmamFclxirK8ha3-a1pTA';
+const _fragment = 'v2.$_secretText.$_commitText';
 
 /// The binding of that link to a group `conv_1`, inviter `acct_alice` on
 /// `dev_alice` with signing key 40 41 .. 5f (D90). The key and the tag are
@@ -56,15 +66,17 @@ void main() {
         MembershipInviteLink.tryParse(text, expectedOrigin: origin);
 
     test('derives the locator from the secret, not the secret itself', () {
-      final link = parse('$_origin/join#v1.$_secretText')!;
+      final link = parse('$_origin/join#$_fragment')!;
       expect(link.locator, _locator);
       expect(link.locator, isNot(contains(_secretText)));
-      expect(link.url, '$_origin/join#v1.$_secretText');
+      expect(link.url, '$_origin/join#$_fragment');
     });
 
     test('round-trips a generated link', () {
       final generated = MembershipInviteLink.generate(
-          origin: 'HTTPS://Chat.Example.org:443', random: Random(7));
+          origin: 'HTTPS://Chat.Example.org:443',
+          inviterSigningKey: defaultInviterKey,
+          random: Random(7));
       expect(generated.origin, _origin);
       final parsed = parse(generated.url)!;
       expect(parsed.locator, generated.locator);
@@ -73,15 +85,18 @@ void main() {
     });
 
     test('two generated links differ', () {
-      final a = MembershipInviteLink.generate(origin: _origin);
-      final b = MembershipInviteLink.generate(origin: _origin);
+      final a = newInviteLink(origin: _origin);
+      final b = newInviteLink(origin: _origin);
       expect(a.locator, isNot(b.locator));
+      // The same device key gives the same commitment in both.
+      expect(a.url.split('.').last, b.url.split('.').last);
+      expect(a.url.split('.').last, _commitText);
     });
 
     test('keeps the secret after the # and out of everything else', () {
-      final link = parse('$_origin/join#v1.$_secretText')!;
+      final link = parse('$_origin/join#$_fragment')!;
       final uri = Uri.parse(link.url);
-      expect(uri.fragment, 'v1.$_secretText');
+      expect(uri.fragment, _fragment);
       expect(uri.path, '/join');
       expect(uri.hasQuery, isFalse);
       expect(uri.removeFragment().toString(), isNot(contains(_secretText)));
@@ -91,64 +106,79 @@ void main() {
 
     test('accepts surrounding whitespace and an origin spelled differently',
         () {
-      expect(parse('  $_origin/join#v1.$_secretText\n'), isNotNull);
-      expect(parse('HTTPS://CHAT.example.org:443/join#v1.$_secretText'),
-          isNotNull);
+      expect(parse('  $_origin/join#$_fragment\n'), isNotNull);
+      expect(parse('HTTPS://CHAT.example.org:443/join#$_fragment'), isNotNull);
       expect(
-          parse('http://127.0.0.1:8080/join#v1.$_secretText',
+          parse('http://127.0.0.1:8080/join#$_fragment',
               origin: 'http://127.0.0.1:8080/'),
           isNotNull);
     });
 
     test('rejects another origin, scheme or port', () {
       for (final text in <String>[
-        'https://evil.example.com/join#v1.$_secretText',
-        'http://chat.example.org/join#v1.$_secretText',
-        'https://chat.example.org:8443/join#v1.$_secretText',
-        'https://chat.example.org.evil.test/join#v1.$_secretText',
-        'https://user:pw@chat.example.org/join#v1.$_secretText',
+        'https://evil.example.com/join#$_fragment',
+        'http://chat.example.org/join#$_fragment',
+        'https://chat.example.org:8443/join#$_fragment',
+        'https://chat.example.org.evil.test/join#$_fragment',
+        'https://user:pw@chat.example.org/join#$_fragment',
       ]) {
         expect(parse(text), isNull, reason: text.split('#').first);
       }
     });
 
-    test('rejects anything but exactly /join and a v1 fragment', () {
+    test('rejects anything but exactly /join and a v2 fragment', () {
       for (final text in <String>[
         '',
         '   ',
         'not a link',
         '$_origin/join',
         '$_origin/join#',
-        '$_origin/join#v1.',
+        '$_origin/join#v2.',
+        // No key commitment, or a v1 link: nothing to anchor the key to.
         '$_origin/join#v2.$_secretText',
+        '$_origin/join#v2.$_secretText.',
+        '$_origin/join#v1.$_secretText',
+        '$_origin/join#v1.$_secretText.$_commitText',
+        '$_origin/join#v3.$_secretText.$_commitText',
         '$_origin/join#$_secretText',
-        '$_origin/join?x=1#v1.$_secretText',
-        '$_origin/join/#v1.$_secretText',
-        '$_origin/other#v1.$_secretText',
-        '$_origin#v1.$_secretText',
-        '$_origin/join#v1.${_secretText}A',
-        '$_origin/join#v1.${_secretText.substring(1)}',
-        '$_origin/join#v1.${_secretText.replaceFirst('A', '!')}',
-        '/join#v1.$_secretText',
-        'join#v1.$_secretText',
+        '$_origin/join#$_secretText.$_commitText',
+        '$_origin/join#v2.$_secretText.${_commitText.substring(1)}',
+        '$_origin/join#v2.$_secretText.${_commitText}A',
+        '$_origin/join#v2.$_secretText.${_commitText.replaceFirst('b', '!')}',
+        '$_origin/join#v2.$_secretText.$_commitText.$_commitText',
+        '$_origin/join?x=1#$_fragment',
+        '$_origin/join/#$_fragment',
+        '$_origin/other#$_fragment',
+        '$_origin#$_fragment',
+        '$_origin/join#v2.${_secretText}A.$_commitText',
+        '$_origin/join#v2.${_secretText.substring(1)}.$_commitText',
+        '$_origin/join#v2.${_secretText.replaceFirst('A', '!')}.$_commitText',
+        '/join#$_fragment',
+        'join#$_fragment',
       ]) {
         expect(parse(text), isNull, reason: text.split('#').first);
       }
       // A non-canonical spelling of the same bytes (the last base64 digit
       // carries only two bits) is refused, so one secret has one link.
       expect(
-          parse('$_origin/join#v1.${_secretText.substring(0, 42)}9'), isNull);
-      expect(parse('$_origin/join#v1.$_secretText${'x' * 600}'), isNull);
+          parse('$_origin/join#v2.${_secretText.substring(0, 42)}9'
+              '.$_commitText'),
+          isNull);
+      expect(
+          parse('$_origin/join#v2.$_secretText.'
+              '${_commitText.substring(0, 21)}B'),
+          isNull);
+      expect(parse('$_origin/join#$_fragment${'x' * 600}'), isNull);
     });
 
     test('does not accept a bad expected origin', () {
-      expect(parse('$_origin/join#v1.$_secretText', origin: 'chat'), isNull);
+      expect(parse('$_origin/join#$_fragment', origin: 'chat'), isNull);
     });
   });
 
   group('invitation binding (D90)', () {
     final link = MembershipInviteLink.tryParse(
-      '$_origin/join#v1.$_secretText',
+      '$_origin/join#$_fragment',
       expectedOrigin: _origin,
     )!;
     final signingKey = List<int>.generate(32, (i) => 0x40 + i);
@@ -169,13 +199,35 @@ void main() {
           inviterSigningKey: key ?? signingKey,
         );
 
-    InviteBinding bindingOf(String tag) => InviteBinding(
+    Uint8List messageOf({
+      InviteTargetKind kind = InviteTargetKind.group,
+      String targetId = 'conv_1',
+      String accountId = 'acct_alice',
+      String deviceId = 'dev_alice',
+      List<int>? key,
+      MembershipInviteLink? of,
+    }) =>
+        (of ?? link).bindingMessage(
+          kind: kind,
+          targetId: targetId,
+          inviterAccountId: accountId,
+          inviterDeviceId: deviceId,
+          inviterSigningKey: key ?? signingKey,
+        );
+
+    InviteBinding bindingOf(
+      String tag, {
+      List<int>? signature,
+      List<int>? key,
+    }) =>
+        InviteBinding(
           kind: InviteTargetKind.group,
           targetId: 'conv_1',
           inviterAccountId: 'acct_alice',
           inviterDeviceId: 'dev_alice',
-          inviterSigningKey: Uint8List.fromList(signingKey),
+          inviterSigningKey: Uint8List.fromList(key ?? signingKey),
           tag: tag,
+          signature: Uint8List.fromList(signature ?? List<int>.filled(64, 1)),
         );
 
     test('matches the pinned vector', () {
@@ -190,53 +242,132 @@ void main() {
       expect(_bindingKey, isNot(_locator));
     });
 
-    test('verifies only the exact binding it was made for', () {
-      expect(link.verifies(bindingOf(_bindingTag)), isTrue);
-      expect(link.verifies(bindingOf(_bindingTag.replaceFirst('f', 'e'))),
-          isFalse);
-      expect(link.verifies(bindingOf(_bindingTag.toUpperCase())), isFalse);
-      expect(link.verifies(bindingOf('')), isFalse);
-      expect(link.verifies(bindingOf(_bindingTag.substring(1))), isFalse);
-      expect(link.verifies(bindingOf('$_bindingTag$_bindingTag')), isFalse);
+    test('commits to the inviter key in the link', () {
+      // The commitment is 16 bytes of SHA-256 over its own label and the key.
+      expect(
+          base64Url
+              .encode(sha256(<int>[
+                ...utf8.encode('veritra/membership-invite/v2/key-commit\x00'),
+                ...signingKey,
+              ]).sublist(0, 16))
+              .replaceAll('=', ''),
+          _commitText);
+      expect(link.matches(bindingOf(_bindingTag)), isTrue);
+      // Another key, even one whose tag the secret holder could recompute,
+      // does not fit the commitment in the link.
+      final other = List<int>.generate(32, (i) => 0x41 + i);
+      expect(link.matches(bindingOf(tagOf(key: other), key: other)), isFalse);
     });
 
-    test('changes with every bound field and with the link', () {
+    test('checks everything the link can tell, and only the exact binding', () {
+      expect(link.matches(bindingOf(_bindingTag)), isTrue);
+      expect(
+          link.matches(bindingOf(_bindingTag.replaceFirst('f', 'e'))), isFalse);
+      expect(link.matches(bindingOf(_bindingTag.toUpperCase())), isFalse);
+      expect(link.matches(bindingOf('')), isFalse);
+      expect(link.matches(bindingOf(_bindingTag.substring(1))), isFalse);
+      expect(link.matches(bindingOf('$_bindingTag$_bindingTag')), isFalse);
+      // A missing or short signature (an invitation made before v2).
+      expect(link.matches(bindingOf(_bindingTag, signature: <int>[])), isFalse);
+      expect(
+          link.matches(
+              bindingOf(_bindingTag, signature: List<int>.filled(63, 1))),
+          isFalse);
+      expect(
+          link.matches(
+              bindingOf(_bindingTag, signature: List<int>.filled(65, 1))),
+          isFalse);
+    });
+
+    test('signs the fields and the locator, and changes with each', () {
       final seen = <String>{
-        tagOf(),
-        tagOf(kind: InviteTargetKind.community),
-        tagOf(targetId: 'conv_2'),
-        tagOf(accountId: 'acct_bob'),
-        tagOf(deviceId: 'dev_bob'),
-        tagOf(key: List<int>.generate(32, (i) => 0x41 + i)),
-        tagOf(of: MembershipInviteLink.generate(origin: _origin)),
-        tagOf(
+        hexOf(messageOf()),
+        hexOf(messageOf(kind: InviteTargetKind.community)),
+        hexOf(messageOf(targetId: 'conv_2')),
+        hexOf(messageOf(accountId: 'acct_bob')),
+        hexOf(messageOf(deviceId: 'dev_bob')),
+        hexOf(messageOf(key: List<int>.generate(32, (i) => 0x41 + i))),
+        // Another link of the same inviter and target: the locator differs.
+        hexOf(messageOf(of: newInviteLink(origin: _origin))),
+        hexOf(messageOf(
           of: MembershipInviteLink.tryParse(
-            'https://other.example.org/join#v1.$_secretText',
+            'https://other.example.org/join#$_fragment',
             expectedOrigin: 'https://other.example.org',
           ),
-        ),
+        )),
       };
       expect(seen, hasLength(8));
+      // The message ends with the locator as lp(64 ASCII hex characters).
+      final message = messageOf();
+      expect(utf8.decode(message.sublist(message.length - 64)), _locator);
+      expect(message.sublist(message.length - 66, message.length - 64),
+          <int>[0, 64]);
     });
 
     test('keeps adjacent fields apart', () {
-      // Length prefixes: moving a character between fields changes the tag.
+      // Length prefixes: moving a character between fields changes the tag
+      // and the signed message.
       expect(tagOf(accountId: 'acct_alice', deviceId: 'dev_alice'),
           isNot(tagOf(accountId: 'acct_alicedev', deviceId: '_alice')));
       expect(tagOf(targetId: 'a', accountId: 'bc'),
           isNot(tagOf(targetId: 'ab', accountId: 'c')));
+      expect(
+          hexOf(messageOf(accountId: 'acct_alice', deviceId: 'dev_alice')),
+          isNot(hexOf(
+              messageOf(accountId: 'acct_alicedev', deviceId: '_alice'))));
+      expect(hexOf(messageOf(targetId: 'a', accountId: 'bc')),
+          isNot(hexOf(messageOf(targetId: 'ab', accountId: 'c'))));
     });
 
     test('refuses a signing key of the wrong length', () {
-      final short = InviteBinding(
+      final short = bindingOf(tagOf(key: signingKey.sublist(1)),
+          key: signingKey.sublist(1));
+      expect(link.matches(short), isFalse);
+      expect(
+          () => MembershipInviteLink.generate(
+              origin: _origin, inviterSigningKey: signingKey.sublist(1)),
+          throwsArgumentError);
+    });
+
+    test('is pinned by the shared vector file', () {
+      final vector = jsonDecode(
+          File('../testing/vectors/invite-binding-v2.json')
+              .readAsStringSync()) as Map<String, Object?>;
+      final inputs = vector['inputs']! as Map<String, Object?>;
+      final outputs = vector['outputs']! as Map<String, Object?>;
+      List<int> unhex(Object? text) {
+        final value = text! as String;
+        return <int>[
+          for (var i = 0; i < value.length; i += 2)
+            int.parse(value.substring(i, i + 2), radix: 16),
+        ];
+      }
+
+      final key = unhex(outputs['signing_public_key_hex']);
+      final fromFile = MembershipInviteLink.tryParse(
+        '${inputs['origin']}/join#${outputs['link_fragment']}',
+        expectedOrigin: inputs['origin']! as String,
+      )!;
+      expect(fromFile.locator, outputs['locator']);
+      // A fresh link committed to the same key spells the same commitment.
+      expect(
+          MembershipInviteLink.generate(
+                  origin: inputs['origin']! as String, inviterSigningKey: key)
+              .url
+              .split('.')
+              .last,
+          (outputs['link_fragment']! as String).split('.').last);
+      final message = fromFile.bindingMessage(
         kind: InviteTargetKind.group,
-        targetId: 'conv_1',
-        inviterAccountId: 'acct_alice',
-        inviterDeviceId: 'dev_alice',
-        inviterSigningKey: Uint8List.fromList(signingKey.sublist(1)),
-        tag: tagOf(key: signingKey.sublist(1)),
+        targetId: inputs['target_id']! as String,
+        inviterAccountId: inputs['inviter_account_id']! as String,
+        inviterDeviceId: inputs['inviter_device_id']! as String,
+        inviterSigningKey: key,
       );
-      expect(link.verifies(short), isFalse);
+      expect(hexOf(message), outputs['signed_message_hex']);
+      // The test engine's stand-in is not the real signature.
+      expect(hexOf(fakeInviteSignature(key, message)),
+          isNot(outputs['signature_hex']));
     });
   });
 

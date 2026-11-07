@@ -1850,8 +1850,9 @@ pub unsafe extern "C" fn pm_crypto_c7_open(
 }
 
 /// ABI 13 (C7): signs `domain | message` with this device's credential key
-/// (Ed25519, 64 bytes). `domain` must be `veritra-c7-post-sig-v1` or
-/// `veritra-c7-history-v1`, which Rust prepends itself (any other is
+/// (Ed25519, 64 bytes). `domain` must be `veritra-c7-post-sig-v1`,
+/// `veritra-c7-history-v1` or `veritra-invite-binding-v2` (C1 invitation
+/// binding), which Rust prepends itself (any other is
 /// `PM_CRYPTO_INVALID_ARGUMENT`); `message` is 1 to 4096 bytes.
 ///
 /// ABI 14 (L1): `domain` may also be `veritra-l1-device-list-sig-v1`. Then

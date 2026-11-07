@@ -22,9 +22,12 @@ enum InviteTargetKind {
 /// What the creating device bound an invitation to (D90): the target, the
 /// inviting account and device, and that device's signing key. [tag] is the
 /// HMAC the creating app derived from the link secret over these fields and
-/// the server's origin. The server cannot make or check it; the joiner
-/// recomputes it from the link (`MembershipInviteLink.verifies`) and refuses
-/// the invitation when it does not match.
+/// the server's origin; [signature] (v2) is the device's Ed25519 signature
+/// over the same fields and the link's locator. The server can make and check
+/// neither; the joiner checks the tag and the key commitment against the link
+/// (`MembershipInviteLink.matches`) and the signature through the engine, and
+/// refuses the invitation unless all pass. An invitation made before v2 has
+/// an empty [signature] and is refused.
 class InviteBinding {
   const InviteBinding({
     required this.kind,
@@ -33,6 +36,7 @@ class InviteBinding {
     required this.inviterDeviceId,
     required this.inviterSigningKey,
     required this.tag,
+    required this.signature,
   });
 
   final InviteTargetKind kind;
@@ -44,6 +48,10 @@ class InviteBinding {
   /// 64 lowercase hex characters.
   final String tag;
 
+  /// The creating device's 64-byte signature (v2); empty when the server has
+  /// none (an invitation made before v2).
+  final Uint8List signature;
+
   factory InviteBinding.fromJson(Object? json) {
     if (json is! Map) throw const FormatException('no invitation binding');
     final kind = InviteTargetKind.fromWire(json['target_kind']);
@@ -52,6 +60,7 @@ class InviteBinding {
     final deviceId = json['inviter_device_id'];
     final key = json['inviter_signing_key'];
     final tag = json['tag'];
+    final signature = json['signature'];
     if (kind == null ||
         targetId is! String ||
         targetId.isEmpty ||
@@ -60,7 +69,8 @@ class InviteBinding {
         deviceId is! String ||
         deviceId.isEmpty ||
         key is! String ||
-        tag is! String) {
+        tag is! String ||
+        (signature != null && signature is! String)) {
       throw const FormatException('bad invitation binding');
     }
     return InviteBinding(
@@ -70,6 +80,9 @@ class InviteBinding {
       inviterDeviceId: deviceId,
       inviterSigningKey: Uint8List.fromList(base64.decode(key)),
       tag: tag,
+      signature: signature == null
+          ? Uint8List(0)
+          : Uint8List.fromList(base64.decode(signature as String)),
     );
   }
 }
@@ -119,7 +132,7 @@ class InvitePreview {
   final bool alreadyMember;
 
   /// What the creating device bound the link to. Not trusted until
-  /// `MembershipInviteLink.verifies` accepts it.
+  /// `MembershipInviteLink.matches` and the signature check accept it.
   final InviteBinding binding;
 
   factory InvitePreview.fromJson(Map<String, Object?> json) {
@@ -181,7 +194,7 @@ class JoinRequest {
 
   /// Only on the answer to a request to join: what the invitation it went
   /// through was bound to. Not trusted until
-  /// `MembershipInviteLink.verifies` accepts it.
+  /// `MembershipInviteLink.matches` and the signature check accept it.
   final InviteBinding? binding;
 
   factory JoinRequest.fromJson(Map<String, Object?> json) {

@@ -55,11 +55,14 @@ final Map<String, Object?> _bindingJson = <String, Object?>{
   'inviter_device_id': 'dev_alice',
   'inviter_signing_key': base64.encode(List<int>.generate(32, (i) => i)),
   'tag': 'cd' * 32,
+  'signature': base64.encode(List<int>.filled(64, 7)),
 };
 
 void main() {
-  final link =
-      MembershipInviteLink.generate(origin: 'https://chat.example.org');
+  final link = MembershipInviteLink.generate(
+    origin: 'https://chat.example.org',
+    inviterSigningKey: List<int>.generate(32, (i) => i),
+  );
 
   test('creating an invitation sends the locator and never the secret',
       () async {
@@ -79,6 +82,7 @@ void main() {
       locator: link.locator,
       signingKey: List<int>.generate(32, (i) => i),
       bindingTag: 'ab' * 32,
+      bindingSignature: List<int>.filled(64, 9),
     );
     expect(invite.id, 'minv_1');
     expect(invite.maxUses, 10);
@@ -89,6 +93,7 @@ void main() {
       'locator',
       'signing_key',
       'binding_tag',
+      'binding_signature',
       'max_uses',
       'expires_in_seconds',
     });
@@ -97,9 +102,11 @@ void main() {
     expect(base64.decode(_bodyOf(call)['signing_key']! as String),
         List<int>.generate(32, (i) => i));
     expect(_bodyOf(call)['binding_tag'], 'ab' * 32);
+    expect(base64.decode(_bodyOf(call)['binding_signature']! as String),
+        List<int>.filled(64, 9));
     expect(_bodyOf(call)['expires_in_seconds'], 7 * 24 * 3600);
-    // The secret is the part of the link after "v1." in its fragment.
-    final secret = Uri.parse(link.url).fragment.substring(3);
+    // The secret is the first part of the link's fragment after "v2.".
+    final secret = Uri.parse(link.url).fragment.split('.')[1];
     expect(call.body, isNot(contains(secret)));
     expect(call.path, isNot(contains(secret)));
   });
@@ -152,6 +159,7 @@ void main() {
     expect(preview.binding.inviterDeviceId, 'dev_alice');
     expect(preview.binding.inviterSigningKey, List<int>.generate(32, (i) => i));
     expect(preview.binding.tag, 'cd' * 32);
+    expect(preview.binding.signature, List<int>.filled(64, 7));
     final request = await client.requestToJoin('tok', link.locator);
     expect(request.status, JoinRequestStatus.pending);
     expect(request.binding!.tag, 'cd' * 32);
@@ -265,6 +273,22 @@ void main() {
     );
   });
 
+  test('an invitation made before v2 has no signature and reads as empty',
+      () async {
+    for (final absent in <Object?>[null, '']) {
+      final (client, _) = await _client((_) => <String, Object?>{
+            'target_kind': 'group',
+            'target_name': 'Hikers',
+            'inviter_username': 'alice',
+            'expires_at': '2026-11-14T10:00:00Z',
+            'already_member': false,
+            'binding': <String, Object?>{..._bindingJson, 'signature': absent},
+          });
+      final preview = await client.previewMembershipInvite('tok', link.locator);
+      expect(preview.binding.signature, isEmpty);
+    }
+  });
+
   test('a preview without a usable binding is a bad response', () async {
     final broken = <Map<String, Object?>?>[
       null,
@@ -273,6 +297,8 @@ void main() {
       <String, Object?>{..._bindingJson, 'inviter_signing_key': 7},
       <String, Object?>{..._bindingJson, 'inviter_signing_key': '!!not base64'},
       <String, Object?>{..._bindingJson, 'tag': null},
+      <String, Object?>{..._bindingJson, 'signature': 7},
+      <String, Object?>{..._bindingJson, 'signature': '!!not base64'},
     ];
     for (final binding in broken) {
       final (client, _) = await _client((_) => <String, Object?>{
