@@ -14,7 +14,6 @@ import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
-import 'l1_test_lists.dart';
 
 /// Real clients, real OpenMLS, real server: the demo's message flow end to
 /// end, including offline use. Run through `scripts/test-demo-e2e.sh`, which
@@ -360,7 +359,7 @@ class _DemoClient {
       apiClientFactory: (url) =>
           ApiClient(baseUrl: url, transport: TransportPolicy.demo),
       cryptoService:
-          TestNativeCryptoService(bindings: bindings, localStore: this.store),
+          NativeCryptoService(bindings: bindings, localStore: this.store),
       localStore: this.store,
       backupService: BackupService(
         bindings: bindings,
