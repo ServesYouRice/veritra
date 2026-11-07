@@ -4,6 +4,7 @@
 //! the selected library and protocol flow while platform key wrapping and ABI
 //! ownership semantics are still under review.
 
+use crate::c7;
 use openmls::prelude::*;
 use openmls::treesync::LeafNodeParameters;
 use openmls_basic_credential::SignatureKeyPair;
@@ -55,6 +56,22 @@ pub enum MlsError {
     /// nothing: the device is just not in the group, and someone has to
     /// add it again.
     KeyPackageUnavailable,
+}
+
+/// What a processed or merged commit did (C7, ABI 13), read from the staged
+/// commit and never from a server label.
+pub struct CommitOutcome {
+    /// At least one Remove proposal (a device replacement included).
+    pub removed_any: bool,
+    /// At least one Add proposal.
+    pub added_any: bool,
+    /// The commit removed this device. Then there is no `root`.
+    pub removed_self: bool,
+    /// The epoch the commit produces.
+    pub new_epoch: u64,
+    /// `MLS-Exporter("veritra-c7-rekey-v1", lp(group_id) | u64(new_epoch), 32)`
+    /// for a removal commit that keeps this device; zeroized on drop.
+    pub root: Option<tls_codec::SecretVLBytes>,
 }
 
 /// One MLS device identity and its private provider state.
@@ -462,6 +479,27 @@ impl MlsDevice {
         })
     }
 
+    /// C7 (ABI 13): merges this device's own staged commit and reports what
+    /// it did, read from the staged commit itself. For a removal commit the
+    /// exporter root is computed from `group.pending_commit()` before the
+    /// merge. Fails with [`MlsError::InvalidState`], touching nothing, when
+    /// no commit is staged: the caller cannot tell a no-op from a
+    /// membership change then, so it is not guessed.
+    pub fn merge_pending_commit_with_outcome(
+        &self,
+        group: &mut MlsGroup,
+    ) -> Result<CommitOutcome, MlsError> {
+        let id = group.group_id().as_slice().to_vec();
+        self.in_group(&id, || {
+            let staged = group.pending_commit().ok_or(MlsError::InvalidState)?;
+            let outcome = self.commit_outcome(group.group_id().as_slice(), staged)?;
+            group
+                .merge_pending_commit(&self.provider)
+                .map_err(|_| MlsError::GroupOperation)?;
+            Ok(outcome)
+        })
+    }
+
     /// Builds and stages an update commit; the FFI caller merges it at once.
     /// The app never uses this path, because merging before the server
     /// accepts the commit can fork the group. Periodic updates go through
@@ -499,12 +537,26 @@ impl MlsDevice {
     }
 
     pub fn process_commit(&self, group: &mut MlsGroup, commit: &[u8]) -> Result<(), MlsError> {
+        self.process_commit_with_outcome(group, commit).map(drop)
+    }
+
+    /// C7 (ABI 13): [`Self::process_commit`] that also reports what the
+    /// commit did, from the staged commit itself and never from a server
+    /// label. For a removal commit that leaves this device in the group,
+    /// `root` is the exporter output of the epoch the commit produces,
+    /// computed before the merge. A commit that removes this device returns
+    /// `removed_any` and `removed_self` with no root, not an error.
+    pub fn process_commit_with_outcome(
+        &self,
+        group: &mut MlsGroup,
+        commit: &[u8],
+    ) -> Result<CommitOutcome, MlsError> {
         let protocol_message = MlsMessageIn::tls_deserialize_exact(commit)
             .map_err(|_| MlsError::InvalidMessage)?
             .try_into_protocol_message()
             .map_err(|_| MlsError::InvalidMessage)?;
         let id = group.group_id().as_slice().to_vec();
-        self.in_group(&id, || {
+        let outcome = self.in_group(&id, || {
             self.process_commit_in_scope(group, protocol_message)
         })?;
         // Own removal applied: the group can never be used again, so its
@@ -513,7 +565,48 @@ impl MlsDevice {
         if !group.is_active() {
             self.provider.storage().drop_group(&id)?;
         }
-        Ok(())
+        Ok(outcome)
+    }
+
+    /// What `staged` does, read from MLS itself (C7, decision 5). The
+    /// exporter runs only for a removal commit that keeps this device, with
+    /// the one label and context C7 uses, so no other exporter output
+    /// leaves the core.
+    fn commit_outcome(
+        &self,
+        group_id: &[u8],
+        staged: &StagedCommit,
+    ) -> Result<CommitOutcome, MlsError> {
+        let removed_any = staged.remove_proposals().next().is_some();
+        let added_any = staged.add_proposals().next().is_some();
+        let removed_self = staged.self_removed();
+        let new_epoch = staged.epoch().as_u64();
+        let root = if removed_any && !removed_self {
+            let context =
+                c7::exporter_context(group_id, new_epoch).map_err(|_| MlsError::InvalidIdentity)?;
+            let secret = staged
+                .export_secret(
+                    self.provider.crypto(),
+                    c7::EXPORTER_LABEL,
+                    &context,
+                    c7::KEY_BYTES,
+                )
+                .map_err(|_| MlsError::GroupOperation)?;
+            let secret = tls_codec::SecretVLBytes::new(secret);
+            if secret.as_slice().len() != c7::KEY_BYTES {
+                return Err(MlsError::GroupOperation);
+            }
+            Some(secret)
+        } else {
+            None
+        };
+        Ok(CommitOutcome {
+            removed_any,
+            added_any,
+            removed_self,
+            new_epoch,
+            root,
+        })
     }
 
     /// Drops a group and every record it holds. Only for a user's action
@@ -552,7 +645,7 @@ impl MlsDevice {
         &self,
         group: &mut MlsGroup,
         protocol_message: ProtocolMessage,
-    ) -> Result<(), MlsError> {
+    ) -> Result<CommitOutcome, MlsError> {
         let processed = group
             .process_message(&self.provider, protocol_message)
             .map_err(|_| MlsError::InvalidMessage)?;
@@ -568,9 +661,13 @@ impl MlsDevice {
         // Inspect before merging: once merged, the leaves it brings in are
         // what decrypt() attributes messages to.
         inspect_commit(group, committer, &staged_commit)?;
+        // The exporter root comes out of the staged commit, before the merge
+        // replaces the epoch secrets. A failed merge drops (and wipes) it.
+        let outcome = self.commit_outcome(group.group_id().as_slice(), &staged_commit)?;
         group
             .merge_staged_commit(&self.provider, *staged_commit)
-            .map_err(|_| MlsError::GroupOperation)
+            .map_err(|_| MlsError::GroupOperation)?;
+        Ok(outcome)
     }
 
     /// Every leaf carrying this account/device credential. A device is one
@@ -592,6 +689,37 @@ impl MlsDevice {
             return Err(MlsError::InvalidIdentity);
         }
         Ok(indices)
+    }
+
+    /// C7 (ABI 13): the signature public key of the member device with this
+    /// account and device id, read from the group's current tree. Fails when
+    /// there is no such member, or when several leaves carry the identity
+    /// with different keys (nothing is guessed).
+    pub fn member_signature_key(
+        &self,
+        group: &MlsGroup,
+        account_id: &[u8],
+        device_id: &[u8],
+    ) -> Result<Vec<u8>, MlsError> {
+        let identity = encode_device_identity(account_id, device_id)?;
+        let mut keys = group
+            .members()
+            .filter(|member| member.credential.serialized_content() == identity)
+            .map(|member| member.signature_key);
+        let first = keys.next().ok_or(MlsError::InvalidIdentity)?;
+        if keys.any(|key| key != first) {
+            return Err(MlsError::InvalidIdentity);
+        }
+        Ok(first)
+    }
+
+    /// C7 (ABI 13): signs `domain | message` with this device's credential
+    /// key. `domain` must be one of [`c7::SIGN_DOMAINS`].
+    pub fn c7_sign(&self, domain: &[u8], message: &[u8]) -> Result<Vec<u8>, MlsError> {
+        let input = c7::signing_input(domain, message).map_err(|_| MlsError::InvalidMessage)?;
+        self.signer
+            .sign(&input)
+            .map_err(|_| MlsError::GroupOperation)
     }
 
     /// The conversation's safety number (v2): the group id and every member
@@ -764,6 +892,25 @@ impl MlsDevice {
         expected_sender_account: &[u8],
         expected_sender_device: &[u8],
     ) -> Result<Vec<u8>, MlsError> {
+        self.decrypt_with_epoch(
+            group,
+            ciphertext,
+            expected_sender_account,
+            expected_sender_device,
+        )
+        .map(|(plaintext, _)| plaintext)
+    }
+
+    /// C7 (ABI 13): [`Self::decrypt`] that also returns the epoch the
+    /// message was encrypted in, from MLS itself (a record's signed `epoch`
+    /// and a post's freshness are judged against it).
+    pub fn decrypt_with_epoch(
+        &self,
+        group: &mut MlsGroup,
+        ciphertext: &[u8],
+        expected_sender_account: &[u8],
+        expected_sender_device: &[u8],
+    ) -> Result<(Vec<u8>, u64), MlsError> {
         let expected_identity =
             encode_device_identity(expected_sender_account, expected_sender_device)?;
         let protocol_message = MlsMessageIn::tls_deserialize_exact(ciphertext)
@@ -776,6 +923,7 @@ impl MlsDevice {
                 .process_message(&self.provider, protocol_message)
                 .map_err(|_| MlsError::InvalidMessage)
         })?;
+        let message_epoch = processed.epoch().as_u64();
         let sender_matches = processed.credential().serialized_content() == expected_identity;
         // Two past epochs stay decryptable (I51), so a device removed at
         // epoch N could keep writing in epoch N by never applying its
@@ -797,7 +945,9 @@ impl MlsDevice {
                 wipe(message.into_bytes());
                 Err(MlsError::SenderRemoved)
             }
-            ProcessedMessageContent::ApplicationMessage(message) => Ok(message.into_bytes()),
+            ProcessedMessageContent::ApplicationMessage(message) => {
+                Ok((message.into_bytes(), message_epoch))
+            }
             _ => Err(MlsError::UnexpectedMessage),
         }
     }
@@ -1111,9 +1261,14 @@ fn inspect_commit(
         .collect::<Result<Vec<_>, _>>()?;
     ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
 
-    let keeps_identity = |leaf: LeafNodeIndex, credential: &Credential| {
+    // C7 (decision 8): credential keys never change in place. An update
+    // keeps the identity and the signature key; a changed key is only a
+    // replacement (remove and add), which rekeys.
+    let keeps_identity = |leaf: LeafNodeIndex, node: &LeafNode| {
         let current = group.member_at(leaf).ok_or(refused)?;
-        if basic_identity(credential)? != current.credential.serialized_content() {
+        if basic_identity(node.credential())? != current.credential.serialized_content()
+            || node.signature_key().as_slice() != current.signature_key.as_slice()
+        {
             return Err(refused);
         }
         Ok(())
@@ -1122,10 +1277,10 @@ fn inspect_commit(
         let Sender::Member(leaf) = *update.sender() else {
             return Err(refused);
         };
-        keeps_identity(leaf, update.update_proposal().leaf_node().credential())?;
+        keeps_identity(leaf, update.update_proposal().leaf_node())?;
     }
     if let Some(leaf_node) = staged.update_path_leaf_node() {
-        keeps_identity(committer, leaf_node.credential())?;
+        keeps_identity(committer, leaf_node)?;
     }
     Ok(())
 }
@@ -2573,5 +2728,343 @@ mod tests {
                 0x6a, 0x48, 0xe2, 0x5a
             ]
         );
+    }
+
+    // ---- C7 (ABI 13): commit outcome, exporter root, epoch, keys ----
+
+    fn root_of(outcome: &CommitOutcome) -> Vec<u8> {
+        outcome.root.as_ref().expect("root").as_slice().to_vec()
+    }
+
+    /// The exporter value of the group's current epoch, through OpenMLS.
+    fn exported_root(device: &MlsDevice, group: &MlsGroup) -> Vec<u8> {
+        group
+            .export_secret(
+                device.provider.crypto(),
+                c7::EXPORTER_LABEL,
+                &c7::exporter_context(group.group_id().as_slice(), group.epoch().as_u64()).unwrap(),
+                32,
+            )
+            .unwrap()
+    }
+
+    fn removal_of<'a>(account: &'a [u8], device: &'a [u8]) -> [MemberIdentity<'a>; 1] {
+        [MemberIdentity {
+            account_id: account,
+            device_id: device,
+        }]
+    }
+
+    #[test]
+    fn c7_removal_returns_the_staged_export_that_the_merged_epoch_also_gives() {
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
+            three_members(b"conv_c7_root");
+        let staged = alice
+            .stage_membership_commit(&mut alice_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
+            .unwrap();
+        // The committer's own pending commit.
+        let own = alice
+            .merge_pending_commit_with_outcome(&mut alice_group)
+            .unwrap();
+        assert!(own.removed_any && !own.added_any && !own.removed_self);
+        assert_eq!(own.new_epoch, staged.epoch + 1);
+        assert_eq!(own.new_epoch, alice_group.epoch().as_u64());
+        // The export taken before the merge is the one MlsGroup gives after.
+        assert_eq!(root_of(&own), exported_root(&alice, &alice_group));
+        assert_eq!(root_of(&own).len(), 32);
+
+        // Another member's staged commit gives the same value.
+        let other = carol
+            .process_commit_with_outcome(&mut carol_group, &staged.commit)
+            .unwrap();
+        assert!(other.removed_any && !other.added_any && !other.removed_self);
+        assert_eq!(other.new_epoch, own.new_epoch);
+        assert_eq!(root_of(&other), root_of(&own));
+        assert_eq!(root_of(&other), exported_root(&carol, &carol_group));
+
+        // The removed device: removed, no root, no error, group gone (D70).
+        let removed = bob
+            .process_commit_with_outcome(&mut bob_group, &staged.commit)
+            .unwrap();
+        assert!(removed.removed_any && removed.removed_self);
+        assert!(removed.root.is_none());
+        assert_eq!(removed.new_epoch, own.new_epoch);
+        assert_eq!(
+            bob.load_group(b"conv_c7_root").err(),
+            Some(MlsError::InvalidState)
+        );
+    }
+
+    #[test]
+    fn c7_roots_differ_by_group_and_by_epoch() {
+        let ([alice, _, _], [mut alice_group, ..]) = three_members(b"conv_c7_a");
+        let ([alice_b, _, _], [mut other_group, ..]) = three_members(b"conv_c7_b");
+        alice
+            .stage_membership_commit(&mut alice_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
+            .unwrap();
+        let a = alice
+            .merge_pending_commit_with_outcome(&mut alice_group)
+            .unwrap();
+        alice_b
+            .stage_membership_commit(&mut other_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
+            .unwrap();
+        let b = alice_b
+            .merge_pending_commit_with_outcome(&mut other_group)
+            .unwrap();
+        // Same epoch number, different groups (and different key schedules).
+        assert_eq!(a.new_epoch, b.new_epoch);
+        assert_ne!(root_of(&a), root_of(&b));
+        // Another removal moves to a new epoch with a new root.
+        alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[],
+                &removal_of(b"acct_carol", b"dev_carol"),
+            )
+            .unwrap();
+        let c = alice
+            .merge_pending_commit_with_outcome(&mut alice_group)
+            .unwrap();
+        assert_eq!(c.new_epoch, a.new_epoch + 1);
+        assert_ne!(root_of(&c), root_of(&a));
+    }
+
+    #[test]
+    fn c7_add_update_and_replacement_report_what_the_commit_holds() {
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
+            three_members(b"conv_c7_kinds");
+        // An add: Added, no root.
+        let dave = MlsDevice::new(b"acct_dave", b"dev_dave").unwrap();
+        let dave_kp = dave.create_key_package().unwrap();
+        let add = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[MemberAdd {
+                    key_package: &dave_kp,
+                    account_id: b"acct_dave",
+                    device_id: b"dev_dave",
+                }],
+                &[],
+            )
+            .unwrap();
+        let own = alice
+            .merge_pending_commit_with_outcome(&mut alice_group)
+            .unwrap();
+        assert!(own.added_any && !own.removed_any && !own.removed_self);
+        assert!(own.root.is_none());
+        let seen = bob
+            .process_commit_with_outcome(&mut bob_group, &add.commit)
+            .unwrap();
+        assert!(seen.added_any && !seen.removed_any && seen.root.is_none());
+        carol.process_commit(&mut carol_group, &add.commit).unwrap();
+
+        // A self-update: nothing, no root, the next epoch.
+        let update = bob.stage_self_update(&mut bob_group).unwrap();
+        let own = bob
+            .merge_pending_commit_with_outcome(&mut bob_group)
+            .unwrap();
+        assert!(!own.added_any && !own.removed_any && !own.removed_self);
+        assert!(own.root.is_none());
+        let seen = alice
+            .process_commit_with_outcome(&mut alice_group, &update.commit)
+            .unwrap();
+        assert!(!seen.added_any && !seen.removed_any && seen.root.is_none());
+        assert_eq!(seen.new_epoch, alice_group.epoch().as_u64());
+        carol
+            .process_commit(&mut carol_group, &update.commit)
+            .unwrap();
+
+        // A replacement: carol's identity removed and added again with a new
+        // key package in one commit. Both flags, and a root: it rekeys.
+        let carol_new = MlsDevice::new(b"acct_carol", b"dev_carol").unwrap();
+        let carol_new_kp = carol_new.create_key_package().unwrap();
+        let replace = alice
+            .stage_membership_commit(
+                &mut alice_group,
+                &[MemberAdd {
+                    key_package: &carol_new_kp,
+                    account_id: b"acct_carol",
+                    device_id: b"dev_carol",
+                }],
+                &removal_of(b"acct_carol", b"dev_carol"),
+            )
+            .unwrap();
+        let own = alice
+            .merge_pending_commit_with_outcome(&mut alice_group)
+            .unwrap();
+        assert!(own.added_any && own.removed_any && !own.removed_self);
+        assert_eq!(root_of(&own), exported_root(&alice, &alice_group));
+        let seen = bob
+            .process_commit_with_outcome(&mut bob_group, &replace.commit)
+            .unwrap();
+        assert_eq!(root_of(&seen), root_of(&own));
+        // The old carol device is removed by it.
+        let gone = carol
+            .process_commit_with_outcome(&mut carol_group, &replace.commit)
+            .unwrap();
+        assert!(gone.removed_self && gone.root.is_none());
+        // The replaced device's key is now the new one in the tree.
+        assert_eq!(
+            alice
+                .member_signature_key(&alice_group, b"acct_carol", b"dev_carol")
+                .unwrap(),
+            carol_new.signing_public_key()
+        );
+    }
+
+    #[test]
+    fn c7_outcome_comes_from_the_commit_bytes_alone() {
+        // The server's label is not an input: the same bytes give the same
+        // outcome whatever the transport called them, so a removal labelled
+        // as an add still reports a removal and a root.
+        let ([alice, _bob, carol], [mut alice_group, _bob_group, mut carol_group]) =
+            three_members(b"conv_c7_label");
+        let removal = alice
+            .stage_membership_commit(&mut alice_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
+            .unwrap();
+        let outcome = carol
+            .process_commit_with_outcome(&mut carol_group, &removal.commit)
+            .unwrap();
+        assert!(outcome.removed_any && !outcome.added_any);
+        assert!(outcome.root.is_some());
+    }
+
+    #[test]
+    fn c7_merge_without_a_staged_commit_is_refused_and_changes_nothing() {
+        let ([alice, ..], [mut alice_group, ..]) = three_members(b"conv_c7_nopending");
+        let epoch = alice.group_epoch(&alice_group);
+        assert!(matches!(
+            alice.merge_pending_commit_with_outcome(&mut alice_group),
+            Err(MlsError::InvalidState)
+        ));
+        assert_eq!(alice.group_epoch(&alice_group), epoch);
+    }
+
+    #[test]
+    fn c7_failed_commit_processing_returns_no_root_and_keeps_the_epoch() {
+        let ([alice, _, carol], [mut alice_group, _, mut carol_group]) =
+            three_members(b"conv_c7_fail");
+        let staged = alice
+            .stage_membership_commit(&mut alice_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
+            .unwrap();
+        let epoch = carol.group_epoch(&carol_group);
+        let mut damaged = staged.commit.clone();
+        let last = damaged.len() - 1;
+        damaged[last] ^= 0x01;
+        assert!(carol
+            .process_commit_with_outcome(&mut carol_group, &damaged)
+            .is_err());
+        assert_eq!(carol.group_epoch(&carol_group), epoch);
+        // The undamaged commit still applies afterwards.
+        let outcome = carol
+            .process_commit_with_outcome(&mut carol_group, &staged.commit)
+            .unwrap();
+        assert!(outcome.root.is_some());
+    }
+
+    #[test]
+    fn c7_an_update_that_changes_the_signature_key_is_refused() {
+        let (devices, mut groups) = three_members(b"conv_c7_rekeyed");
+        // Bob keeps his identity but rotates his credential key in an update
+        // path (the path OpenMLS offers for it).
+        let commit = {
+            let [_, bob, _] = &devices;
+            let new_signer = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm()).unwrap();
+            new_signer.store(bob.provider.storage()).unwrap();
+            let credential = CredentialWithKey {
+                credential: BasicCredential::new(
+                    encode_device_identity(b"acct_bob", b"dev_bob").unwrap(),
+                )
+                .into(),
+                signature_key: new_signer.public().into(),
+            };
+            let bundle = NewSignerBundle {
+                signer: &new_signer,
+                credential_with_key: credential,
+            };
+            in_scope(bob, &mut groups[1], |g| {
+                g.self_update_with_new_signer(
+                    &bob.provider,
+                    &bob.signer,
+                    bundle,
+                    LeafNodeParameters::default(),
+                )
+            })
+            .unwrap()
+            .into_contents()
+            .0
+            .tls_serialize_detached()
+            .unwrap()
+        };
+        assert_refused_then_recovers(&devices, &mut groups, b"conv_c7_rekeyed", &commit);
+    }
+
+    #[test]
+    fn c7_decrypt_returns_the_epoch_the_message_was_sent_in() {
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
+            three_members(b"conv_c7_epoch");
+        let early = bob.encrypt(&mut bob_group, b"early").unwrap();
+        let (plain, epoch) = alice
+            .decrypt_with_epoch(&mut alice_group, &early, b"acct_bob", b"dev_bob")
+            .unwrap();
+        assert_eq!((plain.as_slice(), epoch), (&b"early"[..], 1));
+        // A message from a past epoch reports that epoch, not the current.
+        let late = carol.encrypt(&mut carol_group, b"late").unwrap();
+        let update = alice.stage_self_update(&mut alice_group).unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        assert_eq!(alice.group_epoch(&alice_group), 2);
+        let (plain, epoch) = alice
+            .decrypt_with_epoch(&mut alice_group, &late, b"acct_carol", b"dev_carol")
+            .unwrap();
+        assert_eq!((plain.as_slice(), epoch), (&b"late"[..], 1));
+        bob.process_commit(&mut bob_group, &update.commit).unwrap();
+        let fresh = bob.encrypt(&mut bob_group, b"fresh").unwrap();
+        let (_, epoch) = alice
+            .decrypt_with_epoch(&mut alice_group, &fresh, b"acct_bob", b"dev_bob")
+            .unwrap();
+        assert_eq!(epoch, 2);
+        // A wrong claimed sender is still refused.
+        let spoof = bob.encrypt(&mut bob_group, b"spoof").unwrap();
+        assert_eq!(
+            alice
+                .decrypt_with_epoch(&mut alice_group, &spoof, b"acct_carol", b"dev_carol")
+                .err(),
+            Some(MlsError::SenderMismatch)
+        );
+    }
+
+    #[test]
+    fn c7_member_key_read_and_signatures_cross_devices() {
+        let ([alice, bob, _], [alice_group, ..]) = three_members(b"conv_c7_keys");
+        let key = alice
+            .member_signature_key(&alice_group, b"acct_bob", b"dev_bob")
+            .unwrap();
+        assert_eq!(key, bob.signing_public_key());
+        assert_eq!(
+            alice
+                .member_signature_key(&alice_group, b"acct_alice", b"dev_alice")
+                .unwrap(),
+            alice.signing_public_key()
+        );
+        assert_eq!(
+            alice
+                .member_signature_key(&alice_group, b"acct_zed", b"dev_zed")
+                .err(),
+            Some(MlsError::InvalidIdentity)
+        );
+        // Bob signs; Alice verifies with the key she read from the tree.
+        let message = b"history record fields";
+        for domain in c7::SIGN_DOMAINS {
+            let signature = bob.c7_sign(domain, message).unwrap();
+            assert_eq!(signature.len(), 64);
+            assert!(c7::verify(domain, &key, message, &signature).unwrap());
+            assert!(!c7::verify(domain, &key, b"other fields", &signature).unwrap());
+        }
+        // A signature under one domain is no signature under the other.
+        let post = bob.c7_sign(c7::SIGN_DOMAIN_POST, message).unwrap();
+        assert!(!c7::verify(c7::SIGN_DOMAIN_HISTORY, &key, message, &post).unwrap());
+        // Unlisted domains are refused for signing.
+        assert!(bob.c7_sign(b"veritra-c7-other-v1", message).is_err());
+        assert!(bob.c7_sign(b"MLS 1.0 anything", message).is_err());
     }
 }

@@ -209,6 +209,10 @@ typedef _ThreeSlicesOutputNative = Int32 Function(
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _ThreeSlicesOutputDart = int Function(
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _VerifyNative = Int32 Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
+typedef _VerifyDart = int Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
 
 /// The public values derived from a K0 recovery key (ABI 11). None is
 /// secret against the device. `rkPub` is integrity-critical and never goes
@@ -291,6 +295,16 @@ class NativeCryptoBindings {
         _frankCommit =
             library.lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
                 'pm_crypto_frank_commit'),
+        _c7Derive = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_c7_derive'),
+        _c7ChkCommit = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_c7_chk_commit'),
+        _c7Seal = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_c7_seal'),
+        _c7Open = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_c7_open'),
+        _c7Verify = library
+            .lookupFunction<_VerifyNative, _VerifyDart>('pm_crypto_c7_verify'),
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
@@ -333,7 +347,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 12) {
+    if (_abiVersion() != 13) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -388,6 +402,11 @@ class NativeCryptoBindings {
   final _ThreeSlicesOutputDart _reportSeal;
   final _ThreeSlicesOutputDart _reportOpen;
   final _RecoveryProofDart _frankCommit;
+  final _ThreeSlicesOutputDart _c7Derive;
+  final _LocatorDart _c7ChkCommit;
+  final _ThreeSlicesOutputDart _c7Seal;
+  final _ThreeSlicesOutputDart _c7Open;
+  final _VerifyDart _c7Verify;
 
   /// K0 recovery key entropy length (ABI 11).
   static const recoveryKeyEntropyBytes = 30;
@@ -620,6 +639,136 @@ class NativeCryptoBindings {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
     return Uint8List.fromList(commit);
+  }
+
+  /// C7 channel history keys (ABI 13, `docs/designs/C7-channel-history.md`
+  /// revision 7). Every key is 32 bytes.
+  static const c7KeyBytes = 32;
+
+  /// Largest C7 associated data and derive info (ABI 13).
+  static const c7MaxAadBytes = 1024;
+  static const c7MaxInfoBytes = 1024;
+
+  /// Largest plaintext a C7 body seals: the 64 KiB VAP1 cap and the 64-byte
+  /// signature in front of it.
+  static const c7MaxPlaintextBytes = 64 * 1024 + 64;
+
+  /// What sealing adds: key commitment (32), nonce (12) and tag (16).
+  static const c7SealOverhead = 32 + 12 + 16;
+
+  /// `c7_derive` (ABI 13): HKDF-SHA256, salt [label], 32 bytes out. [label]
+  /// is `veritra-c7-post-v1`, `veritra-c7-rekey-chk-v1` or
+  /// `veritra-c7-slot-v1`; any other is [NativeCryptoError.invalidArgument].
+  /// [info] is `lp(...)` fields with u16 big-endian lengths. The caller
+  /// wipes the result.
+  Uint8List c7Derive({
+    required Uint8List key,
+    required String label,
+    required List<int> info,
+  }) {
+    _bounded(key, c7KeyBytes, exact: true);
+    _bounded(info, c7MaxInfoBytes);
+    final derived = _withSlice(
+        key,
+        (keySlice) => _withByteLists(
+            <List<int>>[utf8.encode(label), info],
+            (slices) => _output(
+                (out) => _c7Derive(keySlice, slices[0], slices[1], out),
+                maximum: c7KeyBytes)));
+    return _secretOutput(derived, c7KeyBytes);
+  }
+
+  /// `sha256("veritra-c7-chk-v1" | key)` (ABI 13): a record's `chk_commit`.
+  Uint8List c7ChkCommit(Uint8List key) {
+    _bounded(key, c7KeyBytes, exact: true);
+    final commit = _withSlice(key,
+        (slice) => _output((out) => _c7ChkCommit(slice, out), maximum: 32));
+    if (commit.length != 32) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(commit);
+  }
+
+  /// Seals [plaintext] under [key] (ABI 13): `kc | nonce | ciphertext |
+  /// tag`, with a random nonce chosen in Rust. A key seals one message only
+  /// (post and slot keys bind `action_id`). [aad] is required.
+  Uint8List c7Seal({
+    required Uint8List key,
+    required List<int> aad,
+    required Uint8List plaintext,
+  }) {
+    _bounded(key, c7KeyBytes, exact: true);
+    _bounded(aad, c7MaxAadBytes);
+    _bounded(plaintext, c7MaxPlaintextBytes);
+    final sealed = _withSlice(
+        key,
+        (keySlice) => _withSlice(
+            plaintext,
+            (plain) => _withByteLists(
+                <List<int>>[aad],
+                (slices) => _output(
+                    (out) => _c7Seal(keySlice, slices[0], plain, out),
+                    maximum: c7MaxPlaintextBytes + c7SealOverhead))));
+    if (sealed.length != plaintext.length + c7SealOverhead) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(sealed);
+  }
+
+  /// Opens a value sealed by [c7Seal] (ABI 13). Returns `null` when [key] is
+  /// not the key it was sealed under (its commitment differs): try the next
+  /// candidate. Altered bytes or another [aad] under the right key throw
+  /// [NativeCryptoError.operationFailed]. The caller wipes the result.
+  Uint8List? c7Open({
+    required Uint8List key,
+    required List<int> aad,
+    required List<int> sealed,
+  }) {
+    _bounded(key, c7KeyBytes, exact: true);
+    _bounded(aad, c7MaxAadBytes);
+    _bounded(sealed, c7MaxPlaintextBytes + c7SealOverhead);
+    if (sealed.length < c7SealOverhead) {
+      throw ArgumentError('Native crypto input has an invalid size');
+    }
+    try {
+      final opened = _withSlice(
+          key,
+          (keySlice) => _withByteLists(
+              <List<int>>[aad, sealed],
+              (slices) => _output(
+                  (out) => _c7Open(keySlice, slices[0], slices[1], out),
+                  maximum: c7MaxPlaintextBytes)));
+      return _secretOutput(opened, sealed.length - c7SealOverhead);
+    } on NativeCryptoException catch (error) {
+      if (error.kind == NativeCryptoError.c7KeyMismatch) return null;
+      rethrow;
+    }
+  }
+
+  /// Strict Ed25519 verification of `domain | message` (ABI 13). [domain] is
+  /// `veritra-c7-post-sig-v1` or `veritra-c7-history-v1`; any other is
+  /// [NativeCryptoError.invalidArgument]. `false` for an invalid signature,
+  /// a malformed key included.
+  bool c7Verify({
+    required String domain,
+    required List<int> publicKey,
+    required List<int> message,
+    required List<int> signature,
+  }) {
+    _bounded(publicKey, 32, exact: true);
+    _bounded(message, 4096);
+    _bounded(signature, 64, exact: true);
+    final ok = calloc<Uint8>();
+    try {
+      final status = _withSlice(
+          Uint8List.fromList(utf8.encode(domain)),
+          (d) => _withByteLists(<List<int>>[publicKey, message, signature],
+              (s) => _c7Verify(d, s[0], s[1], s[2], ok)));
+      _check(status);
+      return ok.value == 1;
+    } finally {
+      calloc.free(ok);
+    }
   }
 
   /// Hands a secret owned-buffer copy over without another Dart copy.
@@ -995,6 +1144,7 @@ class NativeCryptoBindings {
       -7 => NativeCryptoError.senderRemoved,
       -8 => NativeCryptoError.recordLimit,
       -9 => NativeCryptoError.welcomeKeyPackageUnavailable,
+      -10 => NativeCryptoError.c7KeyMismatch,
       _ => NativeCryptoError.unknown,
     });
   }
@@ -1077,6 +1227,11 @@ enum NativeCryptoError {
   /// [NativeCryptoDevice.joinGroup] only: the Welcome names no key package
   /// this device holds, or it expired (ABI 10, D74). Nothing was consumed.
   welcomeKeyPackageUnavailable,
+
+  /// [NativeCryptoBindings.c7Open] only (ABI 13): the key does not match the
+  /// sealed value's commitment. Not a data failure: try the next candidate
+  /// key. [NativeCryptoBindings.c7Open] turns it into a `null` result.
+  c7KeyMismatch,
 
   /// [NativeCryptoDevice.encrypt] only: the plaintext is larger than
   /// [maxSendablePlaintextBytes], so its ciphertext could not be sent.
