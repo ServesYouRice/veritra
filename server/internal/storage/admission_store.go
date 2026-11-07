@@ -126,6 +126,13 @@ func (s *Store) checkNewConversationMember(ctx context.Context, tx *sql.Tx, conv
 // so both the community and its largest channel must have room, and the
 // account must have room for every channel.
 func (s *Store) checkNewCommunityMember(ctx context.Context, tx *sql.Tx, communityID, accountID string) error {
+	layout, err := communityLayoutOf(ctx, tx, communityID)
+	if err != nil {
+		return err
+	}
+	if layout.active {
+		return s.checkNewActiveCommunityMember(ctx, tx, communityID, accountID)
+	}
 	members, err := communityMemberCount(ctx, tx, communityID)
 	if err != nil {
 		return err

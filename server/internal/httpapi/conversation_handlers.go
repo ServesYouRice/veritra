@@ -97,10 +97,9 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 			writeError(w, http.StatusBadRequest, "invalid_name")
 			return
 		}
-		if req.Kind == "" {
-			req.Kind = "private"
-		}
-		if req.Kind != "private" && req.Kind != "announcement" {
+		// Empty means private in a legacy community and open in one with the
+		// shared-group layout; the store decides, and refuses open elsewhere.
+		if req.Kind != "" && req.Kind != "private" && req.Kind != "announcement" && req.Kind != "open" {
 			writeError(w, http.StatusBadRequest, "invalid_channel_kind")
 			return
 		}
