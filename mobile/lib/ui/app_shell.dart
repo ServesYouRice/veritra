@@ -13,6 +13,7 @@ import 'widgets/account_recovery_banner.dart';
 import 'widgets/connection_banner.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
+import 'widgets/history_copy_banner.dart';
 import 'widgets/listenable_selector.dart';
 import '../l10n/l10n.dart';
 
@@ -165,6 +166,7 @@ class _AppShellState extends State<AppShell> {
             children: <Widget>[
               ConnectionBanner(state: widget.state),
               AccountRecoveryBanner(state: widget.state),
+              HistoryCopyBanner(state: widget.state),
               Expanded(
                 child: Row(
                   children: <Widget>[
@@ -198,6 +200,7 @@ class _AppShellState extends State<AppShell> {
           children: <Widget>[
             ConnectionBanner(state: widget.state),
             AccountRecoveryBanner(state: widget.state),
+            HistoryCopyBanner(state: widget.state),
             Expanded(child: pages[index]),
           ],
         ),

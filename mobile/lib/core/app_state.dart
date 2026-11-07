@@ -13,6 +13,11 @@ import 'package:path_provider/path_provider.dart';
 import '../crypto/app_payload.dart';
 import '../crypto/message_format.dart';
 import '../crypto/device_link_code.dart';
+import '../crypto/history_transfer_service.dart';
+import '../crypto/k2_transfer_crypto.dart';
+import '../crypto/native_crypto_bindings.dart'
+    show K2LinkContext, K2TransferId, K2Verification, NativeCryptoException;
+import '../crypto/sha256.dart';
 import '../crypto/attachment_crypto.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';
@@ -29,6 +34,8 @@ import '../sync/sync_service.dart';
 import 'api_client.dart';
 import 'attachments.dart';
 import 'client_config.dart';
+import 'device_link_v3_models.dart';
+import 'history_transfer_client.dart';
 import 'composer_drafts.dart';
 import 'errors.dart';
 import '../storage/message_search.dart';
@@ -39,6 +46,9 @@ import '../storage/encrypted_database.dart'
         LocalMessage,
         LocalPin,
         LocalConversationPref,
+        HistoryTransferProgress,
+        HistoryTransferStage,
+        historyTransferIncoming,
         localStorageErrorCode;
 import 'models.dart';
 import 'receipts_state.dart';
@@ -49,6 +59,7 @@ import 'account_recovery.dart';
 export 'account_recovery.dart';
 
 part 'app_state_recovery.dart';
+part 'app_state_link_v3.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -170,6 +181,11 @@ class Ops {
   static const recoveryKey = 'recovery_key';
   static const accountRecovery = 'account_recovery';
 
+  /// K2: the link screen of the existing device, and the claim form of the
+  /// new one.
+  static const deviceLink = 'device_link';
+  static const deviceLinkClaim = 'device_link_claim';
+
   /// Refresh failures of the conversation and device lists. The lists keep
   /// their last good contents while this holds an error (card T44A).
   static const conversations = 'conversations';
@@ -281,7 +297,27 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Unsent composer text and reply targets, in memory only (T49C-4). Not
   /// part of what [notifyListeners] reports; cleared when the session ends.
   final ComposerDrafts composerDrafts = ComposerDrafts();
-  DeviceLink? activeDeviceLink;
+
+  /// K2 device link v3 (app_state_link_v3.dart). [activeDeviceLink] is the
+  /// link this device made; [pendingDeviceLinkClaim] is this device's own
+  /// waiting claim; [historyTransferStatus] is the history copy, if one is
+  /// open.
+  DeviceLinkV3View? activeDeviceLink;
+  DeviceLinkV3Record? _activeLinkRecord;
+  _PendingLinkV3? _pendingLink;
+  Timer? _linkPollTimer;
+  Timer? _transferTimer;
+  bool _transfersRunning = false;
+  HistoryTransferStatus? historyTransferStatus;
+
+  /// Where the history copy keeps its ciphertext files; the app's private
+  /// support directory unless a test provides one.
+  Future<String> Function()? historyTransferDirectory;
+
+  /// The transport of the history copy; the real client unless a test
+  /// provides one.
+  HistoryTransferTransport Function(String origin)?
+      historyTransferTransportFactory;
   Map<String, LocalConversationPref> conversationPrefs = {};
   final Map<String, List<LocalPin>> _pins = {};
   Set<String> starredMessages = {};
@@ -371,17 +407,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   List<int>? _activeLinkSecret;
-  String? get activeDeviceLinkCode => _activeLinkSecret == null ||
-          activeDeviceLink == null ||
-          DateTime.now().isAfter(activeDeviceLink!.expiresAt)
-      ? null
-      : encodeDeviceLinkSecret(_activeLinkSecret!);
   void _clearLinkSecret() {
     _activeLinkSecret?.fillRange(0, _activeLinkSecret!.length, 0);
     _activeLinkSecret = null;
   }
 
-  DeviceLinkClaim? pendingDeviceLinkClaim;
+  DeviceLinkClaimView? pendingDeviceLinkClaim;
 
   /// K0 recovery (app_state_recovery.dart). [recoveryKeyStatus] is the
   /// server's view of this account's recovery key and any waiting recovery;
@@ -1414,6 +1445,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
         await _loadPendingAccountRecovery();
+        await _loadPendingDeviceLink();
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
         return;
@@ -1429,6 +1461,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       if (restored.token.isEmpty) {
         await _loadPendingAccountRecovery();
+        await _loadPendingDeviceLink();
         lifecycle = SessionLifecycle.ready;
         notifyListeners();
         return;
@@ -1489,6 +1522,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       unawaited(_startSync());
       unawaited(_ensureKeyPackageSupply().catchError((Object _) {}));
       unawaited(_scheduleExpiryPurge());
+      unawaited(resumeHistoryTransfers());
       await _loadSignedInRecoveryState();
       lifecycle = SessionLifecycle.ready;
       notifyListeners();
@@ -1698,6 +1732,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// clears it.
   Future<void> _finishSignIn(Future<void> Function() steps) async {
     unawaited(_loadSignedInRecoveryState());
+    unawaited(resumeHistoryTransfers());
     try {
       await steps();
     } catch (err) {
@@ -3869,291 +3904,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     await _removeFromOutboxByKey(idempotencyKey);
   }
 
-  Future<void> createDeviceLink() async {
-    await _run(() async {
-      final current = session;
-      final client = api;
-      if (current == null || client == null) {
-        return;
-      }
-      _requireLinkOrigin(current, client);
-      if (!membershipChangesAvailable) {
-        throw StateError('device linking is not available in this build');
-      }
-      activeDeviceLink = null;
-      _clearLinkSecret();
-      final random = Random.secure();
-      final secret = List<int>.generate(16, (_) => random.nextInt(256));
-      try {
-        final locator = await cryptoService.deviceLinkLocator(secret);
-        final created = await client.createDeviceLink(current.token, locator);
-        if (created.protocolVersion != 'veritra-device-link-v2' ||
-            created.code != locator ||
-            created.state != 'pending') {
-          throw StateError('Device-link context was substituted');
-        }
-        _requireLinkAccount(current, created);
-        _activeLinkSecret = secret;
-        activeDeviceLink = _deviceLinkWithoutVerification(created);
-      } finally {
-        if (!identical(secret, _activeLinkSecret))
-          secret.fillRange(0, secret.length, 0);
-      }
-    });
-  }
-
-  Future<void> approveActiveDeviceLink(String verificationCode) async {
-    await _run(() async {
-      final current = session;
-      final client = api;
-      final link = activeDeviceLink;
-      if (current == null || client == null || link == null) {
-        return;
-      }
-      _requireLinkOrigin(current, client);
-      _requireLinkAccount(current, link);
-      if (_activeLinkSecret == null ||
-          DateTime.now().isAfter(link.expiresAt) ||
-          link.approvalTag?.length != 32 ||
-          link.state != 'claimed' ||
-          link.verificationCode.isEmpty ||
-          verificationCode.trim() != link.verificationCode ||
-          link.transcriptHash?.length != 32) {
-        throw StateError('Device-link verification did not match locally');
-      }
-      // Strip the result: approving again needs a fresh verified refresh.
-      activeDeviceLink = _deviceLinkWithoutVerification(
-        await client.approveDeviceLink(
-          current.token,
-          link.id,
-          link.transcriptHash!,
-          link.approvalTag!,
-        ),
-      );
-      _clearLinkSecret();
-    });
-  }
-
-  Future<void> refreshActiveDeviceLink() async {
-    await _run(() async {
-      final current = session;
-      final client = api;
-      final link = activeDeviceLink;
-      if (current == null || client == null || link == null) {
-        return;
-      }
-      try {
-        activeDeviceLink = await _refreshedDeviceLink(current, client, link);
-      } catch (_) {
-        // Fail closed: whatever was verified before no longer stands, so
-        // approval is impossible until a refresh passes every check.
-        activeDeviceLink = _deviceLinkWithoutVerification(link);
-        rethrow;
-      }
-    });
-  }
-
-  /// The link after a status refresh. The account and nonce are the ones
-  /// this device received when it created the link; the server cannot swap
-  /// them later, and its relayed transcript hash must match the one derived
-  /// here.
-  Future<DeviceLink> _refreshedDeviceLink(
-      Session current, ApiClient client, DeviceLink link) async {
-    final accountId = link.accountId;
-    final linkNonce = link.linkNonce;
-    if (_activeLinkSecret == null ||
-        link.protocolVersion != 'veritra-device-link-v2' ||
-        DateTime.now().isAfter(link.expiresAt) ||
-        accountId == null ||
-        linkNonce == null ||
-        linkNonce.length != 32) {
-      throw StateError('Device-link transcript context is incomplete');
-    }
-    _requireLinkOrigin(current, client);
-    _requireLinkAccount(current, link);
-    final refreshed = await client.deviceLink(current.token, link.id);
-    if (refreshed.id != link.id) {
-      throw StateError('Device-link transcript was substituted');
-    }
-    if ((refreshed.accountId != null && refreshed.accountId != accountId) ||
-        (refreshed.linkNonce != null &&
-            !_constantTimeBytesEqual(linkNonce, refreshed.linkNonce!))) {
-      throw StateError('Device-link transcript was substituted');
-    }
-    var merged = DeviceLink(
-      id: link.id,
-      state: refreshed.state,
-      verificationCode: '',
-      expiresAt: link.expiresAt,
-      code: link.code ?? refreshed.code,
-      linkUri: link.linkUri ?? refreshed.linkUri,
-      claimedDeviceName: refreshed.claimedDeviceName,
-      approvedDeviceId: refreshed.approvedDeviceId,
-      accountId: accountId,
-      createdByDeviceId: refreshed.createdByDeviceId,
-      protocolVersion: refreshed.protocolVersion,
-      linkNonce: linkNonce,
-      existingSigningKey: refreshed.existingSigningKey,
-      claimedDeviceId: refreshed.claimedDeviceId,
-      claimedSigningKey: refreshed.claimedSigningKey,
-      transcriptHash: null,
-    );
-    if (refreshed.state == 'claimed') {
-      if (refreshed.protocolVersion != 'veritra-device-link-v2' ||
-          refreshed.claimedDeviceId == null ||
-          refreshed.claimedSigningKey?.length != 32) {
-        throw StateError('Device-link transcript context is incomplete');
-      }
-      final relayedHash = refreshed.transcriptHash;
-      if (relayedHash == null) {
-        throw StateError('Device-link transcript hash is missing');
-      }
-      final verification = await cryptoService.deriveDeviceLinkVerification(
-        accountId: accountId,
-        protocolVersion: refreshed.protocolVersion!,
-        serverOrigin: canonicalizeServerOrigin(current.baseUrl),
-        linkId: link.id,
-        linkSecret: _activeLinkSecret!,
-        linkNonce: linkNonce,
-        peerDeviceId: refreshed.claimedDeviceId!,
-        peerSigningKey: refreshed.claimedSigningKey!,
-        localIsExistingDevice: true,
-      );
-      if (!_constantTimeBytesEqual(verification.transcriptHash, relayedHash)) {
-        throw StateError('Device-link transcript was substituted');
-      }
-      if (refreshed.claimTag == null ||
-          !_constantTimeBytesEqual(
-              verification.claimTag, refreshed.claimTag!)) {
-        throw StateError('Device-link confirmation is missing or invalid');
-      }
-      merged = _deviceLinkWithVerification(merged, verification);
-    }
-    return merged;
-  }
-
   void _requireLinkOrigin(Session current, ApiClient client) {
     if (canonicalizeServerOrigin(current.baseUrl) != client.baseUrl) {
       throw StateError('Device-link server was substituted');
     }
-  }
-
-  void _requireLinkAccount(Session current, DeviceLink link) {
-    final sessionAccount = current.accountId;
-    if (sessionAccount != null && sessionAccount != link.accountId) {
-      throw StateError('Device-link account does not match this session');
-    }
-  }
-
-  Future<void> claimDeviceLink(String baseUrl, String code) async {
-    await _run(() async {
-      pendingDeviceLinkClaim = null;
-      final secret = decodeDeviceLinkSecret(code);
-      try {
-        final locator = await cryptoService.deviceLinkLocator(secret);
-        _replaceApi(baseUrl);
-        final client = api!;
-        final origin = client.baseUrl;
-        final enrollment = await client.reserveDeviceLinkEnrollment(locator);
-        if (enrollment.protocolVersion != 'veritra-device-link-v2' ||
-            enrollment.linkNonce?.length != 32 ||
-            enrollment.existingDeviceId == null ||
-            enrollment.existingSigningKey?.length != 32) {
-          throw StateError('Device-link transcript context is incomplete');
-        }
-        final credential =
-            await cryptoService.createEnrollmentCredential(enrollment);
-        final verification = await cryptoService.deriveDeviceLinkVerification(
-          accountId: enrollment.accountId,
-          protocolVersion: enrollment.protocolVersion!,
-          serverOrigin: origin,
-          linkId: enrollment.id,
-          linkSecret: secret,
-          linkNonce: enrollment.linkNonce!,
-          peerDeviceId: enrollment.existingDeviceId!,
-          peerSigningKey: enrollment.existingSigningKey!,
-          localIsExistingDevice: false,
-        );
-        final claimed = await client.claimDeviceLink(
-          code: locator,
-          deviceName: 'Linked ${config.deviceName.toLowerCase()}',
-          enrollment: enrollment,
-          credential: credential,
-          verification: verification,
-        );
-        if (claimed.deviceLink.id != enrollment.id ||
-            claimed.deviceLink.accountId != enrollment.accountId ||
-            claimed.deviceLink.claimedDeviceId != enrollment.deviceId ||
-            claimed.deviceLink.protocolVersion != 'veritra-device-link-v2') {
-          throw StateError('Device-link identity was substituted');
-        }
-        if (claimed.deviceLink.transcriptHash == null ||
-            !_constantTimeBytesEqual(claimed.deviceLink.transcriptHash!,
-                verification.transcriptHash)) {
-          throw StateError('Device-link transcript was substituted');
-        }
-        pendingDeviceLinkClaim = DeviceLinkClaim(
-          serverOrigin: origin,
-          deviceLink:
-              _deviceLinkWithVerification(claimed.deviceLink, verification),
-          claimToken: claimed.claimToken,
-          deviceSecret: claimed.deviceSecret,
-        );
-      } finally {
-        secret.fillRange(0, secret.length, 0);
-      }
-    });
-  }
-
-  Future<void> completeDeviceLinkClaim() async {
-    await _run(() async {
-      final client = api;
-      final claim = pendingDeviceLinkClaim;
-      if (client == null || claim == null) {
-        return;
-      }
-      if (client.baseUrl != claim.serverOrigin) {
-        throw StateError('Device-link server was substituted');
-      }
-      if (claim.deviceLink.transcriptHash?.length != 32 ||
-          claim.deviceLink.approvalTag?.length != 32) {
-        throw StateError('Device-link transcript is unavailable');
-      }
-      final linkedSession = await client.completeDeviceLinkClaim(
-        claim.deviceLink.id,
-        claim.claimToken,
-        claim.deviceLink.transcriptHash!,
-        claim.deviceLink.approvalTag!,
-      );
-      if (linkedSession == null) {
-        return;
-      }
-      if (canonicalizeServerOrigin(linkedSession.baseUrl) !=
-              claim.serverOrigin ||
-          linkedSession.accountId != claim.deviceLink.accountId ||
-          linkedSession.deviceId != claim.deviceLink.claimedDeviceId) {
-        throw StateError('Device-link identity was substituted');
-      }
-      session = Session(
-        baseUrl: linkedSession.baseUrl,
-        token: linkedSession.token,
-        accountId: linkedSession.accountId,
-        deviceId: linkedSession.deviceId,
-        username: linkedSession.username,
-        deviceSecret: claim.deviceSecret,
-        role: linkedSession.role,
-      );
-      pendingDeviceLinkClaim = null;
-      await _oweInitialKeyPackages(session!);
-      await localStore.saveSession(session!);
-      await _mlsCrypto?.activateSession(session!);
-      await localStore.saveSyncCursor(0);
-      await _finishSignIn(() async {
-        await _publishInitialMlsKeyPackages();
-        await _refreshConversations(notify: true);
-        await _refreshDevices();
-      });
-    });
   }
 
   Future<void> logout() async {
@@ -6294,9 +6048,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     starredMessages = {};
     showArchivedChats = false;
     _copiedHistory = {};
-    activeDeviceLink = null;
-    _clearLinkSecret();
-    pendingDeviceLinkClaim = null;
+    _resetDeviceLinkState();
     communities = <Community>[];
     channelsByCommunity = <String, List<Channel>>{};
     invites = <Invite>[];
@@ -8031,8 +7783,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _recoveryPollTimer = null;
     _orphanSweeper?.stop();
     _orphanSweeper = null;
-    _clearLinkSecret();
-    pendingDeviceLinkClaim = null;
+    _resetDeviceLinkState();
     _receiptsRefreshTimer?.cancel();
     typing.dispose();
     receipts.dispose();
@@ -8061,51 +7812,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     api?.close();
     super.dispose();
   }
-}
-
-DeviceLink _deviceLinkWithVerification(
-    DeviceLink link, DeviceLinkVerification verification) {
-  return DeviceLink(
-    id: link.id,
-    state: link.state,
-    verificationCode: verification.sas,
-    expiresAt: link.expiresAt,
-    code: link.code,
-    linkUri: link.linkUri,
-    claimedDeviceName: link.claimedDeviceName,
-    approvedDeviceId: link.approvedDeviceId,
-    accountId: link.accountId,
-    createdByDeviceId: link.createdByDeviceId,
-    protocolVersion: link.protocolVersion,
-    linkNonce: link.linkNonce,
-    existingSigningKey: link.existingSigningKey,
-    claimedDeviceId: link.claimedDeviceId,
-    claimedSigningKey: link.claimedSigningKey,
-    transcriptHash: verification.transcriptHash,
-    claimTag: verification.claimTag,
-    approvalTag: verification.approvalTag,
-  );
-}
-
-DeviceLink _deviceLinkWithoutVerification(DeviceLink link) {
-  return DeviceLink(
-    id: link.id,
-    state: link.state,
-    verificationCode: '',
-    expiresAt: link.expiresAt,
-    code: link.code,
-    linkUri: link.linkUri,
-    claimedDeviceName: link.claimedDeviceName,
-    approvedDeviceId: link.approvedDeviceId,
-    accountId: link.accountId,
-    createdByDeviceId: link.createdByDeviceId,
-    protocolVersion: link.protocolVersion,
-    linkNonce: link.linkNonce,
-    existingSigningKey: link.existingSigningKey,
-    claimedDeviceId: link.claimedDeviceId,
-    claimedSigningKey: link.claimedSigningKey,
-    transcriptHash: null,
-  );
 }
 
 bool _constantTimeBytesEqual(List<int> left, List<int> right) {

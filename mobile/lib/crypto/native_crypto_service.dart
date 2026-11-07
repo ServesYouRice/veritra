@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show Directory, File, FileMode, Platform;
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -13,16 +14,22 @@ import '../storage/encrypted_database.dart'
         EditMessageEffect,
         EnrollmentPromotionOutcome,
         HistoryTransferProgress,
+        HistoryTransferStage,
         InsertMessageEffect,
+        historyTransferIncoming,
+        historyTransferOutgoing,
         LocalMessageKind,
         LocalMessageState,
         MessageEffect,
         ReactionEffect;
 import '../storage/encrypted_database.dart' show PinMessageEffect;
+import '../storage/history_snapshot.dart'
+    show HistoryImportContext, HistorySnapshot;
 import '../storage/local_store.dart';
 import 'app_payload.dart';
 import 'message_format.dart';
 import 'crypto_service.dart';
+import 'k2_transfer_crypto.dart';
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
 
@@ -31,6 +38,7 @@ class NativeCryptoService
         BoundedMlsConversationCryptoService,
         ConversationAuthorityConsumer,
         EnrollmentPromotionCryptoService,
+        K2TransferCryptoService,
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
         NoticeCaptureConsumer,
@@ -1596,6 +1604,641 @@ class NativeCryptoService
         );
       });
 
+  // K2 history transfer (K2TransferCryptoService). Every state-changing step
+  // is one _serial operation: native call, seal, one expected-counter commit
+  // (with the progress row where one changes), restore on failure.
+
+  int get _nowMs => _clock().toUtc().millisecondsSinceEpoch;
+
+  /// The seven-day transfer window of a link (the native retention rule).
+  static const int _k2TransferWindowMs = 7 * 24 * 60 * 60 * 1000;
+
+  static const String _k2SourcePrefix = 'k2-source-';
+  static const String _k2SourceSuffix = '.bin';
+  static final RegExp _k2TransferIdPattern = RegExp(r'^[0-9a-f]{64}$');
+
+  /// Plaintext is read in pieces this large (the native stream's maximum).
+  static const int _k2ChunkBytes = 1024 * 1024;
+
+  @override
+  Future<K2ReceiveResult> k2ReceiveBegin(
+          K2LinkContext context, List<int> secret,
+          {required int originalExpiresAt}) =>
+      _serial(() async {
+        final device = _requiredDevice();
+        if (!_pendingEnrollment) {
+          throw const K2TransferException('no pending enrollment identity');
+        }
+        // The pending state is frozen at its first seal: a record created
+        // afterwards would never be stored.
+        if (_firstState != null) {
+          throw const K2TransferException(
+              'the pending state is already sealed');
+        }
+        return device.k2ReceiveBegin(context, secret,
+            originalExpiresAt: originalExpiresAt, now: _nowMs);
+      });
+
+  @override
+  Future<K2ProofResult> k2EnrollmentProof(K2TransferId id,
+          {required String locator,
+          required List<int> reservationRequestId,
+          required String deviceName,
+          required List<int> challenge,
+          required List<int> keyPackage,
+          required List<int> claimTokenHash,
+          required List<int> deviceSecretHash,
+          required List<int> initialSessionHash}) =>
+      _serial(() async {
+        if (!_pendingEnrollment) {
+          throw const K2TransferException('no pending enrollment identity');
+        }
+        return _requiredDevice().k2EnrollmentProof(id,
+            now: _nowMs,
+            locator: locator,
+            reservationRequestId: reservationRequestId,
+            deviceName: deviceName,
+            challenge: challenge,
+            keyPackage: keyPackage,
+            claimTokenHash: claimTokenHash,
+            deviceSecretHash: deviceSecretHash,
+            initialSessionHash: initialSessionHash);
+      });
+
+  @override
+  Future<bool> k2VerifyPendingApproval(K2TransferId id, List<int> approvalTag,
+          {required int approvedAt}) =>
+      _serial(() async {
+        final first = _firstState;
+        final accountId = _accountId;
+        final deviceId = _deviceId;
+        if (!_pendingEnrollment ||
+            first == null ||
+            accountId == null ||
+            deviceId == null) {
+          throw const K2TransferException('no pending enrollment identity');
+        }
+        // A scratch device from the frozen state: the approval is applied in
+        // memory only and the copy is closed, so nothing is sealed, stored
+        // or changed on the pending identity.
+        final scratch = _formatChecked(() => bindings.restoreRecords(accountId,
+                deviceId, first.stateKey, first.counter, first.sealedState, [
+              for (final change in first.changes)
+                if (change.sealed != null) change.sealed!
+            ]));
+        try {
+          scratch.device.k2ApplyApproval(id, approvalTag,
+              approvedAt: approvedAt, now: _nowMs);
+          return true;
+        } on NativeCryptoException catch (err) {
+          if (err.kind == NativeCryptoError.operationFailed) return false;
+          rethrow;
+        } finally {
+          scratch.device.close();
+        }
+      });
+
+  @override
+  Future<K2Status> k2Inspect(K2TransferId id) =>
+      _serial(() async => _requiredDevice().k2Inspect(id, now: _nowMs));
+
+  @override
+  Future<int> k2ApplyApproval(K2TransferId id, List<int> approvalTag,
+          {required int approvedAt}) =>
+      _serial(() => _transferMutation<int>((device) async =>
+          device.k2ApplyApproval(id, approvalTag,
+              approvedAt: approvedAt, now: _nowMs)));
+
+  @override
+  Future<K2Verification> k2SourceAccept(K2LinkContext context, List<int> secret,
+          {required int originalExpiresAt,
+          required List<int> transcriptHash,
+          required List<int> claimTag}) =>
+      _serial(() => _transferMutation<K2Verification>((device) async =>
+          device.k2SourceAccept(context, secret,
+              originalExpiresAt: originalExpiresAt,
+              now: _nowMs,
+              transcriptHash: transcriptHash,
+              claimTag: claimTag)));
+
+  @override
+  Future<int> k2SourceConfirm(K2TransferId id, String typedSas,
+      {required String recipientDeviceId,
+      required String claimRequestHash}) async {
+    // Read the link's original expiry first: the row's latest deadline.
+    final original =
+        (await k2Inspect(id)).originalExpiresAt + _k2TransferWindowMs;
+    return _serial(() => _transferMutation<int>((device) async {
+          final existing =
+              await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId);
+          if (existing != null &&
+              (existing.direction != historyTransferOutgoing ||
+                  existing.stage != HistoryTransferStage.approving)) {
+            throw const K2TransferException('the approval is already settled');
+          }
+          // A retry keeps the digest the first confirmation stored: the
+          // server's claim hash is immutable, and the approving row is what
+          // the upload later sends.
+          if (existing != null &&
+              _storedClaimHash(existing) != claimRequestHash) {
+            throw const K2TransferException('another claim is stored');
+          }
+          return device.k2SourceConfirm(id, typedSas, now: _nowMs);
+        },
+            row: (_) async => HistoryTransferProgress(
+                  origin: id.serverOrigin,
+                  linkId: id.linkId,
+                  direction: historyTransferOutgoing,
+                  accountId: _accountId!,
+                  deviceId: _deviceId!,
+                  peerDeviceId: recipientDeviceId,
+                  stage: HistoryTransferStage.approving,
+                  expiresAt: original,
+                  payloadJson: jsonEncode(<String, Object?>{
+                    'claim_request_hash': claimRequestHash
+                  }),
+                )));
+  }
+
+  @override
+  Future<K2ApprovalRequest> k2SourceApprovalRequest(K2TransferId id) =>
+      _serial(() async {
+        final device = _requiredDevice();
+        // The row is stored in the same transaction as the native intent,
+        // so it proves the intent is durable before the tag is released.
+        await _transferRow(id, historyTransferOutgoing);
+        return device.k2SourceApprovalRequest(id, now: _nowMs);
+      });
+
+  @override
+  Future<HistoryTransferProgress> k2SourcePrepare(K2TransferId id,
+          {required String cacheDirectory}) =>
+      _serial(() async {
+        k2RequireLinkId(id.linkId);
+        final row = await _transferRow(id, historyTransferOutgoing);
+        if (row.stage != HistoryTransferStage.approving) return row;
+        File? cached;
+        try {
+          return await _transferMutation<HistoryTransferProgress>(
+              (device) async {
+            final status = device.k2Inspect(id, now: _nowMs);
+            if (status.stage != K2Stage.approved) {
+              throw const K2TransferException('the transfer is not approved');
+            }
+            final exported = await localStore.exportHistorySnapshot();
+            final encoded = _bytes(exported);
+            try {
+              // The exporter allocated this counter and creation time in its
+              // own transaction; native binds exactly these to the bundle.
+              final snapshot = HistorySnapshot.decode(encoded);
+              final stream = device.k2SourceBegin(id,
+                  now: _nowMs,
+                  createdAt: snapshot.createdAt,
+                  snapshotCounter: snapshot.counter,
+                  plaintextVersion: k2HistoryPlaintextVersion,
+                  payloadLength: encoded.length);
+              try {
+                var offset = 0;
+                while (offset < encoded.length) {
+                  final end = min(encoded.length, offset + _k2ChunkBytes);
+                  offset = stream.write(
+                      offset, Uint8List.sublistView(encoded, offset, end));
+                }
+                final bundle = stream.sourceFinish(now: _nowMs);
+                final directory = Directory(cacheDirectory);
+                directory.createSync(recursive: true);
+                if (!_k2TransferIdPattern.hasMatch(bundle.transferId)) {
+                  throw const K2TransferException(
+                      'the transfer ID is not valid');
+                }
+                final path = '$cacheDirectory${Platform.pathSeparator}'
+                    '$_k2SourcePrefix${bundle.transferId}$_k2SourceSuffix';
+                cached =
+                    await _drainCiphertext(stream, bundle.ciphertextSize, path);
+                return row.copyWith(
+                  stage: HistoryTransferStage.snapshotReady,
+                  transferId: bundle.transferId,
+                  ciphertextSha256: bundle.ciphertextHash,
+                  ciphertextSize: bundle.ciphertextSize,
+                  handoff: bundle.handoff,
+                  filePath: path,
+                );
+              } finally {
+                stream.close();
+              }
+            } finally {
+              _wipe(encoded);
+              _wipe(exported);
+            }
+          }, row: (progress) async => progress);
+        } catch (_) {
+          // Keep the file only when the commit landed and its outcome was
+          // lost: the stored row then names it.
+          final file = cached;
+          if (file != null) {
+            try {
+              final stored = await localStore.loadHistoryTransfer(
+                  id.serverOrigin, id.linkId);
+              if (stored?.filePath != file.path && file.existsSync()) {
+                file.deleteSync();
+              }
+            } catch (_) {}
+          }
+          rethrow;
+        }
+      });
+
+  /// Drains the source stream's ciphertext into [path] (private working
+  /// directory): a temporary file, flushed, then renamed. Never plaintext.
+  Future<File> _drainCiphertext(
+      K2HistoryStream stream, int size, String path) async {
+    final temporary = File('$path.part');
+    final handle = temporary.openSync(mode: FileMode.write);
+    var closed = false;
+    try {
+      var offset = 0;
+      while (true) {
+        final chunk = stream.read(offset);
+        handle.writeFromSync(chunk.bytes);
+        _wipe(chunk.bytes);
+        offset = chunk.nextOffset;
+        if (chunk.eof) break;
+      }
+      if (offset != size) {
+        throw const K2TransferException('the encrypted copy has a wrong size');
+      }
+      handle.flushSync();
+      handle.closeSync();
+      closed = true;
+      return temporary.renameSync(path);
+    } catch (_) {
+      if (!closed) handle.closeSync();
+      if (temporary.existsSync()) temporary.deleteSync();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<HistoryTransferProgress> k2SourcePosted(K2TransferId id) =>
+      _serial(() => _transferMutation<HistoryTransferProgress>((device) async {
+            final row = await _transferRow(id, historyTransferOutgoing);
+            if (row.stage == HistoryTransferStage.uploaded) {
+              // A retry after the commit: native posted is idempotent.
+              device.k2SourcePosted(id, now: _nowMs);
+              return row;
+            }
+            if (row.stage != HistoryTransferStage.snapshotReady) {
+              throw const K2TransferException('no cached copy to post');
+            }
+            device.k2SourcePosted(id, now: _nowMs);
+            return row.copyWith(stage: HistoryTransferStage.uploaded);
+          }, row: (progress) async => progress));
+
+  @override
+  Future<HistoryTransferProgress> k2ReceiveHandoff(K2TransferId id,
+          {required List<int> handoff,
+          required String transferId,
+          required List<int> ciphertextSha256,
+          required int ciphertextSize,
+          required String downloadPath}) =>
+      _serial(() async {
+        k2RequireLinkId(id.linkId);
+        final row = await _transferRow(id, historyTransferIncoming);
+        if (row.stage != HistoryTransferStage.awaitingHandoff) {
+          // Stored already: only this exact handoff may be treated as done.
+          if (row.handoff == null || !_sameBytes(row.handoff!, handoff)) {
+            throw const K2TransferException('another handoff is stored');
+          }
+          return row;
+        }
+        return _transferMutation<HistoryTransferProgress>((device) async {
+          final begun = device.k2ReceiveBeginBundle(id, handoff,
+              now: _nowMs, plaintextVersion: k2HistoryPlaintextVersion);
+          begun.stream.close();
+          if (begun.transferId != transferId ||
+              !_sameBytes(begun.ciphertextHash, ciphertextSha256) ||
+              begun.ciphertextSize != ciphertextSize) {
+            throw const K2TransferException(
+                'the handoff names another transfer');
+          }
+          return row.copyWith(
+            stage: HistoryTransferStage.downloading,
+            transferId: begun.transferId,
+            ciphertextSha256: begun.ciphertextHash,
+            ciphertextSize: begun.ciphertextSize,
+            handoff: handoff,
+            filePath: downloadPath,
+          );
+        }, row: (progress) async => progress);
+      });
+
+  /// Opens the stored bundle on a native stream and feeds it the whole
+  /// ciphertext file. The caller closes the stream. The digest, header and
+  /// every chunk are checked by native before any plaintext can be read.
+  ({K2HistoryStream stream, K2OpenedBundleResult opened}) _openReceivedBundle(
+      NativeCryptoDevice device, K2TransferId id, HistoryTransferProgress row,
+      {bool reportRejection = false}) {
+    if (row.handoff == null ||
+        row.transferId == null ||
+        row.ciphertextSha256 == null ||
+        row.ciphertextSize == null ||
+        row.filePath == null) {
+      throw const K2TransferException('no handoff is stored');
+    }
+    final begun = device.k2ReceiveBeginBundle(id, row.handoff!,
+        now: _nowMs, plaintextVersion: k2HistoryPlaintextVersion);
+    final stream = begun.stream;
+    // Native refusing the ciphertext itself (digest, header or a chunk
+    // failing authentication) is a rejection of the bytes; every other
+    // failure keeps its own type.
+    T rejectable<T>(T Function() step) {
+      try {
+        return step();
+      } on NativeCryptoException catch (err) {
+        if (reportRejection && err.kind == NativeCryptoError.operationFailed) {
+          throw const _K2BundleRejected();
+        }
+        rethrow;
+      }
+    }
+
+    try {
+      if (begun.transferId != row.transferId ||
+          !_sameBytes(begun.ciphertextHash, row.ciphertextSha256!) ||
+          begun.ciphertextSize != row.ciphertextSize) {
+        throw const K2TransferException('the handoff names another transfer');
+      }
+      final file = File(row.filePath!);
+      if (!file.existsSync() || file.lengthSync() != row.ciphertextSize) {
+        throw const K2TransferException('the download is incomplete');
+      }
+      final handle = file.openSync();
+      try {
+        var offset = 0;
+        while (offset < begun.ciphertextSize) {
+          final chunk = handle
+              .readSync(min(_k2ChunkBytes, begun.ciphertextSize - offset));
+          if (chunk.isEmpty) {
+            throw const K2TransferException('the download is incomplete');
+          }
+          offset = rejectable(() => stream.write(offset, chunk));
+        }
+      } finally {
+        handle.closeSync();
+      }
+      return (
+        stream: stream,
+        opened: rejectable(() => stream.receiveFinish(now: _nowMs)),
+      );
+    } catch (_) {
+      stream.close();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<bool> k2VerifyDownload(K2TransferId id) => _serial(() async {
+        final row = await _transferRow(id, historyTransferIncoming);
+        await _requiredState();
+        try {
+          _openReceivedBundle(_requiredDevice(), id, row, reportRejection: true)
+              .stream
+              .close();
+          return true;
+        } on _K2BundleRejected {
+          // Only the native digest, header or chunk authentication failing
+          // answers false (the caller then deletes the file). Anything else
+          // (I/O, a missing record, the library) passes through: it says
+          // nothing about the bytes, so the file is kept.
+          return false;
+        }
+      });
+
+  @override
+  Future<HistoryTransferProgress> k2ImportDownloaded(K2TransferId id) =>
+      _serial(() async {
+        var row = await _transferRow(id, historyTransferIncoming);
+        if (row.stage == HistoryTransferStage.imported ||
+            row.stage == HistoryTransferStage.acknowledged) {
+          return row;
+        }
+        if (row.stage != HistoryTransferStage.downloaded) {
+          throw const K2TransferException('the download is not complete');
+        }
+        // Verify the whole file, then commit native importing before the
+        // database import (a crash after this reopens the same bundle).
+        await _transferMutation<void>((device) async {
+          _openReceivedBundle(device, id, row).stream.close();
+          device.k2Importing(id, now: _nowMs);
+        });
+        await _requiredState();
+        final device = _requiredDevice();
+        final bundle = _openReceivedBundle(device, id, row);
+        final payload = Uint8List(bundle.opened.payloadLength);
+        try {
+          var offset = 0;
+          while (true) {
+            final chunk = bundle.stream.read(offset);
+            try {
+              if (offset + chunk.bytes.length > payload.length) {
+                throw const K2TransferException('the history is too long');
+              }
+              payload.setRange(
+                  offset, offset + chunk.bytes.length, chunk.bytes);
+            } finally {
+              _wipe(chunk.bytes);
+            }
+            offset = chunk.nextOffset;
+            if (chunk.eof) break;
+          }
+          if (offset != payload.length) {
+            throw const K2TransferException('the history is incomplete');
+          }
+          // The counter and creation time are the authenticated native
+          // header's, never the snapshot's own claims: the importer refuses
+          // a snapshot whose inner values differ.
+          await localStore.importHistorySnapshot(
+              payload,
+              HistoryImportContext(
+                  origin: id.serverOrigin,
+                  accountId: row.accountId,
+                  sourceDeviceId: row.peerDeviceId,
+                  recipientDeviceId: row.deviceId,
+                  transferId: row.transferId!,
+                  digest: _hex(row.ciphertextSha256!),
+                  snapshotCounter: bundle.opened.snapshotCounter,
+                  snapshotCreatedAt: bundle.opened.createdAt));
+        } finally {
+          bundle.stream.close();
+          _wipe(payload);
+        }
+        row = row.copyWith(stage: HistoryTransferStage.imported);
+        await localStore.saveHistoryTransfer(row);
+        return row;
+      });
+
+  @override
+  Future<void> k2Finish(K2TransferId id) => _serial(() async {
+        final row = await _transferRow(id, null);
+        if (row.stage != HistoryTransferStage.acknowledged) {
+          throw const K2TransferException('the server has not confirmed yet');
+        }
+        await _removeTransfer(id, row);
+      });
+
+  @override
+  Future<void> k2Abandon(K2TransferId id) => _serial(() async {
+        await _removeTransfer(id,
+            await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId));
+      });
+
+  @override
+  Future<int> k2ExpireTransfers() => _serial(() async {
+        final now = _nowMs;
+        final previous = await _requiredState();
+        try {
+          // Nothing changed natively when none was removed: no new state.
+          if (_requiredDevice().k2Expire(now: now) > 0) {
+            await _commitLocalMutation(previous);
+          }
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+        var removed = 0;
+        for (final row in await localStore.loadHistoryTransfers()) {
+          if (row.expiresAt > now) continue;
+          _deleteTransferFile(row);
+          await localStore.deleteHistoryTransfer(row.origin, row.linkId);
+          removed++;
+        }
+        return removed;
+      });
+
+  @override
+  Future<int> k2SweepOrphanCaches(String cacheDirectory) => _serial(() async {
+        final directory = Directory(cacheDirectory);
+        if (!directory.existsSync()) return 0;
+        final named = <String>{
+          for (final row in await localStore.loadHistoryTransfers())
+            if (row.filePath != null) File(row.filePath!).absolute.path,
+        };
+        var removed = 0;
+        for (final entry in directory.listSync(followLinks: false)) {
+          if (entry is! File) continue;
+          final name = entry.uri.pathSegments.last;
+          if (!name.startsWith(_k2SourcePrefix)) continue;
+          final cached = name.endsWith('$_k2SourceSuffix.part')
+              ? File(entry.path.substring(0, entry.path.length - 5))
+              : entry;
+          if (!cached.path.endsWith(_k2SourceSuffix) ||
+              named.contains(cached.absolute.path)) {
+            continue;
+          }
+          entry.deleteSync();
+          removed++;
+        }
+        return removed;
+      });
+
+  static String? _storedClaimHash(HistoryTransferProgress row) {
+    try {
+      final decoded = jsonDecode(row.payloadJson);
+      final hash = decoded is Map ? decoded['claim_request_hash'] : null;
+      return hash is String ? hash : null;
+    } on FormatException {
+      return null;
+    }
+  }
+
+  /// Removes the native record (committed first, only when it was there),
+  /// then the ciphertext file, then the row. Each step is safe to repeat, so
+  /// a crash between them is finished by the next call.
+  Future<void> _removeTransfer(
+      K2TransferId id, HistoryTransferProgress? row) async {
+    final previous = await _requiredState();
+    try {
+      if (_requiredDevice().k2Forget(id)) {
+        await _commitLocalMutation(previous);
+      }
+    } catch (_) {
+      await _restorePrevious(previous);
+      rethrow;
+    }
+    if (row != null) _deleteTransferFile(row);
+    await localStore.deleteHistoryTransfer(id.serverOrigin, id.linkId);
+  }
+
+  static void _deleteTransferFile(HistoryTransferProgress row) {
+    final path = row.filePath;
+    if (path == null) return;
+    for (final candidate in <String>[path, '$path.part']) {
+      final file = File(candidate);
+      if (file.existsSync()) file.deleteSync();
+    }
+  }
+
+  /// The stored progress row of [id] for [direction] (either when null), or a
+  /// [K2TransferException].
+  Future<HistoryTransferProgress> _transferRow(
+      K2TransferId id, String? direction) async {
+    final row =
+        await localStore.loadHistoryTransfer(id.serverOrigin, id.linkId);
+    if (row == null || (direction != null && row.direction != direction)) {
+      throw const K2TransferException('no such transfer');
+    }
+    return row;
+  }
+
+  /// One native transfer mutation. Call it only inside [_serial]: [mutate]
+  /// runs on the committed state, the result is sealed as the next state and
+  /// stored with [row]'s progress (or alone) in one expected-counter
+  /// transaction. On any failure the committed state comes back and the
+  /// error is rethrown.
+  Future<T> _transferMutation<T>(
+    Future<T> Function(NativeCryptoDevice device) mutate, {
+    Future<HistoryTransferProgress> Function(T result)? row,
+  }) async {
+    final previous = await _requiredState();
+    try {
+      final result = await mutate(_requiredDevice());
+      final progress = row == null ? null : await row(result);
+      final next = _sealNext(previous);
+      final cursor = await localStore.loadSyncCursor();
+      if (progress == null) {
+        await localStore.commitLocalMlsState(
+            expectedCounter: previous.counter,
+            expectedCursor: cursor,
+            state: next);
+      } else {
+        await localStore.commitHistoryTransferState(
+            expectedCounter: previous.counter,
+            expectedCursor: cursor,
+            state: next,
+            transfer: progress);
+      }
+      return result;
+    } catch (_) {
+      await _restorePrevious(previous);
+      rethrow;
+    }
+  }
+
+  static String _hex(List<int> bytes) =>
+      bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+
+  static Uint8List _bytes(List<int> value) =>
+      value is Uint8List ? value : Uint8List.fromList(value);
+
+  /// Overwrites [value] where it can be (an unmodifiable list cannot).
+  static void _wipe(List<int> value) {
+    try {
+      value.fillRange(0, value.length, 0);
+    } on UnsupportedError {
+      // Nothing more can be done for a read-only list.
+    }
+  }
+
   Future<StoredCryptoState> _requiredState(
       {void Function()? checkCanCommit}) async {
     // A pending enrollment's fresh device must never be sealed over the state
@@ -1845,6 +2488,12 @@ CryptoRecordLimitExceeded recordLimitFromNative(
 List<int> _randomBytes(int length) {
   final random = Random.secure();
   return List<int>.generate(length, (_) => random.nextInt(256));
+}
+
+/// Native refused the downloaded ciphertext itself: its digest, header or a
+/// chunk failed authentication. Private to [NativeCryptoService.k2VerifyDownload].
+class _K2BundleRejected implements Exception {
+  const _K2BundleRejected();
 }
 
 const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
