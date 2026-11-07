@@ -11,7 +11,9 @@ import (
 
 // Scoped sync routes (C1, docs/designs/C1-sync-isolation.md). They sit beside
 // the legacy GET /api/v1/sync/events and are registered only when the
-// operator turns ScopedSync on; no shipped client calls them yet. The
+// operator leaves ScopedSync on (the default; PRIVATE_MESSENGER_SCOPED_SYNC=0
+// turns it off). The app uses the conversation route to pause one failing
+// conversation (C1-P1). The
 // handlers only parse, call the storage reads and shape the envelope.
 
 const (

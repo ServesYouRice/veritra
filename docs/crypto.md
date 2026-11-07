@@ -465,8 +465,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   conversation (2026-11-07):** no ABI, payload, wire or server change; local
   schema 20 adds one table. Design:
   [`C1-sync-isolation`](designs/C1-sync-isolation.md), "Built slice (P1)".
-  Behind `PRIVATE_MESSENGER_SCOPED_SYNC`; off, nothing here activates and
-  every failure stops the device as before.
+  Behind `PRIVATE_MESSENGER_SCOPED_SYNC` (on by default; `0` turns it off, and then nothing here activates and
+  every failure stops the device as before).
   - **I33 now.** A failure at one conversation's event (`mlsControlMissing`,
     `mlsControlMalformed`, `mlsState`, `applicationUndecryptable`,
     `applicationMissing`, `unsupportedEvent`) still stops that
