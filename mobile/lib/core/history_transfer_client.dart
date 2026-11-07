@@ -349,8 +349,9 @@ class HistoryTransferClient implements HistoryTransferTransport {
   /// The ETag is the server's claim, not proof. [verifyDigest] is the native
   /// whole-ciphertext check against the digest from the verified handoff; it
   /// runs on every complete file, including one left by an earlier attempt.
-  /// When it fails the file is deleted and [HistoryTransferMismatch] thrown,
-  /// so a bad prefix is never resumed.
+  /// When it returns false the file is deleted and [HistoryTransferMismatch]
+  /// thrown, so a bad prefix is never resumed; when it throws, the error
+  /// passes through and the file is kept.
   @override
   Future<int> download({
     required String linkId,
@@ -366,13 +367,14 @@ class HistoryTransferClient implements HistoryTransferTransport {
         expectedSha256: expectedSha256,
         expectedSize: expectedSize,
         target: target);
-    var verified = false;
-    try {
-      verified = await verifyDigest(target);
-    } finally {
-      if (!verified) await _discard(target);
+    // The file goes only when the check answers false (an authentication or
+    // digest failure). A check that throws (I/O, a missing record, a native
+    // library error) says nothing about the bytes, so the file stays.
+    final verified = await verifyDigest(target);
+    if (!verified) {
+      await _discard(target);
+      throw const HistoryTransferMismatch();
     }
-    if (!verified) throw const HistoryTransferMismatch();
     return length;
   }
 

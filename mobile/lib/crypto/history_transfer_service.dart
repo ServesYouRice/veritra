@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io' show Directory, File, Platform;
 
+import '../core/api_errors.dart' show ApiException;
 import '../core/history_transfer_client.dart';
 import '../storage/encrypted_database.dart'
     show
@@ -11,6 +12,11 @@ import '../storage/encrypted_database.dart'
 import '../storage/local_store.dart';
 import 'k2_transfer_crypto.dart';
 import 'native_crypto_bindings.dart' show K2Stage, K2TransferId;
+
+/// The download file name for [linkId], validated first (see
+/// [k2RequireLinkId]).
+String k2DownloadFileName(String linkId) =>
+    'k2-${k2RequireLinkId(linkId)}.download';
 
 /// K2 history transfer sequencing (`docs/designs/K2-new-device-history.md`):
 /// each side resumes from its stored progress row, one stage at a time, and
@@ -53,6 +59,9 @@ class HistoryTransferService {
   }) async {
     var row = await _row(id, historyTransferOutgoing);
     if (row.stage == HistoryTransferStage.approving) {
+      // A crash between a copy's rename and its commit leaves a file no row
+      // names; nothing else would ever remove it.
+      await crypto.k2SweepOrphanCaches(cacheDirectory);
       row = await crypto.k2SourcePrepare(id, cacheDirectory: cacheDirectory);
     }
     if (row.stage == HistoryTransferStage.snapshotReady) {
@@ -124,12 +133,25 @@ class HistoryTransferService {
     }
     if (row.stage == HistoryTransferStage.imported) {
       // Only after the import transaction and its ledger committed.
-      await transport.acknowledge(
-        linkId: id.linkId,
-        auth: auth,
-        transferId: row.transferId!,
-        ciphertextSha256: _hex(row.ciphertextSha256!),
-      );
+      try {
+        await transport.acknowledge(
+          linkId: id.linkId,
+          auth: auth,
+          transferId: row.transferId!,
+          ciphertextSha256: _hex(row.ciphertextSha256!),
+        );
+      } on ApiException catch (err) {
+        // The server no longer holds an active copy of this transfer
+        // (cancelled, expired, revoked or gone). The history is imported and
+        // stays, but the row is not marked acknowledged: the caller
+        // abandons it ([abandon]), like a copy the source saw closed.
+        if (err.statusCode == 404 ||
+            err.statusCode == 409 ||
+            err.statusCode == 410) {
+          throw const K2TransferException('the server closed this copy');
+        }
+        rethrow;
+      }
       row = row.copyWith(stage: HistoryTransferStage.acknowledged);
       await localStore.saveHistoryTransfer(row);
     }
@@ -172,6 +194,9 @@ class HistoryTransferService {
         !_same(receipt.transcriptHash, status.verification.transcriptHash)) {
       throw const K2TransferException('the server describes another transfer');
     }
+    // The link ID names a file below [directory]: only the server's ID
+    // alphabet reaches a path.
+    final fileName = k2DownloadFileName(id.linkId);
     Directory(directory).createSync(recursive: true);
     return crypto.k2ReceiveHandoff(
       id,
@@ -179,8 +204,7 @@ class HistoryTransferService {
       transferId: receipt.transferId,
       ciphertextSha256: _unhex(receipt.ciphertextSha256),
       ciphertextSize: receipt.sizeBytes,
-      downloadPath: '$directory${Platform.pathSeparator}'
-          'k2-${id.linkId}.download',
+      downloadPath: '$directory${Platform.pathSeparator}$fileName',
     );
   }
 

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/api_errors.dart';
 import 'package:private_messenger/core/history_transfer_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/history_transfer_service.dart';
@@ -106,6 +107,12 @@ class _FakeTransport implements HistoryTransferTransport {
   Uint8List? handoff;
   bool corruptDownload = false;
   bool loseUploadReply = false;
+
+  /// The status the ACK is refused with (the server holds no active copy).
+  int? ackRefusedWith;
+
+  /// The download writes the file and stops before the digest check.
+  bool stopAfterDownload = false;
   String? wrongTransferId;
   int uploads = 0;
   bool cancelled = false;
@@ -191,6 +198,7 @@ class _FakeTransport implements HistoryTransferTransport {
     final bytes = Uint8List.fromList(ciphertext!);
     if (corruptDownload) bytes[bytes.length ~/ 2] ^= 1;
     target.writeAsBytesSync(bytes);
+    if (stopAfterDownload) throw const SocketException('stopped');
     var verified = false;
     try {
       verified = await verifyDigest(target);
@@ -208,6 +216,7 @@ class _FakeTransport implements HistoryTransferTransport {
     required String transferId,
     required String ciphertextSha256,
   }) async {
+    if (ackRefusedWith != null) throw ApiException(ackRefusedWith!);
     final base = stored!;
     stored = HistoryTransferReceipt(
       transferId: base.transferId,
@@ -781,6 +790,138 @@ void main() {
                 .abandon(pair.id, HistorySessionAuth(_sourceSession.token));
             expect(await pair.sourceRow(), isNull);
             expect(_fileGone(Directory(pair.cacheDir)), isTrue);
+          }),
+      skip: skip);
+
+  test(
+      'an ACK on a copy the server closed is a typed refusal and the row stays',
+      () => _withPair((pair) async {
+            await pair.send();
+            for (final status in [404, 409, 410]) {
+              pair.transport.ackRefusedWith = status;
+              await expectLater(
+                  pair.receive(),
+                  throwsA(isA<K2TransferException>().having(
+                      (e) => e.reason, 'reason', contains('server closed'))));
+              // The history is imported and stays; the row is not
+              // acknowledged, so the caller abandons it.
+              expect((await pair.recipientRow())!.stage,
+                  HistoryTransferStage.imported);
+              expect(
+                  await pair.recipientStore.loadMessages('conv'), hasLength(2));
+            }
+            // Any other failure keeps its own type.
+            pair.transport.ackRefusedWith = 500;
+            await expectLater(pair.receive(), throwsA(isA<ApiException>()));
+            pair.transport.ackRefusedWith = null;
+            await pair.recipientFlow
+                .abandon(pair.id, HistorySessionAuth(_newSession.token));
+            expect(await pair.recipientRow(), isNull);
+            expect(
+                await pair.recipientStore.loadMessages('conv'), hasLength(2));
+          }),
+      skip: skip);
+
+  test(
+      'a link ID that could name another path is refused before any file',
+      () => _withPair((pair) async {
+            for (final bad in ['../x', 'a/b', r'a\b', '.', 'C:x', '']) {
+              expect(() => k2DownloadFileName(bad),
+                  throwsA(isA<K2TransferException>()),
+                  reason: bad);
+              await expectLater(
+                  pair.source.k2SourcePrepare(K2TransferId(_origin, bad),
+                      cacheDirectory: pair.cacheDir),
+                  throwsA(isA<K2TransferException>()),
+                  reason: bad);
+              await expectLater(
+                  pair.recipient.k2ReceiveHandoff(K2TransferId(_origin, bad),
+                      handoff: const [1],
+                      transferId: 'a' * 64,
+                      ciphertextSha256: List<int>.filled(32, 1),
+                      ciphertextSize: 1,
+                      downloadPath: '${pair.downloadDir}/x'),
+                  throwsA(isA<K2TransferException>()),
+                  reason: bad);
+            }
+            expect(k2DownloadFileName('link_1-A'), 'k2-link_1-A.download');
+            expect(Directory(pair.cacheDir).existsSync(), isFalse);
+          }),
+      skip: skip);
+
+  test(
+      'only a digest failure answers false; other failures keep the file',
+      () => _withPair((pair) async {
+            await pair.send();
+            pair.transport.stopAfterDownload = true;
+            await expectLater(pair.receive(), throwsA(isA<SocketException>()));
+            final row = (await pair.recipientRow())!;
+            expect(row.stage, HistoryTransferStage.downloading);
+            final file = File(row.filePath!);
+            expect(file.existsSync(), isTrue);
+            expect(await pair.recipient.k2VerifyDownload(pair.id), isTrue);
+
+            // A flipped byte fails native authentication: false.
+            final bytes = file.readAsBytesSync();
+            bytes[bytes.length ~/ 2] ^= 1;
+            file.writeAsBytesSync(bytes);
+            expect(await pair.recipient.k2VerifyDownload(pair.id), isFalse);
+
+            // A missing file says nothing about the bytes: it throws.
+            file.deleteSync();
+            await expectLater(pair.recipient.k2VerifyDownload(pair.id),
+                throwsA(isA<K2TransferException>()));
+            // So does a transfer with no record.
+            await expectLater(
+                pair.recipient
+                    .k2VerifyDownload(const K2TransferId(_origin, 'link_2')),
+                throwsA(isA<K2TransferException>()));
+          }),
+      skip: skip);
+
+  test(
+      'orphan source copies are swept; a copy a row names never is',
+      () => _withPair((pair) async {
+            final sent = await pair.send();
+            final kept = File(sent.filePath!);
+            final cache = Directory(pair.cacheDir);
+            final orphan = File('${cache.path}/k2-source-${'e' * 64}.bin')
+              ..writeAsBytesSync([1, 2, 3]);
+            final orphanPart =
+                File('${cache.path}/k2-source-${'f' * 64}.bin.part')
+                  ..writeAsBytesSync([4]);
+            final other = File('${cache.path}/notes.txt')
+              ..writeAsStringSync('x');
+            expect(await pair.source.k2SweepOrphanCaches(pair.cacheDir), 2);
+            expect(orphan.existsSync(), isFalse);
+            expect(orphanPart.existsSync(), isFalse);
+            expect(kept.existsSync(), isTrue);
+            expect(other.existsSync(), isTrue);
+            expect(await pair.source.k2SweepOrphanCaches(pair.cacheDir), 0);
+            expect(
+                await pair.source
+                    .k2SweepOrphanCaches('${pair.dir.path}/nowhere'),
+                0);
+            // The transfer still completes from its stored copy.
+            expect((await pair.receive()).stage,
+                HistoryTransferStage.acknowledged);
+            expect(
+                (await pair.send()).stage, HistoryTransferStage.acknowledged);
+          }),
+      skip: skip);
+
+  test(
+      'a confirm retry cannot replace the claim digest the row stored',
+      () => _withPair((pair) async {
+            await expectLater(
+                pair.source.k2SourceConfirm(pair.id, '00000000',
+                    recipientDeviceId: _newDevice, claimRequestHash: 'd' * 64),
+                throwsA(isA<K2TransferException>()));
+            final row = (await pair.sourceRow())!;
+            expect(row.stage, HistoryTransferStage.approving);
+            expect(
+                jsonDecode(row.payloadJson)['claim_request_hash'], _claimHash);
+            expect((await pair.send()).stage, HistoryTransferStage.uploaded);
           }),
       skip: skip);
 }

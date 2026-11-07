@@ -1,3 +1,4 @@
+import '../core/device_link_v3_models.dart' show deviceLinkV3Id;
 import '../storage/encrypted_database.dart' show HistoryTransferProgress;
 import 'native_crypto_bindings.dart';
 
@@ -15,6 +16,17 @@ class K2TransferException implements Exception {
 
   @override
   String toString() => 'K2 transfer refused: $reason';
+}
+
+/// Refuses a link ID outside the v3 ID alphabet (`[A-Za-z0-9_-]{1,128}`)
+/// before it can name a file: the ID comes from the server and the link QR,
+/// and that alphabet holds no separator, dot or drive colon.
+String k2RequireLinkId(String linkId) {
+  try {
+    return deviceLinkV3Id(linkId);
+  } on FormatException {
+    throw const K2TransferException('the link ID is not valid');
+  }
 }
 
 /// K2 history transfer on the native crypto engine (ABI 8 controls and bundle
@@ -131,4 +143,12 @@ abstract interface class K2TransferCryptoService {
   /// (with their files). Returns how many rows went. Commits only when a
   /// native record was removed.
   Future<int> k2ExpireTransfers();
+
+  /// Deletes `k2-source-*` ciphertext files (and their `.part` files) under
+  /// [cacheDirectory] that no stored transfer row names, such as a copy
+  /// written just before a crash that kept its row from committing. A file a
+  /// row names is never touched, whatever its stage. Runs in the service's
+  /// serial queue, so it cannot meet a prepare between its rename and its
+  /// commit. Returns how many files went.
+  Future<int> k2SweepOrphanCaches(String cacheDirectory);
 }

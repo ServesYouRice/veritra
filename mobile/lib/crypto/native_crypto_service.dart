@@ -1613,6 +1613,10 @@ class NativeCryptoService
   /// The seven-day transfer window of a link (the native retention rule).
   static const int _k2TransferWindowMs = 7 * 24 * 60 * 60 * 1000;
 
+  static const String _k2SourcePrefix = 'k2-source-';
+  static const String _k2SourceSuffix = '.bin';
+  static final RegExp _k2TransferIdPattern = RegExp(r'^[0-9a-f]{64}$');
+
   /// Plaintext is read in pieces this large (the native stream's maximum).
   static const int _k2ChunkBytes = 1024 * 1024;
 
@@ -1699,6 +1703,13 @@ class NativeCryptoService
                   existing.stage != HistoryTransferStage.approving)) {
             throw const K2TransferException('the approval is already settled');
           }
+          // A retry keeps the digest the first confirmation stored: the
+          // server's claim hash is immutable, and the approving row is what
+          // the upload later sends.
+          if (existing != null &&
+              _storedClaimHash(existing) != claimRequestHash) {
+            throw const K2TransferException('another claim is stored');
+          }
           return device.k2SourceConfirm(id, typedSas, now: _nowMs);
         },
             row: (_) async => HistoryTransferProgress(
@@ -1730,6 +1741,7 @@ class NativeCryptoService
   Future<HistoryTransferProgress> k2SourcePrepare(K2TransferId id,
           {required String cacheDirectory}) =>
       _serial(() async {
+        k2RequireLinkId(id.linkId);
         final row = await _transferRow(id, historyTransferOutgoing);
         if (row.stage != HistoryTransferStage.approving) return row;
         File? cached;
@@ -1762,8 +1774,12 @@ class NativeCryptoService
                 final bundle = stream.sourceFinish(now: _nowMs);
                 final directory = Directory(cacheDirectory);
                 directory.createSync(recursive: true);
+                if (!_k2TransferIdPattern.hasMatch(bundle.transferId)) {
+                  throw const K2TransferException(
+                      'the transfer ID is not valid');
+                }
                 final path = '$cacheDirectory${Platform.pathSeparator}'
-                    'k2-source-${bundle.transferId}.bin';
+                    '$_k2SourcePrefix${bundle.transferId}$_k2SourceSuffix';
                 cached =
                     await _drainCiphertext(stream, bundle.ciphertextSize, path);
                 return row.copyWith(
@@ -1853,6 +1869,7 @@ class NativeCryptoService
           required int ciphertextSize,
           required String downloadPath}) =>
       _serial(() async {
+        k2RequireLinkId(id.linkId);
         final row = await _transferRow(id, historyTransferIncoming);
         if (row.stage != HistoryTransferStage.awaitingHandoff) {
           // Stored already: only this exact handoff may be treated as done.
@@ -1886,7 +1903,8 @@ class NativeCryptoService
   /// ciphertext file. The caller closes the stream. The digest, header and
   /// every chunk are checked by native before any plaintext can be read.
   ({K2HistoryStream stream, K2OpenedBundleResult opened}) _openReceivedBundle(
-      NativeCryptoDevice device, K2TransferId id, HistoryTransferProgress row) {
+      NativeCryptoDevice device, K2TransferId id, HistoryTransferProgress row,
+      {bool reportRejection = false}) {
     if (row.handoff == null ||
         row.transferId == null ||
         row.ciphertextSha256 == null ||
@@ -1897,6 +1915,20 @@ class NativeCryptoService
     final begun = device.k2ReceiveBeginBundle(id, row.handoff!,
         now: _nowMs, plaintextVersion: k2HistoryPlaintextVersion);
     final stream = begun.stream;
+    // Native refusing the ciphertext itself (digest, header or a chunk
+    // failing authentication) is a rejection of the bytes; every other
+    // failure keeps its own type.
+    T rejectable<T>(T Function() step) {
+      try {
+        return step();
+      } on NativeCryptoException catch (err) {
+        if (reportRejection && err.kind == NativeCryptoError.operationFailed) {
+          throw const _K2BundleRejected();
+        }
+        rethrow;
+      }
+    }
+
     try {
       if (begun.transferId != row.transferId ||
           !_sameBytes(begun.ciphertextHash, row.ciphertextSha256!) ||
@@ -1916,12 +1948,15 @@ class NativeCryptoService
           if (chunk.isEmpty) {
             throw const K2TransferException('the download is incomplete');
           }
-          offset = stream.write(offset, chunk);
+          offset = rejectable(() => stream.write(offset, chunk));
         }
       } finally {
         handle.closeSync();
       }
-      return (stream: stream, opened: stream.receiveFinish(now: _nowMs));
+      return (
+        stream: stream,
+        opened: rejectable(() => stream.receiveFinish(now: _nowMs)),
+      );
     } catch (_) {
       stream.close();
       rethrow;
@@ -1933,11 +1968,15 @@ class NativeCryptoService
         final row = await _transferRow(id, historyTransferIncoming);
         await _requiredState();
         try {
-          _openReceivedBundle(_requiredDevice(), id, row).stream.close();
+          _openReceivedBundle(_requiredDevice(), id, row, reportRejection: true)
+              .stream
+              .close();
           return true;
-        } on NativeCryptoException {
-          return false;
-        } on K2TransferException {
+        } on _K2BundleRejected {
+          // Only the native digest, header or chunk authentication failing
+          // answers false (the caller then deletes the file). Anything else
+          // (I/O, a missing record, the library) passes through: it says
+          // nothing about the bytes, so the file is kept.
           return false;
         }
       });
@@ -2042,6 +2081,42 @@ class NativeCryptoService
         }
         return removed;
       });
+
+  @override
+  Future<int> k2SweepOrphanCaches(String cacheDirectory) => _serial(() async {
+        final directory = Directory(cacheDirectory);
+        if (!directory.existsSync()) return 0;
+        final named = <String>{
+          for (final row in await localStore.loadHistoryTransfers())
+            if (row.filePath != null) File(row.filePath!).absolute.path,
+        };
+        var removed = 0;
+        for (final entry in directory.listSync(followLinks: false)) {
+          if (entry is! File) continue;
+          final name = entry.uri.pathSegments.last;
+          if (!name.startsWith(_k2SourcePrefix)) continue;
+          final cached = name.endsWith('$_k2SourceSuffix.part')
+              ? File(entry.path.substring(0, entry.path.length - 5))
+              : entry;
+          if (!cached.path.endsWith(_k2SourceSuffix) ||
+              named.contains(cached.absolute.path)) {
+            continue;
+          }
+          entry.deleteSync();
+          removed++;
+        }
+        return removed;
+      });
+
+  static String? _storedClaimHash(HistoryTransferProgress row) {
+    try {
+      final decoded = jsonDecode(row.payloadJson);
+      final hash = decoded is Map ? decoded['claim_request_hash'] : null;
+      return hash is String ? hash : null;
+    } on FormatException {
+      return null;
+    }
+  }
 
   /// Removes the native record (committed first, only when it was there),
   /// then the ciphertext file, then the row. Each step is safe to repeat, so
@@ -2380,6 +2455,12 @@ CryptoRecordLimitExceeded recordLimitFromNative(
 List<int> _randomBytes(int length) {
   final random = Random.secure();
   return List<int>.generate(length, (_) => random.nextInt(256));
+}
+
+/// Native refused the downloaded ciphertext itself: its digest, header or a
+/// chunk failed authentication. Private to [NativeCryptoService.k2VerifyDownload].
+class _K2BundleRejected implements Exception {
+  const _K2BundleRejected();
 }
 
 const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
