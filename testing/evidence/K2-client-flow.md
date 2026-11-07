@@ -249,3 +249,78 @@ screens, two-device runs, independent review.
   over-block only on an account and device ID collision across servers;
   `_finishRecoveredSession` sets the in-memory session before a promotion
   that can still throw (pattern older than schema 18).
+
+## 2026-11-07: transfer orchestration on the schema-18 tables (no counter bump)
+
+Built the NativeCryptoService half of step 2: the native K2 controls and
+bundle streams (ABI 8 operations, present in the current ABI 12; no native
+change, no ABI bump) wired to the schema-18 promotion ledger and transfer
+progress rows, plus the HTTP sequencing. No schema change was needed (local
+schema stays 18). The v3 link screens, the AppState switch to v3 and the
+two-device runs are **not** built. Production messaging stays off.
+
+- `crypto/k2_transfer_crypto.dart`: `K2TransferCryptoService`, implemented by
+  `NativeCryptoService`. Each state-changing step is one `_serial` operation:
+  native call, seal as counter N+1, one expected-counter commit with the
+  progress row (`commitHistoryTransferState`; the sync cursor does not
+  move), restore of the committed state on any failure. Native streams are
+  opened and closed inside one operation; no HTTP happens inside the queue.
+- Source order: accept (committed), confirm (committed together with the
+  `approving` row, which proves the intent is durable before
+  `k2SourceApprovalRequest` releases the tag), approval POST, apply approval,
+  prepare (export, native begin/write/finish, ciphertext drained to a
+  `.part` file, flushed, renamed; handoff, manifest and `snapshot_ready` row
+  committed before any upload), upload, posted (`uploaded` row), cleanup after
+  the server shows the ACK. A commit whose outcome was lost keeps the file
+  (the stored row names it); a failed commit deletes it. A missing or short
+  cache after the handoff was committed is refused, never regenerated.
+- Receiver order: receive-begin and the enrollment proof run on the pending
+  device before its one seal (the pending state is frozen, so no schema 19);
+  after promotion the approval is applied as the first active commit (tag and
+  time live in the `awaiting_handoff` row's payload, since promotion deletes
+  the pending row), the handoff is checked against the pinned context and the
+  server receipt (transfer ID, digest, size, transcript) and committed with
+  the `downloading` row, the download is verified by feeding the whole file to
+  a native stream (no Dart SHA-256), native importing is committed, the
+  verified plaintext is read in memory into one import transaction (which
+  holds the import ledger) with the counter and creation time taken from the
+  authenticated native header, then `imported`, ACK, `acknowledged`, native
+  forget (committed), file and row removed.
+- `HistoryTransferService` (`crypto/history_transfer_service.dart`) resumes
+  either side from its stored row; `HistoryTransferTransport` is the interface
+  `HistoryTransferClient` now implements, so the sequencing is testable.
+  `abandon` cancels the server copy best effort and removes the local record,
+  file and row; `k2ExpireTransfers` sweeps native records and rows past their
+  deadline.
+- Choice: the source's `approving` row cannot know the final transfer deadline
+  (approval time plus seven days), and a row's deadline is frozen. It holds
+  the latest the native record can live (original link expiry plus seven
+  days); native enforces the real one.
+- Contract for the link flow: the recipient's `awaiting_handoff` row payload
+  carries `approval_tag` (base64), `approved_at` (epoch ms) and optionally
+  `claim_request_hash`.
+
+Checks (stand-in Dart 3.13.7 with Flutter stubs, system SQLite, release native
+library built from this tree; `test/k2_transfer_orchestration_test.dart`, 14
+passed): full source-to-recipient flow with two real services (history copied,
+state `restored`, cursor unchanged, native records gone, both devices still
+commit), tag refused before the intent commit, pending state refuses a new
+transfer record after its seal, lost commit outcome keeps the frozen copy,
+failed commit leaves no cache and the retry works, lost upload reply retried
+without a second copy, missing cache refused then abandoned, crash after the
+import is a no-op re-import (no duplicates, one ledger entry), crash after the
+ACK finished by the next call, corrupt download imports nothing and is fetched
+again, receipt naming another transfer refused before anything is kept,
+expired transfer refused then swept, importer refusal keeps the `downloaded`
+stage. Also passing: `k2_history_transfer_client_test`, `k2_schema18_test`,
+`native_crypto_service_promotion_test`, `k2_native_streams_test`,
+`k2_native_controls_test`. `dart format --language-version=3.4` clean on lib
+and test; analyzer clean on the changed files. Not run locally: the full
+Flutter suite and `flutter analyze` (CI), the transport against the real Go
+handler, device runs. Independent Opus review of this slice is still owed
+(security, MLS ordering, credential handling).
+
+Left, in order: the v3 link screens and the AppState switch from the v2 clone
+path (which then need `K2TransferCryptoService`, the pending payload for the
+claim credentials, and a call to `HistoryTransferService`), two-device runs,
+independent review, removing the clone-restore path.
