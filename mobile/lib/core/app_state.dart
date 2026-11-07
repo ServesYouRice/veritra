@@ -34,6 +34,7 @@ import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
+import '../calls/call_controller.dart';
 import 'api_client.dart';
 import 'attachments.dart';
 import 'client_config.dart';
@@ -672,6 +673,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   static const _selfUpdateSpacing = Duration(minutes: 1);
   Future<void> _sessionTransitionTail = Future<void>.value();
   Stream<IncomingCallSignal> get callSignals => _callSignals.stream;
+
+  /// The signed-in session's call controller, set by the call host in demo
+  /// builds (B5); null otherwise, so release builds show no call controls.
+  final ValueNotifier<CallController?> callController =
+      ValueNotifier<CallController?>(null);
 
   @override
   void notifyListeners() {

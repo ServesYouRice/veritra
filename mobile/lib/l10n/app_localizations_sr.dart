@@ -3128,6 +3128,85 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get voiceNotePlayFailed => 'Гласовна порука није могла да се пусти.';
+
+  @override
+  String get callStartVoice => 'Гласовни позив';
+
+  @override
+  String get callStartVideo => 'Видео позив';
+
+  @override
+  String get callUnknownContact => 'Непознат контакт';
+
+  @override
+  String get callIncoming => 'Долазни позив';
+
+  @override
+  String get callIncomingVideo => 'Долазни видео позив';
+
+  @override
+  String get callRinging => 'Позивам…';
+
+  @override
+  String get callConnecting => 'Повезујем…';
+
+  @override
+  String get callInProgress => 'Позив у току';
+
+  @override
+  String get callRelayNote =>
+      'Овај позив иде преко релеја сервера, па друга страна никад не види вашу мрежну адресу.';
+
+  @override
+  String get callAccept => 'Прихвати';
+
+  @override
+  String get callDecline => 'Одбиј';
+
+  @override
+  String get callHangUp => 'Прекини';
+
+  @override
+  String get callMute => 'Искључи звук';
+
+  @override
+  String get callUnmute => 'Укључи звук';
+
+  @override
+  String get callSpeaker => 'Звучник';
+
+  @override
+  String get callCameraOff => 'Искључи камеру';
+
+  @override
+  String get callCameraOn => 'Укључи камеру';
+
+  @override
+  String get callDismiss => 'Затвори';
+
+  @override
+  String callNoticeMissed(String name) {
+    return 'Пропуштен позив: $name';
+  }
+
+  @override
+  String callNoticeDeclined(String name) {
+    return '$name је одбио/ла позив';
+  }
+
+  @override
+  String callNoticeNoAnswer(String name) {
+    return '$name се није јавио/ла';
+  }
+
+  @override
+  String callNoticeBusy(String name) {
+    return '$name је звао/ла док сте разговарали';
+  }
+
+  @override
+  String get callNoticeFailed =>
+      'Позив није успео да се повеже. За позиве је потребна подешена релејна (TURN) услуга сервера.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6258,4 +6337,83 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get voiceNotePlayFailed => 'Glasovna poruka nije mogla da se pusti.';
+
+  @override
+  String get callStartVoice => 'Glasovni poziv';
+
+  @override
+  String get callStartVideo => 'Video poziv';
+
+  @override
+  String get callUnknownContact => 'Nepoznat kontakt';
+
+  @override
+  String get callIncoming => 'Dolazni poziv';
+
+  @override
+  String get callIncomingVideo => 'Dolazni video poziv';
+
+  @override
+  String get callRinging => 'Pozivam…';
+
+  @override
+  String get callConnecting => 'Povezujem…';
+
+  @override
+  String get callInProgress => 'Poziv u toku';
+
+  @override
+  String get callRelayNote =>
+      'Ovaj poziv ide preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.';
+
+  @override
+  String get callAccept => 'Prihvati';
+
+  @override
+  String get callDecline => 'Odbij';
+
+  @override
+  String get callHangUp => 'Prekini';
+
+  @override
+  String get callMute => 'Isključi zvuk';
+
+  @override
+  String get callUnmute => 'Uključi zvuk';
+
+  @override
+  String get callSpeaker => 'Zvučnik';
+
+  @override
+  String get callCameraOff => 'Isključi kameru';
+
+  @override
+  String get callCameraOn => 'Uključi kameru';
+
+  @override
+  String get callDismiss => 'Zatvori';
+
+  @override
+  String callNoticeMissed(String name) {
+    return 'Propušten poziv: $name';
+  }
+
+  @override
+  String callNoticeDeclined(String name) {
+    return '$name je odbio/la poziv';
+  }
+
+  @override
+  String callNoticeNoAnswer(String name) {
+    return '$name se nije javio/la';
+  }
+
+  @override
+  String callNoticeBusy(String name) {
+    return '$name je zvao/la dok ste razgovarali';
+  }
+
+  @override
+  String get callNoticeFailed =>
+      'Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.';
 }

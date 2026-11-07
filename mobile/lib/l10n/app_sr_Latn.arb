@@ -845,5 +845,56 @@
   "voiceNotePlay": "Pusti",
   "voiceNotePause": "Pauziraj",
   "voiceNoteSemantics": "Glasovna poruka, {size}",
-  "voiceNotePlayFailed": "Glasovna poruka nije mogla da se pusti."
+  "voiceNotePlayFailed": "Glasovna poruka nije mogla da se pusti.",
+  "callStartVoice": "Glasovni poziv",
+  "callStartVideo": "Video poziv",
+  "callUnknownContact": "Nepoznat kontakt",
+  "callIncoming": "Dolazni poziv",
+  "callIncomingVideo": "Dolazni video poziv",
+  "callRinging": "Pozivam…",
+  "callConnecting": "Povezujem…",
+  "callInProgress": "Poziv u toku",
+  "callRelayNote": "Ovaj poziv ide preko releja servera, pa druga strana nikad ne vidi vašu mrežnu adresu.",
+  "callAccept": "Prihvati",
+  "callDecline": "Odbij",
+  "callHangUp": "Prekini",
+  "callMute": "Isključi zvuk",
+  "callUnmute": "Uključi zvuk",
+  "callSpeaker": "Zvučnik",
+  "callCameraOff": "Isključi kameru",
+  "callCameraOn": "Uključi kameru",
+  "callDismiss": "Zatvori",
+  "callNoticeMissed": "Propušten poziv: {name}",
+  "@callNoticeMissed": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "callNoticeDeclined": "{name} je odbio/la poziv",
+  "@callNoticeDeclined": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "callNoticeNoAnswer": "{name} se nije javio/la",
+  "@callNoticeNoAnswer": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "callNoticeBusy": "{name} je zvao/la dok ste razgovarali",
+  "@callNoticeBusy": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "callNoticeFailed": "Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera."
 }

@@ -3117,4 +3117,83 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get voiceNotePlayFailed => 'The voice note could not be played.';
+
+  @override
+  String get callStartVoice => 'Voice call';
+
+  @override
+  String get callStartVideo => 'Video call';
+
+  @override
+  String get callUnknownContact => 'Unknown contact';
+
+  @override
+  String get callIncoming => 'Incoming call';
+
+  @override
+  String get callIncomingVideo => 'Incoming video call';
+
+  @override
+  String get callRinging => 'Calling…';
+
+  @override
+  String get callConnecting => 'Connecting…';
+
+  @override
+  String get callInProgress => 'Call in progress';
+
+  @override
+  String get callRelayNote =>
+      'This call goes through the server\'s relay, so the other side never sees your network address.';
+
+  @override
+  String get callAccept => 'Accept';
+
+  @override
+  String get callDecline => 'Decline';
+
+  @override
+  String get callHangUp => 'Hang up';
+
+  @override
+  String get callMute => 'Mute';
+
+  @override
+  String get callUnmute => 'Unmute';
+
+  @override
+  String get callSpeaker => 'Speaker';
+
+  @override
+  String get callCameraOff => 'Camera off';
+
+  @override
+  String get callCameraOn => 'Camera on';
+
+  @override
+  String get callDismiss => 'Dismiss';
+
+  @override
+  String callNoticeMissed(String name) {
+    return 'Missed call from $name';
+  }
+
+  @override
+  String callNoticeDeclined(String name) {
+    return '$name declined the call';
+  }
+
+  @override
+  String callNoticeNoAnswer(String name) {
+    return '$name didn\'t answer';
+  }
+
+  @override
+  String callNoticeBusy(String name) {
+    return '$name called while you were on another call';
+  }
+
+  @override
+  String get callNoticeFailed =>
+      'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.';
 }

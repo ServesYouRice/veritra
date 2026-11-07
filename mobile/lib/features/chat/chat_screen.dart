@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
+import '../../calls/call_controller.dart';
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../core/composer_drafts.dart';
@@ -392,6 +393,38 @@ class _ChatScreenState extends State<ChatScreen> {
                         ],
                       ),
                 actions: <Widget>[
+                  if (conversation != null && conversation.isDm && !readOnly)
+                    ValueListenableBuilder<CallController?>(
+                      valueListenable: widget.state.callController,
+                      builder: (context, calls, _) => calls == null
+                          ? const SizedBox.shrink()
+                          : ListenableBuilder(
+                              listenable: calls,
+                              builder: (context, _) => Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: <Widget>[
+                                  IconButton(
+                                      key: const Key('chat-call-voice'),
+                                      tooltip: context.l10n.callStartVoice,
+                                      onPressed: calls.busy
+                                          ? null
+                                          : () => unawaited(
+                                              calls.start(conversation.id)),
+                                      icon: const Icon(Icons.call_outlined)),
+                                  IconButton(
+                                      key: const Key('chat-call-video'),
+                                      tooltip: context.l10n.callStartVideo,
+                                      onPressed: calls.busy
+                                          ? null
+                                          : () => unawaited(calls.start(
+                                              conversation.id,
+                                              withVideo: true)),
+                                      icon:
+                                          const Icon(Icons.videocam_outlined)),
+                                ],
+                              ),
+                            ),
+                    ),
                   IconButton(
                       tooltip: context.l10n.w8StarredMessages,
                       onPressed: _showStarredMessages,

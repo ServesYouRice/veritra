@@ -90,6 +90,33 @@ class ActiveCall {
   RTCPeerConnection get peerConnection => _media.peer;
   MediaStream get localStream => _media.stream!;
 
+  /// Whether the local stream carries a camera track (a video call).
+  bool get hasLocalVideo => _tracks('video').isNotEmpty;
+
+  /// Mutes or unmutes the microphone. A disabled track sends silence; the
+  /// microphone stays acquired until the call ends.
+  void setMicrophoneEnabled(bool enabled) {
+    if (_media.released) return;
+    for (final track in _tracks('audio')) {
+      track.enabled = enabled;
+    }
+  }
+
+  /// Turns the camera on or off (black frames while off). No-op in an
+  /// audio-only call.
+  void setCameraEnabled(bool enabled) {
+    if (_media.released) return;
+    for (final track in _tracks('video')) {
+      track.enabled = enabled;
+    }
+  }
+
+  List<MediaStreamTrack> _tracks(String kind) {
+    final stream = _media.stream;
+    if (stream == null) return const <MediaStreamTrack>[];
+    return stream.getTracks().where((track) => track.kind == kind).toList();
+  }
+
   /// Remote streams received so far, in arrival order.
   List<MediaStream> get currentRemoteStreams =>
       List<MediaStream>.unmodifiable(_media.remoteStreams);

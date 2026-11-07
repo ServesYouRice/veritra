@@ -5126,6 +5126,144 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The voice note could not be played.'**
   String get voiceNotePlayFailed;
+
+  /// No description provided for @callStartVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice call'**
+  String get callStartVoice;
+
+  /// No description provided for @callStartVideo.
+  ///
+  /// In en, this message translates to:
+  /// **'Video call'**
+  String get callStartVideo;
+
+  /// No description provided for @callUnknownContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown contact'**
+  String get callUnknownContact;
+
+  /// No description provided for @callIncoming.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming call'**
+  String get callIncoming;
+
+  /// No description provided for @callIncomingVideo.
+  ///
+  /// In en, this message translates to:
+  /// **'Incoming video call'**
+  String get callIncomingVideo;
+
+  /// No description provided for @callRinging.
+  ///
+  /// In en, this message translates to:
+  /// **'Calling…'**
+  String get callRinging;
+
+  /// No description provided for @callConnecting.
+  ///
+  /// In en, this message translates to:
+  /// **'Connecting…'**
+  String get callConnecting;
+
+  /// No description provided for @callInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Call in progress'**
+  String get callInProgress;
+
+  /// No description provided for @callRelayNote.
+  ///
+  /// In en, this message translates to:
+  /// **'This call goes through the server\'s relay, so the other side never sees your network address.'**
+  String get callRelayNote;
+
+  /// No description provided for @callAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get callAccept;
+
+  /// No description provided for @callDecline.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline'**
+  String get callDecline;
+
+  /// No description provided for @callHangUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Hang up'**
+  String get callHangUp;
+
+  /// No description provided for @callMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get callMute;
+
+  /// No description provided for @callUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get callUnmute;
+
+  /// No description provided for @callSpeaker.
+  ///
+  /// In en, this message translates to:
+  /// **'Speaker'**
+  String get callSpeaker;
+
+  /// No description provided for @callCameraOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera off'**
+  String get callCameraOff;
+
+  /// No description provided for @callCameraOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Camera on'**
+  String get callCameraOn;
+
+  /// No description provided for @callDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get callDismiss;
+
+  /// No description provided for @callNoticeMissed.
+  ///
+  /// In en, this message translates to:
+  /// **'Missed call from {name}'**
+  String callNoticeMissed(String name);
+
+  /// No description provided for @callNoticeDeclined.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} declined the call'**
+  String callNoticeDeclined(String name);
+
+  /// No description provided for @callNoticeNoAnswer.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} didn\'t answer'**
+  String callNoticeNoAnswer(String name);
+
+  /// No description provided for @callNoticeBusy.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} called while you were on another call'**
+  String callNoticeBusy(String name);
+
+  /// No description provided for @callNoticeFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.'**
+  String get callNoticeFailed;
 }
 
 class _AppLocalizationsDelegate
