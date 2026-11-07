@@ -186,8 +186,12 @@ type CreateReportInput struct {
 	ReporterAccountID string
 	ConversationID    string
 	EnvelopeID        string
-	KeyRev            int64
-	Sealed            []byte
+	// KeyRev and RecipientKey name the inbox key the report was sealed to.
+	// Both must still be current: a revision alone would repeat after the
+	// publishing owner's account is deleted and another owner publishes.
+	KeyRev       int64
+	RecipientKey []byte
+	Sealed       []byte
 }
 
 // CreateReport files a sealed report. The reporter must be a current member
@@ -240,7 +244,7 @@ func (s *Store) CreateReport(ctx context.Context, in CreateReportInput) (Report,
 	if err != nil {
 		return Report{}, err
 	}
-	if inbox.KeyRev != in.KeyRev {
+	if inbox.KeyRev != in.KeyRev || !bytes.Equal(inbox.PublicKey, in.RecipientKey) {
 		return Report{}, ErrReportInboxChanged
 	}
 	report.InboxKind, report.InboxID, report.RecipientPublicKey = inbox.Kind, inbox.ID, inbox.PublicKey

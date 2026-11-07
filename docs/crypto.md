@@ -2004,12 +2004,12 @@ for other values does not open.
 publishes the report public key; recent sign-in required),
 `GET /api/v1/reports/inbox?conversation_id=` (the inbox and key for a
 member's report), `POST /api/v1/reports` (`conversation_id`, `envelope_id`,
-`key_rev`, `sealed`), `GET /api/v1/reports?inbox=` and
+`key_rev`, `recipient_public_key`, `sealed`), `GET /api/v1/reports?inbox=` and
 `DELETE /api/v1/reports/{id}` for the people who may read an inbox. The
 server picks the inbox from the conversation kind (a community channel to
 that community's moderator inbox, a DM or group to the instance owners),
 requires a member reporter, a message that carries `frank_commit` and is not
-the reporter's own, and the current `key_rev`, and copies the sender,
+the reporter's own, and the current `key_rev` and key (a revision alone repeats if the publishing owner is deleted), and copies the sender,
 commitment and envelope time from its own envelope row into the report so
 they survive the envelope being pruned. It checks that `sealed` starts with
 `VRP1` and fits the Rust core's bounds, never opens it, never logs it, and

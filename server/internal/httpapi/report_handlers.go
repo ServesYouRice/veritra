@@ -53,24 +53,25 @@ func (a *API) getReportInbox(w http.ResponseWriter, r *http.Request, principal d
 }
 
 // POST /api/v1/reports: file a sealed report. The reporter sends only the
-// conversation, the envelope, the key revision it sealed to, and the sealed
-// bytes. The server picks the inbox and records the sender, commitment and
+// conversation, the envelope, the key (and its revision) it sealed to, and the
+// sealed bytes. The server picks the inbox and records the sender, commitment and
 // envelope time from its own envelope row.
 func (a *API) createReport(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var req struct {
 		ConversationID string `json:"conversation_id"`
 		EnvelopeID     string `json:"envelope_id"`
 		KeyRev         int64  `json:"key_rev"`
+		RecipientKey   []byte `json:"recipient_public_key"`
 		Sealed         []byte `json:"sealed"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if req.ConversationID == "" || req.EnvelopeID == "" || len(req.ConversationID) > franking.MaxIDSize || len(req.EnvelopeID) > franking.MaxIDSize || req.KeyRev < 1 || len(req.Sealed) == 0 {
+	if req.ConversationID == "" || req.EnvelopeID == "" || len(req.ConversationID) > franking.MaxIDSize || len(req.EnvelopeID) > franking.MaxIDSize || req.KeyRev < 1 || len(req.RecipientKey) != franking.PublicKeySize || len(req.Sealed) == 0 {
 		writeError(w, http.StatusBadRequest, "invalid_report")
 		return
 	}
-	report, err := a.Store.CreateReport(r.Context(), storage.CreateReportInput{ReporterAccountID: principal.AccountID, ConversationID: req.ConversationID, EnvelopeID: req.EnvelopeID, KeyRev: req.KeyRev, Sealed: req.Sealed})
+	report, err := a.Store.CreateReport(r.Context(), storage.CreateReportInput{ReporterAccountID: principal.AccountID, ConversationID: req.ConversationID, EnvelopeID: req.EnvelopeID, KeyRev: req.KeyRev, RecipientKey: req.RecipientKey, Sealed: req.Sealed})
 	if err != nil {
 		handleStorageError(w, err)
 		return

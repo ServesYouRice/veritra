@@ -82,10 +82,10 @@ Recommendation: A for both.
 - Migration: nullable `frank_commit BLOB` (32 bytes) on the envelope table,
   write-once (a trigger aborts any later change), plus `report_inbox_keys`
   and `reports`.
-- `POST /api/v1/reports` with `{conversation_id, envelope_id, key_rev,
+- `POST /api/v1/reports` with `{conversation_id, envelope_id, key_rev, recipient_public_key,
   sealed}` (opaque `sealed`). The server checks the reporter is a member and
   the envelope is in that conversation, rate-limits through the write budget
-  and a per-reporter daily cap, and never logs the body. `key_rev` makes a
+  and a per-reporter daily cap, and never logs the body. `key_rev` and the key make a
   report sealed to a rotated key fail instead of landing in a dead inbox.
 - Community reports route to the community's moderator inbox; owner reports to
   the instance owner. The B9 audit log records that a report was filed
@@ -223,7 +223,7 @@ How steps 2 and 3 meet each condition. A wiring review checks the same list.
 
 Deviations from the first design text, none of which changes the wire:
 
-- The report body names `key_rev`, and the instance owners' inbox has one
+- The report body names `key_rev` and the key sealed to, and the instance owners' inbox has one
   published public key (any instance owner may publish it). Several owners
   share that key's seed by hand; per-owner copies (C5 escalations) are a
   later change if the owner wants them.

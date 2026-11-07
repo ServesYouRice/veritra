@@ -25,7 +25,7 @@ Scope: franking on the send and receive path, and the server side of reports
 | G1 | server copies sender, commitment and envelope time into the report row; the design text says what a label may claim (screens are step 4) | `TestReportToInstanceOwnerFromGroup` (snapshot, survives envelope deletion) |
 | G2 | commitment context is the envelope's ids after `classify` matched the payload | `receive_policy_test.dart` "a franked message must match the envelope commitment" (rebound action id is invalid) |
 | G3 | own column, `CHECK` 32 bytes, abort trigger, edit route refuses franked rows, retry must repeat it | `TestFrankCommitIsStoredOnceInItsOwnColumn`, `TestReportsMigrationUpgradesExistingEnvelopes` |
-| G4 | aad over inbox kind, id, recipient key, conversation, envelope, reporter | `TestReportAADVector`, `TestReportAADBindsEveryField`, `c6_report_crypto_test.dart` "report aad" |
+| G4 | aad over inbox kind, id, recipient key, conversation, envelope, reporter; a report names the key it sealed to, so a key revision that restarts after an owner is deleted cannot misroute it | `TestReportAADVector`, `TestReportAADBindsEveryField`, `c6_report_crypto_test.dart` "report aad", `TestReportToARepublishedKeyIsRefusedAtTheSameRevision` |
 | G5 | decided: unfranked accepted as unreportable; franked with missing or wrong commitment invalid | `receive_policy_test.dart`, `native_crypto_service_test.dart` "every message is franked" |
 | G6 | not applicable while the Dart app is the only verifier (recorded in the design) | none |
 
@@ -59,3 +59,9 @@ The demo e2e job is known to time out waiting for sync on several branches.
 - Pin the instance owners' report key (like the K0 recovery key) so the
   server cannot substitute it?
 - One shared owner inbox key, or one copy per owner as C5 escalations do?
+- C7 left this to C6: `POST /api/v1/reports` carries `envelope_id` in clear,
+  so a newcomer reporting a pre-join post shows the server that its channel
+  was `full` then. Move the envelope id inside the sealed body for community
+  reports, or hide the report action on pre-join posts?
+- The independent wiring review (G1 to G6) the design asks for has not
+  happened; no review agent was available to this work.
