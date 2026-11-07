@@ -98,8 +98,8 @@ checks that the kind it shows equals the bound kind.
 What this proves, against a server that never saw the link: whoever made the
 link named exactly this target, inviting account, device and device key, and
 the server did not change any of them. It proves nothing against a server that
-holds the link (see the limits below). It adds no round trip and no new key material, and needs no change to the crypto
-ABI.
+holds the link (see the limits below). It adds no round trip and no new key
+material, and needs no change to the crypto ABI.
 
 Limits, stated plainly:
 
