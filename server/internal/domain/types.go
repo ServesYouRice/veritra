@@ -168,14 +168,27 @@ type Community struct {
 	Name      string    `json:"name"`
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
+	// LayoutVersion, LayoutGeneration and SharedConversationID describe the
+	// C0 shared-group layout. They are omitted for a legacy community.
+	LayoutVersion        int     `json:"layout_version,omitempty"`
+	LayoutGeneration     int64   `json:"layout_generation,omitempty"`
+	SharedConversationID *string `json:"shared_conversation_id,omitempty"`
 }
 
 type Channel struct {
-	ID          string    `json:"id"`
-	CommunityID string    `json:"community_id"`
-	Name        string    `json:"name"`
-	Kind        string    `json:"kind"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	CommunityID string `json:"community_id"`
+	Name        string `json:"name"`
+	// Kind is private or announcement in a legacy community and open,
+	// announcement or private in a community with the shared-group layout.
+	Kind      string    `json:"kind"`
+	CreatedAt time.Time `json:"created_at"`
+	// ConversationID, LayoutVersion and LayoutGeneration are set only for a
+	// routed channel: the shared conversation for open and announcement
+	// channels, the channel's own conversation for a private one.
+	ConversationID   *string `json:"conversation_id,omitempty"`
+	LayoutVersion    int     `json:"layout_version,omitempty"`
+	LayoutGeneration int64   `json:"layout_generation,omitempty"`
 }
 
 type Conversation struct {

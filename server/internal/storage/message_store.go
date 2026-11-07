@@ -83,6 +83,12 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	// C0: a post in a shared community conversation must name one of its open
+	// or announcement channels; elsewhere it must name none.
+	route, err := routeEnvelope(ctx, tx, envelope.ConversationID, envelope.CryptoMetadata)
+	if err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
 	// C2: in an announcement channel or an admins-only group only owners and
 	// admins post. Checked after the idempotent replay above, so a retry of an
 	// already stored post still answers.
@@ -93,6 +99,7 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	restricted = restricted || route.announcement
 	if restricted && !domain.CanPostRestricted(senderRole) {
 		return domain.MessageEnvelope{}, false, 0, ErrPostingRestricted
 	}
@@ -101,7 +108,8 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 			continue
 		}
 		var referenceConversation string
-		if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM message_envelopes WHERE id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, *referenceID, formatTime(now)).Scan(&referenceConversation); err != nil {
+		var referenceChannel sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT conversation_id, json_extract(crypto_metadata_json, '$.channel_id') FROM message_envelopes WHERE id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`, *referenceID, formatTime(now)).Scan(&referenceConversation, &referenceChannel); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
 			}
@@ -109,6 +117,10 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		if referenceConversation != envelope.ConversationID {
 			return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
+		}
+		// A reply or thread stays in its channel.
+		if route.shared && referenceChannel.String != route.channelID {
+			return domain.MessageEnvelope{}, false, 0, ErrInvalidChannelRoute
 		}
 	}
 	if envelope.ID == "" {
@@ -322,6 +334,9 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	now := nowString()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes
@@ -367,6 +382,9 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	now := nowString()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes

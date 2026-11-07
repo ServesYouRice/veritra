@@ -23,7 +23,13 @@ type Config struct {
 	SetupToken    string
 	EnableMetrics bool
 	// ScopedSync serves the per-scope sync routes (C1). Off by default.
-	ScopedSync       bool
+	ScopedSync bool
+	// CommunityLayout makes new communities use the C0 shared-group layout:
+	// one shared conversation for open channels and one conversation per
+	// private channel. Existing communities stay in the legacy layout. Off by
+	// default until the app, scoped sync and the layout control record are
+	// ready (C1 prerequisite 2).
+	CommunityLayout  bool
 	ManagementAddr   string
 	TrustedProxies   []*net.IPNet
 	VAPIDSubscriber  string
@@ -120,6 +126,7 @@ func Load() (Config, error) {
 		SetupToken:       secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
 		ScopedSync:       getenv("PRIVATE_MESSENGER_SCOPED_SYNC", "") == "1",
+		CommunityLayout:  getenv("PRIVATE_MESSENGER_COMMUNITY_LAYOUT", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
 		VAPIDSubscriber:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),

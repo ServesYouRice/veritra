@@ -22,9 +22,10 @@ const deviceLinkProtocolVersion = "veritra-device-link-v2"
 
 func (s *Store) ListCommunities(ctx context.Context, accountID string) ([]domain.Community, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.id, c.name, c.created_by, c.created_at
+		SELECT c.id, c.name, c.created_by, c.created_at, l.generation, l.shared_conversation_id
 		FROM communities c
 		JOIN memberships m ON m.community_id = c.id
+		LEFT JOIN community_layouts l ON l.community_id = c.id AND l.state = 'active'
 		WHERE m.account_id = ?
 		ORDER BY c.created_at DESC`, accountID)
 	if err != nil {
@@ -35,10 +36,15 @@ func (s *Store) ListCommunities(ctx context.Context, accountID string) ([]domain
 	for rows.Next() {
 		var community domain.Community
 		var created string
-		if err := rows.Scan(&community.ID, &community.Name, &community.CreatedBy, &created); err != nil {
+		var generation sql.NullInt64
+		var shared sql.NullString
+		if err := rows.Scan(&community.ID, &community.Name, &community.CreatedBy, &created, &generation, &shared); err != nil {
 			return nil, err
 		}
 		community.CreatedAt = parseTime(created)
+		if shared.Valid {
+			community.LayoutVersion, community.LayoutGeneration, community.SharedConversationID = CommunityLayoutVersion, generation.Int64, &shared.String
+		}
 		communities = append(communities, community)
 	}
 	return communities, rows.Err()
@@ -50,7 +56,7 @@ func (s *Store) ListChannels(ctx context.Context, communityID, accountID string)
 	if _, err := s.CommunityMemberRole(ctx, communityID, accountID); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, community_id, name, kind, created_at FROM channels WHERE community_id = ? ORDER BY created_at`, communityID)
+	rows, err := s.db.QueryContext(ctx, listChannelsQuery, communityID, accountID)
 	if err != nil {
 		return nil, err
 	}
@@ -59,10 +65,16 @@ func (s *Store) ListChannels(ctx context.Context, communityID, accountID string)
 	for rows.Next() {
 		var channel domain.Channel
 		var created string
-		if err := rows.Scan(&channel.ID, &channel.CommunityID, &channel.Name, &channel.Kind, &created); err != nil {
+		var routeConversation, access sql.NullString
+		var generation sql.NullInt64
+		if err := rows.Scan(&channel.ID, &channel.CommunityID, &channel.Name, &channel.Kind, &created, &routeConversation, &access, &generation); err != nil {
 			return nil, err
 		}
 		channel.CreatedAt = parseTime(created)
+		if access.Valid {
+			channel.Kind, channel.ConversationID = access.String, &routeConversation.String
+			channel.LayoutVersion, channel.LayoutGeneration = CommunityLayoutVersion, generation.Int64
+		}
 		channels = append(channels, channel)
 	}
 	return channels, rows.Err()
@@ -487,11 +499,18 @@ func (s *Store) CreateCommunity(ctx context.Context, name, createdBy string) (do
 	if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, community_id, role, created_at) VALUES(?, ?, ?, 'owner', ?)`, membershipID, createdBy, id, createdAt); err != nil {
 		return domain.Community{}, err
 	}
+	if err := s.initCommunityLayout(ctx, tx, id, createdBy, createdAt); err != nil {
+		return domain.Community{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return domain.Community{}, err
 	}
 	created, _ := time.Parse(time.RFC3339Nano, createdAt)
-	return domain.Community{ID: id, Name: strings.TrimSpace(name), CreatedBy: createdBy, CreatedAt: created}, nil
+	community := domain.Community{ID: id, Name: strings.TrimSpace(name), CreatedBy: createdBy, CreatedAt: created}
+	if layout, err := communityLayoutOf(ctx, s.db, id); err == nil && layout.active {
+		community.LayoutVersion, community.LayoutGeneration, community.SharedConversationID = CommunityLayoutVersion, layout.generation, &layout.sharedConversationID
+	}
+	return community, nil
 }
 
 func (s *Store) CreateChannel(ctx context.Context, communityID, name, kind, createdBy string) (domain.Channel, error) {
@@ -521,10 +540,9 @@ func (s *Store) CreateChannel(ctx context.Context, communityID, name, kind, crea
 }
 
 func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, name, kind, createdBy string) (domain.Channel, domain.Conversation, error) {
-	if kind == "" {
-		kind = "private"
-	}
-	if kind != "private" && kind != "announcement" {
+	// An empty kind is private in a legacy community and open in one with the
+	// shared-group layout; open exists only in the latter.
+	if kind != "" && kind != "private" && kind != "announcement" && kind != ChannelAccessOpen {
 		return domain.Channel{}, domain.Conversation{}, ErrInvalidInput
 	}
 	channelID, err := domain.NewID("chan")
@@ -550,6 +568,29 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 	}
 	if !domain.CanManageMembers(actorRole) {
 		return domain.Channel{}, domain.Conversation{}, ErrForbidden
+	}
+	layout, err := communityLayoutOf(ctx, tx, communityID)
+	if err != nil {
+		return domain.Channel{}, domain.Conversation{}, err
+	}
+	if layout.active {
+		if kind == "" {
+			kind = ChannelAccessOpen
+		}
+		channel, conversation, err := s.createRoutedChannel(ctx, tx, layout, communityID, name, kind, createdBy, actorRole, createdAt)
+		if err != nil {
+			return domain.Channel{}, domain.Conversation{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return domain.Channel{}, domain.Conversation{}, err
+		}
+		return channel, conversation, nil
+	}
+	if kind == "" {
+		kind = "private"
+	}
+	if kind == ChannelAccessOpen {
+		return domain.Channel{}, domain.Conversation{}, ErrInvalidInput
 	}
 	communityMembers, err := communityMemberCount(ctx, tx, communityID)
 	if err != nil {
@@ -701,24 +742,8 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 	if _, err := tx.ExecContext(ctx, `INSERT INTO memberships(id, account_id, community_id, role, created_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(account_id, community_id) DO UPDATE SET role = excluded.role`, membershipID, targetAccountID, communityID, role, createdAt); err != nil {
 		return nil, err
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM conversations WHERE community_id = ? AND kind = 'community_channel'`, communityID)
+	conversationIDs, err := communityJoinConversationIDs(ctx, tx, communityID)
 	if err != nil {
-		return nil, err
-	}
-	conversationIDs := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		conversationIDs = append(conversationIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
 		return nil, err
 	}
 	eventIDs := make([]int64, 0, len(conversationIDs)+1)
@@ -834,6 +859,15 @@ func (s *Store) CreateOrGetConversation(ctx context.Context, input CreateConvers
 			return domain.Conversation{}, false, err
 		}
 		if channelCommunity != *input.CommunityID {
+			return domain.Conversation{}, false, ErrForbidden
+		}
+		// A community with the shared-group layout creates its conversations
+		// itself; one made here would be a second, unrouted group.
+		layout, err := communityLayoutOf(ctx, tx, *input.CommunityID)
+		if err != nil {
+			return domain.Conversation{}, false, err
+		}
+		if layout.active {
 			return domain.Conversation{}, false, ErrForbidden
 		}
 	}
@@ -1002,6 +1036,12 @@ func (s *Store) ManageConversationMember(ctx context.Context, conversationID, ac
 		return 0, err
 	}
 	if conversationKind == "dm" {
+		return 0, ErrForbidden
+	}
+	// The shared conversation's roster is the community's roster.
+	if shared, err := isSharedConversation(ctx, tx, conversationID); err != nil {
+		return 0, err
+	} else if shared {
 		return 0, ErrForbidden
 	}
 	if !domain.CanManageMembers(actorRole) || domain.RoleRank(role) > domain.RoleRank(actorRole) {
@@ -1352,6 +1392,9 @@ func (s *Store) ListConversationsPageFrom(ctx context.Context, accountID string,
 	if err := s.annotatePostingRestricted(ctx, conversations); err != nil {
 		return nil, err
 	}
+	if err := annotateSharedKind(ctx, s.db, conversations); err != nil {
+		return nil, err
+	}
 	return conversations, nil
 }
 
@@ -1401,6 +1444,11 @@ func (s *Store) updateConversationRetention(ctx context.Context, conversationID,
 	if err != nil {
 		return domain.Conversation{}, 0, err
 	}
+	one := []domain.Conversation{conversation}
+	if err := annotateSharedKind(ctx, tx, one); err != nil {
+		return domain.Conversation{}, 0, err
+	}
+	conversation = one[0]
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, nil, conversationID, conversation, now)
 	if err != nil {
 		return domain.Conversation{}, 0, err
@@ -1422,6 +1470,9 @@ func (s *Store) ConversationByID(ctx context.Context, conversationID string) (do
 	}
 	one := []domain.Conversation{conversation}
 	if err := s.annotatePostingRestricted(ctx, one); err != nil {
+		return domain.Conversation{}, err
+	}
+	if err := annotateSharedKind(ctx, s.db, one); err != nil {
 		return domain.Conversation{}, err
 	}
 	return one[0], nil
