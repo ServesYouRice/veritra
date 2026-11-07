@@ -187,7 +187,10 @@ no success. A backup never blocks sending or sync.
    - the account keeps at most 3 revoked-device copies, newest first.
 6. **RK swap** (the existing `PUT /account/recovery-key`, in its
    transaction):
-   - delete every backup row whose `rk_id` is not the new one;
+   - delete every backup row whose `rk_id` is not the new one, **except
+     revoked devices' copies inside their retention window** (change 5).
+     A user who just recovered still holds the old RK and needs exactly
+     those copies (see Restore, "Order after a recovery");
    - queue their blobs;
    - emit `account.recovery_key.set` (already sent), which the other devices
      read as "pause backups, ask for the new RK".
@@ -228,9 +231,23 @@ Then:
 3. The download is checked chunk by chunk (as today), then merged by the K2
    history-only importer. Restored rows are marked restored. Existing newer
    messages are kept (merge, not replace).
-4. The typed RK also sets `k1.rk_pub` and `k1.rk_id` here. After a K0-R
-   recovery, the forced RK replacement follows (K0-R step 6), then the first
-   backup sealed to the new key.
+4. The typed RK also sets `k1.rk_pub` and `k1.rk_id` here.
+
+**Order after a recovery.** Built K0-R forces a new RK before chats open
+(K0-R step 6), and an RK swap deletes old-key copies. If nothing changed,
+the forced swap would delete the lost phone's copy before the user could
+restore it. Two guards, both built:
+
+- **Client order (changes built K0-R).** After a K0-R completion the forced
+  follow-up becomes `reauth`, then **restore** (or an explicit skip that
+  warns "older backups will become unusable"), then the new RK, then the new
+  password. The follow-up step is persisted, so after a crash it resumes at
+  the restore step. After that, the first backup is sealed to the new key.
+- **Server keep rule.** The RK swap never deletes a revoked device's copy
+  inside its retention window (server change 6). Those copies still open
+  with the old RK, which the user typed moments ago and still holds. So a
+  client that gets the order wrong still leaves them restorable for 90
+  days.
 
 **Effect on K0-R.**
 
@@ -288,7 +305,7 @@ opens with RK alone; it needs no password and no account.
 | Restore in progress while the owner device replaces the copy | Broken download | 24 h superseded grace |
 | Background run on a locked phone | Key store not readable | Run deferred to the next unlock; never a weaker key store |
 | Disappearing messages | Would outlive their timer | Left out of every backup |
-| Lost phone's copy | Needed for recovery | Kept 90 days after revoke |
+| Lost phone's copy | Needed for recovery | Kept 90 days after revoke, also across the RK swap that K0-R forces; restore comes before that swap |
 
 ## Packages and counters
 
@@ -301,7 +318,7 @@ them first.
 | K1-1 Rust/ABI | VHC1 kind 1 seal and open (open takes the entropy and derives `rk_sk` inside Rust), padding, vectors `testing/vectors/k1-backup-v1.json` checked by Rust and Dart, `docs/crypto.md` change log | **crypto ABI +1** | Opus review |
 | K1-2 Server | Columns and index, kind-1 upload checks, superseded grace and prune, quota, revoked-device retention, RK-swap deletes, recent auth for other devices' deletes, list fields, `docs/operations.md` | **server migration +1** | Opus review |
 | K1-3 Client backup | Store `k1.*`, snapshot without disappearing messages or `k1.*`, the daily run on app open and on the desktop timer, status and warnings in Settings, onboarding prompt (D49) | none (settings keys); the snapshot format version moves up by one, a format number, not a reserved counter | Sonnet, Opus review |
-| K1-4 Restore | Backup list, RK entry, open and import through the K2 importer, K0-R entry changes | none | Opus review |
+| K1-4 Restore | Backup list, RK entry, open and import through the K2 importer, K0-R entry changes, the reordered K0-R follow-up (restore before the new RK, resumable) | none | Opus review |
 | K1-5 Confirm and second copy | Confirmation schedule; desktop folder; Android tree URI; iOS manual export | none | Sonnet |
 | K1-6 Background and retirement | Android job and iOS `BGProcessingTask` after D52's cold start; remove VBK2 creation and the token route (if owner question 1 is yes) | possibly a server migration +1 to drop the token columns | Opus review (platform policy) |
 | K1-7 Review | Independent review of K1-1 to K1-6, demo e2e (back up, lose every device, recover, restore, chat), STATE | none | Opus |
@@ -320,6 +337,10 @@ them first.
   deletes old-key copies in the same transaction.
 - **Revoked devices.** A revoked device's copy survives K0-R completion and
   is pruned after 90 days.
+- **Recovery, then the forced key change.** Recover with no device left,
+  then force the new RK. The lost phone's old-key copy is still listed and
+  opens with the old RK, or the restore already finished before the swap.
+  A crash between the restore and the new RK resumes at the right step.
 - **What a backup holds.** No `k1.*` key, credential or disappearing
   message is in any export.
 - **Restore.** It merges and keeps newer messages.

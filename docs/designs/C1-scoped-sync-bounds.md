@@ -46,9 +46,17 @@ asking each one. D38 allows up to 1,000 conversations per account.
        account's own rows for it (the Welcome), as `ListConversationSyncEvents`
        selects them.
 
-     It counts hidden rows (join filter, blocks, dead envelopes). It is one
-     index probe per scope: `MAX(id)` on `idx_sync_events_conversation` or
-     `idx_sync_events_account`. It never walks a hidden run.
+     It counts hidden rows (join filter, blocks, dead envelopes), so it
+     never walks a hidden run.
+     - **The account scope** is one probe on `idx_sync_events_account`.
+     - **The conversation scope** is a backward probe on
+       `idx_sync_events_conversation`. It also steps over the tail of other
+       accounts' targeted rows (their Welcomes), which the scope excludes.
+       One add commit can leave up to about members × devices of them
+       (about 1,000 at D38's limits).
+     - **For review:** whether that bound is acceptable for heads, or
+       whether the server should count those rows in the head instead. They
+       are ids only, and members already see the commit that made them.
    - **`scanned_through`** is the highest id the server examined for this
      page, hidden rows included.
      - The account scope has no hidden rows, so it equals the last event
@@ -79,7 +87,7 @@ asking each one. D38 allows up to 1,000 conversations per account.
    - **`watermark`** is the highest id the server has issued that this
      account can be shown: the maximum of the heads. The client passes it
      as the next `since`.
-   - **Cost:** one index probe per membership, the same order as the legacy
+   - **Cost:** one backward probe per membership (see `scope_head`), the same order as the legacy
      `syncVisibleLatestExpr` on every legacy page, but without its
      visibility walk.
    - **Paging:** at most 1,000 memberships (D38), so the route answers one
@@ -179,6 +187,10 @@ atomic commits", with these bounds.
      `scope_head > cursor`, each page under the existing lease and `_serial`.
    - On startup and after any membership event in the account stream, call
      heads with `since=0`.
+   - The client keeps every known head in memory and merges each delta
+     into it. A `since=watermark` answer lists only what changed. It is
+     never the full list of pending work: a conversation that is known but
+     not yet drained stays scheduled.
 5. **Advancing a cursor.**
    - **A page with events:** the last event's atomic `ScopedMlsTransition`
      sets the cursor to `max(last event, scanned_through)`.
