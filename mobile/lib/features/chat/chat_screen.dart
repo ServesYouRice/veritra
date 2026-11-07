@@ -1829,8 +1829,7 @@ class _MessageBubble extends StatelessWidget {
                             ?.copyWith(color: foreground),
                       ),
                       ..._linkPreviewCard(text, foreground),
-                    ]
-                    else
+                    ] else
                       _RedactedBars(
                         byteLength: message.ciphertext.length,
                         contentWidth: maxWidth - _insetX,

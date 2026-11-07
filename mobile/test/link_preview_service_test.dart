@@ -254,8 +254,8 @@ void main() {
       }
       expect(transport.requests, isNot(contains('https://example.org/d')));
       // The same off-list redirect is fine when any site is allowed.
-      final any = await builder.build(
-          'https://github.com/c', LinkPreviewMode.anySite);
+      final any =
+          await builder.build('https://github.com/c', LinkPreviewMode.anySite);
       expect(any!.title, 'Veritra & friends');
     });
 
@@ -275,9 +275,9 @@ void main() {
     });
 
     test('failures and odd responses mean no preview', () async {
-      Future<LinkPreview?> build(LinkPreviewResponse response) => service(
-              FakeTransport(<String, LinkPreviewResponse>{link: response}))
-          .build(link, LinkPreviewMode.allowListed);
+      Future<LinkPreview?> build(LinkPreviewResponse response) =>
+          service(FakeTransport(<String, LinkPreviewResponse>{link: response}))
+              .build(link, LinkPreviewMode.allowListed);
       expect(await build(html(page, status: 404)), isNull);
       expect(await build(html(page, status: 500)), isNull);
       expect(await build(html(page, type: 'application/pdf')), isNull);
