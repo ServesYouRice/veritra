@@ -1047,7 +1047,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get deviceLinkIntro =>
-      'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows.';
+      'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows. Your chat history is then copied to the new device, encrypted, so keep both devices online.';
 
   @override
   String get deviceLinkCreate => 'Create link';
@@ -1096,6 +1096,65 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get deviceLinkApproveHint =>
       'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.';
+
+  @override
+  String get deviceLinkUnavailableHere =>
+      'Linking devices is not available in this build.';
+
+  @override
+  String get deviceLinkAlreadyPending =>
+      'A device link is already waiting on this device. Check it or cancel it first.';
+
+  @override
+  String get deviceLinkRecoveryInProgress =>
+      'An account recovery is waiting on this device, so a device cannot be linked here until it is finished or cancelled.';
+
+  @override
+  String get deviceLinkEnded =>
+      'This link was cancelled or has expired. Ask your other device for a new one.';
+
+  @override
+  String get deviceLinkApprovalInvalid =>
+      'That approval could not be verified, so this device was not linked. Create a new link on your other device and try again.';
+
+  @override
+  String get deviceLinkCodeMismatch =>
+      'That code does not match the one on the new device. Check it and try again.';
+
+  @override
+  String get deviceLinkRefreshFirst =>
+      'Refresh the status first, then approve the device.';
+
+  @override
+  String get deviceLinkCancelWaiting => 'Cancel this link';
+
+  @override
+  String get deviceLinkWaitingApproval =>
+      'Waiting for your other device to approve. Keep this screen open.';
+
+  @override
+  String get historyCopySendWorking =>
+      'Sending your history to the new device…';
+
+  @override
+  String get historyCopySendWaiting =>
+      'Your history is ready. Waiting for the new device to receive it.';
+
+  @override
+  String get historyCopyReceiveWorking =>
+      'Receiving your history from your other device…';
+
+  @override
+  String get historyCopyReceiveWaiting =>
+      'Waiting for your other device to send your history. Keep it online.';
+
+  @override
+  String get historyCopyFailed =>
+      'Copying your history did not finish. It will be tried again.';
+
+  @override
+  String get historyCopyEnded =>
+      'Copying your history stopped. Link the device again to copy it.';
 
   @override
   String get bannerQueued => 'Messages you send stay queued on this device.';

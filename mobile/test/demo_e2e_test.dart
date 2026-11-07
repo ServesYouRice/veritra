@@ -232,22 +232,38 @@ void main() {
     expect(await owner.state.reauthenticate('owner-password-123'), isTrue,
         reason: owner.state.error);
     await owner.state.createDeviceLink();
-    owner.expectOk();
+    expect(owner.state.errorFor(Ops.deviceLink), isNull,
+        reason: owner.state.errorFor(Ops.deviceLink));
     final linkCode = owner.state.activeDeviceLinkCode;
     expect(linkCode, isNotNull);
     await replacement.state.claimDeviceLink(baseUrl, linkCode!);
     replacement.expectOk();
     final verification =
-        replacement.state.pendingDeviceLinkClaim!.deviceLink.verificationCode;
+        replacement.state.pendingDeviceLinkClaim!.verificationCode;
     await owner.state.refreshActiveDeviceLink();
-    owner.expectOk();
+    expect(owner.state.errorFor(Ops.deviceLink), isNull,
+        reason: owner.state.errorFor(Ops.deviceLink));
     await owner.state.approveActiveDeviceLink(verification);
-    owner.expectOk();
+    expect(owner.state.errorFor(Ops.deviceLink), isNull,
+        reason: owner.state.errorFor(Ops.deviceLink));
     await replacement.state.completeDeviceLinkClaim();
     replacement.expectOk();
     expect(replacement.state.session?.accountId, ownerAccountId);
     expect(replacement.state.session?.deviceId,
         isNot(owner.state.session?.deviceId));
+    // K2: the owner device sends its history as one encrypted bundle through
+    // the real server; both ends settle (rows and files gone).
+    await replacement.waitUntil(() async {
+      // Spaced out: every client here shares one address and the server's
+      // per-address rate limit.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await owner.state.resumeHistoryTransfers();
+      await replacement.state.resumeHistoryTransfers();
+      return (await owner.store.loadHistoryTransfers()).isEmpty &&
+          (await replacement.store.loadHistoryTransfers()).isEmpty;
+    });
+    expect(replacement.state.historyTransferStatus, isNull);
+    expect(owner.state.historyTransferStatus, isNull);
     // The restored history is still there, and new messages arrive once
     // the groups add the new device.
     expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
@@ -340,7 +356,8 @@ class _DemoClient {
     final attachments =
         Directory.systemTemp.createTempSync('veritra-e2e-attachments-');
     state = AppState(
-      apiClientFactory: (url) => ApiClient(baseUrl: url),
+      apiClientFactory: (url) =>
+          ApiClient(baseUrl: url, transport: TransportPolicy.demo),
       cryptoService:
           NativeCryptoService(bindings: bindings, localStore: this.store),
       localStore: this.store,
@@ -361,6 +378,8 @@ class _DemoClient {
         deviceName: 'E2E test device',
       ),
     );
+    final transfers = Directory.systemTemp.createTempSync('veritra-e2e-k2-');
+    state.historyTransferDirectory = () async => transfers.path;
   }
 
   final NativeCryptoBindings bindings;
