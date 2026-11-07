@@ -72,3 +72,27 @@ func TestProfileExMemberAccountDeleteAndExport(t *testing.T) {
 		t.Fatalf("rows after delete = %d err=%v", n, err)
 	}
 }
+
+// W11: records count toward the writer's storage limit.
+func TestProfileWritesCountTowardStorageLimit(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	t.Cleanup(func() { store.Close() })
+	owner := createTestOwner(t, ctx, store)
+	store.limits.AccountStorageBytes = 5000
+	blob := append([]byte("VPE1"), make([]byte, 4096+24)...)
+	write := func(id string) error {
+		g, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, err = store.PutProfile(ctx, ProfileWrite{Kind: ProfileKindConversation, SubjectID: g.ID, WriterAccountID: owner.Account.ID, KeyID: strings.Repeat("b", 32), Ciphertext: blob})
+		return err
+	}
+	if err := write("a"); err != nil {
+		t.Fatalf("first write: %v", err)
+	}
+	if err := write("b"); !errors.Is(err, ErrStorageQuota) {
+		t.Fatalf("second write err = %v, want quota", err)
+	}
+}

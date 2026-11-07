@@ -186,7 +186,20 @@ func TestAccountProfileReadRuleVersionsAndEvents(t *testing.T) {
 	if events := profileEvents(t, handler, bobToken); len(events) != 2 {
 		t.Fatalf("blocker saw event after block: %v", events)
 	}
+	// And the other way: once Bob unblocks and the owner blocks Bob.
 	if status, _ = doJSON(t, handler, http.MethodDelete, "/api/v1/account/blocks/"+ownerID, bobToken, nil); status >= 300 {
+		t.Fatalf("unblock = %d", status)
+	}
+	if status, response = doJSON(t, handler, http.MethodPut, "/api/v1/account/blocks/"+bobID, ownerToken, nil); status >= 300 {
+		t.Fatalf("owner block status=%d body=%s", status, response)
+	}
+	if rec = profileGet(t, handler, theirs, bobToken, nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("blocked reader get = %d", rec.Code)
+	}
+	if status, _ = doJSON(t, handler, http.MethodDelete, "/api/v1/account/blocks/"+bobID, ownerToken, nil); status >= 300 {
+		t.Fatalf("owner unblock = %d", status)
+	}
+	if status, _ = doJSON(t, handler, http.MethodDelete, "/api/v1/account/blocks/"+ownerID, bobToken, nil); status >= 300 && status != http.StatusNotFound {
 		t.Fatalf("unblock = %d", status)
 	}
 	if rec = profileGet(t, handler, theirs, bobToken, nil); rec.Code != http.StatusOK {

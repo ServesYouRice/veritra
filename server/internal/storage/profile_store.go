@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
@@ -141,6 +142,16 @@ func (s *Store) PutProfile(ctx context.Context, w ProfileWrite) (int64, []Profil
 	}
 	if current != w.ExpectedVersion {
 		return 0, nil, ErrProfileVersionConflict
+	}
+	// Rows count toward the writer's storage limit (D38): the bytes of every
+	// record this account last wrote, with this one replaced.
+	var used int64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(size_bytes), 0) FROM encrypted_profiles
+		WHERE updated_by_account_id = ? AND NOT (subject_kind = ? AND subject_id = ?)`, w.WriterAccountID, w.Kind, w.SubjectID).Scan(&used); err != nil {
+		return 0, nil, err
+	}
+	if used+int64(len(w.Ciphertext)) > s.limits.AccountStorageBytes {
+		return 0, nil, s.refuse(admission.Storage, ErrStorageQuota)
 	}
 	next := current + 1
 	now := nowString()

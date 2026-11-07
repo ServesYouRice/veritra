@@ -24,3 +24,17 @@ No local schema or crypto ABI change in this slice.
 Local schema 21 tables, MLS payload types and sidecars (`profile_key`,
 `group_profile_key`), delivery and lazy rotation, photo pipeline, editors and
 display, l10n, backups, end-to-end tests, group/community rename UI.
+
+## Opus review (independent) and fixes
+
+Blocker fixed: a name with an unpaired surrogate passed and crashed Flutter text
+(now refused on seal and open; U+2028/2029/200B also refused). Also fixed: rows
+count toward the writer's storage limit; `subject_kind` is no longer a closed
+CHECK and the table is a plain rowid table (C3 reuse); title-clear route has the
+write budget; codec validates subject IDs and ignores the floor for groups;
+`If-None-Match: *` on GET gives 200. Tests added for each, and for "subject
+blocks reader".
+
+Owner question: any account can open a DM or group with any other (consent-free
+creation), so the design's "send the key into a conversation" gives a stranger
+the profile key. Decide before the delivery slice.

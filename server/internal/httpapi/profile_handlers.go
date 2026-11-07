@@ -31,7 +31,7 @@ func (a *API) registerProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/profiles/account/{account_id}", a.withAuth(a.getAccountProfile))
 	mux.HandleFunc("PUT /api/v1/conversations/{id}/profile", a.withAuth(a.withWriteBudget(a.putConversationProfile)))
 	mux.HandleFunc("GET /api/v1/conversations/{id}/profile", a.withAuth(a.getConversationProfile))
-	mux.HandleFunc("DELETE /api/v1/conversations/{id}/title", a.withAuth(a.clearConversationTitle))
+	mux.HandleFunc("DELETE /api/v1/conversations/{id}/title", a.withAuth(a.withWriteBudget(a.clearConversationTitle)))
 	mux.HandleFunc("POST /api/v1/profiles/versions", a.withAuth(a.profileVersions))
 }
 
@@ -141,7 +141,7 @@ func (a *API) getProfile(w http.ResponseWriter, r *http.Request, principal domai
 	w.Header().Set("ETag", etag)
 	w.Header().Set("X-Profile-Key-Id", p.KeyID)
 	w.Header().Set("Cache-Control", "no-store")
-	if strings.Trim(r.Header.Get("If-None-Match"), `"`) == strconv.FormatInt(p.Version, 10) {
+	if r.Header.Get("If-None-Match") != "*" && strings.Trim(r.Header.Get("If-None-Match"), `"`) == strconv.FormatInt(p.Version, 10) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}

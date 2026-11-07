@@ -111,6 +111,12 @@ class ProfileRecordCodec {
     return buffer.toString();
   }
 
+  static final _idPattern = RegExp(r'^(acct|conv)_[0-9a-f]{32}$');
+
+  static bool _validSubject(String kind, String id) =>
+      _idPattern.hasMatch(id) &&
+      id.startsWith(kind == profileKindAccount ? 'acct_' : 'conv_');
+
   /// The AEAD context: `"veritra-profile-v1\0" kind "\0" subject "\0" keyId`.
   static Uint8List context(String kind, String subjectId, String keyId) =>
       Uint8List.fromList(utf8.encode(
@@ -124,7 +130,21 @@ class ProfileRecordCodec {
         ? profileAccountNameMax
         : profileConversationNameMax;
     if (name.length > max || name.trim().isEmpty) return false;
-    for (final unit in name.codeUnits) {
+    final units = name.codeUnits;
+    for (var i = 0; i < units.length; i++) {
+      final unit = units[i];
+      // Unpaired surrogates make Flutter text throw: refuse them.
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        if (i + 1 >= units.length ||
+            units[i + 1] < 0xdc00 ||
+            units[i + 1] > 0xdfff) {
+          return false;
+        }
+        i++;
+        continue;
+      }
+      if (unit >= 0xdc00 && unit <= 0xdfff) return false;
+      if (unit == 0x2028 || unit == 0x2029 || unit == 0x200b) return false;
       if (unit < 0x20 || (unit >= 0x7f && unit <= 0x9f)) return false;
       if (unit >= 0x202a && unit <= 0x202e) return false;
       if (unit >= 0x2066 && unit <= 0x2069) return false;
@@ -142,6 +162,7 @@ class ProfileRecordCodec {
     List<int>? noncePrefix,
   }) {
     if (key.length != profileKeyBytes ||
+        !_validSubject(record.kind, record.subjectId) ||
         record.revision < 1 ||
         (record.kind != profileKindAccount &&
             record.kind != profileKindConversation)) {
@@ -219,7 +240,9 @@ class ProfileRecordCodec {
     int cachedRevision = 0,
     int versionFloor = 0,
   }) {
-    if (key.length != profileKeyBytes) {
+    if (key.length != profileKeyBytes ||
+        (kind != profileKindAccount && kind != profileKindConversation) ||
+        !_validSubject(kind, subjectId)) {
       throw const ProfileRecordException(ProfileRecordFailure.badInput);
     }
     if (keyId(key) != servedKeyId) {
@@ -299,7 +322,8 @@ class ProfileRecordCodec {
       throw const ProfileRecordException(ProfileRecordFailure.revisionMismatch);
     }
     // (4) No rollback below the cache or the authenticated floor.
-    if (revision < cachedRevision || revision < versionFloor) {
+    if (revision < cachedRevision ||
+        (kind == profileKindAccount && revision < versionFloor)) {
       throw const ProfileRecordException(ProfileRecordFailure.rollback);
     }
     // (5) The name passes the rules.

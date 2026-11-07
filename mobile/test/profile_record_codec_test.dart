@@ -248,6 +248,43 @@ void main() {
     refuses(() => open(blob), ProfileRecordFailure.badName);
   }, skip: skip);
 
+  test('surrogates, bad subject ids and the group floor', () {
+    for (final bad in <String>[
+      'ab${String.fromCharCode(0xd800)}',
+      '${String.fromCharCode(0xdc00)}ab',
+      'a${String.fromCharCode(0x2028)}b',
+    ]) {
+      expect(
+          ProfileRecordCodec.validName(bad, kind: profileKindAccount), isFalse);
+    }
+    expect(
+        ProfileRecordCodec.validName('ok \u{1F389}', kind: profileKindAccount),
+        isTrue);
+    final lone = _handSealed(bindings, key, {
+      'v': 1,
+      'kind': 'account',
+      'subject_id': acct,
+      'revision': 1,
+      'name': 'ab${String.fromCharCode(0xd800)}',
+      'photo': null,
+    });
+    refuses(() => open(lone), ProfileRecordFailure.badName);
+    refuses(() => seal(rec(name: 'ab${String.fromCharCode(0xd800)}')),
+        ProfileRecordFailure.badName);
+    refuses(() => open(seal(rec()), subject: 'acct_${'a' * 600}'),
+        ProfileRecordFailure.badInput);
+    refuses(() => open(seal(rec()), kind: profileKindConversation),
+        ProfileRecordFailure.badInput);
+    // A group record ignores the floor (any member can send a high hint).
+    final g = codec.seal(
+        key: key,
+        record:
+            rec(kind: profileKindConversation, subject: conv, name: 'Club'));
+    expect(
+        open(g, kind: profileKindConversation, subject: conv, floor: 99).name,
+        'Club');
+  }, skip: skip);
+
   test('photos: signature, size, dimensions and declared size are checked', () {
     ProfilePhoto photo(Uint8List png, int w, int h) =>
         ProfilePhoto(png: png, width: w, height: h);

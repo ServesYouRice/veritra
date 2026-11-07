@@ -5,7 +5,9 @@
 -- table changes.
 
 CREATE TABLE encrypted_profiles (
-  subject_kind TEXT NOT NULL CHECK (subject_kind IN ('account', 'conversation')),
+  -- Not a closed list: C3 reuses this table for community, category and channel
+  -- names. The service decides which kinds are valid.
+  subject_kind TEXT NOT NULL CHECK (length(subject_kind) BETWEEN 1 AND 32),
   subject_id TEXT NOT NULL,
   version INTEGER NOT NULL CHECK (version >= 1),
   key_id TEXT NOT NULL CHECK (length(key_id) = 32),
@@ -14,4 +16,5 @@ CREATE TABLE encrypted_profiles (
   updated_by_account_id TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   PRIMARY KEY (subject_kind, subject_id)
-) WITHOUT ROWID;
+);
+CREATE INDEX encrypted_profiles_writer ON encrypted_profiles(updated_by_account_id);
