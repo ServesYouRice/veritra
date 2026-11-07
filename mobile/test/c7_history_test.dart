@@ -123,7 +123,7 @@ void main() {
           if (step['event'] == 'unsure') {
             state = state.markUnsure(step['epoch'] as int);
           } else if (step['event'] == 'key_arrived') {
-            state = state.keyArrived();
+            state = state.keyArrived(step['for_epoch'] as int);
           } else {
             final entry = entryOf(step['record'] as Map<String, dynamic>);
             names[toHex(entry.hash)] =
@@ -143,7 +143,11 @@ void main() {
                 source: source,
                 keyGiven: step['key_given'] as bool,
               );
-              expect(result.row.number, expect_['row'], reason: '$step');
+              expect(
+                result.row == C7Row.invalid ? 'invalid' : result.row.number,
+                expect_['row'],
+                reason: '$step',
+              );
               state = result.state;
             }
           }
@@ -209,7 +213,7 @@ void main() {
               groupId: gen['group'] as String,
               closeEpoch: gen['close_epoch'] as int?,
             ),
-            periodStartEpoch: w['period_start_epoch'] as int,
+            inCurrentPeriod: w['in_current_period'] as bool,
             signedGen: body['signed_gen'] as int,
             signedGroupId: body['signed_group'] as String,
             signedEpoch: body['signed_epoch'] as int,

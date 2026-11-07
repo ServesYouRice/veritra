@@ -1779,6 +1779,9 @@ class NativeCryptoDevice implements Finalizable {
       }
       final removed = bits & 1 != 0;
       final removedSelf = bits & 4 != 0;
+      if (removedSelf && !removed) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
       Uint8List? rootBytes;
       if (root.ref.data != nullptr) {
         // Only a removal that keeps this device carries a root.
@@ -1793,6 +1796,7 @@ class NativeCryptoDevice implements Finalizable {
           throw const NativeCryptoException(NativeCryptoError.invalidOutput);
         }
         rootBytes = Uint8List.fromList(taken);
+        if (taken is Uint8List) taken.fillRange(0, taken.length, 0);
       } else if (removed && !removedSelf) {
         throw const NativeCryptoException(NativeCryptoError.invalidOutput);
       }
@@ -1944,7 +1948,7 @@ final class C7CommitOutcome {
   /// This device was removed: no root, and the group store is dropped.
   final bool removedSelf;
 
-  /// The epoch the commit produces (0 when [removedSelf]).
+  /// The epoch the commit produces (also set when [removedSelf]).
   final int newEpoch;
   final Uint8List? root;
 

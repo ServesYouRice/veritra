@@ -351,6 +351,16 @@ final class C7Entry {
   final int epoch;
 
   bool get opensKey => mode == c7ModeFull;
+
+  /// The chain's own shape (decision 3): `create` is seq 0 with zero `prev`
+  /// and only `create` is seq 0. A record that breaks it is invalid before
+  /// the table, so it cannot raise the highest `seq`.
+  bool get shapeValid {
+    final zeroPrev = prev.every((value) => value == 0);
+    if (reason == c7ReasonCreate) return seq == 0 && zeroPrev;
+    return seq != 0 && seq < c7SeqLimit;
+  }
+
   bool get isSwitchOrMove => reason == c7ReasonSwitch || reason == c7ReasonMove;
 }
 
@@ -380,7 +390,7 @@ final class C7ChannelState {
     required this.kept,
     required this.highestSeq,
     required this.status,
-    required this.unsureEpoch,
+    required this.missEpoch,
   });
 
   /// The implicit genesis: no record held means `members_from_join` with no
@@ -390,7 +400,7 @@ final class C7ChannelState {
         kept = const <int, C7Entry>{},
         highestSeq = -1,
         status = C7Status.ok,
-        unsureEpoch = 0;
+        missEpoch = 0;
 
   final C7Entry? head;
 
@@ -401,8 +411,10 @@ final class C7ChannelState {
   final int highestSeq;
   final C7Status status;
 
-  /// The epoch of the message that made the channel `unsure`.
-  final int unsureEpoch;
+  /// The highest epoch of any message this device could not fully apply in
+  /// this channel's group (0: none). `unsure` and `keyless` channels return
+  /// to `ok` only through a record or slot above it.
+  final int missEpoch;
 
   int get mode => head?.mode ?? c7ModeMembersFromJoin;
 
@@ -421,14 +433,14 @@ final class C7ChannelState {
     Map<int, C7Entry>? kept,
     int? highestSeq,
     C7Status? status,
-    int? unsureEpoch,
+    int? missEpoch,
   }) =>
       C7ChannelState._(
         head: head ?? this.head,
         kept: kept ?? this.kept,
         highestSeq: highestSeq ?? this.highestSeq,
         status: status ?? this.status,
-        unsureEpoch: unsureEpoch ?? this.unsureEpoch,
+        missEpoch: missEpoch ?? this.missEpoch,
       );
 
   /// A valid record meets the table. [keyGiven] says the message that
@@ -437,15 +449,21 @@ final class C7ChannelState {
   /// match decides.
   ///
   /// Interpretation of the design text, to confirm at the crypto review: a
-  /// `closed` channel recovers only through row 5, so rows 2, 3, 4 and 6
-  /// never lift `closed` (row 3 may still advance the head).
+  /// `closed` channel recovers only through a live switch or move above the
+  /// highest valid `seq` (row 5, or row 3 when it also chains from the head);
+  /// rows 2, 4 and 6 and a plain row 3 never lift `closed`.
   ({C7ChannelState state, C7Row row}) apply(
     C7Entry x, {
     required C7Source source,
     required bool keyGiven,
   }) {
+    if (!x.shapeValid) return (state: this, row: C7Row.invalid);
     final highest = x.seq > highestSeq ? x.seq : highestSeq;
     final h = head;
+    // A record above the miss epoch clears `unsure`; one at or below it
+    // leaves the channel `unsure` (I3).
+    C7Status cleared(C7Entry record) =>
+        record.epoch > missEpoch ? C7Status.ok : C7Status.unsure;
     C7ChannelState next(
       C7Entry newHead, {
       required C7Status status,
@@ -473,19 +491,37 @@ final class C7ChannelState {
     }
     // Row 3: the next record in the chain.
     if (x.seq == h.seq + 1 && _sameBytes(x.prev, h.hash)) {
-      final C7Status status;
-      if (this.status == C7Status.closed) {
-        status = C7Status.closed;
-      } else if (x.opensKey && !keyGiven) {
-        status = C7Status.keyless;
-      } else if (this.status == C7Status.keyless && !x.opensKey) {
-        status = C7Status.keyless;
-      } else if (this.status == C7Status.unsure && x.epoch <= unsureEpoch) {
-        status = C7Status.unsure;
-      } else {
-        status = C7Status.ok;
+      final liveSetting = source == C7Source.proposalLive &&
+          x.isSwitchOrMove &&
+          x.seq > highestSeq;
+      if (status == C7Status.closed) {
+        // A live switch above everything seen that also chains from this
+        // device's head is the ordinary recovery (every honest admin chains
+        // from the head they hold): it recovers like row 5.
+        if (liveSetting) {
+          return (
+            state: _copy(
+              head: x,
+              kept: <int, C7Entry>{x.seq: x},
+              highestSeq: highest,
+              status: cleared(x),
+            ),
+            row: C7Row.apply,
+          );
+        }
+        return (state: next(x, status: C7Status.closed), row: C7Row.apply);
       }
-      return (state: next(x, status: status), row: C7Row.apply);
+      final C7Status status_;
+      if (x.opensKey && !keyGiven) {
+        status_ = C7Status.keyless;
+      } else if (status == C7Status.keyless && !x.opensKey) {
+        status_ = C7Status.keyless;
+      } else if (status == C7Status.unsure) {
+        status_ = cleared(x);
+      } else {
+        status_ = C7Status.ok;
+      }
+      return (state: next(x, status: status_), row: C7Row.apply);
     }
     // Row 4: a proposal that lost the race for a seq already applied.
     if (source != C7Source.report &&
@@ -504,7 +540,7 @@ final class C7ChannelState {
           head: x,
           kept: <int, C7Entry>{x.seq: x},
           highestSeq: highest,
-          status: C7Status.ok,
+          status: cleared(x),
         ),
         row: C7Row.recover,
       );
@@ -523,16 +559,25 @@ final class C7ChannelState {
 
   /// The device met a message it could not fully apply in this channel's
   /// group, or a live post with a `gen` it does not hold (decision 5,
-  /// "Unsure"). Only `ok` `full` channels move; `keyless` and `closed`
-  /// already seal random keys and hand nothing over.
+  /// "Unsure"). Every `full` channel remembers the miss epoch; an `ok` one
+  /// becomes `unsure`. `keyless` and `closed` channels already seal random
+  /// keys, but keep the epoch so no later record or slot at or below it can
+  /// turn sealing back on.
   C7ChannelState markUnsure(int messageEpoch) {
-    if (mode != c7ModeFull || status != C7Status.ok) return this;
-    return _copy(status: C7Status.unsure, unsureEpoch: messageEpoch);
+    if (mode != c7ModeFull) return this;
+    final epoch = messageEpoch > missEpoch ? messageEpoch : missEpoch;
+    return _copy(
+      status: status == C7Status.ok ? C7Status.unsure : status,
+      missEpoch: epoch,
+    );
   }
 
-  /// A later valid slot gave a key matching the head's commitment.
-  C7ChannelState keyArrived() =>
-      status == C7Status.keyless ? _copy(status: C7Status.ok) : this;
+  /// A later valid slot (a `history_sync` for [forEpoch]) gave a key that
+  /// matches the head's commitment. Only a slot above the miss epoch makes
+  /// the channel `ok`; a stale one leaves it `unsure`.
+  C7ChannelState keyArrived(int forEpoch) => status == C7Status.keyless
+      ? _copy(status: forEpoch > missEpoch ? C7Status.ok : C7Status.unsure)
+      : this;
 }
 
 int _min(int a, int b) => a < b ? a : b;
@@ -560,13 +605,13 @@ final class C7Generation {
 /// Anything else drops the body (I3: gaps are acceptable, leaks are not).
 bool c7WindowAccepts({
   required C7Generation generation,
-  required int periodStartEpoch,
+  required bool inCurrentPeriod,
   required int signedGen,
   required String signedGroupId,
   required int signedEpoch,
   required int routeEpoch,
 }) {
-  if (generation.epoch < periodStartEpoch) return false;
+  if (!inCurrentPeriod) return false;
   if (signedGen != generation.epoch) return false;
   if (signedGroupId != generation.groupId) return false;
   if (signedEpoch != routeEpoch) return false;

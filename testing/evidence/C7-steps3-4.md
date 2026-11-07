@@ -31,11 +31,33 @@ assembly and handling; rekey at the three merge sites; targeted-action
 sealing; backward walk; two-pass import; prefetch; the "from a former member"
 marking in the UI; the `unsure` clearing by a slot (`slot` rule of decision 5).
 
+## Independent review (opus-expert) and fixes
+
+Blockers found and fixed, each with vector cases (Dart and Go both):
+- B1 a `closed` channel could never recover when the live switch chains from
+  the device's own head (row 3 ran first): row 3 now recovers a `closed`
+  channel for a live switch or move above the highest valid `seq`.
+- B2 `unsure` cleared too easily: it now keeps the highest miss epoch and
+  row 3, row 5 and a slot clear it only above that epoch.
+- B3 `keyless`/`closed` channels now keep the miss epoch too, so a stale
+  slot cannot turn sealing back on (`keyArrived(for_epoch)`).
+- B4 a create at seq ≠ 0, with a nonzero `prev`, or a non-create at seq 0
+  is now invalid before the table (the vector case used a malformed create).
+Also: windows test "generation is in the current period" (epochs are per
+group), more vector cases (row 2 on an older kept record, row 4 below the
+head seq), root copy wiped, `removedSelf` without `removed` refused.
+Not fixed (design residual, owner): a valid record at seq 2^32-2 leaves no
+seq for recovery; consider capping how far one record may jump.
+
+## Also run
+
+`scripts/test.sh` and `scripts/lint.sh` through `.claude/hooks/check.sh`
+(result in the PR body).
+
 ## Questions for the owner or reviewer
 
-1. Row 3 on a `closed` channel: the design says `closed` shows an error until
-   row 5. Taken literally, row 3 can still advance the head; this code keeps the
-   status `closed`. Confirm.
-2. The first `unsure` trigger says "every `full` channel"; this code leaves
-   `keyless` and `closed` channels alone (they already seal random keys).
+1. A `closed` channel leaves `closed` only through a live switch or move
+   above the highest valid `seq` (row 5, or row 3 when it also chains from the
+   head). Confirm.
+2. The seq-jump residual above.
 3. Exporter use and the root crossing the ABI: unchanged from step 2.

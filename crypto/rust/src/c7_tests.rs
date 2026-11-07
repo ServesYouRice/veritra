@@ -840,7 +840,7 @@ fn window_cases_follow_decision_6() {
         let epoch = generation["epoch"].as_u64().unwrap();
         let close = generation["close_epoch"].as_u64();
         let signed_epoch = body["signed_epoch"].as_u64().unwrap();
-        let accepted = epoch >= window["period_start_epoch"].as_u64().unwrap()
+        let accepted = window["in_current_period"].as_bool().unwrap()
             && body["signed_gen"].as_u64().unwrap() == epoch
             && body["signed_group"] == generation["group"]
             && signed_epoch == body["route_epoch"].as_u64().unwrap()

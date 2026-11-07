@@ -610,9 +610,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     schedule and body helpers. `AppPayloadCodec.framedLength` exposes the
     bucket arithmetic.
   - **Reading of the table to confirm at review:** a `closed` channel leaves
-    `closed` only through row 5 (rows 2, 3, 4, 6 never lift it); `keyless`
-    and `closed` channels are not moved to `unsure`; row 5 and row 1 start a
-    new period (kept records reset).
+    `closed` only through a live switch or move above the highest valid
+    `seq` (row 5, or row 3 when it also chains from the head); every `full`
+    channel keeps the highest miss epoch and only a record or slot above it
+    returns `unsure` or `keyless` to `ok`; a record whose chain shape is wrong
+    (create not at seq 0 with zero `prev`, or a non-create at seq 0) is
+    invalid before the table; row 5 and row 1 start a new period.
   - **Not built:** persistence (local schema), `history_sync` assembly and
     handling, rekey at the three merge sites, targeted-action sealing, the
     backward walk, two-pass import, prefetch and the UI marking. They need a

@@ -297,6 +297,7 @@ type step struct {
 	Valid    *bool   `json:"valid"`
 	Event    string  `json:"event"`
 	Epoch    int     `json:"epoch"`
+	ForEpoch int     `json:"for_epoch"`
 	Expect   expect  `json:"expect"`
 }
 
@@ -308,11 +309,11 @@ type genesisStep struct {
 }
 
 type chain struct {
-	head     *record
-	kept     map[int]*record
-	highest  int
-	status   string
-	unsureAt int
+	head    *record
+	kept    map[int]*record
+	highest int
+	status  string
+	missAt  int
 }
 
 func newChain() *chain { return &chain{kept: map[int]*record{}, highest: -1, status: "ok"} }
@@ -333,8 +334,14 @@ func (c *chain) mode() string {
 
 func (c *chain) seals() bool { return c.mode() == "full" && c.status == "ok" }
 
-// apply is decision 4's table, written afresh from the design text.
+// apply is decision 4's table, written afresh from the design text. It
+// returns 0 for a record whose chain shape is invalid.
 func (c *chain) apply(x *record, source string, keyGiven bool) int {
+	zeroPrev := x.Prev == nil
+	if x.Reason == "create" && !(x.Seq == 0 && zeroPrev) || x.Reason != "create" && x.Seq == 0 {
+		return 0
+	}
+	highest := c.highest
 	if x.Seq > c.highest {
 		defer func(s int) { c.highest = s }(x.Seq)
 	}
@@ -347,6 +354,12 @@ func (c *chain) apply(x *record, source string, keyGiven bool) int {
 		}
 		c.kept[r.Seq] = r
 		c.status = status
+	}
+	cleared := func(r *record) string {
+		if r.Epoch > c.missAt {
+			return "ok"
+		}
+		return "unsure"
 	}
 	if h == nil { // row 1
 		st := "ok"
@@ -363,14 +376,23 @@ func (c *chain) apply(x *record, source string, keyGiven bool) int {
 	if applied != nil && applied.ID == x.ID { // row 2
 		return 2
 	}
+	live := source == "proposal_live" && (x.Reason == "switch" || x.Reason == "move") && x.Seq > highest
 	if x.Seq == h.Seq+1 && prevOf(x) == h.ID { // row 3
+		if c.status == "closed" {
+			if live { // the ordinary recovery chains from the head
+				set(x, cleared(x), true)
+			} else {
+				set(x, "closed", false)
+			}
+			return 3
+		}
 		st := c.status
 		switch {
-		case st == "closed":
 		case opens && !keyGiven:
 			st = "keyless"
 		case st == "keyless" && !opens:
-		case st == "unsure" && x.Epoch <= c.unsureAt:
+		case st == "unsure":
+			st = cleared(x)
 		default:
 			st = "ok"
 		}
@@ -380,8 +402,8 @@ func (c *chain) apply(x *record, source string, keyGiven bool) int {
 	if source != "report" && x.Seq <= h.Seq && applied != nil && prevOf(applied) == prevOf(x) { // row 4
 		return 4
 	}
-	if source == "proposal_live" && (x.Reason == "switch" || x.Reason == "move") && x.Seq > c.highest { // row 5
-		set(x, "ok", true)
+	if live { // row 5
+		set(x, cleared(x), true)
 		return 5
 	}
 	first := h.Seq
@@ -419,12 +441,18 @@ func TestOrderingVector(t *testing.T) {
 			label := fmt.Sprintf("%s step %d", c.Name, i+1)
 			switch {
 			case s.Event == "unsure":
-				if ch.mode() == "full" && ch.status == "ok" {
-					ch.status, ch.unsureAt = "unsure", s.Epoch
+				if ch.mode() == "full" {
+					ch.missAt = max(ch.missAt, s.Epoch)
+					if ch.status == "ok" {
+						ch.status = "unsure"
+					}
 				}
 			case s.Event == "key_arrived":
 				if ch.status == "keyless" {
-					ch.status = "ok"
+					ch.status = "unsure"
+					if s.ForEpoch > ch.missAt {
+						ch.status = "ok"
+					}
 				}
 			case s.Valid != nil && !*s.Valid:
 				rows["invalid"] = true
@@ -433,9 +461,15 @@ func TestOrderingVector(t *testing.T) {
 				}
 			default:
 				row := ch.apply(s.Record, s.Source, s.KeyGiven)
-				rows[fmt.Sprint(row)] = true
-				if float64(row) != s.Expect.Row {
-					t.Fatalf("%s: row %d, want %v", label, row, s.Expect.Row)
+				var got any = float64(row)
+				if row == 0 {
+					got = "invalid"
+					rows["invalid"] = true
+				} else {
+					rows[fmt.Sprint(row)] = true
+				}
+				if got != s.Expect.Row {
+					t.Fatalf("%s: row %v, want %v", label, got, s.Expect.Row)
 				}
 			}
 			head := ""
@@ -482,8 +516,8 @@ func TestWindowsVector(t *testing.T) {
 				Group      string `json:"group"`
 				CloseEpoch *int   `json:"close_epoch"`
 			} `json:"generation"`
-			PeriodStart int `json:"period_start_epoch"`
-			Body        struct {
+			InPeriod bool `json:"in_current_period"`
+			Body     struct {
 				Gen        int    `json:"signed_gen"`
 				Group      string `json:"signed_group"`
 				Epoch      int    `json:"signed_epoch"`
@@ -498,7 +532,7 @@ func TestWindowsVector(t *testing.T) {
 	}
 	for _, w := range v.Windows {
 		g, b := w.Generation, w.Body
-		ok := g.Epoch >= w.PeriodStart && b.Gen == g.Epoch && b.Group == g.Group &&
+		ok := w.InPeriod && b.Gen == g.Epoch && b.Group == g.Group &&
 			b.Epoch == b.RouteEpoch && g.Epoch <= b.Epoch && (g.CloseEpoch == nil || b.Epoch < *g.CloseEpoch)
 		if ok != w.Accept {
 			t.Fatalf("%s: accepted %v, want %v", w.Name, ok, w.Accept)
