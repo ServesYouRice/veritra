@@ -244,6 +244,8 @@ void main() {
           ciphertext: base64Decode(json['ciphertext'] as String),
           cryptoProtocol: 'mls10-openmls-v1',
           cryptoMetadata: json['crypto_metadata'],
+          frankCommit:
+              ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
           createdAt: DateTime.now());
       await harness.aliceCrypto.processApplicationMessage(
           echo, (await harness.aliceStore.loadSyncCursor()) + 1);
@@ -459,6 +461,8 @@ class _Harness {
           ciphertext: base64Decode(json['ciphertext']! as String),
           cryptoProtocol: json['crypto_protocol']! as String,
           cryptoMetadata: json['crypto_metadata'],
+          frankCommit:
+              ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
           createdAt: DateTime.now().toUtc(),
         ),
       );

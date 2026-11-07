@@ -130,6 +130,11 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/mls/revocations", a.withAuth(a.listMLSRevocations))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/mls/revocations/{device_id}/confirm", a.withAuth(a.withWriteBudget(a.confirmMLSRevocation)))
 	mux.HandleFunc("POST /api/v1/messages/envelopes", a.withAuth(a.withWriteBudget(a.createMessageEnvelope)))
+	mux.HandleFunc("PUT /api/v1/reports/inbox-keys/instance", a.withRecentAuth(a.putInstanceReportKey))
+	mux.HandleFunc("GET /api/v1/reports/inbox", a.withAuth(a.getReportInbox))
+	mux.HandleFunc("POST /api/v1/reports", a.withAuth(a.withWriteBudget(a.createReport)))
+	mux.HandleFunc("GET /api/v1/reports", a.withAuth(a.listReports))
+	mux.HandleFunc("DELETE /api/v1/reports/{id}", a.withAuth(a.deleteReport))
 	mux.HandleFunc("POST /api/v1/attachments", a.withAuth(a.uploadAttachment))
 	mux.HandleFunc("GET /api/v1/attachments", a.withAuth(a.listAttachments))
 	mux.HandleFunc("POST /api/v1/push/subscriptions", a.withAuth(a.createPushSubscription))
@@ -510,6 +515,16 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "last_owner_required")
 	case errors.Is(err, storage.ErrIdempotencyConflict):
 		writeError(w, http.StatusConflict, "idempotency_conflict")
+	case errors.Is(err, storage.ErrReportNotReportable):
+		writeError(w, http.StatusConflict, "message_not_reportable")
+	case errors.Is(err, storage.ErrReportInboxUnavailable):
+		writeError(w, http.StatusConflict, "report_inbox_unavailable")
+	case errors.Is(err, storage.ErrReportInboxChanged):
+		writeError(w, http.StatusConflict, "report_inbox_changed")
+	case errors.Is(err, storage.ErrReportDuplicate):
+		writeError(w, http.StatusConflict, "already_reported")
+	case errors.Is(err, storage.ErrReportLimit):
+		writeError(w, http.StatusTooManyRequests, "report_limit_reached")
 	case errors.Is(err, storage.ErrCallVersion):
 		writeError(w, http.StatusConflict, "call_version_conflict")
 	case errors.Is(err, storage.ErrDeviceLinkInvalid):

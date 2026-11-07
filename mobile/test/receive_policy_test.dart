@@ -404,6 +404,93 @@ void main() {
             hasLength(2));
       });
 
+      test('a franked message must match the envelope commitment (C6)',
+          () async {
+        final bindings = NativeCryptoBindings.open(
+            configured ?? fail('set VERITRA_CRYPTO_LIBRARY'));
+        final key = Uint8List.fromList(List<int>.generate(32, (i) => i + 1));
+        String canonical(String action, String text) =>
+            jsonEncode(<String, Object?>{
+              ..._head(2, action),
+              'type': 'text',
+              'body': <String, Object?>{'text': text},
+            });
+        Uint8List commitFor(String action, String json) => bindings.frankCommit(
+            key: key,
+            conversationId: _conversation,
+            senderDeviceId: _senderDevice,
+            actionId: action,
+            payload: Uint8List.fromList(utf8.encode(json)));
+        String wire(String json, [String? member]) =>
+            '${json.substring(0, json.length - 1)},'
+            '"frank":${member ?? '{"k":"${base64Encode(key)}"}'}}';
+        Future<_Received> deliver(String action, String text,
+            {List<int>? commit,
+            bool drop = false,
+            String? member,
+            String? commitAction}) async {
+          final json = canonical(action, text);
+          final item = pair.envelope(
+              pair.alice.encrypt(_conversation, _frame(wire(json, member))),
+              action,
+              frankCommit: drop
+                  ? null
+                  : (commit ?? commitFor(commitAction ?? action, json)));
+          final plain =
+              await pair.bob.processApplicationMessage(item, ++pair.events);
+          return _Received(plain == null ? null : utf8.decode(plain), item.id);
+        }
+
+        expect((await deliver('f1', 'franked ok')).text, 'franked ok');
+
+        final flipped = commitFor('f2', canonical('f2', 'flipped'));
+        flipped[0] ^= 1;
+        expect((await deliver('f2', 'flipped', commit: flipped)).text, isNull);
+        // A server that strips the commitment.
+        expect((await deliver('f3', 'stripped', drop: true)).text, isNull);
+        // A short commitment is not a commitment.
+        expect(
+            (await deliver('f4', 'short', commit: List<int>.filled(31, 7)))
+                .text,
+            isNull);
+        // A commitment for another action of the same sender.
+        expect(
+            (await deliver('f5', 'rebound', commitAction: 'f1')).text, isNull);
+        // A frank member that is not in the one fixed form.
+        expect((await deliver('f6', 'spelled', member: '{"k":"AAAA"}')).text,
+            isNull);
+        expect(
+            (await deliver('f7', 'extra',
+                    member: '{"k":"${base64Encode(key)}","x":1}'))
+                .text,
+            isNull);
+
+        // Sync moved past every refusal, and each left an invalid row.
+        expect(await pair.store.loadSyncCursor(), pair.events);
+        final rows = await pair.messages();
+        expect(rows.where((m) => m.kind == LocalMessageKind.invalid),
+            hasLength(6));
+        expect(
+            rows
+                .where((m) => m.kind == LocalMessageKind.text)
+                .map((m) => m.body),
+            <String?>['franked ok']);
+
+        // No frank member is accepted, with or without an envelope
+        // commitment: an older app's message, or a hidden type (G5).
+        expect((await pair.receive(_frame(_payload('text', 'plain')))).text,
+            'plain');
+        final unfranked = pair.envelope(
+            pair.alice.encrypt(
+                _conversation, _frame(_payload('text', 'x', actionId: 'u1'))),
+            'u1',
+            frankCommit: List<int>.filled(32, 9));
+        expect(
+            utf8.decode((await pair.bob
+                .processApplicationMessage(unfranked, ++pair.events))!),
+            'x');
+      });
+
       test('a malformed envelope stops before decryption (P2)', () async {
         final counter = (await pair.store.loadCryptoState())!.counter;
         final cursor = await pair.store.loadSyncCursor();
@@ -580,8 +667,9 @@ class _Pair {
   }
 
   ReceivedMessageEnvelope envelope(List<int> ciphertext, String actionId,
-          {String senderDeviceId = _senderDevice}) =>
+          {String senderDeviceId = _senderDevice, List<int>? frankCommit}) =>
       ReceivedMessageEnvelope(
+        frankCommit: frankCommit,
         id: 'srv_${++_counter}',
         conversationId: _conversation,
         senderAccountId: 'acct_alice',

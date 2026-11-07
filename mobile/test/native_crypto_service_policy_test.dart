@@ -512,6 +512,7 @@ class _Client {
         ciphertext: ciphertext ?? sent.ciphertext,
         cryptoProtocol: sent.cryptoProtocol,
         createdAt: DateTime.now().toUtc(),
+        frankCommit: sent.frankCommit,
       );
 
   Future<List<int>?> receive(_Client from, MessageEnvelope sent) =>

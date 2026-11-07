@@ -106,8 +106,8 @@ class AppPayloadCodec {
   /// `v: 2`, because a v1 receiver refuses any seventh top-level key.
   /// [canonical] is the inner JSON exactly as [encode] would write it at v2,
   /// which the franking commitment covers; the wire JSON is [canonical] with
-  /// the `frank` member appended last ([frankWireJson]). Not sent yet: the
-  /// sender and receiver wiring is a later, reviewed step.
+  /// the `frank` member appended last ([frankWireJson]). Every message the
+  /// app sends is written this way (`NativeCryptoService.encryptPayload`).
   ({Uint8List padded, Uint8List canonical}) encodeFranked({
     required AppPayloadType type,
     required String conversationId,
@@ -219,6 +219,28 @@ class AppPayloadCodec {
       throw const FormatException('invalid application payload context');
     _validateBody(type, body, version: version);
     return DecryptedAppPayload(type: type, actionId: actionId, body: body);
+  }
+
+  /// What a framed payload says about franking (C6): the inner JSON is cut
+  /// out of the `VAP1` framing and read for its top-level `frank` member
+  /// ([splitFrank]). Never throws; broken framing reads as [MalformedFrank].
+  static FrankOutcome frankOf(List<int> padded) {
+    try {
+      if (padded.length < _headerLength + 2 ||
+          padded.length > _maxPayloadBytes ||
+          !_constantTimePrefix(padded, _magic)) {
+        return const MalformedFrank();
+      }
+      final bytes = padded is Uint8List ? padded : Uint8List.fromList(padded);
+      final length = ByteData.sublistView(bytes).getUint32(4, Endian.big);
+      if (length <= 0 || length > bytes.length - _headerLength) {
+        return const MalformedFrank();
+      }
+      return splitFrank(
+          Uint8List.sublistView(bytes, _headerLength, _headerLength + length));
+    } catch (_) {
+      return const MalformedFrank();
+    }
   }
 
   /// Checks the envelope fields the server supplied (P2). The decrypted

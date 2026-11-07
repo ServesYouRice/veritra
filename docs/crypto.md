@@ -443,6 +443,15 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C6 wiring, franking on the wire and report routes (2026-11-07):** no
+  ABI, payload version or local schema change. Server migration 0047 adds the
+  write-once `message_envelopes.frank_commit` column, the `report_inbox_keys`
+  and `reports` tables. Every app message is now `v: 2` with a `frank`
+  member, and receivers check it against the envelope's `frank_commit`. The
+  rules, the receive table, the report aad and the routes are in
+  [Franking v1](#franking-v1-c6) ("What is wired"); evidence in
+  `testing/evidence/C6-wiring.md`.
+
 - **C6 foundation, report seal and franking commitment, ABI 12
   (2026-11-01):** additive; the Dart binding and the header now pin ABI 12
   exactly. Design: [`C6-reports-franking.md`](designs/C6-reports-franking.md)
@@ -502,7 +511,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     `NativeCryptoService`; `UnavailableCryptoService` refuses every method
     with `StateError`. `mobile/lib/crypto/franking.dart` holds the `P` and
     wire rules; `AppPayloadCodec.encodeFranked` writes a franked payload.
-    Neither is called by the send or receive path yet.
+    Both are used by the send and receive path since the 2026-11-07
+    wiring (see "Franking v1").
 
 - **Server key-package parsing (2026-11-01, TASK-172):** no ABI or wire
   change. The server now refuses a device key package that does not parse as
@@ -1879,9 +1889,12 @@ Also required:
 ## Franking v1 (C6)
 
 **Status:** the byte rules, the commitment (ABI 12) and the vector are
-built; no sender writes `frank` and no receiver checks it yet. Turning it
-on (C6 build step 2: sender, `frank_commit` storage, receive check) is a
-reviewed wire change. Design:
+built, and since C6 wiring steps 2 and 3 (2026-11-07) every message the app
+sends carries `frank` and `frank_commit`, every receiver checks them, and
+the server stores `frank_commit` write-once and routes sealed reports. No
+ABI, payload version or local schema change. What the app still lacks is
+storing `kf` with each received message, which reporting needs (see "What
+is wired" below). Design:
 [`C6-reports-franking.md`](designs/C6-reports-franking.md).
 
 **Canonical bytes `P`.** `P` is the inner JSON (the bytes between the `VAP1`
@@ -1906,7 +1919,8 @@ member `k`.
   franking is turned on.
 - **Reserved key.** `frank` joins `channel_id` and `hidden` as an optional
   top-level key frozen in meaning (§1). A `frank` inside `body` is not it.
-  Until the receive check lands, a v2 receiver ignores `frank` (P6).
+  A v2 app older than the receive check ignores `frank` (P6) and so
+  accepts a message whose commitment is wrong; no such release exists.
 - **Receive rule** (`splitFrank`, `mobile/lib/crypto/franking.dart`). If the
   parsed object has no top-level `frank`, the payload is unfranked. If it
   has one, the bytes must end in the exact form above, the key must decode
@@ -1917,8 +1931,9 @@ member `k`.
   payload is `invalid` (§1), never treated as unfranked.
 - **Commitment.** `c = pm_crypto_frank_commit(kf, conversation_id,
   sender_device_id, action_id, P)` with the envelope's context fields,
-  already checked against `P` (P2). It rides in envelope metadata as
-  `frank_commit` (32 bytes) once step 2 lands.
+  already checked against `P` (P2). It rides beside the ciphertext as the
+  top-level envelope field `frank_commit` (32 bytes, standard base64 in
+  JSON), never inside `crypto_metadata`.
 
 **Vector** (`testing/vectors/c6-franking-v1.json`): the §10 context
 `<C>`, `<D>`, `<A>`, `kf` = 32 bytes of `0x07`, and
@@ -1931,12 +1946,86 @@ member `k`.
 `P` and `kf` from the wire bytes; the Go reference, Rust and Dart all compute
 `c`.
 
-**Open before step 2** (design open items): what a receiver does with an
-unfranked payload once franking is on (refusing it is what makes every
-accepted message reportable, design step 5, but it needs every sender
-upgraded first); where `frank_commit` is stored (a write-once envelope
-column, not `crypto_metadata`, which the legacy edit and delete routes
-overwrite); and retention of that row for the report window.
+### What is wired (C6 steps 2 and 3)
+
+**Send** (`NativeCryptoService.encryptPayload`). Every message type on the
+message path (text, reply, edit, delete, reaction, attachment manifest, pin)
+is written with `encodeFranked`, with a fresh 32-byte `kf` per message. The
+commitment is computed over `P` with the new envelope's `conversation_id`,
+this device's id and the action id (the idempotency key), and sent as
+`frank_commit`. Call signals are not envelopes and are not franked. A hidden
+type (a pin) is franked like any other, so the server cannot tell it apart.
+
+**Receive rule** (G2, G5). The commitment context is the envelope's own
+fields, which `classify` has just matched against the decrypted payload,
+never fields read out of the payload again.
+
+| Payload | Envelope `frank_commit` | Result |
+|---|---|---|
+| malformed `frank` | any | `invalid` |
+| franked | missing, not 32 bytes, or not the recomputed value | `invalid` |
+| franked | matches | accepted |
+| no `frank` member | present or absent | accepted, unreportable |
+
+The last row is the G5 decision: an unfranked payload is accepted, because
+older apps and the C7 hidden types (design item 9, which send 32 random
+bytes as `frank_commit` without a `frank` member) must keep working while
+apps roll out. The cost: a sender that wants to be unreportable can send
+unfranked. Refusing unfranked payloads, with the hidden types exempt after
+decoding, is a later switch once no unfranked sender is left; it is an owner
+question. A native failure while recomputing becomes an `invalid` row, never
+a stuck sync (P1).
+
+**Server** (migration 0047). `message_envelopes.frank_commit` is its own
+nullable `BLOB` column, 32 bytes or `NULL`, accepted as a top-level request
+field and returned on every read path and in sync events. A trigger aborts
+any later change to it (G3), and an idempotent retry must repeat it. The
+legacy in-place edit route refuses franked rows, since it would leave the
+commitment stale; the app sends edits as new envelopes. The server never
+checks the commitment.
+
+**Report aad** (G4). A sealed report's HPKE aad is
+
+```text
+"veritra-c6-report-aad-v1" || lp(inbox_kind) || lp(inbox_id) ||
+lp(recipient public key) || lp(conversation_id) || lp(envelope_id) ||
+lp(reporter_account_id)
+```
+
+with `lp` a big-endian u32 length, `inbox_kind` `instance_owner` or
+`community`, and `inbox_id` `instance` or the community id. Including the
+recipient key binds a key rotation too. `franking.ReportAAD` (Go) and
+`reportAad` (Dart) build it; the shared vector is
+`testing/vectors/c6-report-aad-v1.json`. The reporter seals with it and the
+recipient's app rebuilds it from the server's report row, so a report sealed
+for other values does not open.
+
+**Server routes.** `PUT /api/v1/reports/inbox-keys/instance` (an owner
+publishes the report public key; recent sign-in required),
+`GET /api/v1/reports/inbox?conversation_id=` (the inbox and key for a
+member's report), `POST /api/v1/reports` (`conversation_id`, `envelope_id`,
+`key_rev`, `sealed`), `GET /api/v1/reports?inbox=` and
+`DELETE /api/v1/reports/{id}` for the people who may read an inbox. The
+server picks the inbox from the conversation kind (a community channel to
+that community's moderator inbox, a DM or group to the instance owners),
+requires a member reporter, a message that carries `frank_commit` and is not
+the reporter's own, and the current `key_rev`, and copies the sender,
+commitment and envelope time from its own envelope row into the report so
+they survive the envelope being pruned. It checks that `sealed` starts with
+`VRP1` and fits the Rust core's bounds, never opens it, never logs it, and
+keeps at most 20 reports a day per reporter.
+
+**Not wired.** (1) A receiver does not store `kf` with the message, so
+nothing can be reported yet: it needs a local schema change (a column or
+table, owned by whoever holds the next schema number), and `kf` and the exact
+bytes of `P` must be kept together. (2) The community inbox key has no
+publish route: it needs C4's role state to be distributed (design item 8).
+(3) The report screens and the seal call from the app (build step 4).
+
+**Duplicate JSON keys (G6)** do not apply yet: the only verifier is the Dart
+app, which reads `P` as the exact bytes it received and recomputes over
+those bytes. A second implementation that parses JSON before verifying must
+reject duplicate keys first.
 
 ## Group role state (C4)
 
