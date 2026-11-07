@@ -100,6 +100,9 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	if err := checkSwitch("PRIVATE_MESSENGER_SCOPED_SYNC"); err != nil {
+		return Config{}, err
+	}
 	passwordCost, err := parsePasswordCost(os.Getenv("PRIVATE_MESSENGER_BCRYPT_COST"))
 	if err != nil {
 		return Config{}, err
@@ -374,6 +377,16 @@ func envOff(key string) bool {
 		return true
 	}
 	return false
+}
+
+// checkSwitch refuses a value that is not a clear on or off, so a typo such
+// as "off" cannot leave a default-on switch on by accident.
+func checkSwitch(key string) error {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "", "0", "1", "true", "false":
+		return nil
+	}
+	return fmt.Errorf("%s must be 0, 1, true or false", key)
 }
 
 func getenv(key, fallback string) string {

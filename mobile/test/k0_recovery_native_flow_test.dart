@@ -21,6 +21,9 @@ void main() {
   late NativeCryptoBindings bindings;
 
   setUp(() {
+    // The UnavailableCryptoService test below needs no library; the native
+    // tests are skipped (or required) by nativeCryptoSkip().
+    if (nativeCryptoSkip() != false) return;
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
   });
 

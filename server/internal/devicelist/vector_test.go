@@ -34,10 +34,11 @@ type vectorFile struct {
 			ListIDHex string `json:"list_id_hex"`
 		} `json:"chains"`
 		Refused []struct {
-			Name         string  `json:"name"`
-			PrevHex      *string `json:"prev_hex"`
-			StatementHex string  `json:"statement_hex"`
-			History      []struct {
+			Name              string  `json:"name"`
+			ExpectedAccountID string  `json:"expected_account_id"`
+			PrevHex           *string `json:"prev_hex"`
+			StatementHex      string  `json:"statement_hex"`
+			History           []struct {
 				DeviceID      string `json:"device_id"`
 				SigningKeyHex string `json:"signing_key_hex"`
 			} `json:"history"`
@@ -150,14 +151,16 @@ func TestVectorRefusalsAreRefusedInTheirClass(t *testing.T) {
 			keys[string(unhex(t, "history key", pair.SigningKeyHex))] = true
 		}
 		var head *Statement
-		account := ""
+		// The account the caller asks about (B2): a valid chain of another
+		// account must be refused, so the vector names it and the check
+		// never takes it from the statement or its predecessor.
+		account := refused.ExpectedAccountID
 		if refused.PrevHex != nil {
 			prev, err := Parse(unhex(t, "prev_hex", *refused.PrevHex))
 			if err != nil {
 				t.Fatalf("%s: the previous version does not parse: %v", refused.Name, err)
 			}
 			head = &prev
-			account = prev.Body.AccountID
 			for _, entry := range prev.Body.Entries {
 				devices[entry.DeviceID] = true
 				keys[string(entry.SigningKey)] = true
@@ -168,9 +171,6 @@ func TestVectorRefusalsAreRefusedInTheirClass(t *testing.T) {
 		if parseErr != nil {
 			err = parseErr
 		} else {
-			if account == "" {
-				account = statement.Body.AccountID
-			}
 			history := History{Head: head, SeenDevice: func(id string) bool { return devices[id] }, SeenKey: func(k []byte) bool { return keys[string(k)] }}
 			err = CheckStep(account, history, statement)
 		}
