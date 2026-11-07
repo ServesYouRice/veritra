@@ -194,7 +194,10 @@ and private-channel groups) is sent in two parts:
      1,280-byte VAP1: a visible class. Review finding 4.) A move is 721
      bytes framed with server-length ids, a 768-byte VAP1; moves are
      visible to the server anyway (a new group), and every move carries
-     the same fields in every mode.
+     the same fields in every mode. The 512 bucket leaves 15 bytes, so
+     `history_change` and `history_sync` are **never franked** (C6's
+     `frankWireJson` appends a member that would cross it): a C6
+     interaction, and they are not reportable content anyway.
    - **Create.** Every channel creation sends a `create` record, in both
      modes. A channel for which a device holds no record is
      `members_from_join` with no head: the "implicit genesis" the vectors
@@ -247,7 +250,12 @@ and private-channel groups) is sent in two parts:
      channel closed (review finding 5). MLS refuses a replayed message,
      and a key opened before the removal floor is never used (decision 5).
    - **Own proposals.** A device chains a proposal only from its applied
-     head and keeps at most one pending per channel. It applies its own
+     head and keeps at most one pending per channel. Exception, recovery:
+     an admin's switch proposed while the channel is `closed` takes
+     `seq` = the highest `seq` its device has seen + 1, with `prev` = hash
+     of its own head, so row 6 accepts it on devices that have seen no
+     more. A device that has seen a still higher `seq` stays `closed` until
+     a switch above that arrives (fail closed). It applies its own
      proposal only when it comes back in sync order; until then it seals
      as before the change. If its switch, move or create loses (row 5),
      comes back invalid, or does not come back within a timeout, the app
@@ -265,8 +273,13 @@ and private-channel groups) is sent in two parts:
        this before C7 wires it; C7 follows whichever rule C4 records.
      - `rekey`: the actor is a current member of the group, and the
        record it chains from (`prev`) opened a `full` generation that is
-       stale on this device with `stale_since = close_epoch` (decision 5;
-       newcomers: decision 5, "Newcomers").
+       stale on this device with `stale_since = close_epoch` (decision 5).
+       A newcomer that does not hold the `prev` record takes that
+       generation's `E_open` from the rekey's wrap (a report of a rekey
+       head carries the same wrap as its proposal) and applies the
+       newcomer range (decision 5, "Newcomers"); with no wrap it checks
+       only current membership and trusts the sender (trust limits). The
+       vectors pin both cases.
    - Worked traces: Trace 2 (rows) and Trace 3 (tie-break).
 
 5. **Removal floor, `history_sync` and the membership barrier.**
@@ -297,7 +310,8 @@ and private-channel groups) is sent in two parts:
      modes, the committer sends one group-level message (no `channel_id`).
      Its body (layout below) carries, for each of the `N` channels the
      group carries, in byte order of channel id:
-     - `ok`, fresh `full` channel: `key_c = CHK_g`, slot = head (report).
+     - `ok`, fresh `full` channel: `key_c = CHK_g`, slot = head (report),
+       with the head's wrap when the head is a rekey or narrowing move.
      - `ok`, stale `full` channel: **a rekey proposal**. `key_c` is a new
        `CHK_{g+1}`; the slot holds the rekey record (`close_epoch =
        stale_since`) and a wrap of generation `g`.
