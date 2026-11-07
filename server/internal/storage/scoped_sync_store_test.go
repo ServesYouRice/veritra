@@ -109,3 +109,77 @@ func TestScopedSyncExpiryIsPerScope(t *testing.T) {
 		t.Fatalf("account stream expired by conversation prune: %v", err)
 	}
 }
+
+// A run of hidden events (here: a blocked sender's) is crossed once. Each
+// request examines at most the scan budget, reports where it stopped, and a
+// cursor at that position (a hidden row) is accepted, not called expired.
+func TestScopedConversationSyncCrossesHiddenRunWithBudget(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	old := scopedSyncScanBudget
+	scopedSyncScanBudget = 3
+	t.Cleanup(func() { scopedSyncScanBudget = old })
+	var hidden []int64
+	for i := 0; i < 8; i++ {
+		_, id := f.send(t, ctx, "h"+string(rune('a'+i)), nil)
+		hidden = append(hidden, id)
+	}
+	visibleID := conversationSyncEvent(t, ctx, f.store, "conversation.updated", f.conversation.ID)
+	who := f.blocker
+
+	cursor := int64(0)
+	var got []int64
+	pages := 0
+	for {
+		page, err := f.store.ListConversationSyncPage(ctx, who.Account.ID, who.Device.ID, f.conversation.ID, cursor, 100)
+		if err != nil {
+			t.Fatalf("page from %d: %v", cursor, err)
+		}
+		pages++
+		got = append(got, pageEventIDs(page.Events)...)
+		if page.ScannedThrough < cursor || (page.Truncated && page.ScannedThrough <= cursor) {
+			t.Fatalf("cursor %d did not advance: through %d", cursor, page.ScannedThrough)
+		}
+		cursor = page.ScannedThrough
+		if !page.Truncated {
+			break
+		}
+		if pages > 10 {
+			t.Fatal("did not terminate")
+		}
+	}
+	if len(got) != 1 || got[0] != visibleID {
+		t.Fatalf("events = %v, want only %d", got, visibleID)
+	}
+	if cursor != visibleID {
+		t.Fatalf("scanned through %d, want %d", cursor, visibleID)
+	}
+	if pages != 3 {
+		t.Fatalf("pages = %d, want 3 (3+3+3 candidates)", pages)
+	}
+	// A cursor on a hidden row is not expired, though no visible row
+	// precedes it. A cursor from before the prune marks existed takes the
+	// legacy row test, which would call it expired.
+	if _, err := f.store.db.ExecContext(ctx, `DELETE FROM sync_prune_state`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ListConversationSyncPage(ctx, who.Account.ID, who.Device.ID, f.conversation.ID, hidden[2], 100); err != nil {
+		t.Fatalf("hidden-row cursor: %v", err)
+	}
+}
+
+// The account scope has no hidden rows: it scans through its last event.
+func TestScopedAccountSyncPageReportsScanPosition(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	id := accountSyncEvent(t, ctx, f.store, f.bystander.Account.ID, "")
+	who := f.bystander
+	page, err := f.store.ListAccountSyncPage(ctx, who.Account.ID, who.Device.ID, 0, 10)
+	if err != nil || page.Truncated || page.ScannedThrough != id {
+		t.Fatalf("page = %+v, %v; want through %d", page, err, id)
+	}
+	empty, err := f.store.ListAccountSyncPage(ctx, who.Account.ID, who.Device.ID, id, 10)
+	if err != nil || len(empty.Events) != 0 || empty.ScannedThrough != id {
+		t.Fatalf("empty = %+v, %v", empty, err)
+	}
+}
