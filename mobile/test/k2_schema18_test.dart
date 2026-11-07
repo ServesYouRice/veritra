@@ -209,13 +209,14 @@ void main() {
     test('a fresh database has the ledger and transfer tables', () async {
       final db = EncryptedLocalDatabase(NativeDatabase(await _tempFile()));
       addTearDown(db.close);
-      expect(EncryptedLocalDatabase.currentSchemaVersion, 18);
+      expect(EncryptedLocalDatabase.currentSchemaVersion,
+          greaterThanOrEqualTo(18));
       expect(await db.readHistoryTransfers(), isEmpty);
       expect(
           await db.readEnrollmentPromotions(
               accountId: 'acct_me', deviceId: 'dev_new'),
           isEmpty);
-      expect(await _version(db), 18);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
 
     test('17 to 18 keeps a pending link another session is waiting on',
@@ -231,7 +232,7 @@ void main() {
           await db.readEnrollmentPromotions(
               accountId: 'acct_me', deviceId: 'dev_new'),
           isEmpty);
-      expect(await _version(db), 18);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
 
     test('17 to 18 keeps an activation still owed (same session, no state)',
@@ -342,7 +343,7 @@ void main() {
                 .single
                 .promotionId,
             promotionIdSchemaUpgrade);
-        expect(await _version(db), 18);
+        expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
       });
     }
 
@@ -379,7 +380,7 @@ void main() {
           accountId: 'acct_me', deviceId: 'dev_new');
       expect(ledger.single.kind, PendingEnrollment.kindAccountRecovery);
       expect((await db.readCryptoState())?.counter, 3);
-      expect(await _version(db), 18);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
 
     test('a downgrade to 17 and a re-upgrade keep the ledger', () async {
@@ -406,7 +407,7 @@ void main() {
           await db.readEnrollmentPromotions(
               accountId: 'acct_me', deviceId: 'dev_new'),
           hasLength(1));
-      expect(await _version(db), 18);
+      expect(await _version(db), EncryptedLocalDatabase.currentSchemaVersion);
     });
   });
 

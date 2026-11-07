@@ -63,7 +63,7 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err := deleteExpiredMessageByIdempotency(ctx, tx, envelope.SenderDeviceID, envelope.IdempotencyKey, now); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
+	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
 	if err == nil {
 		if !sameIdempotentMessage(existing, envelope) {
 			return domain.MessageEnvelope{}, false, 0, ErrIdempotencyConflict
@@ -132,9 +132,9 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 	}
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO message_envelopes(id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, expires_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		envelope.ID, envelope.ConversationID, envelope.SenderAccountID, envelope.SenderDeviceID, envelope.IdempotencyKey, envelope.Ciphertext, envelope.CryptoProtocol, string(envelope.CryptoMetadata), string(envelope.AttachmentRefs), nullableString(envelope.ReplyToID), nullableString(envelope.ThreadRootID), formatTime(envelope.CreatedAt), nullableTime(envelope.ExpiresAt))
+		INSERT INTO message_envelopes(id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, expires_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		envelope.ID, envelope.ConversationID, envelope.SenderAccountID, envelope.SenderDeviceID, envelope.IdempotencyKey, envelope.Ciphertext, envelope.CryptoProtocol, string(envelope.CryptoMetadata), nullableBytes(envelope.FrankCommit), string(envelope.AttachmentRefs), nullableString(envelope.ReplyToID), nullableString(envelope.ThreadRootID), formatTime(envelope.CreatedAt), nullableTime(envelope.ExpiresAt))
 	if err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
@@ -233,6 +233,7 @@ func sameIdempotentMessage(existing, requested domain.MessageEnvelope) bool {
 		existing.CryptoProtocol == requested.CryptoProtocol &&
 		bytes.Equal(existing.Ciphertext, requested.Ciphertext) &&
 		bytes.Equal(existing.CryptoMetadata, requested.CryptoMetadata) &&
+		bytes.Equal(existing.FrankCommit, requested.FrankCommit) &&
 		bytes.Equal(existing.AttachmentRefs, requested.AttachmentRefs) &&
 		equalOptionalString(existing.ReplyToID, requested.ReplyToID) &&
 		equalOptionalString(existing.ThreadRootID, requested.ThreadRootID)
@@ -246,7 +247,7 @@ func equalOptionalString(left, right *string) bool {
 }
 
 func (s *Store) messageByIdempotency(ctx context.Context, deviceID, key string) (domain.MessageEnvelope, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND (expires_at IS NULL OR expires_at > ?)`, deviceID, key, nowString())
+	row := s.db.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ? AND (expires_at IS NULL OR expires_at > ?)`, deviceID, key, nowString())
 	msg, err := scanMessage(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -258,7 +259,7 @@ func (s *Store) messageByIdempotency(ctx context.Context, deviceID, key string) 
 }
 
 func (s *Store) MessageByID(ctx context.Context, messageID string) (domain.MessageEnvelope, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, nowString())
+	row := s.db.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE id = ? AND (expires_at IS NULL OR expires_at > ?)`, messageID, nowString())
 	msg, err := scanMessage(row)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -276,7 +277,7 @@ func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID stri
 	row := s.db.QueryRowContext(ctx, `
 		SELECT me.id, me.conversation_id, me.sender_account_id, me.sender_device_id,
 		       me.idempotency_key, me.ciphertext, me.crypto_protocol,
-		       me.crypto_metadata_json, me.attachment_refs_json, me.reply_to_id,
+		       me.crypto_metadata_json, me.frank_commit, me.attachment_refs_json, me.reply_to_id,
 		       me.thread_root_id, me.created_at, me.edited_at, me.deleted_at, me.expires_at
 		FROM message_envelopes me
 		JOIN memberships m ON m.conversation_id = me.conversation_id AND m.account_id = ?
@@ -327,6 +328,7 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 		UPDATE message_envelopes
 		SET ciphertext = ?, crypto_protocol = ?, crypto_metadata_json = ?, edited_at = ?
 		WHERE id = ? AND sender_account_id = ? AND deleted_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+		  AND frank_commit IS NULL -- C6: an edit would leave the write-once commitment stale; apps send an edit as a new envelope
 		  AND EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = message_envelopes.conversation_id AND m.account_id = ?)`,
 		ciphertext, cryptoProtocol, string(cryptoMetadata), now, messageID, accountID, now, accountID)
 	if err != nil {
@@ -515,7 +517,7 @@ func messageAfterOwnedMutationTx(ctx context.Context, tx *sql.Tx, messageID stri
 		}
 		return domain.MessageEnvelope{}, ErrForbidden
 	}
-	return scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE id = ?`, messageID))
+	return scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE id = ?`, messageID))
 }
 
 // ListMessagesOptions controls pagination for ListMessages. Only one of
@@ -541,7 +543,7 @@ func (s *Store) ListMessages(ctx context.Context, conversationID, accountID stri
 	if opts.BeforeID != "" && opts.AfterID != "" {
 		return nil, fmt.Errorf("before_id and after_id are mutually exclusive")
 	}
-	const cols = `id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at`
+	const cols = `id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at`
 	var (
 		rows *sql.Rows
 	)

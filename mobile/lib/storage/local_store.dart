@@ -19,6 +19,7 @@ import 'history_snapshot.dart';
 import 'notice_outbox.dart';
 
 export 'notice_outbox.dart';
+export 'encrypted_database.dart' show FrankReveal, ReportKeyPin;
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
@@ -359,6 +360,7 @@ class MlsStateTransition {
     this.deletedEnvelopeIds = const <String>[],
     this.messageEffects = const <MessageEffect>[],
     this.noticeReferences = const <LocalNoticeReference>[],
+    this.frankReveals = const <FrankReveal>[],
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
   });
@@ -379,6 +381,11 @@ class MlsStateTransition {
   /// Decrypted history changes, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
   final List<LocalNoticeReference> noticeReferences;
+
+  /// What to keep so a received franked message can be reported later (C6,
+  /// schema 19). A reveal is stored only for a message row that this
+  /// transition leaves live; any other is dropped without failing the commit.
+  final List<FrankReveal> frankReveals;
   final void Function()? checkCanCommit;
 }
 
@@ -636,6 +643,22 @@ abstract class LocalStore {
   Future<void> commitMlsTransition(MlsStateTransition transition);
   Future<void> commitSyncEvent(SyncEventCommit commit);
 
+  /// C6 (schema 19): the franking key and exact payload bytes kept with the
+  /// received message [messageKey], or null when none were kept (an unfranked
+  /// message, one received before schema 19, or one that was deleted, hidden
+  /// or expired since). Only a reporting flow reads this.
+  Future<FrankReveal?> loadFrankReveal(String messageKey);
+
+  /// The report keys of [origin]'s instance owners that this app pinned (D95).
+  Future<List<ReportKeyPin>> loadReportKeyPins(String origin);
+  Future<ReportKeyPin?> loadReportKeyPin(String origin, String ownerAccountId);
+
+  /// Pins a key, replacing the owner's earlier pin for the origin. Only a
+  /// person's confirmation calls this; a key the server changed is never
+  /// pinned silently.
+  Future<void> saveReportKeyPin(ReportKeyPin pin);
+  Future<void> deleteReportKeyPin(String origin, String ownerAccountId);
+
   /// The durable recovery record (card I33), or null when sync may run.
   /// Pass null to clear it. It survives restarts so a failing event is not
   /// retried in a loop, and it is removed with the device identity.
@@ -869,6 +892,8 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, PendingMlsMessage> _mlsOutbox =
       <String, PendingMlsMessage>{};
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
+  final Map<String, FrankReveal> _frankReveals = <String, FrankReveal>{};
+  final Map<String, ReportKeyPin> _reportKeyPins = <String, ReportKeyPin>{};
   _MemoryMessageHistory _history = _MemoryMessageHistory();
   final Map<String, LocalConversationPref> _conversationPrefs = {};
   String? _syncLeaseKey;
@@ -937,6 +962,7 @@ class MemoryLocalStore implements LocalStore {
     _history.clear();
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
+    _frankReveals.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
     _lastBackupAt = null;
@@ -1149,6 +1175,11 @@ class MemoryLocalStore implements LocalStore {
     _noticeState = nextNotices;
     _history = nextHistory;
     _historyNamespace = nextNamespace;
+    for (final reveal in transition.frankReveals) {
+      if (reveal.isStorable && _liveMessage(reveal.messageKey) != null) {
+        _frankReveals.putIfAbsent(reveal.messageKey, () => reveal);
+      }
+    }
     _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     final resolved = transition.resolvedMlsOutboxKey;
@@ -1159,6 +1190,59 @@ class MemoryLocalStore implements LocalStore {
       conversations: _snapshot?.conversations ?? const <Conversation>[],
       messagesByConversation: nextMessages,
     );
+  }
+
+  /// The stored row of [key] while it is live (not deleted, hidden or
+  /// expired): a reveal outlives neither.
+  LocalMessage? _liveMessage(String key) {
+    final row = _history._messages[key];
+    if (row == null || row.deletedAt != null || row.hiddenAt != null) {
+      return null;
+    }
+    final expiresAt = row.expiresAt;
+    if (expiresAt != null &&
+        expiresAt <= DateTime.now().toUtc().millisecondsSinceEpoch) {
+      return null;
+    }
+    return row;
+  }
+
+  @override
+  Future<FrankReveal?> loadFrankReveal(String messageKey) async {
+    final reveal = _frankReveals[messageKey];
+    if (reveal == null) return null;
+    if (_liveMessage(messageKey) == null) {
+      _frankReveals.remove(messageKey);
+      return null;
+    }
+    return reveal;
+  }
+
+  @override
+  Future<List<ReportKeyPin>> loadReportKeyPins(String origin) async => [
+        for (final pin in _reportKeyPins.values)
+          if (pin.origin == origin) pin
+      ]..sort((a, b) => a.ownerAccountId.compareTo(b.ownerAccountId));
+
+  @override
+  Future<ReportKeyPin?> loadReportKeyPin(
+          String origin, String ownerAccountId) async =>
+      _reportKeyPins['$origin\u0000$ownerAccountId'];
+
+  @override
+  Future<void> saveReportKeyPin(ReportKeyPin pin) async {
+    if (pin.origin.isEmpty ||
+        pin.ownerAccountId.isEmpty ||
+        pin.publicKey.length != 32 ||
+        pin.keyRev < 1) {
+      throw const FormatException('invalid report key pin');
+    }
+    _reportKeyPins['${pin.origin}\u0000${pin.ownerAccountId}'] = pin;
+  }
+
+  @override
+  Future<void> deleteReportKeyPin(String origin, String ownerAccountId) async {
+    _reportKeyPins.remove('$origin\u0000$ownerAccountId');
   }
 
   @override
@@ -1753,6 +1837,8 @@ class MemoryLocalStore implements LocalStore {
     _history.clear();
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
+    _frankReveals.clear();
+    _reportKeyPins.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
     _lastBackupAt = null;
@@ -2576,8 +2662,30 @@ class SecureLocalStore implements LocalStore {
       resolvedMlsOutboxKey: transition.resolvedMlsOutboxKey,
       checkCanCommit: transition.checkCanCommit,
       noticeReferences: transition.noticeReferences,
+      frankReveals: transition.frankReveals,
     );
   }
+
+  @override
+  Future<FrankReveal?> loadFrankReveal(String messageKey) async =>
+      (await _database()).readFrankReveal(messageKey);
+
+  @override
+  Future<List<ReportKeyPin>> loadReportKeyPins(String origin) async =>
+      (await _database()).readReportKeyPins(origin);
+
+  @override
+  Future<ReportKeyPin?> loadReportKeyPin(
+          String origin, String ownerAccountId) async =>
+      (await _database()).readReportKeyPin(origin, ownerAccountId);
+
+  @override
+  Future<void> saveReportKeyPin(ReportKeyPin pin) async =>
+      (await _database()).writeReportKeyPin(pin);
+
+  @override
+  Future<void> deleteReportKeyPin(String origin, String ownerAccountId) async =>
+      (await _database()).deleteReportKeyPin(origin, ownerAccountId);
 
   @override
   Future<void> commitSyncEvent(SyncEventCommit commit) async {

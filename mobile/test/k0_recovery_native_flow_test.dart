@@ -162,6 +162,7 @@ void main() {
         ciphertext: hello.ciphertext,
         cryptoProtocol: hello.cryptoProtocol,
         createdAt: DateTime.now().toUtc(),
+        frankCommit: hello.frankCommit,
       ),
       2,
     );

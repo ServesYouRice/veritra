@@ -402,6 +402,11 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 		a.drainRetention(ctx, "operational_rows", func() (int64, error) {
 			return a.Store.PruneOperationalRows(ctx, time.Now().UTC())
 		})
+		// C6 (D95): sealed reports go 90 days after filing if nobody dismissed
+		// them first.
+		a.drainRetention(ctx, "reports", func() (int64, error) {
+			return a.Store.PruneReports(ctx, time.Now().UTC())
+		})
 		cutoff := time.Now().UTC().Add(-retention)
 		if removed, err := a.Store.PruneSyncEvents(ctx, cutoff); err != nil {
 			a.Log.Warn("sync_event_prune_failed", "err", err)

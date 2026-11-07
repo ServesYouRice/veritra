@@ -210,6 +210,10 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		`DELETE FROM backup_blobs WHERE account_id = ?`,
 		`DELETE FROM account_recovery_keys WHERE account_id = ?`,
 		`DELETE FROM account_recovery_requests WHERE account_id = ?`,
+		// A deleted owner's report key must not keep receiving reports.
+		`DELETE FROM report_inbox_keys WHERE set_by_account_id = ?`,
+		// Nor may the copies sealed to it stay: only that owner could open them.
+		`DELETE FROM reports WHERE inbox_kind = 'instance_owner' AND inbox_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, query, accountID); err != nil {
 			return nil, err
@@ -268,7 +272,7 @@ func (s *Store) accountByID(ctx context.Context, accountID string) (domain.Accou
 }
 
 func (s *Store) listVisibleMessagesForExport(ctx context.Context, accountID, beforeID string, limit int) ([]domain.MessageEnvelope, error) {
-	const cols = `me.id, me.conversation_id, me.sender_account_id, me.sender_device_id, me.idempotency_key, me.ciphertext, me.crypto_protocol, me.crypto_metadata_json, me.attachment_refs_json, me.reply_to_id, me.thread_root_id, me.created_at, me.edited_at, me.deleted_at, me.expires_at`
+	const cols = `me.id, me.conversation_id, me.sender_account_id, me.sender_device_id, me.idempotency_key, me.ciphertext, me.crypto_protocol, me.crypto_metadata_json, me.frank_commit, me.attachment_refs_json, me.reply_to_id, me.thread_root_id, me.created_at, me.edited_at, me.deleted_at, me.expires_at`
 	var rows *sql.Rows
 	var err error
 	if beforeID != "" {

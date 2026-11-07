@@ -387,6 +387,7 @@ class _Client {
         ciphertext: sent.ciphertext,
         cryptoProtocol: sent.cryptoProtocol,
         createdAt: DateTime.now().toUtc(),
+        frankCommit: sent.frankCommit,
       ),
       nextEvent(),
     );

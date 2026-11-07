@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
@@ -120,6 +121,21 @@ class _LimitBindings implements NativeCryptoBindings {
       generation: restored.generation
     );
   }
+
+  @override
+  Uint8List frankCommit({
+    required Uint8List key,
+    required String conversationId,
+    required String senderDeviceId,
+    required String actionId,
+    required Uint8List payload,
+  }) =>
+      real.frankCommit(
+          key: key,
+          conversationId: conversationId,
+          senderDeviceId: senderDeviceId,
+          actionId: actionId,
+          payload: payload);
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -246,6 +262,7 @@ class _Client {
           ciphertext: sent.ciphertext,
           cryptoProtocol: sent.cryptoProtocol,
           createdAt: DateTime.now().toUtc(),
+          frankCommit: sent.frankCommit,
         ),
         event,
       );
