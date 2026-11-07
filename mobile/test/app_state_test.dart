@@ -886,6 +886,12 @@ class _WakePushService implements MobilePushService {
     return true;
   }
 
+  @override
+  Future<PushEndpointEvent?> pendingEndpoint() async => null;
+
+  @override
+  Future<bool> acknowledgeEndpoint(int generation) async => false;
+
   void emitWake() {
     generation++;
     _events.add(const PushWakeEvent());

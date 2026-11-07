@@ -139,6 +139,15 @@ class MainActivity : FlutterActivity() {
                     result.success(PushEventBridge.acknowledgeWake(applicationContext, generation))
                 }
             }
+            "pendingEndpoint" -> result.success(PushEventBridge.pendingEndpoint(applicationContext))
+            "acknowledgeEndpoint" -> {
+                val generation = call.argument<Number>("generation")?.toLong()
+                if (generation == null || generation <= 0) {
+                    result.error("invalid_arguments", "Endpoint generation is required", null)
+                } else {
+                    result.success(PushEventBridge.acknowledgeEndpoint(applicationContext, generation))
+                }
+            }
             else -> result.notImplemented()
         }
     }
@@ -185,10 +194,8 @@ class MainActivity : FlutterActivity() {
         FirebaseMessaging.getInstance().token
             .addOnSuccessListener { token ->
                 if (!PushRegistrationConfig.current(attempt)) return@addOnSuccessListener
-                PushEventBridge.emit(mapOf(
-                    "type" to "endpoint", "provider" to "fcm",
-                    "instance" to targetInstance, "endpoint" to token,
-                    "publicKey" to "", "authSecret" to ""))
+                PushEventBridge.recordEndpoint(applicationContext, "fcm",
+                    targetInstance, token, "", "")
             }
             .addOnFailureListener {
                 // A late failure after unregister must not fall back to
@@ -268,6 +275,24 @@ object PushEventBridge : EventChannel.StreamHandler {
     fun pendingWakeGeneration(context: Context): Long = WakeMarkerStore.pending(context)
     fun acknowledgeWake(context: Context, generation: Long): Boolean = WakeMarkerStore.acknowledge(context, generation)
     fun clearPendingWake(context: Context) { WakeMarkerStore.clear(context) }
+
+    /** Stores the rotation durably, then emits it live. Listener attach never
+     * clears the record; only [acknowledgeEndpoint] does. */
+    @Synchronized fun recordEndpoint(
+        context: Context, provider: String, instance: String,
+        endpoint: String, publicKey: String, authSecret: String,
+        temporary: Boolean? = null,
+    ) {
+        val generation = PushEndpointStore.record(context, provider, instance, endpoint, publicKey, authSecret)
+        val event = mutableMapOf<String, Any?>(
+            "type" to "endpoint", "provider" to provider, "instance" to instance,
+            "endpoint" to endpoint, "publicKey" to publicKey, "authSecret" to authSecret,
+            "generation" to generation)
+        if (temporary != null) event["temporary"] = temporary
+        emit(event)
+    }
+    fun pendingEndpoint(context: Context): Map<String, Any?>? = PushEndpointStore.pending(context)
+    fun acknowledgeEndpoint(context: Context, generation: Long): Boolean = PushEndpointStore.acknowledge(context, generation)
 }
 
 /** Main-thread confined. [generation] changes on every register and

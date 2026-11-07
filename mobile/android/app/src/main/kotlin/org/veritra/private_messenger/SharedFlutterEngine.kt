@@ -42,12 +42,22 @@ object SharedFlutterEngine {
                     val generation = call.argument<Number>("generation")?.toLong()
                     result.success(generation != null && WakeMarkerStore.acknowledge(app, generation))
                 }
+                "pendingEndpoint" -> result.success(PushEventBridge.pendingEndpoint(app))
+                "acknowledgeEndpoint" -> {
+                    val generation = call.argument<Number>("generation")?.toLong()
+                    if (generation == null || generation <= 0) {
+                        result.error("invalid_arguments", "Endpoint generation is required", null)
+                    } else {
+                        result.success(PushEventBridge.acknowledgeEndpoint(app, generation))
+                    }
+                }
                 "unregister" -> {
                     WakeWorkerCoordinator.unregister(app)
                     val target = call.argument<String>("instance") ?: PushRegistrationConfig.instance
                     if (!target.isNullOrBlank()) UnifiedPush.unregister(app, target)
                     if (FirebaseApp.getApps(app).isNotEmpty()) FirebaseMessaging.getInstance().deleteToken()
                     PushRegistrationConfig.clear(app)
+                    PushEndpointStore.clear(app)
                     result.success(null)
                 }
                 else -> activity.get()?.handlePushMethod(call, result)

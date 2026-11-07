@@ -13,6 +13,7 @@ class PushEndpointEvent extends PushEvent {
     required this.endpoint,
     required this.publicKey,
     required this.authSecret,
+    this.generation = 0,
   });
 
   final String instance;
@@ -20,6 +21,9 @@ class PushEndpointEvent extends PushEvent {
   final String endpoint;
   final String publicKey;
   final String authSecret;
+
+  /// Native pending-record generation; 0 means nothing to acknowledge.
+  final int generation;
 }
 
 class PushWakeEvent extends PushEvent {
@@ -87,6 +91,12 @@ abstract class MobilePushService {
   Future<void> unregister(String instance);
   Future<int> pendingWakeGeneration();
   Future<bool> acknowledgeWake(int generation);
+
+  /// The newest endpoint rotation not yet acknowledged, or null.
+  Future<PushEndpointEvent?> pendingEndpoint();
+
+  /// Clears the record only if [generation] is still the stored one.
+  Future<bool> acknowledgeEndpoint(int generation);
   void dispose();
 }
 
@@ -122,6 +132,12 @@ class DisabledMobilePushService implements MobilePushService {
   Future<bool> acknowledgeWake(int generation) async => false;
 
   @override
+  Future<PushEndpointEvent?> pendingEndpoint() async => null;
+
+  @override
+  Future<bool> acknowledgeEndpoint(int generation) async => false;
+
+  @override
   void dispose() {}
 }
 
@@ -143,29 +159,40 @@ class PlatformMobilePushService implements MobilePushService {
   @override
   Stream<PushEvent> get events => _events.stream;
 
+  /// Null on any malformed field; a missing generation counts as 0.
+  static PushEndpointEvent? _decodeEndpoint(Map<String, Object?> event) {
+    final instance = event['instance'];
+    final provider = event['provider'];
+    final endpoint = event['endpoint'];
+    final publicKey = event['publicKey'];
+    final authSecret = event['authSecret'];
+    final generation = event['generation'] ?? 0;
+    if (instance is String &&
+        provider is String &&
+        endpoint is String &&
+        publicKey is String &&
+        authSecret is String &&
+        generation is int &&
+        generation >= 0) {
+      return PushEndpointEvent(
+        instance: instance,
+        provider: provider,
+        endpoint: endpoint,
+        publicKey: publicKey,
+        authSecret: authSecret,
+        generation: generation,
+      );
+    }
+    return null;
+  }
+
   void _onEvent(Object? raw) {
     if (raw is! Map) return;
     final event = Map<String, Object?>.from(raw);
     switch (event['type']) {
       case 'endpoint':
-        final instance = event['instance'];
-        final provider = event['provider'];
-        final endpoint = event['endpoint'];
-        final publicKey = event['publicKey'];
-        final authSecret = event['authSecret'];
-        if (instance is String &&
-            provider is String &&
-            endpoint is String &&
-            publicKey is String &&
-            authSecret is String) {
-          _events.add(PushEndpointEvent(
-            instance: instance,
-            provider: provider,
-            endpoint: endpoint,
-            publicKey: publicKey,
-            authSecret: authSecret,
-          ));
-        }
+        final decoded = _decodeEndpoint(event);
+        if (decoded != null) _events.add(decoded);
       case 'wake':
         _events.add(const PushWakeEvent());
       case 'unregistered':
@@ -224,6 +251,24 @@ class PlatformMobilePushService implements MobilePushService {
     if (generation <= 0) return false;
     return await _methods.invokeMethod<bool>(
           'acknowledgeWake',
+          <String, int>{'generation': generation},
+        ) ??
+        false;
+  }
+
+  @override
+  Future<PushEndpointEvent?> pendingEndpoint() async {
+    final value = await _methods.invokeMethod<Object?>('pendingEndpoint');
+    if (value is! Map) return null;
+    final decoded = _decodeEndpoint(Map<String, Object?>.from(value));
+    return decoded != null && decoded.generation > 0 ? decoded : null;
+  }
+
+  @override
+  Future<bool> acknowledgeEndpoint(int generation) async {
+    if (generation <= 0) return false;
+    return await _methods.invokeMethod<bool>(
+          'acknowledgeEndpoint',
           <String, int>{'generation': generation},
         ) ??
         false;

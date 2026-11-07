@@ -34,6 +34,8 @@ void main() {
       await disabled.unregister('https://example.com');
       expect(await disabled.pendingWakeGeneration(), 0);
       expect(await disabled.acknowledgeWake(1), isFalse);
+      expect(await disabled.pendingEndpoint(), isNull);
+      expect(await disabled.acknowledgeEndpoint(1), isFalse);
       disabled.dispose();
     });
   });
@@ -125,6 +127,59 @@ void main() {
       expect(methodCalls, hasLength(1));
       expect(methodCalls.first.method, 'unregister');
       expect(methodCalls.first.arguments, {'instance': 'https://example.com'});
+    });
+
+    test('pendingEndpoint decodes the record and rejects malformed ones',
+        () async {
+      final service = PlatformMobilePushService();
+      addTearDown(service.dispose);
+
+      methodResult = <Object?, Object?>{
+        'generation': 5,
+        'provider': 'webpush',
+        'instance': 'acct:dev',
+        'endpoint': 'https://push.example/abc',
+        'publicKey': 'pk',
+        'authSecret': 'auth',
+      };
+      final event = await service.pendingEndpoint();
+      expect(event?.generation, 5);
+      expect(event?.provider, 'webpush');
+      expect(event?.authSecret, 'auth');
+
+      methodResult = <Object?, Object?>{
+        'generation': 5,
+        'provider': 'webpush',
+        'instance': 'acct:dev',
+        'endpoint': 7,
+        'publicKey': 'pk',
+        'authSecret': 'auth',
+      };
+      expect(await service.pendingEndpoint(), isNull);
+      methodResult = <Object?, Object?>{
+        'provider': 'fcm',
+        'instance': 'acct:dev',
+        'endpoint': 't',
+        'publicKey': '',
+        'authSecret': '',
+      };
+      expect(await service.pendingEndpoint(), isNull); // generation missing
+      methodResult = null;
+      expect(await service.pendingEndpoint(), isNull);
+    });
+
+    test('acknowledgeEndpoint sends the generation and refuses non-positive',
+        () async {
+      final service = PlatformMobilePushService();
+      addTearDown(service.dispose);
+
+      methodResult = true;
+      expect(await service.acknowledgeEndpoint(5), isTrue);
+      expect(methodCalls.single.method, 'acknowledgeEndpoint');
+      expect(methodCalls.single.arguments, {'generation': 5});
+      methodCalls.clear();
+      expect(await service.acknowledgeEndpoint(0), isFalse);
+      expect(methodCalls, isEmpty);
     });
 
     test('pendingWakeGeneration returns parsed int and handles non-numbers',

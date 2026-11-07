@@ -15,7 +15,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [ ] 10 `TASK-010` Add commit-then-reveal to device linking and document real SAS strength
   - Docs only (af891ce, a2eb69e): what the device-link tags stop and the real SAS strength under L0. Commit-then-reveal is not built; it belongs with L1.
 - [x] 11 `TASK-011` Dispatch push bridge events to Flutter on the main thread
-- [ ] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
+- [x] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
   - Blocked: the native endpoint record and method-channel calls (`pendingEndpoint`/`acknowledgeEndpoint`) do not exist yet; server side done.
 - [x] 13 `TASK-013` Invalidate pending push registration callbacks on unregister
 - [x] 14 `TASK-014` Disable automatic redirects on all ApiClient requests so custom secret headers are never forwarded
