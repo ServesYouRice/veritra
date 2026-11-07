@@ -7,8 +7,8 @@ yet reviewed. Sources: the commit history and the test files named below. Test
 counts are counted from the source (`#[test]`, `test(`), not from a run, and
 each native Dart file includes one guard test that only fails when CI lacks
 the native library. The Rust and Dart suites run in CI; this change was made
-where Flutter and Docker are unavailable. No timing, byte or memory
-measurement was taken for D70 (see "Not measured").
+where Flutter and Docker are unavailable. Rust seal and activation
+measurements are in "Measured"; nothing else was timed (see "Not measured").
 
 Design: [`D70-per-group-sealed-state.md`](../../docs/designs/D70-per-group-sealed-state.md).
 Crypto change log and the "Rejoining a conversation" note: `docs/crypto.md`.
@@ -145,9 +145,41 @@ Welcome after the group drop had cleared the note, and the group came back.
   `api_bounded_decoding.dart` covers reading `event_id` (fixture
   `member_removed`) and an absent or unusable one as none.
 
+## Measured: seal and activation cost (format 3 against format 4)
+
+Method: `crypto/rust/tests/d70_seal_cost.rs` (ignored test, no behaviour
+change). One device creates N groups of 100 members (99 other devices, one
+add commit per group, key packages reused across groups), then:
+format 3 = `seal_state` after one message (median of up to 5), activation =
+`restore_state`; format 4 = first `seal_changes` (every record), then 20
+single-message seals (median; each changes exactly one group record plus the
+root), activation = `RestoreLoader` over all records. Messages are 13 bytes.
+One process per size, so peak RSS (`VmHWM`) belongs to that size. Command:
+`D70_GROUPS=<n> cargo test --locked --release --test d70_seal_cost -- --ignored --nocapture`.
+Machine: Intel Xeon 2.10 GHz, 4 vCPU, 16 GB, Linux 6.18 (cloud VM), single
+run per size, no warm-up, so treat ms as indicative.
+
+| Groups | v3 bytes/seal | v3 ms/seal | v3 activation | v4 bytes/message | v4 ms/seal | v4 first seal | v4 activation | RSS built | peak RSS |
+|---|---|---|---|---|---|---|---|---|---|
+| 1 | 108,190 | 0.41 | 0.2 ms | 107,848 | 0.42 | 108,447 | 0.3 ms | 6 MiB | 7 MiB |
+| 100 | 10,637,862 | 48.6 | 14.6 ms | 113,064 | 0.33 | 10,652,276 | 19.9 ms | 17 MiB | 77 MiB |
+| 1,000 | refused | refused | n/a | 160,858 | 0.50 | 106,558,160 | 260 ms | 111 MiB | 416 MiB |
+
+Reading:
+- A message at 100 groups costs 94x fewer bytes and about 150x less time to
+  seal in format 4. At 1,000 groups format 3 cannot seal at all: the state is
+  about 106 MB, over its 32 MiB cap (`seal_state` returns `InvalidState`).
+  Format 4 seals one group record plus the root (root 5.5 KB at 100 groups,
+  53 KB at 1,000: it grows with the record count).
+- Peak RSS is for the whole run (build, v3 seal and restore, v4 seals and
+  restore). At 100 groups 77 MiB; at 1,000 groups 416 MiB, of which 111 MiB
+  was the live state. Activation holds every record in memory at once.
+- The v4 activation (260 ms at 1,000 groups) excludes SQLite reads, the
+  platform key unwrap and Dart overhead.
+- Not measured: Dart-side cost, SQLite writes, real devices, activation from a
+  v3 database through `migrate_v3`.
+
 ## Not measured
 
-The design asked for bytes and ms sealed per message, activation time and peak
-RSS at 1, 100 and 1,000 groups of 100 members, against format 3. No such
-measurement is in the repository, so none is claimed. Real-device and Linux demo end-to-end runs from a v3 database are not recorded
-here.
+Dart-side and SQLite timings, real-device and Linux demo end-to-end runs from
+a v3 database are not recorded here.
