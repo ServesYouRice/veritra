@@ -17,9 +17,9 @@ dependencies:
   # Sender-side link previews (B2): parses the fetched page's metadata only.
   html: 0.15.7
   qr_flutter: ^4.1.0
-  mobile_scanner: ^7.5.0
+  mobile_scanner: ^7.4.2
   path_provider: 2.1.6
-  flutter_webrtc: 1.6.3
+  flutter_webrtc: 1.6.2+hotfix.3
   sqlite3: 3.5.2
   file_selector: 1.1.0
   # Desktop shell (W3, W4). Newer tray_manager releases need Flutter 3.47.
@@ -32,11 +32,11 @@ dependencies:
   open_filex: 5.0.0
   # Pinned to the version flutter_localizations requires in Flutter 3.44.0;
   # the generated lib/l10n code imports it directly.
-  intl: 0.20.3
+  intl: 0.20.2
 
 dev_dependencies:
   build_runner: 2.15.1
-  drift_dev: 2.35.2
+  drift_dev: 2.35.1
   flutter_test:
     sdk: flutter
 
