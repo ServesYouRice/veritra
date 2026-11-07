@@ -140,8 +140,11 @@ state (`removeAccount`): the account loses its role, its elector flag, its
 `joined` entry, and its votes and votes for it. The **owner is never pruned**
 (D81): a removed owner stays owner, and nobody inherits. Pruning alone needs
 no role, so any committer may carry it; a removal that does not prune is
-refused (`notPruned`). `validateCommit` prunes first, then checks any further
-change against the pruned state. Two commits also rewrite the record at
+refused (`notPruned`). An election with nobody from its snapshot left in the
+roster is cleared in the same step (nobody could close it, and no new one
+could open). `validateCommit` prunes first, then checks any further change
+against the pruned state. No commit drops a `joined` entry of a member who
+stays. Two commits also rewrite the record at
 `rev + 1`: an add stamps `joined`, and an owner commit clears an open
 election. The check refuses anything else.
 
@@ -222,9 +225,15 @@ about the group state. An honest app refuses:
 
 Owner activity is any owner commit **or application message** the app has
 received in the group, so an owner who chats but rarely commits is not
-challenged. A transfer or a win restarts every app's clock. A majority of
-honest elector apps therefore enforces the timing; one rogue admin can open
-early but cannot win.
+challenged. A transfer or a win restarts every app's clock.
+
+Receivers cannot refuse a commit for its timing, so **the waits bind honest
+committers only**. When most of the snapshot is honest, their apps enforce
+the timing: one rogue elector can open early but cannot win. When most of
+the snapshot is not (a snapshot of one elector, a claim, or D82 stand-ins
+below), the open, the votes and the win can follow each other within
+minutes, and the owner may get no chance to cancel. An honest app that sees
+a win its own clock would have refused should say so to the user.
 
 ### No admin left
 
@@ -262,21 +271,25 @@ same waits, the owner can cancel, more than half of the snapshot must agree.
   the electors goes along, gets a handover. The server alone cannot do it.
   K0's recovery accepts the same kind of risk.
 - Until C1 makes a leaver prove its own leave, the server can force out
-  every admin and let the longest-serving member claim ownership after the
-  waits.
+  every admin and let the longest-serving member claim ownership; if that
+  member goes along, there is no wait. Forcing out every elector likewise
+  hands an election to the remaining admins (D82) in the same commit.
+- A snapshot of one elector, or a claim, has no honest majority to enforce
+  the waits: that one account can win at once.
 - A rogue elector can keep opening (or closing) elections. Each automatic
   cancel tells the server roughly when the owner was online; the random
   delay blurs this but does not hide it.
 - With no elector present (D82), a rogue admin can promote stand-ins and
-  outvote the other admins after the waits. The owner can still cancel
-  any time before the win, and confirming even one admin as an elector
-  closes this path.
+  outvote the other admins, and since the stand-ins ignore the waits, the
+  open, votes and win can come within minutes: the owner may have no
+  chance to cancel (pinned in a test). Confirming even one admin as an
+  elector closes this path. Owner question 3 below offers a narrowing.
 - If the electors themselves are inactive, no majority forms; the group
   keeps its absent owner.
 
 ## Built and not built
 
-Built: the rules engine and 45 tests (posting, hierarchy as on the server,
+Built: the rules engine and 50 tests (posting, hierarchy as on the server,
 step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
 open, cancel, close, vote, win, claim, electors, `joined`; the local waits as
 pure helpers; the commit-level check). Not built: the ABI above, the record codec (format in
@@ -304,6 +317,14 @@ deletion.
    to someone no admin chose.
 2. **Moderators making moderators.** Allowed, as on the server today. If
    not wanted, change the server and this rule together.
+3. **D82 stand-ins win without a wait** (raised by the C4 review,
+   2026-11-07). Options: (a) accept it as written in the residuals;
+   (b) record in the record the `rev` of the owner's last commit, and let
+   the D82 snapshot hold only admins who were admin by then, so admins
+   promoted after the owner went quiet never vote (deterministic, cheap
+   while codec v2 is unbuilt; an admin promoted while the owner was active
+   still votes); (c) trust a server timestamp (adds trust in the server).
+   (b) is the reviewer's recommendation.
 
 ## History
 

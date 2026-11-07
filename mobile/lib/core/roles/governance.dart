@@ -354,7 +354,12 @@ GovernanceCheck validateTransition(
         : next.rev;
     if (e.value != since) return no(GovernanceReject.badShape);
   }
-  // `joined` is written once, when an account is added.
+  // `joined` is written once, when an account is added, and only a removal
+  // (already pruned in [prev]) drops it. Dropping another member's entry
+  // would disable the no-admin claim for good.
+  if (!next.joined.keys.toSet().containsAll(prev.joined.keys)) {
+    return no(GovernanceReject.badShape);
+  }
   for (final e in next.joined.entries) {
     final was = prev.joined[e.key];
     final ok = was != null
@@ -491,7 +496,7 @@ GovernanceReject? _checkWin(
   } else if (el.electorate.length != 1 ||
       winner != actor ||
       el.votes.isNotEmpty ||
-      _longestServing(next.joined, members, prev.owner) != actor) {
+      _longestServing(prev.joined, members, prev.owner) != actor) {
     // A claim: no admin in the roster and the sole claimant takes it itself.
     return GovernanceReject.ownerChange;
   }
@@ -576,17 +581,23 @@ GovernanceReject? _checkElection(
   return null;
 }
 
-/// The whole check for one MLS commit. [prev] is the state before it,
-/// [next] the state its GroupContext carries after it ([prev] when the commit
-/// does not change the extension), [before] and [after] the rosters. Every
-/// account whose last device the commit removes is pruned first
-/// ([GovernanceState.removeAccount]). An add stamps `joined`, and an owner
+/// The record a commit must carry when the committer changes nothing itself:
+/// every account whose last device the commit removes is pruned
+/// ([GovernanceState.removeAccount]); an election with nobody from its
+/// snapshot left in the roster is cleared (nobody could close it, and no new
+/// one could open); both keep `rev`. Then an add stamps `joined`, and an owner
 /// commit clears an open election; each of those rewrites the record at
-/// `rev + 1`. The result must be exactly [next], or [next] must be a valid
-/// change by [committer] from it.
-GovernanceCheck validateCommit(
+/// `rev + 1`. Commit producers use this to build their record, and
+/// [validateCommit] checks against it, so the two cannot drift.
+GovernanceState requiredRecord(
   GovernanceState prev,
-  GovernanceState next,
+  String committer, {
+  required Set<String> before,
+  required Set<String> after,
+}) => _required(prev, committer, before: before, after: after).record;
+
+({GovernanceState base, GovernanceState record, bool cancel}) _required(
+  GovernanceState prev,
   String committer, {
   required Set<String> before,
   required Set<String> after,
@@ -595,17 +606,42 @@ GovernanceCheck validateCommit(
   for (final gone in before.difference(after)) {
     base = base.removeAccount(gone);
   }
+  final el = base.election;
+  if (el != null && !el.electorate.any(after.contains)) {
+    base = base.copyWith(clearElection: true);
+  }
   final added = after.difference(before);
   final cancel =
       prev.owner != null && committer == prev.owner && base.election != null;
-  var expected = base;
+  var record = base;
   if (added.isNotEmpty || cancel) {
-    expected = base.copyWith(
+    record = base.copyWith(
       rev: base.rev + 1,
       clearElection: cancel,
       joined: {...base.joined, for (final a in added) a: base.rev + 1},
     );
   }
+  return (base: base, record: record, cancel: cancel);
+}
+
+/// The whole check for one MLS commit. [prev] is the state before it,
+/// [next] the state its GroupContext carries after it ([prev] when the commit
+/// does not change the extension), [before] and [after] the rosters.
+/// [next] must be exactly [requiredRecord], or a valid change by [committer]
+/// from the pruned record.
+GovernanceCheck validateCommit(
+  GovernanceState prev,
+  GovernanceState next,
+  String committer, {
+  required Set<String> before,
+  required Set<String> after,
+}) {
+  final (:base, record: expected, :cancel) = _required(
+    prev,
+    committer,
+    before: before,
+    after: after,
+  );
   if (next == expected) return const GovernanceCheck.ok();
   if (next == prev) {
     return GovernanceCheck.no(
@@ -621,6 +657,6 @@ GovernanceCheck validateCommit(
     next,
     committer,
     members: after,
-    added: added,
+    added: after.difference(before),
   );
 }

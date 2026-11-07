@@ -909,5 +909,113 @@ void main() {
         isTrue,
       );
     });
+
+    test('no commit drops another member\'s joined entry', () {
+      final s = council();
+      final dropped = bump(s, joined: {...joinedAt}..remove(carol));
+      expect(
+        validateCommit(s, dropped, bob, before: crew, after: crew).reject,
+        GovernanceReject.badShape,
+      );
+      expect(run(s, dropped, owner).reject, GovernanceReject.badShape);
+    });
+
+    test('an election with nobody of its snapshot left is cleared', () {
+      final s = opened(votes: {admin: carol});
+      const after = {owner, eve, mod, bob};
+      final need = requiredRecord(s, bob, before: crew, after: after);
+      expect(need.election, isNull);
+      expect(need.rev, s.rev);
+      expect(need.admins, {eve: 4});
+      expect(
+        validateCommit(s, need, bob, before: crew, after: after).ok,
+        isTrue,
+      );
+      // Keeping the dead election is refused.
+      final kept = s
+          .removeAccount(admin)
+          .removeAccount(carol)
+          .removeAccount(dave);
+      expect(kept.election, isNotNull);
+      expect(
+        validateCommit(s, kept, bob, before: crew, after: after).ok,
+        isFalse,
+      );
+      expect(
+        validateCommit(s, s, bob, before: crew, after: after).reject,
+        GovernanceReject.notPruned,
+      );
+      // A fresh election can open: eve is the only admin left (D82).
+      final reopen = bump(
+        need,
+        election: Election(opened: 12, electorate: {eve}),
+      );
+      expect(
+        validateCommit(need, reopen, eve, before: after, after: after).ok,
+        isTrue,
+      );
+    });
+
+    test('a claim whose claimant left is cleared; the next member claims', () {
+      final c = GovernanceState(
+        rev: 11,
+        owner: owner,
+        joined: {owner: 0, bob: 1, carol: 2},
+        election: Election(opened: 11, electorate: {bob}),
+      );
+      const before = {owner, bob, carol};
+      const after = {owner, carol};
+      final need = requiredRecord(c, carol, before: before, after: after);
+      expect(need.election, isNull);
+      final claim = bump(
+        need,
+        election: Election(opened: 12, electorate: {carol}),
+      );
+      expect(
+        validateCommit(need, claim, carol, before: after, after: after).ok,
+        isTrue,
+      );
+    });
+
+    // Residuals, pinned so a change to them is deliberate. Receivers cannot
+    // check time, so the 30- and 7-day waits bind honest committers only.
+    test('residual: with no elector, an admin\'s stand-ins win at once', () {
+      const roster = {owner, admin, carol, bob, mod};
+      var s = GovernanceState(
+        rev: 10,
+        owner: owner,
+        admins: {admin: 1, carol: 2},
+        joined: {owner: 0, admin: 1, carol: 2, bob: 3, mod: 4},
+      );
+      GovernanceState step(GovernanceState next, String who) {
+        final r = validateCommit(s, next, who, before: roster, after: roster);
+        expect(r.ok, isTrue, reason: '${r.reject}');
+        return s = next;
+      }
+
+      const all = {admin, carol, bob, mod};
+      step(bump(s, admins: {...s.admins, bob: 11, mod: 11}), admin);
+      step(bump(s, election: Election(opened: 12, electorate: all)), admin);
+      Election votes(Map<String, String> v) =>
+          Election(opened: 12, electorate: all, votes: v);
+      step(bump(s, election: votes({admin: admin})), admin);
+      step(bump(s, election: votes({admin: admin, bob: admin})), bob);
+      step(won(s, admin), mod);
+      expect(s.owner, admin);
+    });
+
+    test('residual: a forced removal of every elector hands D82 the vote', () {
+      final s = council();
+      const after = {owner, eve, mod, bob};
+      final open = s
+          .removeAccount(admin)
+          .removeAccount(carol)
+          .removeAccount(dave)
+          .copyWith(rev: 11, election: Election(opened: 11, electorate: {eve}));
+      expect(
+        validateCommit(s, open, eve, before: crew, after: after).ok,
+        isTrue,
+      );
+    });
   });
 }

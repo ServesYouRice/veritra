@@ -1938,7 +1938,9 @@ only if `validateCommit` accepts:
 - Accounts whose last device the commit removes are pruned first
   (`removeAccount`): their role, elector flag, `joined` entry and votes go.
   The owner is never pruned (D81): it stays owner even out of the roster, and
-  nobody inherits. `rev` is kept. A record equal to that result is valid from
+  nobody inherits. An election with nobody from its snapshot left in the
+  roster is cleared. `rev` is kept (`requiredRecord` computes all of this
+  for committers and receivers alike). A record equal to that result is valid from
   any committer; a removal that leaves a departed account named is invalid.
   An add must stamp `joined` and an owner commit must clear an open election;
   each rewrites the record at `rev` + 1 (record format v2, not built).
