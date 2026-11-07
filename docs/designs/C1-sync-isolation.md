@@ -234,10 +234,10 @@ reviews the diff independently.
 Status: built on `agent/c1-p1`, needs an Opus review (MLS ordering) before
 merge. It meets the C1 prerequisite (one conversation's MLS failure no
 longer stops sync for every conversation) with a smaller change than the
-design above, and it is **inert unless the operator turns
-`PRIVATE_MESSENGER_SCOPED_SYNC` on**: the client probes the scoped
-conversation route, and without it every failure stops the device as before.
-Whether to turn it on (in the demo, or by default) is the owner's call.
+design above, and the server switch
+`PRIVATE_MESSENGER_SCOPED_SYNC` is **on by default** (owner decision
+2026-11-07; `0` turns it off): the client probes the scoped conversation
+route, and with the switch off every failure stops the device as before.
 
 ### What differs from the design
 
