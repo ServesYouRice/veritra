@@ -55,6 +55,11 @@ updates:
       # pinned Flutter SDK moves (decision D15).
       - dependency-name: sqlite3
         versions: [">=3.6.0"]
+      # window_manager 0.6.0 needs Dart ^3.13, above the Dart 3.12 in the
+      # pinned Flutter 3.44.0 SDK, so `flutter pub get` fails in CI (#105,
+      # reverted). Lift when the pinned Flutter SDK moves (decision D15).
+      - dependency-name: window_manager
+        versions: [">=0.6.0"]
       # drift 2.35.0 needs meta 1.19.0 and floats matcher, test_api and
       # vector_math past the pinned Flutter 3.44.0 SDK, which broke CI on main
       # after #65. Lift when the pinned Flutter SDK moves (decision D15).
