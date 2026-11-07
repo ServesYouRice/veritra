@@ -213,7 +213,11 @@ On success, in one transaction:
 - **At claim:**
   - sync event `account.recovery.pending {request_id, device_name,
     ready_at}`;
-  - a generic push wake (no text; D53);
+  - a generic silent push wake (no text) to `local_decrypt_v1` devices
+    only. Legacy-mode subscriptions get no wake: on APNs theirs is a
+    visible "New message" alert (D53), which D69 keeps for new messages.
+    They learn of the claim or cancel on next sync (owner decision
+    2026-11-07);
   - audit `account.recovery_requested`.
 - **Active devices** show a persistent notice: "Someone is recovering your
   account on <device>, finishing <date>. Not you? Cancel, or change your
