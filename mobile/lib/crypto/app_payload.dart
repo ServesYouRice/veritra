@@ -107,7 +107,7 @@ class AppPayloadCodec {
   /// [canonical] is the inner JSON exactly as [encode] would write it at v2,
   /// which the franking commitment covers; the wire JSON is [canonical] with
   /// the `frank` member appended last ([frankWireJson]). Every message the
-  /// app sends is written this way (`NativeCryptoService.encryptPayload`).
+  /// app sends is written this way (the message send path).
   ({Uint8List padded, Uint8List canonical}) encodeFranked({
     required AppPayloadType type,
     required String conversationId,
