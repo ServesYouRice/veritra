@@ -184,6 +184,34 @@ typedef _DecryptNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _DecryptDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _C7CommitNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7CommitDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7MergeNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7MergeDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7DecryptNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _C7DecryptDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _C7MemberKeyNative = Int32 Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _C7MemberKeyDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _SealNative = Int32 Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, Uint64, Pointer<_PmOwnedBuffer>);
 typedef _SealDart = int Function(
@@ -343,6 +371,19 @@ class NativeCryptoBindings {
             _HandleTwoSlicesOutputDart>('pm_crypto_group_encrypt'),
         _groupDecrypt = library.lookupFunction<_DecryptNative, _DecryptDart>(
             'pm_crypto_group_decrypt'),
+        _c7ProcessCommit =
+            library.lookupFunction<_C7CommitNative, _C7CommitDart>(
+                'pm_crypto_group_c7_process_commit'),
+        _c7MergePending = library.lookupFunction<_C7MergeNative, _C7MergeDart>(
+            'pm_crypto_group_c7_merge_pending_commit'),
+        _c7GroupDecrypt =
+            library.lookupFunction<_C7DecryptNative, _C7DecryptDart>(
+                'pm_crypto_group_c7_decrypt'),
+        _c7MemberKey =
+            library.lookupFunction<_C7MemberKeyNative, _C7MemberKeyDart>(
+                'pm_crypto_group_member_signature_key'),
+        _c7Sign = library.lookupFunction<_HandleTwoSlicesOutputNative,
+            _HandleTwoSlicesOutputDart>('pm_crypto_c7_sign'),
         _attachmentEncrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
@@ -821,6 +862,11 @@ class NativeCryptoBindings {
   final _GroupEpochDart _groupEpoch;
   final _HandleTwoSlicesOutputDart _groupEncrypt;
   final _DecryptDart _groupDecrypt;
+  final _C7CommitDart _c7ProcessCommit;
+  final _C7MergeDart _c7MergePending;
+  final _C7DecryptDart _c7GroupDecrypt;
+  final _C7MemberKeyDart _c7MemberKey;
+  final _HandleTwoSlicesOutputDart _c7Sign;
   final _AttachmentChunkDart _attachmentEncrypt;
   final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
@@ -1685,6 +1731,170 @@ class NativeCryptoDevice implements Finalizable {
             _liveHandle, slices[0], slices[1], slices[2], slices[3], out)));
   }
 
+  /// [processCommit] that also reports what the commit did, from MLS itself
+  /// (ABI 13, C7). Never trust a server label for this. The commit is staged
+  /// and merged as before; for a removal that keeps this device the result
+  /// carries the 32-byte exporter `root` of the epoch it produces. The caller
+  /// derives its channel keys from it in the same local transaction as the
+  /// merged MLS state and then wipes it ([C7CommitOutcome.wipeRoot]). A commit
+  /// that removes this device returns [C7CommitOutcome.removedSelf] and no
+  /// root.
+  C7CommitOutcome c7ProcessCommit(String groupId, List<int> commit) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(commit, 4 * 1024 * 1024);
+    return _c7Outcome(
+      (flags, epoch, root) => _bindings._withByteLists(
+        [groupId.codeUnits, commit],
+        (slices) => _bindings._c7ProcessCommit(
+            _liveHandle, slices[0], slices[1], flags, epoch, root),
+      ),
+    );
+  }
+
+  /// [mergePendingCommit] that reports like [c7ProcessCommit], for this
+  /// device's own staged commit. Refuses a group with nothing staged.
+  C7CommitOutcome c7MergePendingCommit(String groupId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    return _c7Outcome(
+      (flags, epoch, root) => _bindings._withByteLists(
+        [groupId.codeUnits],
+        (slices) => _bindings._c7MergePending(
+            _liveHandle, slices[0], flags, epoch, root),
+      ),
+    );
+  }
+
+  C7CommitOutcome _c7Outcome(
+    int Function(Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>)
+        operation,
+  ) {
+    final flags = calloc<Uint8>();
+    final epoch = calloc<Uint64>();
+    final root = calloc<_PmOwnedBuffer>();
+    try {
+      _bindings._check(operation(flags, epoch, root));
+      final bits = flags.value;
+      if (bits & ~7 != 0) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
+      final removed = bits & 1 != 0;
+      final removedSelf = bits & 4 != 0;
+      Uint8List? rootBytes;
+      if (root.ref.data != nullptr) {
+        // Only a removal that keeps this device carries a root.
+        if (!removed || removedSelf) {
+          throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+        }
+        final taken = _bindings._take(root.ref, maximum: 32);
+        root.ref
+          ..data = nullptr
+          ..len = 0;
+        if (taken.length != 32) {
+          throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+        }
+        rootBytes = Uint8List.fromList(taken);
+      } else if (removed && !removedSelf) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
+      if (epoch.value == 0 && !removedSelf) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
+      return C7CommitOutcome._(
+        removedAny: removed,
+        addedAny: bits & 2 != 0,
+        removedSelf: removedSelf,
+        newEpoch: epoch.value,
+        root: rootBytes,
+      );
+    } finally {
+      if (root.ref.data != nullptr) _bindings._free(root.ref);
+      calloc.free(flags);
+      calloc.free(epoch);
+      calloc.free(root);
+    }
+  }
+
+  /// [decrypt] that also returns the epoch the message was encrypted in
+  /// (ABI 13). Errors are [decrypt]'s.
+  ({List<int> plaintext, int epoch}) c7Decrypt(
+    String groupId,
+    List<int> ciphertext, {
+    required String senderAccountId,
+    required String senderDeviceId,
+  }) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(ciphertext, 1024 * 1024 + 4096);
+    _bindings._bounded(senderAccountId.codeUnits, 128);
+    _bindings._bounded(senderDeviceId.codeUnits, 128);
+    final epoch = calloc<Uint64>();
+    try {
+      final plaintext = _bindings._withByteLists(
+        [
+          groupId.codeUnits,
+          ciphertext,
+          senderAccountId.codeUnits,
+          senderDeviceId.codeUnits,
+        ],
+        (slices) => _bindings._output((out) => _bindings._c7GroupDecrypt(
+            _liveHandle,
+            slices[0],
+            slices[1],
+            slices[2],
+            slices[3],
+            out,
+            epoch)),
+      );
+      if (epoch.value == 0) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
+      return (plaintext: plaintext, epoch: epoch.value);
+    } finally {
+      calloc.free(epoch);
+    }
+  }
+
+  /// The 32-byte signature public key of a member device, read from the
+  /// group's current tree (ABI 13). An unknown device is an error.
+  Uint8List c7MemberSignatureKey(
+    String groupId,
+    String accountId,
+    String deviceId,
+  ) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(accountId.codeUnits, 128);
+    _bindings._bounded(deviceId.codeUnits, 128);
+    final key = _bindings._withByteLists(
+      [groupId.codeUnits, accountId.codeUnits, deviceId.codeUnits],
+      (slices) => _bindings._output(
+          (out) => _bindings._c7MemberKey(
+              _liveHandle, slices[0], slices[1], slices[2], out),
+          maximum: 32),
+    );
+    if (key.length != 32) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(key);
+  }
+
+  /// Signs `domain | message` with this device's credential key (ABI 13).
+  /// [domain] is `veritra-c7-post-sig-v1` or `veritra-c7-history-v1`.
+  Uint8List c7Sign({required String domain, required List<int> message}) {
+    _bindings._bounded(message, 4096);
+    final signature = _bindings._withSlice(
+      Uint8List.fromList(utf8.encode(domain)),
+      (d) => _bindings._withByteLists(
+        [message],
+        (slices) => _bindings._output(
+            (out) => _bindings._c7Sign(_liveHandle, d, slices[0], out),
+            maximum: 64),
+      ),
+    );
+    if (signature.length != 64) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(signature);
+  }
+
   void _withOne(
       List<int> value, int Function(_PmByteSlice) operation, int max) {
     _bindings._bounded(value, max);
@@ -1711,6 +1921,37 @@ class NativeCryptoDevice implements Finalizable {
     _bindings._deviceDestroy(_handle);
     _handle = nullptr;
   }
+}
+
+/// What a C7 commit call did (ABI 13), from MLS itself. [root] is the
+/// exporter secret of [newEpoch] for a removal that keeps this device, else
+/// null; call [wipeRoot] once the channel keys are derived.
+final class C7CommitOutcome {
+  C7CommitOutcome._({
+    required this.removedAny,
+    required this.addedAny,
+    required this.removedSelf,
+    required this.newEpoch,
+    required Uint8List? root,
+  }) : root = root;
+
+  /// At least one Remove proposal (a device replacement included).
+  final bool removedAny;
+
+  /// At least one Add proposal.
+  final bool addedAny;
+
+  /// This device was removed: no root, and the group store is dropped.
+  final bool removedSelf;
+
+  /// The epoch the commit produces (0 when [removedSelf]).
+  final int newEpoch;
+  final Uint8List? root;
+
+  /// A membership commit has an Add or a Remove (a `history_sync` is owed).
+  bool get membership => removedAny || addedAny;
+
+  void wipeRoot() => root?.fillRange(0, root!.length, 0);
 }
 
 /// Encodes the change list of `pm_crypto_group_stage_commit` (ABI 6).
