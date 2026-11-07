@@ -4275,6 +4275,36 @@ abstract class AppLocalizations {
   /// **'Notify when a member mentions you, even in a muted chat.'**
   String get w8MentionsMutedDetail;
 
+  /// No description provided for @b2LinkPreviews.
+  ///
+  /// In en, this message translates to:
+  /// **'Link previews'**
+  String get b2LinkPreviews;
+
+  /// No description provided for @b2LinkPreviewsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'When you send a link, this device can fetch the page and put a preview in the encrypted message. The site sees this device\'s address. The server and the people you write to never fetch it.'**
+  String get b2LinkPreviewsDetail;
+
+  /// No description provided for @b2LinkPreviewsOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get b2LinkPreviewsOff;
+
+  /// No description provided for @b2LinkPreviewsKnown.
+  ///
+  /// In en, this message translates to:
+  /// **'Known sites only'**
+  String get b2LinkPreviewsKnown;
+
+  /// No description provided for @b2LinkPreviewsAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All sites'**
+  String get b2LinkPreviewsAll;
+
   /// No description provided for @w8HiddenSpoiler.
   ///
   /// In en, this message translates to:

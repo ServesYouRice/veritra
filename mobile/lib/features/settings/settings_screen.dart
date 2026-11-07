@@ -12,6 +12,7 @@ import '../../core/models.dart';
 import '../../desktop/message_notifications.dart';
 import '../../ui/about.dart';
 import '../../ui/appearance.dart';
+import 'link_preview_tile.dart';
 import 'read_receipts_tile.dart';
 import '../../ui/avatar.dart';
 import '../../ui/confirm.dart';
@@ -347,6 +348,9 @@ class SettingsScreen extends StatelessWidget {
                       subtitle: Text(l10n.w8MentionsMutedDetail),
                       value: state.mentionsInMutedChats,
                       onChanged: state.setMentionsInMutedChats),
+                  LinkPreviewTile(
+                      mode: state.linkPreviewMode,
+                      onChanged: state.setLinkPreviewMode),
                 ],
               ),
               if (appearance != null) ...<Widget>[

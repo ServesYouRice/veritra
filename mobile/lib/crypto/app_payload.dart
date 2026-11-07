@@ -159,6 +159,7 @@ class AppPayloadCodec {
             body.keys.any(const {
               'entities',
               'mentions',
+              'link_preview',
               'forwarded',
               'profile_key',
               'group_profile_key'

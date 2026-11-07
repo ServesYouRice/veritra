@@ -687,10 +687,18 @@ const _messageFields = {
   'channelId',
   'senderHidden'
 };
-Map<String, Object?> _messageJson(LocalMessage m) => {
-      for (final e in m.toJson().entries)
-        if (_messageFields.contains(e.key)) e.key: e.value
-    };
+
+/// A link preview (B2, up to ~22 KiB of thumbnail per row) never travels in a
+/// snapshot: it would push a long history over the 64 MiB cap, and a build
+/// older than B2 rejects the key. The reader still accepts it.
+Map<String, Object?> _messageJson(LocalMessage m) {
+  final json = <String, Object?>{
+    for (final e in m.toJson().entries)
+      if (_messageFields.contains(e.key)) e.key: e.value
+  };
+  json['formatJson'] = formatJsonWithoutPreview(json['formatJson'] as String?);
+  return json;
+}
 
 LocalMessage _readMessage(Object? raw) {
   final j = _object(raw, _messageFields);
@@ -732,7 +740,7 @@ LocalMessage _readMessage(Object? raw) {
   if (m.formatJson != null) {
     if (m.kind != 'text' || m.body == null) _invalid();
     final d = _object(strictHistoryJson(utf8.encode(m.formatJson!)),
-        {'entities', 'mentions'});
+        {'entities', 'mentions', 'link_preview'});
     if ((d['entities'] is List && (d['entities'] as List).length > 256) ||
         (d['mentions'] is List && (d['mentions'] as List).length > 50))
       _invalid();
