@@ -1738,8 +1738,21 @@ class ApiClient {
   /// answers 404 otherwise. A conversation whose retention was pruned past
   /// [after] answers 409 `conversation_recovery_required`; a non-member 403.
   /// Only the events are read: the envelope's bounds are the account's, not
-  /// this stream's.
+  /// this stream's. See [conversationSyncPage] for the scan position.
   Future<List<SyncEvent>> conversationSyncEvents(
+    String token,
+    String conversationId, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      (await conversationSyncPage(token, conversationId,
+              after: after, limit: limit))
+          .events;
+
+  /// [conversationSyncEvents] with the scan position (C1 bounds, D92): how
+  /// far the server looked, hidden events included, and whether its scan
+  /// budget cut the page short. Both are absent from an older server.
+  Future<ConversationSyncPage> conversationSyncPage(
     String token,
     String conversationId, {
     int after = 0,
@@ -1758,7 +1771,22 @@ class ApiClient {
         throw const FormatException();
       }
     });
-    return _rows(json, 'events', SyncEvent.fromJson);
+    final events = _rows(json, 'events', SyncEvent.fromJson);
+    return _decode(() {
+      final through = json['scanned_through'];
+      final truncated = json['scan_truncated'];
+      if (through != null && (through is! int || through < 0)) {
+        throw const FormatException();
+      }
+      if (truncated != null && truncated is! bool) {
+        throw const FormatException();
+      }
+      return ConversationSyncPage(
+        events,
+        scannedThrough: through as int?,
+        truncated: truncated == true,
+      );
+    });
   }
 
   /// The newest sync event id the server holds for this account, read from
@@ -2347,4 +2375,19 @@ List<T> _rows<T>(
           throw const ApiResponseException(),
     ],
   );
+}
+
+/// One page of a conversation's sync stream with the server's scan position
+/// (C1 bounds, D92). [scannedThrough] is the highest event id the server
+/// examined, hidden events included, so a hidden run is crossed once; null
+/// from a server that does not report it. [truncated] means the server's scan
+/// budget ended the page early: more may follow even when [events] is short
+/// or empty.
+class ConversationSyncPage {
+  const ConversationSyncPage(this.events,
+      {this.scannedThrough, this.truncated = false});
+
+  final List<SyncEvent> events;
+  final int? scannedThrough;
+  final bool truncated;
 }

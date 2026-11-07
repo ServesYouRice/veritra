@@ -352,6 +352,40 @@ void main() {
       harness.dispose();
     });
 
+    test('a budget-limited empty page does not end the replay (D92)', () async {
+      // Four events the conversation stream hides from this device sit
+      // between the failed event and the next visible one. The server
+      // scans two candidates a request, so the replay meets an empty page
+      // that says it was cut short, and must go on from the scan position.
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_h1'),
+          _envelopeEvent(6, 'msg_h2'),
+          _envelopeEvent(7, 'msg_h3'),
+          _envelopeEvent(8, 'msg_h4'),
+          _envelopeEvent(9, 'msg_e'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 9);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+
+      harness.crypto.rejectedMls.clear();
+      api.hideFromConversationStream.addAll(<int>[5, 6, 7, 8]);
+      api.conversationScanBudget = 2;
+      await harness.state.retryConversationPause('conv_1');
+      await harness
+          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+
+      expect(harness.crypto.order, <String>['mls_bad', 'msg_e']);
+      expect(await store.loadConversationPause('conv_1'), isNull);
+      harness.dispose();
+    });
+
     test('a failure on a later short page keeps the pause where it stopped',
         () async {
       final api = _ScriptedApi()
@@ -815,8 +849,13 @@ class _ScriptedApi extends ApiClient {
   /// limit, so a page below the asked size is not the end of the stream.
   int? conversationPageCap;
 
+  /// When set, a page examines at most this many of the conversation's
+  /// events after the cursor, hidden ones included, and reports the scan
+  /// position (C1 bounds). Null models a server without them.
+  int? conversationScanBudget;
+
   @override
-  Future<List<SyncEvent>> conversationSyncEvents(
+  Future<ConversationSyncPage> conversationSyncPage(
     String token,
     String conversationId, {
     int after = 0,
@@ -825,13 +864,34 @@ class _ScriptedApi extends ApiClient {
     if (!conversationRoute) {
       throw ApiException(404, '{"error":"not_found"}');
     }
-    return events
+    final cap = min(limit, conversationPageCap ?? limit);
+    final budget = conversationScanBudget;
+    final candidates = events
         .where((event) =>
-            event.conversationId == conversationId &&
-            event.id > after &&
-            !hideFromConversationStream.contains(event.id))
-        .take(min(limit, conversationPageCap ?? limit))
+            event.conversationId == conversationId && event.id > after)
         .toList(growable: false);
+    if (budget == null) {
+      return ConversationSyncPage(candidates
+          .where((event) => !hideFromConversationStream.contains(event.id))
+          .take(cap)
+          .toList(growable: false));
+    }
+    final page = <SyncEvent>[];
+    var through = after;
+    var truncated = false;
+    var scanned = 0;
+    for (final event in candidates) {
+      if (page.length >= cap) break;
+      if (scanned >= budget) {
+        truncated = true;
+        break;
+      }
+      scanned++;
+      through = event.id;
+      if (!hideFromConversationStream.contains(event.id)) page.add(event);
+    }
+    return ConversationSyncPage(page,
+        scannedThrough: through, truncated: truncated);
   }
 
   @override
