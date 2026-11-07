@@ -1,7 +1,14 @@
+import 'dart:typed_data';
+
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 
-class TestOnlyCryptoService implements CryptoService {
+/// The device signing key [TestOnlyCryptoService] reports (32 bytes).
+final Uint8List testDeviceSigningKey =
+    Uint8List.fromList(List<int>.generate(32, (i) => 0x20 + i));
+
+class TestOnlyCryptoService
+    implements CryptoService, DeviceSigningKeyCryptoService {
   // Windows clocks tick coarsely, so a timestamp alone repeats within a test.
   static int _keySequence = 0;
 
@@ -29,6 +36,13 @@ class TestOnlyCryptoService implements CryptoService {
       },
     );
   }
+
+  @override
+  Future<Uint8List> deviceSigningPublicKey({
+    required String accountId,
+    required String deviceId,
+  }) async =>
+      Uint8List.fromList(testDeviceSigningKey);
 
   @override
   Future<String> deviceLinkLocator(List<int> secret) async => "a" * 64;

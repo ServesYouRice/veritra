@@ -210,6 +210,21 @@ abstract interface class RecoveryCryptoService {
   Future<void> abandonPendingEnrollment();
 }
 
+/// The public signing key of this device's MLS credential (the one the server
+/// holds as the device's `signing_key`). C1 binds an invitation to it (D90),
+/// and the binding is checked against the key the server registered. Reads
+/// the existing `pm_crypto_device_signing_public_key`; no signing happens.
+/// Callers check for it like the other capabilities, so
+/// [UnavailableCryptoService] (`PM_CRYPTO_UNAVAILABLE`) is never asked.
+abstract interface class DeviceSigningKeyCryptoService {
+  /// The 32-byte Ed25519 public key of the active device, which must be
+  /// [accountId]/[deviceId]; any other active identity throws.
+  Future<Uint8List> deviceSigningPublicKey({
+    required String accountId,
+    required String deviceId,
+  });
+}
+
 /// K2/K0 (local schema 18): the one step that makes the pending identity
 /// this device's active one, with a promotion-ledger row, so its frozen
 /// pre-join MLS state can never become active again (review finding 4 on

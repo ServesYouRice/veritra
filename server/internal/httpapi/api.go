@@ -119,6 +119,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerAccountRecoveryRoutes(mux)
 	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.withWriteBudget(a.createCommunity)))
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
+	a.registerMembershipInviteRoutes(mux)
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.withWriteBudget(a.createConversation)))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.withWriteBudget(a.claimConversationKeyPackages)))
@@ -515,6 +516,14 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 	case errors.Is(err, storage.ErrLastOwner):
 		writeError(w, http.StatusConflict, "last_owner_required")
+	case errors.Is(err, storage.ErrAlreadyMember):
+		writeError(w, http.StatusConflict, "already_member")
+	case errors.Is(err, storage.ErrJoinRequestResolved):
+		writeError(w, http.StatusConflict, "join_request_resolved")
+	case errors.Is(err, storage.ErrMembershipInviteUnavailable):
+		writeError(w, http.StatusConflict, "invite_unavailable")
+	case errors.Is(err, storage.ErrJoinRequestLimit):
+		writeError(w, http.StatusConflict, "join_request_limit_reached")
 	case errors.Is(err, storage.ErrIdempotencyConflict):
 		writeError(w, http.StatusConflict, "idempotency_conflict")
 	case errors.Is(err, storage.ErrReportInboxUnavailable):
