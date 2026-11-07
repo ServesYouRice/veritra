@@ -1380,13 +1380,18 @@ func (s *Store) SearchMetadata(ctx context.Context, accountID, query string, lim
 				END AS rank
 			FROM channels ch
 			JOIN memberships m ON m.community_id = ch.community_id
+			LEFT JOIN community_channel_routes r ON r.channel_id = ch.id
 			WHERE m.account_id = ? AND ch.name LIKE ? ESCAPE '\'
+			  -- A private route is listed only to members of its conversation,
+			  -- as listChannelsQuery does.
+			  AND (r.channel_id IS NULL OR r.access_mode <> 'private'
+			       OR EXISTS (SELECT 1 FROM memberships pm WHERE pm.conversation_id = r.conversation_id AND pm.account_id = ?))
 		)
 		ORDER BY rank, label COLLATE NOCASE, type, id
 		LIMIT ? OFFSET ?`,
 		exact, exactAccountID,
 		exact, accountID, prefixPattern,
-		exact, accountID, prefixPattern,
+		exact, accountID, prefixPattern, accountID,
 		limit, offset)
 	if err != nil {
 		return nil, err

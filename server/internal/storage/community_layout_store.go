@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -293,13 +294,45 @@ type envelopeRoute struct {
 }
 
 // metadataFields parses envelope crypto metadata as a JSON object. ok is false
-// when it is not one; such metadata carries no route keys.
+// when it is not one; such metadata carries no route keys. A repeated key keeps
+// its last value, as Go and Dart decode it; see metadataRepeatsKey.
 func metadataFields(metadata json.RawMessage) (map[string]json.RawMessage, bool) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(metadata, &fields); err != nil || fields == nil {
 		return nil, false
 	}
 	return fields, true
+}
+
+// metadataRepeatsKey reports whether a JSON object names the same top-level
+// key twice. Go keeps the last value while SQLite json_extract reads the
+// first, so in a shared conversation the stored row could name another channel
+// than the one admission checked. The metadata is stored byte for byte
+// (sameIdempotentMessage compares it, so a retry must match), so such metadata
+// is refused rather than rewritten. Invalid JSON and non-objects report false;
+// metadataFields already rejects those.
+func metadataRepeatsKey(metadata json.RawMessage) bool {
+	decoder := json.NewDecoder(bytes.NewReader(metadata))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return false
+	}
+	seen := map[string]struct{}{}
+	for decoder.More() {
+		keyToken, err := decoder.Token()
+		key, ok := keyToken.(string)
+		if err != nil || !ok {
+			return false
+		}
+		if _, dup := seen[key]; dup {
+			return true
+		}
+		seen[key] = struct{}{}
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return false
+		}
+	}
+	return false
 }
 
 func metadataHasRouteKeys(fields map[string]json.RawMessage) bool {
@@ -329,7 +362,7 @@ func routeEnvelope(ctx context.Context, q queryRower, conversationID string, met
 	if err != nil {
 		return envelopeRoute{}, err
 	}
-	if !isObject {
+	if !isObject || metadataRepeatsKey(metadata) {
 		return envelopeRoute{}, ErrInvalidChannelRoute
 	}
 	var channelID string
@@ -381,7 +414,7 @@ func sameChannelAsStored(ctx context.Context, q queryRower, messageID string, me
 		return metadata, nil
 	}
 	old, ok := metadataFields(json.RawMessage(stored))
-	if !ok || !isObject {
+	if !ok || !isObject || metadataRepeatsKey(metadata) || metadataRepeatsKey(json.RawMessage(stored)) {
 		return nil, ErrInvalidChannelRoute
 	}
 	for _, key := range []string{EnvelopeChannelKey, EnvelopeLayoutGenerationKey} {

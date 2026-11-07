@@ -763,8 +763,60 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 		eventID, _ := result.LastInsertId()
 		eventIDs = append(eventIDs, eventID)
 	}
+	// A private channel of an active layout is not part of the join set, but a
+	// role change must still reach the memberships the target already has in
+	// one, as the legacy loop did: a demoted admin must not stay an admin
+	// there. No row is added, so this never grants access.
+	privateEventIDs, err := syncPrivateChannelRoles(ctx, tx, communityID, targetAccountID, role, createdAt)
+	if err != nil {
+		return nil, err
+	}
+	eventIDs = append(eventIDs, privateEventIDs...)
 	if err := tx.Commit(); err != nil {
 		return nil, err
+	}
+	return eventIDs, nil
+}
+
+// syncPrivateChannelRoles sets the account's role in the private-channel
+// conversations of an active layout it already belongs to, and records a
+// membership.updated event for each. It adds no membership.
+func syncPrivateChannelRoles(ctx context.Context, tx *sql.Tx, communityID, accountID, role, at string) ([]int64, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT m.conversation_id
+		FROM memberships m
+		JOIN community_conversation_layouts l ON l.conversation_id = m.conversation_id
+		WHERE m.account_id = ? AND l.community_id = ? AND l.purpose = 'private' AND m.role <> ?
+		ORDER BY m.conversation_id`, accountID, communityID, role)
+	if err != nil {
+		return nil, err
+	}
+	var conversationIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		conversationIDs = append(conversationIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	var eventIDs []int64
+	for _, conversationID := range conversationIDs {
+		if _, err := tx.ExecContext(ctx, `UPDATE memberships SET role = ? WHERE account_id = ? AND conversation_id = ?`, role, accountID, conversationID); err != nil {
+			return nil, err
+		}
+		payload, _ := json.Marshal(map[string]string{"community_id": communityID, "conversation_id": conversationID, "role": role})
+		result, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('membership.updated', ?, ?, ?, ?)`, accountID, conversationID, string(payload), at)
+		if err != nil {
+			return nil, err
+		}
+		eventID, _ := result.LastInsertId()
+		eventIDs = append(eventIDs, eventID)
 	}
 	return eventIDs, nil
 }

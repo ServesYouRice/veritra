@@ -496,3 +496,146 @@ func TestActiveLayoutMemberLimitAppliesToTheSharedGroup(t *testing.T) {
 		t.Fatal("a refused join left a membership")
 	}
 }
+
+func TestActiveLayoutRefusesARepeatedChannelKey(t *testing.T) {
+	ctx := context.Background()
+	f := newLayoutFixture(t, ctx)
+	gen := `"community_layout_generation":1`
+	repeated := func(first, second string) json.RawMessage {
+		return json.RawMessage(`{"channel_id":"` + first + `","channel_id":"` + second + `",` + gen + `}`)
+	}
+	for name, metadata := range map[string]json.RawMessage{
+		"announcement then open": repeated(f.announcement.ID, f.open.ID),
+		"open then announcement": repeated(f.open.ID, f.announcement.ID),
+		"same channel twice":     repeated(f.open.ID, f.open.ID),
+		"repeated generation":    json.RawMessage(`{"channel_id":"` + f.open.ID + `",` + gen + `,` + gen + `}`),
+		"repeated other key":     json.RawMessage(`{"mls_epoch":1,"mls_epoch":2,"channel_id":"` + f.open.ID + `",` + gen + `}`),
+	} {
+		if _, err := f.post(ctx, f.shared, f.member, "dup-"+name, metadata); !errors.Is(err, ErrInvalidChannelRoute) {
+			t.Errorf("%s: err = %v, want %v", name, err, ErrInvalidChannelRoute)
+		}
+	}
+	// Nested objects may repeat names of their own; only the top level counts.
+	nested := json.RawMessage(`{"channel_id":"` + f.open.ID + `",` + gen + `,"extra":{"a":1,"a":2}}`)
+	post, err := f.post(ctx, f.shared, f.member, "nested", nested)
+	if err != nil {
+		t.Fatalf("repeated key inside a nested object: %v", err)
+	}
+	// An edit cannot introduce a repeated key either.
+	if _, err := f.store.UpdateMessageEnvelope(ctx, post.ID, f.member.Account.ID, []byte("y"), "mls-openmls-todo", repeated(f.open.ID, f.open.ID)); !errors.Is(err, ErrInvalidChannelRoute) {
+		t.Fatalf("edit with a repeated channel key: %v", err)
+	}
+	// A repeated route key outside a shared group stays refused as before.
+	if _, err := f.post(ctx, f.privateConv, f.owner, "dup-private", repeated(f.open.ID, f.open.ID)); !errors.Is(err, ErrInvalidChannelRoute) {
+		t.Fatalf("repeated channel key in a private channel: %v", err)
+	}
+	// Every stored row reads, through SQLite, the channel admission checked.
+	rows, err := f.store.db.QueryContext(ctx, `SELECT json_extract(crypto_metadata_json, '$.channel_id') FROM message_envelopes`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var channelID string
+		if err := rows.Scan(&channelID); err != nil || channelID != f.open.ID {
+			t.Fatalf("stored channel = %q err=%v, want %q", channelID, err, f.open.ID)
+		}
+		seen++
+	}
+	if seen != 1 {
+		t.Fatalf("stored envelopes = %d, want only the nested-object post", seen)
+	}
+}
+
+func TestActiveLayoutSearchHidesPrivateChannelsFromNonMembers(t *testing.T) {
+	ctx := context.Background()
+	f := newLayoutFixture(t, ctx)
+	search := func(who AccountDevice) string {
+		results, err := f.store.SearchMetadata(ctx, who.Account.ID, "sec", 20, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, r := range results {
+			if r.Type == "channel" {
+				out = append(out, r.ID+":"+r.Label)
+			}
+		}
+		return strings.Join(out, ",")
+	}
+	want := f.private.ID + ":secret"
+	if got := search(f.member); got != "" {
+		t.Fatalf("a member's search found the private channel: %q", got)
+	}
+	if got := search(f.owner); got != want {
+		t.Fatalf("the private channel's member search = %q, want %q", got, want)
+	}
+	if _, err := f.store.ManageConversationMember(ctx, f.privateConv, f.owner.Account.ID, f.member.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if got := search(f.member); got != want {
+		t.Fatalf("search after joining = %q, want %q", got, want)
+	}
+	// Open channels stay searchable by every community member.
+	results, err := f.store.SearchMetadata(ctx, f.member.Account.ID, "gen", 20, 0)
+	if err != nil || len(results) != 1 || results[0].ID != f.open.ID {
+		t.Fatalf("open channel search = %+v err=%v", results, err)
+	}
+}
+
+func TestActiveLayoutDemotionReachesPrivateChannelRoles(t *testing.T) {
+	ctx := context.Background()
+	f := newLayoutFixture(t, ctx)
+	third := f.outsider
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, third.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.member.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	// The promotion alone adds no private-channel membership.
+	if in, _ := f.store.IsConversationMember(ctx, f.privateConv, f.member.Account.ID); in {
+		t.Fatal("promotion put the member into a private channel")
+	}
+	if _, err := f.store.ManageConversationMember(ctx, f.privateConv, f.owner.Account.ID, f.member.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if role, err := f.store.ConversationMemberRole(ctx, f.privateConv, f.member.Account.ID); err != nil || role != domain.RoleAdmin {
+		t.Fatalf("private role = %q err=%v", role, err)
+	}
+	var before int64
+	if err := f.store.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	eventIDs, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.member.Account.ID, domain.RoleMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(eventIDs) != 2 {
+		t.Fatalf("events = %v, want the shared and the private membership", eventIDs)
+	}
+	for _, conversationID := range []string{f.shared, f.privateConv} {
+		if role, err := f.store.ConversationMemberRole(ctx, conversationID, f.member.Account.ID); err != nil || role != domain.RoleMember {
+			t.Fatalf("role in %s = %q err=%v, want member", conversationID, role, err)
+		}
+	}
+	var events int
+	if err := f.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_events WHERE id > ? AND event_type = 'membership.updated' AND conversation_id = ? AND account_id = ?`, before, f.privateConv, f.member.Account.ID).Scan(&events); err != nil || events != 1 {
+		t.Fatalf("private membership.updated events = %d err=%v", events, err)
+	}
+	// The demoted account can no longer manage the private channel.
+	if _, err := f.store.ManageConversationMember(ctx, f.privateConv, f.member.Account.ID, third.Account.ID, domain.RoleMember); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("demoted admin added to a private channel: %v", err)
+	}
+	// A role change adds no membership in private channels the target is not in.
+	if in, _ := f.store.IsConversationMember(ctx, f.privateConv, third.Account.ID); in {
+		t.Fatal("a role change put an account into a private channel")
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, third.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if in, _ := f.store.IsConversationMember(ctx, f.privateConv, third.Account.ID); in {
+		t.Fatal("a promotion put an account into a private channel")
+	}
+}
