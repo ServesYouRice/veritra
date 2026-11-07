@@ -30,17 +30,8 @@ abstract class CryptoService {
   Future<EnrollmentCredential> createEnrollmentCredential(
       EnrollmentReservation reservation);
   Future<MessageEnvelope> encrypt(String conversationId, String plaintext);
-  Future<DeviceLinkVerification> deriveDeviceLinkVerification({
-    required String accountId,
-    required String protocolVersion,
-    required String serverOrigin,
-    required String linkId,
-    required List<int> linkSecret,
-    required List<int> linkNonce,
-    required String peerDeviceId,
-    required List<int> peerSigningKey,
-    required bool localIsExistingDevice,
-  });
+  // The v2 link derivation was retired with ABI 18 (L1-3): device links run
+  // on K2TransferCryptoService, whose SAS needs the source's committed random.
 }
 
 abstract class MlsConversationCryptoService implements CryptoService {
@@ -506,20 +497,5 @@ class UnavailableCryptoService
   Future<MessageEnvelope> encrypt(
       String conversationId, String plaintext) async {
     throw StateError('Production MLS/OpenMLS encryption is not integrated');
-  }
-
-  @override
-  Future<DeviceLinkVerification> deriveDeviceLinkVerification({
-    required String accountId,
-    required String protocolVersion,
-    required String serverOrigin,
-    required String linkId,
-    required List<int> linkSecret,
-    required List<int> linkNonce,
-    required String peerDeviceId,
-    required List<int> peerSigningKey,
-    required bool localIsExistingDevice,
-  }) async {
-    throw StateError('Production device-link SAS is not integrated');
   }
 }

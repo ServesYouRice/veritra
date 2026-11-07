@@ -659,7 +659,8 @@ fn genuine_v3_fixture_migrates_to_records_and_keeps_working() {
         .restore(b"acct_fixture3", b"dev_src", &V3_KEY)
         .unwrap();
     assert_eq!(source.provider.storage().snapshot(), expected);
-    assert_eq!(source.pending_transfers.len(), 2);
+    // Its two K2 transfers are protocol v3, dropped on load (L1-3).
+    assert_eq!(source.pending_transfers.len(), 0);
     assert_eq!(
         source.signing_public_key(),
         include_bytes!("../../tests/fixtures/state-v3/source-public.bin")

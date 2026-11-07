@@ -128,12 +128,18 @@ class ApiClient {
     });
   }
 
-  Future<DeviceLinkV3Record> createDeviceLinkV3(Session owner, String locator,
+  /// [sourceCommitment] is this device's commitment to the random it will
+  /// reveal once it accepted the claim (L1-3).
+  Future<DeviceLinkV3Record> createDeviceLinkV3(
+      Session owner, String locator, List<int> sourceCommitment,
       {int expiresInSeconds = 600}) async {
     _v3Owner(owner);
     deviceLinkV3Hash(locator);
     if (expiresInSeconds < 1 || expiresInSeconds > 1800) {
       throw const FormatException('invalid device link lifetime');
+    }
+    if (sourceCommitment.length != 32) {
+      throw const FormatException('invalid device link commitment');
     }
     final json = await _jsonRequest('POST', '/api/v1/device-links/v3',
         token: owner.token,
@@ -141,10 +147,44 @@ class ApiClient {
           'code': locator,
           'server_origin': baseUrl,
           'protocol_version': deviceLinkV3Protocol,
+          'source_commitment': base64Encode(sourceCommitment),
           'expires_in_seconds': expiresInSeconds,
         });
     final link = _v3Link(json, owner: owner);
-    if (link.fields['code'] != locator) throw const ApiResponseException();
+    if (link.fields['code'] != locator ||
+        link.fields['source_commitment'] != base64Encode(sourceCommitment)) {
+      throw const ApiResponseException();
+    }
+    return link;
+  }
+
+  /// Reveals the source random for the claim in [expected] (L1-3). Call it
+  /// only after the native accept of that claim is committed.
+  Future<DeviceLinkV3Record> revealDeviceLinkV3(Session owner,
+      DeviceLinkV3Record expected, List<int> sourceRandom) async {
+    _v3Owner(owner);
+    if (expected.origin != baseUrl ||
+        expected.accountId != owner.accountId ||
+        expected.sourceDeviceId != owner.deviceId ||
+        sourceRandom.length != 32) {
+      throw const FormatException('device link reveal context mismatch');
+    }
+    final link = _v3Link(
+        await _jsonRequest(
+            'POST', '/api/v1/device-links/v3/${expected.id}/reveal',
+            token: owner.token,
+            body: {
+              'protocol_version': deviceLinkV3Protocol,
+              'claim_request_hash':
+                  deviceLinkV3Hash(expected.fields['claim_request_hash']),
+              'source_random': base64Encode(sourceRandom),
+            }),
+        id: expected.id,
+        owner: owner);
+    _v3SameClaim(expected, link);
+    if (link.fields['source_random'] != base64Encode(sourceRandom)) {
+      throw const ApiResponseException();
+    }
     return link;
   }
 
@@ -180,6 +220,7 @@ class ApiClient {
       ('claimed_device_id', 'device_id'),
       ('created_by_device_id', 'existing_device_id'),
       ('existing_signing_key', 'existing_signing_key'),
+      ('source_commitment', 'source_commitment'),
       ('link_nonce', 'link_nonce'),
       ('expires_at', 'expires_at'),
     ]) {
@@ -191,6 +232,7 @@ class ApiClient {
       ('claimed_device_name', 'device_name'),
       ('claimed_signing_key', 'signing_key'),
       ('transfer_public_key', 'transfer_public_key'),
+      ('recipient_random', 'recipient_random'),
       ('transcript_hash', 'transcript_hash'),
       ('claim_tag', 'claim_tag'),
     ]) {
@@ -239,6 +281,8 @@ class ApiClient {
       'server_origin',
       'link_nonce',
       'existing_signing_key',
+      'source_commitment',
+      'recipient_random',
       'claimed_device_id',
       'claimed_device_name',
       'claimed_signing_key',
@@ -259,6 +303,8 @@ class ApiClient {
       throw const ApiResponseException();
     }
     for (final key in [
+      'source_random',
+      'revealed_at',
       'approved_at',
       'transfer_expires_at',
       'approval_tag',

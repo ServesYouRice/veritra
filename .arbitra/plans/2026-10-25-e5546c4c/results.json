@@ -95,22 +95,22 @@
       "title": "Device-link SAS is derived from only 32 bits of the transcript hash",
       "severity": "medium",
       "task": "TASK-010",
-      "result": "blocked",
-      "failedBefore": null,
-      "test": null,
-      "proof": "Docs only (af891ce, a2eb69e): what the device-link tags stop and the real SAS strength under L0. Commit-then-reveal is not built; it belongs with L1.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "crypto/rust/src/mls/link_v3.rs tests; server device-link v3/v4 tests; mobile/test/device_link_v3_flow_test.dart; scripts/test-demo-e2e.sh",
+      "proof": "D100 10 A / 48 A, built with L1-3 (design docs/designs/L1-3-link-commitment.md): protocol veritra-device-link-v4 on the K2 route. The existing device commits C = SHA-256(... r_S) at link creation; the new device's claim transcript binds C and its own random r_N; r_S is revealed only after the claim is accepted, and the new device opens C before any SAS exists; SAS = HMAC(K_sas, transcript | r_S). Approval is refused before the reveal (409 reveal_required). v2 derivation removed from the ABI (18); server migration 0060 stores the commitment write-once. Before the fix, a relay holding the QR secret matched 4 of 8 digits after 3,645 nonce tries in 0.5 s. Tests: cargo (link_v3, vector testing/vectors/device-link-v4.json checked against an independent Python script), Go store/handler tests, Dart device_link_v3_flow_test (substituted reveal ends the claim), demo e2e.",
+      "checkedEndToEnd": true
     },
     {
       "issue": "C-7ad8f79b06fc",
       "title": "The 8-digit device-link SAS has no commitment step and can be ground if its inputs are visible to a relay",
       "severity": "high",
       "task": "TASK-010",
-      "result": "blocked",
-      "failedBefore": null,
-      "test": null,
-      "proof": "Docs only (af891ce, a2eb69e): what the device-link tags stop and the real SAS strength under L0. Commit-then-reveal is not built; it belongs with L1.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "crypto/rust/src/mls/link_v3.rs tests; server device-link v3/v4 tests; mobile/test/device_link_v3_flow_test.dart; scripts/test-demo-e2e.sh",
+      "proof": "D100 10 A / 48 A, built with L1-3 (design docs/designs/L1-3-link-commitment.md): protocol veritra-device-link-v4 on the K2 route. The existing device commits C = SHA-256(... r_S) at link creation; the new device's claim transcript binds C and its own random r_N; r_S is revealed only after the claim is accepted, and the new device opens C before any SAS exists; SAS = HMAC(K_sas, transcript | r_S). Approval is refused before the reveal (409 reveal_required). v2 derivation removed from the ABI (18); server migration 0060 stores the commitment write-once. Before the fix, a relay holding the QR secret matched 4 of 8 digits after 3,645 nonce tries in 0.5 s. Tests: cargo (link_v3, vector testing/vectors/device-link-v4.json checked against an independent Python script), Go store/handler tests, Dart device_link_v3_flow_test (substituted reveal ends the claim), demo e2e.",
+      "checkedEndToEnd": true
     },
     {
       "issue": "C-6e5ce2fcc71e",
@@ -623,11 +623,11 @@
       "title": "8-digit device-link SAS is only safe with a key commitment that this code does not enforce",
       "severity": "medium",
       "task": "TASK-048",
-      "result": "blocked",
-      "failedBefore": null,
-      "test": null,
-      "proof": "Docs only (af891ce, a2eb69e). The key commitment is not built; it belongs with L1.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "crypto/rust/src/mls/link_v3.rs tests; server device-link v3/v4 tests; mobile/test/device_link_v3_flow_test.dart; scripts/test-demo-e2e.sh",
+      "proof": "D100 10 A / 48 A, built with L1-3 (design docs/designs/L1-3-link-commitment.md): protocol veritra-device-link-v4 on the K2 route. The existing device commits C = SHA-256(... r_S) at link creation; the new device's claim transcript binds C and its own random r_N; r_S is revealed only after the claim is accepted, and the new device opens C before any SAS exists; SAS = HMAC(K_sas, transcript | r_S). Approval is refused before the reveal (409 reveal_required). v2 derivation removed from the ABI (18); server migration 0060 stores the commitment write-once. Before the fix, a relay holding the QR secret matched 4 of 8 digits after 3,645 nonce tries in 0.5 s. Tests: cargo (link_v3, vector testing/vectors/device-link-v4.json checked against an independent Python script), Go store/handler tests, Dart device_link_v3_flow_test (substituted reveal ends the claim), demo e2e.",
+      "checkedEndToEnd": true
     },
     {
       "issue": "C-5560907efa80",

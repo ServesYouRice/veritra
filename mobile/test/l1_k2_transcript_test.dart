@@ -16,14 +16,22 @@ K2LinkContext _context(
       recipientDeviceId: recipient,
       recipientSigningKey: recipientKey ?? List<int>.filled(32, 0x33),
       transferPublicKey: List<int>.filled(32, 0x44),
+      sourceCommitment: _bytes(
+          'ff2211c8c00f5fe3bbd434e9327b24d1caeaa0144ae01ab72cc1f6fe9e719393'),
+      recipientRandom: List<int>.filled(32, 0x77),
     );
 
+List<int> _bytes(String hex) => [
+      for (var i = 0; i < hex.length; i += 2)
+        int.parse(hex.substring(i, i + 2), radix: 16),
+    ];
+
 void main() {
-  // The vector of `v3_transcript_and_tags_match_independent_python_vector`
-  // in crypto/rust/src/mls/link_v3.rs: Dart must hash byte for byte as Rust.
-  test('the v3 transcript hash matches the Rust and Python vector', () {
+  // testing/vectors/device-link-v4.json, which Rust and an independent
+  // Python script check too: Dart must hash byte for byte as Rust.
+  test('the v4 transcript hash matches the shared vector', () {
     expect(_hex(deviceLinkV3TranscriptHash(_context())),
-        'ad52136463e49d1c1484e12a2745de1722c99d402666dd533de03150391fb9db');
+        '66327629e6c43d9f94566895f17ece003a0e43b29f83a88815d1238e5a65399a');
   });
 
   test('a swapped recipient key or id changes the hash (L1 change 2)', () {

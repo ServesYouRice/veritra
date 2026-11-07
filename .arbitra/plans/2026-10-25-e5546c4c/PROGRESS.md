@@ -12,8 +12,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 07 `TASK-007` Remove the raw-bytes signing oracle on the MLS identity key
 - [x] 08 `TASK-008` Reject past-epoch application messages from senders no longer in the roster
 - [x] 09 `TASK-009` Distinguish unsupported sealed-state format from corruption
-- [ ] 10 `TASK-010` Add commit-then-reveal to device linking and document real SAS strength
-  - Docs only (af891ce, a2eb69e): what the device-link tags stop and the real SAS strength under L0. Commit-then-reveal is not built; it belongs with L1.
+- [x] 10 `TASK-010` Add commit-then-reveal to device linking and document real SAS strength
+  - Built with L1-3 (D100 A): device link v4, source commitment before the claim, reveal after it, SAS over the revealed random. ABI 18, migration 0060.
 - [x] 11 `TASK-011` Dispatch push bridge events to Flutter on the main thread
 - [ ] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
   - Blocked: the native endpoint record and method-channel calls (`pendingEndpoint`/`acknowledgeEndpoint`) do not exist yet; server side done.
@@ -55,8 +55,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 45 `TASK-045` Retry recovery correctly after an HTTP 416 range rejection
 - [x] 46 `TASK-046` Make the 'read receipts off' preference fail closed and retry failed loads
 - [x] 47 `TASK-047` Give each native output buffer a single owner in NativeCryptoBindings._take
-- [ ] 48 `TASK-048` Add a key commitment to the device-link SAS flow (gated on section-52f8711c03564f2607ba13c6/Q-001)
-  - Docs only (af891ce, a2eb69e). The key commitment is not built; it belongs with L1.
+- [x] 48 `TASK-048` Add a key commitment to the device-link SAS flow (gated on section-52f8711c03564f2607ba13c6/Q-001)
+  - Built with TASK-010 (device link v4, D100 A).
 - [x] 49 `TASK-049` Harden safeAttachmentName against bidi, format and C1 characters and Windows-invalid names
 - [x] 50 `TASK-050` Sweep orphaned attachment working files after an interrupted encryption or decryption
 - [x] 51 `TASK-051` Re-check revocation state after draining before creating a revocation commit

@@ -1150,6 +1150,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Waiting for your other device to approve. Keep this screen open.';
 
   @override
+  String get deviceLinkWaitingCode =>
+      'Waiting for your other device. The code to confirm appears here in a moment.';
+
+  @override
+  String get deviceLinkCommitmentMismatch =>
+      'Your other device\'s link check did not match, so this device was not linked. Create a new link on your other device and try again.';
+
+  @override
   String get historyCopySendWorking =>
       'Sending your history to the new device…';
 

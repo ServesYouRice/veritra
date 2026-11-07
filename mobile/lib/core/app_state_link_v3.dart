@@ -8,6 +8,13 @@ part of 'app_state.dart';
 // bundle. There is no fallback to the v2 link: a v3 server answer never
 // produces a response-generated credential.
 //
+// L1-3 commit-then-reveal (docs/designs/L1-3-link-commitment.md): the
+// existing device commits to a fresh random when it creates the link and
+// reveals it only after its native accept of the claim is committed; the new
+// device shows the code only once that random opens the commitment it was
+// given before it claimed. A relay that knows the QR secret still gets one
+// guess at the 8 digits per run.
+//
 // Every secret here is held in memory only as long as a step needs it. The
 // new device's three credentials (claim token, device secret, initial session
 // token) are created on the device and stored, with the frozen signed claim,
@@ -57,7 +64,9 @@ class DeviceLinkClaimView {
   /// existing device approved it.
   final String state;
 
-  /// The 8-digit safety code to read out on the existing device.
+  /// The 8-digit safety code to read out on the existing device. Empty
+  /// until the existing device revealed its random and it opened the
+  /// commitment (L1-3).
   final String verificationCode;
   final DateTime expiresAt;
 }
@@ -118,6 +127,26 @@ class _PendingLinkV3 {
   /// until the claim was accepted.
   final Map<String, Object?>? record;
 
+  /// The code is never stored: after a restart it is derived again from
+  /// the reveal (the read-only native step), so a stored row keeps ''.
+  _PendingLinkV3 withCode(String code) => _PendingLinkV3(
+        origin: origin,
+        linkId: linkId,
+        accountId: accountId,
+        deviceId: deviceId,
+        locator: locator,
+        requestId: requestId,
+        reservation: reservation,
+        claim: claim,
+        claimRequestHash: claimRequestHash,
+        claimToken: claimToken,
+        deviceSecret: deviceSecret,
+        initialSessionToken: initialSessionToken,
+        verificationCode: code,
+        expiresAt: expiresAt,
+        record: record,
+      );
+
   _PendingLinkV3 withRecord(Map<String, Object?> next) => _PendingLinkV3(
         origin: origin,
         linkId: linkId,
@@ -155,7 +184,7 @@ class _PendingLinkV3 {
           'claim_token': claimToken,
           'device_secret': deviceSecret,
           'initial_session_token': initialSessionToken,
-          'sas': verificationCode,
+          'sas': '',
           'expires_at': expiresAt,
           if (record != null) 'record': record,
         }),
@@ -186,7 +215,8 @@ class _PendingLinkV3 {
         claimToken: text('claim_token'),
         deviceSecret: text('device_secret'),
         initialSessionToken: text('initial_session_token'),
-        verificationCode: text('sas'),
+        // Shown again only after a fresh reveal check (L1-3).
+        verificationCode: '',
         expiresAt: json['expires_at'] as int,
         record: record == null ? null : map(record),
       );
@@ -272,31 +302,41 @@ extension DeviceLinkV3Actions on AppState {
   // ------------------------------------------------ Existing device ---
 
   /// Makes a v3 link. The secret stays in memory; only its locator goes to
-  /// the server.
+  /// the server. So does the random this device commits to (L1-3): only its
+  /// commitment goes to the server now.
   Future<void> createDeviceLink() => _runScoped(Ops.deviceLink, () async {
         final current = session;
         final client = api;
         if (current == null || client == null) return;
         _requireDeviceLinkV3();
+        final crypto = _k2;
         _requireLinkOrigin(current, client);
         activeDeviceLink = null;
         _activeLinkRecord = null;
         _clearLinkSecret();
         final secret = _linkRandom(16);
+        final sourceRandom = _linkRandom(32);
         try {
           final locator = await cryptoService.deviceLinkLocator(secret);
-          final created = await client.createDeviceLinkV3(current, locator);
+          final commitment = await crypto.k2SourceCommitment(
+              canonicalizeServerOrigin(current.baseUrl), sourceRandom);
+          final created =
+              await client.createDeviceLinkV3(current, locator, commitment);
           if (created.state != 'pending' ||
               created.accountId != current.accountId ||
               created.sourceDeviceId != current.deviceId) {
             throw StateError('Device-link context was substituted');
           }
           _activeLinkSecret = secret;
+          _activeLinkSourceRandom = sourceRandom;
           _activeLinkRecord = created;
           activeDeviceLink = _linkView(created);
         } finally {
           if (!identical(secret, _activeLinkSecret)) {
             secret.fillRange(0, secret.length, 0);
+          }
+          if (!identical(sourceRandom, _activeLinkSourceRandom)) {
+            sourceRandom.fillRange(0, sourceRandom.length, 0);
           }
         }
       });
@@ -322,7 +362,11 @@ extension DeviceLinkV3Actions on AppState {
           _activeLinkRecord = link;
           if (link.state == 'claimed') {
             final code = await _acceptedVerification(crypto, current, link);
-            activeDeviceLink = _linkView(link, verificationCode: code);
+            // Only now, with this claim accepted and committed natively,
+            // may the random leave the device (L1-3).
+            final revealed = await _revealSourceRandom(client, current, link);
+            _activeLinkRecord = revealed;
+            activeDeviceLink = _linkView(revealed, verificationCode: code);
           } else {
             activeDeviceLink = _linkView(link);
           }
@@ -377,6 +421,12 @@ extension DeviceLinkV3Actions on AppState {
       }
       return known.sas;
     }
+    final sourceRandom = _activeLinkSourceRandom;
+    if (sourceRandom == null) {
+      throw StateError('Device-link random is unavailable');
+    }
+    // Native refuses unless this device's random opens the commitment in
+    // the context, so a substituted commitment cannot be accepted.
     final verification = await crypto.k2SourceAccept(
       K2LinkContext(
         id: id,
@@ -387,17 +437,38 @@ extension DeviceLinkV3Actions on AppState {
         recipientDeviceId: link.recipientDeviceId!,
         recipientSigningKey: link.bytes('claimed_signing_key'),
         transferPublicKey: link.bytes('transfer_public_key'),
+        sourceCommitment: link.bytes('source_commitment'),
+        recipientRandom: link.bytes('recipient_random'),
       ),
       secret,
       originalExpiresAt: _linkExpiry(link).millisecondsSinceEpoch,
       transcriptHash: transcript,
       claimTag: link.bytes('claim_tag'),
+      sourceRandom: sourceRandom,
     );
     return verification.sas;
   }
 
   DateTime _linkExpiry(DeviceLinkV3Record link) =>
       DateTime.parse(link.fields['expires_at'] as String);
+
+  /// Reveals this device's committed random for the claim it accepted, once
+  /// (an exact repeat is accepted). A link that already holds another random
+  /// was not revealed by this device: refused.
+  Future<DeviceLinkV3Record> _revealSourceRandom(
+      ApiClient client, Session current, DeviceLinkV3Record link) async {
+    final random = _activeLinkSourceRandom;
+    if (random == null) {
+      throw StateError('Device-link random is unavailable');
+    }
+    if (link.fields.containsKey('source_random')) {
+      if (!_constantTimeBytesEqual(link.bytes('source_random'), random)) {
+        throw StateError('Device-link reveal was substituted');
+      }
+      return link;
+    }
+    return client.revealDeviceLinkV3(current, link, random);
+  }
 
   /// Confirms the code typed from the new device and approves it. The
   /// native confirmation is committed with the transfer record before the
@@ -495,6 +566,8 @@ extension DeviceLinkV3Actions on AppState {
           recipientDeviceId: recipient,
           recipientSigningKey: recipientKey,
           transferPublicKey: link.bytes('transfer_public_key'),
+          sourceCommitment: link.bytes('source_commitment'),
+          recipientRandom: link.bytes('recipient_random'),
         ));
         if (!_constantTimeBytesEqual(verified.transcriptHash, transcript) ||
             !_constantTimeBytesEqual(
@@ -590,6 +663,10 @@ extension DeviceLinkV3Actions on AppState {
               recipientDeviceId: deviceId,
               recipientSigningKey: credential.signingKey,
               transferPublicKey: List<int>.filled(32, 0),
+              // Fixed before this device chooses its random (L1-3).
+              sourceCommitment:
+                  base64Decode(fields['source_commitment'] as String),
+              recipientRandom: List<int>.filled(32, 0),
             ),
             secret,
             originalExpiresAt: expiresAt,
@@ -619,9 +696,9 @@ extension DeviceLinkV3Actions on AppState {
             'device_key_package': base64Encode(credential.deviceKeyPackage),
             'signing_key': base64Encode(credential.signingKey),
             'transfer_public_key': base64Encode(received.transferPublicKey),
-            'transcript_hash':
-                base64Encode(received.verification.transcriptHash),
-            'claim_tag': base64Encode(received.verification.claimTag),
+            'recipient_random': base64Encode(received.recipientRandom),
+            'transcript_hash': base64Encode(received.transcriptHash),
+            'claim_tag': base64Encode(received.claimTag),
             'claim_token_hash': hexOf(_linkTokenHash(claimToken)),
             'device_secret_hash': hexOf(_linkTokenHash(deviceSecret)),
             'initial_session_token_hash': hexOf(_linkTokenHash(sessionToken)),
@@ -645,7 +722,8 @@ extension DeviceLinkV3Actions on AppState {
             claimToken: claimToken,
             deviceSecret: deviceSecret,
             initialSessionToken: sessionToken,
-            verificationCode: received.verification.sas,
+            // No code before the existing device reveals its random.
+            verificationCode: '',
             expiresAt: expiresAt,
           );
           await localStore
@@ -811,13 +889,42 @@ extension DeviceLinkV3Actions on AppState {
         await _abandonDeviceLinkClaimNow();
         throw UserFacingException(l10n.deviceLinkEnded);
       case 'approved' || 'consumed':
+        // The record model refuses an approved link without a reveal, and
+        // the approval tag binds the commitment through the transcript. The
+        // native opening is not repeated here: it needs the link window,
+        // and a late approval must still finish (transfer window).
         await _finishDeviceLink(pending, status);
       default:
         if (DateTime.now().millisecondsSinceEpoch > pending.expiresAt) {
           await _abandonDeviceLinkClaimNow();
           throw UserFacingException(l10n.deviceLinkEnded);
         }
+        if (status.fields.containsKey('source_random') &&
+            pending.verificationCode.isEmpty) {
+          final code = await _revealedLinkCode(pending, status);
+          if (!identical(_pendingLink, pending)) return;
+          _setPendingLink(pending.withCode(code), 'claimed');
+        }
         _scheduleLinkPoll();
+    }
+  }
+
+  /// The code to show, from the random the existing device revealed. Native
+  /// opens the commitment pinned when this device claimed; a reveal that is
+  /// missing or does not open it ends the claim with its own message.
+  Future<String> _revealedLinkCode(
+      _PendingLinkV3 pending, DeviceLinkV3Record status) async {
+    try {
+      return await _k2.k2RevealSas(K2TransferId(pending.origin, pending.linkId),
+          status.bytes('source_random'));
+    } on Object {
+      await _abandonDeviceLinkClaimNow();
+      // Past the link window native refuses any reveal: that is an ended
+      // link, not a mismatch.
+      throw UserFacingException(
+          DateTime.now().millisecondsSinceEpoch > pending.expiresAt
+              ? l10n.deviceLinkEnded
+              : l10n.deviceLinkCommitmentMismatch);
     }
   }
 

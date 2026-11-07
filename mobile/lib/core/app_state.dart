@@ -474,9 +474,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   List<int>? _activeLinkSecret;
+  // L1-3: the random this device committed to when it made the link; it is
+  // revealed only after the native accept of the claim.
+  List<int>? _activeLinkSourceRandom;
   void _clearLinkSecret() {
     _activeLinkSecret?.fillRange(0, _activeLinkSecret!.length, 0);
     _activeLinkSecret = null;
+    _activeLinkSourceRandom?.fillRange(0, _activeLinkSourceRandom!.length, 0);
+    _activeLinkSourceRandom = null;
   }
 
   DeviceLinkClaimView? pendingDeviceLinkClaim;

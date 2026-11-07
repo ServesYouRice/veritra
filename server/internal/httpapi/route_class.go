@@ -79,6 +79,9 @@ func ClassifyRoute(urlPath string) RouteClass {
 	// Every nested v3 path can check a claim capability now or in the history
 	// follow-up. Use the fixed credential budget even for alternate decoded
 	// slash spellings; authenticated source operations share that safe bound.
+	if sessionOnlyDeviceLinkV3Route(urlPath) {
+		return OrdinaryRoute
+	}
 	if strings.HasPrefix(urlPath, deviceLinkV3Prefix+"/") {
 		return CredentialRoute
 	}
@@ -91,6 +94,32 @@ func ClassifyRoute(urlPath string) RouteClass {
 }
 
 const deviceLinkPrefix = "/api/v1/device-links/"
+
+// sessionOnlyDeviceLinkV3Route is the source's reveal (L1-3) or approval of
+// a v3 link: both authenticate a session token only, never a claim token,
+// password or code, like the v2 approval, so they take the signed-in budget.
+// A link needs both on top of the claim-token polls, and the two devices of
+// one user usually share an address. Only a decoded path of exactly
+// `<prefix>/<link id>/reveal|approve` qualifies; whatever handler such a path
+// reaches (these two, or the session-authenticated GET/DELETE of an ID that
+// held an encoded slash) checks only a session. Every other spelling stays a
+// credential request.
+func sessionOnlyDeviceLinkV3Route(urlPath string) bool {
+	rest, ok := strings.CutPrefix(urlPath, deviceLinkV3Prefix+"/")
+	if !ok {
+		return false
+	}
+	parts := strings.Split(rest, "/")
+	if len(parts) != 2 || (parts[1] != "reveal" && parts[1] != "approve") || parts[0] == "" || len(parts[0]) > 128 {
+		return false
+	}
+	for _, c := range parts[0] {
+		if !(c == '_' || c == '-' || ('0' <= c && c <= '9') || ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z')) {
+			return false
+		}
+	}
+	return true
+}
 
 // deviceLinkPathParts splits a path under /api/v1/device-links/ for
 // deviceLinkSubroute: surrounding slashes are ignored.

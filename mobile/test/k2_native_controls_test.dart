@@ -18,7 +18,12 @@ void main() {
     const id = K2TransferId('https://example.test', 'link');
     final secret = List<int>.filled(16, 8);
     final stateKey = List<int>.filled(32, 7);
-    K2LinkContext context(List<int> transferKey) => K2LinkContext(
+    // L1-3: the source commits to its random before the new device begins.
+    final sourceRandom = List<int>.filled(32, 6);
+    final commitment =
+        source.k2SourceCommitment('https://example.test', sourceRandom);
+    K2LinkContext context(List<int> transferKey, List<int> random) =>
+        K2LinkContext(
           id: id,
           accountId: 'account',
           nonce: List<int>.filled(32, 9),
@@ -27,19 +32,43 @@ void main() {
           recipientDeviceId: 'recipient',
           recipientSigningKey: recipient.signingPublicKey(),
           transferPublicKey: transferKey,
+          sourceCommitment: commitment,
+          recipientRandom: random,
         );
     try {
-      final beginning = context(List<int>.filled(32, 0));
+      expect(commitment, hasLength(32));
+      final beginning =
+          context(List<int>.filled(32, 0), List<int>.filled(32, 0));
       final received = recipient.k2ReceiveBegin(beginning, secret,
           originalExpiresAt: 1000, now: 100);
+      expect(received.recipientRandom.any((b) => b != 0), isTrue);
+      // A random that does not open the commitment accepts nothing.
+      final wrong = List<int>.filled(32, 5);
+      expect(
+          () => source.k2SourceAccept(
+              context(received.transferPublicKey, received.recipientRandom),
+              secret,
+              originalExpiresAt: 1000,
+              now: 100,
+              transcriptHash: received.transcriptHash,
+              claimTag: received.claimTag,
+              sourceRandom: wrong),
+          throwsA(isA<NativeCryptoException>()));
       final claimed = source.k2SourceAccept(
-          context(received.transferPublicKey), secret,
+          context(received.transferPublicKey, received.recipientRandom), secret,
           originalExpiresAt: 1000,
           now: 100,
-          transcriptHash: received.verification.transcriptHash,
-          claimTag: received.verification.claimTag);
-      expect(claimed.transcriptHash, received.verification.transcriptHash);
-      expect(claimed.sas, received.verification.sas);
+          transcriptHash: received.transcriptHash,
+          claimTag: received.claimTag,
+          sourceRandom: sourceRandom);
+      expect(claimed.transcriptHash, received.transcriptHash);
+      // Honest run: the new device's reveal shows the source's code, and a
+      // substituted random shows none (VAL-066).
+      expect(recipient.k2RevealSas(id, sourceRandom, now: 100), claimed.sas);
+      expect(() => recipient.k2RevealSas(id, wrong, now: 100),
+          throwsA(isA<NativeCryptoException>()));
+      expect(recipient.k2Inspect(id, now: 100).verification.sas, isEmpty);
+      expect(source.k2Inspect(id, now: 100).verification.sas, claimed.sas);
       expect(source.k2Inspect(id, now: 100).intentPresent, isFalse);
       expect(() => source.k2SourceApprovalRequest(id, now: 100),
           throwsA(isA<NativeCryptoException>()));
@@ -63,6 +92,9 @@ void main() {
       final resumed = recipient.k2ReceiveBegin(beginning, secret,
           originalExpiresAt: 1000, now: 100);
       expect(resumed.transferPublicKey, received.transferPublicKey);
+      expect(resumed.recipientRandom, received.recipientRandom);
+      // The reveal is read only: after a restart it gives the same code.
+      expect(recipient.k2RevealSas(id, sourceRandom, now: 100), claimed.sas);
       expect(proof().signature, originalProof.signature);
       expect(proof().requestHash, originalProof.requestHash);
 
@@ -108,8 +140,32 @@ void main() {
         sourceSigningKey: source.signingPublicKey(),
         recipientDeviceId: 'recipient',
         recipientSigningKey: recipient.signingPublicKey(),
-        transferPublicKey: List<int>.filled(32, 0));
+        transferPublicKey: List<int>.filled(32, 0),
+        sourceCommitment: List<int>.filled(32, 3),
+        recipientRandom: List<int>.filled(32, 0));
     try {
+      // A zero commitment is never accepted; nor is a zero random to commit.
+      expect(
+          () => recipient.k2ReceiveBegin(
+              K2LinkContext(
+                  id: id,
+                  accountId: 'account',
+                  nonce: List<int>.filled(32, 9),
+                  sourceDeviceId: 'source',
+                  sourceSigningKey: source.signingPublicKey(),
+                  recipientDeviceId: 'recipient',
+                  recipientSigningKey: recipient.signingPublicKey(),
+                  transferPublicKey: List<int>.filled(32, 0),
+                  sourceCommitment: List<int>.filled(32, 0),
+                  recipientRandom: List<int>.filled(32, 0)),
+              List<int>.filled(16, 8),
+              originalExpiresAt: 1000,
+              now: 100),
+          throwsA(isA<NativeCryptoException>()));
+      expect(
+          () => source.k2SourceCommitment(
+              'https://example.test', List<int>.filled(32, 0)),
+          throwsA(isA<NativeCryptoException>()));
       expect(
           () => recipient.k2ReceiveBegin(context, [],
               originalExpiresAt: 1000, now: 100),

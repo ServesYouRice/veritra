@@ -321,6 +321,8 @@
   "deviceLinkRefreshFirst": "Prvo osvežite status, a zatim odobrite uređaj.",
   "deviceLinkCancelWaiting": "Otkaži ovu vezu",
   "deviceLinkWaitingApproval": "Čeka se da vaš drugi uređaj odobri. Ostavite ovaj ekran otvoren.",
+  "deviceLinkWaitingCode": "Čeka se vaš drugi uređaj. Kod za potvrdu će se uskoro pojaviti ovde.",
+  "deviceLinkCommitmentMismatch": "Provera veze sa vašeg drugog uređaja se nije poklopila, pa uređaj nije povezan. Napravite novu vezu na svom drugom uređaju i pokušajte ponovo.",
   "historyCopySendWorking": "Šaljem vašu istoriju na novi uređaj…",
   "historyCopySendWaiting": "Vaša istorija je spremna. Čeka se da je novi uređaj primi.",
   "historyCopyReceiveWorking": "Primam vašu istoriju sa drugog uređaja…",

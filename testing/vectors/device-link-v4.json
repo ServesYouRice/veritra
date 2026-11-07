@@ -1,0 +1,25 @@
+{
+  "description": "L1-3 device link v4: source commitment, claim transcript, tags and SAS",
+  "protocol_version": "veritra-device-link-v4",
+  "inputs": {
+    "origin": "https://example.test",
+    "link_id": "link_01",
+    "account_id": "acct_01",
+    "nonce": "1111111111111111111111111111111111111111111111111111111111111111",
+    "source_device_id": "dev_old",
+    "source_signing_key": "2222222222222222222222222222222222222222222222222222222222222222",
+    "recipient_device_id": "dev_new",
+    "recipient_signing_key": "3333333333333333333333333333333333333333333333333333333333333333",
+    "transfer_public_key": "4444444444444444444444444444444444444444444444444444444444444444",
+    "secret": "55555555555555555555555555555555",
+    "source_random": "6666666666666666666666666666666666666666666666666666666666666666",
+    "recipient_random": "7777777777777777777777777777777777777777777777777777777777777777"
+  },
+  "source_commitment": "ff2211c8c00f5fe3bbd434e9327b24d1caeaa0144ae01ab72cc1f6fe9e719393",
+  "transcript_hash": "66327629e6c43d9f94566895f17ece003a0e43b29f83a88815d1238e5a65399a",
+  "claim_tag": "2ab765fde002a12159a4e0ed5243cd9e6b48d23206115a68d55f538875061c55",
+  "approval_tag": "2f907ca3bdd8680b5ba3e8706b428385eaafe862044d6678e5ff4a452b9859db",
+  "link_key": "8e5ba67793b47dd0e5a6967c05fcafbb84cd7d367807555468d5572fd83fa2e8",
+  "sas_bytes": "15c83bc5",
+  "sas": "65444037"
+}

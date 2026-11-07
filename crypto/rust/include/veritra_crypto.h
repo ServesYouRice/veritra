@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (14u)
+#define PM_CRYPTO_ABI_VERSION (18u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -209,6 +209,15 @@ int32_t pm_crypto_k2_source_posted(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer 
 int32_t pm_crypto_k2_importing(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
 int32_t pm_crypto_k2_forget(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
 int32_t pm_crypto_k2_expire(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+/* ABI 18 (L1-3, docs/designs/L1-3-link-commitment.md): protocol
+ * veritra-device-link-v4. The context carries the existing device's
+ * commitment and the new device's random. reveal_sas is read-only: it
+ * opens the commitment with the revealed random and returns the 8-digit
+ * SAS (about 26.6 bits; with commit-then-reveal a relay gets one 10^-8
+ * guess per run). source_commitment hashes this device's own id and key.
+ * The v2 derivation pm_crypto_device_link_transcript_hash was removed. */
+int32_t pm_crypto_k2_reveal_sas(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_source_commitment(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
 /* ABI8 bounded bundle streams. One large stream process-wide. All results
  * use PK2R framing; write/read chunks max1MiB, total padded frame max64MiB.
  * Incoming read fails until receive_finish authenticates the complete bundle.
@@ -227,17 +236,6 @@ int32_t pm_crypto_k2_source_finish(PmCryptoHandle *, PmHistoryStream *,
 int32_t pm_crypto_k2_receive_finish(PmCryptoHandle *, PmHistoryStream *,
     PmByteSlice, PmOwnedBuffer *);
 void pm_crypto_k2_stream_destroy(PmHistoryStream *);
-/* ABI 7: returns hash32, claim MAC32, approval MAC32, SAS prefix4. The SAS
- * is prefix4 (big-endian) mod 10^8: 8 digits, about 26.6 bits. The prefix
- * and both tags are MACs keyed from the 128-bit out-of-band link secret, so
- * a relay without it cannot grind keys to match; if the secret leaks, the 8
- * digits alone fall to about 10^4 key generations per side. */
-int32_t pm_crypto_device_link_transcript_hash(
-    PmCryptoHandle *handle, PmByteSlice protocol_version,
-    PmByteSlice server_origin, PmByteSlice link_id, PmByteSlice link_secret,
-    PmByteSlice peer_device_id,
-    PmByteSlice peer_signing_public_key, PmByteSlice link_nonce,
-    uint8_t local_is_existing_device, PmOwnedBuffer *out);
 int32_t pm_crypto_device_create_key_package(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
 /* ABI 9: the only enrollment signature. It covers

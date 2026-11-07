@@ -426,6 +426,8 @@
   "deviceLinkRefreshFirst": "Refresh the status first, then approve the device.",
   "deviceLinkCancelWaiting": "Cancel this link",
   "deviceLinkWaitingApproval": "Waiting for your other device to approve. Keep this screen open.",
+  "deviceLinkWaitingCode": "Waiting for your other device. The code to confirm appears here in a moment.",
+  "deviceLinkCommitmentMismatch": "Your other device's link check did not match, so this device was not linked. Create a new link on your other device and try again.",
   "historyCopySendWorking": "Sending your history to the new device…",
   "historyCopySendWaiting": "Your history is ready. Waiting for the new device to receive it.",
   "historyCopyReceiveWorking": "Receiving your history from your other device…",

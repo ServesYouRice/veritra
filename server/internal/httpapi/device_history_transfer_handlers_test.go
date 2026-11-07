@@ -58,7 +58,7 @@ func historyMultipart(t *testing.T, input interface{}, data []byte, extra bool) 
 
 func historyHTTPInput(f *v3APIFixture, data []byte) storage.HistoryTransferInput {
 	d := sha256.Sum256(data)
-	return storage.HistoryTransferInput{ProtocolVersion: storage.DeviceLinkV3Protocol, TransferID: strings.Repeat("b", 64), ClaimRequestHash: f.link.ClaimRequestHash, TranscriptHash: f.claim.TranscriptHash, CiphertextSHA256: hex.EncodeToString(d[:]), SizeBytes: int64(len(data)), Handoff: []byte("opaque handoff")}
+	return storage.HistoryTransferInput{ProtocolVersion: storage.HistoryTransferProtocol, TransferID: strings.Repeat("b", 64), ClaimRequestHash: f.link.ClaimRequestHash, TranscriptHash: f.claim.TranscriptHash, CiphertextSHA256: hex.EncodeToString(d[:]), SizeBytes: int64(len(data)), Handoff: []byte("opaque handoff")}
 }
 
 var historyContractAddress atomic.Int32
@@ -137,7 +137,7 @@ func TestHistoryTransferHTTPUploadRangeRetryAndDurableAck(t *testing.T) {
 	if w.Code != http.StatusOK || !bytes.Equal(w.Body.Bytes(), data) {
 		t.Fatalf("recipient session %d", w.Code)
 	}
-	ack, _ := json.Marshal(map[string]interface{}{"protocol_version": storage.DeviceLinkV3Protocol, "transfer_id": input.TransferID, "ciphertext_sha256": input.CiphertextSHA256})
+	ack, _ := json.Marshal(map[string]interface{}{"protocol_version": storage.HistoryTransferProtocol, "transfer_id": input.TransferID, "ciphertext_sha256": input.CiphertextSHA256})
 	for i := 0; i < 2; i++ {
 		w = historyRequest(t, f, http.MethodPost, base+"/ack", "", ack, headers)
 		if w.Code != http.StatusOK || !bytes.Contains(w.Body.Bytes(), []byte(`"state":"acknowledged"`)) {

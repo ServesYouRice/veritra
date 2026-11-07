@@ -113,28 +113,6 @@ typedef _HandleSliceTwoOutputsNative = Int32 Function(Pointer<_PmCryptoHandle>,
     _PmByteSlice, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
 typedef _HandleSliceTwoOutputsDart = int Function(Pointer<_PmCryptoHandle>,
     _PmByteSlice, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
-typedef _DeviceLinkTranscriptNative = Int32 Function(
-    Pointer<_PmCryptoHandle>,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    Uint8,
-    Pointer<_PmOwnedBuffer>);
-typedef _DeviceLinkTranscriptDart = int Function(
-    Pointer<_PmCryptoHandle>,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    _PmByteSlice,
-    int,
-    Pointer<_PmOwnedBuffer>);
 typedef _HandleTwoSlicesNative = Int32 Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, _PmByteSlice);
 typedef _HandleTwoSlicesDart = int Function(
@@ -401,9 +379,6 @@ class NativeCryptoBindings {
                 'pm_crypto_group_l1_process_commit'),
         _groupL1Merge = library.lookupFunction<_L1MergeNative, _L1MergeDart>(
             'pm_crypto_group_l1_merge_pending_commit'),
-        _deviceLinkTranscript = library.lookupFunction<
-            _DeviceLinkTranscriptNative,
-            _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
         _createKeyPackage =
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_create_key_package'),
@@ -443,7 +418,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 14) {
+    if (_abiVersion() != 18) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -459,6 +434,8 @@ class NativeCryptoBindings {
         9: 'importing',
         10: 'forget',
         11: 'expire',
+        12: 'reveal_sas',
+        13: 'source_commitment',
       }.entries)
         entry.key: library.lookupFunction<_HandleSliceOutputNative,
             _HandleSliceOutputDart>('pm_crypto_k2_${entry.value}'),
@@ -486,7 +463,6 @@ class NativeCryptoBindings {
   final _GroupDeleteDart _groupDelete;
   final _PruneDart _pruneKeyPackages;
   final _HandleOutputDart _signingKey;
-  final _DeviceLinkTranscriptDart _deviceLinkTranscript;
   final _LocatorDart _deviceLinkLocator;
   final _OutputDart _recoveryGenerate;
   final _LocatorDart _recoveryEncode;
@@ -1533,59 +1509,6 @@ class NativeCryptoDevice implements Finalizable {
 
   List<int> signingPublicKey() =>
       _bindings._output((out) => _bindings._signingKey(_liveHandle, out));
-
-  DeviceLinkVerification deriveDeviceLinkVerification({
-    required String protocolVersion,
-    required String serverOrigin,
-    required String linkId,
-    required List<int> linkSecret,
-    required String peerDeviceId,
-    required List<int> peerSigningKey,
-    required List<int> linkNonce,
-    required bool localIsExistingDevice,
-  }) {
-    _bindings._bounded(protocolVersion.codeUnits, 64);
-    _bindings._bounded(serverOrigin.codeUnits, 2048);
-    _bindings._bounded(linkId.codeUnits, 128);
-    _bindings._bounded(linkSecret, 16, exact: true);
-    _bindings._bounded(peerDeviceId.codeUnits, 128);
-    _bindings._bounded(peerSigningKey, 32, exact: true);
-    _bindings._bounded(linkNonce, 32, exact: true);
-    final transcriptHash = _bindings._withByteLists(
-      [
-        protocolVersion.codeUnits,
-        serverOrigin.codeUnits,
-        linkId.codeUnits,
-        linkSecret,
-        peerDeviceId.codeUnits,
-        peerSigningKey,
-        linkNonce
-      ],
-      (slices) => _bindings._output((out) => _bindings._deviceLinkTranscript(
-          _liveHandle,
-          slices[0],
-          slices[1],
-          slices[2],
-          slices[3],
-          slices[4],
-          slices[5],
-          slices[6],
-          localIsExistingDevice ? 1 : 0,
-          out)),
-    );
-    if (transcriptHash.length != 100) {
-      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
-    }
-    final sasValue = ByteData.sublistView(Uint8List.fromList(transcriptHash))
-            .getUint32(96, Endian.big) %
-        100000000;
-    return DeviceLinkVerification(
-      transcriptHash: transcriptHash.sublist(0, 32),
-      claimTag: transcriptHash.sublist(32, 64),
-      approvalTag: transcriptHash.sublist(64, 96),
-      sas: sasValue.toString().padLeft(8, '0'),
-    );
-  }
 
   List<int> createKeyPackage() =>
       _bindings._output((out) => _bindings._createKeyPackage(_liveHandle, out));

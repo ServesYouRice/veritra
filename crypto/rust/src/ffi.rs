@@ -493,61 +493,9 @@ pub unsafe extern "C" fn pm_crypto_device_signing_public_key(
     })
 }
 
-/// ABI v7: hash32 || claim_tag32 || approval_tag32 || sas_mac_prefix4.
-///
-/// The SAS shown to the user is the prefix as a big-endian integer modulo
-/// 10^8: 8 digits, about 26.6 bits. The prefix and both tags are MACs keyed
-/// from the 128-bit link secret, so a relay without the secret cannot grind
-/// keys to match them; if the secret leaks, the 8 digits alone fall to about
-/// 10^4 key generations per side. See
-/// [`crate::mls::derive_device_link_verification`].
-#[no_mangle]
-pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
-    handle: *mut PmCryptoHandle,
-    protocol_version: PmByteSlice,
-    server_origin: PmByteSlice,
-    link_id: PmByteSlice,
-    link_secret: PmByteSlice,
-    peer_device_id: PmByteSlice,
-    peer_signing_public_key: PmByteSlice,
-    link_nonce: PmByteSlice,
-    local_is_existing_device: u8,
-    out: *mut PmOwnedBuffer,
-) -> i32 {
-    ffi_call(|| {
-        if local_is_existing_device > 1 {
-            return Err(PM_CRYPTO_INVALID_ARGUMENT);
-        }
-        let protocol_version = unsafe { borrowed(protocol_version, 64)? };
-        let server_origin = unsafe { borrowed(server_origin, 2048)? };
-        let link_id = unsafe { borrowed(link_id, MAX_ID_BYTES)? };
-        let link_secret = unsafe { borrowed(link_secret, 16)? };
-        let peer_device_id = unsafe { borrowed(peer_device_id, MAX_ID_BYTES)? };
-        let peer_signing_public_key = unsafe { borrowed(peer_signing_public_key, 32)? };
-        let link_nonce = unsafe { borrowed(link_nonce, 32)? };
-        if peer_signing_public_key.len() != 32 || link_nonce.len() != 32 {
-            return Err(PM_CRYPTO_INVALID_ARGUMENT);
-        }
-        let transcript_hash = unsafe {
-            with_device(handle, |device| {
-                device
-                    .derive_device_link_verification(
-                        protocol_version,
-                        server_origin,
-                        link_id,
-                        link_secret,
-                        peer_device_id,
-                        peer_signing_public_key,
-                        link_nonce,
-                        local_is_existing_device == 1,
-                    )
-                    .map(|v| [v.transcript_hash, v.claim_tag, v.approval_tag, v.sas_bytes].concat())
-                    .map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)
-            })?
-        };
-        unsafe { output(out, transcript_hash) }
-    })
-}
+// ABI 18 (L1-3) retired `pm_crypto_device_link_transcript_hash`, the v2
+// link derivation: device links use the K2 controls (`ffi/k2.rs`), whose
+// SAS needs the existing device's committed random.
 
 /// ABI v7 locator. `secret` must be readable and `out` writable.
 #[no_mangle]

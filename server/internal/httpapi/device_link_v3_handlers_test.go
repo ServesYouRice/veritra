@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -21,6 +22,13 @@ import (
 )
 
 const v3Base = "/api/v1/device-links/v3"
+
+// L1-3: any nonzero 32 bytes stand for the source's commitment and random
+// here; the server stores them and never opens the commitment.
+var (
+	v3Commitment   = bytes.Repeat([]byte{0x21}, 32)
+	v3SourceRandom = bytes.Repeat([]byte{0x23}, 32)
+)
 
 type v3APIFixture struct {
 	application                            *app.App
@@ -50,7 +58,7 @@ func newV3APIFixtureOn(t *testing.T, application *app.App, handler http.Handler,
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	f := &v3APIFixture{application: application, handler: handler, ownerToken: token, db: db}
-	status, response := doJSON(t, handler, http.MethodPost, v3Base, token, map[string]interface{}{"code": strings.Repeat("a", 64), "server_origin": "https://example.test", "protocol_version": storage.DeviceLinkV3Protocol})
+	status, response := doJSON(t, handler, http.MethodPost, v3Base, token, map[string]interface{}{"code": strings.Repeat("a", 64), "server_origin": "https://example.test", "protocol_version": storage.DeviceLinkV3Protocol, "source_commitment": v3Commitment})
 	if status != http.StatusCreated {
 		t.Fatalf("create v3: %d %s", status, response)
 	}
@@ -66,13 +74,17 @@ func newV3APIFixtureOn(t *testing.T, application *app.App, handler http.Handler,
 		t.Fatalf("reserve v3: %d %s", status, response)
 	}
 	var reservation struct {
-		ID        string `json:"id"`
-		AccountID string `json:"account_id"`
-		DeviceID  string `json:"device_id"`
-		Challenge []byte `json:"challenge"`
+		ID               string `json:"id"`
+		AccountID        string `json:"account_id"`
+		DeviceID         string `json:"device_id"`
+		Challenge        []byte `json:"challenge"`
+		SourceCommitment []byte `json:"source_commitment"`
 	}
 	if err := json.Unmarshal(response, &reservation); err != nil {
 		t.Fatal(err)
+	}
+	if !bytes.Equal(reservation.SourceCommitment, v3Commitment) {
+		t.Fatalf("reservation lacks the commitment: %s", response)
 	}
 	public, private, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -91,7 +103,7 @@ func newV3APIFixtureOn(t *testing.T, application *app.App, handler http.Handler,
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.claim = storage.DeviceLinkV3ClaimInput{Code: f.link.Code, ProtocolVersion: storage.DeviceLinkV3Protocol, ServerOrigin: f.link.ServerOrigin, ReservationRequestID: strings.Repeat("1", 64), EnrollmentReservationID: reservation.ID, DeviceName: "HTTP linked phone", DeviceKeyPackage: mlswiretest.KeyPackage(), SigningKey: public, TransferPublicKey: bytes.Repeat([]byte{4}, 32), TranscriptHash: bytes.Repeat([]byte{5}, 32), ClaimTag: bytes.Repeat([]byte{6}, 32), ClaimTokenHash: auth.HashToken(f.claimToken), DeviceSecretHash: auth.HashToken(f.deviceSecret), InitialSessionTokenHash: auth.HashToken(f.sessionToken)}
+	f.claim = storage.DeviceLinkV3ClaimInput{Code: f.link.Code, ProtocolVersion: storage.DeviceLinkV3Protocol, ServerOrigin: f.link.ServerOrigin, ReservationRequestID: strings.Repeat("1", 64), EnrollmentReservationID: reservation.ID, DeviceName: "HTTP linked phone", DeviceKeyPackage: mlswiretest.KeyPackage(), SigningKey: public, TransferPublicKey: bytes.Repeat([]byte{4}, 32), RecipientRandom: bytes.Repeat([]byte{0x22}, 32), TranscriptHash: bytes.Repeat([]byte{5}, 32), ClaimTag: bytes.Repeat([]byte{6}, 32), ClaimTokenHash: auth.HashToken(f.claimToken), DeviceSecretHash: auth.HashToken(f.deviceSecret), InitialSessionTokenHash: auth.HashToken(f.sessionToken)}
 	// Client-side proof assembly is independent of the server builder.
 	requestID, _ := hex.DecodeString(f.claim.ReservationRequestID)
 	proof := []byte("veritra-device-link-enrollment-v3")
@@ -119,7 +131,20 @@ func newV3APIFixtureOn(t *testing.T, application *app.App, handler http.Handler,
 		t.Fatal(err)
 	}
 	f.link = created.Link
+	// The source accepted the claim natively, so it reveals its random.
+	if status, response = f.reveal(t, v3SourceRandom); status != http.StatusOK {
+		t.Fatalf("reveal v3: %d %s", status, response)
+	}
+	if err := json.Unmarshal(response, &created); err != nil {
+		t.Fatal(err)
+	}
+	f.link = created.Link
 	return f
+}
+
+func (f *v3APIFixture) reveal(t *testing.T, random []byte) (int, []byte) {
+	t.Helper()
+	return doJSON(t, f.handler, http.MethodPost, v3Base+"/"+f.link.ID+"/reveal", f.ownerToken, map[string]interface{}{"protocol_version": storage.DeviceLinkV3Protocol, "claim_request_hash": f.link.ClaimRequestHash, "source_random": random})
 }
 
 func (f *v3APIFixture) approve(t *testing.T) {
@@ -200,7 +225,20 @@ func TestDeviceLinkV3HTTPReadOnlyPollAndNoSecretResponses(t *testing.T) {
 func TestDeviceLinkV3HTTPClaimReplayAndApprovedCancellationBoundary(t *testing.T) {
 	f := newV3APIFixture(t)
 	status, response := doJSON(t, f.handler, http.MethodPost, v3Base+"/claim", "", f.claim)
-	if status != http.StatusAccepted || !bytes.Equal(response, f.claimResponse) {
+	// The fixture revealed after its claim (L1-3), so the replay returns the
+	// link with the reveal; everything the claim set is unchanged.
+	withoutReveal := func(body []byte) map[string]interface{} {
+		var object struct {
+			Link map[string]interface{} `json:"device_link"`
+		}
+		if err := json.Unmarshal(body, &object); err != nil {
+			t.Fatal(err)
+		}
+		delete(object.Link, "source_random")
+		delete(object.Link, "revealed_at")
+		return object.Link
+	}
+	if status != http.StatusAccepted || !reflect.DeepEqual(withoutReveal(response), withoutReveal(f.claimResponse)) {
 		t.Fatalf("claim replay changed public acknowledgement: %d %s", status, response)
 	}
 	f.approve(t)
@@ -254,5 +292,56 @@ func TestDeviceLinkV3HTTPLargeTTLAndMissingProtocolFailClosed(t *testing.T) {
 		if status != http.StatusBadRequest {
 			t.Fatalf("invalid v3 create: %d %s", status, response)
 		}
+	}
+}
+
+// L1-3 over HTTP: create needs a commitment, the reveal is source-only and
+// write-once, and the new device reads it from claim-status.
+func TestDeviceLinkV3HTTPCommitmentAndReveal(t *testing.T) {
+	application, handler, token, _ := newTestAppWithOwner(t)
+	for _, body := range []map[string]interface{}{
+		{"code": strings.Repeat("b", 64), "server_origin": "https://example.test", "protocol_version": storage.DeviceLinkV3Protocol},
+		{"code": strings.Repeat("b", 64), "server_origin": "https://example.test", "protocol_version": storage.DeviceLinkV3Protocol, "source_commitment": make([]byte, 32)},
+		{"code": strings.Repeat("b", 64), "server_origin": "https://example.test", "protocol_version": "veritra-device-link-v3", "source_commitment": v3Commitment},
+	} {
+		if status, response := doJSON(t, handler, http.MethodPost, v3Base, token, body); status != http.StatusBadRequest {
+			t.Fatalf("create without a valid commitment or with v3: %d %s", status, response)
+		}
+	}
+	_ = application
+	f := newV3APIFixture(t)
+	if !bytes.Equal(f.link.SourceRandom, v3SourceRandom) || !bytes.Equal(f.link.RecipientRandom, f.claim.RecipientRandom) {
+		t.Fatal("reveal response lacks the randoms")
+	}
+	headers := map[string]string{"X-Veritra-Claim-Token": f.claimToken}
+	status, response := doRaw(t, f.handler, http.MethodGet, v3Base+"/"+f.link.ID+"/claim-status", "", nil, headers)
+	var polled struct {
+		Link storage.DeviceLinkV3 `json:"device_link"`
+	}
+	if status != http.StatusOK || json.Unmarshal(response, &polled) != nil || !bytes.Equal(polled.Link.SourceRandom, v3SourceRandom) || !bytes.Equal(polled.Link.SourceCommitment, v3Commitment) {
+		t.Fatalf("claim status lacks the reveal: %d %s", status, response)
+	}
+	if status, response := f.reveal(t, v3SourceRandom); status != http.StatusOK {
+		t.Fatalf("exact reveal replay: %d %s", status, response)
+	}
+	if status, response := f.reveal(t, bytes.Repeat([]byte{0x26}, 32)); status != http.StatusConflict {
+		t.Fatalf("second random: %d %s", status, response)
+	}
+	// The new device's own session token is not the source's.
+	status, response = doJSON(t, f.handler, http.MethodPost, v3Base+"/"+f.link.ID+"/reveal", f.sessionToken, map[string]interface{}{"protocol_version": storage.DeviceLinkV3Protocol, "claim_request_hash": f.link.ClaimRequestHash, "source_random": v3SourceRandom})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("reveal by a non-session: %d %s", status, response)
+	}
+	f.approve(t)
+}
+
+func TestDeviceLinkV3HTTPApprovalNeedsTheReveal(t *testing.T) {
+	f := newV3APIFixture(t)
+	if _, err := f.db.Exec(`UPDATE device_links_v3 SET source_random=NULL, revealed_at=NULL WHERE id=?`, f.link.ID); err != nil {
+		t.Fatal(err)
+	}
+	status, response := doJSON(t, f.handler, http.MethodPost, v3Base+"/"+f.link.ID+"/approve", f.ownerToken, map[string]interface{}{"protocol_version": storage.DeviceLinkV3Protocol, "claim_request_hash": f.link.ClaimRequestHash, "transcript_hash": f.claim.TranscriptHash, "approval_tag": bytes.Repeat([]byte{9}, 32)})
+	if status != http.StatusConflict || !strings.Contains(string(response), "reveal_required") {
+		t.Fatalf("approved before the reveal: %d %s", status, response)
 	}
 }
