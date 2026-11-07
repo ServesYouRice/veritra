@@ -138,6 +138,13 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'recovery_status_failed': ApiErrorKind.server,
   'invalid_recovery_key': ApiErrorKind.invalidRequest,
 
+  // L1 approved-device list.
+  'invalid_device_list': ApiErrorKind.invalidRequest,
+  'device_list_required': ApiErrorKind.invalidRequest,
+  'device_list_conflict': ApiErrorKind.conflict,
+  'invalid_after': ApiErrorKind.invalidRequest,
+  'invalid_items': ApiErrorKind.invalidRequest,
+
   // C6 franking and abuse reports.
   'invalid_frank_commit': ApiErrorKind.invalidRequest,
   'report_inbox_unavailable': ApiErrorKind.conflict,
