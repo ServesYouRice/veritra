@@ -22,7 +22,8 @@ type Config struct {
 	InstanceName  string
 	SetupToken    string
 	EnableMetrics bool
-	// ScopedSync serves the per-scope sync routes (C1). Off by default.
+	// ScopedSync serves the per-scope sync routes (C1). Loaded on by default;
+	// PRIVATE_MESSENGER_SCOPED_SYNC=0 (or false) turns it off.
 	ScopedSync bool
 	// CommunityLayout makes new communities use the C0 shared-group layout:
 	// one shared conversation for open channels and one conversation per
@@ -125,7 +126,7 @@ func Load() (Config, error) {
 		InstanceName:     getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
 		SetupToken:       secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
-		ScopedSync:       getenv("PRIVATE_MESSENGER_SCOPED_SYNC", "") == "1",
+		ScopedSync:       !envOff("PRIVATE_MESSENGER_SCOPED_SYNC"),
 		CommunityLayout:  getenv("PRIVATE_MESSENGER_COMMUNITY_LAYOUT", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
@@ -363,6 +364,16 @@ func loopbackHost(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// envOff reports whether the variable is explicitly "0" or "false"; unset,
+// empty and any other value leave a default-on switch on.
+func envOff(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "0", "false":
+		return true
+	}
+	return false
 }
 
 func getenv(key, fallback string) string {

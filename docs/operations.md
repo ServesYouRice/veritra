@@ -714,12 +714,16 @@ message with an encrypted action message instead, which the server cannot
 tell apart from any other message; that message's original ciphertext stays
 until it expires or sync-event retention removes it.
 
-**Scoped sync (C1, off by default).** `PRIVATE_MESSENGER_SCOPED_SYNC=1` adds
+**Scoped sync (C1, on by default).** The server serves
 `GET /sync/account-events` and `GET /conversations/{id}/sync-events`. They
 serve the same events as `/sync/events`, split into an account stream and one
-stream per conversation. No released client uses them yet; leave the switch
-off. When a conversation stream falls behind retention it answers 409
-`conversation_recovery_required` and only that conversation pauses.
+stream per conversation. `PRIVATE_MESSENGER_SCOPED_SYNC=0` (or `false`) turns
+them off; they then answer 404 and the app falls back to stopping the device
+when one conversation fails. The app reads the conversation route only to
+pause one failing conversation (C1-P1). When a conversation stream falls
+behind retention it answers 409 `conversation_recovery_required` and only that
+conversation pauses. The routes are read-only, member-checked, and expose
+nothing the legacy stream does not.
 
 **Community shared-group layout (C0, off by default).**
 `PRIVATE_MESSENGER_COMMUNITY_LAYOUT=1` makes each community created from then
