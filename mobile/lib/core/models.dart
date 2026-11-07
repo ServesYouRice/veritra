@@ -360,6 +360,7 @@ class MessageEnvelope {
     this.attachmentRefs = const <Object?>[],
     this.replyToId,
     this.threadRootId,
+    this.frankCommit,
   });
 
   final String conversationId;
@@ -371,6 +372,10 @@ class MessageEnvelope {
   final String? replyToId;
   final String? threadRootId;
 
+  /// The C6 franking commitment (32 bytes), a top-level envelope field and
+  /// never part of [cryptoMetadata]. Null for an unfranked message.
+  final List<int>? frankCommit;
+
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'conversation_id': conversationId,
@@ -378,6 +383,7 @@ class MessageEnvelope {
       'ciphertext': base64Encode(ciphertext),
       'crypto_protocol': cryptoProtocol,
       'crypto_metadata': cryptoMetadata,
+      if (frankCommit != null) 'frank_commit': base64Encode(frankCommit!),
       'attachment_refs': attachmentRefs,
       if (replyToId != null) 'reply_to_id': replyToId,
       if (threadRootId != null) 'thread_root_id': threadRootId,
@@ -397,6 +403,8 @@ class MessageEnvelope {
           const <Object?>[],
       replyToId: json['reply_to_id'] as String?,
       threadRootId: json['thread_root_id'] as String?,
+      frankCommit:
+          ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
     );
   }
 }
@@ -598,6 +606,7 @@ class ReceivedMessageEnvelope {
     this.editedAt,
     this.deletedAt,
     this.expiresAt,
+    this.frankCommit,
   });
 
   final String id;
@@ -616,6 +625,11 @@ class ReceivedMessageEnvelope {
   final DateTime? deletedAt;
   final DateTime? expiresAt;
 
+  /// The server's copy of the sender's franking commitment (C6), or null
+  /// when the server holds none. Untrusted until a franked payload's own
+  /// commitment is recomputed against it.
+  final List<int>? frankCommit;
+
   factory ReceivedMessageEnvelope.fromJson(Map<String, Object?> json) {
     return ReceivedMessageEnvelope(
       id: json['id'] as String,
@@ -633,7 +647,20 @@ class ReceivedMessageEnvelope {
       editedAt: _parseOptionalTime(json['edited_at']),
       deletedAt: _parseOptionalTime(json['deleted_at']),
       expiresAt: _parseOptionalTime(json['expires_at']),
+      frankCommit: frankCommitFromJson(json['frank_commit']),
     );
+  }
+
+  /// Reads a `frank_commit` field leniently: the server is not trusted, and
+  /// a bad value must not stop sync. Anything that is not standard base64
+  /// reads as absent, which a franked payload then refuses.
+  static List<int>? frankCommitFromJson(Object? value) {
+    if (value is! String || value.isEmpty) return null;
+    try {
+      return base64Decode(value);
+    } on FormatException {
+      return null;
+    }
   }
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -645,6 +672,7 @@ class ReceivedMessageEnvelope {
         'ciphertext': base64Encode(ciphertext),
         'crypto_protocol': cryptoProtocol,
         if (cryptoMetadata != null) 'crypto_metadata': cryptoMetadata,
+        if (frankCommit != null) 'frank_commit': base64Encode(frankCommit!),
         if (attachmentRefs != null) 'attachment_refs': attachmentRefs,
         if (replyToId != null) 'reply_to_id': replyToId,
         if (threadRootId != null) 'thread_root_id': threadRootId,

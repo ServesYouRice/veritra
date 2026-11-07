@@ -43,6 +43,65 @@ void main() {
   final device = commitment['sender_device_id'] as String;
   final action = commitment['action_id'] as String;
 
+  group('report aad (condition G4)', () {
+    final aadVector = jsonDecode(
+      File('../testing/vectors/c6-report-aad-v2.json').readAsStringSync(),
+    ) as Map<String, dynamic>;
+
+    Uint8List build(Map<String, dynamic> c) => reportAad(
+          inboxKind: c['inbox_kind'] as String,
+          inboxId: c['inbox_id'] as String,
+          recipientKey: hex(c['recipient_key_hex']),
+          conversationId: c['conversation_id'] as String,
+          reportId: c['report_id'] as String,
+          reporterAccountId: c['reporter_account_id'] as String,
+        );
+
+    test('matches the shared vector the Go server checks', () {
+      final cases = (aadVector['cases'] as List).cast<Map<String, dynamic>>();
+      expect(cases.length, greaterThanOrEqualTo(2));
+      for (final c in cases) {
+        expect(build(c), hex(c['aad_hex']), reason: c['name'] as String);
+      }
+    });
+
+    test('binds every field and refuses bad input', () {
+      final base = (aadVector['cases'] as List).first as Map<String, dynamic>;
+      final want = build(base);
+      for (final field in const [
+        'inbox_id',
+        'conversation_id',
+        'report_id',
+        'reporter_account_id',
+      ]) {
+        final changed = Map<String, dynamic>.of(base)
+          ..[field] = '${base[field]}x';
+        expect(build(changed), isNot(want), reason: field);
+      }
+      final otherKey = Map<String, dynamic>.of(base)
+        ..['recipient_key_hex'] = 'ff' * 32;
+      expect(build(otherKey), isNot(want));
+      final otherKind = Map<String, dynamic>.of(base)
+        ..['inbox_kind'] = 'community';
+      expect(build(otherKind), isNot(want));
+      expect(
+        () => build(Map<String, dynamic>.of(base)..['inbox_kind'] = 'mods'),
+        throwsFormatException,
+      );
+      expect(
+        () => build(Map<String, dynamic>.of(base)..['report_id'] = ''),
+        throwsFormatException,
+      );
+      expect(
+        () => build(
+            Map<String, dynamic>.of(base)..['recipient_key_hex'] = 'ab' * 31),
+        throwsFormatException,
+      );
+      // The Rust core takes at most 1024 bytes of aad.
+      expect(want.length, lessThanOrEqualTo(1024));
+    });
+  });
+
   group('franking v1 wire form', () {
     test('encodeFranked writes the vector bytes and classifies as text', () {
       final codec = AppPayloadCodec();
@@ -75,6 +134,34 @@ void main() {
       expect(split.key, key);
       expect(splitFrank(payload), isA<Unfranked>());
       expect(frankWireJson(payload, key), wire);
+    });
+
+    test('frankOf reads a framed payload and never throws', () {
+      final encoded = AppPayloadCodec().encodeFranked(
+        type: AppPayloadType.text,
+        conversationId: conversation,
+        senderDeviceId: device,
+        actionId: action,
+        body: const <String, Object?>{'text': 'hi'},
+        frankKey: key,
+      );
+      final franked = AppPayloadCodec.frankOf(encoded.padded);
+      expect(franked, isA<Franked>());
+      expect((franked as Franked).canonical, payload);
+      expect(franked.key, key);
+      final plain = AppPayloadCodec().encode(
+        type: AppPayloadType.text,
+        conversationId: conversation,
+        senderDeviceId: device,
+        actionId: action,
+        body: const <String, Object?>{'text': 'hi'},
+      );
+      expect(AppPayloadCodec.frankOf(plain), isA<Unfranked>());
+      expect(AppPayloadCodec.frankOf(Uint8List(256)), isA<MalformedFrank>());
+      expect(AppPayloadCodec.frankOf(const <int>[]), isA<MalformedFrank>());
+      final truncated = Uint8List.fromList(encoded.padded)
+        ..[7] = 255; // a length that runs past the padded bytes
+      expect(AppPayloadCodec.frankOf(truncated), isA<MalformedFrank>());
     });
 
     test('a v1 payload carrying frank is invalid on every receiver', () {

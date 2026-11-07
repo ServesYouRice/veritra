@@ -132,6 +132,18 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'recovery_status_failed': ApiErrorKind.server,
   'invalid_recovery_key': ApiErrorKind.invalidRequest,
 
+  // C6 franking and abuse reports.
+  'invalid_frank_commit': ApiErrorKind.invalidRequest,
+  'report_inbox_unavailable': ApiErrorKind.conflict,
+  'report_inbox_changed': ApiErrorKind.conflict,
+  'already_reported': ApiErrorKind.conflict,
+  'report_limit_reached': ApiErrorKind.rateLimited,
+  'invalid_public_key': ApiErrorKind.invalidRequest,
+  'invalid_report': ApiErrorKind.invalidRequest,
+  'community_id_required': ApiErrorKind.invalidRequest,
+  'invalid_inbox': ApiErrorKind.invalidRequest,
+  'invalid_limit': ApiErrorKind.invalidRequest,
+
   // Rate limits and quotas on request volume.
   'login_backoff': ApiErrorKind.rateLimited,
   'reauth_backoff': ApiErrorKind.rateLimited,

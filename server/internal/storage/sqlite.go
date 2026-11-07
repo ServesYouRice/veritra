@@ -688,11 +688,15 @@ func scanConversationWithRole(rows scanner) (domain.Conversation, error) {
 func scanMessage(rows scanner) (domain.MessageEnvelope, error) {
 	var msg domain.MessageEnvelope
 	var cryptoMetadata, attachmentRefs string
+	var frankCommit []byte
 	var replyTo, threadRoot, created, edited, deleted, expires sql.NullString
-	if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.SenderAccountID, &msg.SenderDeviceID, &msg.IdempotencyKey, &msg.Ciphertext, &msg.CryptoProtocol, &cryptoMetadata, &attachmentRefs, &replyTo, &threadRoot, &created, &edited, &deleted, &expires); err != nil {
+	if err := rows.Scan(&msg.ID, &msg.ConversationID, &msg.SenderAccountID, &msg.SenderDeviceID, &msg.IdempotencyKey, &msg.Ciphertext, &msg.CryptoProtocol, &cryptoMetadata, &frankCommit, &attachmentRefs, &replyTo, &threadRoot, &created, &edited, &deleted, &expires); err != nil {
 		return domain.MessageEnvelope{}, err
 	}
 	msg.CryptoMetadata = json.RawMessage(cryptoMetadata)
+	if len(frankCommit) > 0 {
+		msg.FrankCommit = frankCommit
+	}
 	msg.AttachmentRefs = json.RawMessage(attachmentRefs)
 	msg.ReplyToID = stringPtr(replyTo)
 	msg.ThreadRootID = stringPtr(threadRoot)

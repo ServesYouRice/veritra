@@ -222,13 +222,17 @@ type MessageEnvelope struct {
 	Ciphertext      []byte          `json:"ciphertext"`
 	CryptoProtocol  string          `json:"crypto_protocol"`
 	CryptoMetadata  json.RawMessage `json:"crypto_metadata"`
-	AttachmentRefs  json.RawMessage `json:"attachment_refs"`
-	ReplyToID       *string         `json:"reply_to_id,omitempty"`
-	ThreadRootID    *string         `json:"thread_root_id,omitempty"`
-	CreatedAt       time.Time       `json:"created_at"`
-	EditedAt        *time.Time      `json:"edited_at,omitempty"`
-	DeletedAt       *time.Time      `json:"deleted_at,omitempty"`
-	ExpiresAt       *time.Time      `json:"expires_at,omitempty"`
+	// FrankCommit is the C6 franking commitment (32 bytes) the sender
+	// attached at send time. Opaque to the server, written once at insert,
+	// never inside CryptoMetadata (C6 condition G3).
+	FrankCommit    []byte          `json:"frank_commit,omitempty"`
+	AttachmentRefs json.RawMessage `json:"attachment_refs"`
+	ReplyToID      *string         `json:"reply_to_id,omitempty"`
+	ThreadRootID   *string         `json:"thread_root_id,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	EditedAt       *time.Time      `json:"edited_at,omitempty"`
+	DeletedAt      *time.Time      `json:"deleted_at,omitempty"`
+	ExpiresAt      *time.Time      `json:"expires_at,omitempty"`
 }
 
 type AttachmentEnvelope struct {

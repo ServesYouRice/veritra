@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/domain"
+	"private-messenger/server/internal/franking"
 	"private-messenger/server/internal/messaging"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -479,6 +480,10 @@ type messageEnvelopeRequest struct {
 	Ciphertext     []byte          `json:"ciphertext"`
 	CryptoProtocol string          `json:"crypto_protocol"`
 	CryptoMetadata json.RawMessage `json:"crypto_metadata,omitempty"`
+	// FrankCommit is the C6 franking commitment: a top-level field, exactly
+	// 32 bytes when present, stored write-once in its own column. The server
+	// can neither compute nor check it.
+	FrankCommit    []byte          `json:"frank_commit,omitempty"`
 	AttachmentRefs json.RawMessage `json:"attachment_refs,omitempty"`
 	ReplyToID      *string         `json:"reply_to_id,omitempty"`
 	ThreadRootID   *string         `json:"thread_root_id,omitempty"`
@@ -516,6 +521,10 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		writeError(w, http.StatusBadRequest, "invalid_expires_at")
 		return
 	}
+	if len(req.FrankCommit) != 0 && len(req.FrankCommit) != franking.CommitSize {
+		writeError(w, http.StatusBadRequest, "invalid_frank_commit")
+		return
+	}
 	result, err := a.messageService().Create(r.Context(), domain.MessageEnvelope{
 		ConversationID:  req.ConversationID,
 		SenderAccountID: principal.AccountID,
@@ -524,6 +533,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		Ciphertext:      req.Ciphertext,
 		CryptoProtocol:  req.CryptoProtocol,
 		CryptoMetadata:  req.CryptoMetadata,
+		FrankCommit:     req.FrankCommit,
 		AttachmentRefs:  req.AttachmentRefs,
 		ReplyToID:       req.ReplyToID,
 		ThreadRootID:    req.ThreadRootID,

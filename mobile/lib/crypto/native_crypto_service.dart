@@ -12,6 +12,7 @@ import '../storage/encrypted_database.dart'
         DeleteMessageEffect,
         EditMessageEffect,
         EnrollmentPromotionOutcome,
+        FrankReveal,
         HistoryTransferProgress,
         InsertMessageEffect,
         LocalMessageKind,
@@ -23,6 +24,7 @@ import '../storage/local_store.dart';
 import 'app_payload.dart';
 import 'message_format.dart';
 import 'crypto_service.dart';
+import 'franking.dart';
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
 
@@ -40,10 +42,15 @@ class NativeCryptoService
     required this.bindings,
     required this.localStore,
     DateTime Function()? clock,
+    this.frankingPolicy = const FrankingPolicy(),
   }) : _clock = clock ?? DateTime.now;
 
   final NativeCryptoBindings bindings;
   final LocalStore localStore;
+
+  /// What the receive path does with a payload that carries no franking key
+  /// (D95). Accepts them for now.
+  final FrankingPolicy frankingPolicy;
 
   /// The time key-package expiry is judged by (D70).
   final DateTime Function() _clock;
@@ -1193,18 +1200,33 @@ class NativeCryptoService
         try {
           final idempotencyKey = _randomIdempotencyKey();
           final deviceId = _deviceId!;
-          final payload = AppPayloadCodec().encode(
+          // C6: every message carries a franking key inside its encrypted
+          // payload and the commitment to it beside the ciphertext. The
+          // commitment covers the canonical payload without the key, bound to
+          // this conversation, this device and this action.
+          final frankKey = generateFrankKey();
+          final framed = AppPayloadCodec().encodeFranked(
             type: type,
             conversationId: conversationId,
             senderDeviceId: deviceId,
             actionId: idempotencyKey,
             body: body,
+            frankKey: frankKey,
             hidden: type == AppPayloadType.pin,
             channelId: _authority?.conversationKind(conversationId) ==
                     'community_shared'
                 ? _authority?.conversationChannel(conversationId)
                 : null,
           );
+          final payload = framed.padded;
+          final commit = bindings.frankCommit(
+            key: frankKey,
+            conversationId: conversationId,
+            senderDeviceId: deviceId,
+            actionId: idempotencyKey,
+            payload: framed.canonical,
+          );
+          frankKey.fillRange(0, frankKey.length, 0);
           final device = _requiredDevice();
           final epoch = device.groupEpoch(conversationId).epoch;
           final ciphertext = device.encrypt(conversationId, payload);
@@ -1226,6 +1248,7 @@ class NativeCryptoService
               // joined after that epoch and cannot decrypt it (card I51).
               'mls_epoch': epoch,
             },
+            frankCommit: commit,
             attachmentRefs: attachmentRefs,
           );
           await localStore.commitOutgoingApplicationTransition(
@@ -1416,19 +1439,26 @@ class NativeCryptoService
         List<MessageEffect> effects;
         List<int>? text;
         var noticePayload = false;
+        FrankReveal? reveal;
         try {
-          final outcome = AppPayloadCodec().classify(
+          final checked = _checkFranking(
+            envelope,
             plaintext,
-            conversationId: envelope.conversationId,
-            senderDeviceId: envelope.senderDeviceId,
-            actionId: envelope.idempotencyKey,
-            communityShared:
-                _authority?.conversationKind(envelope.conversationId) ==
-                    'community_shared',
-            channelId: (envelope.cryptoMetadata is Map
-                ? (envelope.cryptoMetadata as Map)['channel_id']
-                : null) as String?,
+            AppPayloadCodec().classify(
+              plaintext,
+              conversationId: envelope.conversationId,
+              senderDeviceId: envelope.senderDeviceId,
+              actionId: envelope.idempotencyKey,
+              communityShared:
+                  _authority?.conversationKind(envelope.conversationId) ==
+                      'community_shared',
+              channelId: (envelope.cryptoMetadata is Map
+                  ? (envelope.cryptoMetadata as Map)['channel_id']
+                  : null) as String?,
+            ),
           );
+          final outcome = checked.outcome;
+          reveal = checked.reveal;
           switch (outcome) {
             case DecodedAppPayload(:final payload):
               if (!_messageTypes.contains(payload.type)) {
@@ -1474,6 +1504,7 @@ class NativeCryptoService
           effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
           text = null;
           noticePayload = false;
+          reveal = null;
         }
         operationFence();
         await localStore.commitMlsTransition(MlsStateTransition(
@@ -1489,6 +1520,9 @@ class NativeCryptoService
           noticeReferences: noticePayload && capture != null
               ? _noticeReferences(capture.owner, envelope, syncEventId, effects)
               : const <LocalNoticeReference>[],
+          // A reveal for a row this transition does not leave live (an edit,
+          // an invalid placeholder) is dropped by the store, not an error.
+          frankReveals: reveal == null ? const <FrankReveal>[] : [reveal],
         ));
         return text;
       } catch (_) {
@@ -1496,6 +1530,69 @@ class NativeCryptoService
         rethrow;
       }
     });
+  }
+
+  /// C6 receive rule for franking, applied to a payload that already
+  /// classified. The commitment context is the envelope's own ids, which
+  /// `classify` has just matched against the decrypted payload (condition
+  /// G2), never fields read out of the payload again.
+  ///
+  /// | payload                     | envelope `frank_commit` | result            |
+  /// |-----------------------------|-------------------------|-------------------|
+  /// | malformed `frank`           | any                     | invalid           |
+  /// | franked                     | missing or wrong        | invalid           |
+  /// | franked                     | matches                 | accepted, with a reveal to keep |
+  /// | no `frank` member           | any                     | per [frankingPolicy] (D95) |
+  ///
+  /// With the policy that accepts unfranked payloads (today's), the last
+  /// row is accepted but unreportable. A policy that refuses them makes an
+  /// unfranked payload invalid, except a hidden payload this app does not
+  /// understand (design item 9: the C7 hidden types are never franked).
+  ///
+  /// A native failure while recomputing throws; the caller's `catch` turns
+  /// that into an `invalid` row, never a stuck sync.
+  ({AppPayloadOutcome outcome, FrankReveal? reveal}) _checkFranking(
+      ReceivedMessageEnvelope envelope,
+      List<int> plaintext,
+      AppPayloadOutcome outcome) {
+    if (outcome is InvalidAppPayload) return (outcome: outcome, reveal: null);
+    switch (AppPayloadCodec.frankOf(plaintext)) {
+      case Unfranked():
+        if (frankingPolicy.acceptsUnfranked(outcome)) {
+          return (outcome: outcome, reveal: null);
+        }
+        return (outcome: const InvalidAppPayload(), reveal: null);
+      case MalformedFrank():
+        return (outcome: const InvalidAppPayload(), reveal: null);
+      case Franked(:final canonical, :final key):
+        final commit = envelope.frankCommit;
+        if (commit == null || commit.length != frankCommitBytes) {
+          return (outcome: const InvalidAppPayload(), reveal: null);
+        }
+        final expected = bindings.frankCommit(
+          key: key,
+          conversationId: envelope.conversationId,
+          senderDeviceId: envelope.senderDeviceId,
+          actionId: envelope.idempotencyKey,
+          payload: canonical,
+        );
+        if (!frankCommitEquals(expected, commit)) {
+          return (outcome: const InvalidAppPayload(), reveal: null);
+        }
+        // Kept so the message can be reported later (D95, schema 19): kf and
+        // the exact bytes P the commitment covers.
+        return (
+          outcome: outcome,
+          reveal: FrankReveal(
+            messageKey:
+                messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
+            conversationId: envelope.conversationId,
+            envelopeId: envelope.id,
+            frankKey: key,
+            payload: canonical,
+          ),
+        );
+    }
   }
 
   ({LocalNoticeOwner owner, int generation})? _captureNoticeOwner(

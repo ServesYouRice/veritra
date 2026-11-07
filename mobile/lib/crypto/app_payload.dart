@@ -67,6 +67,49 @@ final class InvalidAppPayload extends AppPayloadOutcome {
   const InvalidAppPayload();
 }
 
+/// What a receiver does with a payload that has no `frank` member (D95,
+/// condition G5). Accepting is the owner's decision for now, so every
+/// sender running an older app keeps working; [acceptUnfranked] is the
+/// switch that turns it into a refusal once every sender runs the franking
+/// build, with no other change.
+///
+/// Refusing makes an unfranked payload `invalid`, with exemptions decided
+/// after decoding: a hidden payload this app does not understand
+/// ([UnsupportedAppPayload.hidden]), and a payload whose type is in
+/// [unfrankedPayloadTypes]. The C7 hidden types (`history_change`,
+/// `history_sync`, `history_sync_request`) are never franked, because a
+/// `frank` member would push them out of the 512-byte bucket (C6 design,
+/// open item 9). Today they decode as unsupported hidden payloads; when C7
+/// makes them known types, [unfrankedPayloadTypes] keeps them exempt only if
+/// it holds their `AppPayloadType.name`, so the C7 merge must keep the two in
+/// step. Every other message type this app sends, pins included, is franked
+/// and is never exempt.
+class FrankingPolicy {
+  const FrankingPolicy({this.acceptUnfranked = true});
+
+  /// Payload types that are never franked (C6 design, open item 9), by
+  /// `AppPayloadType.name`.
+  static const Set<String> unfrankedPayloadTypes = {
+    'history_change',
+    'history_sync',
+    'history_sync_request',
+  };
+
+  /// Whether a payload without `frank` is accepted (as unreportable).
+  final bool acceptUnfranked;
+
+  /// Whether [outcome], a payload that classified but carries no `frank`,
+  /// is accepted.
+  bool acceptsUnfranked(AppPayloadOutcome outcome) =>
+      acceptUnfranked ||
+      switch (outcome) {
+        UnsupportedAppPayload(:final hidden) => hidden,
+        DecodedAppPayload(:final payload) =>
+          unfrankedPayloadTypes.contains(payload.type.name),
+        InvalidAppPayload() => false,
+      };
+}
+
 /// Encodes only client-visible content. The complete padded value is protected
 /// by MLS; duplicated routing fields are checked after decryption so ciphertext
 /// cannot be replayed into a different conversation, device, or action row.
@@ -106,8 +149,8 @@ class AppPayloadCodec {
   /// `v: 2`, because a v1 receiver refuses any seventh top-level key.
   /// [canonical] is the inner JSON exactly as [encode] would write it at v2,
   /// which the franking commitment covers; the wire JSON is [canonical] with
-  /// the `frank` member appended last ([frankWireJson]). Not sent yet: the
-  /// sender and receiver wiring is a later, reviewed step.
+  /// the `frank` member appended last ([frankWireJson]). Every message the
+  /// app sends is written this way (the message send path).
   ({Uint8List padded, Uint8List canonical}) encodeFranked({
     required AppPayloadType type,
     required String conversationId,
@@ -219,6 +262,28 @@ class AppPayloadCodec {
       throw const FormatException('invalid application payload context');
     _validateBody(type, body, version: version);
     return DecryptedAppPayload(type: type, actionId: actionId, body: body);
+  }
+
+  /// What a framed payload says about franking (C6): the inner JSON is cut
+  /// out of the `VAP1` framing and read for its top-level `frank` member
+  /// ([splitFrank]). Never throws; broken framing reads as [MalformedFrank].
+  static FrankOutcome frankOf(List<int> padded) {
+    try {
+      if (padded.length < _headerLength + 2 ||
+          padded.length > _maxPayloadBytes ||
+          !_constantTimePrefix(padded, _magic)) {
+        return const MalformedFrank();
+      }
+      final bytes = padded is Uint8List ? padded : Uint8List.fromList(padded);
+      final length = ByteData.sublistView(bytes).getUint32(4, Endian.big);
+      if (length <= 0 || length > bytes.length - _headerLength) {
+        return const MalformedFrank();
+      }
+      return splitFrank(
+          Uint8List.sublistView(bytes, _headerLength, _headerLength + length));
+    } catch (_) {
+      return const MalformedFrank();
+    }
   }
 
   /// Checks the envelope fields the server supplied (P2). The decrypted

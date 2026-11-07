@@ -79,6 +79,44 @@ void main() {
     expect(deleted.deletedAt, isNotNull);
   }, skip: skip);
 
+  test('every message is franked and a receiver checks the commitment',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+
+    final good =
+        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'one'});
+    // The commitment rides beside the ciphertext, never in the metadata.
+    expect(good.frankCommit, hasLength(32));
+    expect(good.toJson()['frank_commit'], isA<String>());
+    expect(good.cryptoMetadata.keys.any((key) => key.contains('frank')), false);
+    expect(
+        MessageEnvelope.fromJson(good.toJson()).frankCommit, good.frankCommit);
+    await bob.receive(alice, good);
+
+    // A server that changes the commitment, or removes it, makes the message
+    // invalid; sync still moves past it.
+    final changed =
+        await alice.send(AppPayloadType.text, <String, Object?>{'text': 'two'});
+    await bob.receive(alice, changed,
+        frankCommit: List<int>.of(changed.frankCommit!)..[0] ^= 1);
+    final stripped = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'three'});
+    await bob.receive(alice, stripped, dropFrankCommit: true);
+    // Another message's commitment is not this message's.
+    final swapped = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'four'});
+    await bob.receive(alice, swapped, frankCommit: good.frankCommit);
+
+    final rows = await bob.history();
+    expect(rows.where((row) => row.kind == LocalMessageKind.invalid),
+        hasLength(3));
+    expect(rows.where((row) => row.body != null).map((row) => row.body),
+        <String?>['one']);
+  }, skip: skip);
+
   test('a service reloads MLS state that moved without it', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
@@ -502,8 +540,13 @@ class _Client {
     return envelope;
   }
 
+  /// Delivers [sent] as the server would, carrying its franking commitment.
+  /// [frankCommit] replaces it and [dropFrankCommit] removes it, to play a
+  /// server that changed or stripped the field.
   Future<void> receive(_Client from, MessageEnvelope sent,
-      {String? claimedAccountId}) async {
+      {String? claimedAccountId,
+      List<int>? frankCommit,
+      bool dropFrankCommit = false}) async {
     await service.processApplicationMessage(
       ReceivedMessageEnvelope(
         id: 'srv_${++_serverIds}',
@@ -514,6 +557,7 @@ class _Client {
         ciphertext: sent.ciphertext,
         cryptoProtocol: sent.cryptoProtocol,
         createdAt: DateTime.now().toUtc(),
+        frankCommit: dropFrankCommit ? null : (frankCommit ?? sent.frankCommit),
       ),
       nextEvent(),
     );
