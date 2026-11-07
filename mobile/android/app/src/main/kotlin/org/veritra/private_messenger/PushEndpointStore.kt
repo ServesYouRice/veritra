@@ -43,19 +43,27 @@ object PushEndpointStore {
         )
     }.getOrNull()
 
-    /** True only if [generation] is still the stored one and was cleared. */
+    /** True only if [generation] is still the stored one and was cleared. A
+     * failed write puts the whole record back (SharedPreferences changes its
+     * in-memory copy even when commit fails). */
     @Synchronized fun acknowledge(context: Context, generation: Long): Boolean = runCatching {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        WakeRules.acknowledge(object : WakeRules.PendingStore {
-            override fun pending(): Long = prefs.getLong(PENDING, 0)
-            override fun writePending(value: Long): Boolean {
-                val edit = prefs.edit()
-                if (value == 0L) { edit.remove(PENDING); FIELDS.forEach { edit.remove(it) } }
-                else edit.putLong(PENDING, value)
-                return edit.commit()
-            }
-        }, generation)
+        if (generation <= 0 || prefs.getLong(PENDING, 0) != generation) return@runCatching false
+        val saved = FIELDS.associateWith { prefs.getString(it, null) }
+        val edit = prefs.edit().remove(PENDING)
+        FIELDS.forEach { edit.remove(it) }
+        if (edit.commit()) return@runCatching true
+        val restore = prefs.edit().putLong(PENDING, generation)
+        saved.forEach { (key, value) -> if (value != null) restore.putString(key, value) }
+        restore.commit()
+        false
     }.getOrDefault(false)
+
+    /** Drops the record when its instance was unregistered by the platform. */
+    @Synchronized fun clearIfInstance(context: Context, instance: String): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        return if (prefs.getString("endpoint_instance", null) == instance) clear(context) else false
+    }
 
     @Synchronized fun clear(context: Context): Boolean {
         val edit = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(PENDING)

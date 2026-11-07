@@ -25,6 +25,7 @@ class VeritraPushService : PushService() {
     }
 
     override fun onUnregistered(instance: String) {
+        PushEndpointStore.clearIfInstance(applicationContext, instance)
         PushEventBridge.emit(mapOf("type" to "unregistered", "instance" to instance))
     }
 
