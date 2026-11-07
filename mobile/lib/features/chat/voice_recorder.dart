@@ -188,11 +188,18 @@ class VoiceRecorderController extends ChangeNotifier {
     } on FileSystemException {
       return null;
     }
-    return XFile(
-      path,
-      name: voiceNoteName(DateTime.now(), format),
-      mimeType: format.mediaType,
-    );
+    // XFile ignores `name` for files on disk (its name is the path's last
+    // segment), so the recording itself is renamed to the voice note name.
+    final name = voiceNoteName(DateTime.now(), format);
+    try {
+      final slash = path.lastIndexOf(Platform.pathSeparator);
+      final renamed = '${path.substring(0, slash + 1)}$name';
+      await file.rename(renamed);
+      path = renamed;
+    } on FileSystemException {
+      // Keep the recorder's own name; the note still sends.
+    }
+    return XFile(path, name: name, mimeType: format.mediaType);
   }
 
   /// Stops and throws the recording away.

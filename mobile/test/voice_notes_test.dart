@@ -231,9 +231,14 @@ void main() {
 
     playback.finish();
     await tester.pump();
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 50)),
-    );
+    // The delete is real file I/O whose continuation runs in the fake-async
+    // zone, so alternate real waiting with pumps until it has finished.
+    for (var i = 0; i < 100 && copy.parent.existsSync(); i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+    }
     expect(find.byIcon(Icons.play_circle), findsOneWidget);
     expect(copy.parent.existsSync(), isFalse,
         reason: 'the plaintext copy goes when playback ends');
