@@ -60,6 +60,8 @@ class _Server implements DeviceListSource {
 }
 
 void main() {
+  // Skipped without the library, unless VERITRA_REQUIRE_NATIVE_CRYPTO=1.
+  final skip = nativeCryptoSkip();
   late NativeCryptoBindings bindings;
   late Map<String, dynamic> vector;
   late MemoryLocalStore store;
@@ -239,7 +241,7 @@ void main() {
       await pins.refresh(account(0));
       expect(server.fetches, 3);
     });
-  });
+  }, skip: skip);
 
   group('judge and the add gate', () {
     test('verdicts follow the pin', () async {
@@ -338,7 +340,7 @@ void main() {
       expect(await pins.approvedKey(account(0), 'dev_ghost'), isNull);
       expect(await pins.approvedKey('acct_no_list', 'dev_x'), isNull);
     });
-  });
+  }, skip: skip);
 
   group('own versions', () {
     test('a device signs its genesis and an add; both pin forward', () async {
@@ -390,5 +392,5 @@ void main() {
               expectedHead: statements(0)[2]),
           throwsFormatException);
     });
-  });
+  }, skip: skip);
 }
