@@ -2820,6 +2820,41 @@ class AppLocalizationsSr extends AppLocalizations {
   String recoveryKeyOriginMismatch(String current, String origin) {
     return 'Овај уређај користи $current, али адреса сервера за опоравак је $origin. Опоравак ради само преко адресе $origin.';
   }
+
+  @override
+  String get voiceNoteRecord => 'Снимите гласовну поруку';
+
+  @override
+  String get voiceNoteStop => 'Заустави и приложи';
+
+  @override
+  String get voiceNoteDiscard => 'Одбаци снимак';
+
+  @override
+  String voiceNoteRecording(String time) {
+    return 'Снимање $time';
+  }
+
+  @override
+  String get voiceNotePermissionDenied =>
+      'Приступ микрофону је искључен. Дозволите га у подешавањима система да бисте снимали.';
+
+  @override
+  String get voiceNoteRecordFailed => 'Снимање није могло да почне.';
+
+  @override
+  String get voiceNotePlay => 'Пусти';
+
+  @override
+  String get voiceNotePause => 'Паузирај';
+
+  @override
+  String voiceNoteSemantics(String size) {
+    return 'Гласовна порука, $size';
+  }
+
+  @override
+  String get voiceNotePlayFailed => 'Гласовна порука није могла да се пусти.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -5642,4 +5677,39 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String recoveryKeyOriginMismatch(String current, String origin) {
     return 'Ovaj uređaj koristi $current, ali adresa servera za oporavak je $origin. Oporavak radi samo preko adrese $origin.';
   }
+
+  @override
+  String get voiceNoteRecord => 'Snimite glasovnu poruku';
+
+  @override
+  String get voiceNoteStop => 'Zaustavi i priloži';
+
+  @override
+  String get voiceNoteDiscard => 'Odbaci snimak';
+
+  @override
+  String voiceNoteRecording(String time) {
+    return 'Snimanje $time';
+  }
+
+  @override
+  String get voiceNotePermissionDenied =>
+      'Pristup mikrofonu je isključen. Dozvolite ga u podešavanjima sistema da biste snimali.';
+
+  @override
+  String get voiceNoteRecordFailed => 'Snimanje nije moglo da počne.';
+
+  @override
+  String get voiceNotePlay => 'Pusti';
+
+  @override
+  String get voiceNotePause => 'Pauziraj';
+
+  @override
+  String voiceNoteSemantics(String size) {
+    return 'Glasovna poruka, $size';
+  }
+
+  @override
+  String get voiceNotePlayFailed => 'Glasovna poruka nije mogla da se pusti.';
 }

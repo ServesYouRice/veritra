@@ -37,7 +37,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Veritra connects to a Veritra server you host on your own network.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Veritra uses the microphone only during calls you start or answer.</string>
+	<string>Veritra uses the microphone only during calls you start or answer and when you record a voice note.</string>
 	<key>UIFileSharingEnabled</key>
 	<false/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

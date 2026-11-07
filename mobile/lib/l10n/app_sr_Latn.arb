@@ -757,5 +757,15 @@
   "recoveryAlreadyEnded": "Ovaj oporavak je već završen ili ga je zamenio noviji.",
   "apiErrorPasswordUnchanged": "Izaberite lozinku koja se razlikuje od trenutne.",
   "recoveryKeyServerAddress": "Uz njega zapišite i adresu servera:",
-  "recoveryKeyOriginMismatch": "Ovaj uređaj koristi {current}, ali adresa servera za oporavak je {origin}. Oporavak radi samo preko adrese {origin}."
+  "recoveryKeyOriginMismatch": "Ovaj uređaj koristi {current}, ali adresa servera za oporavak je {origin}. Oporavak radi samo preko adrese {origin}.",
+  "voiceNoteRecord": "Snimite glasovnu poruku",
+  "voiceNoteStop": "Zaustavi i priloži",
+  "voiceNoteDiscard": "Odbaci snimak",
+  "voiceNoteRecording": "Snimanje {time}",
+  "voiceNotePermissionDenied": "Pristup mikrofonu je isključen. Dozvolite ga u podešavanjima sistema da biste snimali.",
+  "voiceNoteRecordFailed": "Snimanje nije moglo da počne.",
+  "voiceNotePlay": "Pusti",
+  "voiceNotePause": "Pauziraj",
+  "voiceNoteSemantics": "Glasovna poruka, {size}",
+  "voiceNotePlayFailed": "Glasovna poruka nije mogla da se pusti."
 }
