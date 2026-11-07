@@ -6074,6 +6074,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (resolved.id != id) {
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
+        // A post in a community's shared group is decoded by the group's
+        // kind, which only the conversation list knows. A device that has
+        // just taken the Welcome may not have listed it yet; decoding first
+        // would turn the post into a permanent invalid row.
+        if (_metadataChannel(resolved.cryptoMetadata) != null &&
+            !conversations.any((c) => c.id == resolved.conversationId)) {
+          await _refreshConversations(notify: false, persist: false);
+        }
         await _ensureConversationAuthority(resolved.conversationId,
             client: client);
         // A message this device can never decrypt does not throw: the
