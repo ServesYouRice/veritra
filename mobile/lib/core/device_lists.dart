@@ -436,9 +436,11 @@ class DeviceListPins {
   Future<DeviceListStatus> _refreshFor(
       String accountId, bool Function(DeviceListPin pin) satisfies) async {
     final status = await refresh(accountId);
-    if (status.state == DeviceListState.conflict) return status;
     final pin = status.pin;
-    if (status.state == DeviceListState.ok && pin != null && satisfies(pin)) {
+    // Only a stale pin is helped by fetching sooner; an unreachable or empty
+    // list keeps the one-minute limit, so a hung server is not asked again
+    // on every judgment.
+    if (status.state != DeviceListState.ok || pin == null || satisfies(pin)) {
       return status;
     }
     final last = _lastFetch[accountId];
