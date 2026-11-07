@@ -225,3 +225,27 @@ full Flutter suite run in CI only.
 
 Left: NativeCryptoService source/receive streaming on these tables, v3 link
 screens, two-device runs, independent review.
+
+### 2026-11-07: independent review of schema 18 (PR #111)
+
+- Finding (fixed): a sign-out that keeps the device leaves its session
+  (no token) and MLS state, and the sign-in screen still offers K0
+  recovery. The promotion refused that case after the server had
+  completed the claim, so the new device could never finish. Before
+  schema 18 the identity change in `saveSession` dropped the old identity.
+  Now a signed-out identity of another device is replaced in the
+  promotion's own transaction, with the same identity clear an identity
+  change uses (ledger and pending row kept). A signed-in other device and
+  the pending identity's own stored state are still refused.
+- The 17→18 upgrade now ledgers a pending row whose identity is stored
+  with an MLS state even when its session was signed out since.
+- Checks: `k2_schema18_test.dart` and `native_crypto_service_promotion_test.dart`
+  64 passed locally (stand-in Dart 3.13.7, system SQLite, release native
+  library); the 7 new ones fail on the pre-fix code. The new AppState K0
+  test runs in CI only.
+- Notes, not changed: a re-upgrade after a downgrade could only hit the
+  ledger's primary key for an identity a schema-17 build re-pended, which
+  fresh device IDs rule out; ledger lookups ignore the origin, so they can
+  over-block only on an account and device ID collision across servers;
+  `_finishRecoveredSession` sets the in-memory session before a promotion
+  that can still throw (pattern older than schema 18).
