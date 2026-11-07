@@ -757,5 +757,19 @@
   "recoveryAlreadyEnded": "Ovaj oporavak je već završen ili ga je zamenio noviji.",
   "apiErrorPasswordUnchanged": "Izaberite lozinku koja se razlikuje od trenutne.",
   "recoveryKeyServerAddress": "Uz njega zapišite i adresu servera:",
-  "recoveryKeyOriginMismatch": "Ovaj uređaj koristi {current}, ali adresa servera za oporavak je {origin}. Oporavak radi samo preko adrese {origin}."
+  "recoveryKeyOriginMismatch": "Ovaj uređaj koristi {current}, ali adresa servera za oporavak je {origin}. Oporavak radi samo preko adrese {origin}.",
+  "pollComposerTitle": "Nova anketa",
+  "pollQuestionLabel": "Pitanje",
+  "pollOptionLabel": "Opcija {number}",
+  "pollAddOption": "Dodaj opciju",
+  "pollRemoveOption": "Ukloni opciju",
+  "pollMultipleChoice": "Dozvoli više odgovora",
+  "pollSend": "Pošalji anketu",
+  "pollInvalidHint": "Dodajte pitanje i bar dve različite opcije.",
+  "pollVisibleNotice": "Svi u ovom razgovoru vide ko je za šta glasao.",
+  "pollVoteTotal": "Glasova: {count}",
+  "pollChooseOne": "Izaberite jednu opciju",
+  "pollChooseSeveral": "Izaberite jednu ili više opcija",
+  "pollClose": "Zatvori anketu",
+  "pollClosedNotice": "Ova anketa je zatvorena."
 }

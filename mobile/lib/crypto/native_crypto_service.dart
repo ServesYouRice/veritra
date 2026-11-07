@@ -18,10 +18,12 @@ import '../storage/encrypted_database.dart'
         LocalMessageState,
         MessageEffect,
         ReactionEffect;
-import '../storage/encrypted_database.dart' show PinMessageEffect;
+import '../storage/encrypted_database.dart'
+    show PinMessageEffect, PollCloseEffect, PollVoteEffect;
 import '../storage/local_store.dart';
 import 'app_payload.dart';
 import 'message_format.dart';
+import 'poll.dart' show pollRowBody;
 import 'crypto_service.dart';
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
@@ -1199,7 +1201,7 @@ class NativeCryptoService
             senderDeviceId: deviceId,
             actionId: idempotencyKey,
             body: body,
-            hidden: type == AppPayloadType.pin,
+            hidden: type.sendsHidden,
             channelId: _authority?.conversationKind(conversationId) ==
                     'community_shared'
                 ? _authority?.conversationChannel(conversationId)
@@ -1855,6 +1857,9 @@ const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
   AppPayloadType.reaction,
   AppPayloadType.attachmentManifest,
   AppPayloadType.pin,
+  AppPayloadType.poll,
+  AppPayloadType.pollVote,
+  AppPayloadType.pollClose,
 };
 
 /// The local history key of a message: its authenticated sender device and
@@ -1962,6 +1967,28 @@ List<MessageEffect> messageEffectsFor(
               pendingActionKey: state == LocalMessageState.pending
                   ? messageKey(senderDeviceId, payload.actionId)
                   : null),
+      ],
+    AppPayloadType.poll => <MessageEffect>[
+        row(LocalMessageKind.poll, text: pollRowBody(body)),
+      ],
+    AppPayloadType.pollVote => <MessageEffect>[
+        row(LocalMessageKind.action),
+        PollVoteEffect(
+          targetKey: body['message_id'] as String,
+          voterAccountId: senderAccountId,
+          choices: (body['choices'] as List).cast<int>(),
+          conversationId: conversationId,
+          channelId: payload.channelId,
+        ),
+      ],
+    AppPayloadType.pollClose => <MessageEffect>[
+        row(LocalMessageKind.action),
+        PollCloseEffect(
+          targetKey: body['message_id'] as String,
+          closerAccountId: senderAccountId,
+          conversationId: conversationId,
+          channelId: payload.channelId,
+        ),
       ],
     AppPayloadType.callSignal =>
       throw const FormatException('call signals are not messages'),

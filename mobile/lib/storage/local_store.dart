@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../core/models.dart';
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
+import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
@@ -2030,7 +2031,8 @@ class _MemoryMessageHistory {
                   target.conversationId != effect.conversationId) ||
               (target.kind != LocalMessageKind.text &&
                   target.kind != LocalMessageKind.attachment &&
-                  target.kind != LocalMessageKind.unsupported)) {
+                  target.kind != LocalMessageKind.unsupported &&
+                  target.kind != LocalMessageKind.poll)) {
             continue;
           }
           _messages[effect.targetKey] = target.copyWith(
@@ -2074,6 +2076,38 @@ class _MemoryMessageHistory {
                 reaction: effect.reaction,
                 updatedAt: effect.at);
           }
+        case PollVoteEffect():
+          final poll = _messages[effect.targetKey];
+          if (poll == null ||
+              poll.kind != LocalMessageKind.poll ||
+              poll.conversationId != effect.conversationId ||
+              poll.channelId != effect.channelId ||
+              poll.hiddenAt != null ||
+              poll.deletedAt != null ||
+              (poll.expiresAt != null &&
+                  poll.expiresAt! <= DateTime.now().millisecondsSinceEpoch)) {
+            continue;
+          }
+          final updated =
+              applyPollVote(poll.body, effect.voterAccountId, effect.choices);
+          if (updated == null) continue;
+          _messages[effect.targetKey] = poll.copyWith(body: Value(updated));
+        case PollCloseEffect():
+          final poll = _messages[effect.targetKey];
+          if (poll == null ||
+              poll.kind != LocalMessageKind.poll ||
+              poll.senderAccountId != effect.closerAccountId ||
+              poll.conversationId != effect.conversationId ||
+              poll.channelId != effect.channelId ||
+              poll.hiddenAt != null ||
+              poll.deletedAt != null ||
+              (poll.expiresAt != null &&
+                  poll.expiresAt! <= DateTime.now().millisecondsSinceEpoch)) {
+            continue;
+          }
+          final closed = applyPollClose(poll.body);
+          if (closed == null) continue;
+          _messages[effect.targetKey] = poll.copyWith(body: Value(closed));
         case PinMessageEffect():
           if (effect.pendingActionKey != null) {
             pendingPins[effect.pendingActionKey!] = LocalPendingPin(

@@ -2820,6 +2820,53 @@ class AppLocalizationsSr extends AppLocalizations {
   String recoveryKeyOriginMismatch(String current, String origin) {
     return 'Овај уређај користи $current, али адреса сервера за опоравак је $origin. Опоравак ради само преко адресе $origin.';
   }
+
+  @override
+  String get pollComposerTitle => 'Нова анкета';
+
+  @override
+  String get pollQuestionLabel => 'Питање';
+
+  @override
+  String pollOptionLabel(String number) {
+    return 'Опција $number';
+  }
+
+  @override
+  String get pollAddOption => 'Додај опцију';
+
+  @override
+  String get pollRemoveOption => 'Уклони опцију';
+
+  @override
+  String get pollMultipleChoice => 'Дозволи више одговора';
+
+  @override
+  String get pollSend => 'Пошаљи анкету';
+
+  @override
+  String get pollInvalidHint => 'Додајте питање и бар две различите опције.';
+
+  @override
+  String get pollVisibleNotice =>
+      'Сви у овом разговору виде ко је за шта гласао.';
+
+  @override
+  String pollVoteTotal(String count) {
+    return 'Гласова: $count';
+  }
+
+  @override
+  String get pollChooseOne => 'Изаберите једну опцију';
+
+  @override
+  String get pollChooseSeveral => 'Изаберите једну или више опција';
+
+  @override
+  String get pollClose => 'Затвори анкету';
+
+  @override
+  String get pollClosedNotice => 'Ова анкета је затворена.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -5642,4 +5689,51 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String recoveryKeyOriginMismatch(String current, String origin) {
     return 'Ovaj uređaj koristi $current, ali adresa servera za oporavak je $origin. Oporavak radi samo preko adrese $origin.';
   }
+
+  @override
+  String get pollComposerTitle => 'Nova anketa';
+
+  @override
+  String get pollQuestionLabel => 'Pitanje';
+
+  @override
+  String pollOptionLabel(String number) {
+    return 'Opcija $number';
+  }
+
+  @override
+  String get pollAddOption => 'Dodaj opciju';
+
+  @override
+  String get pollRemoveOption => 'Ukloni opciju';
+
+  @override
+  String get pollMultipleChoice => 'Dozvoli više odgovora';
+
+  @override
+  String get pollSend => 'Pošalji anketu';
+
+  @override
+  String get pollInvalidHint => 'Dodajte pitanje i bar dve različite opcije.';
+
+  @override
+  String get pollVisibleNotice =>
+      'Svi u ovom razgovoru vide ko je za šta glasao.';
+
+  @override
+  String pollVoteTotal(String count) {
+    return 'Glasova: $count';
+  }
+
+  @override
+  String get pollChooseOne => 'Izaberite jednu opciju';
+
+  @override
+  String get pollChooseSeveral => 'Izaberite jednu ili više opcija';
+
+  @override
+  String get pollClose => 'Zatvori anketu';
+
+  @override
+  String get pollClosedNotice => 'Ova anketa je zatvorena.';
 }

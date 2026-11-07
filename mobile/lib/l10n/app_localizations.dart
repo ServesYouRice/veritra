@@ -4598,6 +4598,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device uses {current}, but the server\'s recovery address is {origin}. Recovery works only from {origin}.'**
   String recoveryKeyOriginMismatch(String current, String origin);
+
+  /// No description provided for @pollComposerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'New poll'**
+  String get pollComposerTitle;
+
+  /// No description provided for @pollQuestionLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Question'**
+  String get pollQuestionLabel;
+
+  /// No description provided for @pollOptionLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Option {number}'**
+  String pollOptionLabel(String number);
+
+  /// No description provided for @pollAddOption.
+  ///
+  /// In en, this message translates to:
+  /// **'Add option'**
+  String get pollAddOption;
+
+  /// No description provided for @pollRemoveOption.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove option'**
+  String get pollRemoveOption;
+
+  /// No description provided for @pollMultipleChoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow several answers'**
+  String get pollMultipleChoice;
+
+  /// No description provided for @pollSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Send poll'**
+  String get pollSend;
+
+  /// No description provided for @pollInvalidHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a question and at least two different options.'**
+  String get pollInvalidHint;
+
+  /// No description provided for @pollVisibleNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Everyone in this chat can see who voted for what.'**
+  String get pollVisibleNotice;
+
+  /// No description provided for @pollVoteTotal.
+  ///
+  /// In en, this message translates to:
+  /// **'Votes: {count}'**
+  String pollVoteTotal(String count);
+
+  /// No description provided for @pollChooseOne.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose one'**
+  String get pollChooseOne;
+
+  /// No description provided for @pollChooseSeveral.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose one or more'**
+  String get pollChooseSeveral;
+
+  /// No description provided for @pollClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close poll'**
+  String get pollClose;
+
+  /// No description provided for @pollClosedNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'This poll is closed.'**
+  String get pollClosedNotice;
 }
 
 class _AppLocalizationsDelegate

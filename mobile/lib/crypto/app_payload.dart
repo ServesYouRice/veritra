@@ -3,6 +3,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'franking.dart';
+import 'poll.dart';
 
 const int appPayloadVersion = 2;
 const int _headerLength = 8;
@@ -22,7 +23,28 @@ enum AppPayloadType {
   reaction,
   attachmentManifest,
   pin,
+  poll,
+  pollVote,
+  pollClose,
   callSignal
+}
+
+extension AppPayloadTypeWire on AppPayloadType {
+  /// The string in the payload's `type`. Existing types keep their Dart enum
+  /// name (the wire contract of every device); new multi-word types are
+  /// snake_case, as `docs/crypto.md` writes them.
+  String get wireName => switch (this) {
+        AppPayloadType.pollVote => 'poll_vote',
+        AppPayloadType.pollClose => 'poll_close',
+        _ => name,
+      };
+
+  /// Types that change state rather than add a bubble. Senders mark them
+  /// `hidden: true` (S2) so an older app stores them without showing them.
+  bool get sendsHidden =>
+      this == AppPayloadType.pin ||
+      this == AppPayloadType.pollVote ||
+      this == AppPayloadType.pollClose;
 }
 
 class DecryptedAppPayload {
@@ -86,6 +108,9 @@ class AppPayloadCodec {
   }) {
     validateContext(conversationId, senderDeviceId, actionId);
     final version = type == AppPayloadType.pin ||
+            type == AppPayloadType.poll ||
+            type == AppPayloadType.pollVote ||
+            type == AppPayloadType.pollClose ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -139,7 +164,7 @@ class AppPayloadCodec {
           bool hidden) =>
       utf8.encode(jsonEncode(<String, Object?>{
         'v': version,
-        'type': type.name,
+        'type': type.wireName,
         'conversation_id': conversationId,
         'sender_device_id': senderDeviceId,
         'action_id': actionId,
@@ -202,7 +227,7 @@ class AppPayloadCodec {
     }
     final typeName = map['type'];
     final type = AppPayloadType.values
-        .where((candidate) => candidate.name == typeName)
+        .where((candidate) => candidate.wireName == typeName)
         .firstOrNull;
     if (type == null ||
         map['conversation_id'] != conversationId ||
@@ -290,7 +315,7 @@ class AppPayloadCodec {
         return const InvalidAppPayload();
       }
       final type = AppPayloadType.values
-          .where((candidate) => candidate.name == map['type'])
+          .where((candidate) => candidate.wireName == map['type'])
           .firstOrNull;
       if (type == null) {
         return UnsupportedAppPayload(
@@ -334,6 +359,9 @@ class AppPayloadCodec {
           (body['pinned'] == false ||
               const [86400, 604800, 2592000]
                   .contains(body['duration_seconds'])),
+      AppPayloadType.poll => version >= 2 && isValidPollBody(body),
+      AppPayloadType.pollVote => version >= 2 && isValidPollVoteBody(body),
+      AppPayloadType.pollClose => version >= 2 && isValidPollCloseBody(body),
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,

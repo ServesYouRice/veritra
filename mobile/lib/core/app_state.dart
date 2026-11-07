@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart'
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/poll.dart';
 import '../crypto/message_format.dart';
 import '../crypto/device_link_code.dart';
 import '../crypto/attachment_crypto.dart';
@@ -3276,6 +3277,58 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           String conversationId, String targetKey, String reaction) =>
       _sendPayload(conversationId, AppPayloadType.reaction,
           <String, Object?>{'message_id': targetKey, 'reaction': reaction});
+
+  /// Sends a poll (B3). The question and options travel inside the MLS
+  /// payload; the server sees only ciphertext. False when the poll breaks
+  /// the limits in `crypto/poll.dart` or the send is refused.
+  Future<bool> sendPoll(String conversationId,
+      {required String question,
+      required List<String> options,
+      required bool multipleChoice}) {
+    final body = <String, Object?>{
+      'question': question.trim(),
+      'options': [for (final option in options) option.trim()],
+      'multiple_choice': multipleChoice,
+    };
+    if (!isValidPollBody(body)) return Future<bool>.value(false);
+    return _sendPayload(conversationId, AppPayloadType.poll, body);
+  }
+
+  /// Sets this account's vote on a poll; an empty [choices] takes it back. A
+  /// vote the poll would not accept is not sent.
+  Future<bool> votePoll(
+      String conversationId, String pollKey, List<int> choices) {
+    final poll = historyFor(conversationId).forKey(pollKey);
+    final account = session?.accountId;
+    if (account == null ||
+        poll == null ||
+        poll.kind != LocalMessageKind.poll ||
+        poll.deletedAt != null ||
+        poll.hiddenAt != null ||
+        applyPollVote(poll.body, account, choices) == null) {
+      return Future<bool>.value(false);
+    }
+    return _sendPayload(conversationId, AppPayloadType.pollVote,
+        <String, Object?>{'message_id': pollKey, 'choices': choices});
+  }
+
+  /// Closes a poll this account sent; later votes are ignored. False when the
+  /// poll is not this account's, is already closed or is gone.
+  Future<bool> closePoll(String conversationId, String pollKey) {
+    final poll = historyFor(conversationId).forKey(pollKey);
+    final account = session?.accountId;
+    if (account == null ||
+        poll == null ||
+        poll.kind != LocalMessageKind.poll ||
+        poll.senderAccountId != account ||
+        poll.deletedAt != null ||
+        poll.hiddenAt != null ||
+        applyPollClose(poll.body) == null) {
+      return Future<bool>.value(false);
+    }
+    return _sendPayload(conversationId, AppPayloadType.pollClose,
+        <String, Object?>{'message_id': pollKey});
+  }
 
   /// Encrypts the file at [path] on this device, uploads only its
   /// ciphertext, then sends the key and name inside an MLS manifest message.
