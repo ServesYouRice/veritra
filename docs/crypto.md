@@ -1942,21 +1942,26 @@ only if `validateCommit` accepts:
   roster is cleared. `rev` is kept (`requiredRecord` computes all of this
   for committers and receivers alike). A record equal to that result is valid from
   any committer; a removal that leaves a departed account named is invalid.
-  An add must stamp `joined`, and every owner commit must stamp `owner_rev`
-  (the committer's own `rev`) and clear an open election; each rewrites the
-  record at `rev` + 1 (record format v2, not built). A commit by anyone else
-  must keep `owner_rev`, and a won election or claim sets it to its own `rev`.
-  Owner decision 2026-11-07 (C4 doc, "The owner's last commit"): `owner_rev`
-  is the `rev` of the owner's last commit, and receivers use it in place of a
-  clock the phone cannot check. A D82 election (no elector in the roster)
-  snapshots only admins whose `since_rev` is at or before it, and a claimant
-  must have `joined` at or before it, so admins promoted, or members added,
-  after the owner went quiet never vote or claim. Residuals: an owner
-  commit made after a rogue admin's promotions (an automatic cancel, an
-  Update) makes them old enough, so the stand-in path is closed only while
-  the owner's device makes no commit; and an admin who was already admin by
-  then and is the whole snapshot wins at once. Both are listed in the C4
-  doc.
+  An add must stamp `joined` and an owner commit must clear an open election;
+  each rewrites the record at `rev` + 1 (record format v2, not built). Neither
+  moves `owner_rev`, and `requiredRecord` never stamps it. A bare owner
+  commit (self-update, reconcile, revocation) carries no record.
+  Record format v2 adds, to the v1 fields: `electors` (the per-admin "owner
+  chose this admin" flag), `election` (none, or `{opened, electorate,
+  votes}`), `joined` (account to the `rev` of its first device's add) and
+  `owner_rev` (a `u64`, genesis 0).
+  Owner decision 2026-11-07 (C4 doc, "The owner's last role decision"):
+  `owner_rev` is the `rev` of the owner's last role decision, and receivers
+  use it in place of a clock the phone cannot check. An owner commit moves it
+  to its own `rev` only when the owner itself changes `owner`, `admins`,
+  `moderators`, `electors` or a posting field; a won election or claim sets it
+  to its own `rev`; any other commit must keep it, and it never exceeds
+  `rev`. A D82 election (no elector in the roster) snapshots only admins
+  whose `since_rev` is at or before it. Claims are not gated by it.
+  Residuals: a deliberate owner role or posting decision made after a rogue
+  admin's promotions makes them old enough; and, until C1 has removal
+  proofs, a server that forces out every elector leaves one owner-era admin
+  as a snapshot of one that wins at once. Both are in the C4 doc.
 - Any other difference is a change by the committer, checked by
   `validateTransition` against the pruned record: `rev` + 1; everything
   named is in the roster after the commit; role changes as on the server
@@ -1970,11 +1975,14 @@ receiver check on the commit.
 
 **Sending a commit.** Every path that stages a commit (D68 reconcile,
 revocation removals, device replacement, role changes) computes the pruned
-record for its own commit (for the owner's, with `owner_rev` stamped, so the
-owner's commit always carries a record), carries it as the proposal when it
-differs, and runs `validateCommit` on the result before staging. Producers
-are wired before or with the receiver check, or the first kick of an admin
-stops every receiver's sync.
+record for its own commit, carries it as the proposal when it differs, and
+runs `validateCommit` on the result before staging. Producers are wired
+before or with the receiver check, or the first kick of an admin stops
+every receiver's sync. The owner's self-update stays path-only
+(`stage_self_update` in `mls.rs` refuses any proposal): it carries no
+record, so it never moves `owner_rev`. It cannot cancel an election either, and
+receivers refuse an owner commit that leaves one open, so while an election is
+open the owner's app sends the cancel (a commit with the record) first.
 
 **Using it.** C2: a post is accepted where `mayPost` holds, and posting is
 restricted where this record or the server says so. C1/C5: `mayActOn`. A

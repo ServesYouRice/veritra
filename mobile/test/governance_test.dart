@@ -11,8 +11,8 @@ void main() {
   const eve = 'acct_eve';
   const members = {owner, admin, mod, bob, carol};
 
-  // rev 3: admin since rev 1, moderator since rev 2; the owner's last commit
-  // was at rev 2.
+  // rev 3: admin since rev 1, moderator since rev 2; the owner's last role
+  // decision was at rev 2.
   GovernanceState base() => GovernanceState(
         rev: 3,
         owner: owner,
@@ -466,8 +466,8 @@ void main() {
 
     // rev 10. Admins admin, carol, dave, eve; the owner chose the first
     // three (electors). eve was made admin by another admin, at rev 4, after
-    // the owner's last commit.
-    // The owner's last commit was at rev 3 (it made dave an admin).
+    // the owner's last role decision.
+    // The owner's last role decision was at rev 3 (it made dave an admin).
     GovernanceState council({
       Set<String>? electors,
       Election? election,
@@ -589,7 +589,7 @@ void main() {
     });
 
     test('D82: with no elector in the roster, the admins by ownerRev vote', () {
-      // eve was made admin at rev 4, after the owner's last commit (rev 3).
+      // eve was made admin at rev 4, after the owner's last decision (rev 3).
       final s = council(electors: const {});
       const all = {admin, carol, dave};
       final next = bump(s, election: poll(who: all));
@@ -635,24 +635,31 @@ void main() {
         validateCommit(o, o, owner, before: crew, after: crew).reject,
         GovernanceReject.election,
       );
-      // An owner's add must carry the cancel and the stamp.
+      // An owner's add must carry the cancel and the stamp of `joined`; the
+      // cancel is not a role decision, so `ownerRev` stays.
       const after = {...crew, 'acct_new'};
       final stamp = {...joinedAt, 'acct_new': o.rev + 1};
-      final cancel = bump(o, byOwner: true, clearElection: true, joined: stamp);
+      final cancel = bump(o, clearElection: true, joined: stamp);
       expect(
         validateCommit(o, cancel, owner, before: crew, after: after).ok,
         isTrue,
+      );
+      expect(
+        requiredRecord(o, owner, before: crew, after: after),
+        cancel,
+      );
+      // An owner cancel that also moves `ownerRev` is refused.
+      final stamped =
+          bump(o, byOwner: true, clearElection: true, joined: stamp);
+      expect(
+        validateCommit(o, stamped, owner, before: crew, after: after).reject,
+        GovernanceReject.badShape,
       );
       // Anyone else's add leaves the election alone.
       final others = bump(o, joined: stamp);
       expect(
         validateCommit(o, others, admin, before: crew, after: after).ok,
         isTrue,
-      );
-      // The owner's stamp is the owner's alone.
-      expect(
-        validateCommit(o, cancel, admin, before: crew, after: after).reject,
-        GovernanceReject.badShape,
       );
     });
 
@@ -997,7 +1004,7 @@ void main() {
         GovernanceReject.notPruned,
       );
       // A fresh election can open: eve is the only admin left (D82), and
-      // only once the owner's last commit is no older than her promotion.
+      // only once the owner's last decision is no older than her promotion.
       final reopen = bump(
         need,
         election: Election(opened: 12, electorate: {eve}),
@@ -1169,24 +1176,93 @@ void main() {
         expect(plain.ownerRev, 2);
       });
 
-      test('every owner commit stamps ownerRev; nobody else\'s does', () {
+      test('only the owner\'s own role or posting change stamps ownerRev', () {
         final s = quiet();
-        // The owner's commit, with or without a change, rewrites the record.
-        final need = requiredRecord(s, owner, before: roster, after: roster);
-        expect(need.rev, 11);
-        expect(need.ownerRev, 11);
-        expect(commit(s, need, owner).ok, isTrue);
-        expect(commit(s, s, owner).reject, GovernanceReject.badRev);
-        final late = bump(s, moderators: {mod}); // by the owner, unstamped
-        expect(commit(s, late, owner).reject, GovernanceReject.badShape);
-        final change = bump(s, byOwner: true, moderators: {mod});
-        expect(commit(s, change, owner).ok, isTrue);
-        // Someone else's commit leaves it alone, an add included.
+        // A bare owner commit (self-update, reconcile) carries no record.
+        expect(requiredRecord(s, owner, before: roster, after: roster), s);
+        expect(commit(s, s, owner).ok, isTrue);
+        // Each role or posting change by the owner must stamp, and only those.
+        final changes = <String, GovernanceState Function({bool byOwner})>{
+          'moderators': ({bool byOwner = false}) =>
+              bump(s, byOwner: byOwner, moderators: {mod}),
+          'admins': ({bool byOwner = false}) => bump(
+                s,
+                byOwner: byOwner,
+                admins: {...s.admins, bob: 11},
+              ),
+          'electors': ({bool byOwner = false}) =>
+              bump(s, byOwner: byOwner, electors: {carol}),
+          'posting': ({bool byOwner = false}) =>
+              bump(s, byOwner: byOwner, adminsOnlyPosting: true),
+          'channels': ({bool byOwner = false}) =>
+              bump(s, byOwner: byOwner, announcementChannels: {'chan_news'}),
+          'transfer': ({bool byOwner = false}) => bump(
+                s,
+                byOwner: byOwner,
+                owner: admin,
+                admins: {carol: 2, owner: 11},
+              ),
+        };
+        for (final e in changes.entries) {
+          expect(commit(s, e.value(byOwner: true), owner).ok, isTrue,
+              reason: e.key);
+          expect(
+            commit(s, e.value(), owner).reject,
+            GovernanceReject.badShape,
+            reason: e.key,
+          );
+        }
+        // Stamping with nothing decided is refused too.
+        final idle = bump(s, byOwner: true);
+        expect(commit(s, idle, owner).reject, GovernanceReject.badShape);
+        // Someone else's commit leaves it alone.
         expect(requiredRecord(s, admin, before: roster, after: roster), s);
-        const after = {...roster, eve};
-        final added = requiredRecord(s, bob, before: roster, after: after);
-        expect(added.rev, 11);
-        expect(added.ownerRev, 2);
+      });
+
+      test('provoked owner commits (cancel, add, remove) do not stamp', () {
+        final s = quiet().copyWith(
+          admins: {admin: 1, carol: 2, bob: 11},
+          election: vote(old, opened: 11),
+          rev: 11,
+        );
+        // The forced cancel.
+        final cancel = requiredRecord(s, owner, before: roster, after: roster);
+        expect(cancel.election, isNull);
+        expect(cancel.rev, 12);
+        expect(cancel.ownerRev, 2);
+        expect(commit(s, cancel, owner).ok, isTrue);
+        // A reconcile that adds a member.
+        const more = {...roster, eve};
+        final add = requiredRecord(s, owner, before: roster, after: more);
+        expect(add.ownerRev, 2);
+        expect(add.joined[eve], 12);
+        expect(commit(s, add, owner, after: more).ok, isTrue);
+        // A revocation that removes an admin (pruning keeps the stamp).
+        const fewer = {owner, admin, carol, mod};
+        final gone = requiredRecord(s, owner, before: roster, after: fewer);
+        expect(gone.ownerRev, 2);
+        expect(gone.admins.containsKey(bob), isFalse);
+        expect(
+          validateCommit(s, gone, owner, before: roster, after: fewer).ok,
+          isTrue,
+        );
+        // A bare self-update: nothing to carry, and nothing stamped.
+        final idle = s.copyWith(election: null, clearElection: true, rev: 11);
+        expect(commit(idle, idle, owner).ok, isTrue);
+        // Stamping any of them is refused.
+        final stamped = <(GovernanceState, Set<String>)>[
+          (cancel, roster),
+          (add, more),
+          (gone, fewer),
+        ];
+        for (final (rec, after) in stamped) {
+          final bumped = rec.copyWith(ownerRev: rec.rev);
+          expect(
+            validateCommit(s, bumped, owner, before: roster, after: after)
+                .reject,
+            GovernanceReject.badShape,
+          );
+        }
       });
 
       test('a win stamps its own rev, so the old owner and admins count', () {
@@ -1205,7 +1281,7 @@ void main() {
       });
 
       test('admins by ownerRev vote; since == ownerRev counts', () {
-        // eve became admin at rev 4; the owner's last commit is rev 4 or 3.
+        // eve became admin at rev 4; the owner's last decision is rev 4 or 3.
         GovernanceState withEve(int ownerRev) => quiet(ownerRev: ownerRev)
             .copyWith(admins: {admin: 1, carol: 2, eve: 4});
         const crew = {...roster, eve};
@@ -1262,7 +1338,7 @@ void main() {
       });
 
       test('forced removal of every elector in the opening commit', () {
-        // The owner chose dave and carol; the owner's last commit is rev 3.
+        // The owner chose dave and carol; its last decision is rev 3.
         // eve was promoted by an admin at rev 4, after it.
         final s = GovernanceState(
           rev: 10,
@@ -1285,50 +1361,66 @@ void main() {
         );
       });
 
-      test('a claimant must have joined by ownerRev', () {
+      test('owner only adds members, then a claim still succeeds', () {
+        // No admin, and the owner last decided roles at rev 0. It adds a
+        // member (a provoked commit that does not stamp); the longest-serving
+        // member claims as before, and a late joiner can claim too.
         const four = {owner, bob, carol, mod};
-        GovernanceState solo({
-          required int ownerRev,
-          Map<String, int>? joined,
-        }) =>
-            GovernanceState(
-              rev: 10,
-              owner: owner,
-              ownerRev: ownerRev,
-              joined: joined ?? {owner: 0, bob: 1, carol: 2, mod: 3},
-            );
-        GovernanceCheck open(GovernanceState s, String who) => validateCommit(
-              s,
-              bump(s, election: vote({who})),
-              who,
-              before: four,
-              after: four,
-            );
-        // bob joined at rev 1: fine at ownerRev 1, refused before it.
-        expect(open(solo(ownerRev: 1), bob).ok, isTrue);
-        expect(open(solo(ownerRev: 0), bob).reject, GovernanceReject.election);
-        // Everyone senior gone, a newcomer added after the owner went quiet.
-        final late = solo(
-          ownerRev: 3,
-          joined: {owner: 0, bob: 20, mod: 21, carol: 22},
+        final s = GovernanceState(
+          rev: 10,
+          owner: owner,
+          ownerRev: 0,
+          joined: {owner: 0, bob: 1, carol: 2, mod: 3},
         );
-        expect(open(late, bob).reject, GovernanceReject.election);
-        // The win is checked the same way, whatever opened the claim.
-        final c = solo(ownerRev: 0).copyWith(rev: 11, election: vote({bob}));
+        const five = {...four, dave};
+        final added = requiredRecord(s, owner, before: four, after: five);
+        expect(added.ownerRev, 0);
+        expect(added.joined[dave], 11);
+        expect(
+          validateCommit(s, added, owner, before: four, after: five).ok,
+          isTrue,
+        );
+        final claim = bump(added, election: vote({bob}, opened: 12));
+        expect(
+          validateCommit(added, claim, bob, before: five, after: five).ok,
+          isTrue,
+        );
+        // Only the longest-serving member, as before.
+        final other = bump(added, election: vote({dave}, opened: 12));
+        expect(
+          validateCommit(added, other, dave, before: five, after: five).reject,
+          GovernanceReject.election,
+        );
+        // The win goes through, and stamps its own rev.
+        final c = added.copyWith(rev: 12, election: vote({bob}, opened: 12));
         final win = c.copyWith(
-          rev: 12,
-          ownerRev: 12,
+          rev: 13,
+          ownerRev: 13,
           owner: bob,
-          admins: {owner: 12},
+          admins: {owner: 13},
           clearElection: true,
         );
         expect(
-          validateCommit(c, win, bob, before: four, after: four).reject,
-          GovernanceReject.ownerChange,
+          validateCommit(c, win, bob, before: five, after: five).ok,
+          isTrue,
         );
-        final ok = c.copyWith(ownerRev: 1);
+        // Someone who joined after the owner's last decision may claim when
+        // every senior member is gone: there is no claim gate on `ownerRev`.
+        final late = GovernanceState(
+          rev: 30,
+          owner: owner,
+          ownerRev: 3,
+          joined: {owner: 0, bob: 20, mod: 21},
+        );
+        final open = bump(late, election: vote({bob}, opened: 31));
         expect(
-          validateCommit(ok, win, bob, before: four, after: four).ok,
+          validateCommit(
+            late,
+            open,
+            bob,
+            before: {owner, bob, mod},
+            after: {owner, bob, mod},
+          ).ok,
           isTrue,
         );
       });
@@ -1356,10 +1448,10 @@ void main() {
         expect(s.owner, carol);
       });
 
-      test('residual: an owner commit makes everything before it count', () {
-        // The rogue admin promotes stand-ins, opens an election, and the
-        // owner's automatic cancel stamps ownerRev past the promotions.
-        // Receivers cannot tell that commit from a manual one.
+      test('provoked owner commits do not help the rogue; a decision does', () {
+        // The rogue admin promotes stand-ins and opens a throwaway election.
+        // The owner's automatic cancel does not move ownerRev, so the stand-ins
+        // still cannot open or vote.
         var s = quiet();
         GovernanceState step(GovernanceState next, String who) {
           final r = commit(s, next, who);
@@ -1371,8 +1463,18 @@ void main() {
         step(bump(s, election: vote(old, opened: 12)), admin);
         step(requiredRecord(s, owner, before: roster, after: roster), owner);
         expect(s.election, isNull);
+        expect(s.ownerRev, 2);
         const all = {admin, carol, bob, mod};
-        step(bump(s, election: vote(all, opened: 14)), bob);
+        final stuffed = bump(s, election: vote(all, opened: 14));
+        expect(commit(s, stuffed, bob).reject, GovernanceReject.election);
+        // Residual: a deliberate role or posting decision by the owner (here
+        // a posting switch, which the rogue cannot force) after the rogue's
+        // promotions makes them old enough. The roles screen should list
+        // admins promoted by others since ownerRev and prompt the owner to
+        // flag electors.
+        step(bump(s, byOwner: true, adminsOnlyPosting: true), owner);
+        expect(s.ownerRev, 14);
+        step(bump(s, election: vote(all, opened: 15)), bob);
       });
 
       test('residual: a forced removal leaves D82 to the old admin who stays',
