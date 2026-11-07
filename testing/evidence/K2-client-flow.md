@@ -169,3 +169,59 @@ clear paths; memory and SQLite store rules; a sentinel claim absent from
 The NativeCryptoService orchestration was not started: its receiver half
 begins at the v3 claim, which the v3 link screens drive, and it needs the
 transfer-progress tables above.
+
+## 2026-11-07: transfer progress and promotion ledger (local schema 18)
+
+Built the schema-18 half of step 2 above, plus the atomic promotion. The
+transfer streaming itself (source begin/write/finish, upload, download,
+import, ACK) is **not** wired yet. Production messaging stays off.
+
+- Tables (raw SQL in `storage/k2_transfer_sql.dart`, no Drift regeneration):
+  - `local_enrollment_promotions`: the promotion ledger, keyed by identity
+    `(origin, account_id, device_id)`, with kind, promotion ID (K2 claim
+    request digest, K0 request ID) and time. Device IDs are fresh per
+    reservation, so the identity key is what stops a frozen state coming back.
+  - `local_history_transfers`: one row per `(origin, link_id)`, as the native
+    map. Direction, this and the peer device, stage (incoming:
+    awaiting_handoff, downloading, downloaded, imported, acknowledged;
+    outgoing: approving, snapshot_ready, uploaded, acknowledged), transfer ID
+    + digest + size (all or none), exact handoff bytes, cache/download path,
+    offset, fixed expiry, and `payload_json` for mutable fields and the claim
+    token. Identity, expiry, transfer ID, digest, size, handoff and path are
+    frozen once set; the stage only moves forward; offset is at most the size.
+- Lifetimes: the ledger survives sign-out, a cached clear, an identity
+  change and a backup restore; only a full reset drops it (with the pending
+  row). Transfers share the MLS state's lifetime (their native half lives
+  there): dropped by an identity change, a backup restore, a legacy import
+  and a full reset. Neither is in a backup or a history snapshot (tested).
+- Review finding 4 closed for both K2 and K0: `promotePendingEnrollment` is
+  one transaction (session, frozen state at counter 1, cursor 0, ledger row,
+  optional transfer, pending row deleted). The ledger decides first: the same
+  promotion again answers `alreadyPromoted` and opens the stored state;
+  anything else is refused. A ledgered identity's pending row is dropped on
+  load and refused on save; the native service refuses to resume, enroll or
+  seal-activate it. K0's completion and its crash resume now go through the
+  same promotion. The 17→18 upgrade ledgers a pending row whose identity is
+  already active (session + MLS state), so a schema-17 crash window closes.
+- `commitHistoryTransferState`: a native transfer mutation and its progress
+  row in one expected-counter transaction (manifest + handoff before HTTP).
+- Limit: an older build (schema 17) after a downgrade ignores the ledger.
+- Design note for the next slice: the pending MLS state stays frozen, so the
+  receiver applies the approval (`k2ApplyApproval`) after promotion as the
+  first active-state commit, with the approval tag and time kept in the
+  pending payload; no schema change needed.
+
+Checks: `k2_schema18_test.dart` 51 passed locally (Dart 3.13.7 with Flutter
+stubs, system SQLite: fresh create, 17→18 with each pending case, crash after
+each upgrade statement and each promotion statement, 16→18 K0 move then
+ledger, downgrade, stale pending row, both stores: promotion, retry, restore
+and identity change, refusals, transfer rules, atomic commit, lifetimes,
+backup/history sentinels, no secrets in `toString`).
+`native_crypto_service_promotion_test.dart` 3 passed locally against the
+release native library (promote then commit, lost outcome retried onto the
+stored state, frozen identity refused after a restore). Analyzer: no issues
+in the changed storage, crypto and test files. K0 flow tests (2 new) and the
+full Flutter suite run in CI only.
+
+Left: NativeCryptoService source/receive streaming on these tables, v3 link
+screens, two-device runs, independent review.

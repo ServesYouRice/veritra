@@ -200,18 +200,35 @@ extension PendingEnrollmentSql on EncryptedLocalDatabase {
     );
   }
 
-  /// The pending enrollment, or null.
+  /// The pending enrollment, or null. A row whose identity the promotion
+  /// ledger (schema 18) names was already made active once: it is deleted
+  /// and never returned, so its frozen pre-join state cannot come back
+  /// (review finding 4).
   Future<PendingEnrollmentRow?> readPendingEnrollment() =>
-      transaction(_readPendingEnrollmentInTransaction);
+      transaction(() async {
+        final row = await _readPendingEnrollmentInTransaction();
+        if (row == null) return null;
+        if ((await _readPromotionsInTransaction(row.accountId, row.deviceId))
+            .isNotEmpty) {
+          await _clearPendingEnrollment();
+          return null;
+        }
+        return row;
+      });
 
   /// Stores [row] as the pending enrollment. Fails closed with
   /// [PendingEnrollmentConflict] when another enrollment (another kind,
   /// origin, account or device) is pending, and when [row] would replace a
   /// stored MLS state with a different one: once sealed, the identity is
   /// frozen until promotion or abandonment. A [row] without a state keeps
-  /// the stored one.
+  /// the stored one. An identity the promotion ledger names is refused the
+  /// same way: it was made active once already.
   Future<void> writePendingEnrollment(PendingEnrollmentRow row) =>
       transaction(() async {
+        if ((await _readPromotionsInTransaction(row.accountId, row.deviceId))
+            .isNotEmpty) {
+          throw const PendingEnrollmentConflict();
+        }
         final existing = await _readPendingEnrollmentInTransaction();
         final write = mergePendingEnrollment(existing, row);
         if (existing != null) await _clearPendingEnrollment();

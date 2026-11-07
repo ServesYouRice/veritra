@@ -542,9 +542,7 @@ extension AccountRecoveryActions on AppState {
     );
     session = recovered;
     await _oweInitialKeyPackages(recovered);
-    await localStore.saveSession(recovered);
-    await _mlsCrypto?.activateSession(recovered);
-    await localStore.saveSyncCursor(0);
+    await _activateRecoveredIdentity(recovered, pending, saveSession: true);
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
     pendingAccountRecovery = null;
@@ -630,18 +628,38 @@ extension AccountRecoveryActions on AppState {
         pending.origin != canonicalizeServerOrigin(restored.baseUrl)) {
       return;
     }
+    // A row the promotion ledger names never loads (finding 4), so the
+    // empty MLS state below is not the only thing that lets it resume.
     if (await localStore.loadCryptoState() == null) {
       await _recoveryCrypto.resumePendingEnrollment(
         accountId: pending.accountId,
         deviceId: pending.deviceId,
         state: pending.mlsState,
       );
-      await _mlsCrypto?.activateSession(restored);
-      await localStore.saveSyncCursor(0);
+      await _activateRecoveredIdentity(restored, pending, saveSession: false);
     }
     await localStore.deletePendingEnrollment(
         kind: PendingEnrollment.kindAccountRecovery,
         deviceId: pending.deviceId);
+  }
+
+  /// Stores [recovered] with the pending identity [resumePendingEnrollment]
+  /// opened as its MLS state. The native engine does it in one transaction
+  /// with a promotion-ledger row (schema 18), so a later restore or identity
+  /// change can never reactivate the frozen state (finding 4). A crypto
+  /// service without that step (test fakes) takes the older steps.
+  Future<void> _activateRecoveredIdentity(
+      Session recovered, PendingAccountRecovery pending,
+      {required bool saveSession}) async {
+    if (cryptoService case final EnrollmentPromotionCryptoService promoter) {
+      await promoter.promotePendingEnrollment(recovered,
+          kind: PendingEnrollment.kindAccountRecovery,
+          promotionId: pending.requestId);
+      return;
+    }
+    if (saveSession) await localStore.saveSession(recovered);
+    await _mlsCrypto?.activateSession(recovered);
+    await localStore.saveSyncCursor(0);
   }
 
   /// Reads the follow-up step, the leak warning and the server's recovery

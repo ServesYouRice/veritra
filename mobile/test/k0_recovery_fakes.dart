@@ -5,6 +5,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/storage/encrypted_database.dart'
+    show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -137,6 +139,52 @@ class K0Crypto extends TestOnlyCryptoService
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
+}
+
+/// A [K0Crypto] that promotes the way the native engine does: one store
+/// transaction with a promotion-ledger row (schema 18, finding 4).
+class K0PromotingCrypto extends K0Crypto
+    implements EnrollmentPromotionCryptoService {
+  K0PromotingCrypto(this.store);
+  final LocalStore store;
+  final List<EnrollmentPromotionOutcome> promotions =
+      <EnrollmentPromotionOutcome>[];
+
+  // A state the store accepts (a device record has an empty ID).
+  @override
+  Future<StoredCryptoState> sealPendingEnrollment() async {
+    if (!pendingIdentity) throw StateError('no pending enrollment identity');
+    seals++;
+    return StoredCryptoState(
+      counter: 1,
+      stateKey: List<int>.filled(32, 9),
+      sealedState: const <int>[4, 4, 4],
+      changes: const <CryptoRecordChange>[
+        CryptoRecordChange(
+            kind: 1, recordId: <int>[], generation: 1, sealed: <int>[5]),
+      ],
+    );
+  }
+
+  @override
+  Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
+    Session session, {
+    required String kind,
+    required String promotionId,
+    HistoryTransferProgress? transfer,
+  }) async {
+    final outcome = await store.promotePendingEnrollment(EnrollmentPromotion(
+      kind: kind,
+      session: session,
+      promotionId: promotionId,
+      expectedState: resumed.last,
+      promotedAt: DateTime.now().toUtc(),
+      transfer: transfer,
+    ));
+    promotions.add(outcome);
+    pendingIdentity = false;
+    return outcome;
+  }
 }
 
 /// One account's recovery state on the server side.
