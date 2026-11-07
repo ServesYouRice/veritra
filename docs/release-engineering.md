@@ -24,9 +24,13 @@ What the scripts pin (`scripts/repro/env.sh`, `build.ps1`):
 
 - **Clock:** `SOURCE_DATE_EPOCH` = the commit's time. Never "now".
 - **Toolchains:** Rust from `rust-toolchain.toml`, Flutter from `pubspec.yaml`
-  (`3.44.0`), JDK 17, Gradle from the wrapper (9.1.0). A wrong version stops the
-  build. Dependencies come from the lockfiles (`cargo --locked`,
-  `flutter pub get --enforce-lockfile`).
+  (`3.44.0`), JDK 17, Gradle from the wrapper (9.1.0). A wrong Rust, Flutter or
+  JDK version stops the build. Rust and Dart dependencies come from lockfiles
+  (`cargo --locked`, `flutter pub get --enforce-lockfile`). Gradle/Maven
+  dependencies are **not** locked and the Gradle wrapper has no checksum yet:
+  both are open for the first real Android build.
+- **Clean input:** `build.sh` refuses a dirty checkout and a non-empty output
+  folder, and for Android accepts exactly one release APK.
 - **Paths:** `--remap-path-prefix` for the checkout, cargo and rustc; fixed
   `TZ`, `LC_ALL`; no incremental builds; no build-id (Linux), `/Brepro` (Windows).
 - **Release entry point only:** `lib/main.dart`. The demo entry point is never
@@ -35,14 +39,17 @@ What the scripts pin (`scripts/repro/env.sh`, `build.ps1`):
 Known gaps (see the evidence file for what was measured):
 
 - A reproducible build is only as stable as the toolchain it pins. The Android
-  SDK, NDK and Gradle plugin versions are pinned by Flutter 3.44.0 and the
-  wrapper, but the SDK build-tools version is whatever is installed. For the
+  Gradle-side NDK is pinned by Flutter 3.44.0, but the Rust library uses
+  `ANDROID_NDK_HOME` or else the newest installed NDK, and the SDK build-tools
+  version is whatever is installed. Set all three explicitly. For the
   first real build, record it and pin it in the owner's build image.
 - Signing changes the file. The signature is added **after** `verify`, to the
-  digest-checked unsigned file; F-Droid and the update channel compare the
-  unsigned content.
-- The container image path already is deterministic (`release.yml`); these
-  scripts cover the apps.
+  digest-checked unsigned file. F-Droid compares the unsigned content; the
+  update channel (below) checks the signed installer's digest.
+- Measured so far: one host, two directories. F-Droid's check needs the same
+  result on a different host; that is not shown.
+- The server container image is out of scope here; its determinism is not
+  measured by these scripts.
 
 ## Windows installer
 
@@ -67,13 +74,19 @@ Goal: a user's installed desktop app learns that a newer, genuine build exists,
 without a vendor service and without telemetry.
 
 1. **Where:** a static `update.json` on the GitHub release (or the user's own
-   server). Fields: `version`, `build`, `url`, `sha256`, `signature`, `notes`.
-2. **Trust:** the file is signed with an **update key**, separate from the
-   Windows code-signing certificate. The public key is compiled into the app.
-   An update that fails the signature, or whose installer digest differs from
-   `sha256`, is rejected. A downgrade (lower `build`) is rejected.
-3. **Check:** on start and once a day, one HTTPS `GET` of `update.json` with no
-   identifiers, no cookies, no counters. A setting turns it off.
+   server), plus a **detached** signature file `update.json.sig` over the exact
+   bytes. Fields: `version`, `build`, `platform`, `arch`, `issued_at`,
+   `expires_at`, `url`, `sha256`, `notes`.
+2. **Trust:** signed with an **update key**, separate from the Windows
+   code-signing certificate; its public key is compiled into the app. Rejected:
+   a bad signature, a digest mismatch, a different platform or arch, a lower
+   `build` (downgrade), and a file past `expires_at` (stops a mirror serving an
+   old but validly signed file forever).
+3. **Check:** one HTTPS `GET` of the file with no identifiers or cookies. It
+   still shows the user's IP address and the app's User-Agent to the host
+   (GitHub). **Owner decision:** on by default (daily, with an off switch), or
+   off until the user opts in. Opt-in is the more private choice; default-on
+   updates more users.
 4. **Install:** the app downloads the installer, checks the digest, shows
    "Version X is ready, restart to update", and starts the signed installer in
    silent mode. Never silently, never without the user's click.

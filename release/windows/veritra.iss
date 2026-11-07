@@ -41,8 +41,8 @@ OutputDir={#OutDir}
 OutputBaseFilename=Veritra-Setup-{#AppVersion}-x64
 Compression=lzma2
 SolidCompression=yes
-; Same bytes for the same input: no timestamp in the installer.
-; (Inno honours SOURCE_DATE_EPOCH from 6.2 on.)
+; Reproducibility of the installer itself is NOT measured (Inno stores file
+; timestamps); only the app folder it packages is checked by verify.ps1.
 UninstallDisplayIcon={app}\private_messenger.exe
 LicenseFile={#SourcePath}\..\..\LICENSE
 ; SignTool=veritra

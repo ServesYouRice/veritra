@@ -9,7 +9,7 @@ try {
     $src = Join-Path $Work "$run\src"
     git -C $Root worktree add --detach -q $src HEAD
     if ($LASTEXITCODE -ne 0) { throw "worktree failed" }
-    & powershell -NoProfile -File (Join-Path $src "scripts\repro\build.ps1") -OutDir (Join-Path $Work "$run\out")
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $src "scripts\repro\build.ps1") -OutDir (Join-Path $Work "$run\out")
     if ($LASTEXITCODE -ne 0) { throw "build $run failed" }
   }
   $a = Get-Content (Join-Path $Work "a\out\SHA256SUMS")

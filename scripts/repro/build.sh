@@ -19,6 +19,11 @@ cd "$ROOT"
 . "$ROOT/scripts/repro/env.sh"
 check_rust
 mkdir -p "$OUT"
+[ -z "$(ls -A "$OUT")" ] || fail "OUTDIR $OUT is not empty"
+# Uncommitted changes would be built under HEAD's timestamp: refuse, so the
+# digests always describe a commit.
+[ -z "$(git status --porcelain --untracked-files=normal)" ] ||
+  fail "the checkout has uncommitted changes; commit or stash first"
 OUT=$(CDPATH= cd -- "$OUT" && pwd)
 
 # Release builds only: the demo entry point (main_demo.dart) is never built here.
@@ -52,8 +57,11 @@ case $TARGET in
     (cd mobile && flutter build apk --release --no-tree-shake-icons)
     # Unsigned on purpose (mobile/android/app/build.gradle.kts). The signing
     # step belongs to the owner and runs on the finished file, not in here.
-    apk=$(find mobile/build/app/outputs -name '*.apk' | LC_ALL=C sort | head -n 1)
-    [ -n "$apk" ] || fail "no APK was produced"
+    # Only the release APK counts: a debug or demo APK left in the checkout
+    # must never be picked up and labelled as a release.
+    apk=$(find mobile/build/app/outputs -path '*/release/*' -name '*.apk' | LC_ALL=C sort)
+    [ -n "$apk" ] && [ "$(printf '%s\n' "$apk" | wc -l)" -eq 1 ] ||
+      fail "expected exactly one release APK, found: ${apk:-none}"
     cp "$apk" "$OUT/veritra-release-unsigned.apk"
     ;;
   macos)
