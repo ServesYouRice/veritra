@@ -45,7 +45,8 @@ const Duration electionWait = Duration(days: 7);
 bool mayOpenElectionNow({
   required DateTime now,
   required DateTime lastOwnerActivity,
-}) => now.difference(lastOwnerActivity) >= ownerInactivityWait;
+}) =>
+    now.difference(lastOwnerActivity) >= ownerInactivityWait;
 
 /// Local clock rule: may this app vote (or, in a claim, take ownership) now?
 /// [openedSeen] is when this app saw the election open.
@@ -67,8 +68,8 @@ class Election {
     required this.opened,
     required Set<String> electorate,
     Map<String, String> votes = const {},
-  }) : electorate = Set.unmodifiable(electorate),
-       votes = Map.unmodifiable(votes);
+  })  : electorate = Set.unmodifiable(electorate),
+        votes = Map.unmodifiable(votes);
 
   /// The record `rev` that opened it.
   final int opened;
@@ -120,11 +121,11 @@ class GovernanceState {
     Set<String> electors = const {},
     this.election,
     Map<String, int> joined = const {},
-  }) : admins = Map.unmodifiable(admins),
-       moderators = Set.unmodifiable(moderators),
-       announcementChannels = Set.unmodifiable(announcementChannels),
-       electors = Set.unmodifiable(electors),
-       joined = Map.unmodifiable(joined);
+  })  : admins = Map.unmodifiable(admins),
+        moderators = Set.unmodifiable(moderators),
+        announcementChannels = Set.unmodifiable(announcementChannels),
+        electors = Set.unmodifiable(electors),
+        joined = Map.unmodifiable(joined);
 
   /// The first state, written when the creator makes the MLS group: the
   /// creator owns it, nobody else holds a role, nothing is restricted.
@@ -178,17 +179,18 @@ class GovernanceState {
     Election? election,
     bool clearElection = false,
     Map<String, int>? joined,
-  }) => GovernanceState(
-    rev: rev ?? this.rev,
-    owner: clearOwner ? null : (owner ?? this.owner),
-    admins: admins ?? this.admins,
-    moderators: moderators ?? this.moderators,
-    adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
-    announcementChannels: announcementChannels ?? this.announcementChannels,
-    electors: electors ?? this.electors,
-    election: clearElection ? null : (election ?? this.election),
-    joined: joined ?? this.joined,
-  );
+  }) =>
+      GovernanceState(
+        rev: rev ?? this.rev,
+        owner: clearOwner ? null : (owner ?? this.owner),
+        admins: admins ?? this.admins,
+        moderators: moderators ?? this.moderators,
+        adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
+        announcementChannels: announcementChannels ?? this.announcementChannels,
+        electors: electors ?? this.electors,
+        election: clearElection ? null : (election ?? this.election),
+        joined: joined ?? this.joined,
+      );
 
   /// The account's role. Meaningful only for an account in the MLS roster.
   BuiltInRole roleOf(String account) {
@@ -260,16 +262,16 @@ class GovernanceState {
 
   @override
   int get hashCode => Object.hash(
-    rev,
-    owner,
-    admins.length,
-    moderators.length,
-    adminsOnlyPosting,
-    announcementChannels.length,
-    electors.length,
-    election,
-    joined.length,
-  );
+        rev,
+        owner,
+        admins.length,
+        moderators.length,
+        adminsOnlyPosting,
+        announcementChannels.length,
+        electors.length,
+        election,
+        joined.length,
+      );
 }
 
 /// Why a change was refused. Stable codes for logs and tests.
@@ -349,9 +351,8 @@ GovernanceCheck validateTransition(
   }
   // An admin keeps its seniority; a new admin starts at this rev.
   for (final e in next.admins.entries) {
-    final since = prev.roleOf(e.key) == BuiltInRole.admin
-        ? prev.admins[e.key]
-        : next.rev;
+    final since =
+        prev.roleOf(e.key) == BuiltInRole.admin ? prev.admins[e.key] : next.rev;
     if (e.value != since) return no(GovernanceReject.badShape);
   }
   // `joined` is written once, when an account is added, and only a removal
@@ -504,8 +505,7 @@ GovernanceReject? _checkWin(
   final old = prev.owner;
   final admins = {...prev.admins}..remove(winner);
   if (old != null && members.contains(old)) admins[old] = next.rev;
-  final ok =
-      _mapEq(next.admins, admins) &&
+  final ok = _mapEq(next.admins, admins) &&
       _setEq(next.electors, prev.electors.difference({winner})) &&
       _setEq(next.moderators, prev.moderators.difference({winner})) &&
       next.adminsOnlyPosting == prev.adminsOnlyPosting &&
@@ -594,7 +594,8 @@ GovernanceState requiredRecord(
   String committer, {
   required Set<String> before,
   required Set<String> after,
-}) => _required(prev, committer, before: before, after: after).record;
+}) =>
+    _required(prev, committer, before: before, after: after).record;
 
 ({GovernanceState base, GovernanceState record, bool cancel}) _required(
   GovernanceState prev,
@@ -648,8 +649,8 @@ GovernanceCheck validateCommit(
       cancel
           ? GovernanceReject.election
           : base != prev
-          ? GovernanceReject.notPruned
-          : GovernanceReject.badRev,
+              ? GovernanceReject.notPruned
+              : GovernanceReject.badRev,
     );
   }
   return validateTransition(

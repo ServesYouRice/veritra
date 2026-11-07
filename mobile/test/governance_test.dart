@@ -13,18 +13,19 @@ void main() {
 
   // rev 3: admin since rev 1, moderator since rev 2.
   GovernanceState base() => GovernanceState(
-    rev: 3,
-    owner: owner,
-    admins: {admin: 1},
-    moderators: {mod},
-  );
+        rev: 3,
+        owner: owner,
+        admins: {admin: 1},
+        moderators: {mod},
+      );
 
   GovernanceCheck check(
     GovernanceState prev,
     GovernanceState next,
     String who, {
     Set<String> roster = members,
-  }) => validateTransition(prev, next, who, members: roster);
+  }) =>
+      validateTransition(prev, next, who, members: roster);
 
   GovernanceState bump(
     GovernanceState s, {
@@ -37,18 +38,19 @@ void main() {
     Election? election,
     bool clearElection = false,
     Map<String, int>? joined,
-  }) => s.copyWith(
-    rev: s.rev + 1,
-    owner: owner,
-    admins: admins,
-    moderators: moderators,
-    adminsOnlyPosting: adminsOnlyPosting,
-    announcementChannels: announcementChannels,
-    electors: electors,
-    election: election,
-    clearElection: clearElection,
-    joined: joined,
-  );
+  }) =>
+      s.copyWith(
+        rev: s.rev + 1,
+        owner: owner,
+        admins: admins,
+        moderators: moderators,
+        adminsOnlyPosting: adminsOnlyPosting,
+        announcementChannels: announcementChannels,
+        electors: electors,
+        election: election,
+        clearElection: clearElection,
+        joined: joined,
+      );
 
   group('roles and posting', () {
     test('genesis: the creator owns the group, nobody else has a role', () {
@@ -459,7 +461,8 @@ void main() {
     Election poll({
       Map<String, String> votes = const {},
       Set<String> who = const {admin, carol, dave},
-    }) => Election(opened: 11, electorate: who, votes: votes);
+    }) =>
+        Election(opened: 11, electorate: who, votes: votes);
 
     // The council with an election open since rev 11.
     GovernanceState opened({Map<String, String> votes = const {}}) =>
@@ -467,23 +470,24 @@ void main() {
 
     // The commit that sets [heir] as owner and clears the election.
     GovernanceState won(GovernanceState s, String heir) => s.copyWith(
-      rev: s.rev + 1,
-      owner: heir,
-      admins: {
-        for (final e in s.admins.entries)
-          if (e.key != heir) e.key: e.value,
-        owner: s.rev + 1,
-      },
-      electors: s.electors.difference({heir}),
-      clearElection: true,
-    );
+          rev: s.rev + 1,
+          owner: heir,
+          admins: {
+            for (final e in s.admins.entries)
+              if (e.key != heir) e.key: e.value,
+            owner: s.rev + 1,
+          },
+          electors: s.electors.difference({heir}),
+          clearElection: true,
+        );
 
     GovernanceCheck run(
       GovernanceState s,
       GovernanceState next,
       String who, {
       Set<String> roster = crew,
-    }) => validateTransition(s, next, who, members: roster);
+    }) =>
+        validateTransition(s, next, who, members: roster);
 
     test('the owner cannot leave until it transfers', () {
       expect(base().mayLeave(owner), isFalse);
@@ -786,11 +790,11 @@ void main() {
       const four = {owner, bob, carol, mod};
       // bob joined first after the owner.
       GovernanceState solo({Map<String, int>? joined}) => GovernanceState(
-        rev: 10,
-        owner: owner,
-        moderators: {mod},
-        joined: joined ?? {owner: 0, bob: 1, carol: 2, mod: 3},
-      );
+            rev: 10,
+            owner: owner,
+            moderators: {mod},
+            joined: joined ?? {owner: 0, bob: 1, carol: 2, mod: 3},
+          );
       Election alone(String who) => Election(opened: 11, electorate: {who});
 
       test('only that member opens, with a snapshot of itself', () {
@@ -932,10 +936,8 @@ void main() {
         isTrue,
       );
       // Keeping the dead election is refused.
-      final kept = s
-          .removeAccount(admin)
-          .removeAccount(carol)
-          .removeAccount(dave);
+      final kept =
+          s.removeAccount(admin).removeAccount(carol).removeAccount(dave);
       expect(kept.election, isNotNull);
       expect(
         validateCommit(s, kept, bob, before: crew, after: after).ok,
