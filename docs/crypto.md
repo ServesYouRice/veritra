@@ -511,6 +511,47 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     `mobile/test/chat_sync_paused_test.dart`,
     `server/internal/httpapi/scoped_sync_handlers_test.go`.
 
+- **K1-1, backup container seal, peek and open, ABI 16 (2026-11-07):**
+  additive; the Dart binding and the header now pin ABI 16 exactly (ABIs 14
+  and 15 belong to other packages). Design:
+  [`K1-automatic-backups.md`](designs/K1-automatic-backups.md), owner
+  defaults D91. Nothing calls it yet: no app, server or schema path uses the
+  container until K1-2 and K1-3. **Needs the independent crypto review
+  before release.** Vector: `testing/vectors/k1-backup-v1.json` (Rust checks
+  all of it; Dart checks the header and a seal/open round trip). Code:
+  `crypto/rust/src/history.rs`, `history_backup_tests.rs`, `ffi.rs`.
+  - **New symbols.** `pm_crypto_backup_seal`, `pm_crypto_backup_peek` and
+    `pm_crypto_backup_open`.
+  - **Container.** VHC1 kind 1, exactly as
+    [`K0-long-lived-key.md`](designs/K0-long-lived-key.md) specifies: HPKE
+    base mode (DHKEM X25519, HKDF-SHA256, AES-256-GCM) seals `FK ||
+    nonce_prefix` to `rk_pub` with `info = "veritra-k0-seal-v1" |
+    lp(account_id)` and `aad = H0`; the chunk context hashes the full header
+    `H = H0 | lp(enc) | lp(sealed_fk)`, so any header byte, `enc` included,
+    is bound. `enc` is 32 bytes and `sealed_fk` 56. The header carries
+    account, source device, creation time, counter and `rk_id`, which Seal
+    derives from `rk_pub` itself. The file key is fresh per backup and never
+    leaves Rust.
+  - **Open** takes the 30-byte RK entropy and derives `rk_sk` inside Rust
+    (`recovery::derive_hpke_key_pair`); the private key never crosses the
+    ABI and is wiped on drop. It refuses another account, another `rk_id`
+    (before any HPKE work), another source device (only when the caller
+    pins one; a file restore passes none and reads the device from the
+    returned header), a kind-2 bundle, a non-canonical padded size or
+    non-zero padding.
+  - **Peek** reads the header from the first 416 bytes and returns account
+    id, device id and a 41-byte meta (`created_at_ms`, `counter`, `rk_id`,
+    `plaintext_version`, `padded_size`). It authenticates nothing; it exists
+    so the app refuses a wrong key or device before downloading the body.
+  - **Padding.** The padded size is Signal's attachment bucket of the framed
+    payload (`1.05^k`, built by repeated multiplication as
+    `paddedAttachmentSize`), at least 1 MiB, rounded up to the 64 KiB frame,
+    at most 64 MiB. The payload must be non-empty and at most 64 MiB - 8. A
+    test pins the bucket sizes against an independent Python computation, and
+    the Dart test checks them against `paddedAttachmentSize`.
+  - **Refactor.** The K2 bundle (kind 2) shares the header reader and the
+    chunk decoder; its bytes and tests are unchanged.
+
 - **C7 step 2, history primitives, ABI 13 (2026-11-07):** additive; the Dart
   binding and the header now pin ABI 13 exactly. Design:
   [`C7-channel-history.md`](designs/C7-channel-history.md) revision 7 (owner

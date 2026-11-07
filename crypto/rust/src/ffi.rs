@@ -663,6 +663,159 @@ pub unsafe extern "C" fn pm_crypto_recovery_proof_sign(
     })
 }
 
+fn history_error(error: crate::history::HistoryError) -> i32 {
+    match error {
+        crate::history::HistoryError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
+        crate::history::HistoryError::Authentication | crate::history::HistoryError::Crypto => {
+            PM_CRYPTO_ERROR
+        }
+    }
+}
+
+/// Fixed 41-byte description of a backup header, all big-endian:
+/// `created_at_ms (8) | counter (8) | rk_id (16) | plaintext_version (1) |
+/// padded_size (8)`.
+fn backup_meta(header: &crate::history::BundleHeader, padded: usize) -> Result<Vec<u8>, i32> {
+    let rk_id = header.recovery_key_id.ok_or(PM_CRYPTO_ERROR)?;
+    let mut meta = Vec::with_capacity(41);
+    meta.extend_from_slice(&header.created_at_ms.to_be_bytes());
+    meta.extend_from_slice(&header.snapshot_counter.to_be_bytes());
+    meta.extend_from_slice(&rk_id);
+    meta.push(header.plaintext_version);
+    meta.extend_from_slice(&(padded as u64).to_be_bytes());
+    Ok(meta)
+}
+
+/// ABI 16 (K1): seals `payload` into a VHC1 kind-1 backup container for the
+/// recovery public key `rk_pub` (32 bytes). The container binds the account,
+/// source device, creation time, counter and `rk_id` (derived here from
+/// `rk_pub`). The padded size follows the K1 bucket rule. A fresh file key is
+/// sealed to `rk_pub` and is never returned.
+///
+/// # Safety
+/// Every slice must be readable and `out_ciphertext` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_backup_seal(
+    account_id: PmByteSlice,
+    source_device_id: PmByteSlice,
+    created_at_ms: u64,
+    counter: u64,
+    plaintext_version: u32,
+    rk_pub: PmByteSlice,
+    payload: PmByteSlice,
+    out_ciphertext: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_ciphertext.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let account_id = unsafe { borrowed(account_id, MAX_ID_BYTES)? };
+        let source_device_id = unsafe { borrowed(source_device_id, MAX_ID_BYTES)? };
+        let rk_pub: [u8; 32] = unsafe { borrowed(rk_pub, 32)? }
+            .try_into()
+            .map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        let payload = unsafe { borrowed(payload, crate::history::MAX_PADDED_HISTORY)? };
+        let plaintext_version =
+            u8::try_from(plaintext_version).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        let header = crate::history::BundleHeader {
+            account_id: account_id.to_vec(),
+            source_device_id: source_device_id.to_vec(),
+            created_at_ms,
+            snapshot_counter: counter,
+            recovery_key_id: Some(crate::history::recovery_id(&rk_pub)),
+            plaintext_version,
+        };
+        let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+        let ciphertext = crate::history::seal_backup(&provider, &header, &rk_pub, payload)
+            .map_err(history_error)?;
+        unsafe { output(out_ciphertext, ciphertext) }
+    })
+}
+
+/// ABI 16 (K1): reads the header of a backup container from its first bytes
+/// (the first 416 are enough), before any body is downloaded. Returns the
+/// account id, the source device id and the 41-byte meta (see `backup_meta`).
+/// Nothing is authenticated: it only lets the app refuse a wrong account,
+/// device or key early. `pm_crypto_backup_open` is the real check.
+///
+/// # Safety
+/// `prefix` must be readable and every output writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_backup_peek(
+    prefix: PmByteSlice,
+    out_account_id: *mut PmOwnedBuffer,
+    out_source_device_id: *mut PmOwnedBuffer,
+    out_meta: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_account_id.is_null() || out_source_device_id.is_null() || out_meta.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let prefix = unsafe { borrowed(prefix, crate::history::MAX_PEEK_BYTES)? };
+        let peek = crate::history::peek_backup(prefix).map_err(history_error)?;
+        let meta = backup_meta(&peek.header, peek.padded)?;
+        unsafe {
+            three_outputs(
+                [out_account_id, out_source_device_id, out_meta],
+                [peek.header.account_id, peek.header.source_device_id, meta],
+            )
+        }
+    })
+}
+
+/// ABI 16 (K1): opens a backup container with the typed recovery-key
+/// entropy (30 bytes). `rk_sk` is derived and wiped inside Rust. Fails if the
+/// container is for another account, another recovery key, or (when
+/// `source_device_id` is non-empty) another source device, or if any byte
+/// was changed. Returns the plaintext, the source device id and the 41-byte meta.
+///
+/// # Safety
+/// Every non-empty slice must be readable and the outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_backup_open(
+    ciphertext: PmByteSlice,
+    entropy: PmByteSlice,
+    account_id: PmByteSlice,
+    source_device_id: PmByteSlice,
+    out_payload: *mut PmOwnedBuffer,
+    out_source_device_id: *mut PmOwnedBuffer,
+    out_meta: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_payload.is_null() || out_source_device_id.is_null() || out_meta.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let ciphertext = unsafe { borrowed(ciphertext, crate::history::MAX_HISTORY_CIPHERTEXT)? };
+        let entropy = unsafe { borrowed(entropy, recovery::ENTROPY_BYTES)? };
+        let account_id = unsafe { borrowed(account_id, MAX_ID_BYTES)? };
+        // An empty device id means "do not pin the source device" (restore
+        // from a file, where the server row is gone).
+        let device = if source_device_id.len == 0 {
+            None
+        } else {
+            Some(unsafe { borrowed(source_device_id, MAX_ID_BYTES)? })
+        };
+        let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+        let opened =
+            crate::history::open_backup(&provider, ciphertext, entropy, account_id, device)
+                .map_err(history_error)?;
+        let padded = crate::history::peek_backup(ciphertext)
+            .map_err(history_error)?
+            .padded;
+        let meta = backup_meta(&opened.header, padded)?;
+        unsafe {
+            three_outputs(
+                [out_payload, out_source_device_id, out_meta],
+                [
+                    opened.payload.as_slice().to_vec(),
+                    opened.header.source_device_id,
+                    meta,
+                ],
+            )
+        }
+    })
+}
+
 fn report_error(error: report::ReportError) -> i32 {
     match error {
         report::ReportError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,

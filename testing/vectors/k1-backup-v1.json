@@ -1,0 +1,17 @@
+{
+  "description": "K1 backup container (VHC1 kind 1) known-answer vector. Checked by crypto/rust/src/history_backup_tests.rs and mobile/test/k1_backup_native_test.dart. See docs/designs/K1-automatic-backups.md. HPKE encapsulation is random, so the file pins one sealed header; the chunk layer is deterministic under the pinned file secrets. Changing any value is a protocol change.",
+  "account_id": "acct_k1_vector",
+  "ciphertext_sha256_hex": "53fa7cca30845621f2f98e9bbf670c7fc4f3c8d168afe4812d66f3bbb995d4b8",
+  "counter": 42,
+  "created_at_ms": 1730000000000,
+  "file_key_hex": "6161616161616161616161616161616161616161616161616161616161616161",
+  "header_hex": "5648433101000e616363745f6b315f766563746f72000d6465765f6b315f766563746f7200000192cc091400000000000000002a0010530ceffe7f20ef5939bcce351ca456540000000100000000001000000600202874451fbef7f0157eb40625fd695d009078894dc03bfc710b5fdef7d1c3417c00383f523825a4a8795c6e49079c86e5e2292f14824bcc1ff9738cf70a7330f4f4d03613787878e89fbad736e1f2d673ddbf70d1e1e10d731098",
+  "nonce_prefix_hex": "6262626262626262",
+  "padded_size": 1048576,
+  "payload_hex": "7b2273796e746865746963223a226b31206261636b757020766563746f72227d",
+  "plaintext_version": 6,
+  "recovery_key_entropy_hex": "0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccdde",
+  "rk_id_hex": "530ceffe7f20ef5939bcce351ca45654",
+  "rk_pub_hex": "686dabd0ddbcbf541e5f5df9c5d120222c2fd6dbee331c25fc1a0485888de208",
+  "source_device_id": "dev_k1_vector"
+}

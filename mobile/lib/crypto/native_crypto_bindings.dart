@@ -205,6 +205,30 @@ typedef _RecoveryProofNative = Int32 Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RecoveryProofDart = int Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _BackupSealNative = Int32 Function(_PmByteSlice, _PmByteSlice, Uint64,
+    Uint64, Uint32, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _BackupSealDart = int Function(_PmByteSlice, _PmByteSlice, int, int,
+    int, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _BackupPeekNative = Int32 Function(_PmByteSlice,
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _BackupPeekDart = int Function(_PmByteSlice, Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _BackupOpenNative = Int32 Function(
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _BackupOpenDart = int Function(
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
 typedef _ThreeSlicesOutputNative = Int32 Function(
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _ThreeSlicesOutputDart = int Function(
@@ -228,6 +252,37 @@ class RecoveryKeyPublic {
   final Uint8List rkPub;
   final Uint8List rkId;
   final Uint8List rkAuthPub;
+}
+
+/// What a K1 backup container's header says (ABI 16). From [peekBackup] it is
+/// unauthenticated; from [openBackup] it is authenticated.
+class BackupHeaderInfo {
+  const BackupHeaderInfo({
+    required this.accountId,
+    required this.sourceDeviceId,
+    required this.createdAtMs,
+    required this.counter,
+    required this.rkId,
+    required this.plaintextVersion,
+    required this.paddedSize,
+  });
+
+  final String accountId;
+  final String sourceDeviceId;
+  final int createdAtMs;
+  final int counter;
+  final Uint8List rkId;
+  final int plaintextVersion;
+  final int paddedSize;
+}
+
+/// An opened K1 backup: the header and the plaintext. The caller wipes
+/// [plaintext].
+class OpenedBackup {
+  const OpenedBackup({required this.header, required this.plaintext});
+
+  final BackupHeaderInfo header;
+  final Uint8List plaintext;
 }
 
 class NativeCryptoBindings {
@@ -281,6 +336,15 @@ class NativeCryptoBindings {
         _recoveryDerive =
             library.lookupFunction<_RecoveryDeriveNative, _RecoveryDeriveDart>(
                 'pm_crypto_recovery_key_derive'),
+        _backupSeal =
+            library.lookupFunction<_BackupSealNative, _BackupSealDart>(
+                'pm_crypto_backup_seal'),
+        _backupPeek =
+            library.lookupFunction<_BackupPeekNative, _BackupPeekDart>(
+                'pm_crypto_backup_peek'),
+        _backupOpen =
+            library.lookupFunction<_BackupOpenNative, _BackupOpenDart>(
+                'pm_crypto_backup_open'),
         _recoveryProof =
             library.lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
                 'pm_crypto_recovery_proof_sign'),
@@ -347,7 +411,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 13) {
+    if (_abiVersion() != 16) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -397,6 +461,9 @@ class NativeCryptoBindings {
   final _LocatorDart _recoveryDecode;
   final _RecoveryDeriveDart _recoveryDerive;
   final _RecoveryProofDart _recoveryProof;
+  final _BackupSealDart _backupSeal;
+  final _BackupPeekDart _backupPeek;
+  final _BackupOpenDart _backupOpen;
   final _OutputDart _reportKeyGenerate;
   final _LocatorDart _reportKeyPublic;
   final _ThreeSlicesOutputDart _reportSeal;
@@ -486,6 +553,157 @@ class NativeCryptoBindings {
         calloc.free(rkAuthPub);
       }
     });
+  }
+
+  /// The most a K1 backup plaintext may hold (`MAX_PADDED_HISTORY` less the
+  /// 8-byte length frame).
+  static const backupMaxPlaintextBytes = 64 * 1024 * 1024 - 8;
+
+  /// The most of a backup container the header peek needs.
+  static const backupPeekBytes = 416;
+
+  /// Seals [plaintext] into a K1 backup container for [rkPub] (ABI 16). The
+  /// container binds [accountId], [sourceDeviceId], [createdAtMs], [counter]
+  /// and the key id derived from [rkPub]. Padding is applied in Rust. The
+  /// file key is fresh, sealed to [rkPub] and never returned. [plaintext]
+  /// must not be empty.
+  Uint8List sealBackup({
+    required String accountId,
+    required String sourceDeviceId,
+    required int createdAtMs,
+    required int counter,
+    required int plaintextVersion,
+    required Uint8List rkPub,
+    required Uint8List plaintext,
+  }) {
+    final account = utf8.encode(accountId);
+    final device = utf8.encode(sourceDeviceId);
+    _bounded(account, 128);
+    _bounded(device, 128);
+    _bounded(rkPub, 32, exact: true);
+    _bounded(plaintext, backupMaxPlaintextBytes);
+    if (createdAtMs <= 0 ||
+        counter <= 0 ||
+        plaintextVersion <= 0 ||
+        plaintextVersion > 255) {
+      throw ArgumentError('Invalid backup header value');
+    }
+    return Uint8List.fromList(_withByteLists(
+        <List<int>>[account, device, rkPub, plaintext],
+        (slices) => _output(
+            (out) => _backupSeal(slices[0], slices[1], createdAtMs, counter,
+                plaintextVersion, slices[2], slices[3], out),
+            maximum: backupMaxPlaintextBytes + 64 * 1024 * 2 + 4096)));
+  }
+
+  /// Reads the header of a backup from its first [backupPeekBytes] bytes,
+  /// before the body is downloaded. Nothing is authenticated: use it to
+  /// refuse a wrong account, device or key early. [openBackup] is the check.
+  BackupHeaderInfo peekBackup(Uint8List prefix) {
+    _bounded(prefix, backupPeekBytes);
+    return _withSlice(prefix, (slice) {
+      final account = calloc<_PmOwnedBuffer>();
+      final device = calloc<_PmOwnedBuffer>();
+      final meta = calloc<_PmOwnedBuffer>();
+      try {
+        _check(_backupPeek(slice, account, device, meta));
+        return _backupHeader(_take(account.ref, maximum: 128),
+            _take(device.ref, maximum: 128), _take(meta.ref, maximum: 41));
+      } finally {
+        if (account.ref.data != nullptr) _free(account.ref);
+        if (device.ref.data != nullptr) _free(device.ref);
+        if (meta.ref.data != nullptr) _free(meta.ref);
+        calloc.free(account);
+        calloc.free(device);
+        calloc.free(meta);
+      }
+    });
+  }
+
+  /// Opens a backup with the typed recovery-key [entropy] (ABI 16). Throws
+  /// if the container is for another account or key, if [sourceDeviceId] is
+  /// given and differs, or if any byte was changed. Pass no
+  /// [sourceDeviceId] only for a restore from a file. The caller wipes
+  /// [OpenedBackup.plaintext] and [entropy].
+  OpenedBackup openBackup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  }) {
+    final account = utf8.encode(accountId);
+    final device = sourceDeviceId == null ? null : utf8.encode(sourceDeviceId);
+    _bounded(ciphertext, backupMaxPlaintextBytes + 64 * 1024 * 2 + 4096);
+    _bounded(entropy, recoveryKeyEntropyBytes, exact: true);
+    _bounded(account, 128);
+    if (device != null) _bounded(device, 128);
+    return _withSlice(ciphertext, (cipherSlice) {
+      return _withSlice(entropy, (entropySlice) {
+        return _withByteLists(<List<int>>[account], (accountSlices) {
+          return _withOptionalSlice(device, (deviceSlice) {
+            final payload = calloc<_PmOwnedBuffer>();
+            final sourceDevice = calloc<_PmOwnedBuffer>();
+            final meta = calloc<_PmOwnedBuffer>();
+            try {
+              // An empty device slice is how Rust reads "do not pin".
+              _check(_backupOpen(cipherSlice, entropySlice, accountSlices[0],
+                  deviceSlice, payload, sourceDevice, meta));
+              final plaintext = Uint8List.fromList(
+                  _take(payload.ref, maximum: backupMaxPlaintextBytes));
+              return OpenedBackup(
+                header: _backupHeader(
+                    account,
+                    _take(sourceDevice.ref, maximum: 128),
+                    _take(meta.ref, maximum: 41)),
+                plaintext: plaintext,
+              );
+            } finally {
+              if (payload.ref.data != nullptr) _free(payload.ref);
+              if (sourceDevice.ref.data != nullptr) _free(sourceDevice.ref);
+              if (meta.ref.data != nullptr) _free(meta.ref);
+              calloc.free(payload);
+              calloc.free(sourceDevice);
+              calloc.free(meta);
+            }
+          });
+        });
+      });
+    });
+  }
+
+  /// Like [_withSlice], but null reads as the empty slice (null pointer,
+  /// length 0) for the one argument Rust treats as optional.
+  T _withOptionalSlice<T>(
+      List<int>? bytes, T Function(_PmByteSlice) operation) {
+    if (bytes == null) {
+      final slice = calloc<_PmByteSlice>();
+      try {
+        slice.ref
+          ..data = nullptr
+          ..len = 0;
+        return operation(slice.ref);
+      } finally {
+        calloc.free(slice);
+      }
+    }
+    return _withSlice(Uint8List.fromList(bytes), operation);
+  }
+
+  BackupHeaderInfo _backupHeader(
+      List<int> account, List<int> device, List<int> meta) {
+    if (meta.length != 41) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    final data = ByteData.sublistView(Uint8List.fromList(meta));
+    return BackupHeaderInfo(
+      accountId: utf8.decode(account),
+      sourceDeviceId: utf8.decode(device),
+      createdAtMs: data.getUint64(0),
+      counter: data.getUint64(8),
+      rkId: Uint8List.fromList(meta.sublist(16, 32)),
+      plaintextVersion: data.getUint8(32),
+      paddedSize: data.getUint64(33),
+    );
   }
 
   /// Signs the recovery-enrollment proof for a claim (ABI 11):
