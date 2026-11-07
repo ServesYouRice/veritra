@@ -119,6 +119,12 @@ Recommendation: A for both.
 6. **False reports.** Rate limits only in v1; no automatic action.
 7. **Dependencies, not edited here.** C4 (moderator key), C5 (actions), W7
    (reserved key, receive policy).
+8. **C7 hidden types** (`docs/designs/C7-channel-history.md`, decision 3).
+   `history_change`, `history_sync` and `history_sync_request` are never
+   franked (a `frank` member would push a record out of the 512-byte
+   bucket) and send 32 random bytes as `frank_commit`, so the server cannot
+   tell them apart. The refusal of unfranked payloads, when turned on, must
+   exempt these types after decoding.
 
 ## Owner decisions (2026-11-01)
 
