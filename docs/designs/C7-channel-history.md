@@ -816,9 +816,9 @@ would meet `HS25`'s slot as row 7 (review finding 5).
 - **W7 types** (hidden, never franked): `history_change` (body
   `{"r": base64(compact record)}`), `history_sync`,
   `history_sync_request`. Belongs to the W7 section of `docs/crypto.md`.
-- **Rust ABI 13 or later**, numbered when built and coordinated with C4's
-  ABI work (whichever lands first takes 13; ABI 12 is C6's). Approved in
-  principle (D80). **Each piece needs the independent crypto review
+- **Rust ABI 13** (built in step 2, 2026-11-07, as `crypto/rust/src/c7.rs`
+  and the C ABI; change log in `docs/crypto.md`; C4 takes the next number).
+  Approved in principle (D80). **Each piece needs the independent crypto review
   before it lands; the exporter use in particular** (its label and
   context, the export from the staged or pending commit, and the
   guarantee that no other exporter output leaves the core):
