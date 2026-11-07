@@ -497,7 +497,7 @@ GovernanceReject? _checkWin(
   } else if (el.electorate.length != 1 ||
       winner != actor ||
       el.votes.isNotEmpty ||
-      _longestServing(prev.joined, members, prev.owner) != actor) {
+      _longestServing(next.joined, members, prev.owner) != actor) {
     // A claim: no admin in the roster and the sole claimant takes it itself.
     return GovernanceReject.ownerChange;
   }

@@ -289,7 +289,7 @@ same waits, the owner can cancel, more than half of the snapshot must agree.
 
 ## Built and not built
 
-Built: the rules engine and 50 tests (posting, hierarchy as on the server,
+Built: the rules engine and 51 tests (posting, hierarchy as on the server,
 step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
 open, cancel, close, vote, win, claim, electors, `joined`; the local waits as
 pure helpers; the commit-level check). Not built: the ABI above, the record codec (format in

@@ -958,6 +958,26 @@ void main() {
       );
     });
 
+    test('a claim win may also add a member, who is junior', () {
+      final c = GovernanceState(
+        rev: 11,
+        owner: owner,
+        joined: {owner: 0, bob: 1, carol: 2},
+        election: Election(opened: 11, electorate: {bob}),
+      );
+      const before = {owner, bob, carol};
+      const after = {...before, dave};
+      final win = c.copyWith(
+        rev: 12,
+        owner: bob,
+        admins: {owner: 12},
+        clearElection: true,
+        joined: {owner: 0, bob: 1, carol: 2, dave: 12},
+      );
+      expect(
+          validateCommit(c, win, bob, before: before, after: after).ok, isTrue);
+    });
+
     test('a claim whose claimant left is cleared; the next member claims', () {
       final c = GovernanceState(
         rev: 11,
