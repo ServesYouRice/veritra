@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'link_preview.dart';
+
 /// Active pins per chat (per channel in a shared community conversation).
 /// Owner decision 2026-10-31: Discord-like 50, replacing W7's original 3.
 /// A pin beyond the limit evicts the oldest by `pinned_at`.
@@ -36,7 +38,8 @@ bool _validRange(String text, int offset, int length) {
   return !split(offset) && !split(offset + length);
 }
 
-/// Formatting and mentions are optional decoration. Bad entries alone disappear.
+/// Formatting, mentions and a link preview (B2) are optional decoration. Bad
+/// entries alone disappear.
 Map<String, Object?> messageDecoration(Map<String, Object?> body,
     {Set<String>? members}) {
   final text = body['text'] as String? ?? '';
@@ -81,10 +84,35 @@ Map<String, Object?> messageDecoration(Map<String, Object?> body,
       });
     }
   }
+  final preview = LinkPreview.fromWire(body['link_preview'], text: text);
   return {
     if (entities.isNotEmpty) 'entities': entities,
-    if (mentions.isNotEmpty) 'mentions': mentions
+    if (mentions.isNotEmpty) 'mentions': mentions,
+    if (preview != null) 'link_preview': preview.toWire()
   };
+}
+
+/// `format_json` for export: the same decoration without the B2 `link_preview`
+/// key, or null when nothing else is left. Used by the K2 history snapshot and
+/// the backup so a 22 KiB thumbnail per row never counts against their 64 MiB
+/// caps, and so an older reader (which allows only `entities` and `mentions`)
+/// still accepts the snapshot. A value that is not a JSON object is returned
+/// unchanged; the readers reject it as before.
+String? formatJsonWithoutPreview(String? formatJson) {
+  if (formatJson == null || !formatJson.contains('"link_preview"')) {
+    return formatJson;
+  }
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(formatJson);
+  } on FormatException {
+    return formatJson;
+  }
+  if (decoded is! Map || !decoded.containsKey('link_preview')) {
+    return formatJson;
+  }
+  final rest = Map<Object?, Object?>.of(decoded)..remove('link_preview');
+  return rest.isEmpty ? null : jsonEncode(rest);
 }
 
 /// Marker parsing happens only on the sender. Received text is never parsed.

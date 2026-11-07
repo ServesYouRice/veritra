@@ -362,7 +362,8 @@ void main() {
     test('a new database has the schema 19 tables and trigger', () async {
       final db = EncryptedLocalDatabase(NativeDatabase.memory());
       addTearDown(db.close);
-      expect(EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(19));
+      expect(EncryptedLocalDatabase.currentSchemaVersion,
+          greaterThanOrEqualTo(19));
       expect(await version(db), EncryptedLocalDatabase.currentSchemaVersion);
       expect(
           await objects(db),

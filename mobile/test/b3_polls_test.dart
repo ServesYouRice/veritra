@@ -42,10 +42,13 @@ void main() {
     test('a valid poll and vote decode; v1 and bad bodies are invalid', () {
       expect(classify('poll', _pollBody), isA<DecodedAppPayload>());
       expect(
-          classify('poll_vote', {
-            'message_id': 'dev:p',
-            'choices': [0]
-          }, hidden: true),
+          classify(
+              'poll_vote',
+              {
+                'message_id': 'dev:p',
+                'choices': [0]
+              },
+              hidden: true),
           isA<DecodedAppPayload>());
       expect(classify('poll', _pollBody, v: 1), isA<InvalidAppPayload>());
       for (final bad in <Map<String, Object?>>[
@@ -55,10 +58,7 @@ void main() {
           ..._pollBody,
           'options': ['only']
         },
-        {
-          ..._pollBody,
-          'options': List.generate(13, (i) => 'o$i')
-        },
+        {..._pollBody, 'options': List.generate(13, (i) => 'o$i')},
         {
           ..._pollBody,
           'options': ['same', 'same']
@@ -79,8 +79,7 @@ void main() {
             'choices': [2]
           }),
           isA<DecodedAppPayload>());
-      expect(
-          classify('poll_vote', {'message_id': 'dev:p', 'choices': 'x'}),
+      expect(classify('poll_vote', {'message_id': 'dev:p', 'choices': 'x'}),
           isA<InvalidAppPayload>());
       expect(
           classify('poll_vote', {
@@ -124,9 +123,7 @@ void main() {
           actionId: 'action',
           body: _pollBody);
       final decoded = codec.decode(bytes,
-          conversationId: 'conv',
-          senderDeviceId: 'dev',
-          actionId: 'action');
+          conversationId: 'conv', senderDeviceId: 'dev', actionId: 'action');
       expect(decoded.type, AppPayloadType.poll);
       expect(decoded.body['question'], 'Lunch?');
     });
@@ -139,8 +136,8 @@ void main() {
       expect(classify('poll_close', {'message_id': 'dev:p'}, v: 1),
           isA<InvalidAppPayload>());
       expect(classify('poll_close', {}), isA<InvalidAppPayload>());
-      expect(classify('poll_close', {'message_id': 5}),
-          isA<InvalidAppPayload>());
+      expect(
+          classify('poll_close', {'message_id': 5}), isA<InvalidAppPayload>());
     });
 
     test('is v2, hidden and snake_case on the wire', () {
@@ -282,10 +279,10 @@ void main() {
         if (await dir.exists()) await dir.delete(recursive: true);
       });
 
-      Future<PollView> poll() async => parsePollBody((await store
-              .loadMessages('conv'))
-          .firstWhere((m) => m.key == 'dev:p')
-          .body)!;
+      Future<PollView> poll() async =>
+          parsePollBody((await store.loadMessages('conv'))
+              .firstWhere((m) => m.key == 'dev:p')
+              .body)!;
       PollVoteEffect vote(String voter, List<int> choices,
               {String conversation = 'conv', String? channel}) =>
           PollVoteEffect(
@@ -297,9 +294,14 @@ void main() {
 
       test('votes are counted, changed and retracted per account', () async {
         await _commit(store, [_pollRow()]);
-        await _commit(store, [vote('alice', [0]), vote('bob', [1])]);
+        await _commit(store, [
+          vote('alice', [0]),
+          vote('bob', [1])
+        ]);
         expect((await poll()).tally(), [1, 1, 0]);
-        await _commit(store, [vote('alice', [2])]);
+        await _commit(store, [
+          vote('alice', [2])
+        ]);
         expect((await poll()).tally(), [0, 1, 1]);
         await _commit(store, [vote('bob', [])]);
         expect((await poll()).tally(), [0, 0, 1]);
@@ -307,7 +309,9 @@ void main() {
 
       test('invalid votes and wrong targets change nothing', () async {
         await _commit(store, [_pollRow()]);
-        await _commit(store, [vote('alice', [0])]);
+        await _commit(store, [
+          vote('alice', [0])
+        ]);
         await _commit(store, [
           vote('alice', [5]),
           vote('alice', [0, 1]),
@@ -341,9 +345,14 @@ void main() {
 
       test('the author closes a poll; later votes are ignored', () async {
         await _commit(store, [_pollRow()]);
-        await _commit(store, [vote('bob', [1])]);
+        await _commit(store, [
+          vote('bob', [1])
+        ]);
         await _commit(store, [close('alice')]);
-        await _commit(store, [vote('bob', [2]), vote('carol', [0])]);
+        await _commit(store, [
+          vote('bob', [2]),
+          vote('carol', [0])
+        ]);
         final closed = await poll();
         expect(closed.closed, isTrue);
         expect(closed.votes, {
@@ -360,7 +369,9 @@ void main() {
           close('alice', channel: 'c'),
         ]);
         expect((await poll()).closed, isFalse);
-        await _commit(store, [vote('bob', [1])]);
+        await _commit(store, [
+          vote('bob', [1])
+        ]);
         expect((await poll()).votes, {
           'bob': [1]
         });
@@ -369,7 +380,9 @@ void main() {
       test('delete clears the poll with its votes; later votes are dropped',
           () async {
         await _commit(store, [_pollRow()]);
-        await _commit(store, [vote('bob', [1])]);
+        await _commit(store, [
+          vote('bob', [1])
+        ]);
         await _commit(store, [
           const DeleteMessageEffect(
               targetKey: 'dev:p',
@@ -377,12 +390,14 @@ void main() {
               at: 5,
               conversationId: 'conv'),
         ]);
-        await _commit(store, [vote('bob', [1])]);
+        await _commit(store, [
+          vote('bob', [1])
+        ]);
         final row = (await store.loadMessages('conv')).single;
         expect(row.deletedAt, 5);
         expect(row.body, isNull);
-        expect(utf8.decode(await store.exportBackup()),
-            isNot(contains('Lunch?')));
+        expect(
+            utf8.decode(await store.exportBackup()), isNot(contains('Lunch?')));
       });
 
       test('only the author deletes a poll', () async {
@@ -399,9 +414,13 @@ void main() {
 
       test('delete for me clears the poll and its votes', () async {
         await _commit(store, [_pollRow()]);
-        await _commit(store, [vote('bob', [1])]);
+        await _commit(store, [
+          vote('bob', [1])
+        ]);
         await store.hideMessage('conv', 'dev:p');
-        await _commit(store, [vote('bob', [2])]);
+        await _commit(store, [
+          vote('bob', [2])
+        ]);
         final row = (await store.loadMessages('conv')).single;
         expect(row.hiddenAt, isNotNull);
         expect(row.body, isNull);
@@ -409,7 +428,9 @@ void main() {
 
       test('a poll survives a backup restore with its votes', () async {
         await _commit(store, [_pollRow()]);
-        await _commit(store, [vote('bob', [1])]);
+        await _commit(store, [
+          vote('bob', [1])
+        ]);
         final backup = await store.exportBackup();
         await store.restoreBackup(backup);
         // A restore leaves no device or MLS state; enroll the device again.

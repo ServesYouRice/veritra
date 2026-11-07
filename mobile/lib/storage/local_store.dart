@@ -10,7 +10,8 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
-import '../crypto/message_format.dart' show pinLimitPerChat;
+import '../crypto/message_format.dart'
+    show formatJsonWithoutPreview, pinLimitPerChat;
 import '../sync/conversation_pause.dart';
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 import '../sync/sync_recovery.dart';
@@ -4334,6 +4335,10 @@ String _cryptoRecordKey(int kind, List<int> recordId) =>
     '${kind.toString().padLeft(5, '0')}:'
     '${recordId.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
 
+LocalMessage _withoutLinkPreview(LocalMessage m) => m.formatJson == null
+    ? m
+    : m.copyWith(formatJson: Value(formatJsonWithoutPreview(m.formatJson)));
+
 List<int> _encodeBackup(LocalBackupData data) {
   final accountId = data.session.accountId;
   if (accountId == null || accountId.isEmpty) {
@@ -4346,7 +4351,11 @@ List<int> _encodeBackup(LocalBackupData data) {
           (data.historyNamespace ?? HistoryNamespace()).toJson(),
       // Decrypted history (D27). Local only: the backup is encrypted with
       // a key the server never sees.
-      'history': data.history.map((item) => item.toJson()).toList(),
+      // A link preview stays out (about 22 KiB a row against the 64 MiB
+      // cap); the text and its other decoration are kept.
+      'history': data.history
+          .map((item) => _withoutLinkPreview(item).toJson())
+          .toList(),
       'reactions': data.reactions.map((item) => item.toJson()).toList(),
       'pins': data.pins.map((p) => p.toJson()).toList(),
       'starred': data.starred,

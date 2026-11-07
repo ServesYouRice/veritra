@@ -308,6 +308,7 @@ class _Client {
         idempotencyKey: sent.idempotencyKey,
         ciphertext: sent.ciphertext,
         cryptoProtocol: sent.cryptoProtocol,
+        frankCommit: sent.frankCommit,
         createdAt: DateTime.now().toUtc(),
       );
 }
