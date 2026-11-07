@@ -82,7 +82,7 @@ void main() {
           'duration_seconds': 'ignored on unpin'
         })),
         isA<DecodedAppPayload>());
-    for (final type in ['poll', 'admin_delete', 'profile_key']) {
+    for (final type in ['admin_delete', 'profile_key']) {
       expect(classify({...payload(type, {}), 'hidden': true}),
           isA<UnsupportedAppPayload>().having((p) => p.hidden, 'hidden', true));
     }

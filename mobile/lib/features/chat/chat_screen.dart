@@ -14,6 +14,7 @@ import '../../core/composer_drafts.dart';
 import '../../core/message_history.dart';
 import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
+import '../../crypto/poll.dart' show PollView, parsePollBody;
 import '../../storage/encrypted_database.dart'
     show LocalMessage, LocalMessageKind, LocalMessageState;
 import '../../l10n/l10n.dart';
@@ -34,6 +35,7 @@ import 'conversation_details_screen.dart';
 import 'emoji_picker.dart';
 import 'message_request_screen.dart';
 import 'message_ticks.dart';
+import 'poll_widgets.dart';
 import 'typing_line.dart';
 import '../../core/receipts_state.dart' show MessageTick;
 
@@ -483,6 +485,9 @@ class _ChatScreenState extends State<ChatScreen> {
                         onEditLast: widget.state.messageActionsAvailable
                             ? _editLast
                             : null,
+                        onPoll: widget.state.messageActionsAvailable
+                            ? _createPoll
+                            : null,
                       ),
                   ],
                 ),
@@ -522,6 +527,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (clipboard.files.isEmpty || !mounted) return false;
     await _addFiles(clipboard.files, temporary: clipboard.temporary);
     return true;
+  }
+
+  /// Asks for a question and options, then sends them as a poll (B3).
+  Future<void> _createPoll() async {
+    final draft = await showPollComposer(context);
+    if (draft == null || !mounted) return;
+    await widget.state.sendPoll(widget.conversationId,
+        question: draft.question,
+        options: draft.options,
+        multipleChoice: draft.multipleChoice);
   }
 
   /// Up in an empty composer edits your newest message, as in other chats.
@@ -730,7 +745,8 @@ class _ChatScreenState extends State<ChatScreen> {
               if (const [
                     LocalMessageKind.text,
                     LocalMessageKind.attachment,
-                    LocalMessageKind.unsupported
+                    LocalMessageKind.unsupported,
+                    LocalMessageKind.poll
                   ].contains(message.kind) &&
                   message.deletedAt == null)
                 ListTile(
@@ -1157,7 +1173,9 @@ class _MessageList extends StatelessWidget {
           return _PendingMessageBubble(
             text: local?.kind == LocalMessageKind.attachment
                 ? _attachmentSummary(context.l10n, local!, conversationId)
-                : local?.body ?? record?.draftText,
+                : local?.kind == LocalMessageKind.poll
+                    ? parsePollBody(local!.body)?.question
+                    : local?.body ?? record?.draftText,
             state: state.outboxState(key),
             failureMessage: terminal ? state.outboxFailureMessage(key) : null,
             onRetry: terminal ? null : () => state.retryEnvelope(key),
@@ -1228,6 +1246,17 @@ class _MessageList extends StatelessWidget {
                 },
                 mine: mine,
                 tick: tick,
+                ownAccountId: state.session?.accountId,
+                pollMembers: state.membersFor(conversationId).isEmpty
+                    ? null
+                    : state.memberAccounts(conversationId),
+                onVote: local == null ||
+                        local.kind != LocalMessageKind.poll ||
+                        !state.messageActionsAvailable ||
+                        state.readOnlyWithoutPeer(conversationId)
+                    ? null
+                    : (choices) =>
+                        state.votePoll(conversationId, local.key, choices),
                 onActions: onMessageActions == null ||
                         local == null ||
                         local.kind == LocalMessageKind.action ||
@@ -1290,6 +1319,9 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
     return l10n.w8HiddenSpoiler;
   if (target.kind == LocalMessageKind.attachment) {
     return _attachmentSummary(l10n, target, target.conversationId);
+  }
+  if (target.kind == LocalMessageKind.poll) {
+    return parsePollBody(target.body)?.question ?? l10n.chatReplyDeleted;
   }
   final text = target.body!.replaceAll(RegExp(r'\s+'), ' ').trim();
   // Cut by user-perceived character: a UTF-16 cut can leave half a surrogate
@@ -1526,7 +1558,16 @@ class _MessageBubble extends StatelessWidget {
     this.onMention,
     this.starred = false,
     this.copiedHistory = false,
+    this.ownAccountId,
+    this.pollMembers,
+    this.onVote,
   });
+
+  /// For a poll bubble: who is looking, the roster whose votes count, and the
+  /// vote sender (null when voting is unavailable).
+  final String? ownAccountId;
+  final Set<String>? pollMembers;
+  final void Function(List<int> choices)? onVote;
 
   /// Sent, delivered or read, for a message of yours; null otherwise.
   final MessageTick? tick;
@@ -1565,7 +1606,11 @@ class _MessageBubble extends StatelessWidget {
     final placeholder = _isPlaceholder;
     // Placeholder rows hold no content to show; an unsupported row's body is
     // raw JSON kept for a later version.
-    final text = deleted || unverifiable || isAttachment || placeholder
+    final text = deleted ||
+            unverifiable ||
+            isAttachment ||
+            placeholder ||
+            local?.kind == LocalMessageKind.poll
         ? null
         : local?.body;
     // Bone keeps sent bubbles **on tone**: a near-white accent tiled down a
@@ -1586,6 +1631,14 @@ class _MessageBubble extends StatelessWidget {
               deleted, unverifiable, text),
         ));
   }
+
+  /// The poll of a live poll bubble, when its stored JSON reads.
+  PollView? get _poll =>
+      local?.kind == LocalMessageKind.poll &&
+              local?.deletedAt == null &&
+              message.deletedAt == null
+          ? parsePollBody(local?.body)
+          : null;
 
   bool get _isPlaceholder =>
       local?.kind == LocalMessageKind.unsupported ||
@@ -1660,13 +1713,15 @@ class _MessageBubble extends StatelessWidget {
     // (file name, size and a tap action); excluding descendants would leave
     // the merged bubble with no way to open them. Everything else in such a
     // bubble stays covered by the bubble's label.
-    final tileNodes = local?.kind == LocalMessageKind.attachment &&
-        !deleted &&
-        !unverifiable &&
-        onOpenAttachment != null &&
-        AttachmentEntry.listFromBody(local?.body,
-                conversationId: message.conversationId)
-            .isNotEmpty;
+    final poll = _poll;
+    final tileNodes = (local?.kind == LocalMessageKind.attachment &&
+            !deleted &&
+            !unverifiable &&
+            onOpenAttachment != null &&
+            AttachmentEntry.listFromBody(local?.body,
+                    conversationId: message.conversationId)
+                .isNotEmpty) ||
+        (poll != null && !deleted && !unverifiable && !placeholder);
     Widget quiet(Widget child) =>
         tileNodes ? ExcludeSemantics(child: child) : child;
     return Semantics(
@@ -1686,7 +1741,11 @@ class _MessageBubble extends StatelessWidget {
                               : l10n.chatMessageSemantics(sender, time, text))
                           : local?.kind == LocalMessageKind.attachment
                               ? l10n.chatAttachmentSemantics(sender, time)
-                              : l10n.chatEncryptedSemantics(sender, time)) +
+                              : poll != null
+                                  ? l10n.chatMessageSemantics(
+                                      sender, time, poll.question)
+                                  : l10n.chatEncryptedSemantics(
+                                      sender, time)) +
           (tick == null ? '' : ', ${messageTickLabel(l10n, tick!)}'),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1799,6 +1858,13 @@ class _MessageBubble extends StatelessWidget {
                             ),
                           ),
                         ],
+                      )
+                    else if (poll != null)
+                      PollCard(
+                        poll: poll,
+                        ownAccountId: ownAccountId,
+                        members: pollMembers,
+                        onVote: onVote,
                       )
                     else if (local?.kind == LocalMessageKind.attachment)
                       ..._attachmentTiles(context)
@@ -2002,10 +2068,14 @@ class _Composer extends StatelessWidget {
     this.attaching = false,
     this.onPasteFiles,
     this.onEditLast,
+    this.onPoll,
   });
 
   final bool enabled;
   final TextEditingController controller;
+
+  /// Opens the new-poll dialog; null where polls are unavailable.
+  final VoidCallback? onPoll;
   final bool busy;
   final Future<void> Function() onSend;
 
@@ -2114,6 +2184,12 @@ class _Composer extends StatelessWidget {
                   tooltip: attaching
                       ? context.l10n.chatSendingFile
                       : context.l10n.chatAttachFile,
+                ),
+              if (onPoll != null)
+                IconButton(
+                  onPressed: enabled && !busy ? onPoll : null,
+                  icon: const Icon(Icons.poll_outlined),
+                  tooltip: context.l10n.pollComposerTitle,
                 ),
               Expanded(
                 child: _wrapDesktopInput(

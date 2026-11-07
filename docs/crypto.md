@@ -443,6 +443,12 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **B3 polls (2026-11-07):** additive, app layer only (no ABI, schema,
+  migration or server change). `poll` and `poll_vote` payload types turned
+  on (wire names `poll`, `poll_vote`); votes live in the poll row's body, so
+  no `local_poll_*` table exists. `poll_close` stays reserved. Details:
+  section "Application payload v2", 5.5 and 8;
+  `testing/evidence/B3-polls.md`.
 - **C6 foundation, report seal and franking commitment, ABI 12
   (2026-11-01):** additive; the Dart binding and the header now pin ABI 12
   exactly. Design: [`C6-reports-franking.md`](designs/C6-reports-franking.md)
@@ -1242,8 +1248,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 
 **Status:** W8 implements formatting, mentions, forwarding, pins and local
 actions; full verification and D52 phone background delivery remain pending.
-B3 (polls), W11 (profiles) and later C2/C5 remain reserved. It needs no ABI
-change: Rust encrypts the
+B3 (polls and votes, 2026-11-07) is implemented: `poll` and `poll_vote` are
+on, `poll_close` stays reserved (§5.5). W11 (profiles) and later C2/C5 remain
+reserved. It needs no ABI change: Rust encrypts the
 padded payload as opaque bytes, and all of this lives in
 `mobile/lib/crypto/app_payload.dart`, `native_crypto_service.dart` and the
 local database.
@@ -1392,10 +1399,12 @@ that a v2 app can still check context and classify a v3 message as
   | attachment manifest | `attachmentManifest` |
   | call signal | `callSignal` |
 
-  Open: the names of the new v2 types (`poll_vote`, `admin_delete`,
-  `profile_key` and the rest, written in snake_case in this document)
-  must be settled, in one convention, before any v2 sender ships. Changing
-  an existing wire string would break every device.
+  Settled by B3 for the poll types: `poll` and `poll_vote`, the snake_case
+  names this document uses (the code maps `AppPayloadType.pollVote` to
+  `poll_vote` through `wireName`). Existing strings never change. Still open
+  for `admin_delete`, `profile_key` and the rest: use the same snake_case
+  convention, or decide otherwise, before any sender ships. Changing an
+  existing wire string would break every device.
 - **Decoding v2 and later.**
   - Required fields are validated.
   - **Unknown body fields and unknown top-level keys are ignored** (P6),
@@ -1639,6 +1648,18 @@ markup:
   the vote sender is authenticated. Veritra offers **no "anonymous
   poll"**; the UI must not suggest one.
 - **Size.** A poll fits well inside one payload (~5 KiB at the limits).
+- **As built (B3).** `poll` and `poll_vote` are on; `poll_close` is not
+  (the type stays `unsupported`, and no UI offers closing). A `poll` that
+  breaks the limits is `invalid`; a `poll_vote` is checked for shape only
+  (a text `message_id` of at most 128 characters, at most 12 integer
+  `choices`), and range, duplicates, the single-choice rule and the target
+  are checked when it is applied, so a bad vote is an action row with no
+  effect (vectors 12-13). Votes are sent with `hidden: true`. A device
+  applies its own vote when it sends it (it cannot decrypt its own echo), so
+  if the same account votes from two devices, the two can disagree about
+  which came last until a later vote. Polls cannot be reacted to, replied
+  to, forwarded or pinned, and are not copied to a new device (K2 history
+  and the quoted preview of a reply show the question only).
 
 #### 5.6 Admin delete (reserved for C5)
 
@@ -1705,8 +1726,13 @@ consumed without an effect. A same-device backup may retain a command with
 either its queued outbox or its still-pending own action row (HTTP can
 acknowledge before sync echoes). K2 history transfer must exclude this table.
 
-The original design below also reserves poll and admin-delete state, which
-W8 does not create. W11 takes a later backup number when it is implemented.
+B3 adds no table and no schema change. The `local_poll_votes` and
+`local_poll_state` tables below were not built: a poll row's `body` holds
+`{question, options, multiple_choice, votes: {account_id: [index]}}`, the
+vote effect rewrites it in the MLS transaction, and delete or delete for me
+clears the body and so the votes. Because they are in the message body they
+travel in the existing backup. The original design below also reserves
+poll-close and admin-delete state, which neither W8 nor B3 creates. W11 takes a later backup number when it is implemented.
 
 Action rows store no body, so pin, vote and close state cannot be rebuilt
 from history. They are tables applied in the MLS transaction:
