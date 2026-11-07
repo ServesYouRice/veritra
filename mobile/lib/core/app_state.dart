@@ -284,6 +284,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   DeviceLink? activeDeviceLink;
   Map<String, LocalConversationPref> conversationPrefs = {};
   final Map<String, List<LocalPin>> _pins = {};
+
+  /// The channel the open chat is showing, for a community's shared group
+  /// (C0): that group holds every open channel, so which one a post goes to,
+  /// and which posts are listed, comes from here. Set by the chat screen.
+  final Map<String, String> _selectedChannels = {};
   Set<String> starredMessages = {};
   bool showArchivedChats = false;
 
@@ -308,9 +313,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       conversations.where((c) => c.id == conversationId).firstOrNull?.channelId;
   bool isArchived(String id) => conversationPrefs[id]?.archivedAt != null;
   bool isChatPinned(String id) => conversationPrefs[id]?.pinnedAt != null;
-  List<LocalPin> pinsFor(String id) => (_pins[id] ?? const [])
-      .where((p) => p.expiresAt > DateTime.now().millisecondsSinceEpoch)
-      .toList();
+  List<LocalPin> pinsFor(String id) {
+    final channel = selectedChannelFor(id);
+    return (_pins[id] ?? const <LocalPin>[])
+        .where((p) =>
+            p.expiresAt > DateTime.now().millisecondsSinceEpoch &&
+            (channel == null || p.channelId == channel))
+        .toList();
+  }
+
   bool canPinMessages(String id) => pinAllowed(
       kind: conversationKind(id), role: roleOf(id, session?.accountId ?? ''));
   void toggleArchivedChats() {
@@ -1181,6 +1192,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// left the local cache. Server envelopes without a local record (sent
   /// before this device joined, say) still appear, as redacted bars.
   List<ReceivedMessageEnvelope> timelineFor(String conversationId) {
+    final all = _timelineForConversation(conversationId);
+    final channel = _selectedChannels[conversationId];
+    if (channel == null) return all;
+    // A shared group holds every open channel; the chat shows one of them.
+    final history = historyFor(conversationId);
+    return all
+        .where((envelope) =>
+            (history.forEnvelope(envelope)?.channelId ??
+                _metadataChannel(envelope.cryptoMetadata)) ==
+            channel)
+        .toList(growable: false);
+  }
+
+  /// The channel a server envelope names in its clear metadata.
+  static String? _metadataChannel(Object? metadata) =>
+      metadata is Map ? metadata['channel_id'] as String? : null;
+
+  List<ReceivedMessageEnvelope> _timelineForConversation(
+      String conversationId) {
     final envelopes = messagesFor(conversationId);
     if (_mlsCrypto == null) return envelopes;
     final history = historyFor(conversationId);
@@ -1246,9 +1276,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       messagesByConversation[conversationId] ??
       const <ReceivedMessageEnvelope>[];
 
-  List<MessageEnvelope> pendingFor(String conversationId) => pendingOutbox
-      .where((envelope) => envelope.conversationId == conversationId)
-      .toList(growable: false);
+  List<MessageEnvelope> pendingFor(String conversationId) {
+    final channel = _selectedChannels[conversationId];
+    return pendingOutbox
+        .where((envelope) =>
+            envelope.conversationId == conversationId &&
+            (channel == null ||
+                _metadataChannel(envelope.cryptoMetadata) == channel))
+        .toList(growable: false);
+  }
 
   OutboxDeliveryState outboxState(String idempotencyKey) =>
       _outboxStates[idempotencyKey] ?? OutboxDeliveryState.failed;
@@ -2175,6 +2211,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       created = await client.createCommunity(current.token, name);
       communities = <Community>[created!, ...communities];
+      // A community with the C0 layout starts with its shared group, which
+      // this device creates now; channels in it need no group of their own.
+      final shared = created!.sharedConversationId;
+      if (shared != null) {
+        await _setUpConversationGroup(shared);
+        await refreshConversations();
+      }
     });
     return error == null ? created : null;
   }
@@ -2187,9 +2230,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null) {
         return;
       }
-      final creation =
-          await client.createChannel(current.token, communityId, name);
-      await _setUpConversationGroup(creation.conversation.id);
+      final sharedLayout = communities
+              .where((community) => community.id == communityId)
+              .firstOrNull
+              ?.sharedConversationId !=
+          null;
+      final creation = await client.createChannel(
+        current.token,
+        communityId,
+        name,
+        kind: sharedLayout ? 'open' : 'private',
+      );
+      final inSharedGroup = creation.conversation.isCommunityShared;
+      // An open channel posts into the community's existing group.
+      if (!inSharedGroup) {
+        await _setUpConversationGroup(creation.conversation.id);
+      }
       channelsByCommunity = <String, List<Channel>>{
         ...channelsByCommunity,
         communityId: <Channel>[
@@ -2197,11 +2253,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           ...channelsByCommunity[communityId] ?? const <Channel>[],
         ],
       };
-      conversations = <Conversation>[
-        creation.conversation,
-        ...conversations.where((item) => item.id != creation.conversation.id),
-      ];
+      // The shared group keeps the entry the list already has for it.
+      final known =
+          conversations.any((item) => item.id == creation.conversation.id);
+      if (!inSharedGroup || !known) {
+        conversations = <Conversation>[
+          creation.conversation,
+          ...conversations.where((item) => item.id != creation.conversation.id),
+        ];
+      }
       selectedConversationId = creation.conversation.id;
+      if (inSharedGroup) {
+        selectChannel(creation.conversation.id, creation.channel.id);
+      }
       await loadMessages(creation.conversation.id);
     });
   }
@@ -3219,7 +3283,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (targets.isEmpty || targets.length > (hops >= 5 ? 1 : 5)) return false;
     final nextHops = (hops + 1).clamp(1, 5);
     for (final id in targets) {
-      if (!conversations.any((c) => c.id == id)) return false;
+      // A shared group needs a channel; a forward names none.
+      if (!conversations.any((c) => c.id == id) || _isSharedGroup(id)) {
+        return false;
+      }
     }
     try {
       for (final id in targets) {
@@ -3307,6 +3374,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       required Future<PreparedEncryptedAttachment> Function(
               AttachmentCryptoService service, String name, int paddingLimit)
           prepare}) async {
+    // Upload can take long; the channel is the one open when the send began.
+    final channelId = _selectedChannels[conversationId];
     final service = attachmentService;
     final current = session;
     final client = api;
@@ -3349,6 +3418,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           ],
         },
         attachmentRefs: <String>[uploaded.id],
+        channelId: channelId,
       );
       if (!sent) {
         _opErrors[Ops.attachment] =
@@ -3486,10 +3556,17 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
     String? draftText,
+    String? channelId,
   }) async {
     final owner = session;
     final ownerGeneration = _sessionGeneration;
     if (owner == null) return false;
+    // The channel is fixed here, before anything is awaited, so leaving the
+    // chat for another channel cannot redirect a send already made. A shared
+    // group without a usable channel sends nothing.
+    final route = _channelRouteFor(
+        conversationId, channelId ?? _selectedChannels[conversationId]);
+    if (route == null && _isSharedGroup(conversationId)) return false;
     // Every send takes its place in its conversation's line, and the next
     // one waits until this one is queued, refused or given up: a send held
     // inside the session queue cannot be overtaken by a later one.
@@ -3507,7 +3584,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         final sent = await _sendPayloadOnce(
             owner, ownerGeneration, conversationId, type, body,
-            attachmentRefs: attachmentRefs, draftText: draftText);
+            attachmentRefs: attachmentRefs, draftText: draftText, route: route);
         if (sent != null) return sent;
         wait = true;
       }
@@ -3766,6 +3843,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     Map<String, Object?> body, {
     List<String> attachmentRefs = const <String>[],
     String? draftText,
+    ({String channelId, int generation})? route,
   }) {
     var queued = false;
     var held = false;
@@ -3803,7 +3881,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final MessageEnvelope encrypted;
-      if (mls != null) {
+      if (mls != null && route != null) {
+        final Object service = mls;
+        if (service is! ChannelRoutedCryptoService) {
+          throw StateError('this crypto service cannot post into a channel');
+        }
+        encrypted = await service.encryptChannelPayload(
+            conversation.id, type, body,
+            channelId: route.channelId,
+            layoutGeneration: route.generation,
+            attachmentRefs: attachmentRefs,
+            draftText: draftText);
+      } else if (mls != null) {
         encrypted = await mls.encryptPayload(conversation.id, type, body,
             attachmentRefs: attachmentRefs, draftText: draftText);
       } else if (type == AppPayloadType.text) {
@@ -4325,6 +4414,54 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return _constantTimeBytesEqual(
         utf8.encode(scanned.trim()), utf8.encode(current.qrPayload));
   }
+
+  /// Names the channel the chat for [conversationId] is showing, or clears it
+  /// with null. Only a community's shared group has channels in it.
+  void selectChannel(String conversationId, String? channelId) {
+    if (_selectedChannels[conversationId] == channelId) return;
+    if (channelId == null) {
+      _selectedChannels.remove(conversationId);
+    } else {
+      _selectedChannels[conversationId] = channelId;
+    }
+    notifyListeners();
+  }
+
+  String? selectedChannelFor(String conversationId) =>
+      _selectedChannels[conversationId];
+
+  /// Where a post to [conversationId] goes inside it: the selected channel
+  /// and the layout generation the server routes by. Null for every
+  /// conversation but a shared group, and for a shared group with no usable
+  /// channel selected, where nothing may be sent.
+  ({String channelId, int generation})? _channelRouteFor(
+      String conversationId, String? channelId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    final communityId = conversation?.communityId;
+    if (conversation == null ||
+        !conversation.isCommunityShared ||
+        channelId == null ||
+        communityId == null) {
+      return null;
+    }
+    final channel = (channelsByCommunity[communityId] ?? const <Channel>[])
+        .where((c) =>
+            c.id == channelId &&
+            c.conversationId == conversationId &&
+            c.kind != 'private')
+        .firstOrNull;
+    final generation = channel?.layoutGeneration;
+    if (channel == null || generation == null) return null;
+    return (channelId: channel.id, generation: generation);
+  }
+
+  bool _isSharedGroup(String conversationId) =>
+      conversations
+          .where((c) => c.id == conversationId)
+          .firstOrNull
+          ?.isCommunityShared ??
+      false;
 
   void selectConversation(String id) {
     selectedConversationId = id;
@@ -5936,6 +6073,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         }
         if (resolved.id != id) {
           throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        // A post in a community's shared group is decoded by the group's
+        // kind, which only the conversation list knows. A device that has
+        // just taken the Welcome may not have listed it yet; decoding first
+        // would turn the post into a permanent invalid row.
+        if (_metadataChannel(resolved.cryptoMetadata) != null &&
+            !conversations.any((c) => c.id == resolved.conversationId)) {
+          await _refreshConversations(notify: false, persist: false);
         }
         await _ensureConversationAuthority(resolved.conversationId,
             client: client);
