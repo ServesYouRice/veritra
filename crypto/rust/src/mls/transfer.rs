@@ -560,6 +560,24 @@ impl MlsDevice {
         )?;
         verification.public.sas = sas;
         verification.public.sas_bytes = sas_bytes.to_vec();
+        // One claim per source random, not only per link: the commitment
+        // does not bind the link ID, so a random reused for a second link
+        // would let a relay that saw the first reveal pick the second claim
+        // to match a SAS. Keyed on the random, not the commitment, so reuse
+        // under another origin (another commitment that still opens) is
+        // caught too. Refused here so the rule does not rest on the caller
+        // alone. An exact replay for the same link is left to
+        // `insert_transfer`.
+        let id = TransferId::new(&context.origin, &context.link_id);
+        if self.pending_transfers.iter().any(|(other, record)| {
+            other != &id
+                && record
+                    .source_random
+                    .as_ref()
+                    .is_some_and(|known| link_v3::equal_tag(known, source_random))
+        }) {
+            return Err(MlsError::InvalidState);
+        }
         self.insert_transfer(
             PendingTransfer {
                 context,
@@ -1305,6 +1323,61 @@ mod tests {
             ),
             Err(MlsError::InvalidIdentity)
         );
+    }
+
+    #[test]
+    fn a_revealed_source_random_never_accepts_a_claim_for_another_link() {
+        // The commitment does not bind the link ID. If the caller ever
+        // reused a random, a relay that saw it revealed for
+        // link_1 could choose a claim for another link whose SAS matches the
+        // new device's code. Native refuses, for another link and for the
+        // same random committed under another origin.
+        let (mut source, _, context, verification) = pair();
+        let accept = |source: &mut MlsDevice, context: LinkContext| {
+            let derived = link_v3::derive(&source.provider, &context, &[7; 16]).unwrap();
+            source.accept_history_claim(
+                context,
+                &[7; 16],
+                2_000,
+                1_001,
+                &derived.public.transcript_hash,
+                &derived.public.claim_tag,
+                &SOURCE_RANDOM,
+            )
+        };
+        let mut other_link = context.clone();
+        other_link.link_id = b"link_2".to_vec();
+        other_link.recipient_signing_key[0] ^= 1;
+        assert_eq!(accept(&mut source, other_link), Err(MlsError::InvalidState));
+        let mut other_origin = context.clone();
+        other_origin.origin = b"https://other.example.test".to_vec();
+        other_origin.source_commitment = source
+            .link_source_commitment(&other_origin.origin, &SOURCE_RANDOM)
+            .unwrap();
+        assert_eq!(
+            accept(&mut source, other_origin),
+            Err(MlsError::InvalidState)
+        );
+        // The exact replay for link_1 still returns the stored verification,
+        // and a fresh random accepts another link.
+        assert_eq!(accept(&mut source, context.clone()).unwrap(), verification);
+        let fresh = [0x5b; 32];
+        let mut next = context;
+        next.link_id = b"link_3".to_vec();
+        next.source_commitment = source.link_source_commitment(&next.origin, &fresh).unwrap();
+        let derived = link_v3::derive(&source.provider, &next, &[7; 16]).unwrap();
+        assert!(source
+            .accept_history_claim(
+                next,
+                &[7; 16],
+                2_000,
+                1_001,
+                &derived.public.transcript_hash,
+                &derived.public.claim_tag,
+                &fresh,
+            )
+            .is_ok());
+        assert_eq!(source.pending_transfers.len(), 2);
     }
 
     #[test]
