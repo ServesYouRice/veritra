@@ -5033,6 +5033,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (type.startsWith('account.') && _noteAccountSyncEvent(event)) {
       _recoveryStatusReadAt = null;
     }
+    if (_isMemberLinkedNotice(type)) {
+      // Only a membership pass is asked for; nothing local changed.
+      _mlsReconcileRequested = true;
+      return;
+    }
     if (type.startsWith('device.') ||
         type.startsWith('membership.') ||
         type.startsWith('conversation.')) {
@@ -5711,6 +5716,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         err is HandshakeException;
   }
 
+  /// The server's `device.member_linked` notice (D96): IDs only, sent to the
+  /// account that holds a group's coordinator device.
+  static bool _isMemberLinkedNotice(String type) =>
+      type == 'device.member_linked';
+
   bool _isCryptoSyncEvent(String type) =>
       type == 'mls.message.created' ||
       type.startsWith('message.envelope.') ||
@@ -5747,6 +5757,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final receipts = <String>{};
     for (final event in events) {
       final type = event.type;
+      if (_isMemberLinkedNotice(type)) {
+        // A co-member linked a device and this device may coordinate the
+        // group change: run the membership pass now instead of waiting for
+        // the fallback. IDs only; nothing local changed, so no refresh.
+        _mlsReconcileRequested = true;
+        continue;
+      }
       if (type.startsWith('device.') ||
           type.startsWith('membership.') ||
           type.startsWith('conversation.')) {

@@ -69,6 +69,18 @@ updates:
       dart-dependencies:
         patterns:
           - "*"
+        # `ignore` alone does not stop a grouped update from re-resolving
+        # these: group #121 floated intl, matcher, meta, test_api and
+        # vector_math past the pinned Flutter 3.44.0 SDK. Keep them out of the
+        # group; they move when the pinned Flutter SDK moves (decision D15).
+        # build_runner is held for the same reason (see its ignore above).
+        exclude-patterns:
+          - intl
+          - matcher
+          - meta
+          - test_api
+          - vector_math
+          - build_runner
   - package-ecosystem: github-actions
     directory: /
     schedule:

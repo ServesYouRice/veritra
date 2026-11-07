@@ -551,6 +551,17 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - No server, payload or schema change. The app does not call these yet:
     R3 (setup) and R4 (recovery) wire them.
 
+- **Coordinator notice (D96, 2026-11-07):** no ABI or schema change (the
+  event type is free text, so migration 0050 is not needed). When a device
+  link is approved (v3 only), the server writes one `device.member_linked`
+  account event for each other account whose device is the lowest-id live
+  device of an MLS group the linking account belongs to (at most 64), in the
+  same transaction, and publishes it live. Payload: `account_id` and
+  `device_id` of the link, nothing else, no conversation id. The client
+  starts a membership pass on it; only the coordinator acts, the others keep
+  the 3-minute fallback. Not covered: the legacy v2 link route, and
+  coordinators beyond the 64 cap.
+
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),
   the `coordinator_device_id` that `GET /api/v1/mls/revocations` reports now

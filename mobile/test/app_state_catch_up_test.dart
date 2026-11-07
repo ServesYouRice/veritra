@@ -311,6 +311,19 @@ void main() {
       expect(burst.conversationCalls, one.conversationCalls);
     });
 
+    test('a member-linked notice asks for a pass, not a device refresh',
+        () async {
+      final base = await catchUp(
+          <SyncEvent>[_projectionEvent(1, 'conversation.updated')], 1);
+      final device =
+          await catchUp(<SyncEvent>[_projectionEvent(1, 'device.updated')], 1);
+      final notice = await catchUp(<SyncEvent>[
+        _projectionEvent(1, 'device.member_linked', conversationId: null),
+      ], 1);
+      expect(notice.deviceCalls, base.deviceCalls);
+      expect(notice.conversationCalls, lessThan(device.conversationCalls));
+    });
+
     test('each run is refreshed and committed before the next message',
         () async {
       // The same two runs, of one event each.
