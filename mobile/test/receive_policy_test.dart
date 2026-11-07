@@ -330,7 +330,7 @@ void main() {
         await pair.receive(
             _frame(jsonEncode(<String, Object?>{
               ..._head(1, 'e3'),
-              'type': 'poll',
+              'type': 'admin_delete',
               'body': <String, Object?>{},
             })),
             actionId: 'e3');

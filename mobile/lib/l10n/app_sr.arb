@@ -860,5 +860,19 @@
   "communityLeaveTitle": "Напустити ову заједницу?",
   "communityLeave": "Напусти заједницу",
   "communityLeaveDetail": "Напуштате све канале одједном. Поново се можете придружити новим линком.",
-  "communityLeaveConfirm": "Напусти"
+  "communityLeaveConfirm": "Напусти",
+  "pollComposerTitle": "Нова анкета",
+  "pollQuestionLabel": "Питање",
+  "pollOptionLabel": "Опција {number}",
+  "pollAddOption": "Додај опцију",
+  "pollRemoveOption": "Уклони опцију",
+  "pollMultipleChoice": "Дозволи више одговора",
+  "pollSend": "Пошаљи анкету",
+  "pollInvalidHint": "Додајте питање и бар две различите опције.",
+  "pollVisibleNotice": "Сви у овом разговору виде ко је за шта гласао.",
+  "pollVoteTotal": "Гласова: {count}",
+  "pollChooseOne": "Изаберите једну опцију",
+  "pollChooseSeveral": "Изаберите једну или више опција",
+  "pollClose": "Затвори анкету",
+  "pollClosedNotice": "Ова анкета је затворена."
 }
