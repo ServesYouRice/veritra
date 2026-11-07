@@ -337,6 +337,8 @@ func (a *App) Serve(ctx context.Context) error {
 	// before the caller closes storage.
 	if a.api != nil {
 		a.api.WaitDeliveryWrites(deadline)
+		// Account-level recovery wakes (K0-R) stop the same way.
+		a.api.WaitPushWakes(deadline)
 	}
 	if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 		return nil
@@ -802,6 +804,15 @@ func (a *App) reconcileBlobDeletions(ctx context.Context) {
 		if int64(len(storageKeys)) < retentionBatchSize || !retentionYield(ctx) {
 			break
 		}
+	}
+}
+
+// WaitPushWakes waits for the API's account-level recovery wakes, then stops
+// them (see httpapi.API.WaitPushWakes). Run calls it during shutdown; tests
+// call it before closing storage.
+func (a *App) WaitPushWakes(deadline time.Time) {
+	if a.api != nil {
+		a.api.WaitPushWakes(deadline)
 	}
 }
 
