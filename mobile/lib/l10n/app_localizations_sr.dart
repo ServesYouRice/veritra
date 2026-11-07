@@ -1142,6 +1142,14 @@ class AppLocalizationsSr extends AppLocalizations {
       'Чека се да ваш други уређај одобри. Оставите овај екран отворен.';
 
   @override
+  String get deviceLinkWaitingCode =>
+      'Чека се ваш други уређај. Код за потврду ће се ускоро појавити овде.';
+
+  @override
+  String get deviceLinkCommitmentMismatch =>
+      'Провера везе са вашег другог уређаја се није поклопила, па уређај није повезан. Направите нову везу на свом другом уређају и покушајте поново.';
+
+  @override
   String get historyCopySendWorking => 'Шаљем вашу историју на нови уређај…';
 
   @override
@@ -4266,6 +4274,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get deviceLinkWaitingApproval =>
       'Čeka se da vaš drugi uređaj odobri. Ostavite ovaj ekran otvoren.';
+
+  @override
+  String get deviceLinkWaitingCode =>
+      'Čeka se vaš drugi uređaj. Kod za potvrdu će se uskoro pojaviti ovde.';
+
+  @override
+  String get deviceLinkCommitmentMismatch =>
+      'Provera veze sa vašeg drugog uređaja se nije poklopila, pa uređaj nije povezan. Napravite novu vezu na svom drugom uređaju i pokušajte ponovo.';
 
   @override
   String get historyCopySendWorking => 'Šaljem vašu istoriju na novi uređaj…';

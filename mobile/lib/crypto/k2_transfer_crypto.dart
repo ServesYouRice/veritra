@@ -76,6 +76,12 @@ abstract interface class K2TransferCryptoService {
   Future<bool> k2VerifyPendingApproval(K2TransferId id, List<int> approvalTag,
       {required int approvedAt});
 
+  /// The SAS to show, from the random the source revealed (L1-3). Native
+  /// opens the commitment pinned at [k2ReceiveBegin] and refuses a random
+  /// that does not open it. Read only: nothing is stored, so it runs on the
+  /// frozen pending identity and repeats after a restart.
+  Future<String> k2RevealSas(K2TransferId id, List<int> sourceRandom);
+
   // --- Both roles ---
 
   /// Reads the native record (pending or active identity). Never mutates.
@@ -89,11 +95,19 @@ abstract interface class K2TransferCryptoService {
 
   // --- Source ---
 
-  /// Accepts the claim and returns the SAS to show. Committed first.
+  /// This device's commitment to [sourceRandom] (32 fresh random bytes) for
+  /// a link it is about to create on [serverOrigin] (L1-3). Pure.
+  Future<List<int>> k2SourceCommitment(
+      String serverOrigin, List<int> sourceRandom);
+
+  /// Accepts the claim and returns this device's SAS. Committed first: only
+  /// then may [sourceRandom] be revealed to the server, and native refuses
+  /// any other claim for the link afterwards.
   Future<K2Verification> k2SourceAccept(K2LinkContext context, List<int> secret,
       {required int originalExpiresAt,
       required List<int> transcriptHash,
-      required List<int> claimTag});
+      required List<int> claimTag,
+      required List<int> sourceRandom});
 
   /// Confirms the typed SAS: native intent, an `approving` progress row (its
   /// deadline is the latest the native record can live, the original link

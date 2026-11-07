@@ -37,17 +37,6 @@ void main() {
     final errors = <Object>[
       await thrownBy(() => crypto.createEnrollmentCredential(reservation)),
       await thrownBy(() => crypto.encrypt('conv_1', 'hello')),
-      await thrownBy(() => crypto.deriveDeviceLinkVerification(
-            accountId: 'acct_1',
-            protocolVersion: 'v1',
-            serverOrigin: 'https://chat.example.org',
-            linkId: 'dl_1',
-            linkSecret: <int>[1],
-            linkNonce: <int>[2],
-            peerDeviceId: 'dev_2',
-            peerSigningKey: <int>[3],
-            localIsExistingDevice: true,
-          )),
       await thrownBy(() => crypto.deviceLinkLocator(<int>[1, 2, 3])),
     ];
     expect(errors, everyElement(isA<StateError>()));
@@ -66,21 +55,11 @@ void main() {
       expect(describeError(await thrownBy(call), englishL10n),
           englishL10n.errorEncryptionUnavailable);
     }
-    // The device-link errors name neither MLS nor encryption, so they read
-    // as their own capitalised sentence (today's behaviour, pinned here).
-    final sas = await thrownBy(() => crypto.deriveDeviceLinkVerification(
-          accountId: 'acct_1',
-          protocolVersion: 'v1',
-          serverOrigin: 'https://chat.example.org',
-          linkId: 'dl_1',
-          linkSecret: <int>[1],
-          linkNonce: <int>[2],
-          peerDeviceId: 'dev_2',
-          peerSigningKey: <int>[3],
-          localIsExistingDevice: true,
-        ));
+    // The device-link error names neither MLS nor encryption, so it reads
+    // as its own capitalised sentence (today's behaviour, pinned here). The
+    // v2 SAS derivation it was pinned with was retired in ABI 18 (L1-3).
     final locator = await thrownBy(() => crypto.deviceLinkLocator(<int>[1]));
-    for (final error in <Object>[sas, locator]) {
+    for (final error in <Object>[locator]) {
       expect(describeError(error, englishL10n), (error as StateError).message);
     }
   });

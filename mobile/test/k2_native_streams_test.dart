@@ -11,7 +11,10 @@ class _Linked {
     bindings = NativeCryptoBindings.open(path);
     source = bindings.createDevice('account', 'source');
     recipient = bindings.createDevice('account', 'recipient');
-    K2LinkContext context(List<int> key) => K2LinkContext(
+    final sourceRandom = List.filled(32, 6);
+    final commitment =
+        source.k2SourceCommitment('https://example.test', sourceRandom);
+    K2LinkContext context(List<int> key, List<int> random) => K2LinkContext(
         id: id,
         accountId: 'account',
         nonce: List.filled(32, 9),
@@ -19,17 +22,20 @@ class _Linked {
         sourceSigningKey: source.signingPublicKey(),
         recipientDeviceId: 'recipient',
         recipientSigningKey: recipient.signingPublicKey(),
-        transferPublicKey: key);
+        transferPublicKey: key,
+        sourceCommitment: commitment,
+        recipientRandom: random);
     final secret = List.filled(16, 8);
     final received = recipient.k2ReceiveBegin(
-        context(List.filled(32, 0)), secret,
+        context(List.filled(32, 0), List.filled(32, 0)), secret,
         originalExpiresAt: 1000, now: 100);
     final checked = source.k2SourceAccept(
-        context(received.transferPublicKey), secret,
+        context(received.transferPublicKey, received.recipientRandom), secret,
         originalExpiresAt: 1000,
         now: 100,
-        transcriptHash: received.verification.transcriptHash,
-        claimTag: received.verification.claimTag);
+        transcriptHash: received.transcriptHash,
+        claimTag: received.claimTag,
+        sourceRandom: sourceRandom);
     source.k2SourceConfirm(id, checked.sas, now: 100);
     final tag = source.k2SourceApprovalRequest(id, now: 100).approvalTag;
     source.k2ApplyApproval(id, tag, approvedAt: 100, now: 100);

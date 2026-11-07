@@ -69,6 +69,8 @@ impl<'a> Reader<'a> {
             recipient_device_id: self.text(128)?.to_vec(),
             recipient_signing_key: self.fixed()?,
             transfer_public_key: self.fixed()?,
+            source_commitment: self.fixed()?,
+            recipient_random: self.fixed()?,
         })
     }
     fn finish(&self) -> Result<(), i32> {
@@ -82,7 +84,15 @@ impl<'a> Reader<'a> {
 
 enum Request<'a> {
     Begin(LinkContext, &'a [u8], u64, u64),
-    Accept(LinkContext, &'a [u8], u64, u64, [u8; 32], [u8; 32]),
+    Accept(
+        LinkContext,
+        &'a [u8],
+        u64,
+        u64,
+        [u8; 32],
+        [u8; 32],
+        [u8; 32],
+    ),
     Inspect(TransferId, u64),
     Proof(
         TransferId,
@@ -103,6 +113,11 @@ enum Request<'a> {
     Importing(TransferId, u64),
     Forget(TransferId),
     Expire(u64),
+    /// ABI 18: the new device's SAS from the revealed source random. Read only.
+    Reveal(TransferId, [u8; 32], u64),
+    /// ABI 18: this device's commitment to a source random, for a link it
+    /// is about to create (origin, then the random).
+    Commitment(&'a [u8], [u8; 32]),
 }
 impl<'a> Request<'a> {
     fn mutation_id(&self) -> Option<&TransferId> {
@@ -130,6 +145,7 @@ impl<'a> Request<'a> {
                 r.u64()?,
                 r.fixed()?,
                 r.fixed()?,
+                r.fixed()?,
             ),
             3 => Self::Inspect(r.id()?, r.u64()?),
             4 => Self::Proof(
@@ -151,6 +167,8 @@ impl<'a> Request<'a> {
             9 => Self::Importing(r.id()?, r.u64()?),
             10 => Self::Forget(r.id()?),
             11 => Self::Expire(r.u64()?),
+            12 => Self::Reveal(r.id()?, r.fixed()?, r.u64()?),
+            13 => Self::Commitment(r.text(2048)?, r.fixed()?),
             _ => return Err(BAD),
         };
         r.finish()?;
@@ -160,15 +178,17 @@ impl<'a> Request<'a> {
         // All result lengths are known. Allocate once, including the exact
         // framing, to avoid reallocating buffers containing approval MACs.
         let size = match operation {
-            1 => 111,
+            1 => 135,
             2 => 79,
-            3 => 106,
+            3 => 107,
             4 => 103,
             5 => 16,
             6 => 71,
             7 => 15,
             8..=10 => 8,
             11 => 9,
+            12 => 15,
+            13 => 39,
             _ => return Err(BAD),
         };
         let mut out = Vec::with_capacity(size);
@@ -182,12 +202,18 @@ impl<'a> Request<'a> {
         };
         match self {
             Self::Begin(c, s, e, n) => {
-                let (key, v) = d.begin_history_receive(c, s, e, n).map_err(fail)?;
+                // key32 || recipient random32 || hash32 || claim tag32: no
+                // SAS before the source reveals (ABI 18).
+                let (key, random, v) = d.begin_history_receive(c, s, e, n).map_err(fail)?;
                 out.extend_from_slice(&key);
-                verification(&mut out, &v);
+                out.extend_from_slice(&random);
+                out.extend_from_slice(&v.transcript_hash);
+                out.extend_from_slice(&v.claim_tag);
             }
-            Self::Accept(c, s, e, n, h, t) => {
-                let v = d.accept_history_claim(c, s, e, n, &h, &t).map_err(fail)?;
+            Self::Accept(c, s, e, n, h, t, random) => {
+                let v = d
+                    .accept_history_claim(c, s, e, n, &h, &t, &random)
+                    .map_err(fail)?;
                 verification(&mut out, &v);
             }
             Self::Inspect(id, n) => {
@@ -200,7 +226,17 @@ impl<'a> Request<'a> {
                 for t in [r.link_expires_at_ms, r.approved_at_ms, r.expires_at_ms] {
                     out.extend_from_slice(&t.to_be_bytes());
                 }
-                verification(&mut out, &r.verification);
+                // ABI 18: hash32 || claim tag32 || has_sas u8 || sas8 (eight
+                // zero bytes on an incoming record, which never holds one).
+                out.extend_from_slice(&r.verification.transcript_hash);
+                out.extend_from_slice(&r.verification.claim_tag);
+                if r.verification.sas.len() == 8 {
+                    out.push(1);
+                    out.extend_from_slice(r.verification.sas.as_bytes());
+                } else {
+                    out.push(0);
+                    out.extend_from_slice(&[0; 8]);
+                }
             }
             Self::Proof(
                 id,
@@ -294,6 +330,14 @@ impl<'a> Request<'a> {
                 }
                 out.extend_from_slice(&(d.expire_history_transfers(n) as u16).to_be_bytes());
             }
+            Self::Reveal(id, random, n) => {
+                let sas = d.reveal_history_sas(&id, &random, n).map_err(fail)?;
+                out.extend_from_slice(sas.as_bytes());
+            }
+            Self::Commitment(origin, random) => {
+                let commitment = d.link_source_commitment(origin, &random).map_err(|_| BAD)?;
+                out.extend_from_slice(&commitment);
+            }
         }
         debug_assert_eq!(out.len(), size);
         Ok(out)
@@ -372,6 +416,8 @@ control_export!(pm_crypto_k2_source_posted, 8);
 control_export!(pm_crypto_k2_importing, 9);
 control_export!(pm_crypto_k2_forget, 10);
 control_export!(pm_crypto_k2_expire, 11);
+control_export!(pm_crypto_k2_reveal_sas, 12);
+control_export!(pm_crypto_k2_source_commitment, 13);
 
 #[cfg(test)]
 mod tests {
@@ -446,7 +492,17 @@ mod tests {
         lp(b, b"https://example.test");
         lp(b, b"link");
     }
-    fn context(b: &mut Vec<u8>, s: &Device, r: &Device, key: &[u8]) {
+    const SOURCE_RANDOM: [u8; 32] = [6; 32];
+    /// Op 13: the source's commitment for a link on the test origin.
+    fn commitment(s: &Device) -> Vec<u8> {
+        let mut b = frame(13);
+        lp(&mut b, b"https://example.test");
+        b.extend_from_slice(&SOURCE_RANDOM);
+        let out = s.call(13, &b).unwrap();
+        assert_eq!(out.len(), 39);
+        out[7..].to_vec()
+    }
+    fn context(b: &mut Vec<u8>, s: &Device, r: &Device, key: &[u8], random: &[u8]) {
         id(b);
         lp(b, b"account");
         b.extend_from_slice(&[9; 32]);
@@ -455,24 +511,39 @@ mod tests {
         lp(b, b"new");
         b.extend_from_slice(&r.key());
         b.extend_from_slice(key);
+        b.extend_from_slice(&commitment(s));
+        b.extend_from_slice(random);
     }
+    /// Begin result: frame7 || key32 || recipient random32 || hash32 || tag32.
     fn receive(s: &Device, r: &Device) -> (Vec<u8>, Vec<u8>) {
         let mut begin = frame(1);
-        context(&mut begin, s, r, &[0; 32]);
+        context(&mut begin, s, r, &[0; 32], &[0; 32]);
         begin.extend_from_slice(&[8; 16]);
         begin.extend_from_slice(&1000u64.to_be_bytes());
         begin.extend_from_slice(&100u64.to_be_bytes());
         let result = r.call(1, &begin).unwrap();
         (begin, result)
     }
-    fn accept(s: &Device, r: &Device, received: &[u8]) -> Vec<u8> {
+    fn accept_request(s: &Device, r: &Device, received: &[u8], random: &[u8; 32]) -> Vec<u8> {
         let mut b = frame(2);
-        context(&mut b, s, r, &received[7..39]);
+        context(&mut b, s, r, &received[7..39], &received[39..71]);
         b.extend_from_slice(&[8; 16]);
         b.extend_from_slice(&1000u64.to_be_bytes());
         b.extend_from_slice(&100u64.to_be_bytes());
-        b.extend_from_slice(&received[39..103]);
-        s.call(2, &b).unwrap()
+        b.extend_from_slice(&received[71..135]);
+        b.extend_from_slice(random);
+        b
+    }
+    fn accept(s: &Device, r: &Device, received: &[u8]) -> Vec<u8> {
+        s.call(2, &accept_request(s, r, received, &SOURCE_RANDOM))
+            .unwrap()
+    }
+    fn reveal(d: &Device, random: &[u8; 32]) -> Result<Vec<u8>, i32> {
+        let mut b = frame(12);
+        id(&mut b);
+        b.extend_from_slice(random);
+        b.extend_from_slice(&100u64.to_be_bytes());
+        d.call(12, &b)
     }
 
     #[test]
@@ -480,9 +551,25 @@ mod tests {
         let mut s = Device::new(b"source");
         let mut r = Device::new(b"new");
         let (begin, result) = receive(&s, &r);
-        assert_eq!(result.len(), 111);
+        assert_eq!(result.len(), 135);
+        // A wrong source random opens no commitment and accepts nothing.
+        let mut wrong = SOURCE_RANDOM;
+        wrong[0] ^= 1;
+        assert_eq!(
+            s.call(2, &accept_request(&s, &r, &result, &wrong)),
+            Err(PM_CRYPTO_ERROR)
+        );
         let verification = accept(&s, &r, &result);
-        assert_eq!(verification[7..], result[39..]);
+        assert_eq!(verification.len(), 79);
+        assert_eq!(verification[7..71], result[71..135]);
+        // The new device's read-only reveal gives the source's SAS; a random
+        // that does not open the commitment gives none.
+        assert_eq!(
+            reveal(&r, &SOURCE_RANDOM).unwrap()[7..],
+            verification[71..79]
+        );
+        assert_eq!(reveal(&r, &wrong), Err(PM_CRYPTO_ERROR));
+        assert_eq!(reveal(&s, &SOURCE_RANDOM), Err(PM_CRYPTO_ERROR));
         let mut request = frame(6);
         id(&mut request);
         request.extend_from_slice(&100u64.to_be_bytes());
@@ -518,8 +605,15 @@ mod tests {
             id(&mut inspect);
             inspect.extend_from_slice(&100u64.to_be_bytes());
             let status = d.call(3, &inspect).unwrap();
-            assert_eq!(status.len(), 106);
+            assert_eq!(status.len(), 107);
             assert_eq!(status[8], 2);
+            // has_sas: the source holds the SAS, the new device never does.
+            if std::ptr::eq(d, &s) {
+                assert_eq!(status[98], 1);
+                assert_eq!(status[99..], verification[71..79]);
+            } else {
+                assert_eq!(status[98..], [0; 9]);
+            }
             let mut posted = frame(8);
             id(&mut posted);
             posted.extend_from_slice(&100u64.to_be_bytes());
@@ -575,7 +669,36 @@ mod tests {
             .unwrap();
         assert_eq!(r.call(4, &proof(&other)), Err(PM_CRYPTO_ERROR));
         assert_eq!(s.call(4, &request), Err(PM_CRYPTO_ERROR));
-        assert_eq!(received.len(), 111);
+        assert_eq!(received.len(), 135);
+    }
+
+    #[test]
+    fn begin_never_takes_a_caller_random_and_commitment_checks_its_input() {
+        let s = Device::new(b"source");
+        let r = Device::new(b"new");
+        // A first begin with a caller-chosen random is refused: the new
+        // device's random is a native output, like the transfer key.
+        let mut chosen = frame(1);
+        context(&mut chosen, &s, &r, &[0; 32], &[3; 32]);
+        chosen.extend_from_slice(&[8; 16]);
+        chosen.extend_from_slice(&1000u64.to_be_bytes());
+        chosen.extend_from_slice(&100u64.to_be_bytes());
+        assert_eq!(r.call(1, &chosen), Err(PM_CRYPTO_ERROR));
+        let (_, result) = receive(&s, &r);
+        assert_ne!(result[39..71], [0; 32]);
+        let mut b = frame(13);
+        lp(&mut b, b"https://example.test");
+        b.extend_from_slice(&[0; 32]);
+        assert_eq!(s.call(13, &b), Err(BAD));
+        let mut b = frame(13);
+        lp(&mut b, &[0xff]);
+        b.extend_from_slice(&SOURCE_RANDOM);
+        assert_eq!(s.call(13, &b), Err(BAD));
+        // Each device commits under its own identity.
+        let mut b = frame(13);
+        lp(&mut b, b"https://example.test");
+        b.extend_from_slice(&SOURCE_RANDOM);
+        assert_ne!(r.call(13, &b).unwrap(), s.call(13, &b).unwrap());
     }
 
     #[test]

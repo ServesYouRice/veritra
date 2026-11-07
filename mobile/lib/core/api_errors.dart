@@ -80,6 +80,8 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'mls_change_pending': ApiErrorKind.conflict,
   'recovery_transfer_in_progress': ApiErrorKind.conflict,
   'transcript_mismatch': ApiErrorKind.conflict,
+  // L1-3: an approval sent before the source revealed its random.
+  'reveal_required': ApiErrorKind.conflict,
   'device_recovery_required': ApiErrorKind.conflict,
   // Admission limits (card T49D).
   'device_limit_reached': ApiErrorKind.conflict,
@@ -318,6 +320,8 @@ class ApiException implements Exception {
       case 'transcript_hash_required':
       case 'transcript_mismatch':
         return l10n.apiErrorTranscriptMismatch;
+      case 'reveal_required':
+        return l10n.deviceLinkRefreshFirst;
       case 'invalid_device_name':
         return l10n.apiErrorInvalidDeviceName;
       case 'invalid_name':

@@ -1989,6 +1989,18 @@ abstract class AppLocalizations {
   /// **'Waiting for your other device to approve. Keep this screen open.'**
   String get deviceLinkWaitingApproval;
 
+  /// No description provided for @deviceLinkWaitingCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for your other device. The code to confirm appears here in a moment.'**
+  String get deviceLinkWaitingCode;
+
+  /// No description provided for @deviceLinkCommitmentMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Your other device\'s link check did not match, so this device was not linked. Create a new link on your other device and try again.'**
+  String get deviceLinkCommitmentMismatch;
+
   /// No description provided for @historyCopySendWorking.
   ///
   /// In en, this message translates to:

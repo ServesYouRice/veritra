@@ -26,6 +26,8 @@ type EnrollmentReservation struct {
 	LinkNonce          []byte
 	ExistingDeviceID   string
 	ExistingSigningKey []byte
+	// SourceCommitment is the existing device's L1-3 commitment (v3 route).
+	SourceCommitment []byte
 }
 
 func (s *Store) ReserveOwnerEnrollment(ctx context.Context) (EnrollmentReservation, error) {

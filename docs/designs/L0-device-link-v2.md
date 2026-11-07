@@ -33,3 +33,11 @@ single-use checks. Existing device sessions and MLS state are unchanged.
 K2 will version its transfer-key transcript separately. L0 authenticates a
 link; the signed approved-device list (L1) is still required to prevent a
 malicious server adding devices outside this flow. Production gates stay shut.
+
+## Superseded parts (L1-3, ABI 18)
+
+ABI 18 removes the v2 derivation. Device links now use protocol
+`veritra-device-link-v4` on the K2 route, which keeps these secret-keyed
+tags and adds commit-then-reveal, so a leaked QR secret no longer leaves the
+8-digit SAS open to grinding. See [L1-3](L1-3-link-commitment.md). The
+server's v2 routes remain for now, but no client speaks v2.

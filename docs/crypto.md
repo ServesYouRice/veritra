@@ -177,8 +177,9 @@ until the package that builds it lands and adds its change-log entry.
 
 ## Device linking
 
-[L0 device link v2](designs/L0-device-link-v2.md) specifies the current
-transcript and tag derivation. Both devices use their configured canonical
+[L0 device link v2](designs/L0-device-link-v2.md) specifies the secret-keyed
+tags; [L1-3](designs/L1-3-link-commitment.md) specifies the current protocol,
+`veritra-device-link-v4` on the K2 route, which adds commit-then-reveal. Both devices use their configured canonical
 server origin. The old device generates a 128-bit secret; QR and manual
 input carry its 26-character base32 encoding. HTTP carries only a one-way
 locator. The old device verifies the claim tag before asking for the typed
@@ -186,22 +187,24 @@ safety code; the new device verifies the separate approval tag and its
 reserved identity before saving a session. JSON API redirects are refused.
 Legacy links must be recreated. Existing account/device sessions remain valid.
 
-SAS strength (TASK-010, TASK-048). The SAS is 8 digits, about 26.6 bits.
-The audit's grinding attack assumes the SAS is a hash of values the relay
-sees, so a relay that substitutes both keys can search for a collision
-(about 10^4 key generations per side). Under L0 that does not hold: the
-SAS, the claim tag and the approval tag are MACs keyed from the 128-bit
-secret, which travels only out of band. A relay without the secret cannot
-evaluate any of them. A substituted new-device key fails the claim tag, so
-the old device never asks for or accepts the typed SAS; a substituted
-old-device key fails the approval tag, so the new device saves no session. The
-secret plays the role a commit-then-reveal step would, so none is added.
-The residual case is a leaked secret (a QR seen by someone who also
-controls the relay): the attacker can then forge both tags and grind the
-SAS, which becomes the only check. Closing that needs a key commitment
-before the nonce is revealed, or a longer SAS. That is an owner decision
-(Q-001), not a defect in v2. Protocol v3 (`mls/link_v3.rs`) uses the same
-construction. Any transcript change needs a new protocol string and vector.
+SAS strength (TASK-010, TASK-048, D100). The SAS is 8 digits, about 26.6
+bits. The SAS, the claim tag and the approval tag are MACs keyed from the
+128-bit QR secret, so a relay without the secret can evaluate none of them.
+The case L0 left open is a leaked secret: someone who saw the QR code and
+also controls the relay. That attacker can forge both tags, so the SAS is
+the only check left. Before L1-3 it could also be ground, and more cheaply
+than the audit assumed: the old device built its transcript from the nonce
+returned on refresh, so the relay could grind that nonce with HMACs alone
+(4 of 8 digits after 3,645 tries in a test; all 8 in minutes). Protocol v4
+(L1-3, ABI 18) adds commit-then-reveal. The old device commits to a fresh
+random before the new device exists. The new device sends its own fresh
+random in the claim. The old device reveals its random only after its native
+accept has fixed that claim, and the new device shows the code only once the
+random opens the commitment. Both codes depend on a random the relay had to
+fix before it saw it, so it gets one guess of about 10^-8 per run. The 8
+digits are kept (D100). The v2 derivation was removed from the ABI. Any
+transcript change still needs a new protocol string and vector
+(`testing/vectors/device-link-v4.json`).
 
 ### What L1 must provide (TASK-006)
 
@@ -449,6 +452,35 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1-3, device-link commit-then-reveal, ABI 18 (2026-11-07, D100 A;
+  TASK-010, TASK-048):** design
+  [`L1-3-link-commitment.md`](designs/L1-3-link-commitment.md). Protocol
+  `veritra-device-link-v4` on the K2 route. The existing device commits to a
+  fresh 32-byte random at create (`source_commitment`). The new device adds
+  its own random to the claim (`recipient_random`, a native output). The
+  existing device reveals its random only after its native accept of the
+  claim is committed, and the new device opens the commitment, read only,
+  before it shows the 8-digit SAS. A relay holding the QR secret therefore
+  gets one 10^-8 guess per run. The approval tag still covers only the claim
+  transcript, which carries the commitment, so the frozen pending state never
+  needs the reveal. **ABI 18 is not backward compatible:** the K2 control
+  context gains two fields; `receive_begin` returns no SAS; `source_accept`
+  takes the source random; `inspect` reports `has_sas`; there are new ops
+  12 `reveal_sas` and 13 `source_commitment`; and
+  `pm_crypto_device_link_transcript_hash` (v2) is removed. Native transfer
+  records move to item version 2. Version-1 (v3) records are dropped on load,
+  never refused, so a history copy in flight across the upgrade ends and the
+  device links again. Server migration 0060 adds four write-once columns,
+  revokes pending and claimed links that have no commitment, adds `POST
+  .../v3/{id}/reveal` (source only) and refuses approval before the reveal
+  (`409 reveal_required`). The source's session-only reveal and approve
+  routes move from the credential budget to the signed-in budget, exact clean
+  spelling only. The history transfer keeps its
+  `veritra-device-link-v3` label. Vector `testing/vectors/device-link-v4.json`
+  (independent Python, checked by Rust). No MLS group, payload or local schema
+  change. Open: the server's legacy v2 link routes still exist but no client
+  can speak v2. Remove them after L1 lands. **Needs the independent crypto
+  review before release.**
 - **L1-1, approved-device list, crypto layer, ABI 14 (2026-11-07, D94):**
   design [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
   Additive except for one call (`pm_crypto_recovery_key_derive` gains the
@@ -559,13 +591,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     expected key on adds and the changed-key refusal; it deliberately does
     not refuse in `process_commit` or `join_group` for an L1 reason (D94), so
     the task closes with L1-3, which judges the pairs against the pins and
-    holds. TASK-010 and TASK-048 (SAS commit-then-reveal): L1 needs nothing
-    more from the crypto layer. L0 and K2 already authenticate the new
-    device's key to the old device under a MAC keyed by the QR-only secret,
-    and L1 only has the old device sign change 2 after that check; the
-    residual (a leaked QR secret held by whoever also controls the relay) is
-    unchanged by L1 and stays the owner decision Q-001. L1-3 must sign
-    change 2 only after the claim tag and typed code verify.
+    holds. TASK-010 and TASK-048 (SAS commit-then-reveal): built with L1-3
+    (D100, ABI 18, [design](designs/L1-3-link-commitment.md)); see the L1-3
+    change-log entry. L1-3 must sign change 2 only after the claim tag and
+    the typed code verify, which under v4 also means after the reveal.
   - **Remains for L1-3 (mobile)** and the other steps: pins and the keys
     table (local schema), fetch and verify, the add gate and complete adds,
     judging commits and Welcomes against the pins (and a Welcome roster
@@ -1356,10 +1385,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     the server or app must refuse mixed ABI versions (for example a minimum
     client version on enrollment and sync). This belongs with the release
     gates in STATE.md.
-  - TASK-010, TASK-048: no protocol change. L0's secret-keyed SAS and tags
-    already stop a relay from grinding keys; the doc comments now state the
-    8-digit SAS (about 26.6 bits) and the leaked-secret residual. See
-    "Device linking".
+  - TASK-010, TASK-048: no protocol change here. L0's secret-keyed SAS and
+    tags already stop a relay without the secret from grinding keys; the doc
+    comments now state the 8-digit SAS (about 26.6 bits) and the
+    leaked-secret residual. Superseded by L1-3 (ABI 18), which adds
+    commit-then-reveal. See "Device linking".
   - Not closed here: which identities may hold which keys, and who may
     commit or invite (TASK-006), needs the L1 approved-device list. See
     "What L1 must provide".

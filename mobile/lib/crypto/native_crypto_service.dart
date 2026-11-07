@@ -1738,34 +1738,6 @@ class NativeCryptoService
   Future<String> deviceLinkLocator(List<int> secret) async =>
       bindings.deviceLinkLocator(secret);
 
-  @override
-  Future<DeviceLinkVerification> deriveDeviceLinkVerification({
-    required String accountId,
-    required String protocolVersion,
-    required String serverOrigin,
-    required String linkId,
-    required List<int> linkSecret,
-    required List<int> linkNonce,
-    required String peerDeviceId,
-    required List<int> peerSigningKey,
-    required bool localIsExistingDevice,
-  }) =>
-      _serial(() async {
-        if (_accountId != accountId) {
-          throw StateError('device-link account mismatch');
-        }
-        return _requiredDevice().deriveDeviceLinkVerification(
-          protocolVersion: protocolVersion,
-          serverOrigin: serverOrigin,
-          linkId: linkId,
-          linkSecret: linkSecret,
-          peerDeviceId: peerDeviceId,
-          peerSigningKey: peerSigningKey,
-          linkNonce: linkNonce,
-          localIsExistingDevice: localIsExistingDevice,
-        );
-      });
-
   // K2 history transfer (K2TransferCryptoService). Every state-changing step
   // is one _serial operation: native call, seal, one expected-counter commit
   // (with the progress row where one changes), restore on failure.
@@ -1870,6 +1842,22 @@ class NativeCryptoService
       _serial(() async => _requiredDevice().k2Inspect(id, now: _nowMs));
 
   @override
+  Future<String> k2RevealSas(K2TransferId id, List<int> sourceRandom) =>
+      _serial(() async {
+        // Read only, so it runs on the frozen pending identity too.
+        if (!_pendingEnrollment) {
+          throw const K2TransferException('no pending enrollment identity');
+        }
+        return _requiredDevice().k2RevealSas(id, sourceRandom, now: _nowMs);
+      });
+
+  @override
+  Future<List<int>> k2SourceCommitment(
+          String serverOrigin, List<int> sourceRandom) =>
+      _serial(() async =>
+          _requiredDevice().k2SourceCommitment(serverOrigin, sourceRandom));
+
+  @override
   Future<int> k2ApplyApproval(K2TransferId id, List<int> approvalTag,
           {required int approvedAt}) =>
       _serial(() => _transferMutation<int>((device) async =>
@@ -1880,13 +1868,15 @@ class NativeCryptoService
   Future<K2Verification> k2SourceAccept(K2LinkContext context, List<int> secret,
           {required int originalExpiresAt,
           required List<int> transcriptHash,
-          required List<int> claimTag}) =>
+          required List<int> claimTag,
+          required List<int> sourceRandom}) =>
       _serial(() => _transferMutation<K2Verification>((device) async =>
           device.k2SourceAccept(context, secret,
               originalExpiresAt: originalExpiresAt,
               now: _nowMs,
               transcriptHash: transcriptHash,
-              claimTag: claimTag)));
+              claimTag: claimTag,
+              sourceRandom: sourceRandom)));
 
   @override
   Future<int> k2SourceConfirm(K2TransferId id, String typedSas,

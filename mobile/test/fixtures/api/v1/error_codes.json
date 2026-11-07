@@ -153,6 +153,7 @@
     "token_create_failed": "server",
     "transcript_hash_required": "invalidRequest",
     "transcript_mismatch": "conflict",
+    "reveal_required": "conflict",
     "typing_publish_failed": "server",
     "typing_rate_limited": "rateLimited",
     "unauthorized": "authentication",

@@ -238,11 +238,17 @@ void main() {
     expect(linkCode, isNotNull);
     await replacement.state.claimDeviceLink(baseUrl, linkCode!);
     replacement.expectOk();
-    final verification =
-        replacement.state.pendingDeviceLinkClaim!.verificationCode;
+    // L1-3: the code appears only after the owner accepted the claim and
+    // revealed its committed random, and the replacement looked again.
+    expect(replacement.state.pendingDeviceLinkClaim!.verificationCode, isEmpty);
     await owner.state.refreshActiveDeviceLink();
     expect(owner.state.errorFor(Ops.deviceLink), isNull,
         reason: owner.state.errorFor(Ops.deviceLink));
+    await replacement.state.completeDeviceLinkClaim();
+    replacement.expectOk();
+    final verification =
+        replacement.state.pendingDeviceLinkClaim!.verificationCode;
+    expect(verification, matches(RegExp(r'^\d{8}$')));
     await owner.state.approveActiveDeviceLink(verification);
     expect(owner.state.errorFor(Ops.deviceLink), isNull,
         reason: owner.state.errorFor(Ops.deviceLink));
