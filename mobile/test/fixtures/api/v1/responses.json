@@ -95,6 +95,11 @@
       "created_at": "2026-06-02T12:30:00Z"
     }
   },
+  "member_removed": {
+    "status": "membership_removed",
+    "mls_coordination": "pending",
+    "event_id": 12
+  },
   "errors": {
     "plain": {"status": 403, "body": "{\"error\":\"forbidden\"}"},
     "with_int_field": {"status": 409, "body": "{\"error\":\"mls_epoch_conflict\",\"epoch\":12}"},

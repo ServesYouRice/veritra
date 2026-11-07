@@ -6,7 +6,8 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
-import 'package:flutter/foundation.dart' show mapEquals, setEquals;
+import 'package:flutter/foundation.dart'
+    show mapEquals, setEquals, visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
@@ -181,6 +182,18 @@ enum RequestBucket { chat, request, hidden }
 /// Why the stored message-request state is not in use: the read failed
 /// (tried again later) or the value could not be decoded.
 enum _RequestStateFault { unreadable, undecodable }
+
+/// The newest event id a sync pass fetched, as a floor for a leave that
+/// cannot be dated by the server (D70). It counts only for the session
+/// generation it was recorded under: a value from another session's pass
+/// says nothing about this one's events, so it is 0 then.
+@visibleForTesting
+int passFetchedFloor({
+  required int fetchedThrough,
+  required int fetchedGeneration,
+  required int sessionGeneration,
+}) =>
+    fetchedGeneration == sessionGeneration ? fetchedThrough : 0;
 
 class AppState extends ChangeNotifier implements ConversationAuthority {
   AppState({
@@ -2321,7 +2334,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null) {
         return;
       }
-      await client.removeConversationMember(
+      final leaveEventId = await client.removeConversationMember(
         current.token,
         conversationId,
         'me',
@@ -2352,7 +2365,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         selectedConversationId = null;
       }
       await _persistSnapshot();
-      await _afterLeftConversation(current, conversationId);
+      await _afterLeftConversation(current, conversationId, leaveEventId);
     });
   }
 
@@ -2364,7 +2377,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// durable, so a restart still drops the group. A local failure here does
   /// not undo or fail the leave.
   Future<void> _afterLeftConversation(
-      Session current, String conversationId) async {
+      Session current, String conversationId, int? leaveEventId) async {
     try {
       for (final record in await localStore.pendingEnvelopeRecords()) {
         if (record.envelope.conversationId == conversationId) {
@@ -2377,7 +2390,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (_mlsCrypto is! MlsStateMaintenanceCryptoService) return;
     // Before the note, so a Welcome from before the leave that a pass
     // under way applies later already finds it ([_skipWelcomeBeforeLeave]).
-    await _noteLeaveFloor(current, conversationId);
+    await _noteLeaveFloor(current, conversationId, leaveEventId);
     try {
       await _changeLeftConversations(
           current, (ids) => <String>{...ids, conversationId});
@@ -2456,6 +2469,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// committed yet, and it is never above the leave's own event.
   int _syncFetchedThrough = 0;
 
+  /// The [_sessionGeneration] [_syncFetchedThrough] was recorded under. A
+  /// pass of another session (sign-out, account switch) says nothing about
+  /// this one's events, so a mismatch ignores the value.
+  int _syncFetchedGeneration = -1;
+
   Future<Map<String, int>> _readLeftFloors(Session owner) async {
     final raw = await localStore.loadSetting(_leftFloorsSetting);
     if (raw == null || raw.isEmpty) return <String, int>{};
@@ -2513,26 +2531,44 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return done;
   }
 
-  /// Notes the event id the leave of [conversationId] came after. The
-  /// server's `latest_event_id` is read once the leave succeeded: it is at
-  /// or above the leave's own event, so at or above every older one, and
-  /// the sync cursor alone is not (a pass can hold fetched events beyond
-  /// it). Where the server cannot be asked, the newest id the running pass
-  /// fetched stands in (covering the page it holds, not events it has yet
-  /// to fetch). Best effort, like the note: a failure leaves the leave as
-  /// it was.
-  Future<void> _noteLeaveFloor(Session current, String conversationId) async {
+  /// Notes the floor for the leave of [conversationId]: the sync event id
+  /// at or below which a Welcome for this device predates the leave.
+  ///
+  /// [leaveEventId] is the server's own id of the leaver's `membership.left`
+  /// event, from the leave response. Welcomes are stored only for member
+  /// devices, in the transaction that adds them, so every Welcome with a
+  /// lower id came before the leave and any higher id is a real re-add: the
+  /// floor is exact and a re-add is never skipped. A server that reports no
+  /// id (an older one) is asked for its newest event id instead
+  /// (`latest_event_id`, at or above the leave's own event, so at or above
+  /// every older one; the sync cursor alone is not, a pass can hold fetched
+  /// events beyond it). Where that fails too, the newest id the running pass
+  /// of this session fetched stands in (covering the page it holds, not
+  /// events it has yet to fetch). Best effort, like the note: a failure
+  /// leaves the leave as it was.
+  Future<void> _noteLeaveFloor(
+      Session current, String conversationId, int? leaveEventId) async {
     try {
-      var floor = max(await localStore.loadSyncCursor(), _syncFetchedThrough);
-      final client = api;
-      if (client != null) {
-        try {
-          final latest = await client
-              .syncLatestEventId(current.token)
-              .timeout(const Duration(seconds: 5));
-          floor = max(floor, latest);
-        } catch (_) {
-          // The cursor and the pass's fetched page stand in for it.
+      int floor;
+      if (leaveEventId != null && leaveEventId > 0) {
+        floor = leaveEventId;
+      } else {
+        final fetched = passFetchedFloor(
+          fetchedThrough: _syncFetchedThrough,
+          fetchedGeneration: _syncFetchedGeneration,
+          sessionGeneration: _sessionGeneration,
+        );
+        floor = max(await localStore.loadSyncCursor(), fetched);
+        final client = api;
+        if (client != null) {
+          try {
+            final latest = await client
+                .syncLatestEventId(current.token)
+                .timeout(const Duration(seconds: 5));
+            floor = max(floor, latest);
+          } catch (_) {
+            // The cursor and the pass's fetched page stand in for it.
+          }
         }
       }
       await _changeLeftFloors(current, (floors) {
@@ -5206,6 +5242,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final fetchAfterRead = _removalReadCount;
       var pageCursor = await localStore.loadSyncCursor();
       _syncFetchedThrough = pageCursor;
+      _syncFetchedGeneration = ownerGeneration;
       const pageSize = 200;
       while (true) {
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) {
@@ -5228,7 +5265,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           }
           returnedCursor = event.id;
         }
-        _syncFetchedThrough = max(_syncFetchedThrough, returnedCursor);
+        if (_syncFetchedGeneration == ownerGeneration) {
+          _syncFetchedThrough = max(_syncFetchedThrough, returnedCursor);
+        }
         final repair = _SyncPageRepair(
           client: client,
           token: current.token,

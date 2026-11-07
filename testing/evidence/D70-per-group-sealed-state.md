@@ -113,28 +113,37 @@ Commit `50bee42` (merge `38fa087`).
 Race: a pass fetched an add-Welcome, the user left, the pass then applied the
 Welcome after the group drop had cleared the note, and the group came back.
 
-- At leave, after the server took it, the app reads the server's
-  `latest_event_id` (an empty `GET /api/v1/sync/events` page; the leave's own
-  `membership.left` account event is at or below it) and stores it as that
-  conversation's floor in the local setting `mls.left_floors`. No schema change;
-  no server change. The floor is written before the leave note.
+- The `DELETE /members/me` response now carries `event_id`, the id of the
+  leaver's own `membership.left` sync event (additive field; no schema
+  change). The app stores it as that conversation's floor in the local setting
+  `mls.left_floors`, written before the leave note. Welcomes are stored only
+  for member devices in the transaction that adds them, so a lower id predates
+  the leave and a higher one is a real re-add: the floor is exact.
 - A Welcome for this device at or below its conversation's floor is skipped:
   the cursor moves past it, nothing joins, its key package is still owed a
-  replacement. A floor is dropped once the committed cursor reaches it.
-- If the server cannot be asked, the newest event id the running pass has
-  fetched stands in. That covers the page the pass holds, not events it has
-  yet to fetch or a fetch still in flight, so the race stays partly open in
-  that case.
-- Server contract the fix relies on, pinned by
-  `server/internal/httpapi/sync_latest_bound_test.go`: a sync page requested
-  past every event id is a 200 with no events, its `latest_event_id` is at or
-  above the leaver's `membership.left` event although the left conversation no
-  longer counts for the account, and the request changes what the device is
-  served.
-- Tests, `d70_s4_wiring_test.dart` (18 in the file now): a leave racing a pass
-  that holds the older Welcome keeps no group, a later re-add joins, the key
-  package is still owed; the fallback when the bound request fails; another
-  conversation's Welcome is not skipped; the floor survives a restart.
+  replacement. Floors at or below the committed cursor are dropped lazily, on
+  the next write of the floors.
+- Only for a server that returns no `event_id` (an older one) the app reads
+  the server's `latest_event_id` (an empty `GET /api/v1/sync/events` page) as
+  the floor. That is not exact: a Welcome created between the leave and that
+  read would also be skipped (a window of one request). If that read fails,
+  the newest event id the running pass of the same session has fetched stands
+  in (a pass of another session is ignored); it covers the page the pass holds,
+  not events it has yet to fetch or a fetch still in flight.
+- Server contracts, pinned by
+  `server/internal/httpapi/sync_latest_bound_test.go`: the leave response's
+  `event_id` equals the leaver's `membership.left` event id; a sync page
+  requested past every event id is a 200 with no events, its `latest_event_id`
+  is at or above that event although the left conversation no longer counts
+  for the account, and the request changes what the device is served.
+- Tests: `d70_s4_wiring_test.dart` covers a leave racing a pass that holds the
+  older Welcome (no group kept, a later re-add joins, the key package is still
+  owed); a re-add above the leave id but at or below `latest_event_id` joins;
+  the leave id stands alone when the bound read fails; the fallback for a
+  server with no `event_id`; the generation rule for the pass's fetched page;
+  another conversation's Welcome is not skipped; the floor survives a restart.
+  `api_bounded_decoding.dart` covers reading `event_id` (fixture
+  `member_removed`) and an absent or unusable one as none.
 
 ## Not measured
 

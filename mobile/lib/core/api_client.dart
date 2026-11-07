@@ -1370,17 +1370,25 @@ class ApiClient {
   /// Removes a member, or leaves the conversation when [accountId] is `me`.
   /// The server records this as membership only; MLS removal is coordinated
   /// separately and is not implied by a successful response.
-  Future<void> removeConversationMember(
+  ///
+  /// Returns the sync event id the server reports as the removed member's
+  /// own event (`event_id`, the leaver's `membership.left` for a leave), or
+  /// null when it reports none (an older server) or an unusable value. The
+  /// app dates a leave by it (D70): every Welcome stored for the leaver
+  /// before the leave has a lower id.
+  Future<int?> removeConversationMember(
     String token,
     String conversationId,
     String accountId,
   ) async {
-    await _jsonRequest(
+    final json = await _jsonRequest(
       'DELETE',
       '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
           '/members/${Uri.encodeComponent(accountId)}',
       token: token,
     );
+    final id = json['event_id'];
+    return id is int && id > 0 ? id : null;
   }
 
   Future<ConversationMute> conversationMute(

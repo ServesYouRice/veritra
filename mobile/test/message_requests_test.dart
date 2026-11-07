@@ -91,7 +91,7 @@ class _Api extends ApiClient {
 
   // The server refuses to remove a member from anything but a group.
   @override
-  Future<void> removeConversationMember(
+  Future<int?> removeConversationMember(
     String token,
     String conversationId,
     String accountId,
@@ -102,6 +102,7 @@ class _Api extends ApiClient {
     }
     left.add(conversationId);
     list = list.where((c) => c.id != conversationId).toList();
+    return null;
   }
 }
 
