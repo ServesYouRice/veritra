@@ -296,8 +296,12 @@ goes through one gate:
    "the list says key K" and "the key package the server handed over".
 
 Adds are also made complete: when an account joins a conversation, the
-committer stages every device approved for it, not only those the server
-lists. A listed device the server gives no key package for is retried; after
+committer stages every device approved for it that is not already a leaf
+(`group_members`), not only those the server lists. The server already
+accepts that: an Added device must be a non-revoked device of a member
+account that is not active in the roster, whether or not it is pending
+(`mls_group_store.go:268`). A listed device the server gives no key package
+for is retried; after
 a grace period (1 hour) the conversation shows "Some of <name>'s devices
 haven't joined yet". This makes it harder for a server to keep an account's
 real devices out of a group so that they never see a ghost beside them.
@@ -439,9 +443,19 @@ auth only when every removed device is already revoked on the server.
 setting `rk_list_pub′`. The device derives it from the RK it just generated
 and the user typed back. The server swaps `{rk_auth_pub, rk_id}` and inserts
 the version in one transaction, so an RK the server accepts is always the
-RK on the list. A claim against an account whose head has no recovery key
-counts as `rkOK = false`: the same 401 as no RK at all, so there is no new
-oracle.
+RK on the list.
+
+A claim against an account whose head has no recovery key (only a pre-L1
+RK not yet confirmed; see [Existing accounts](#existing-accounts)) is
+refused with the same 401 as no RK at all, so there is no new oracle.
+
+**This changes how D79 behaves.** Such a claim is **not** counted toward the
+D79 cap and does not trigger the leak warning: the user's own correct RK
+must not use up their daily cap or warn their devices that the password
+leaked. The claim handler still reads and writes the `recovery_attempts`
+row on that path, adding 0, so the work and timing stay equal on every
+path, decoys included. A wrong RK on such an account counts as D79 says.
+The owner and the reviewer should confirm this.
 
 ### Recovery when every device is lost (K0-R)
 
@@ -649,7 +663,9 @@ Each step adds its `docs/crypto.md` change-log entry. With L1-3, the
    account's current devices for the user to review, and they become the
    approved list. The alternative is to make the user link every other
    device again. In both cases a recovery key made before L1 must be typed
-   once more to keep working; there is no safe way around that.
+   once more to keep working; there is no safe way around that. Until then,
+   a recovery with that key is refused without counting toward the D79 cap
+   (a change to how D79 behaves).
 4. **Safety numbers.** Keep today's per-chat numbers, which change whenever
    a contact adds a device (default)? A later package could add a per-
    account code from the list identity, so a verified contact stays verified
