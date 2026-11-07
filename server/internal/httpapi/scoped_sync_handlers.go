@@ -47,8 +47,13 @@ func syncPageParams(r *http.Request) (int64, int) {
 }
 
 // writeScopedSync writes the stream envelope. The bounds are the account's,
-// as in the legacy stream; the expiry decision itself is made per scope in
-// storage. A 409 pauses only this scope.
+// as in the legacy stream, so a client must not read them as this scope's
+// progress or floor; the expiry decision itself is made per scope in
+// storage. A 409 pauses only this scope: the account scope keeps the
+// device-wide device_recovery_required (missing account events stay a
+// device-wide condition), a conversation scope answers
+// conversation_recovery_required so a client never relinks the whole device
+// over one paused conversation.
 func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal domain.Principal, scope, scopeID string, events []domain.SyncEvent, err error) {
 	expired := errors.Is(err, storage.ErrSyncCursorExpired)
 	if err != nil && !expired {
@@ -67,6 +72,9 @@ func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal 
 	body := map[string]interface{}{"scope": scope, "scope_id": scopeID, "sync_epoch": epoch, "oldest_event_id": oldest, "latest_event_id": latest}
 	if expired {
 		body["error"] = "device_recovery_required"
+		if scope == syncScopeConversation {
+			body["error"] = "conversation_recovery_required"
+		}
 		writeJSON(w, http.StatusConflict, body)
 		return
 	}

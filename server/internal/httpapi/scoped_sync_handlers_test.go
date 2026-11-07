@@ -1,10 +1,14 @@
 package httpapi_test
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
 	"testing"
+	"time"
 
 	"private-messenger/server/internal/config"
 )
@@ -129,4 +133,58 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 	if err := json.Unmarshal(body, &raw); err != nil || string(raw["events"]) != "[]" {
 		t.Fatalf("empty page body=%s err=%v", body, err)
 	}
+}
+
+// A conversation cursor behind that conversation's pruned events answers a
+// scoped 409 (conversation_recovery_required, never the device-wide code),
+// while the account stream at the same cursor keeps working.
+func TestScopedSyncConversationExpiryIsScoped(t *testing.T) {
+	application, handler, token, dbPath := newTestAppWithOwnerConfig(t, func(c *config.Config) { c.ScopedSync = true })
+	conversationID := createConversation(t, handler, token)
+	createMessage(t, handler, token, conversationID, "scoped-expiry-seen", []byte("ciphertext"))
+	first := getScopedSyncPage(t, handler, "/api/v1/conversations/"+conversationID+"/sync-events?after=0", token, http.StatusOK)
+	if len(first.Events) == 0 {
+		t.Fatal("no conversation event to hold a cursor on")
+	}
+	cursor := first.Events[len(first.Events)-1].ID
+	for i := 0; i < 3; i++ {
+		createMessage(t, handler, token, conversationID, "scoped-expiry-"+strconv.Itoa(i), []byte("ciphertext"))
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open test database: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	var latest int64
+	if err := db.QueryRow(`SELECT MAX(id) FROM sync_events WHERE conversation_id = ?`, conversationID).Scan(&latest); err != nil {
+		t.Fatalf("latest event: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE sync_events SET created_at = '2000-01-01T00:00:00.000000000Z' WHERE id > ? AND id < ? AND conversation_id = ?`, cursor, latest, conversationID); err != nil {
+		t.Fatalf("age events: %v", err)
+	}
+	if _, err := application.Store.PruneSyncEvents(context.Background(), time.Now().UTC().Add(-time.Hour)); err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+
+	path := "/api/v1/conversations/" + conversationID + "/sync-events?after=" + strconv.FormatInt(cursor, 10)
+	status, body := doJSON(t, handler, http.MethodGet, path, token, nil)
+	if status != http.StatusConflict {
+		t.Fatalf("expired conversation cursor status=%d body=%s", status, body)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("decode 409: %v", err)
+	}
+	if string(raw["error"]) != `"conversation_recovery_required"` || string(raw["scope"]) != `"conversation"` || string(raw["scope_id"]) != strconv.Quote(conversationID) {
+		t.Fatalf("scoped 409 body=%s", body)
+	}
+	if _, ok := raw["events"]; ok {
+		t.Fatalf("409 carries events: %s", body)
+	}
+	for _, key := range []string{"sync_epoch", "oldest_event_id", "latest_event_id"} {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("409 lacks %s: %s", key, body)
+		}
+	}
+	getScopedSyncPage(t, handler, "/api/v1/sync/account-events?after="+strconv.FormatInt(cursor, 10), token, http.StatusOK)
 }

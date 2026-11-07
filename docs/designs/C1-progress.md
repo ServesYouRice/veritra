@@ -20,9 +20,14 @@ pruning one conversation expires only that conversation's cursor.
 (`httpapi/scoped_sync_handlers.go`). Served only with
 `PRIVATE_MESSENGER_SCOPED_SYNC=1`; off, they are not registered and answer 404.
 Envelope: `scope`, `scope_id`, `events`, `sync_epoch`, `oldest_event_id`,
-`latest_event_id`. A scope behind its retention gets 409
-`device_recovery_required` with the same envelope minus `events`; non-members
-get 403. Bounds are the account's, as in the legacy stream. Delivery receipts
+`latest_event_id`. A scope behind its retention gets 409 with the same
+envelope minus `events`: `device_recovery_required` for the account scope
+(device-wide, as the design keeps it), `conversation_recovery_required` for a
+conversation scope (pauses only that conversation; a client must never relink
+the device over it). Non-members and unknown conversations both get 403.
+Bounds are the account's, as in the legacy stream: a scoped client must not
+read them as one scope's progress, floor or "caught up" mark (per-scope
+bounds would need a new store query and review). Delivery receipts
 are recorded as in the legacy route. Handler tests: auth, outsider 403,
 envelope, switch off, and account + conversation equal to the legacy stream.
 No client uses the routes; no migration.
