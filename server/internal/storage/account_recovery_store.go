@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 )
 
@@ -460,6 +461,24 @@ func (s *Store) CompleteRecovery(ctx context.Context, id, claimTokenHash, sessio
 		}
 		return RecoveryCompletion{}, ErrRecoveryCancelled
 	}
+	// L1: a claim filed before the account's device list existed must not
+	// complete onto a list that names no recovery key. Completion revokes every
+	// listed device, and nothing could then sign the version that lists the new
+	// one (change 4 needs the head's recovery key), so the account could never
+	// approve a device again. The claim route refuses such claims; this is the
+	// same rule for one already waiting. The user confirms the key on a device
+	// (change 5) and claims again.
+	if hasHead, headRecoveryKey, err := s.deviceListHeadRecoveryKey(ctx, tx, record.AccountID); err != nil {
+		return RecoveryCompletion{}, err
+	} else if hasHead && headRecoveryKey == nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE account_recovery_requests SET state = 'cancelled', cancelled_by = ? WHERE id = ? AND state = 'waiting'`, RecoveryCancelledCredentialsMoved, record.ID); err != nil {
+			return RecoveryCompletion{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return RecoveryCompletion{}, err
+		}
+		return RecoveryCompletion{}, ErrRecoveryCancelled
+	}
 	oldDevices, err := activeDeviceIDsTx(ctx, tx, record.AccountID)
 	if err != nil {
 		return RecoveryCompletion{}, err
@@ -644,11 +663,26 @@ type RecoveryKeyResult struct {
 	// change cancelled and its sync event, or "" and zero.
 	CancelledRequestID string
 	CancelledEventID   int64
+	// DeviceListVersion and DeviceListEventID are the version stored with
+	// the change, or zero.
+	DeviceListVersion uint64
+	DeviceListEventID int64
 }
 
 // SetRecoveryKey sets or replaces the account's recovery key verifier and,
 // in the same transaction, cancels a waiting recovery request.
 func (s *Store) SetRecoveryKey(ctx context.Context, accountID string, authPublicKey, rkID []byte) (RecoveryKeyResult, error) {
+	return s.SetRecoveryKeyWithDeviceList(ctx, accountID, "", authPublicKey, rkID, nil)
+}
+
+// SetRecoveryKeyWithDeviceList is SetRecoveryKey that also stores the change-5
+// version the calling device signed (statement), in the same transaction, so
+// the recovery key the server accepts is always the one the list names. When
+// the account has a list a version is required (callerDeviceID set): without
+// it the list would keep naming an old recovery key, or none. The server
+// cannot check that the list's recovery key and rk_auth_pub come from the
+// same recovery key (they are derived apart); it only keeps them in step.
+func (s *Store) SetRecoveryKeyWithDeviceList(ctx context.Context, accountID, callerDeviceID string, authPublicKey, rkID, statement []byte) (RecoveryKeyResult, error) {
 	if len(authPublicKey) != 32 || len(rkID) != 16 {
 		return RecoveryKeyResult{}, ErrInvalidInput
 	}
@@ -670,6 +704,17 @@ func (s *Store) SetRecoveryKey(ctx context.Context, accountID string, authPublic
 		return RecoveryKeyResult{}, ErrNotFound
 	}
 	var out RecoveryKeyResult
+	listResult, err := optionalDeviceListTx(ctx, tx, accountID, statement, DeviceListRule{
+		Changes:        []devicelist.Change{devicelist.ChangeRecoveryKey},
+		Signer:         callerDeviceID,
+		RecoveryKeySet: true,
+	}, callerDeviceID != "", now)
+	if err != nil {
+		return RecoveryKeyResult{}, err
+	}
+	if listResult != nil {
+		out.DeviceListVersion, out.DeviceListEventID = listResult.Version, listResult.EventID
+	}
 	if out.CancelledRequestID, out.CancelledEventID, err = cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledKeyChanged, now); err != nil {
 		return RecoveryKeyResult{}, err
 	}

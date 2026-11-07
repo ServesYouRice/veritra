@@ -717,6 +717,35 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - No server, payload or schema change. The app does not call these yet:
     R3 (setup) and R4 (recovery) wire them.
 
+- **L1-2, approved-device list, server (D94, 2026-11-07):** server migration
+  0051 (no ABI, payload or local schema change). The server stores each
+  account's signed VDL1 chain and serves it to the account and its
+  conversation peers; see "Approved-device lists" in `docs/operations.md` and
+  `docs/designs/L1-approved-device-list.md`. The server verifies, as defence
+  in depth, every upload with the design's rules (package
+  `server/internal/devicelist`): strict parse (ids 1 to 128 bytes, listed keys
+  and the recovery key canonical non-small-order points, as the crypto core
+  checks), version = head + 1, `prev_hash`, signer by change kind (a change 5
+  must change the recovery key), Ed25519 signature (Go `crypto/ed25519`; signed
+  message `"veritra-l1-device-list-sig-v1" | SHA-256(body) | signer kind |
+  lp(signer)`, `list_hash = SHA-256("veritra-l1-device-list-hash-v1" | body)`),
+  no return of a removed id or key, one key per device, and that each listed
+  device exists live in the account with the same `signing_key`. The shared
+  vector `testing/vectors/l1-device-list-v1.json` belongs to L1-1;
+  `server/internal/devicelist/vector_test.go` runs the production parse and
+  check over it (both chains, every refusal in its class, the Ed25519 edge
+  cases) and skips while the file is absent. It passed against L1-1 at
+  `4c2b5ff`. A recovery completion onto a list with no recovery key is refused
+  (410, request cancelled), as the claim is.
+  The new `device_list` field on setup, register, link approval (v2, v3),
+  revoke and `PUT /account/recovery-key` is optional, required only once the
+  account has a list (link approval, recovery key); a revoke without it stays
+  allowed. Honest-server gates (pending changes, claims, commit bundles) apply
+  to accounts with a list. A recovery claim on a list with no recovery key is
+  refused as no key at all and not counted toward D79. The key-package leaf
+  signature-key gate (Q-1) is not built here. Independent review of L1-2 is
+  still owed.
+
 - **Coordinator notice (D96, 2026-11-07):** no ABI or schema change (the
   event type is free text, so migration 0050 is not needed). When a device
   link is approved, on the v3 route and on the legacy v2 route the shipped app

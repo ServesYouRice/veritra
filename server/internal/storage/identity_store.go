@@ -11,6 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 )
 
@@ -134,6 +135,9 @@ func (s *Store) CreateOwner(ctx context.Context, input CreateOwnerInput) (Accoun
 	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, input.KeyPackage, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
+	if _, err := optionalDeviceListTx(ctx, tx, accountID, input.DeviceList, genesisDeviceListRule(deviceID, input.SigningKey), false, createdAt); err != nil {
+		return AccountDevice{}, err
+	}
 	if input.SessionHash != "" {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, input.SessionHash, accountID, deviceID, sessionExpiresAt, createdAt, createdAt, createdAt, sessionAbsoluteExpiresAt); err != nil {
 			return AccountDevice{}, err
@@ -164,6 +168,8 @@ type RegisterInput struct {
 	DeviceAuthHash          string
 	SessionHash             string
 	SessionExpiry           time.Time
+	// DeviceList is the optional change-1 genesis the new device signed.
+	DeviceList []byte
 }
 
 func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (AccountDevice, error) {
@@ -198,6 +204,9 @@ func (s *Store) RegisterWithInvite(ctx context.Context, input RegisterInput) (Ac
 		return AccountDevice{}, err
 	}
 	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, input.KeyPackage, createdAt); err != nil {
+		return AccountDevice{}, err
+	}
+	if _, err := optionalDeviceListTx(ctx, tx, accountID, input.DeviceList, genesisDeviceListRule(deviceID, input.SigningKey), false, createdAt); err != nil {
 		return AccountDevice{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE invites SET uses = uses + 1 WHERE id = ?`, inviteID); err != nil {
@@ -621,6 +630,34 @@ func (s *Store) RevokeDevice(ctx context.Context, accountID, deviceID string) er
 
 func (s *Store) RevokeDeviceWithSyncEvent(ctx context.Context, accountID, deviceID string) (int64, error) {
 	return s.revokeDevice(ctx, accountID, deviceID, "device.revoked")
+}
+
+// RevokeDeviceWithDeviceList is RevokeDeviceWithSyncEvent that also stores the
+// change-3 version the caller signed (statement), in the same transaction. A
+// revocation with no version is still taken (an old client, or a revocation
+// no device can sign for): the listed device stays listed until a listed
+// device repairs the list (POST /account/device-list). The statement must be
+// signed by the caller and remove exactly this device.
+func (s *Store) RevokeDeviceWithDeviceList(ctx context.Context, accountID, callerDeviceID, deviceID string, statement []byte) (int64, *DeviceListResult, error) {
+	now := nowString()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer tx.Rollback()
+	eventID, err := revokeDeviceTx(ctx, tx, accountID, deviceID, "device.revoked", now)
+	if err != nil {
+		return 0, nil, err
+	}
+	rule := DeviceListRule{Changes: []devicelist.Change{devicelist.ChangeRemove}, Signer: callerDeviceID, Removed: []string{deviceID}}
+	result, err := optionalDeviceListTx(ctx, tx, accountID, statement, rule, false, now)
+	if err != nil {
+		return 0, nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, nil, err
+	}
+	return eventID, result, nil
 }
 
 func (s *Store) revokeDevice(ctx context.Context, accountID, deviceID, eventType string) (int64, error) {

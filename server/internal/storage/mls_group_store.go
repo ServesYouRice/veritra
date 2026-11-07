@@ -270,6 +270,7 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
 			SELECT 1 FROM devices d JOIN memberships m ON m.account_id = d.account_id
 			WHERE d.id = ? AND d.account_id = ? AND d.revoked_at IS NULL AND m.conversation_id = ?
+			  AND `+deviceOnHeadSQL("d.account_id", "d.id")+`
 		)`, added.DeviceID, added.AccountID, input.ConversationID).Scan(&eligible); err != nil {
 			return MLSCommitBundleResult{}, err
 		}
@@ -585,6 +586,7 @@ func (s *Store) ListMLSPendingChangesRead(ctx context.Context, accountID, device
 			JOIN devices d ON d.account_id = m.account_id AND d.revoked_at IS NULL
 			WHERE NOT EXISTS (SELECT 1 FROM conversation_mls_devices r
 				WHERE r.conversation_id = g.conversation_id AND r.device_id = d.id AND r.removed_after_event_id IS NULL)
+			  AND ` + deviceOnHeadSQL("d.account_id", "d.id") + `
 		) WHERE position <= ?3
 		ORDER BY conversation_id, position
 		LIMIT ?4`
@@ -716,7 +718,7 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 		var accountID string
 		err := tx.QueryRowContext(ctx, `SELECT d.account_id FROM devices d
 			JOIN memberships m ON m.account_id = d.account_id AND m.conversation_id = ?
-			WHERE d.id = ? AND d.revoked_at IS NULL`, conversationID, deviceID).Scan(&accountID)
+			WHERE d.id = ? AND d.revoked_at IS NULL AND `+deviceOnHeadSQL("d.account_id", "d.id"), conversationID, deviceID).Scan(&accountID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrForbidden
 		}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/auth"
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -84,6 +85,7 @@ type ownerRequest struct {
 	DeviceKeyPackage        []byte  `json:"device_key_package"`
 	SigningKey              []byte  `json:"signing_key"`
 	ChallengeSignature      []byte  `json:"challenge_signature"`
+	DeviceList              []byte  `json:"device_list,omitempty"`
 }
 
 func (a *API) reserveOwnerEnrollment(w http.ResponseWriter, r *http.Request) {
@@ -142,6 +144,9 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
 		return
 	}
+	if !checkDeviceListField(w, req.DeviceList) {
+		return
+	}
 	reservation, ok := a.verifyEnrollment(
 		r, req.EnrollmentReservationID, "owner", req.SigningKey, req.DeviceKeyPackage, req.ChallengeSignature,
 	)
@@ -166,6 +171,7 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := a.Store.CreateOwner(r.Context(), storage.CreateOwnerInput{
 		EnrollmentReservationID: reservation.ID,
+		DeviceList:              req.DeviceList,
 		InstanceName:            req.InstanceName,
 		Username:                req.Username,
 		Email:                   req.Email,
@@ -183,6 +189,10 @@ func (a *API) createOwner(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, storage.ErrEnrollmentInvalid) {
 			writeError(w, http.StatusBadRequest, "invalid_enrollment")
+			return
+		}
+		if errors.Is(err, storage.ErrInvalidDeviceList) {
+			writeError(w, http.StatusBadRequest, "invalid_device_list")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "owner_create_failed")
@@ -361,6 +371,7 @@ type registerRequest struct {
 	DeviceKeyPackage        []byte  `json:"device_key_package"`
 	SigningKey              []byte  `json:"signing_key"`
 	ChallengeSignature      []byte  `json:"challenge_signature"`
+	DeviceList              []byte  `json:"device_list,omitempty"`
 }
 
 func (a *API) reserveRegistrationEnrollment(w http.ResponseWriter, r *http.Request) {
@@ -414,6 +425,9 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_device_key_package")
 		return
 	}
+	if !checkDeviceListField(w, req.DeviceList) {
+		return
+	}
 	reservation, ok := a.verifyEnrollment(
 		r, req.EnrollmentReservationID, "register", req.SigningKey, req.DeviceKeyPackage, req.ChallengeSignature,
 	)
@@ -439,6 +453,7 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 	created, err := a.Store.RegisterWithInvite(r.Context(), storage.RegisterInput{
 		EnrollmentReservationID: reservation.ID,
 		InviteCode:              req.InviteCode,
+		DeviceList:              req.DeviceList,
 		Username:                req.Username,
 		Email:                   req.Email,
 		PasswordHash:            passwordHash,
@@ -455,6 +470,10 @@ func (a *API) register(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, storage.ErrEnrollmentInvalid) {
 			writeError(w, http.StatusBadRequest, "invalid_enrollment")
+			return
+		}
+		if errors.Is(err, storage.ErrInvalidDeviceList) {
+			writeError(w, http.StatusBadRequest, "invalid_device_list")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "register_failed")
@@ -744,6 +763,7 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			TranscriptHash []byte `json:"transcript_hash"`
 			ApprovalTag    []byte `json:"approval_tag"`
+			DeviceList     []byte `json:"device_list,omitempty"`
 		}
 		if !decodeJSON(w, r, &req) {
 			return
@@ -752,7 +772,10 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "transcript_hash_required")
 			return
 		}
-		link, device, eventID, notices, err := a.Store.ApproveDeviceLinkWithSyncEvent(r.Context(), linkID, principal.AccountID, req.TranscriptHash, req.ApprovalTag)
+		if !checkDeviceListField(w, req.DeviceList) {
+			return
+		}
+		link, device, eventID, notices, listResult, err := a.Store.ApproveDeviceLinkWithDeviceList(r.Context(), linkID, principal.AccountID, principal.DeviceID, req.TranscriptHash, req.ApprovalTag, req.DeviceList)
 		if err != nil {
 			switch {
 			case errors.Is(err, storage.ErrDeviceLinkVerificationFailed):
@@ -766,6 +789,7 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 		}
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
 		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishDeviceListEvent(r, principal.AccountID, listResult, devicelist.ChangeAdd)
 		for _, notice := range notices {
 			a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.MemberLinkEventType, ID: notice.EventID,
 				Payload: map[string]string{"account_id": notice.LinkedAccountID, "device_id": notice.DeviceID}, CreatedAt: time.Now().UTC()})
@@ -991,13 +1015,23 @@ func (a *API) revokeDevice(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusBadRequest, "invalid_device_id")
 		return
 	}
-	eventID, err := a.Store.RevokeDeviceWithSyncEvent(r.Context(), principal.AccountID, deviceID)
+	// The optional body carries the change-3 version the caller signed. A
+	// revocation with none is still taken (an old client, or a device the
+	// list cannot be signed for): a listed device repairs the list later.
+	var req struct {
+		DeviceList []byte `json:"device_list,omitempty"`
+	}
+	if !decodeOptionalJSON(w, r, &req) || !checkDeviceListField(w, req.DeviceList) {
+		return
+	}
+	eventID, listResult, err := a.Store.RevokeDeviceWithDeviceList(r.Context(), principal.AccountID, principal.DeviceID, deviceID, req.DeviceList)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
 	payload := map[string]string{"device_id": deviceID}
 	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.revoked", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+	a.publishDeviceListEvent(r, principal.AccountID, listResult, devicelist.ChangeRemove)
 	a.Hub.DisconnectDevice(principal.AccountID, deviceID)
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "device.revoked", map[string]string{"device_id": deviceID})
 	w.WriteHeader(http.StatusNoContent)

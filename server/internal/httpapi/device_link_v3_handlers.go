@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/auth"
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -107,6 +108,7 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 		ClaimRequestHash string `json:"claim_request_hash"`
 		TranscriptHash   []byte `json:"transcript_hash"`
 		ApprovalTag      []byte `json:"approval_tag"`
+		DeviceList       []byte `json:"device_list,omitempty"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -115,7 +117,10 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 		return
 	}
-	link, device, eventID, notices, err := a.Store.ApproveDeviceLinkV3(r.Context(), r.PathValue("id"), principal.AccountID, principal.DeviceID, req.ClaimRequestHash, req.TranscriptHash, req.ApprovalTag)
+	if !checkDeviceListField(w, req.DeviceList) {
+		return
+	}
+	link, device, eventID, notices, listResult, err := a.Store.ApproveDeviceLinkV3WithDeviceList(r.Context(), r.PathValue("id"), principal.AccountID, principal.DeviceID, req.ClaimRequestHash, req.TranscriptHash, req.ApprovalTag, req.DeviceList)
 	if err != nil {
 		a.deviceLinkV3Error(w, err)
 		return
@@ -123,6 +128,7 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 	if eventID != 0 {
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
 		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishDeviceListEvent(r, principal.AccountID, listResult, devicelist.ChangeAdd)
 		for _, notice := range notices {
 			a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.MemberLinkEventType, ID: notice.EventID,
 				Payload: map[string]string{"account_id": notice.LinkedAccountID, "device_id": notice.DeviceID}, CreatedAt: time.Now().UTC()})

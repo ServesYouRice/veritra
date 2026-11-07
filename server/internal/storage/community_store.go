@@ -15,6 +15,7 @@ import (
 
 	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 )
 
@@ -324,18 +325,27 @@ func (s *Store) DeviceLinkForAccount(ctx context.Context, linkID, accountID stri
 }
 
 func (s *Store) ApproveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash, approvalTag []byte) (domain.DeviceLink, domain.Device, error) {
-	link, device, _, _, err := s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, approvalTag, "")
+	link, device, _, _, _, err := s.approveDeviceLink(ctx, linkID, accountID, "", transcriptHash, approvalTag, nil, "")
 	return link, device, err
 }
 
 func (s *Store) ApproveDeviceLinkWithSyncEvent(ctx context.Context, linkID, accountID string, transcriptHash, approvalTag []byte) (domain.DeviceLink, domain.Device, int64, []MemberLinkNotice, error) {
-	return s.approveDeviceLink(ctx, linkID, accountID, transcriptHash, approvalTag, "device.updated")
+	link, device, eventID, notices, _, err := s.approveDeviceLink(ctx, linkID, accountID, "", transcriptHash, approvalTag, nil, "device.updated")
+	return link, device, eventID, notices, err
 }
 
-func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string, transcriptHash, approvalTag []byte, eventType string) (domain.DeviceLink, domain.Device, int64, []MemberLinkNotice, error) {
+// ApproveDeviceLinkWithDeviceList is ApproveDeviceLinkWithSyncEvent that also
+// stores the change-2 version the approving device signed (statement), in the
+// same transaction as the new device. When the account has a list a version is
+// required: without it the new device would be unlisted.
+func (s *Store) ApproveDeviceLinkWithDeviceList(ctx context.Context, linkID, accountID, approverDeviceID string, transcriptHash, approvalTag, statement []byte) (domain.DeviceLink, domain.Device, int64, []MemberLinkNotice, *DeviceListResult, error) {
+	return s.approveDeviceLink(ctx, linkID, accountID, approverDeviceID, transcriptHash, approvalTag, statement, "device.updated")
+}
+
+func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID, approverDeviceID string, transcriptHash, approvalTag, statement []byte, eventType string) (domain.DeviceLink, domain.Device, int64, []MemberLinkNotice, *DeviceListResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	defer tx.Rollback()
 	var link domain.DeviceLink
@@ -351,37 +361,47 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 		linkID, accountID, domain.DeviceLinkClaimed, nowString())
 	if err := scanDeviceLinkForApproval(row, &link, &deviceName, &keyPackage, &authSecretHash); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return domain.DeviceLink{}, domain.Device{}, 0, nil, ErrDeviceLinkInvalid
+			return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkInvalid
 		}
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	if link.ProtocolVersion != deviceLinkProtocolVersion || len(link.ClaimTag) != 32 || len(approvalTag) != 32 || len(transcriptHash) != 32 || subtle.ConstantTimeCompare(transcriptHash, link.TranscriptHash) != 1 {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, ErrDeviceLinkVerificationFailed
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkVerificationFailed
 	}
 	if strings.TrimSpace(deviceName) == "" || len(keyPackage) == 0 || len(link.ClaimedSigningKey) != 32 || link.ClaimedDeviceID == "" || authSecretHash == "" {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, ErrDeviceLinkInvalid
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkInvalid
 	}
 	if err := s.checkDevices(ctx, tx, accountID); err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	now := nowString()
 	deviceID := link.ClaimedDeviceID
 	if _, err := tx.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, signing_key, auth_secret_hash, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`, deviceID, accountID, deviceName, keyPackage, link.ClaimedSigningKey, authSecretHash, now); err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	if err := insertInitialDeviceKeyPackage(ctx, tx, deviceID, keyPackage, now); err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
+	}
+	// The change-2 version names exactly this device and the signing key the
+	// link claimed, and the approving device signed it.
+	listResult, err := optionalDeviceListTx(ctx, tx, accountID, statement, DeviceListRule{
+		Changes: []devicelist.Change{devicelist.ChangeAdd},
+		Signer:  approverDeviceID,
+		Added:   []devicelist.Entry{{DeviceID: deviceID, SigningKey: link.ClaimedSigningKey}},
+	}, approverDeviceID != "", now)
+	if err != nil {
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, approved_device_id = ?, approved_at = ?, approval_tag = ? WHERE id = ? AND state = ?`, domain.DeviceLinkApproved, deviceID, now, approvalTag, linkID, domain.DeviceLinkClaimed)
 	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	if rows == 0 {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, ErrDeviceLinkInvalid
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkInvalid
 	}
 	approvedAt := parseTime(now)
 	link.State = domain.DeviceLinkApproved
@@ -393,7 +413,7 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 	payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
 	eventID, err := insertOptionalSyncEvent(ctx, tx, eventType, &accountID, "", payload, now)
 	if err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
 	// Only the route that publishes device.updated (eventType set) tells
 	// coordinators; ApproveDeviceLink is the event-less variant.
@@ -401,13 +421,13 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID string,
 	if eventType != "" {
 		notices, err = insertMemberLinkNotices(ctx, tx, accountID, deviceID, now)
 		if err != nil {
-			return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+			return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return domain.DeviceLink{}, domain.Device{}, 0, nil, err
+		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}
-	return link, device, eventID, notices, nil
+	return link, device, eventID, notices, listResult, nil
 }
 
 // ConsumedDeviceLink is what consuming an approved link returns: the linked

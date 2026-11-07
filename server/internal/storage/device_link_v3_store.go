@@ -20,6 +20,7 @@ import (
 
 	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 )
 
@@ -407,69 +408,89 @@ func (s *Store) DeviceLinkV3ForClaim(ctx context.Context, id, claimTokenHash str
 	return link.public(), nil
 }
 
+// ApproveDeviceLinkV3 is ApproveDeviceLinkV3WithDeviceList with no version.
 func (s *Store) ApproveDeviceLinkV3(ctx context.Context, id, accountID, sourceDeviceID, requestHash string, transcriptHash, approvalTag []byte) (DeviceLinkV3, domain.Device, int64, []MemberLinkNotice, error) {
+	link, device, eventID, notices, _, err := s.ApproveDeviceLinkV3WithDeviceList(ctx, id, accountID, sourceDeviceID, requestHash, transcriptHash, approvalTag, nil)
+	return link, device, eventID, notices, err
+}
+
+// ApproveDeviceLinkV3WithDeviceList also stores the change-2 version the source
+// device signed (statement) in the same transaction as the new device. When the
+// account has a list a version is required.
+func (s *Store) ApproveDeviceLinkV3WithDeviceList(ctx context.Context, id, accountID, sourceDeviceID, requestHash string, transcriptHash, approvalTag, statement []byte) (DeviceLinkV3, domain.Device, int64, []MemberLinkNotice, *DeviceListResult, error) {
 	if !validV3Hash(requestHash) || len(transcriptHash) != 32 || len(approvalTag) != 32 {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, ErrDeviceLinkVerificationFailed
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkVerificationFailed
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	defer tx.Rollback()
 	link, err := loadDeviceLinkV3(ctx, tx, ` AND v.id=? AND v.account_id=? AND v.source_device_id=?`, id, accountID, sourceDeviceID)
 	if err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	if !link.validWindow(time.Now().UTC()) {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, ErrDeviceLinkInvalid
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkInvalid
 	}
 	if link.ClaimRequestHash != requestHash || !v3Equal(link.TranscriptHash, transcriptHash) {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, ErrDeviceLinkVerificationFailed
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkVerificationFailed
 	}
 	device := domain.Device{ID: link.RecipientDeviceID, AccountID: accountID, Name: link.DeviceName, KeyPackage: link.keyPackage, SigningKey: link.SigningKey}
 	if link.State == domain.DeviceLinkApproved || link.State == domain.DeviceLinkConsumed {
 		if !v3Equal(link.ApprovalTag, approvalTag) {
-			return DeviceLinkV3{}, domain.Device{}, 0, nil, ErrIdempotencyConflict
+			return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, ErrIdempotencyConflict
 		}
 		device.CreatedAt = *link.ApprovedAt
-		return link.public(), device, 0, nil, nil
+		return link.public(), device, 0, nil, nil, nil
 	}
 	if link.State != domain.DeviceLinkClaimed || !link.ExpiresAt.After(time.Now().UTC()) {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, ErrDeviceLinkInvalid
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkInvalid
 	}
 	if err := s.checkDevices(ctx, tx, accountID); err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	now := time.Now().UTC()
 	nowText := formatTime(now)
 	_, err = tx.ExecContext(ctx, `INSERT INTO devices(id,account_id,name,key_package,signing_key,auth_secret_hash,created_at) VALUES(?,?,?,?,?,?,?)`, link.RecipientDeviceID, accountID, link.DeviceName, link.keyPackage, link.SigningKey, link.deviceSecretHash, nowText)
 	if err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	if err := insertInitialDeviceKeyPackage(ctx, tx, link.RecipientDeviceID, link.keyPackage, nowText); err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
+	}
+	// The change-2 version names exactly this device and its claimed signing
+	// key, signed by the source device. With a list on the account it is
+	// required, so the new device is never left unlisted.
+	listResult, err := optionalDeviceListTx(ctx, tx, accountID, statement, DeviceListRule{
+		Changes: []devicelist.Change{devicelist.ChangeAdd},
+		Signer:  sourceDeviceID,
+		Added:   []devicelist.Entry{{DeviceID: link.RecipientDeviceID, SigningKey: link.SigningKey}},
+	}, sourceDeviceID != "", nowText)
+	if err != nil {
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE device_links_v3 SET state='approved',approval_tag=?,approved_at=?,transfer_expires_at=? WHERE id=? AND state='claimed'`, approvalTag, nowText, formatTime(now.Add(deviceLinkV3TransferLifetime)), id)
 	if err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	device.CreatedAt = now
 	eventID, err := insertSyncEvent(ctx, tx, "device.updated", &accountID, "", map[string]interface{}{"device": device, "device_link_id": id}, nowText)
 	if err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	notices, err := insertMemberLinkNotices(ctx, tx, accountID, device.ID, nowText)
 	if err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	link, err = loadDeviceLinkV3(ctx, tx, ` AND v.id=?`, id)
 	if err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return DeviceLinkV3{}, domain.Device{}, 0, nil, err
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}
-	return link.public(), device, eventID, notices, nil
+	return link.public(), device, eventID, notices, listResult, nil
 }
 
 func (s *Store) CompleteDeviceLinkV3(ctx context.Context, id, claimTokenHash, requestHash, initialSessionHash string, transcriptHash []byte) (DeviceLinkV3Completion, []byte, error) {
