@@ -95,6 +95,99 @@ void main() {
     expect((await alice.store.loadMessages('conv_b')).map((row) => row.body),
         containsAll(<String?>['b one', 'b two']));
   }, skip: skip);
+
+  test('a real failed commit pauses A, then the replay merges it in order',
+      () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _start(alice, bob, 'conv_a');
+    await _start(alice, bob, 'conv_b');
+    final epochA = await alice.epoch('conv_a');
+    final epochB = await alice.epoch('conv_b');
+
+    // Bob moves A to a new epoch with a self-update and speaks in it. He does
+    // the same in B, which Alice applies while A is paused.
+    final updateA = await bob.selfUpdate('conv_a');
+    final newA = await bob.send('conv_a', 'a new epoch');
+    final updateB = await bob.selfUpdate('conv_b');
+    final newB = await bob.send('conv_b', 'b new epoch');
+    final eventA1 = alice.nextEvent();
+    final eventA2 = alice.nextEvent();
+    final eventB1 = alice.nextEvent();
+    final eventB2 = alice.nextEvent();
+
+    // A's commit arrives damaged: a real failure inside OpenMLS, which must
+    // leave the group, the counter and the cursor where they were.
+    final good = MlsCommitBundle.decode(updateA.payload).commit;
+    final goodB = MlsCommitBundle.decode(updateB.payload).commit;
+    final damaged = List<int>.of(good)..[good.length - 1] ^= 0xff;
+    final counter = (await alice.store.loadCryptoState())!.counter;
+    await expectLater(
+        alice.service.processMlsMessage(
+            alice.commitFrom(bob, updateA, eventA1, damaged)),
+        throwsA(isNot(isA<ConversationSyncPausedException>())));
+    expect(await alice.service.deviceHandleUsable(), isTrue);
+    expect(await alice.epoch('conv_a'), epochA);
+    expect((await alice.store.loadCryptoState())!.counter, counter);
+    expect(await alice.store.loadSyncCursor(), 0);
+
+    // The failure pauses A. The cursor passes A's two held events alone.
+    await alice.store.pauseConversation(
+        conversationId: 'conv_a',
+        failedEventId: eventA1,
+        kind: SyncFailureKind.mlsState,
+        failedEventType: 'mls.message.created');
+    await alice.store.skipPausedConversationEvent(
+        conversationId: 'conv_a', eventId: eventA1, expectedCursor: 0);
+    await alice.store.skipPausedConversationEvent(
+        conversationId: 'conv_a', eventId: eventA2, expectedCursor: eventA1);
+
+    // B goes on into its new epoch while A is paused.
+    await alice.service
+        .processMlsMessage(alice.commitFrom(bob, updateB, eventB1, goodB));
+    await alice.service
+        .processApplicationMessage(alice.envelopeFrom(bob, newB), eventB2);
+    expect(await alice.epoch('conv_b'), epochB + 1);
+    expect(await alice.epoch('conv_a'), epochA);
+    expect((await alice.store.loadMessages('conv_b')).single.body,
+        'b new epoch');
+    expect(await alice.store.loadSyncCursor(), eventB2);
+    final before = (await alice.store.loadCryptoState())!.counter;
+
+    // The replay merges A's commit, then decrypts the new-epoch message,
+    // both behind the cursor. Each is one transition.
+    await alice.service
+        .processMlsMessage(alice.commitFrom(bob, updateA, eventA1, good));
+    expect(await alice.epoch('conv_a'), epochA + 1);
+    expect((await alice.store.loadCryptoState())!.counter, before + 1);
+    expect((await alice.store.loadConversationPause('conv_a'))!.resumeAfter,
+        eventA1);
+    expect(await alice.store.loadSyncCursor(), eventB2);
+    expect(await alice.epoch('conv_b'), epochB + 1);
+
+    await alice.service
+        .processApplicationMessage(alice.envelopeFrom(bob, newA), eventA2);
+    expect((await alice.store.loadCryptoState())!.counter, before + 2);
+    expect((await alice.store.loadConversationPause('conv_a'))!.resumeAfter,
+        eventA2);
+    expect(await alice.store.loadSyncCursor(), eventB2);
+    expect(await alice.epoch('conv_b'), epochB + 1);
+    expect((await alice.store.loadMessages('conv_a')).single.body,
+        'a new epoch');
+    expect((await alice.store.loadMessages('conv_b')).single.body,
+        'b new epoch');
+
+    // With the pause lifted, A works in its new epoch both ways.
+    expect(await alice.store.clearConversationPause('conv_a'), isTrue);
+    await alice.service
+        .encryptPayload('conv_a', AppPayloadType.text, {'text': 'a reply'});
+    final later = await bob.send('conv_a', 'a later');
+    await alice.service.processApplicationMessage(
+        alice.envelopeFrom(bob, later), alice.nextEvent());
+    expect((await alice.store.loadMessages('conv_a')).map((row) => row.body),
+        containsAll(<String?>['a new epoch', 'a later']));
+  }, skip: skip);
 }
 
 int _serverIds = 0;
@@ -158,6 +251,36 @@ class _Client {
   }
 
   int nextEvent() => ++events;
+
+  Future<int> epoch(String conversationId) async =>
+      (await service.groupEpoch(conversationId))!.epoch;
+
+  /// Stages a self-update commit and merges it, as after the server accepts
+  /// it. Returns the accepted outbox item, so its commit can be delivered.
+  Future<PendingMlsMessage> selfUpdate(String conversationId) async {
+    await service.stageSelfUpdate(conversationId);
+    final item = (await store.pendingMlsMessages())
+        .singleWhere((pending) => pending.conversationId == conversationId);
+    await service.completeCommitBundle(item);
+    return item;
+  }
+
+  /// The sync event that delivers [payload], a copy of [item]'s commit, from
+  /// [from] to this device.
+  MlsMessage commitFrom(_Client from, PendingMlsMessage item, int eventId,
+      List<int> payload) {
+    return MlsMessage(
+      id: 'mls_${item.conversationId}',
+      conversationId: item.conversationId,
+      senderAccountId: from.accountId,
+      senderDeviceId: from.deviceId,
+      kind: 'commit',
+      payload: payload,
+      idempotencyKey: item.idempotencyKey,
+      syncEventId: eventId,
+      createdAt: DateTime.now().toUtc(),
+    );
+  }
 
   Future<DeviceKeyPackage> keyPackage() async => DeviceKeyPackage(
         id: 'kp_$deviceId${++_serverIds}',

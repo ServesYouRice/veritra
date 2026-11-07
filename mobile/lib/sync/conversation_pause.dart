@@ -95,7 +95,8 @@ class ConversationPause {
 
 /// The most conversations paused at once. It follows the per-account
 /// conversation limit (D38), so a hostile server cannot grow the table with
-/// invented ids: past it, a further failure stops the device as before.
+/// invented ids: past it, a further failure stops the device as before. The
+/// same holds for a failed event type longer than [maxPausedEventTypeLength].
 const int maxConversationPauses = 1000;
 
 /// Thrown when pausing one more conversation would pass
@@ -109,6 +110,10 @@ class ConversationPauseLimitReached implements Exception {
 
 /// The longest conversation id a pause stores.
 const int maxPausedConversationIdLength = 128;
+
+/// The longest failed event type a pause stores. The server picks the type,
+/// so a longer one is never stored: the device stops as before instead.
+const int maxPausedEventTypeLength = 128;
 
 /// Thrown when a conversation's MLS work is refused because it is paused.
 /// Queued messages stay queued; nothing is discarded or sent around the
@@ -133,6 +138,10 @@ bool failurePausesConversation(SyncEventFailure failure) {
       conversationId == null ||
       conversationId.isEmpty ||
       conversationId.length > maxPausedConversationIdLength) {
+    return false;
+  }
+  final eventType = failure.eventType;
+  if (eventType != null && eventType.length > maxPausedEventTypeLength) {
     return false;
   }
   switch (failure.kind) {

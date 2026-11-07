@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -306,6 +307,90 @@ void main() {
       expect(harness.crypto.order, <String>['msg_ok']);
       expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
       expect(harness.state.syncRecovery, isNull);
+      harness.dispose();
+    });
+
+    test('a short page that is not the last one does not end the replay',
+        () async {
+      // Six held events, served two to a page.
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_a'),
+          _envelopeEvent(6, 'msg_b'),
+          _envelopeEvent(7, 'msg_c'),
+          _envelopeEvent(8, 'msg_d'),
+          _envelopeEvent(9, 'msg_e'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 9);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+      expect(harness.crypto.order, isEmpty);
+
+      harness.crypto.rejectedMls.clear();
+      api.conversationPageCap = 2;
+      await harness.state.retryConversationPause('conv_1');
+      await harness
+          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+
+      // Nothing at or below the cursor was left behind, and the pause went
+      // only after the last of them.
+      expect(await store.loadConversationPause('conv_1'), isNull);
+      expect(harness.crypto.order, <String>[
+        'mls_bad',
+        'msg_a',
+        'msg_b',
+        'msg_c',
+        'msg_d',
+        'msg_e',
+      ]);
+      expect(await store.loadSyncCursor(), 9);
+      harness.dispose();
+    });
+
+    test('a failure on a later short page keeps the pause where it stopped',
+        () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_a'),
+          _envelopeEvent(6, 'msg_b'),
+          _envelopeEvent(7, 'msg_c'),
+          _mlsEvent(8, 'mls_bad_too'),
+          _envelopeEvent(9, 'msg_d'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.addAll(<String>['mls_bad', 'mls_bad_too']);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 9);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+
+      // The first cause is gone, the second event still fails. It sits on
+      // the third page, so the replay has to get there to see it.
+      harness.crypto.rejectedMls.remove('mls_bad');
+      api.conversationPageCap = 2;
+      await harness.state.retryConversationPause('conv_1');
+      await harness.waitFor(() async =>
+          (await store.loadConversationPause('conv_1'))?.failedEventId == 8);
+
+      final pause = (await store.loadConversationPause('conv_1'))!;
+      expect(pause.resumeAfter, 7);
+      expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
+      expect(harness.crypto.order, <String>[
+        'mls_bad',
+        'msg_a',
+        'msg_b',
+        'msg_c',
+      ]);
+      expect(await store.loadSyncCursor(), 9);
+      final last = await store.hasProcessedMlsMessage('application:9:msg_d');
+      expect(last, isFalse);
       harness.dispose();
     });
 
@@ -712,6 +797,11 @@ class _ScriptedApi extends ApiClient {
   /// Event ids the conversation stream leaves out.
   final Set<int> hideFromConversationStream = <int>{};
 
+  /// The most events one conversation page holds. A server may answer with
+  /// short pages, and the client halves a page that is over the response
+  /// limit, so a page below the asked size is not the end of the stream.
+  int? conversationPageCap;
+
   @override
   Future<List<SyncEvent>> conversationSyncEvents(
     String token,
@@ -727,7 +817,7 @@ class _ScriptedApi extends ApiClient {
             event.conversationId == conversationId &&
             event.id > after &&
             !hideFromConversationStream.contains(event.id))
-        .take(limit)
+        .take(min(limit, conversationPageCap ?? limit))
         .toList(growable: false);
   }
 

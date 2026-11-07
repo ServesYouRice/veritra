@@ -962,6 +962,7 @@ class MemoryLocalStore implements LocalStore {
     checkCanCommit?.call();
     if (conversationId.isEmpty ||
         conversationId.length > maxPausedConversationIdLength ||
+        (failedEventType?.length ?? 0) > maxPausedEventTypeLength ||
         failedEventId <= 0) {
       throw const FormatException('invalid conversation pause');
     }

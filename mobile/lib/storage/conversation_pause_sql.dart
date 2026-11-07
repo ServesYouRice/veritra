@@ -15,7 +15,9 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
         'CHECK(length(conversation_id) BETWEEN 1 AND 128), '
         'resume_after INTEGER NOT NULL CHECK(resume_after >= 0), '
         'failed_event_id INTEGER NOT NULL CHECK(failed_event_id > 0), '
-        'failed_event_type TEXT, failed_ref TEXT, '
+        'failed_event_type TEXT '
+        'CHECK(failed_event_type IS NULL OR length(failed_event_type) <= 128), '
+        'failed_ref TEXT, '
         'kind TEXT NOT NULL, recorded_at INTEGER NOT NULL, '
         'generation INTEGER NOT NULL CHECK(generation >= 1))');
   }
@@ -79,6 +81,7 @@ extension ConversationPauseSql on EncryptedLocalDatabase {
         await _assertSyncLeaseInTransaction(leaseKey);
         if (conversationId.isEmpty ||
             conversationId.length > maxPausedConversationIdLength ||
+            (failedEventType?.length ?? 0) > maxPausedEventTypeLength ||
             failedEventId <= 0) {
           throw const FormatException('invalid conversation pause');
         }

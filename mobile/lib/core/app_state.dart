@@ -5698,7 +5698,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (served == null ||
         served.id != eventId ||
         served.conversationId != conversationId ||
-        (failure.eventType != null && served.type != failure.eventType)) {
+        (failure.eventType != null && served.type != failure.eventType) ||
+        served.type.length > maxPausedEventTypeLength) {
       return false;
     }
     final ConversationPause pause;
@@ -5921,7 +5922,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           }
           after = event.id;
         }
-        if (due.length < events.length || events.length < pageSize) break;
+        // A short page is not the end: the client halves the page size when a
+        // reply is over the response limit, and a server may send short
+        // pages. The stream ends at an empty page, or at an event the global
+        // stream has not reached yet.
+        if (due.length < events.length || events.isEmpty) break;
       }
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       final cleared = await localStore.clearConversationPause(conversationId,

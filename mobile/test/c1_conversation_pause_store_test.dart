@@ -238,6 +238,43 @@ void main() {
       expect((await db.readConversationPauses()).length, maxConversationPauses);
     });
 
+    test('a failed event type over the length limit is refused', () async {
+      final db = await _db();
+      final longest = 'x' * maxPausedEventTypeLength;
+      final stored = await db.writeConversationPause(
+          conversationId: 'conv_a',
+          failedEventId: 5,
+          kind: SyncFailureKind.unsupportedEvent,
+          failedEventType: longest);
+      expect(stored.failedEventType, longest);
+      await expectLater(
+          db.writeConversationPause(
+              conversationId: 'conv_b',
+              failedEventId: 5,
+              kind: SyncFailureKind.unsupportedEvent,
+              failedEventType: '${longest}x'),
+          throwsFormatException);
+      // An update of a paused conversation is held to the same limit.
+      await expectLater(
+          db.writeConversationPause(
+              conversationId: 'conv_a',
+              failedEventId: 6,
+              kind: SyncFailureKind.unsupportedEvent,
+              failedEventType: '${longest}x'),
+          throwsFormatException);
+      // The table refuses it too, whatever the Dart code does.
+      await expectLater(
+          db.customStatement(
+              'INSERT INTO local_conversation_pauses (conversation_id, '
+              'resume_after, failed_event_id, failed_event_type, kind, '
+              'recorded_at, generation) VALUES (?, 0, 1, ?, ?, 0, 1)',
+              ['conv_raw', '${longest}x', SyncFailureKind.mlsState.name]),
+          throwsA(anything));
+      expect(await db.readConversationPause('conv_b'), isNull);
+      expect(await db.readConversationPause('conv_raw'), isNull);
+      expect((await db.readConversationPause('conv_a'))!.failedEventId, 5);
+    });
+
     test('a new MLS state and cursor drop the pauses', () async {
       final db = await _db();
       await _seed(db);
@@ -346,6 +383,42 @@ void main() {
               expectedCursor: 10,
               cursor: 3)),
           throwsStateError);
+    });
+
+    test('a failed event type over the limit is refused like the database',
+        () async {
+      final store = MemoryLocalStore();
+      final longest = 'x' * maxPausedEventTypeLength;
+      final stored = await store.pauseConversation(
+          conversationId: 'conv_a',
+          failedEventId: 5,
+          kind: SyncFailureKind.unsupportedEvent,
+          failedEventType: longest);
+      expect(stored.failedEventType, longest);
+      await expectLater(
+          store.pauseConversation(
+              conversationId: 'conv_b',
+              failedEventId: 5,
+              kind: SyncFailureKind.unsupportedEvent,
+              failedEventType: '${longest}x'),
+          throwsFormatException);
+      expect(await store.loadConversationPause('conv_b'), isNull);
+    });
+
+    test('a failure with an over-long event type never pauses', () {
+      SyncEventFailure failure(String type) => SyncEventFailure(
+          SyncFailureKind.unsupportedEvent,
+          eventId: 5,
+          eventType: type,
+          conversationId: 'conv_a');
+      expect(failurePausesConversation(failure('mls.future')), isTrue);
+      expect(
+          failurePausesConversation(failure('x' * maxPausedEventTypeLength)),
+          isTrue);
+      expect(
+          failurePausesConversation(
+              failure('x' * (maxPausedEventTypeLength + 1))),
+          isFalse);
     });
 
     test('clearing and the limit', () async {
