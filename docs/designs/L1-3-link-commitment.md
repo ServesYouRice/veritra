@@ -29,7 +29,7 @@ fresh random.
 | 1 create | draws `r_S` (32 bytes), computes `C = commit(r_S)` and posts `C` with the locator | stores `C` (write-once) | |
 | 2 reserve | | returns `C` with the nonce and the source key | refuses a reservation without `C` or with an all-zero `C` |
 | 3 claim | | stores `r_N` (write-once) | native draws `r_N`; claim transcript includes `C` and `r_N`; posts claim tag and `r_N` |
-| 4 accept | GET claim; native checks the claim tag and that `r_S` opens `C`, then stores the record (one claim per link) | | |
+| 4 accept | GET claim; native checks the claim tag and that `r_S` opens `C`, then stores the record (one claim per link, and one claim per `r_S`: native refuses a random another record already holds) | | |
 | 5 reveal | only after step 4 is committed: `POST .../reveal {r_S}` | stores `r_S` once (source only, claimed state) | |
 | 6 show | | claim-status carries `r_S` | native opens `C` with `r_S` (read only) and shows the SAS; a mismatch ends the claim with its own message |
 | 7 approve | the user types N's code; native compares; approval tag | refuses approval before step 5 (`409 reveal_required`) | refuses an approved record without a reveal; checks the approval tag, which binds `C` through the transcript (the native opening is not repeated here, because it needs the link window and a late approval must still finish) |
@@ -56,7 +56,11 @@ fresh random.
 
 **Why one guess.** The relay must give N a commitment before N picks `r_N`,
 and it must give S a claim before S reveals `r_S`. S accepts one claim per
-link, so whatever it tells S is fixed before `r_S` is known. Whatever it
+link, so whatever it tells S is fixed before `r_S` is known. The
+commitment does not bind the link ID, so native also refuses a claim
+whose `r_S` another stored record already holds (keyed on `r_S`, not
+`C`, so reuse under another origin is caught too): a random reused by a
+caller bug cannot open a second claim after the first reveal. Whatever it
 tells N is fixed, by the commitment, before `r_N` is known. Each SAS
 therefore depends on a fresh random that the relay had to commit to before
 seeing it. The two values match with probability about 10^-8 per run, and
