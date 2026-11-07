@@ -711,9 +711,10 @@ func (s *Store) ManageCommunityMember(ctx context.Context, communityID, actorAcc
 	if activeTarget == 0 {
 		return nil, ErrNotFound
 	}
-	// Adding or promoting also joins the target to every channel conversation,
-	// where RemoveConversationMember cannot take it out again, so a block in
-	// either direction refuses the change as it does for ManageConversationMember.
+	// Adding or promoting also joins the target to the community's join
+	// conversations, where RemoveConversationMember cannot take it out again,
+	// so a block in either direction refuses the change as it does for
+	// ManageConversationMember.
 	var blocked int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM account_blocks WHERE (blocker_account_id = ? AND blocked_account_id = ?) OR (blocker_account_id = ? AND blocked_account_id = ?)`, actorAccountID, targetAccountID, targetAccountID, actorAccountID).Scan(&blocked); err != nil {
 		return nil, err

@@ -65,3 +65,14 @@ the PR's CI runs them. New test: `mobile/test/c0_shared_group_routing_test.dart`
   exists; the encrypted `channel_id` stops the server moving a post between
   channels, not hiding or inventing a channel.
 - **Counters.** Migration 0049 only; no local schema; no crypto ABI change.
+
+## Review fixes (PR #136)
+
+| Blocker | Problem | Fix | Test |
+| --- | --- | --- | --- |
+| B1 privacy | `SearchMetadata` listed a private channel's id and name to every community member. | The channel branch applies the `listChannelsQuery` rule: a private route is listed only to members of its conversation. | `TestActiveLayoutSearchHidesPrivateChannelsFromNonMembers` |
+| B2 authorization | A member demoted in the community kept admin in private channels, because the role loop covered only the shared conversation. | `ManageCommunityMember` also sets the new role on the target's existing private-channel memberships and emits `membership.updated` for each. It adds no row, so it never grants access. Option (a) was chosen; refusing kind `private` until C3 can still be layered on. | `TestActiveLayoutDemotionReachesPrivateChannelRoles` |
+| B3 admission | A repeated top-level `channel_id` key passed admission (Go keeps the last) but SQLite `json_extract` (first) read another channel from the stored row. | Admission in a shared group, and edits of a shared-group message, refuse metadata that repeats a top-level key. The metadata is still stored byte for byte, so idempotent retries still match. | `TestActiveLayoutRefusesARepeatedChannelKey` |
+
+There is no community remove or leave path in storage (`RemoveConversationMember`
+refuses community conversations), so no removal path needed the B2 change.
