@@ -144,16 +144,20 @@ class HistoryTransferService {
       HistoryTransferProgress row,
       HistoryTransferAuth auth,
       String directory) async {
-    final status = await crypto.k2Inspect(id);
     final payload = _payload(row);
-    if (status.stage == K2Stage.waitingApproval) {
-      // The first active commit after promotion (the pending state is frozen).
-      final tag = payload['approval_tag'];
-      final at = payload['approved_at'];
-      if (tag is! String || at is! int) {
-        throw const K2TransferException('the approval is missing');
-      }
+    final tag = payload['approval_tag'];
+    final at = payload['approved_at'];
+    if (tag is String && at is int) {
+      // The first active commit after promotion (the pending state is
+      // frozen). Applied without inspecting first: inspect refuses a record
+      // whose link has expired, and native accepts a late approval within its
+      // retention window; an already-applied approval is a native no-op for
+      // the same `approved_at`.
       await crypto.k2ApplyApproval(id, base64Decode(tag), approvedAt: at);
+    }
+    final status = await crypto.k2Inspect(id);
+    if (status.stage == K2Stage.waitingApproval) {
+      throw const K2TransferException('the approval is missing');
     }
     final receipt = await transport.status(id.linkId, auth);
     final claimHash = payload['claim_request_hash'];

@@ -682,6 +682,20 @@ void main() {
       skip: skip);
 
   test(
+      'a recipient resuming after the link expired still applies the approval',
+      () => _withPair((pair) async {
+            // The harness link expires 30 minutes after `link()`; the transfer
+            // itself stays live for seven days from the approval.
+            pair.clock = pair.clock.add(const Duration(hours: 1));
+            await pair.send();
+            final received = await pair.receive();
+            expect(received.stage, HistoryTransferStage.acknowledged);
+            final messages = await pair.recipientStore.loadMessages('conv');
+            expect(messages.map((m) => m.body), ['first', 'second']);
+          }),
+      skip: skip);
+
+  test(
       'an expired transfer is refused and then swept',
       () => _withPair((pair) async {
             await pair.send();
