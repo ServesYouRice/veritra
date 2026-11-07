@@ -118,7 +118,7 @@ Tick a task when it is done and verified; note anything left open under it.
   - Fixed 58adb7e (D65): pending drafts flush before sign-out and session end clear data (`_flushDraftsBeforeSessionEnd`); no skipped draft test remains.
 - [x] 104 `TASK-104` Make the MLS rollback test assert the surviving messages, not just the absence of msg_2
 - [x] 105 `TASK-105` Make the hard-coded string guard scan whole files and cover the missing string parameters
-- [ ] 106 `TASK-106` Stop trusting server-stamped expiry without an authenticated source (gated on section-26579cea45f35cfc5617fb36/UQ-1)
+- [x] 106 `TASK-106` Stop trusting server-stamped expiry without an authenticated source (gated on section-26579cea45f35cfc5617fb36/UQ-1) — done 2026-11-07: sender-signed `expires_at` in the payload, shorter of it and the server time wins; no sender expiry falls back to the server time.
   - Skipped: waits on UQ-1.
 - [x] 107 `TASK-107` Exercise the attachment manifest binding past the request gate
 - [x] 108 `TASK-108` Strengthen message search tests: backfill kind filter and a full-coverage server spy
@@ -232,8 +232,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 206 `TASK-206` Let a live recovery lease holder renew and complete past the initial lease and capability deadline
 - [x] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
 - [x] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
-- [ ] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner
-  - Still open (checked 2026-11-07): semantics decided (D92, docs/designs/C1-scoped-sync-bounds.md) but `scanned_through` is in no server or app code yet; STATE.md Open work still lists the hidden-tail cost.
+- [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); legacy route unchanged, no heads route.
+  - Skipped: needs an API change on both sides (see STATE.md Open work, hidden tail on every poll).
 - [x] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
 - [x] 211 `TASK-211` Require current conversation membership for message edit and delete
 - [x] 212 `TASK-212` Release attachment links, orphaned attachments and blobs when a message is deleted

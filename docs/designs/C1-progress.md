@@ -94,3 +94,17 @@ list with usernames, and the Flutter screens. Format, rules and limits are in
   open the list.
 - Not tested on a device. Dart analyzer, formatter and the new tests ran
   locally on Flutter 3.44.0 (see `testing/evidence/C1-membership.md`).
+
+## 2026-11-07: scanned-through paging (TASK-209, D92)
+
+The scoped conversation and account routes now add `scanned_through` (the
+highest id examined, hidden rows included, never below the cursor) and
+`scan_truncated` (a 2,000-candidate scan budget ended the page early) to the
+envelope. A conversation cursor that names a row of its own scope, hidden or
+not, is accepted by the legacy-mark expiry test. D92 holds: a block-hidden
+tail the cursor passes is not replayed after an unblock. The app's paused
+conversation replay keeps paging while `scan_truncated` and moves to
+`scanned_through`. Not built: the heads route, `scope_head`, per-scope
+client cursors (C1-B2 to B4), and the legacy global stream is unchanged.
+`PRIVATE_MESSENGER_SCOPED_SYNC` still defaults to off in `config.go`; the
+brief said it now defaults on, but main does not.
