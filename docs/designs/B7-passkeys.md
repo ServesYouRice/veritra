@@ -141,9 +141,11 @@ are public and static, and they use the general per-address budget.
 | `PATCH /api/v1/account/passkeys/{id}` | `withAuth` | `{name}` | 204 |
 | `DELETE /api/v1/account/passkeys/{id}` | `withRecentAuth` | none | 204 |
 
-`GET /api/v1/setup/status` gains `passkeys: {rp_id}` while passkeys are
-on, so the app can offer the button before anyone signs in. That reveals
-configuration only.
+While passkeys are on, `GET /api/v1/setup/status` gains
+`passkeys: {rp_id, android, apple}`. The two booleans say whether the
+operator configured that platform's app list. The app can then offer the
+button before anyone signs in, and hide it on a platform the operator left
+out, instead of failing at registration. This reveals configuration only.
 
 **Sign-in options.** The handler checks the device ID and secret with the
 same constant-time comparison as `login`. The device must be active and its
@@ -179,11 +181,23 @@ No username is taken, so the route is no enumeration oracle.
 6. Run one writer transaction (below), then answer like `login`. Audit:
    `session.login {device_id, method: "passkey"}`.
 
-Every failure answers the same 401 `invalid_credentials` and counts against
-the **same backoff buckets as password login**: the source key always, and
-the account-device key only when the device secret was valid. Switching
-between password and passkey therefore does not double an attacker's
-budget.
+Every failure at either step answers the same 401 `invalid_credentials`.
+Failures count against these `LoginBackoff` keys (`loginBackoffKeys` in
+`auth_handlers.go` builds the password ones):
+
+- **Always:** a passkey source key, `"passkey-source-device\x00" + address
+  + "\x00" + device_id`. The passkey routes take no username, so this
+  bucket is separate from the password source bucket. Both are checked
+  before any work, and each holds its own budget.
+- **Only when the device secret was valid:** the password path's own
+  account-device key, `"login-account-device\x00" + username + "\x00" +
+  device_id`, where `username` is the device's account username, lowercased
+  as `loginBackoffKeys` does. Someone who holds a device secret therefore
+  shares one budget across password and passkey failures, and switching
+  method gains nothing. Someone without the secret cannot touch this bucket,
+  so they cannot lock the owner out, which is the same rule as `login`.
+
+A success clears both keys, as `SucceededAny` does for password sign-in.
 
 **The writer transaction (race fence).** It mirrors `CreateLoginSession`'s
 `password_hash` fence and is all-or-nothing:
@@ -193,10 +207,14 @@ budget.
    a ceremony is single-use even under concurrent finishes.
 2. `UPDATE passkey_credentials SET sign_count = ?, backup_state = ?,
    last_used_at = ? WHERE id = ? AND account_id = ? AND sign_count = <value
-   read before verification>`. It must change exactly one row. A passkey
-   deleted meanwhile (by its owner, or by K0 completion if O5 is yes)
-   matches no row. Two concurrent uses of the same passkey cannot both
-   commit.
+   read before verification>`. It must change exactly one row. What this
+   guarantees: a passkey deleted meanwhile (by its owner, or by K0
+   completion if O5 is yes) matches no row. For an authenticator with a
+   counter, it also stops a stale count from overwriting a newer one. It
+   does **not** stop two concurrent uses of a synced passkey: such
+   passkeys always send 0, so both finishes match `sign_count = 0`. Reuse
+   is stopped by step 1 (each ceremony is single-use) and by the device
+   binding, not by the counter.
 3. `INSERT INTO sessions ... SELECT ... FROM accounts a JOIN devices d ...
    WHERE a.id = ? AND a.status = 'active' AND a.deleted_at IS NULL AND
    d.id = ? AND d.account_id = a.id AND d.revoked_at IS NULL AND
@@ -238,6 +256,14 @@ starts just after it.
   ("A passkey was added to your account").
 - **Removal** audits `passkey.removed` and emits
   `account.passkey_removed`.
+- **Older apps skip both events safely.** In current apps,
+  `_noteAccountSyncEvent` (`app_state_recovery.dart`) returns false for an
+  unknown `account.*` type, and `_deferProjectionRefresh`
+  (`app_state.dart`) acts only on the `device.`, `membership.` and
+  `conversation.` prefixes and `retention.updated`. These are plain sync
+  events, not MLS messages, so the I33 stop never applies to them. S1 adds a
+  Go test that they are written as account events. S3 adds a Dart test
+  that an app without the handler skips them and moves the cursor on.
 
 **Ceremonies.**
 
@@ -349,6 +375,17 @@ server.
 to be in a compile-time list (`--dart-define=VERITRA_PASSKEY_DOMAINS=...`)
 that matches the entitlements. A host missing from that list never sees
 the passkey button.
+
+**iOS entitlements.** The `com.apple.developer.associated-domains` key is
+added to `Runner.entitlements` only at build time, and only when the
+domain list is not empty. An empty key can still require the capability in
+the provisioning profile and break the simulator CI job. Default builds
+carry no such key.
+
+**Android `minSdk`.** `passkeys_android` declares `minSdkVersion 23`. S3
+checks that the app's effective `minSdk` (`flutter.minSdkVersion` in
+`build.gradle.kts`) is at least 23. D41 already requires 24 or higher for
+release APKs.
 
 ## Libraries
 
@@ -480,13 +517,39 @@ state.
 | Attachment working files (`attachment_crypto.dart`, support root) | **Shared root** | `<support>/<ns>/` |
 | Backup and recovery files: `.veritra-recovery.partial` and `.*.backup-ciphertext` (`backup_service.dart`, support root) | **Shared root, fixed name** | `<support>/<ns>/`. Otherwise one slot's partial recovery file could be picked up by another slot |
 | Opened files `<tmp>/veritra-open` (`attachment_views.dart`) | **Shared**, purged at start | `<tmp>/veritra-open/<ns or "primary">`, purged at start and at every switch |
-| Pasted images (`composer_attachments.dart`) | Per profile (`usePastedImageProfile`) | Per slot |
+| Pasted images (`<cache>/veritra-paste/<scope>`, `composer_attachments.dart`, from `getApplicationCacheDirectory`) | Per profile (`usePastedImageProfile`) | Per slot: the scope becomes the slot's namespace |
 | Account export file (Documents, `veritra-account-export-v2-<stamp>.json`) | User-visible file | Shared folder. It is the user's own file |
 | Appearance `veritra.appearance.v1` | Global | Shared: it is a device look, not account data |
 | Push: native `PushRegistrationConfig` (one instance at a time), FCM token and APNs token (one per app), UnifiedPush endpoint (per instance `accountId:deviceId`) | One | The active slot only (below) |
 | D52 wake bridge profile and native permit (`wake_worker_bridge.dart` refuses a second profile) | One per process | The active slot. Rebinding happens after an uninstall (S5) |
 | Desktop tray, window, notifier and its pending notices | Bound to one `AppState` | Re-attached to the new runtime at each switch. The old slot's notices are cleared |
 | Native crypto (Rust `loaders()` map keyed by handle) | Per handle | The old handles are closed at teardown |
+
+**Nested folders.** In release builds the primary slot is the empty
+namespace, so `<support>/` holds the primary's own files and also every
+other slot's `<support>/<ns>/` folder. Each sweep and reset that works on
+that root must therefore never reach into a slot folder. Checked today:
+
+| Code | What it deletes | Safe with nested slots |
+|---|---|---|
+| `cleanupAttachmentOrphans` (`attachments.dart`, run by `startAttachmentOrphanSweep`) | Lists one folder without following links. Deletes only `File` entries whose name matches `_attachmentOrphanName` and that are old enough | Yes: it is file-only and does not recurse |
+| `BackupService._cleanupOrphans` (`backup_service.dart`) | Lists one folder. Deletes only `File` entries ending `.backup-ciphertext` that are older than 24 h | Yes: it is file-only and does not recurse |
+| `_completeReset` (`local_store.dart`) | Moves the three fixed database file names into `unreadable-<stamp>/` | Yes: it uses fixed names only |
+| `purgeOpenedAttachments` (`attachment_views.dart`) | `<tmp>/veritra-open`, recursively | Yes. Those are throwaway decrypted copies, and at start every slot's copies should go anyway. At a switch, S4 purges only the old slot's subfolder |
+| `purgePastedImages` (`composer_attachments.dart`) | Its own scope folder, recursively, plus the legacy `<tmp>/veritra-paste` | Yes: the scope is per slot |
+
+**Removing the primary slot** therefore deletes the primary's database
+files and `unreadable-*` folders by name. It never deletes `<support>/`
+recursively. S4's done-when includes a test that sweeps, resets and the
+removal of the primary leave every other slot's folder untouched.
+
+**Release gate.** The entry point builds each slot's runtime: `main.dart`
+and `main_demo.dart` each pass their own factory. `main.dart` slots always
+get `UnavailableCryptoService` and the release transport. Demo slots keep
+D11's crypto path and D12's loopback-only HTTP. No slot code chooses a
+crypto service or transport by itself. S5's done-when includes
+`scripts/check-demo-boundary.sh` and a test that a slot added in the
+release entry point holds `UnavailableCryptoService`.
 
 ### Runtime: one live account per process
 
@@ -577,7 +640,7 @@ the credential must belong to the device's account.
 | A hostile server asks the app for another server's assertion | The app's RP ID pin refuses. Android and Apple platforms also refuse an RP ID with no association to the app |
 | Thief with the phone who knows its PIN (UV is often the unlock PIN) | Can sign in after a session expiry, which reads new messages, as an unexpired session already can. **Cannot** add or remove passkeys, change the password, cancel a recovery, remove or link devices, create invites, export or delete the account: all need the password. The owner removes the device from another one, or recovers. Residual: password-only sign-in blocked this thief after expiry |
 | Stolen session token, no password | Cannot add a passkey to keep access after the session ends, because registration needs recent password authentication |
-| Replay or reuse of an assertion | The challenge is single-use, deleted in the session transaction, and bound to the device ID. It lives 3 minutes |
+| Replay or reuse of an assertion | The ceremony is single-use: it is deleted in the session transaction, so of two concurrent finishes exactly one commits. It is bound to the device ID and the device secret, and it lives 3 minutes. The sign count adds nothing for synced passkeys (always 0) |
 | Credential or user swap | The credential must belong to the ceremony's account and `userHandle` must match. Credential IDs are unique per instance |
 | Cloned authenticator | Refused on a non-increasing nonzero sign count. Synced passkeys (count 0) get no clone detection; accepted |
 | Account enumeration | Sign-in options need a valid device secret and take no username. Failures look the same |
@@ -599,9 +662,9 @@ the credential must belong to the device's account.
 | S0 | This design | none | Merged after review | Opus designs |
 | S1 | Server passkeys: the Go module, config and startup checks, well-known files, migration, routes, the writer-transaction fence, backoff sharing, audit and sync events, export, `THIRD_PARTY_NOTICES.md`, `operations.md` (settings, hostname permanence, T37C wording) | **one server migration**, number reserved by the coordinator | Go tests with a test authenticator written in the test code (ECDSA P-256 and Ed25519 keys, CBOR from the module already pulled in, attestation `none`). The tests cover: register, sign in, wrong device secret, revoked device, suspended account, wrong `userHandle`, another account's credential, replayed and expired ceremony, two concurrent finishes (exactly one session), a passkey deleted mid-ceremony, BE change refused, sign-count regression refused, no `recent_auth_at` after a passkey sign-in, `withRecentAuth` refused with a passkey session, registration refused without recent auth, the shared backoff, and startup refusing a port, an IP or `http`. `go test -race`, `go vet`, `govulncheck` and `scripts/test` pass | Sonnet builds; independent review before merge |
 | S2 | K0 completion deletes passkeys (only if O5 is yes) | none (same tables) | A completion test shows no passkey left and a ceremony fenced | Inside S1 or after it; reviewed with K0 |
-| S3 | App passkeys: plugin pins (resolve in CI first), the `PasskeyClient` interface, API client, RP ID pin, "Sign in with passkey" next to the password on the sign-in screen (same post-sign-in path as `login`), Settings, Passkeys (list, add after password reauth, rename, remove), notices for `account.passkey_added` and `account.passkey_removed`, English and Serbian strings, the empty iOS `webcredentials` build setting and `VERITRA_PASSKEY_DOMAINS` | none | Flutter tests with a fake `PasskeyClient` cover: the RP ID pin refuses a mismatch, a cancel is silent, the button is hidden on Linux and on an iOS host not in the list, and passkey sign-in keeps the cursor rules of `login`. An API contract fixture holds JSON shapes the Go tests produce. CI green on every desktop and phone job | Sonnet builds; independent review before merge |
-| S4 | Slot storage: registry with read-back, per-slot names for the global items in the table above, primary unchanged | none | Tests: the primary keeps its keys and paths byte for byte; two slots share no file or key; a crash in each registry state recovers; a pending slot with a K0 claim survives a restart | Sonnet; Opus review (storage) |
-| S5 | Runtime switch: teardown queue, bridge rebind (Dart and native), push handoff with retry, desktop re-attach | none | `session_switch_test.dart` grows: a page, a draft, a sync result or a notice from slot A never reaches slot B; after a switch no timer, socket or store of A is alive; the bridge refuses a stale profile's wake; deregistration failure shows the dialog | Opus review (MLS ordering and lifecycle) |
+| S3 | App passkeys: plugin pins (resolve in CI first), the `PasskeyClient` interface, API client, RP ID pin, "Sign in with passkey" next to the password on the sign-in screen (same post-sign-in path as `login`), Settings, Passkeys (list, add after password reauth, rename, remove), notices for `account.passkey_added` and `account.passkey_removed`, English and Serbian strings, a build-time step that adds the iOS associated-domains key only for a non-empty `VERITRA_PASSKEY_DOMAINS`, a `minSdk` check (at least 23), `check_notice` entries | none | Flutter tests with a fake `PasskeyClient` cover: the RP ID pin refuses a mismatch, a cancel is silent, the button is hidden on Linux, on an iOS host not in the list and on a platform the server reports unconfigured, older apps skip the new account events, and passkey sign-in keeps the cursor rules of `login`. An API contract fixture holds JSON shapes the Go tests produce. CI green on every desktop and phone job | Sonnet builds; independent review before merge |
+| S4 | Slot storage: registry with read-back, per-slot names for the global items in the table above, primary unchanged | none | Tests: the primary keeps its keys and paths byte for byte; two slots share no file or key; a crash in each registry state recovers; a pending slot with a K0 claim survives a restart; the primary's sweeps and reset, and removing the primary, leave every other slot's folder untouched | Sonnet; Opus review (storage) |
+| S5 | Runtime switch: teardown queue, bridge rebind (Dart and native), push handoff with retry, desktop re-attach | none | `session_switch_test.dart` grows: a page, a draft, a sync result or a notice from slot A never reaches slot B; after a switch no timer, socket or store of A is alive; the bridge refuses a stale profile's wake; deregistration failure shows the dialog; a slot added under `main.dart` holds `UnavailableCryptoService`; `scripts/check-demo-boundary.sh` passes | Opus review (MLS ordering and lifecycle) |
 | S6 | Switcher UI: list, add, remove, the same-server warning, the 5-slot cap; English and Serbian strings | none | Widget tests; the demo e2e signs into a second account in one process and switches back | Sonnet |
 | S7 | Evidence: `testing/evidence/B7-passkeys.md` | none | Server tests and CI linked. One hand run on Windows Hello (the owner, with W1). Android and iOS runs need signed builds and wait for G24-era devices; they are listed as open, not claimed | Owner run |
 
