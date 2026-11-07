@@ -377,9 +377,7 @@ class _VoiceNoteTileState extends State<VoiceNoteTile> {
                     Text(
                       label,
                       style: theme.textTheme.bodySmall?.copyWith(
-                        color: _failed
-                            ? scheme.error
-                            : scheme.onSurfaceVariant,
+                        color: _failed ? scheme.error : scheme.onSurfaceVariant,
                       ),
                     ),
                   ],

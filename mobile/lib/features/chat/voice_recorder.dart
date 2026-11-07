@@ -68,9 +68,8 @@ class RecordPluginBackend implements VoiceRecorderBackend {
   @override
   Future<void> start(String path, VoiceFormat format) => _recorder.start(
         RecordConfig(
-          encoder: format == VoiceFormat.aac
-              ? AudioEncoder.aacLc
-              : AudioEncoder.wav,
+          encoder:
+              format == VoiceFormat.aac ? AudioEncoder.aacLc : AudioEncoder.wav,
           // Speech: mono at 64 kbit/s keeps a minute near 480 kB.
           numChannels: 1,
           bitRate: 64000,

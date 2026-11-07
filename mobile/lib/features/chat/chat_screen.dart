@@ -1696,10 +1696,11 @@ class _MessageBubble extends StatelessWidget {
           )
         else
           AttachmentTile(
-          entry: entry,
-          onOpen:
-              onOpenAttachment == null ? null : () => onOpenAttachment!(entry),
-        ),
+            entry: entry,
+            onOpen: onOpenAttachment == null
+                ? null
+                : () => onOpenAttachment!(entry),
+          ),
     ];
   }
 
