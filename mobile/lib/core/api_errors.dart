@@ -130,6 +130,13 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'transcript_hash_required': ApiErrorKind.invalidRequest,
   'weak_password': ApiErrorKind.invalidRequest,
   'password_unchanged': ApiErrorKind.invalidRequest,
+  // B7 passkeys.
+  'passkeys_not_configured': ApiErrorKind.unavailable,
+  'passkey_limit': ApiErrorKind.conflict,
+  'passkey_exists': ApiErrorKind.conflict,
+  'invalid_passkey': ApiErrorKind.invalidRequest,
+  'passkey_options_failed': ApiErrorKind.server,
+  'passkeys_list_failed': ApiErrorKind.server,
   // K0 account recovery.
   'recovery_not_configured': ApiErrorKind.unavailable,
   'recovery_backoff': ApiErrorKind.rateLimited,
