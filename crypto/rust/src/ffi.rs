@@ -1551,6 +1551,392 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
     })
 }
 
+/// ABI 13 (C7): a commit changed the roster by at least one Remove.
+pub const PM_CRYPTO_C7_COMMIT_REMOVED: u8 = 1;
+/// ABI 13 (C7): a commit carried at least one Add.
+pub const PM_CRYPTO_C7_COMMIT_ADDED: u8 = 2;
+/// ABI 13 (C7): the commit removed this device (no root is returned).
+pub const PM_CRYPTO_C7_COMMIT_REMOVED_SELF: u8 = 4;
+/// ABI 13 (C7): the key does not match the sealed value's commitment. Not a
+/// failure of the data: try the next candidate key. Nothing was decrypted.
+pub const PM_CRYPTO_C7_KEY_MISMATCH: i32 = -10;
+
+const C7_MAX_INFO_BYTES: usize = crate::c7::MAX_INFO_BYTES;
+const C7_MAX_SEALED_BYTES: usize = crate::c7::SEAL_OVERHEAD + crate::c7::MAX_PLAINTEXT_BYTES;
+const C7_MAX_MESSAGE_BYTES: usize = 4096;
+
+fn c7_error(error: crate::c7::C7Error) -> i32 {
+    match error {
+        crate::c7::C7Error::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
+        crate::c7::C7Error::KeyMismatch => PM_CRYPTO_C7_KEY_MISMATCH,
+        crate::c7::C7Error::Authentication | crate::c7::C7Error::Crypto => PM_CRYPTO_ERROR,
+    }
+}
+
+/// Writes a commit outcome. Called only after the commit is merged, with
+/// outputs checked beforehand, so it cannot fail halfway.
+unsafe fn write_commit_outcome(
+    outcome: crate::mls::CommitOutcome,
+    out_flags: *mut u8,
+    out_epoch: *mut u64,
+    out_root: *mut PmOwnedBuffer,
+) {
+    let mut flags = 0u8;
+    if outcome.removed_any {
+        flags |= PM_CRYPTO_C7_COMMIT_REMOVED;
+    }
+    if outcome.added_any {
+        flags |= PM_CRYPTO_C7_COMMIT_ADDED;
+    }
+    if outcome.removed_self {
+        flags |= PM_CRYPTO_C7_COMMIT_REMOVED_SELF;
+    }
+    // SAFETY: The caller checked all three targets and they are writable.
+    unsafe {
+        out_flags.write(flags);
+        out_epoch.write(outcome.new_epoch);
+        if let Some(root) = outcome.root {
+            out_root.write(into_owned(root.as_slice().to_vec()));
+        }
+    }
+}
+
+/// ABI 13 (C7): `c7_derive`, HKDF-SHA256 with `salt = label`, `ikm = key`,
+/// `info`, 32 bytes out. `key` is exactly 32 bytes; `label` must be one of
+/// `veritra-c7-post-v1`, `veritra-c7-rekey-chk-v1`, `veritra-c7-slot-v1`
+/// (any other is `PM_CRYPTO_INVALID_ARGUMENT`); `info` is 1 to 1024 bytes.
+///
+/// # Safety
+/// Every slice must be readable and `out_key` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_c7_derive(
+    key: PmByteSlice,
+    label: PmByteSlice,
+    info: PmByteSlice,
+    out_key: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_key.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let key = unsafe { borrowed(key, crate::c7::KEY_BYTES)? };
+        let label = unsafe { borrowed(label, 64)? };
+        let info = unsafe { borrowed(info, C7_MAX_INFO_BYTES)? };
+        let derived = crate::c7::derive(key, label, info).map_err(c7_error)?;
+        unsafe { output(out_key, derived.as_slice().to_vec()) }
+    })
+}
+
+/// ABI 13 (C7): `sha256("veritra-c7-chk-v1" | key)` for a 32-byte key: a
+/// record's `chk_commit` and a generation entry's `key_commit`.
+///
+/// # Safety
+/// `key` must be readable and `out_commit` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_c7_chk_commit(
+    key: PmByteSlice,
+    out_commit: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_commit.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let key = unsafe { borrowed(key, crate::c7::KEY_BYTES)? };
+        let commit = crate::c7::chk_commit(key).map_err(c7_error)?;
+        unsafe { output(out_commit, commit.to_vec()) }
+    })
+}
+
+/// ABI 13 (C7): seals `plaintext` (1 byte to 64 KiB plus 64) under a 32-byte
+/// `key`: `kc[32] | nonce[12] | AES-256-GCM(K_enc, nonce, plaintext, aad)`
+/// with `K_enc` and `kc` derived from `key` and a fresh random nonce. `aad`
+/// (1 to 1024 bytes) is required and is the caller's own context. Every key
+/// must seal one message only (post and slot keys bind `action_id`).
+///
+/// # Safety
+/// Every slice must be readable and `out_sealed` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_c7_seal(
+    key: PmByteSlice,
+    aad: PmByteSlice,
+    plaintext: PmByteSlice,
+    out_sealed: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_sealed.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let key = unsafe { borrowed(key, crate::c7::KEY_BYTES)? };
+        let aad = unsafe { borrowed(aad, crate::c7::MAX_AAD_BYTES)? };
+        let plaintext = unsafe { borrowed(plaintext, crate::c7::MAX_PLAINTEXT_BYTES)? };
+        let sealed = crate::c7::seal(key, aad, plaintext).map_err(c7_error)?;
+        unsafe { output(out_sealed, sealed) }
+    })
+}
+
+/// ABI 13 (C7): opens a value sealed by [`pm_crypto_c7_seal`]. The key's
+/// commitment is checked first: a different key is
+/// `PM_CRYPTO_C7_KEY_MISMATCH` and nothing is decrypted; a matching key with
+/// altered bytes or another aad is `PM_CRYPTO_ERROR`. Nothing is written on
+/// failure.
+///
+/// # Safety
+/// Every slice must be readable and `out_plaintext` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_c7_open(
+    key: PmByteSlice,
+    aad: PmByteSlice,
+    sealed: PmByteSlice,
+    out_plaintext: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_plaintext.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let key = unsafe { borrowed(key, crate::c7::KEY_BYTES)? };
+        let aad = unsafe { borrowed(aad, crate::c7::MAX_AAD_BYTES)? };
+        let sealed = unsafe { borrowed(sealed, C7_MAX_SEALED_BYTES)? };
+        let plaintext = crate::c7::open(key, aad, sealed).map_err(c7_error)?;
+        unsafe { output(out_plaintext, plaintext.as_slice().to_vec()) }
+    })
+}
+
+/// ABI 13 (C7): signs `domain | message` with this device's credential key
+/// (Ed25519, 64 bytes). `domain` must be `veritra-c7-post-sig-v1` or
+/// `veritra-c7-history-v1`, which Rust prepends itself (any other is
+/// `PM_CRYPTO_INVALID_ARGUMENT`); `message` is 1 to 4096 bytes.
+///
+/// # Safety
+/// `handle` must be live, slices readable and `out_signature` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_c7_sign(
+    handle: *mut PmCryptoHandle,
+    domain: PmByteSlice,
+    message: PmByteSlice,
+    out_signature: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_signature.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let domain = unsafe { borrowed(domain, 64)? };
+        let message = unsafe { borrowed(message, C7_MAX_MESSAGE_BYTES)? };
+        if !crate::c7::SIGN_DOMAINS.contains(&domain) {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let signature = unsafe {
+            with_device(handle, |device| {
+                device.c7_sign(domain, message).map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        if signature.len() != crate::c7::SIGNATURE_BYTES {
+            return Err(PM_CRYPTO_ERROR);
+        }
+        unsafe { output(out_signature, signature) }
+    })
+}
+
+/// ABI 13 (C7): strict Ed25519 verification of `domain | message` under a
+/// 32-byte public key and a 64-byte signature, over the same two domains as
+/// [`pm_crypto_c7_sign`]. Returns `PM_CRYPTO_OK` and writes 1 to `out_valid`
+/// for a valid signature, 0 for an invalid one (a malformed key included);
+/// a wrong length or unknown domain is `PM_CRYPTO_INVALID_ARGUMENT`.
+///
+/// # Safety
+/// Every slice must be readable and `out_valid` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_c7_verify(
+    domain: PmByteSlice,
+    public_key: PmByteSlice,
+    message: PmByteSlice,
+    signature: PmByteSlice,
+    out_valid: *mut u8,
+) -> i32 {
+    ffi_call(|| {
+        if out_valid.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let domain = unsafe { borrowed(domain, 64)? };
+        let public_key = unsafe { borrowed(public_key, crate::c7::PUBLIC_KEY_BYTES)? };
+        let message = unsafe { borrowed(message, C7_MAX_MESSAGE_BYTES)? };
+        let signature = unsafe { borrowed(signature, crate::c7::SIGNATURE_BYTES)? };
+        let valid = crate::c7::verify(domain, public_key, message, signature).map_err(c7_error)?;
+        unsafe { out_valid.write(u8::from(valid)) };
+        Ok(())
+    })
+}
+
+/// ABI 13 (C7): the signature public key (32 bytes) of the member device
+/// with this account and device id, read from the group's current tree.
+/// Fails when there is no such member.
+///
+/// # Safety
+/// `handle` must be live, slices readable and `out_key` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_member_signature_key(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    account_id: PmByteSlice,
+    device_id: PmByteSlice,
+    out_key: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_key.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let account_id = unsafe { borrowed(account_id, MAX_ID_BYTES)? };
+        let device_id = unsafe { borrowed(device_id, MAX_ID_BYTES)? };
+        let key = unsafe {
+            with_device(handle, |device| {
+                let group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .member_signature_key(&group, account_id, device_id)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        unsafe { output(out_key, key) }
+    })
+}
+
+/// ABI 13 (C7): [`pm_crypto_group_process_commit`] that also reports what
+/// the commit did, read from MLS itself and never from a server label.
+/// `out_flags` gets `PM_CRYPTO_C7_COMMIT_*` bits (a Remove, an Add, this
+/// device removed); `out_epoch` the epoch the commit produces. For a removal
+/// commit that keeps this device, `out_root` gets the 32-byte
+/// `MLS-Exporter("veritra-c7-rekey-v1", lp(group_id) | u64(new_epoch), 32)`
+/// of that epoch, computed from the staged commit before the merge; in every
+/// other case it is null/0. A commit that removes this device returns
+/// `PM_CRYPTO_OK` with `PM_CRYPTO_C7_COMMIT_REMOVED_SELF` and no root. Every
+/// output is checked before the commit is processed and is set to
+/// zero/null first, so a failure leaves them zero. The caller wipes the
+/// root after deriving from it.
+///
+/// # Safety
+/// `handle` must be live, slices readable and all three outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_c7_process_commit(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    commit: PmByteSlice,
+    out_flags: *mut u8,
+    out_epoch: *mut u64,
+    out_root: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_flags.is_null() || out_epoch.is_null() || out_root.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        // SAFETY: Targets checked above; reset before any work that can fail.
+        unsafe {
+            out_flags.write(0);
+            out_epoch.write(0);
+            out_root.write(PmOwnedBuffer::default());
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let commit = unsafe { borrowed(commit, MAX_HANDSHAKE_BYTES)? };
+        let outcome = unsafe {
+            with_device(handle, |device| {
+                let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .process_commit_with_outcome(&mut group, commit)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        unsafe { write_commit_outcome(outcome, out_flags, out_epoch, out_root) };
+        Ok(())
+    })
+}
+
+/// ABI 13 (C7): [`pm_crypto_group_merge_pending_commit`] that also reports
+/// what this device's own staged commit did, with the same outputs as
+/// [`pm_crypto_group_c7_process_commit`]; the root comes from the pending
+/// commit before the merge. A group with no staged commit is
+/// `PM_CRYPTO_ERROR` and is left as it is (the plain call's silent no-op
+/// would hide whether a membership commit happened).
+///
+/// # Safety
+/// `handle` must be live, `group_id` readable and all three outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_c7_merge_pending_commit(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    out_flags: *mut u8,
+    out_epoch: *mut u64,
+    out_root: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_flags.is_null() || out_epoch.is_null() || out_root.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        // SAFETY: Targets checked above; reset before any work that can fail.
+        unsafe {
+            out_flags.write(0);
+            out_epoch.write(0);
+            out_root.write(PmOwnedBuffer::default());
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let outcome = unsafe {
+            with_device(handle, |device| {
+                let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .merge_pending_commit_with_outcome(&mut group)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        unsafe { write_commit_outcome(outcome, out_flags, out_epoch, out_root) };
+        Ok(())
+    })
+}
+
+/// ABI 13 (C7): [`pm_crypto_group_decrypt`] that also writes the epoch the
+/// message was encrypted in to `out_epoch`, from MLS itself. Errors,
+/// including `PM_CRYPTO_SENDER_MISMATCH` and `PM_CRYPTO_SENDER_REMOVED`,
+/// are as for the plain call (the ratchet has advanced); `out_epoch` is 0
+/// then.
+///
+/// # Safety
+/// `handle` must be live, slices readable, outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_c7_decrypt(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    ciphertext: PmByteSlice,
+    sender_account_id: PmByteSlice,
+    sender_device_id: PmByteSlice,
+    out_plaintext: *mut PmOwnedBuffer,
+    out_epoch: *mut u64,
+) -> i32 {
+    ffi_call(|| {
+        // Checked before decrypting: a decrypt consumes its ratchet step.
+        if out_plaintext.is_null() || out_epoch.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        unsafe { out_epoch.write(0) };
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let ciphertext = unsafe { borrowed(ciphertext, MAX_CIPHERTEXT_BYTES)? };
+        let sender_account_id = unsafe { borrowed(sender_account_id, MAX_ID_BYTES)? };
+        let sender_device_id = unsafe { borrowed(sender_device_id, MAX_ID_BYTES)? };
+        let (plaintext, epoch) = unsafe {
+            with_device(handle, |device| {
+                let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .decrypt_with_epoch(&mut group, ciphertext, sender_account_id, sender_device_id)
+                    .map_err(|error| match error {
+                        MlsError::SenderMismatch => PM_CRYPTO_SENDER_MISMATCH,
+                        MlsError::SenderRemoved => PM_CRYPTO_SENDER_REMOVED,
+                        _ => PM_CRYPTO_ERROR,
+                    })
+            })?
+        };
+        unsafe {
+            output(out_plaintext, plaintext)?;
+            out_epoch.write(epoch);
+        }
+        Ok(())
+    })
+}
+
 /// Encrypts one independently authenticated attachment chunk.
 ///
 /// # Safety
@@ -1612,6 +1998,10 @@ pub unsafe extern "C" fn pm_crypto_attachment_decrypt_chunk(
 #[cfg(test)]
 #[path = "ffi/records_tests.rs"]
 mod records_tests;
+
+#[cfg(test)]
+#[path = "ffi/c7_tests.rs"]
+mod c7_tests;
 
 #[cfg(test)]
 mod tests {

@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (12u)
+#define PM_CRYPTO_ABI_VERSION (13u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -33,6 +33,14 @@
  * device holds, or the one it names has expired (D74). Nothing was
  * consumed; the device has to be added again. */
 #define PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE (-9)
+/* ABI 13 (C7), pm_crypto_c7_open and pm_crypto_group_c7_*: the key does not
+ * match the sealed value's commitment. Not a data failure: try the next
+ * candidate key. Nothing was decrypted. */
+#define PM_CRYPTO_C7_KEY_MISMATCH (-10)
+/* ABI 13 (C7): bits of the out_flags the commit calls write. */
+#define PM_CRYPTO_C7_COMMIT_REMOVED (1u)      /* at least one Remove */
+#define PM_CRYPTO_C7_COMMIT_ADDED (2u)        /* at least one Add */
+#define PM_CRYPTO_C7_COMMIT_REMOVED_SELF (4u) /* this device was removed */
 
 typedef struct {
   const uint8_t *data;
@@ -328,6 +336,81 @@ int32_t pm_crypto_group_decrypt(PmCryptoHandle *handle, PmByteSlice group_id,
                                 PmByteSlice sender_account_id,
                                 PmByteSlice sender_device_id,
                                 PmOwnedBuffer *out_plaintext);
+/* ABI 13 (C7, docs/designs/C7-channel-history.md revision 7). Nothing is
+ * wired into the app, and every piece needs the independent crypto review
+ * before release, the exporter use in particular. Vector:
+ * testing/vectors/c7-primitives-v1.json.
+ *
+ * Commit calls: like pm_crypto_group_process_commit and
+ * pm_crypto_group_merge_pending_commit, but they report what the commit did
+ * from MLS itself, never from a server label. out_flags gets
+ * PM_CRYPTO_C7_COMMIT_* bits, out_epoch the epoch the commit produces. For
+ * a removal commit that keeps this device, out_root gets 32 bytes,
+ * MLS-Exporter("veritra-c7-rekey-v1", lp(group_id) | u64(new_epoch), 32)
+ * (lp = u16 big-endian length, integers big-endian), taken from the staged
+ * or pending commit before the merge; in every other case out_root is
+ * null/0. A commit that removes this device returns PM_CRYPTO_OK with
+ * REMOVED and REMOVED_SELF and no root. All outputs are checked before the
+ * commit is processed and are zero/null on failure. The merge variant
+ * refuses (PM_CRYPTO_ERROR) a group with nothing staged. The app wipes the
+ * root once it has derived per-channel keys. No other exporter output
+ * leaves the core. Only the staged path reports: the older
+ * pm_crypto_group_remove_member and pm_crypto_group_self_update merge at
+ * once and report nothing. */
+int32_t pm_crypto_group_c7_process_commit(PmCryptoHandle *handle,
+                                          PmByteSlice group_id,
+                                          PmByteSlice commit, uint8_t *out_flags,
+                                          uint64_t *out_epoch,
+                                          PmOwnedBuffer *out_root);
+int32_t pm_crypto_group_c7_merge_pending_commit(PmCryptoHandle *handle,
+                                                PmByteSlice group_id,
+                                                uint8_t *out_flags,
+                                                uint64_t *out_epoch,
+                                                PmOwnedBuffer *out_root);
+/* pm_crypto_group_decrypt that also writes the epoch the message was
+ * encrypted in (0 on failure). Errors are the plain call's. */
+int32_t pm_crypto_group_c7_decrypt(PmCryptoHandle *handle, PmByteSlice group_id,
+                                   PmByteSlice ciphertext,
+                                   PmByteSlice sender_account_id,
+                                   PmByteSlice sender_device_id,
+                                   PmOwnedBuffer *out_plaintext,
+                                   uint64_t *out_epoch);
+/* The 32-byte signature public key of the member device with this account
+ * and device id, from the group's current tree. */
+int32_t pm_crypto_group_member_signature_key(PmCryptoHandle *handle,
+                                             PmByteSlice group_id,
+                                             PmByteSlice account_id,
+                                             PmByteSlice device_id,
+                                             PmOwnedBuffer *out_key);
+/* c7_derive: HKDF-SHA256, salt = label, ikm = key (32 bytes), info 1 to 1024
+ * bytes, 32 bytes out. label is one of "veritra-c7-post-v1",
+ * "veritra-c7-rekey-chk-v1", "veritra-c7-slot-v1"; any other is
+ * PM_CRYPTO_INVALID_ARGUMENT. chk_commit: sha256("veritra-c7-chk-v1" | key).
+ * Unlike C6 franking, C7 length prefixes are u16 big-endian. */
+int32_t pm_crypto_c7_derive(PmByteSlice key, PmByteSlice label,
+                            PmByteSlice info, PmOwnedBuffer *out_key);
+int32_t pm_crypto_c7_chk_commit(PmByteSlice key, PmOwnedBuffer *out_commit);
+/* Seal: kc[32] | nonce[12] | AES-256-GCM(K_enc, nonce, plaintext, aad), K_enc
+ * and kc derived from the 32-byte key with the internal labels
+ * "veritra-c7-enc-v1" and "veritra-c7-kc-v1", a fresh random nonce, aad 1 to
+ * 1024 bytes (required), plaintext 1 byte to 64 KiB + 64. A key may seal one
+ * message only. Open checks kc first: another key is
+ * PM_CRYPTO_C7_KEY_MISMATCH (nothing decrypted), altered bytes or aad under
+ * the right key are PM_CRYPTO_ERROR. */
+int32_t pm_crypto_c7_seal(PmByteSlice key, PmByteSlice aad,
+                          PmByteSlice plaintext, PmOwnedBuffer *out_sealed);
+int32_t pm_crypto_c7_open(PmByteSlice key, PmByteSlice aad, PmByteSlice sealed,
+                          PmOwnedBuffer *out_plaintext);
+/* Sign and verify with the credential key (Ed25519) over domain | message.
+ * domain is "veritra-c7-post-sig-v1" or "veritra-c7-history-v1" (any other
+ * is PM_CRYPTO_INVALID_ARGUMENT); Rust prepends it, so no C7 signature is an
+ * MLS signature. message 1 to 4096 bytes. Verify is strict and stateless;
+ * it writes 1 or 0 to out_valid and returns PM_CRYPTO_OK for either. */
+int32_t pm_crypto_c7_sign(PmCryptoHandle *handle, PmByteSlice domain,
+                          PmByteSlice message, PmOwnedBuffer *out_signature);
+int32_t pm_crypto_c7_verify(PmByteSlice domain, PmByteSlice public_key,
+                            PmByteSlice message, PmByteSlice signature,
+                            uint8_t *out_valid);
 int32_t pm_crypto_attachment_encrypt_chunk(
     PmByteSlice key, PmByteSlice nonce_prefix, uint32_t chunk_index,
     PmByteSlice context, PmByteSlice plaintext, PmOwnedBuffer *out_ciphertext);
