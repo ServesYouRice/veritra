@@ -3,7 +3,7 @@
 # run the full checks. Runs only in Claude web (cloud) sessions.
 set -euo pipefail
 [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] || exit 0
-cd "$CLAUDE_PROJECT_DIR"
+cd "${CLAUDE_PROJECT_DIR:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}"
 
 # REPO-SPECIFIC: install dependencies and start services the checks need.
 # Veritra needs no database (SQLite only). The checks need: the pinned Go
@@ -15,8 +15,9 @@ FLUTTER_VERSION=3.44.0
 CARGO_AUDIT_VERSION=$(sh scripts/check-rust-audit-expiry.sh --print-cargo-audit-version)
 FLUTTER_HOME=/opt/flutter-$FLUTTER_VERSION
 
-# Linux desktop build dependencies (same list as the desktop-linux build).
-pkgs="clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libnotify-dev libayatana-appindicator3-dev xz-utils unzip"
+# Linux desktop build dependencies (same list as the desktop-linux build;
+# GStreamer is for the voice-note player).
+pkgs="clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libnotify-dev libayatana-appindicator3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev xz-utils unzip"
 missing=""
 for p in $pkgs; do
   dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q 'install ok installed' || missing="$missing $p"
