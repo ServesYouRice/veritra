@@ -12,10 +12,10 @@
 What they exercise: group and community round trips (preview, request,
 list, approve, roster with usernames); a pending request grants nothing;
 repeated and opposite decisions; four concurrent approvals of one request
-(one change, one use); use limit with a second pending request; revoked,
+(one change, one use); use limit (the last use closes the other pending requests); revoked,
 expired, used-up, unknown and malformed locators; creator demoted or deleted;
 block in either direction; member limit at approval (rolled back, request
-stays pending, use not counted); bounds (input, pending per account);
+stays pending, use not counted); bounds (input, pending per account); dead requests (link used up, expired, creator demoted or deleted) are neither listed, counted against the caps, nor shown as waiting to the requester; a hand-added member's pending requests are cancelled;
 outsider, plain member and requester attempts; community leave, remove,
 last owner, rank rule, channel-less community; the stored hash is not the
 locator; one test vector shared with the Dart side.

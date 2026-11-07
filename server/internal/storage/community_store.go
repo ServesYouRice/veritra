@@ -713,6 +713,9 @@ func (s *Store) manageCommunityMemberTx(ctx context.Context, tx *sql.Tx, communi
 		if err := s.checkNewCommunityMember(ctx, tx, communityID, targetAccountID); err != nil {
 			return nil, err
 		}
+		if err := cancelPendingJoinRequestsTx(ctx, tx, MembershipTarget{Kind: domain.InviteTargetCommunity, ID: communityID}, targetAccountID); err != nil {
+			return nil, err
+		}
 	}
 	createdAt := nowString()
 	membershipID, err := domain.NewID("mbr")
@@ -1078,6 +1081,9 @@ func (s *Store) manageConversationMemberTx(ctx context.Context, tx *sql.Tx, conv
 			}
 		}
 		if err := s.checkNewConversationMember(ctx, tx, conversationID, targetAccountID); err != nil {
+			return 0, err
+		}
+		if err := cancelPendingJoinRequestsTx(ctx, tx, MembershipTarget{Kind: domain.InviteTargetGroup, ID: conversationID}, targetAccountID); err != nil {
 			return 0, err
 		}
 	}

@@ -366,15 +366,16 @@ func TestInviteUseLimitAndDecisionRace(t *testing.T) {
 	if uses := testRowCount(t, ctx, f.store, `SELECT uses FROM membership_invites WHERE id = ?`, invite.ID); uses != 1 {
 		t.Fatalf("uses = %d", uses)
 	}
-	// The link is used up: a second request cannot be approved, and nothing leaks.
-	if _, err := f.store.DecideJoinRequest(ctx, f.owner.Account.ID, second.ID, true); !errors.Is(err, ErrMembershipInviteUnavailable) {
+	// The link is used up: the second request was closed, cannot be approved, and nothing leaks.
+	if _, err := f.store.DecideJoinRequest(ctx, f.owner.Account.ID, second.ID, true); !errors.Is(err, ErrJoinRequestResolved) {
 		t.Fatalf("approve beyond max uses: %v", err)
 	}
 	if member, _ := f.store.IsConversationMember(ctx, f.group.ID, bob.Account.ID); member {
 		t.Fatal("bob joined past the use limit")
 	}
-	if status := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM membership_join_requests WHERE id = ? AND status = 'pending'`, second.ID); status != 1 {
-		t.Fatal("the refused approval changed the request")
+	// The last use closed the other request on the link in the same transaction.
+	if n := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM membership_join_requests WHERE id = ? AND status = 'cancelled' AND decided_at IS NOT NULL`, second.ID); n != 1 {
+		t.Fatal("the used up link left the other request pending")
 	}
 	if _, _, err := f.store.RequestToJoin(ctx, carol.Account.ID, testLocator(20)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("request on a used up link: %v", err)
@@ -606,5 +607,158 @@ func TestHashLocatorVector(t *testing.T) {
 	}
 	if !validLocator(locator) || validLocator(strings.ToUpper(locator)) || validLocator(locator[1:]) {
 		t.Fatal("validLocator accepts the wrong shapes")
+	}
+}
+
+// ownStatus is the status the requester sees for the request.
+func ownStatus(t *testing.T, ctx context.Context, f inviteFixture, accountID, requestID string) string {
+	t.Helper()
+	own, err := f.store.ListOwnJoinRequests(ctx, accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range own {
+		if r.ID == requestID {
+			return r.Status
+		}
+	}
+	t.Fatalf("request %s not listed for its requester", requestID)
+	return ""
+}
+
+func TestUsedUpInviteCancelsOtherPendingRequests(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice, bob := f.people[0], f.people[1]
+	f.invite(t, ctx, f.groupTarget(), f.owner, testLocator(60), 1)
+	a, _, _ := f.store.RequestToJoin(ctx, alice.Account.ID, testLocator(60))
+	b, _, _ := f.store.RequestToJoin(ctx, bob.Account.ID, testLocator(60))
+	if _, err := f.store.DecideJoinRequest(ctx, f.owner.Account.ID, a.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := ownStatus(t, ctx, f, bob.Account.ID, b.ID); got != domain.JoinRequestCancelled {
+		t.Fatalf("bob sees %q after the link was used up", got)
+	}
+	if n := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM membership_join_requests WHERE account_id = ? AND status = 'pending'`, bob.Account.ID); n != 0 {
+		t.Fatalf("%d pending rows stay for bob", n)
+	}
+	// Bob can ask again through a new link at once: nothing dead counts.
+	f.invite(t, ctx, f.groupTarget(), f.owner, testLocator(61), 1)
+	if _, created, err := f.store.RequestToJoin(ctx, bob.Account.ID, testLocator(61)); err != nil || !created {
+		t.Fatalf("new request: created=%v err=%v", created, err)
+	}
+}
+
+func TestDeadRequestsDoNotCountAgainstCapsOrList(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice := f.people[0]
+	invite := f.invite(t, ctx, f.groupTarget(), f.admin, testLocator(62), 5)
+	req, _, err := f.store.RequestToJoin(ctx, alice.Account.ID, testLocator(62))
+	if err != nil {
+		t.Fatal(err)
+	}
+	capped := func() (int, int) {
+		community, conversation := f.groupTarget().columns()
+		own := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM membership_join_requests r JOIN membership_invites i ON i.id = r.invite_id WHERE r.account_id = ? AND r.status = 'pending' AND `+usableInviteSQL, alice.Account.ID, nowString())
+		target := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM membership_join_requests r JOIN membership_invites i ON i.id = r.invite_id WHERE r.community_id IS ? AND r.conversation_id IS ? AND r.status = 'pending' AND `+usableInviteSQL, community, conversation, nowString())
+		return own, target
+	}
+	if own, target := capped(); own != 1 || target != 1 {
+		t.Fatalf("live request counted own=%d target=%d", own, target)
+	}
+	listed := func() int {
+		l, err := f.store.ListJoinRequests(ctx, f.groupTarget(), f.owner.Account.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(l)
+	}
+	if listed() != 1 {
+		t.Fatal("live request not listed")
+	}
+
+	t.Run("expired", func(t *testing.T) {
+		if _, err := f.store.db.ExecContext(ctx, `UPDATE membership_invites SET expires_at = ? WHERE id = ?`, formatTime(time.Now().Add(-time.Minute)), invite.ID); err != nil {
+			t.Fatal(err)
+		}
+		if own, target := capped(); own != 0 || target != 0 || listed() != 0 {
+			t.Fatalf("expired: own=%d target=%d listed=%d", own, target, listed())
+		}
+		if got := ownStatus(t, ctx, f, alice.Account.ID, req.ID); got != domain.JoinRequestCancelled {
+			t.Fatalf("requester sees %q for an expired link", got)
+		}
+		if _, err := f.store.db.ExecContext(ctx, `UPDATE membership_invites SET expires_at = ? WHERE id = ?`, formatTime(time.Now().Add(time.Hour)), invite.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("creator demoted", func(t *testing.T) {
+		if _, err := f.store.ManageConversationMember(ctx, f.group.ID, f.owner.Account.ID, f.admin.Account.ID, domain.RoleMember); err != nil {
+			t.Fatal(err)
+		}
+		if own, target := capped(); own != 0 || target != 0 || listed() != 0 {
+			t.Fatalf("demoted creator: own=%d target=%d listed=%d", own, target, listed())
+		}
+		if got := ownStatus(t, ctx, f, alice.Account.ID, req.ID); got != domain.JoinRequestCancelled {
+			t.Fatalf("requester sees %q after the creator was demoted", got)
+		}
+		if _, err := f.store.DecideJoinRequest(ctx, f.owner.Account.ID, req.ID, true); !errors.Is(err, ErrMembershipInviteUnavailable) {
+			t.Fatalf("approve after demotion: %v", err)
+		}
+		// Promoting the creator again makes the request live again.
+		if _, err := f.store.ManageConversationMember(ctx, f.group.ID, f.owner.Account.ID, f.admin.Account.ID, domain.RoleAdmin); err != nil {
+			t.Fatal(err)
+		}
+		if listed() != 1 {
+			t.Fatal("request not listed once the creator is admin again")
+		}
+	})
+
+	t.Run("creator deleted", func(t *testing.T) {
+		if err := f.store.DeleteAccount(ctx, f.admin.Account.ID); err != nil {
+			t.Fatal(err)
+		}
+		if own, target := capped(); own != 0 || target != 0 || listed() != 0 {
+			t.Fatalf("deleted creator: own=%d target=%d listed=%d", own, target, listed())
+		}
+	})
+}
+
+func TestHandAddedRequesterRequestsAreCancelled(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice, bob := f.people[0], f.people[1]
+	f.invite(t, ctx, f.groupTarget(), f.owner, testLocator(63), 5)
+	f.invite(t, ctx, f.communityTarget(), f.owner, testLocator(64), 5)
+	ga, _, _ := f.store.RequestToJoin(ctx, alice.Account.ID, testLocator(63))
+	ca, _, _ := f.store.RequestToJoin(ctx, alice.Account.ID, testLocator(64))
+	gb, _, _ := f.store.RequestToJoin(ctx, bob.Account.ID, testLocator(63))
+
+	if _, err := f.store.ManageConversationMember(ctx, f.group.ID, f.owner.Account.ID, alice.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.comm.ID, f.owner.Account.ID, alice.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []MembershipTarget{f.groupTarget(), f.communityTarget()} {
+		listed, err := f.store.ListJoinRequests(ctx, target, f.owner.Account.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range listed {
+			if r.AccountID == alice.Account.ID {
+				t.Fatalf("hand-added alice still listed for %s", target.Kind)
+			}
+		}
+	}
+	for _, id := range []string{ga.ID, ca.ID} {
+		if got := ownStatus(t, ctx, f, alice.Account.ID, id); got != domain.JoinRequestCancelled {
+			t.Fatalf("alice's request %s is %q", id, got)
+		}
+	}
+	// Bob, not added, keeps his request; cancelling is per target and account.
+	if got := ownStatus(t, ctx, f, bob.Account.ID, gb.ID); got != domain.JoinRequestPending {
+		t.Fatalf("bob's request is %q", got)
 	}
 }

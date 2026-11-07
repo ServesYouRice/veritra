@@ -112,6 +112,16 @@ func inviteAdminRoleTx(ctx context.Context, q queryRower, target MembershipTarge
 	return nil
 }
 
+// usableInviteSQL is the SQL form of usableInviteTx for a query that aliases
+// membership_invites as i: not revoked or expired, uses left, and its creator
+// an active owner or admin of the target. It takes one argument, the current
+// time. Counting caps, listing requests and approving use the same test, so a
+// request nobody can approve is never listed or counted.
+var usableInviteSQL = `(i.revoked_at IS NULL AND i.uses < i.max_uses AND i.expires_at > ?
+	AND EXISTS (SELECT 1 FROM accounts ca WHERE ca.id = i.created_by AND ca.deleted_at IS NULL)
+	AND EXISTS (SELECT 1 FROM memberships cm WHERE cm.account_id = i.created_by AND cm.role IN ('` + domain.RoleOwner + `', '` + domain.RoleAdmin + `')
+		AND ((i.community_id IS NOT NULL AND cm.community_id = i.community_id) OR (i.conversation_id IS NOT NULL AND cm.conversation_id = i.conversation_id))))`
+
 type inviteRow struct {
 	id        string
 	target    MembershipTarget
@@ -405,18 +415,21 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 			return domain.JoinRequest{}, false, err
 		}
 	}
-	own, err := countRows(ctx, tx, `SELECT COUNT(*) FROM membership_join_requests WHERE account_id = ? AND status = 'pending'`, accountID)
+	// Both caps count only requests that could still be approved, so dead
+	// ones (invitation used up, expired, revoked, creator demoted) never
+	// block a new request.
+	now := time.Now().UTC()
+	own, err := countRows(ctx, tx, `SELECT COUNT(*) FROM membership_join_requests r JOIN membership_invites i ON i.id = r.invite_id WHERE r.account_id = ? AND r.status = 'pending' AND `+usableInviteSQL, accountID, formatTime(now))
 	if err != nil {
 		return domain.JoinRequest{}, false, err
 	}
-	forTarget, err := countRows(ctx, tx, `SELECT COUNT(*) FROM membership_join_requests WHERE community_id IS ? AND conversation_id IS ? AND status = 'pending'`, community, conversation)
+	forTarget, err := countRows(ctx, tx, `SELECT COUNT(*) FROM membership_join_requests r JOIN membership_invites i ON i.id = r.invite_id JOIN accounts ra ON ra.id = r.account_id AND ra.deleted_at IS NULL WHERE r.community_id IS ? AND r.conversation_id IS ? AND r.status = 'pending' AND `+usableInviteSQL, community, conversation, formatTime(now))
 	if err != nil {
 		return domain.JoinRequest{}, false, err
 	}
 	if own >= maxPendingRequestsPerAccount || forTarget >= maxPendingRequestsPerTarget {
 		return domain.JoinRequest{}, false, ErrJoinRequestLimit
 	}
-	now := time.Now().UTC()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO membership_join_requests(id, invite_id, community_id, conversation_id, account_id, status, created_at) VALUES(?, ?, ?, ?, ?, 'pending', ?)`, id, invite.id, community, conversation, accountID, formatTime(now)); err != nil {
 		return domain.JoinRequest{}, false, err
 	}
@@ -428,7 +441,7 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 
 // ListJoinRequests lists the pending requests for a target, with usernames,
 // for its owners and admins. A request whose invitation can no longer be used
-// (revoked, expired, used up) is left out: approving it would fail.
+// (revoked, expired, used up, creator no longer owner or admin) is left out: approving it would fail.
 func (s *Store) ListJoinRequests(ctx context.Context, target MembershipTarget, actorAccountID string) ([]domain.JoinRequest, error) {
 	if !target.valid() {
 		return nil, ErrInvalidInput
@@ -443,7 +456,7 @@ func (s *Store) ListJoinRequests(ctx context.Context, target MembershipTarget, a
 		JOIN membership_invites i ON i.id = r.invite_id
 		JOIN accounts a ON a.id = r.account_id AND a.deleted_at IS NULL
 		WHERE r.community_id IS ? AND r.conversation_id IS ? AND r.status = 'pending'
-		  AND i.revoked_at IS NULL AND i.uses < i.max_uses AND i.expires_at > ?
+		  AND `+usableInviteSQL+`
 		ORDER BY r.created_at, r.id
 		LIMIT ?`, community, conversation, nowString(), maxListedJoinRequests)
 	if err != nil {
@@ -464,17 +477,20 @@ func (s *Store) ListJoinRequests(ctx context.Context, target MembershipTarget, a
 }
 
 // ListOwnJoinRequests lists the account's most recent requests, so the app
-// can show waiting, approved and rejected ones.
+// can show waiting, approved and rejected ones. A pending request whose
+// invitation can no longer be used reads as cancelled, not waiting.
 func (s *Store) ListOwnJoinRequests(ctx context.Context, accountID string) ([]domain.JoinRequest, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT r.id, r.community_id, r.conversation_id, r.status, r.created_at, r.decided_at,
-		       COALESCE(c.name, g.title, '')
+		SELECT r.id, r.community_id, r.conversation_id,
+		       CASE WHEN r.status = 'pending' AND NOT `+usableInviteSQL+` THEN 'cancelled' ELSE r.status END,
+		       r.created_at, r.decided_at, COALESCE(c.name, g.title, '')
 		FROM membership_join_requests r
+		JOIN membership_invites i ON i.id = r.invite_id
 		LEFT JOIN communities c ON c.id = r.community_id
 		LEFT JOIN conversations g ON g.id = r.conversation_id
 		WHERE r.account_id = ?
 		ORDER BY r.created_at DESC, r.id
-		LIMIT ?`, accountID, maxListedOwnRequests)
+		LIMIT ?`, nowString(), accountID, maxListedOwnRequests)
 	if err != nil {
 		return nil, err
 	}
@@ -615,6 +631,11 @@ func (s *Store) DecideJoinRequest(ctx context.Context, actorAccountID, requestID
 		} else if n != 1 {
 			return JoinDecision{}, ErrMembershipInviteUnavailable
 		}
+		// The last use is gone: the other requests on this link can never be
+		// approved, so close them instead of leaving them pending.
+		if _, err := tx.ExecContext(ctx, `UPDATE membership_join_requests SET status = 'cancelled', decided_at = ? WHERE invite_id = ? AND status = 'pending' AND EXISTS (SELECT 1 FROM membership_invites WHERE id = ? AND uses >= max_uses)`, now, inviteID, inviteID); err != nil {
+			return JoinDecision{}, err
+		}
 		if target.Kind == domain.InviteTargetCommunity {
 			ids, err := s.manageCommunityMemberTx(ctx, tx, target.ID, actorAccountID, requester, domain.RoleMember)
 			if err != nil {
@@ -638,4 +659,13 @@ func (s *Store) DecideJoinRequest(ctx context.Context, actorAccountID, requestID
 	request.DecidedAt = &decided
 	decision.Request = request
 	return decision, nil
+}
+
+// cancelPendingJoinRequestsTx closes the account's pending requests for a
+// target it has just joined by another route, so no admin is offered an
+// approval that would fail with already_member.
+func cancelPendingJoinRequestsTx(ctx context.Context, tx *sql.Tx, target MembershipTarget, accountID string) error {
+	community, conversation := target.columns()
+	_, err := tx.ExecContext(ctx, `UPDATE membership_join_requests SET status = 'cancelled', decided_at = ? WHERE account_id = ? AND status = 'pending' AND community_id IS ? AND conversation_id IS ?`, nowString(), accountID, community, conversation)
+	return err
 }
