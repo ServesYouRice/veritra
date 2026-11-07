@@ -54,6 +54,9 @@ func newWakeFixture(t *testing.T, sendErr error) (*recoveryFixture, *wakeRecorde
 	rec := &wakeRecorder{err: sendErr}
 	f.app.Push = rec
 	f.handler = f.app.Handler()
+	// Registered after the fixture's close, so it runs first: no wake is
+	// still using storage when it closes.
+	t.Cleanup(func() { f.app.WaitPushWakes(time.Now().Add(5 * time.Second)) })
 	f.ownerRK = f.setRK(f.ownerToken)
 	return f, rec
 }
@@ -151,4 +154,25 @@ func TestRecoveryWakeRetiresGoneSubscriptions(t *testing.T) {
 	if n := f.activeSubscriptions(); n != 0 {
 		t.Fatalf("gone subscription still active: %d", n)
 	}
+}
+
+// A recovery-key change that cancels a waiting claim wakes the other devices
+// like an owner cancel; one that cancels nothing (the fixture's own setRK)
+// sends no wake.
+func TestRecoveryKeyChangeCancellingAClaimWakesOtherDevices(t *testing.T) {
+	f, rec := newWakeFixture(t, nil)
+	f.addPush("push_owner", f.ownerDeviceID, "fcm-token-owner-0123456789-0123456789")
+	f.claimOK(claimBody(t, f.reserve("owner"), "owner-password-123", f.ownerRK, recoveryTestOrigin))
+	rec.waitFor(t, 1)
+	f.addPush("push_other", "", "fcm-token-other-0123456789-0123456789")
+	f.reauth()
+	f.setRK(f.ownerToken)
+	sent := rec.waitFor(t, 2)
+	if sent[1].Endpoint != "fcm-token-other-0123456789-0123456789" {
+		t.Fatalf("key-change wake went to %q, want the other device only", sent[1].Endpoint)
+	}
+	// No claim is waiting now: another key change sends nothing.
+	f.reauth()
+	f.setRK(f.ownerToken)
+	rec.waitFor(t, 2)
 }

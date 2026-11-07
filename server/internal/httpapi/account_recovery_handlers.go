@@ -438,6 +438,10 @@ func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 	}
 	a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "account.recovery_key.set", ID: result.EventID, Payload: map[string]interface{}{"rk_id": req.RKID}, CreatedAt: now})
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "account.recovery_key_set", map[string]string{"device_id": principal.DeviceID})
+	if result.CancelledEventID != 0 {
+		// Like an owner cancel: the account's other devices drop the notice.
+		a.wakeAccountDevices(principal.AccountID, principal.DeviceID)
+	}
 	status, err := a.Store.RecoveryKeyStatus(r.Context(), principal.AccountID)
 	if err != nil {
 		handleStorageError(w, err)

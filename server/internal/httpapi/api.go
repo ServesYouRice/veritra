@@ -38,7 +38,7 @@ type API struct {
 	VAPIDPublicKey      string
 	PushProviders       []string
 	pushTestMu          sync.Mutex
-	pushWakes           sync.WaitGroup
+	pushWakes           accountWakes
 	pushTestLast        map[string]time.Time
 	TURNURLs            []string
 	TURNSharedSecret    string
