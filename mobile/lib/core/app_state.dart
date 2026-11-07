@@ -4147,7 +4147,26 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final MessageEnvelope encrypted;
-      if (mls != null && route != null) {
+      // The sender's own expiry goes inside the encrypted payload (TASK-106)
+      // when the conversation has a disappearing timer and the service can
+      // carry it; otherwise the payload has none and receivers fall back to
+      // the server-stamped time.
+      final retention = conversation.retentionSeconds;
+      final DateTime? senderExpiry = retention != null && retention > 0
+          ? DateTime.now().toUtc().add(Duration(seconds: retention))
+          : null;
+      final Object? expiringService = mls;
+      if (mls != null &&
+          senderExpiry != null &&
+          expiringService is ExpiringPayloadCryptoService) {
+        encrypted = await expiringService.encryptExpiringPayload(
+            conversation.id, type, body,
+            expiresAt: senderExpiry,
+            channelId: route?.channelId,
+            layoutGeneration: route?.generation,
+            attachmentRefs: attachmentRefs,
+            draftText: draftText);
+      } else if (mls != null && route != null) {
         final Object service = mls;
         if (service is! ChannelRoutedCryptoService) {
           throw StateError('this crypto service cannot post into a channel');

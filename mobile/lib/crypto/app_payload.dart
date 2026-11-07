@@ -53,13 +53,44 @@ class DecryptedAppPayload {
     required this.actionId,
     required this.body,
     this.channelId,
+    this.expiresAtMs,
   });
 
   final AppPayloadType type;
   final String actionId;
   final Map<String, Object?> body;
   final String? channelId;
+
+  /// The sender's own expiry for this message, in epoch milliseconds, from
+  /// the signed (end-to-end encrypted) payload. Null when the sender put none
+  /// there (an older app, or no disappearing timer): the receiver then falls
+  /// back to the server-stamped time, see [effectiveExpiryMillis].
+  final int? expiresAtMs;
 }
+
+/// The latest expiry a sender may name, in epoch milliseconds (year 9999): a
+/// value past it, or not a positive integer, is read as absent.
+const int _maxExpiryMs = 253402300799000;
+
+/// The expiry to store for a message (TASK-106, owner decision 2026-11-07).
+/// [senderMs] is the sender's authenticated value from the payload and
+/// [serverMs] the server-stamped envelope time, either may be null.
+///
+/// - Both: the shorter one. A longer server time is ignored; a shorter one
+///   still applies, because it cannot make the message outlive what the
+///   sender chose.
+/// - Only the sender's: that.
+/// - Only the server's (the payload has none, for example from an older
+///   app): the server's, as before. That is the compatibility fallback; it
+///   is exactly as trustworthy as it always was.
+int? effectiveExpiryMillis({int? senderMs, int? serverMs}) {
+  if (senderMs == null) return serverMs;
+  if (serverMs == null) return senderMs;
+  return senderMs < serverMs ? senderMs : serverMs;
+}
+
+int? _readExpiryMs(Object? raw) =>
+    raw is int && raw > 0 && raw <= _maxExpiryMs ? raw : null;
 
 /// What a decrypted application payload turned out to be (W8 step 0, P1).
 /// Classification is total: [AppPayloadCodec.classify] never throws.
@@ -168,7 +199,7 @@ class AppPayloadCodec {
         : 1;
     _validateBody(type, body, version: version);
     return _frame(_innerJson(version, type, conversationId, senderDeviceId,
-        actionId, body, channelId, hidden));
+        actionId, body, channelId, hidden, null));
   }
 
   /// Encodes a franked payload (C6, `docs/crypto.md` "Franking v1"). Always
@@ -186,11 +217,12 @@ class AppPayloadCodec {
     required Uint8List frankKey,
     String? channelId,
     bool hidden = false,
+    int? expiresAtMs,
   }) {
     validateContext(conversationId, senderDeviceId, actionId);
     _validateBody(type, body, version: 2);
     final canonical = _innerJson(2, type, conversationId, senderDeviceId,
-        actionId, body, channelId, hidden);
+        actionId, body, channelId, hidden, expiresAtMs);
     return (
       padded: _frame(frankWireJson(canonical, frankKey)),
       canonical: canonical
@@ -205,7 +237,8 @@ class AppPayloadCodec {
           String actionId,
           Map<String, Object?> body,
           String? channelId,
-          bool hidden) =>
+          bool hidden,
+          int? expiresAtMs) =>
       utf8.encode(jsonEncode(<String, Object?>{
         'v': version,
         'type': type.wireName,
@@ -214,6 +247,9 @@ class AppPayloadCodec {
         'action_id': actionId,
         if (channelId != null) 'channel_id': channelId,
         if (hidden) 'hidden': true,
+        // The sender's expiry (v2 only: a v1 receiver refuses extra keys,
+        // and every v2 receiver ignores keys it does not know).
+        if (expiresAtMs != null) 'expires_at': expiresAtMs,
         'body': body,
       }));
 
@@ -393,7 +429,8 @@ class AppPayloadCodec {
           type: type,
           actionId: actionId,
           body: body,
-          channelId: map['channel_id'] as String?));
+          channelId: map['channel_id'] as String?,
+          expiresAtMs: version >= 2 ? _readExpiryMs(map['expires_at']) : null));
     } catch (_) {
       return const InvalidAppPayload();
     }

@@ -13,6 +13,7 @@ import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart'
     show formatJsonWithoutPreview, pinLimitPerChat;
 import '../sync/conversation_pause.dart';
+import '../crypto/app_payload.dart' show effectiveExpiryMillis;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
@@ -2542,11 +2543,13 @@ class _MemoryMessageHistory {
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
-      // Only the first echo sets the expiry (W2).
-      expiresAt: Value(
-          target.serverMessageId == null && target.expiresAt == null
-              ? expiresAt
-              : target.expiresAt),
+      // Only the first echo sets the expiry (W2). The sender's own expiry,
+      // already on the row, is only ever shortened by it, never lengthened
+      // (TASK-106): the shorter of the two wins, as for a received message.
+      expiresAt: Value(target.serverMessageId == null
+          ? effectiveExpiryMillis(
+              senderMs: target.expiresAt, serverMs: expiresAt)
+          : target.expiresAt),
     );
   }
 
