@@ -1959,18 +1959,18 @@ after (the record before, when the commit carries no proposal). Dart merges
 only if `validateCommit` accepts:
 
 - Accounts whose last device the commit removes are pruned first
-  (`removeAccount`): their role goes; if the owner left, the oldest admin
-  still present (smallest `since_rev`, then the smallest account id by
-  UTF-16 code-unit order, as Dart's `String.compareTo`; account ids are
-  ASCII today, where this equals byte order) becomes owner, and with no admin nobody does. `rev` is kept. A
-  record equal to that result is valid from any committer; a removal that
-  leaves a departed account named is invalid.
+  (`removeAccount`): their role, elector flag, `joined` entry and votes go.
+  The owner is never pruned (D81): it stays owner even out of the roster, and
+  nobody inherits. `rev` is kept. A record equal to that result is valid from
+  any committer; a removal that leaves a departed account named is invalid.
+  An add must stamp `joined` and an owner commit must clear an open election;
+  each rewrites the record at `rev` + 1 (record format v2, not built).
 - Any other difference is a change by the committer, checked by
   `validateTransition` against the pruned record: `rev` + 1; everything
   named is in the roster after the commit; role changes as on the server
   (moderator or above; target strictly below the actor; new role at most
   the actor's); stepping down is free; only the owner transfers ownership,
-  and only to a current admin; posting fields need admin or above; a new
+  and only to a current admin, or a won election sets it (D81, D82); posting fields need admin or above; a new
   admin's `since_rev` is the new `rev`, and an admin's stays unchanged.
 
 The check does not judge whether a removal was allowed; that is C1/C5's
