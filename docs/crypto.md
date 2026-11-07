@@ -443,6 +443,16 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **B2 link previews (2026-11-07):** additive payload v2 field
+  `link_preview` on `text` and `reply` (§5.8). The sender's app builds the
+  preview and sends it inside the encrypted message; receivers and the
+  server never fetch. No ABI, server API, migration or local schema change
+  (counters stay ABI 12, schema 18, migration 0046): the received preview
+  lives in the existing `format_json`. Adds one Dart dependency, `html`
+  0.15.7 (with `csslib` 1.0.2), owner-approved for B2. The K2 history
+  snapshot reader accepts the new `format_json` key, so an older build
+  cannot import a snapshot that contains one.
+
 - **C6 foundation, report seal and franking commitment, ABI 12
   (2026-11-01):** additive; the Dart binding and the header now pin ABI 12
   exactly. Design: [`C6-reports-franking.md`](designs/C6-reports-franking.md)
@@ -1242,6 +1252,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 
 **Status:** W8 implements formatting, mentions, forwarding, pins and local
 actions; full verification and D52 phone background delivery remain pending.
+B2 (link previews, §5.8) adds the optional `link_preview` body field.
 B3 (polls), W11 (profiles) and later C2/C5 remain reserved. It needs no ABI
 change: Rust encrypts the
 padded payload as opaque bytes, and all of this lives in
@@ -1477,8 +1488,8 @@ input can differ.
 
 | Type | v | Body (required; *optional*) | Who may send (checked by every receiver) | Effect |
 |---|---|---|---|---|
-| `text` | 1/2 | `text`; *`entities`*, *`mentions`*, *`forwarded`*, *`profile_key`*, *`group_profile_key`* | Any member | Visible row, kind `text` |
-| `reply` | 1/2 | `text`, `reply_to_id`; *`entities`*, *`mentions`*, *`profile_key`*, *`group_profile_key`* | Any member | Visible row with quote; `reply_to_id` resolved with the §3 rules for display only |
+| `text` | 1/2 | `text`; *`entities`*, *`mentions`*, *`forwarded`*, *`link_preview`*, *`profile_key`*, *`group_profile_key`* | Any member | Visible row, kind `text` |
+| `reply` | 1/2 | `text`, `reply_to_id`; *`entities`*, *`mentions`*, *`link_preview`*, *`profile_key`*, *`group_profile_key`* | Any member | Visible row with quote; `reply_to_id` resolved with the §3 rules for display only |
 | `edit` | 1/2 | `message_id`, `text`; *`entities`*, *`mentions`* | Target's author account | Replaces text, entities and mentions together. An edit **never** raises a mention alert |
 | `delete` | 1 | `message_id` | Target's author account | Clears body and reactions. Kinds widen to `text`, `attachment`, `poll`, and `unsupported` (its raw JSON is cleared, §1); clearing an attachment row also drops its keys. A poll's votes and pin go with it |
 | `reaction` | 1 | `message_id`, `reaction` (≤ 32 UTF-16 units, empty clears) | Any member | As today, plus the conversation check |
@@ -1535,7 +1546,7 @@ markup:
   ignored. Formatting never makes a message `invalid`.
 - There is no link entity. Receivers detect URLs in the text locally and
   show the real URL, so link text cannot hide its target. The receiver
-  never fetches a link (B2 is separate).
+  never fetches a link; a preview is made by the sender (§5.8).
 
 #### 5.2 Mentions: `mentions`
 
@@ -1664,6 +1675,89 @@ body fields:
 
 Until W11 both are ignored, like any unknown field. The rules are in W11.
 
+#### 5.8 Link previews: `link_preview` (B2)
+
+The **sender's** app fetches the page and puts the result inside the
+encrypted message. Receivers and the server never fetch anything, so a
+link cannot be used to learn that a recipient read a message.
+
+```json
+"link_preview": {"url": "https://example.org/a", "title": "A",
+                 "description": "…",
+                 "thumb": {"mime": "image/png", "width": 96, "height": 54,
+                           "data": "<base64>"}}
+```
+
+- **Where.** An optional body field of `text` and `reply`. A body that
+  carries it is written as `v: 2`, so a v1 receiver never sees it. No new
+  type, ABI, server or schema change.
+- **Fields.** `url` is required. At least one of `title`, `description`
+  or `thumb` must remain after cleaning, or the preview is dropped.
+
+  | Field | Limit |
+  |---|---|
+  | `url` | https, default port, no credentials, an ASCII public-looking DNS name (not an IP literal, not `localhost`, `.local`, `.internal` and the like), 2,048 characters |
+  | `title` / `description` | 200 / 400 UTF-16 units, after cleaning |
+  | `thumb` | `image/png` only, at most 16 KiB, at most 160 × 160 px, the declared size must match the PNG header |
+  | body (text and preview together) | 48 KiB of UTF-8 |
+
+- **Receiver rules.** Lenient, like formatting: a preview that breaks a
+  rule is dropped alone and the message stays valid.
+  - The `url` must carry no tracking parameter and no fragment, and must
+    equal, after the same tracking strip, **a link in the message text**.
+    A card can therefore never describe a different site than the one the
+    message names.
+  - `title` and `description` lose control characters and bidirectional
+    overrides, and whitespace is collapsed. A bad `thumb` is dropped alone.
+  - The card shows the real host from `url` above the title. It has no tap
+    target: receivers do not open or fetch the link.
+- **Sender rules.**
+  - A setting on this device, "Link previews": **off**, **known sites
+    only** (the default: a small allow-list of reference and code-hosting
+    sites, `linkPreviewAllowList`), or **all sites**. With "known sites
+    only", an unknown site is never contacted.
+  - Only the **first** link of the text is considered, and only if it is
+    https. Tracking parameters (`utm_*`, `fbclid`, `gclid` and similar) and
+    the fragment are removed before the fetch and in the sent `url`.
+  - The fetch is bounded: 8 seconds in all; one page of at most 256 KiB;
+    at most 3 redirects, and **every hop** must again be https, a
+    public-looking host, and inside the setting; the response must be
+    `text/html`; no cookies, no referrer, a generic user agent. The
+    resolved addresses must all be public unicast, so a pasted link cannot
+    probe the sender's own network.
+  - The page is parsed with the `html` package for `og:title`,
+    `og:description`, `og:image` and the Twitter equivalents, falling back
+    to `<title>` and `<meta name="description">`.
+  - The picture is fetched under the same rules (at most 384 KiB), then
+    decoded, scaled to at most 128 px and **re-encoded as PNG**, which drops
+    all metadata; it must fit in 16 KiB (96 and 64 px are tried next). It
+    travels inline inside the encrypted payload, not as an attachment, so
+    the server sees no extra upload.
+  - If the body is over budget, the thumbnail goes first, then the whole
+    preview. A fetch or encoding failure sends the message without a
+    preview. Sending never fails because of a preview.
+  - The fetch happens before encryption and before the send queue, so a
+    slow site never holds the session queue; a second tap on the same chat
+    is refused until it finishes.
+- **Edits and forwards.** An `edit` carries no preview and replaces the
+  stored decoration, so an edit removes the card. A forward copies text and
+  entities only, so it never carries one. Delete (for everyone or for me)
+  clears the preview with the text.
+- **Local storage.** A received preview is kept under the key `link_preview`
+  of the row's existing `format_json`. No column, table, migration or
+  schema number changes. The K2 history snapshot and backup readers accept
+  the key and re-validate it against the text; a build older than B2
+  rejects a snapshot that contains it (its reader allows only `entities` and
+  `mentions`). Notifications and message search never read it.
+- **Residuals.** (1) The site, and anyone on the path, sees the sender's
+  address and that it was asked for this page, once, when the message is
+  sent. (2) The address check happens before the connection; a name that
+  changes its answer in between (DNS rebinding) is not caught, bounded by
+  https, port 443 and the bounded read. (3) The padded size of a message
+  with a thumbnail is visibly larger to the server (256-byte buckets).
+  (4) The sender chooses the preview text, so it can differ from what the
+  site shows; the host line is the part receivers can trust.
+
 ### 6. Local-only state (never an MLS payload, never sent to the server)
 
 | Feature | Stored as | Notes |
@@ -1684,6 +1778,7 @@ device" for star, archive and pinned chats.
 | Padded payload | 64 KiB, 256-byte buckets (unchanged) |
 | `text` | 16,384 UTF-16 units (unchanged) |
 | `entities` / `mentions` | 256 / 50 entries |
+| Link preview (§5.8) | `url` 2,048; `title` 200; `description` 400; `thumb` 16 KiB PNG, 160 px; text + preview 48 KiB |
 | Target key (`message_id`) | 128 characters (current keys are 85) |
 | Poll | question 300; 2–12 options of ≤ 100; `choices` ≤ 12 |
 | Active pins per conversation | 3 (per channel in a `community_shared` conversation) |
@@ -1816,6 +1911,16 @@ Decoding:
     state and cursor commit, with no row and no signal.
 28. An `invalid` message whose envelope `idempotency_key` equals the
     action ID of an existing row `<D>:<X>` leaves that row untouched (P3).
+29. `{H,"type":"text","body":{"text":"see https://example.org/a?utm_source=x","link_preview":{"url":"https://example.org/a","title":"A"}}}`
+    gives `text` with a card for `example.org`. The same vector without
+    `link_preview` is a `v: 1` payload on the wire (B2).
+30. Vector 29 with `"url":"https://bank.example/"` gives `text` and **no**
+    card (the URL is not a link of the text).
+31. Vector 29 with `"url":"http://example.org/a"`, with
+    `"url":"https://example.org/a#x"` or with
+    `"url":"https://example.org/a?utm_source=x"` gives `text` and no card.
+32. Vector 29 with a `thumb` whose declared size differs from its PNG
+    header, or whose data is over 16 KiB, gives a card without the image.
 
 Encoding: `encode()` writes the keys in this order:
 

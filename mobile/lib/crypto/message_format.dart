@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'link_preview.dart';
+
 /// Active pins per chat (per channel in a shared community conversation).
 /// Owner decision 2026-10-31: Discord-like 50, replacing W7's original 3.
 /// A pin beyond the limit evicts the oldest by `pinned_at`.
@@ -36,7 +38,8 @@ bool _validRange(String text, int offset, int length) {
   return !split(offset) && !split(offset + length);
 }
 
-/// Formatting and mentions are optional decoration. Bad entries alone disappear.
+/// Formatting, mentions and a link preview (B2) are optional decoration. Bad
+/// entries alone disappear.
 Map<String, Object?> messageDecoration(Map<String, Object?> body,
     {Set<String>? members}) {
   final text = body['text'] as String? ?? '';
@@ -81,9 +84,11 @@ Map<String, Object?> messageDecoration(Map<String, Object?> body,
       });
     }
   }
+  final preview = LinkPreview.fromWire(body['link_preview'], text: text);
   return {
     if (entities.isNotEmpty) 'entities': entities,
-    if (mentions.isNotEmpty) 'mentions': mentions
+    if (mentions.isNotEmpty) 'mentions': mentions,
+    if (preview != null) 'link_preview': preview.toWire()
   };
 }
 

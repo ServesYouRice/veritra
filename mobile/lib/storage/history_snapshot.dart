@@ -732,7 +732,7 @@ LocalMessage _readMessage(Object? raw) {
   if (m.formatJson != null) {
     if (m.kind != 'text' || m.body == null) _invalid();
     final d = _object(strictHistoryJson(utf8.encode(m.formatJson!)),
-        {'entities', 'mentions'});
+        {'entities', 'mentions', 'link_preview'});
     if ((d['entities'] is List && (d['entities'] as List).length > 256) ||
         (d['mentions'] is List && (d['mentions'] as List).length > 50))
       _invalid();

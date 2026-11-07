@@ -2559,6 +2559,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notify when a member mentions you, even in a muted chat.';
 
   @override
+  String get b2LinkPreviews => 'Link previews';
+
+  @override
+  String get b2LinkPreviewsDetail =>
+      'When you send a link, this device can fetch the page and put a preview in the encrypted message. The site sees this device\'s address. The server and the people you write to never fetch it.';
+
+  @override
+  String get b2LinkPreviewsOff => 'Off';
+
+  @override
+  String get b2LinkPreviewsKnown => 'Known sites only';
+
+  @override
+  String get b2LinkPreviewsAll => 'All sites';
+
+  @override
   String get w8HiddenSpoiler => 'Message containing a hidden spoiler';
 
   @override
