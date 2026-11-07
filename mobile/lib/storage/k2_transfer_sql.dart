@@ -136,6 +136,38 @@ String _canonicalOrigin(String raw) {
   );
 }
 
+/// Whether promoting [request] over the stored session [existingSession]
+/// replaces another identity that is signed out (its token is empty, for
+/// example a sign-out that kept the device). That identity's local state
+/// (MLS state, chats, cursor) is then dropped in the promotion's own
+/// transaction, as saving a session of another identity drops it. Throws
+/// [EnrollmentPromotionRefused] when another identity is signed in.
+///
+/// Kept, never replaced: no session; a restored account (no device) of the
+/// same server and account, whose history stays; and a session of the
+/// pending identity itself (an older build saved it before its MLS state).
+/// Same rules as `_identityChanged` in local_store.dart.
+bool promotionReplacesSignedOutIdentity({
+  required EnrollmentPromotionRequest request,
+  required Map<String, Object?>? existingSession,
+}) {
+  final previous = _storedSessionIdentity(existingSession);
+  if (previous == null) return false;
+  final restoredAccount = previous.token.isEmpty &&
+      previous.deviceId.isEmpty &&
+      previous.accountId.isNotEmpty;
+  final sameAccount = previous.origin == request.origin &&
+      previous.accountId == request.accountId;
+  if (sameAccount &&
+      (restoredAccount || previous.deviceId == request.deviceId)) {
+    return false;
+  }
+  if (previous.token.isNotEmpty) {
+    throw const EnrollmentPromotionRefused('another session is active');
+  }
+  return true;
+}
+
 /// Decides a promotion from what is stored; throws
 /// [EnrollmentPromotionRefused] where it must not happen. Both stores use
 /// it. [ledger] holds every ledger row for the request's account and device
@@ -189,22 +221,12 @@ EnrollmentPromotionOutcome decideEnrollmentPromotion({
     throw const EnrollmentPromotionRefused(
         'the pending identity is not the one opened');
   }
-  if (cryptoStateStored) {
+  // The session decides before the MLS state: a signed-out identity the
+  // promotion replaces takes its MLS state with it.
+  final replaces = promotionReplacesSignedOutIdentity(
+      request: request, existingSession: existingSession);
+  if (cryptoStateStored && !replaces) {
     throw const EnrollmentPromotionRefused('another MLS state is active');
-  }
-  final previous = _storedSessionIdentity(existingSession);
-  if (previous != null) {
-    final restoredAccount = previous.token.isEmpty &&
-        previous.deviceId.isEmpty &&
-        previous.accountId.isNotEmpty;
-    final sameAccount = previous.origin == request.origin &&
-        previous.accountId == request.accountId;
-    // A restored account of the same server keeps its history; the same
-    // identity is a session an older build saved before its MLS state.
-    if (!sameAccount ||
-        !(restoredAccount || previous.deviceId == request.deviceId)) {
-      throw const EnrollmentPromotionRefused('another session is active');
-    }
   }
   if (request.transfer case final transfer?) {
     if (transfer.direction != historyTransferIncoming ||
@@ -563,7 +585,8 @@ extension K2TransferSql on EncryptedLocalDatabase {
   }
 
   /// Schema 17 to 18: a pending enrollment whose identity is already the
-  /// active one (session and MLS state stored) was activated by schema 17
+  /// stored one (its session, signed in or out, and an MLS state) was
+  /// activated by schema 17
   /// code that stopped before deleting it. It is recorded in the ledger and
   /// dropped, so it can never be activated again. One without a stored MLS
   /// state stays: its activation may still be owed. Never throws on stored
@@ -573,8 +596,10 @@ extension K2TransferSql on EncryptedLocalDatabase {
     if (pending == null) return;
     final session = _decodeSessionMap(await _readSessionJsonRaw());
     final identity = _storedSessionIdentity(session);
+    // The token does not matter: a sign-out that kept the device leaves
+    // it empty, and the stored MLS state still says the identity was made
+    // active (only an activation stores the state of the session's device).
     if (identity == null ||
-        identity.token.isEmpty ||
         identity.origin != pending.origin ||
         identity.accountId != pending.accountId ||
         identity.deviceId != pending.deviceId ||
@@ -674,19 +699,22 @@ extension K2TransferSql on EncryptedLocalDatabase {
   /// A promotion the ledger already holds (same origin, kind and promotion
   /// ID) answers [EnrollmentPromotionOutcome.alreadyPromoted] and only drops
   /// a stale pending row; anything else that does not fit throws
-  /// [EnrollmentPromotionRefused] and changes nothing.
+  /// [EnrollmentPromotionRefused] and changes nothing. A signed-out identity
+  /// of another device is replaced, as an identity change replaces it (see
+  /// [promotionReplacesSignedOutIdentity]).
   Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
           EnrollmentPromotionRequest request) =>
       transaction(() async {
         final ledger = await _readPromotionsInTransaction(
             request.accountId, request.deviceId);
         final pending = await _readPendingEnrollmentInTransaction();
+        final existingSession = _decodeSessionMap(await _readSessionJsonRaw());
         final outcome = decideEnrollmentPromotion(
           request: request,
           ledger: ledger,
           pending: pending,
           cryptoStateStored: await _cryptoStateStoredRaw(),
-          existingSession: _decodeSessionMap(await _readSessionJsonRaw()),
+          existingSession: existingSession,
         );
         if (outcome == EnrollmentPromotionOutcome.alreadyPromoted) {
           if (pending != null &&
@@ -697,6 +725,12 @@ extension K2TransferSql on EncryptedLocalDatabase {
           return outcome;
         }
         final state = pending!.state!;
+        // A signed-out identity of another device goes first, in this same
+        // transaction, as an identity change drops it (the ledger stays).
+        if (promotionReplacesSignedOutIdentity(
+            request: request, existingSession: existingSession)) {
+          await _clearIdentityStateInTransaction();
+        }
         await customStatement(
             'INSERT INTO local_accounts (singleton, session_json) VALUES (1, ?) '
             'ON CONFLICT(singleton) DO UPDATE SET session_json = excluded.session_json',

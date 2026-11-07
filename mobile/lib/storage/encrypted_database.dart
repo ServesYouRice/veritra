@@ -912,44 +912,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     bool clearIdentityState = false,
   }) =>
       transaction(() async {
-        if (sessionJson == null || clearIdentityState)
-          await clearNoticeOutbox();
         if (clearIdentityState) {
-          await delete(localDrafts).go();
-          await delete(localConversationMutes).go();
-          await delete(localCiphertextEnvelopes).go();
-          await delete(localConversations).go();
-          await delete(localOutboxEntries).go();
-          await delete(localMlsTransitions).go();
-          await delete(localMlsOutboxEntries).go();
-          await delete(localPeerVerifications).go();
-          await _clearHistoryNamespace();
-          await delete(localMessages).go();
-          await delete(localPins).go();
-          await delete(localPendingPins).go();
-          await delete(localStarred).go();
-          await delete(localConversationPrefs).go();
-          await delete(localMessageReactions).go();
-          await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
-              <Object?>['$outboxDraftPrefix%']);
-          await (delete(localMetadata)
-                ..where((table) => table.name.isIn(<String>[
-                      syncLeaseName,
-                      syncRecoveryName,
-                      lastBackupName,
-                    ])))
-              .go();
-          await delete(localCryptoStates).go();
-          await delete(localCryptoRecords).go();
-          // Their native half went with the MLS state; the promotion ledger
-          // stays (finding 4).
-          await _clearHistoryTransfers();
-          // The cursor went with the MLS state it was committed with. An
-          // upsert of only the key would keep the old value.
-          await into(localSyncStates).insertOnConflictUpdate(
-            LocalSyncStatesCompanion.insert(
-                singleton: const Value(1), cursor: const Value(0)),
-          );
+          await _clearIdentityStateInTransaction();
+        } else if (sessionJson == null) {
+          await clearNoticeOutbox();
         }
         await into(localAccounts).insertOnConflictUpdate(
           LocalAccountsCompanion.insert(
@@ -958,6 +924,50 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           ),
         );
       });
+
+  /// Drops everything one device identity kept: its chats, drafts, outboxes,
+  /// MLS state and records, cursor and history transfers. The session row,
+  /// a pending enrollment and the promotion ledger stay (finding 4). Shared
+  /// by an identity change ([writeSessionJson]) and a promotion that
+  /// replaces a signed-out identity, so the two cannot drift.
+  Future<void> _clearIdentityStateInTransaction() async {
+    await clearNoticeOutbox();
+    await delete(localDrafts).go();
+    await delete(localConversationMutes).go();
+    await delete(localCiphertextEnvelopes).go();
+    await delete(localConversations).go();
+    await delete(localOutboxEntries).go();
+    await delete(localMlsTransitions).go();
+    await delete(localMlsOutboxEntries).go();
+    await delete(localPeerVerifications).go();
+    await _clearHistoryNamespace();
+    await delete(localMessages).go();
+    await delete(localPins).go();
+    await delete(localPendingPins).go();
+    await delete(localStarred).go();
+    await delete(localConversationPrefs).go();
+    await delete(localMessageReactions).go();
+    await customStatement('DELETE FROM local_metadata WHERE name LIKE ?',
+        <Object?>['$outboxDraftPrefix%']);
+    await (delete(localMetadata)
+          ..where((table) => table.name.isIn(<String>[
+                syncLeaseName,
+                syncRecoveryName,
+                lastBackupName,
+              ])))
+        .go();
+    await delete(localCryptoStates).go();
+    await delete(localCryptoRecords).go();
+    // Their native half went with the MLS state; the promotion ledger
+    // stays (finding 4).
+    await _clearHistoryTransfers();
+    // The cursor went with the MLS state it was committed with. An
+    // upsert of only the key would keep the old value.
+    await into(localSyncStates).insertOnConflictUpdate(
+      LocalSyncStatesCompanion.insert(
+          singleton: const Value(1), cursor: const Value(0)),
+    );
+  }
 
   Future<void> importLegacy({
     required String? sessionJson,

@@ -269,6 +269,28 @@ void main() {
       expect(await db.readCursor(), 9);
     });
 
+    test('17 to 18 ledgers an active identity that later signed out', () async {
+      final file = await _tempFile();
+      await _schema17(file,
+          session: const Session(
+              baseUrl: _origin,
+              token: '',
+              accountId: 'acct_me',
+              deviceId: 'dev_new',
+              deviceSecret: 'secret_new'),
+          withState: true);
+      final db = EncryptedLocalDatabase(NativeDatabase(file));
+      addTearDown(db.close);
+      expect(
+          (await db.readEnrollmentPromotions(
+                  accountId: 'acct_me', deviceId: 'dev_new'))
+              .single
+              .promotionId,
+          promotionIdSchemaUpgrade);
+      expect(await db.readPendingEnrollment(), isNull);
+      expect((await db.readCryptoState())?.counter, 6);
+    });
+
     final stages = <String, bool Function(String)>{
       'create ledger': (s) => s
           .startsWith('CREATE TABLE IF NOT EXISTS local_enrollment_promotions'),
@@ -445,6 +467,75 @@ void main() {
         expect(await db.readHistoryTransfers(), hasLength(1));
       });
     }
+
+    test('a crash while replacing a signed-out identity keeps it whole',
+        () async {
+      final file = await _tempFile();
+      final db = _FailAt(NativeDatabase(file),
+          (s) => s.startsWith('INSERT INTO local_accounts'),
+          armed: false);
+      addTearDown(db.close);
+      final signedOut = jsonEncode({
+        'base_url': _origin,
+        'token': '',
+        'account_id': 'acct_me',
+        'device_id': 'dev_old',
+      });
+      await db.writeSessionJson(signedOut);
+      await db.writeCryptoState(
+          counter: 7,
+          stateKey: List.filled(32, 7),
+          sealedState: [7],
+          cursor: 5);
+      await db.writePendingEnrollment(_row(_pendingLink()));
+      final request = EnrollmentPromotionRequest(
+        kind: PendingEnrollment.kindDeviceLinkV3,
+        origin: _origin,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+        promotionId: 'request-digest-1',
+        session: jsonDecode(_sessionJson(_newSession)) as Map<String, Object?>,
+        expectedState: _row(_pendingLink()).state!,
+        promotedAt: 1,
+      );
+      db.armed = true;
+      await expectLater(
+          db.promotePendingEnrollment(request), throwsA(isA<StateError>()));
+      expect(await db.readSessionJson(), signedOut);
+      expect((await db.readCryptoState())?.counter, 7);
+      expect(await db.readCursor(), 5);
+      expect(
+          await db.readEnrollmentPromotions(
+              accountId: 'acct_me', deviceId: 'dev_new'),
+          isEmpty);
+      expect((await db.readPendingEnrollment())?.deviceId, 'dev_new');
+
+      expect(await db.promotePendingEnrollment(request),
+          EnrollmentPromotionOutcome.promoted);
+      expect((await db.readCryptoState())?.counter, 1);
+      expect(await db.readCursor(), 0);
+    });
+
+    test('a signed-in identity of another device is never replaced', () async {
+      final db = EncryptedLocalDatabase(NativeDatabase(await _tempFile()));
+      addTearDown(db.close);
+      await db.writeSessionJson(_sessionJson(_otherSession));
+      await db.writePendingEnrollment(_row(_pendingLink()));
+      await expectLater(
+          db.promotePendingEnrollment(EnrollmentPromotionRequest(
+            kind: PendingEnrollment.kindDeviceLinkV3,
+            origin: _origin,
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+            promotionId: 'request-digest-1',
+            session:
+                jsonDecode(_sessionJson(_newSession)) as Map<String, Object?>,
+            expectedState: _row(_pendingLink()).state!,
+            promotedAt: 1,
+          )),
+          throwsA(isA<EnrollmentPromotionRefused>()));
+      expect(await db.readSessionJson(), _sessionJson(_otherSession));
+    });
 
     test('a stale pending row beside its ledger row never loads', () async {
       final db = EncryptedLocalDatabase(NativeDatabase(await _tempFile()));
@@ -661,6 +752,87 @@ void main() {
         expect((await store.loadCryptoState())!.counter, 4);
         expect((await store.loadSession())!.deviceId, 'dev_other');
         expect(await store.loadPendingEnrollment(), isNotNull);
+      });
+
+      // A sign-out that kept the device leaves its session (no token) and
+      // MLS state; the sign-in screen then offers a recovery or a link. The
+      // server has completed the claim by the time it is promoted, so a
+      // refusal here would strand the new identity: it replaces the
+      // signed-out one, as an identity change does.
+      test('replaces a signed-out device of the same account', () async {
+        await store.saveSession(const Session(
+            baseUrl: _origin,
+            token: '',
+            accountId: 'acct_me',
+            deviceId: 'dev_old',
+            deviceSecret: 'secret_old'));
+        await store.saveCryptoState(
+            StoredCryptoState(
+                counter: 7,
+                stateKey: List<int>.filled(32, 7),
+                sealedState: const [7]),
+            5);
+        await store.saveDraft('conv_old', 'old draft');
+        await promoted(transfer: _incoming());
+        final session = (await store.loadSession())!;
+        expect(session.deviceId, 'dev_new');
+        expect(session.token, 'tok_new');
+        final state = (await store.loadCryptoState())!;
+        expect(state.counter, 1);
+        expect(state.sealedState, _root);
+        expect(await store.loadCryptoRecords(), hasLength(2));
+        expect(await store.loadSyncCursor(), 0);
+        expect(await store.loadDrafts(), isEmpty);
+        expect(await store.loadPendingEnrollment(), isNull);
+        expect(await store.loadHistoryTransfers(), hasLength(1));
+        expect(
+            await store.isEnrollmentPromoted(
+                accountId: 'acct_me', deviceId: 'dev_new'),
+            isTrue);
+      });
+
+      test('replaces a signed-out identity of another account', () async {
+        await store.saveSession(const Session(
+            baseUrl: _origin,
+            token: '',
+            accountId: 'acct_other',
+            deviceId: 'dev_other',
+            deviceSecret: 'secret_other'));
+        await store.saveCryptoState(
+            StoredCryptoState(
+                counter: 7,
+                stateKey: List<int>.filled(32, 7),
+                sealedState: const [7]),
+            5);
+        await store.saveDraft('conv_old', 'old draft');
+        await promoted();
+        expect((await store.loadSession())!.accountId, 'acct_me');
+        expect((await store.loadCryptoState())!.counter, 1);
+        expect(await store.loadDrafts(), isEmpty);
+      });
+
+      test('never replaces the pending identity\'s own stored state', () async {
+        // Signed out as the pending identity with its MLS state stored: the
+        // identity was made active once, so the frozen state stays refused.
+        await store.saveSession(const Session(
+            baseUrl: _origin,
+            token: '',
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+            deviceSecret: 'secret_new'));
+        await store.saveCryptoState(
+            StoredCryptoState(
+                counter: 4,
+                stateKey: List<int>.filled(32, 4),
+                sealedState: const [4]),
+            3);
+        await store.saveDraft('conv_1', 'kept draft');
+        await store.savePendingEnrollment(_pendingLink());
+        await expectLater(store.promotePendingEnrollment(_promotion()),
+            throwsA(isA<EnrollmentPromotionRefused>()));
+        expect((await store.loadCryptoState())!.counter, 4);
+        expect((await store.loadDrafts())['conv_1']?.text, 'kept draft');
+        expect((await store.loadSession())!.token, '');
       });
 
       test('resumes over a session an older build saved before its state',
