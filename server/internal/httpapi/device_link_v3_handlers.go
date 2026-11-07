@@ -115,7 +115,7 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 		return
 	}
-	link, device, eventID, err := a.Store.ApproveDeviceLinkV3(r.Context(), r.PathValue("id"), principal.AccountID, principal.DeviceID, req.ClaimRequestHash, req.TranscriptHash, req.ApprovalTag)
+	link, device, eventID, notices, err := a.Store.ApproveDeviceLinkV3(r.Context(), r.PathValue("id"), principal.AccountID, principal.DeviceID, req.ClaimRequestHash, req.TranscriptHash, req.ApprovalTag)
 	if err != nil {
 		a.deviceLinkV3Error(w, err)
 		return
@@ -123,6 +123,10 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 	if eventID != 0 {
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
 		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+		for _, notice := range notices {
+			a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.MemberLinkEventType, ID: notice.EventID,
+				Payload: map[string]string{"account_id": notice.LinkedAccountID, "device_id": notice.DeviceID}, CreatedAt: time.Now().UTC()})
+		}
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "device_link.approved", map[string]string{"link_id": link.ID, "device_id": device.ID})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"device_link": link, "device": device})

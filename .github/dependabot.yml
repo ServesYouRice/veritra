@@ -69,6 +69,20 @@ updates:
       dart-dependencies:
         patterns:
           - "*"
+        # Group #121 updated only drift_dev, flutter_webrtc and mobile_scanner;
+        # intl, matcher, meta, test_api and vector_math moved as solver
+        # collateral because Dependabot resolved with the newest Flutter.
+        # mobile/pubspec.yaml now pins environment.flutter and the Dart upper
+        # bound, which is the actual fix (decision D15). These excludes are
+        # kept as a harmless extra guard; build_runner is held for the reason
+        # given in its ignore above.
+        exclude-patterns:
+          - intl
+          - matcher
+          - meta
+          - test_api
+          - vector_math
+          - build_runner
   - package-ecosystem: github-actions
     directory: /
     schedule:
