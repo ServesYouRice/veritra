@@ -33,6 +33,10 @@ impl MlsDevice {
         if state_key.len() != KEY_BYTES || counter == 0 {
             return Err(MlsError::InvalidState);
         }
+        // Format 3 has no place for the L1 recovery seed: refuse rather than drop it.
+        if self.held_list_seed.is_some() {
+            return Err(MlsError::InvalidState);
+        }
         // The union of every owner's store: format 3 is the flat map.
         let records: SecretVLBytes = self.provider.storage().with_records(encode_records)?.into();
         let transfers = transfer::encode(
@@ -191,6 +195,7 @@ impl MlsDevice {
                 device_id: device_id.to_vec(),
                 pending_transfers,
                 sealed: Default::default(),
+                held_list_seed: None,
             },
             counter,
         ))

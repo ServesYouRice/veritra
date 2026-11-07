@@ -1,7 +1,8 @@
 # L1: approved-device list
 
-**Status: proposed (2026-11-07), not built.** A design only, against `main`
-at `0073fe4`. It changes the crypto ABI, the server schema, the local schema
+**Status: proposed (2026-11-07); step L1-1 (the crypto layer, ABI 14) is built
+and listed in the `docs/crypto.md` change log, the other steps are not.** A
+design only, against `main` at `0073fe4`. It changes the crypto ABI, the server schema, the local schema
 and the recovery flow, so it needs an independent review (AGENTS.md:
 security, MLS ordering, recovery and credential decisions) and the owner's
 answers to the questions at the end before any step is built.
