@@ -7,7 +7,6 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/models.dart';
-import 'package:private_messenger/core/account_recovery.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
