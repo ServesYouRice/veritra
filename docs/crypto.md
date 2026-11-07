@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 12 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 13 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 12. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 13. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -161,13 +161,13 @@ until the package that builds it lands and adds its change-log entry.
   encrypted W11-style records; a private channel's key travels only in its
   own group. It proposes W7 payload types `info_key`, `info_key_request` and
   `info_update` (W7 owns that section; not yet registered).
-- [C7: history for new members](designs/C7-channel-history.md) (revision 7, reviewed, ready for build step 2,
-  planned, not built): every community message becomes a 68-byte `C7R1`
+- [C7: history for new members](designs/C7-channel-history.md) (revision 7, reviewed; build step 2,
+  the primitives, is in as ABI 13 and wired nowhere; the rest is planned, not built): every community message becomes a 68-byte `C7R1`
   MLS reference plus a sealed body (an amendment of the W7 §1 framing, VAP1
   unchanged inside the body); hidden W7 types `history_change`,
   `history_sync`, `history_sync_request`; rekeys derived from the MLS
-  exporter at each removal epoch (owner, 2026-11-07); and an ABI after 12,
-  coordinated with C4 and subject to independent crypto review: commit
+  exporter at each removal epoch (owner, 2026-11-07); and ABI 13 (step 2,
+  see the change log), subject to independent crypto review: commit
   processing and merge that return whether the commit removed or added
   members, the new epoch and a fixed-label exporter root, a decrypt that also returns the epoch, a
   member signature-key read, an `inspect_commit` refusal of a changed leaf
@@ -443,6 +443,80 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C7 step 2, history primitives, ABI 13 (2026-11-07):** additive; the Dart
+  binding and the header now pin ABI 13 exactly. Design:
+  [`C7-channel-history.md`](designs/C7-channel-history.md) revision 7 (owner
+  decisions D83 to D85; D80 approved the ABI in principle). Nothing is wired
+  into send, receive, the server or the schema, and no payload type is
+  registered. **Every piece below needs the independent crypto review before
+  release; the exporter use first.** Vector:
+  `testing/vectors/c7-primitives-v1.json` (Rust checks all of it, Dart the
+  stateless calls; Go follows with step 3). Code: `crypto/rust/src/c7.rs`, `mls.rs`,
+  `ffi.rs`.
+  - **Commit calls return what happened.** `pm_crypto_group_c7_process_commit`
+    and `pm_crypto_group_c7_merge_pending_commit` (the plain calls stay)
+    write `out_flags` (Remove, Add, this device removed), `out_epoch` (the
+    epoch the commit produces) and, for a removal commit that keeps this
+    device, a 32-byte `root`: `MLS-Exporter("veritra-c7-rekey-v1",
+    lp(group_id) | u64(new_epoch), 32)` (RFC 9420 section 8.5), taken from
+    `StagedCommit::export_secret` (another device's commit, after
+    `inspect_commit`) or `group.pending_commit()` (this device's own) before
+    the merge. The flags come from the staged commit's Add and Remove
+    proposals, never from a server label, so a removal the server calls an
+    add still reports a removal and a root. A commit that removes this
+    device returns OK with `REMOVED_SELF` and no root; the group store is
+    dropped as before (D70). The merge call refuses a group with nothing
+    staged. All outputs are checked before processing and are zero on
+    failure. Only the staged path reports: `pm_crypto_group_remove_member`
+    and `pm_crypto_group_self_update` merge at once and report nothing, so
+    the app must not use them for C7 groups. No other exporter output
+    leaves the core and there is no stand-alone exporter call.
+  - **Derive, commit, seal, open.** `pm_crypto_c7_derive` is HKDF-SHA256
+    (salt = label, ikm = the 32-byte key, info up to 1024 bytes, 32 bytes
+    out) over the labels `veritra-c7-post-v1`, `veritra-c7-rekey-chk-v1` and
+    `veritra-c7-slot-v1` only. `pm_crypto_c7_chk_commit` is
+    `sha256("veritra-c7-chk-v1" | key)`. `pm_crypto_c7_seal` and `_open`:
+    `kc[32] | nonce[12] | AES-256-GCM(K_enc, nonce, plaintext, aad)` with
+    `K_enc` and `kc` derived from the key under the internal labels
+    `veritra-c7-enc-v1` and `veritra-c7-kc-v1`, a random nonce, a required
+    aad of 1 to 1024 bytes and a plaintext of up to 64 KiB plus 64. Open
+    checks `kc` first, in constant time: another key is the new status
+    `PM_CRYPTO_C7_KEY_MISMATCH` (-10) and nothing is decrypted; the right key
+    with altered bytes or aad is `PM_CRYPTO_ERROR`. A slot of a
+    `history_sync` is the same seal under `slot_key` (derive with the slot
+    label), so there is no separate slot call. C7 length prefixes are u16
+    big-endian (C6 franking uses u32).
+  - **Sign and verify.** `pm_crypto_c7_sign` signs `domain | message` with
+    the device's credential key; `pm_crypto_c7_verify` is strict Ed25519 and
+    stateless. The domains are `veritra-c7-post-sig-v1` and
+    `veritra-c7-history-v1` only, and Rust prepends the label, so a C7
+    signature cannot be an MLS signature.
+  - **Epoch-returning decrypt and member key.** `pm_crypto_group_c7_decrypt`
+    is `pm_crypto_group_decrypt` plus `out_epoch`; its errors are the plain
+    call's. `pm_crypto_group_member_signature_key` reads a member device's
+    signature key from the current tree (an unknown device, or leaves of one
+    identity with different keys, is an error).
+  - **`inspect_commit` refuses a changed signature key.** An Update proposal
+    or update path must keep the leaf's identity and its signature key;
+    previously only the identity was checked. A device replacement (Remove
+    plus Add of one identity) still changes the key and rekeys. A test
+    builds the refused commit through OpenMLS's `self_update_with_new_signer`.
+  - **History pieces in Rust (`c7.rs`, no ABI).** The generation entry (80
+    bytes padded to 128), `slot_plain` (record 512 + entry 128), `P(N)` and
+    the `history_sync` body length `P(N) + 124 + 700 N` with its inverse, the
+    full history record (512 bytes, at most 481 used) and its compact forms
+    (143 bytes; a move adds `lp(close_group_id)` and a 128-byte wrap), the
+    signed-field builders and the record hash. They check structure only;
+    the ordering table, freshness and authority stay with the app (step 4).
+  - **Not in this step.** The ordering-row, window and implicit-genesis
+    vectors, the 512-byte VAP1 slack check and the Go check of the vector
+    wait for steps 3 and 4. The exporter root cannot be pinned as a
+    constant (OpenMLS cannot start a group from fixed secrets); tests pin
+    it as "the staged export equals the export of the merged epoch" for
+    another device's commit and for this device's own, in several groups
+    and epochs. The Dart binding adds only the stateless calls (derive,
+    chk_commit, seal, open, verify); the device-level calls come with step 4.
+  - No new crate and no Cargo.lock change (D84).
 - **C6 foundation, report seal and franking commitment, ABI 12
   (2026-11-01):** additive; the Dart binding and the header now pin ABI 12
   exactly. Design: [`C6-reports-franking.md`](designs/C6-reports-franking.md)
