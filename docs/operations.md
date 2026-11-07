@@ -718,6 +718,20 @@ stream per conversation. No released client uses them yet; leave the switch
 off. When a conversation stream falls behind retention it answers 409
 `conversation_recovery_required` and only that conversation pauses.
 
+**Community shared-group layout (C0, off by default).**
+`PRIVATE_MESSENGER_COMMUNITY_LAYOUT=1` makes each community created from then
+on use one shared MLS conversation for its open and announcement channels and
+one conversation per private channel (migration 0049). Existing communities
+stay in the legacy one-conversation-per-channel layout; nothing is converted.
+A post in the shared conversation must name an open or announcement channel of
+that community in its clear envelope metadata (`channel_id`,
+`community_layout_generation`), so the server can refuse posts in an
+announcement channel from members and keep a post in its channel; the same
+channel id is inside the encrypted payload, which the receiving app checks.
+The server therefore sees which channel a post is in and who is in each
+private channel. Leave the switch off until the app that ships with it is
+released; an older app cannot open a community in the new layout.
+
 **Sync cursors after retention.** `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS`
 (30 by default) also limits how long a device can be away. Pruning records
 the highest pruned event id for each account and device and for each

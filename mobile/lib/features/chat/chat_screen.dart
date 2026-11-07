@@ -989,6 +989,7 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     // every history without messages draws the same.
     history.messages.isEmpty ? null : history,
     state.membersFor(conversationId),
+    state.selectedChannelFor(conversationId),
     session?.accountId,
     session?.deviceId,
     state.l10n,

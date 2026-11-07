@@ -50,11 +50,14 @@ class ChatListScreen extends StatelessWidget {
     // No rows until the request state is read, so no stranger's chat shows as
     // a normal one and none flashes into Requests (B8).
     final loaded = state.requestStateLoaded;
+    // A community's shared group is opened per channel, from Communities.
     final conversations = state.conversations
         .where(
-          (c) => loaded
-              ? state.requestBucket(c) != RequestBucket.hidden
-              : state.requestBucket(c) == RequestBucket.chat,
+          (c) =>
+              !c.isCommunityShared &&
+              (loaded
+                  ? state.requestBucket(c) != RequestBucket.hidden
+                  : state.requestBucket(c) == RequestBucket.chat),
         )
         .toList(growable: false);
     // Strangers wait in a Requests section above the chats (B8).

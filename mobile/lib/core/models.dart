@@ -120,7 +120,11 @@ class Conversation {
 
   bool get isDm => kind == 'dm';
   bool get isGroup => kind == 'group';
-  bool get isChannel => kind == 'community_channel';
+  bool get isChannel => kind == 'community_channel' || isCommunityShared;
+
+  /// The one group of a community's open and announcement channels (C0). It
+  /// has no channel of its own: each post names one.
+  bool get isCommunityShared => kind == 'community_shared';
 
   /// Most recent activity for ordering/display: last message if known,
   /// otherwise creation time.
@@ -235,17 +239,27 @@ class MessagePage {
 }
 
 class Community {
-  Community({required this.id, required this.name, this.createdAt});
+  Community({
+    required this.id,
+    required this.name,
+    this.createdAt,
+    this.sharedConversationId,
+  });
 
   final String id;
   final String name;
   final DateTime? createdAt;
+
+  /// The shared group of a community with the C0 layout; null for a legacy
+  /// community, whose channels each have a conversation of their own.
+  final String? sharedConversationId;
 
   factory Community.fromJson(Map<String, Object?> json) {
     return Community(
       id: json['id'] as String,
       name: json['name'] as String,
       createdAt: _parseOptionalTime(json['created_at']),
+      sharedConversationId: json['shared_conversation_id'] as String?,
     );
   }
 }
@@ -256,12 +270,27 @@ class Channel {
     required this.communityId,
     required this.name,
     required this.kind,
+    this.conversationId,
+    this.layoutGeneration,
   });
 
   final String id;
   final String communityId;
   final String name;
+
+  /// `private` or `announcement` in a legacy community; `open`,
+  /// `announcement` or `private` in one with the C0 layout.
   final String kind;
+
+  /// The group this channel's posts go to, and the layout generation they
+  /// must name. Both null for a legacy channel (the conversation is found
+  /// through [Conversation.channelId]).
+  final String? conversationId;
+  final int? layoutGeneration;
+
+  /// Whether posts to this channel are routed inside a group of their own
+  /// (the community's shared group, or the channel's private group).
+  bool get isRouted => conversationId != null && layoutGeneration != null;
 
   factory Channel.fromJson(Map<String, Object?> json) {
     return Channel(
@@ -269,6 +298,8 @@ class Channel {
       communityId: json['community_id'] as String,
       name: json['name'] as String,
       kind: json['kind'] as String,
+      conversationId: json['conversation_id'] as String?,
+      layoutGeneration: (json['layout_generation'] as num?)?.toInt(),
     );
   }
 }
