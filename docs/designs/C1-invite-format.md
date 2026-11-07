@@ -95,28 +95,51 @@ checks that the kind it shows equals the bound kind.
   the app withdraws the request (best effort) and shows the same message, so a
   server cannot show the genuine target at preview and file against another.
 
-What this proves: whoever made the link named exactly this target, inviting
-account, device and device key, and the server did not change any of them. It
-adds no round trip and no new key material, and needs no change to the crypto
+What this proves, against a server that never saw the link: whoever made the
+link named exactly this target, inviting account, device and device key, and
+the server did not change any of them. It proves nothing against a server that
+holds the link (see the limits below). It adds no round trip and no new key material, and needs no change to the crypto
 ABI.
 
 Limits, stated plainly:
 
 - **No signature.** The tag is a MAC keyed by the link secret, not a
-  signature by the device. Anyone holding the link can compute tags, so a
-  server that colludes with a recipient of the link can still swap the target
-  for that recipient. A device signature the joiner verifies needs a signing
-  entry point and a verifier in the crypto ABI, which ABI 12 does not have on
-  purpose (TASK-007 removed the raw signer; the enrollment-proof signer has
-  its own domain and mints a key package). C7's reserved ABI 13 adds
-  credential-key sign and verify over a domain allowlist; moving the binding
-  onto it, with a new domain label, is the follow-up and a format version
-  bump (`v2`).
-- **The device key is committed, not cross-checked.** The joiner learns the
-  inviting device's key from the server. Checking it against the account's
-  signed device list needs L1, and against the MLS roster needs C7's member
-  signature-key read. Until then it is bound to the link, not proven to belong
-  to the inviting account.
+  signature by the device. Anyone holding the link can compute tags. So a
+  server that holds the link (it colludes with a recipient, or it is the
+  recipient) can swap the target, the inviting account or the device key and
+  recompute a valid tag, and the joiner cannot tell. The binding protects
+  only against a server that never saw the secret.
+- **The device key comes from the server and is not cross-checked.** The
+  joiner learns the inviting device's key from the server, and the tag is
+  computed over that key, so the tag does not vouch for it. Checking it
+  against the account's signed device list needs L1, and against the MLS
+  roster needs C7's member signature-key read. Until then the key is bound to
+  the link, not proven to belong to the inviting account.
+- **Public links.** Any link the server operator can read gives no protection
+  against the server. That includes a link posted in a public community, a
+  main use case given a use limit of up to 1000: the server reads the link
+  where it is posted, can compute the locator and the tag, and can answer
+  with any target or key it likes. The binding is meaningful only for a link
+  that reaches the joiner through a channel the server does not see. Joining
+  a community through a link the server can read is trust in the server, and
+  the app must not describe it as verified.
+- **v2 must close both gaps together.** A signature alone does not close the
+  collusion case: the joiner still gets the inviter's key from the server, so
+  a server holding the link can substitute its own key, sign a swapped target
+  with it and recompute the HMAC over that key, since it has the secret.
+  v2 is an ABI-13 credential-key signature over the same `lp()` fields, plus
+  a key commitment the server cannot replace. Candidates for the commitment:
+  a truncated SHA-256 of the inviter key placed in the link fragment (the
+  server never sees the fragment, but this only helps when the link itself
+  did not pass through the server); an L1 signed-device-list check; or C7's
+  roster signature-key read. The signature itself needs a verifier in the
+  crypto ABI, which ABI 12 does not have on purpose (TASK-007 removed the raw
+  signer; the enrollment-proof signer has its own domain and mints a key
+  package). C7's reserved ABI 13 adds credential-key sign and verify over a
+  domain allowlist, with a new domain label, and the format version moves to
+  `v2`. For a link the server can read (see "Public links") even v2 gives no
+  protection against the server, because the server can also rewrite a
+  fragment commitment it can see.
 - **Names are not bound.** The target name and the inviter's username are
   server-supplied text shown for orientation; the bound target is the id.
   Encrypted names wait for W11 and C3.

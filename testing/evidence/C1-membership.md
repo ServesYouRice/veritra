@@ -66,4 +66,5 @@ locally to resolve; that change is not in the branch.
 
 - No device run, no native MLS lifecycle test of approval or removal.
 - The binding is a MAC, not a device signature, and the inviting device's key
-  is not checked against a device list or the MLS roster (needs L1 and C7).
+  is not checked against a device list or the MLS roster (needs L1 and C7). Against a server that holds the link, including public
+  community links, it gives no protection.
