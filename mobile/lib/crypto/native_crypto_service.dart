@@ -19,7 +19,7 @@ import '../storage/encrypted_database.dart'
         MessageEffect,
         ReactionEffect;
 import '../storage/encrypted_database.dart'
-    show PinMessageEffect, PollVoteEffect;
+    show PinMessageEffect, PollCloseEffect, PollVoteEffect;
 import '../storage/local_store.dart';
 import 'app_payload.dart';
 import 'message_format.dart';
@@ -1859,6 +1859,7 @@ const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
   AppPayloadType.pin,
   AppPayloadType.poll,
   AppPayloadType.pollVote,
+  AppPayloadType.pollClose,
 };
 
 /// The local history key of a message: its authenticated sender device and
@@ -1976,6 +1977,15 @@ List<MessageEffect> messageEffectsFor(
           targetKey: body['message_id'] as String,
           voterAccountId: senderAccountId,
           choices: (body['choices'] as List).cast<int>(),
+          conversationId: conversationId,
+          channelId: payload.channelId,
+        ),
+      ],
+    AppPayloadType.pollClose => <MessageEffect>[
+        row(LocalMessageKind.action),
+        PollCloseEffect(
+          targetKey: body['message_id'] as String,
+          closerAccountId: senderAccountId,
           conversationId: conversationId,
           channelId: payload.channelId,
         ),

@@ -132,6 +132,56 @@ void main() {
     });
   });
 
+  group('poll_close payload', () {
+    test('decodes as v2 with a target; v1 and a missing target fail', () {
+      expect(classify('poll_close', {'message_id': 'dev:p'}, hidden: true),
+          isA<DecodedAppPayload>());
+      expect(classify('poll_close', {'message_id': 'dev:p'}, v: 1),
+          isA<InvalidAppPayload>());
+      expect(classify('poll_close', {}), isA<InvalidAppPayload>());
+      expect(classify('poll_close', {'message_id': 5}),
+          isA<InvalidAppPayload>());
+    });
+
+    test('is v2, hidden and snake_case on the wire', () {
+      final bytes = codec.encode(
+          type: AppPayloadType.pollClose,
+          conversationId: 'conv',
+          senderDeviceId: 'dev',
+          actionId: 'action',
+          body: {'message_id': 'dev:p'},
+          hidden: AppPayloadType.pollClose.sendsHidden);
+      final length = ByteData.sublistView(bytes).getUint32(4);
+      final json = jsonDecode(utf8.decode(bytes.sublist(8, 8 + length))) as Map;
+      expect(json['type'], 'poll_close');
+      expect(json['v'], 2);
+      expect(json['hidden'], true);
+    });
+  });
+
+  group('poll close rules', () {
+    final base = pollRowBody(_pollBody);
+
+    test('close keeps the votes and refuses later votes', () {
+      final voted = applyPollVote(base, 'alice', [1])!;
+      final closed = applyPollClose(voted)!;
+      final poll = parsePollBody(closed)!;
+      expect(poll.closed, isTrue);
+      expect(poll.votes, {
+        'alice': [1]
+      });
+      expect(applyPollVote(closed, 'bob', [0]), isNull);
+      expect(applyPollVote(closed, 'alice', []), isNull);
+      expect(applyPollClose(closed), isNull);
+      expect(parsePollBody(voted)!.closed, isFalse);
+    });
+
+    test('close of a non-poll body has no effect', () {
+      expect(applyPollClose(null), isNull);
+      expect(applyPollClose('{"not":"a poll"}'), isNull);
+    });
+  });
+
   group('poll rules', () {
     final base = pollRowBody(_pollBody);
 
@@ -194,6 +244,11 @@ void main() {
     final effect = vote.last as PollVoteEffect;
     expect(effect.voterAccountId, 'alice');
     expect(effect.choices, [1]);
+    final close = effects(AppPayloadType.pollClose, {'message_id': 'dev:p'});
+    expect((close.first as InsertMessageEffect).kind, LocalMessageKind.action);
+    final closeEffect = close.last as PollCloseEffect;
+    expect(closeEffect.closerAccountId, 'alice');
+    expect(closeEffect.targetKey, 'dev:p');
   });
 
   for (final encrypted in [false, true]) {
@@ -274,6 +329,41 @@ void main() {
         final text = (await store.loadMessages('conv'))
             .firstWhere((m) => m.key == 'dev:t');
         expect(text.body, 'hello');
+      });
+
+      PollCloseEffect close(String closer,
+              {String conversation = 'conv', String? channel}) =>
+          PollCloseEffect(
+              targetKey: 'dev:p',
+              closerAccountId: closer,
+              conversationId: conversation,
+              channelId: channel);
+
+      test('the author closes a poll; later votes are ignored', () async {
+        await _commit(store, [_pollRow()]);
+        await _commit(store, [vote('bob', [1])]);
+        await _commit(store, [close('alice')]);
+        await _commit(store, [vote('bob', [2]), vote('carol', [0])]);
+        final closed = await poll();
+        expect(closed.closed, isTrue);
+        expect(closed.votes, {
+          'bob': [1]
+        });
+      });
+
+      test('a close from a non-author or a wrong context changes nothing',
+          () async {
+        await _commit(store, [_pollRow()]);
+        await _commit(store, [
+          close('bob'),
+          close('alice', conversation: 'other'),
+          close('alice', channel: 'c'),
+        ]);
+        expect((await poll()).closed, isFalse);
+        await _commit(store, [vote('bob', [1])]);
+        expect((await poll()).votes, {
+          'bob': [1]
+        });
       });
 
       test('delete clears the poll with its votes; later votes are dropped',

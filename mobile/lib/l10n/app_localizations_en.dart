@@ -2847,4 +2847,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pollChooseSeveral => 'Choose one or more';
+
+  @override
+  String get pollClose => 'Close poll';
+
+  @override
+  String get pollClosedNotice => 'This poll is closed.';
 }

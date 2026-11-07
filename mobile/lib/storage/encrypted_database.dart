@@ -13,7 +13,7 @@ import 'notice_outbox.dart';
 import '../core/models.dart' show Conversation, Session;
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
-import '../crypto/poll.dart' show applyPollVote;
+import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
@@ -279,6 +279,22 @@ final class PollVoteEffect extends MessageEffect {
   final String targetKey;
   final String voterAccountId;
   final List<int> choices;
+  final String conversationId;
+  final String? channelId;
+}
+
+/// Closes the poll [targetKey], only if [closerAccountId] sent it. Votes that
+/// come after it are ignored.
+final class PollCloseEffect extends MessageEffect {
+  const PollCloseEffect({
+    required this.targetKey,
+    required this.closerAccountId,
+    required this.conversationId,
+    this.channelId,
+  });
+
+  final String targetKey;
+  final String closerAccountId;
   final String conversationId;
   final String? channelId;
 }
@@ -2483,6 +2499,26 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await (update(localMessages)
                 ..where((t) => t.key.equals(effect.targetKey)))
               .write(LocalMessagesCompanion(body: Value(updated)));
+        case PollCloseEffect():
+          final poll = await (select(localMessages)
+                ..where((t) => t.key.equals(effect.targetKey)))
+              .getSingleOrNull();
+          if (poll == null ||
+              poll.kind != LocalMessageKind.poll ||
+              poll.senderAccountId != effect.closerAccountId ||
+              poll.conversationId != effect.conversationId ||
+              poll.channelId != effect.channelId ||
+              poll.hiddenAt != null ||
+              poll.deletedAt != null ||
+              (poll.expiresAt != null &&
+                  poll.expiresAt! <= DateTime.now().millisecondsSinceEpoch)) {
+            continue;
+          }
+          final closed = applyPollClose(poll.body);
+          if (closed == null) continue;
+          await (update(localMessages)
+                ..where((t) => t.key.equals(effect.targetKey)))
+              .write(LocalMessagesCompanion(body: Value(closed)));
         case PinMessageEffect():
           if (effect.pendingActionKey != null) {
             await into(localPendingPins).insertOnConflictUpdate(

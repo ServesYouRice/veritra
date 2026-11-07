@@ -3312,6 +3312,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         <String, Object?>{'message_id': pollKey, 'choices': choices});
   }
 
+  /// Closes a poll this account sent; later votes are ignored. False when the
+  /// poll is not this account's, is already closed or is gone.
+  Future<bool> closePoll(String conversationId, String pollKey) {
+    final poll = historyFor(conversationId).forKey(pollKey);
+    final account = session?.accountId;
+    if (account == null ||
+        poll == null ||
+        poll.kind != LocalMessageKind.poll ||
+        poll.senderAccountId != account ||
+        poll.deletedAt != null ||
+        poll.hiddenAt != null ||
+        applyPollClose(poll.body) == null) {
+      return Future<bool>.value(false);
+    }
+    return _sendPayload(conversationId, AppPayloadType.pollClose,
+        <String, Object?>{'message_id': pollKey});
+  }
+
   /// Encrypts the file at [path] on this device, uploads only its
   /// ciphertext, then sends the key and name inside an MLS manifest message.
   /// Encryption and upload run outside the session queue so a large file

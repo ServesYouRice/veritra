@@ -769,5 +769,7 @@
   "pollVisibleNotice": "Svi u ovom razgovoru vide ko je za šta glasao.",
   "pollVoteTotal": "Glasova: {count}",
   "pollChooseOne": "Izaberite jednu opciju",
-  "pollChooseSeveral": "Izaberite jednu ili više opcija"
+  "pollChooseSeveral": "Izaberite jednu ili više opcija",
+  "pollClose": "Zatvori anketu",
+  "pollClosedNotice": "Ova anketa je zatvorena."
 }

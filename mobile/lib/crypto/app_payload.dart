@@ -25,6 +25,7 @@ enum AppPayloadType {
   pin,
   poll,
   pollVote,
+  pollClose,
   callSignal
 }
 
@@ -34,13 +35,16 @@ extension AppPayloadTypeWire on AppPayloadType {
   /// snake_case, as `docs/crypto.md` writes them.
   String get wireName => switch (this) {
         AppPayloadType.pollVote => 'poll_vote',
+        AppPayloadType.pollClose => 'poll_close',
         _ => name,
       };
 
   /// Types that change state rather than add a bubble. Senders mark them
   /// `hidden: true` (S2) so an older app stores them without showing them.
   bool get sendsHidden =>
-      this == AppPayloadType.pin || this == AppPayloadType.pollVote;
+      this == AppPayloadType.pin ||
+      this == AppPayloadType.pollVote ||
+      this == AppPayloadType.pollClose;
 }
 
 class DecryptedAppPayload {
@@ -106,6 +110,7 @@ class AppPayloadCodec {
     final version = type == AppPayloadType.pin ||
             type == AppPayloadType.poll ||
             type == AppPayloadType.pollVote ||
+            type == AppPayloadType.pollClose ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -356,6 +361,7 @@ class AppPayloadCodec {
                   .contains(body['duration_seconds'])),
       AppPayloadType.poll => version >= 2 && isValidPollBody(body),
       AppPayloadType.pollVote => version >= 2 && isValidPollVoteBody(body),
+      AppPayloadType.pollClose => version >= 2 && isValidPollCloseBody(body),
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,

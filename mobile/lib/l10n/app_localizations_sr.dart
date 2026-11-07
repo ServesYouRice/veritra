@@ -2861,6 +2861,12 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get pollChooseSeveral => 'Изаберите једну или више опција';
+
+  @override
+  String get pollClose => 'Затвори анкету';
+
+  @override
+  String get pollClosedNotice => 'Ова анкета је затворена.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -5724,4 +5730,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get pollChooseSeveral => 'Izaberite jednu ili više opcija';
+
+  @override
+  String get pollClose => 'Zatvori anketu';
+
+  @override
+  String get pollClosedNotice => 'Ova anketa je zatvorena.';
 }

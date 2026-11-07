@@ -26,7 +26,8 @@ local schema 18, migration 0046 unchanged. No server change.
   backup carries them with the message.
 - Wire names are `poll` and `poll_vote` (explicit `wireName`; existing
   strings unchanged).
-- `poll_close` is not turned on (not in this brief); it remains `unsupported`.
+- `poll_close` was added later on this branch (owner decision D96); see
+  "Poll close" below.
 - Own vote is applied when sent. Same account on two devices can briefly
   disagree about the last vote (documented in `docs/crypto.md` 5.5).
 - Polls are skipped by the K2 history snapshot (its reader rejects unknown
@@ -42,3 +43,22 @@ local schema 18, migration 0046 unchanged. No server change.
   delete, delete for me, backup restore.
 - Not run locally: `flutter analyze`, `flutter test` (not installed). GitHub CI
   on the PR is the check.
+
+## Poll close (D96)
+
+Same branch, same rules: no counter bumped (ABI 12, local schema 18,
+migration 0046), no server change.
+
+- Wire: `poll_close` (v2, `hidden: true`), body `message_id`. Shape check only;
+  the author check happens when it is applied.
+- Apply: only if the target is a live `poll` row, same conversation and
+  channel, and its sender account is the closer. It sets `closed: true` in the
+  poll row's body; votes are kept. Later votes and a second close change
+  nothing. Own close is applied when sent, like own votes.
+- UI: the author sees "Close poll" under an open poll; a closed poll shows
+  "This poll is closed." and takes no taps. English and Serbian strings added
+  (Latin ARB from `scripts/l10n-sr-latn.py`, `--check` passes).
+- Tests added to `mobile/test/b3_polls_test.dart`: codec, pure rules, effect
+  building, and both stores (author closes and later votes are ignored;
+  non-author and wrong-context closes change nothing).
+- Not run locally: Dart (no Flutter). GitHub CI on the PR is the check.

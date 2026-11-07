@@ -14,6 +14,7 @@ class PollCard extends StatelessWidget {
     required this.ownAccountId,
     required this.members,
     required this.onVote,
+    this.onClose,
   });
 
   final PollView poll;
@@ -24,6 +25,9 @@ class PollCard extends StatelessWidget {
   /// possible here (read-only conversation).
   final void Function(List<int> choices)? onVote;
 
+  /// Closes the poll; set only for the poll's author while it is open.
+  final VoidCallback? onClose;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -31,6 +35,7 @@ class PollCard extends StatelessWidget {
     final l10n = context.l10n;
     final counts = poll.tally(members: members);
     final voters = poll.voterCount(members: members);
+    final close = poll.closed ? null : onClose;
     final own = ownAccountId == null
         ? const <int>[]
         : (poll.votes[ownAccountId] ?? const <int>[]);
@@ -54,6 +59,20 @@ class PollCard extends StatelessWidget {
           style: theme.textTheme.labelSmall
               ?.copyWith(color: scheme.onSurfaceVariant),
         ),
+        if (poll.closed)
+          Text(
+            l10n.pollClosedNotice,
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        if (close != null)
+          Align(
+            alignment: AlignmentDirectional.centerStart,
+            child: TextButton(
+              onPressed: close,
+              child: Text(l10n.pollClose),
+            ),
+          ),
         Text(
           l10n.pollVisibleNotice,
           style: theme.textTheme.labelSmall
@@ -68,7 +87,7 @@ class PollCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final chosen = own.contains(index);
-    final vote = onVote;
+    final vote = poll.closed ? null : onVote;
     return InkWell(
       onTap: vote == null
           ? null

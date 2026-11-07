@@ -4670,6 +4670,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Choose one or more'**
   String get pollChooseSeveral;
+
+  /// No description provided for @pollClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close poll'**
+  String get pollClose;
+
+  /// No description provided for @pollClosedNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'This poll is closed.'**
+  String get pollClosedNotice;
 }
 
 class _AppLocalizationsDelegate

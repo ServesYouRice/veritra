@@ -53,6 +53,13 @@ bool isValidPollVoteBody(Map<String, Object?> body) {
       choices.every((choice) => choice is int);
 }
 
+/// True when [body] has the shape of a `poll_close`: a target key. Whether
+/// the sender is the poll's author is checked when the close is applied.
+bool isValidPollCloseBody(Map<String, Object?> body) {
+  final target = body['message_id'];
+  return target is String && target.length <= 128;
+}
+
 /// The text stored in a new poll row: the poll plus an empty vote table.
 String pollRowBody(Map<String, Object?> body) => jsonEncode(<String, Object?>{
       'question': body['question'],
@@ -68,6 +75,7 @@ class PollView {
     required this.options,
     required this.multipleChoice,
     required this.votes,
+    this.closed = false,
   });
 
   final String question;
@@ -76,6 +84,9 @@ class PollView {
 
   /// Option indexes by voting account.
   final Map<String, List<int>> votes;
+
+  /// True once the author closed the poll; later votes are ignored.
+  final bool closed;
 
   /// Votes per option. With [members], only accounts in that roster count.
   List<int> tally({Set<String>? members}) {
@@ -122,6 +133,7 @@ PollView? parsePollBody(String? json) {
       options: options,
       multipleChoice: body['multiple_choice'] as bool,
       votes: votes,
+      closed: body['closed'] == true,
     );
   } catch (_) {
     return null;
@@ -131,10 +143,11 @@ PollView? parsePollBody(String? json) {
 /// The poll body after [voter] votes [choices], or null when the vote has no
 /// effect at all: the body is not a poll, an index is out of range or repeated,
 /// or a single-choice poll got more than one index. An empty list retracts the
-/// voter's vote. The last valid vote replaces the earlier one.
+/// voter's vote. The last valid vote replaces the earlier one. A closed poll
+/// takes no vote.
 String? applyPollVote(String? pollBody, String voter, List<int> choices) {
   final poll = parsePollBody(pollBody);
-  if (poll == null) return null;
+  if (poll == null || poll.closed) return null;
   if (choices.length > maxPollOptions ||
       choices.toSet().length != choices.length ||
       choices.any((index) => index < 0 || index >= poll.options.length) ||
@@ -149,10 +162,24 @@ String? applyPollVote(String? pollBody, String voter, List<int> choices) {
   } else {
     votes[voter] = List<int>.from(choices)..sort();
   }
+  return _encodePoll(poll, votes, false);
+}
+
+/// The poll body after the author closes it, or null when the body is not a
+/// poll or is already closed. The votes so far are kept and frozen. The caller
+/// checks that the close came from the poll's author.
+String? applyPollClose(String? pollBody) {
+  final poll = parsePollBody(pollBody);
+  if (poll == null || poll.closed) return null;
+  return _encodePoll(poll, poll.votes, true);
+}
+
+String _encodePoll(PollView poll, Map<String, Object?> votes, bool closed) {
   return jsonEncode(<String, Object?>{
     'question': poll.question,
     'options': poll.options,
     'multiple_choice': poll.multipleChoice,
     'votes': votes,
+    if (closed) 'closed': true,
   });
 }

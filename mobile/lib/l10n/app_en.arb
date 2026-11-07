@@ -976,5 +976,7 @@
   "pollVoteTotal": "Votes: {count}",
   "@pollVoteTotal": {"placeholders": {"count": {"type": "String", "example": "3"}}},
   "pollChooseOne": "Choose one",
-  "pollChooseSeveral": "Choose one or more"
+  "pollChooseSeveral": "Choose one or more",
+  "pollClose": "Close poll",
+  "pollClosedNotice": "This poll is closed."
 }

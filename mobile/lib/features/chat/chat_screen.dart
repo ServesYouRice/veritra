@@ -1257,6 +1257,13 @@ class _MessageList extends StatelessWidget {
                     ? null
                     : (choices) =>
                         state.votePoll(conversationId, local.key, choices),
+                onClosePoll: local == null ||
+                        local.kind != LocalMessageKind.poll ||
+                        local.senderAccountId != state.session?.accountId ||
+                        !state.messageActionsAvailable ||
+                        state.readOnlyWithoutPeer(conversationId)
+                    ? null
+                    : () => state.closePoll(conversationId, local.key),
                 onActions: onMessageActions == null ||
                         local == null ||
                         local.kind == LocalMessageKind.action ||
@@ -1561,6 +1568,7 @@ class _MessageBubble extends StatelessWidget {
     this.ownAccountId,
     this.pollMembers,
     this.onVote,
+    this.onClosePoll,
   });
 
   /// For a poll bubble: who is looking, the roster whose votes count, and the
@@ -1568,6 +1576,9 @@ class _MessageBubble extends StatelessWidget {
   final String? ownAccountId;
   final Set<String>? pollMembers;
   final void Function(List<int> choices)? onVote;
+
+  /// Closes a poll of yours; null when closing is unavailable.
+  final VoidCallback? onClosePoll;
 
   /// Sent, delivered or read, for a message of yours; null otherwise.
   final MessageTick? tick;
@@ -1865,6 +1876,7 @@ class _MessageBubble extends StatelessWidget {
                         ownAccountId: ownAccountId,
                         members: pollMembers,
                         onVote: onVote,
+                        onClose: onClosePoll,
                       )
                     else if (local?.kind == LocalMessageKind.attachment)
                       ..._attachmentTiles(context)
