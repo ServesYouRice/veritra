@@ -284,7 +284,9 @@ class _Pair {
 
   /// Links the two devices through the native controls and approves, so the
   /// source row is `approving` and the recipient's `awaiting_handoff`.
-  Future<void> link({List<String> bodies = const ['first', 'second']}) async {
+  Future<void> link(
+      {List<String> bodies = const ['first', 'second'],
+      bool loseConfirmOutcome = false}) async {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     clock = DateTime.now().toUtc();
     final now = clock.millisecondsSinceEpoch;
@@ -339,6 +341,16 @@ class _Pair {
         originalExpiresAt: originalExpiresAt,
         transcriptHash: received.verification.transcriptHash,
         claimTag: received.verification.claimTag);
+    if (loseConfirmOutcome) {
+      // The confirm committed, then the app crashed before the approval POST.
+      sourceStore.loseOutcomeStage = HistoryTransferStage.approving;
+      await expectLater(
+          source.k2SourceConfirm(id, verification.sas,
+              recipientDeviceId: _newDevice, claimRequestHash: _claimHash),
+          throwsA(isA<StateError>()));
+      expect((await sourceStore.loadHistoryTransfer(_origin, _linkId))!.stage,
+          HistoryTransferStage.approving);
+    }
     await source.k2SourceConfirm(id, verification.sas,
         recipientDeviceId: _newDevice, claimRequestHash: _claimHash);
     final approval = await source.k2SourceApprovalRequest(id);
@@ -392,11 +404,12 @@ class _Pair {
 Future<void> _withPair(
   Future<void> Function(_Pair pair) body, {
   List<String> bodies = const ['first', 'second'],
+  bool loseConfirmOutcome = false,
 }) async {
   final dir = Directory.systemTemp.createTempSync('k2-orchestration');
   final pair = _Pair(dir);
   try {
-    await pair.link(bodies: bodies);
+    await pair.link(bodies: bodies, loseConfirmOutcome: loseConfirmOutcome);
     await body(pair);
   } finally {
     await pair.dispose();
@@ -475,7 +488,7 @@ void main() {
     }
   }, skip: skip);
 
-  test('a confirm retried after it committed changes nothing', () async {
+  test('an approved transfer refuses a later confirm', () async {
     final dir = Directory.systemTemp.createTempSync('k2-orchestration');
     final pair = _Pair(dir);
     try {
@@ -708,6 +721,52 @@ void main() {
             expect((await pair.recipientRow())!.stage,
                 HistoryTransferStage.downloaded);
             expect(await pair.recipientStore.loadMessages('conv'), isEmpty);
+          }),
+      skip: skip);
+
+  test(
+      'a confirm whose outcome was lost is retried onto the same row',
+      () => _withPair(loseConfirmOutcome: true, (pair) async {
+            final row = (await pair.sourceRow())!;
+            expect(row.stage, HistoryTransferStage.approving);
+            final original =
+                (await pair.source.k2Inspect(pair.id)).originalExpiresAt;
+            expect(row.expiresAt, original + _week.inMilliseconds);
+            // The whole transfer still completes from that row.
+            expect((await pair.send()).stage, HistoryTransferStage.uploaded);
+            expect((await pair.receive()).stage,
+                HistoryTransferStage.acknowledged);
+            expect(
+                await pair.recipientStore.loadMessages('conv'), hasLength(2));
+          }),
+      skip: skip);
+
+  test(
+      'a copy the server closed is refused and can be abandoned',
+      () => _withPair((pair) async {
+            await pair.send();
+            final base = pair.transport.stored!;
+            pair.transport.stored = HistoryTransferReceipt(
+              transferId: base.transferId,
+              linkId: base.linkId,
+              accountId: base.accountId,
+              sourceDeviceId: base.sourceDeviceId,
+              recipientDeviceId: base.recipientDeviceId,
+              claimRequestHash: base.claimRequestHash,
+              transcriptHash: base.transcriptHash,
+              ciphertextSha256: base.ciphertextSha256,
+              sizeBytes: base.sizeBytes,
+              state: 'cancelled',
+              createdAt: base.createdAt,
+              expiresAt: base.expiresAt,
+            );
+            await expectLater(pair.send(), throwsA(isA<K2TransferException>()));
+            expect(
+                (await pair.sourceRow())!.stage, HistoryTransferStage.uploaded);
+            await pair.sourceFlow
+                .abandon(pair.id, HistorySessionAuth(_sourceSession.token));
+            expect(await pair.sourceRow(), isNull);
+            expect(_fileGone(Directory(pair.cacheDir)), isTrue);
           }),
       skip: skip);
 }

@@ -301,7 +301,7 @@ two-device runs are **not** built. Production messaging stays off.
   `claim_request_hash`.
 
 Checks (stand-in Dart 3.13.7 with Flutter stubs, system SQLite, release native
-library built from this tree; `test/k2_transfer_orchestration_test.dart`, 14
+library built from this tree; `test/k2_transfer_orchestration_test.dart`, 16
 passed): full source-to-recipient flow with two real services (history copied,
 state `restored`, cursor unchanged, native records gone, both devices still
 commit), tag refused before the intent commit, pending state refuses a new
@@ -312,7 +312,7 @@ import is a no-op re-import (no duplicates, one ledger entry), crash after the
 ACK finished by the next call, corrupt download imports nothing and is fetched
 again, receipt naming another transfer refused before anything is kept,
 expired transfer refused then swept, importer refusal keeps the `downloaded`
-stage. Also passing: `k2_history_transfer_client_test`, `k2_schema18_test`,
+stage, a confirm whose outcome was lost retried onto the same row, a copy the server closed refused then abandoned. Also passing: `k2_history_transfer_client_test`, `k2_schema18_test`,
 `native_crypto_service_promotion_test`, `k2_native_streams_test`,
 `k2_native_controls_test`. `dart format --language-version=3.4` clean on lib
 and test; analyzer clean on the changed files. Not run locally: the full
@@ -324,3 +324,13 @@ Left, in order: the v3 link screens and the AppState switch from the v2 clone
 path (which then need `K2TransferCryptoService`, the pending payload for the
 claim credentials, and a call to `HistoryTransferService`), two-device runs,
 independent review, removing the clone-restore path.
+
+Server facts checked against the Go handler for this slice
+(`device_history_transfer_handlers.go`, `device_history_transfer_store.go`):
+the upload handler rejects a body whose size or SHA-256 differs from the
+metadata (so a corrupt same-size cache cannot become the stored copy); the
+source can GET the transfer status with its own session while the link is
+inside its transfer window and sees `acknowledged` after the ACK; once that
+window passes the GET fails and the caller falls back to `abandon` or
+`k2ExpireTransfers`. A terminal state other than `active` or `acknowledged`
+(cancelled, expired) makes `send` refuse with a typed error.

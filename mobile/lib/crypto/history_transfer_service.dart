@@ -64,6 +64,10 @@ class HistoryTransferService {
       if (receipt.state == 'acknowledged') {
         row = row.copyWith(stage: HistoryTransferStage.acknowledged);
         await localStore.saveHistoryTransfer(row);
+      } else if (receipt.state != 'active') {
+        // Cancelled, expired or revoked: the copy cannot finish. The caller
+        // abandons it ([abandon]); a new link makes a new copy.
+        throw const K2TransferException('the server closed this copy');
       }
     }
     if (row.stage == HistoryTransferStage.acknowledged) {
