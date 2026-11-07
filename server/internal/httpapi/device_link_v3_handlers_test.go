@@ -31,11 +31,19 @@ type v3APIFixture struct {
 	claim                                  storage.DeviceLinkV3ClaimInput
 	claimToken, deviceSecret, sessionToken string
 	claimResponse                          []byte
+	recipientDeviceID                      string
 }
 
 func newV3APIFixture(t *testing.T) *v3APIFixture {
 	t.Helper()
 	application, handler, token, path := newTestAppWithOwner(t)
+	return newV3APIFixtureOn(t, application, handler, token, path)
+}
+
+// newV3APIFixtureOn claims a v3 link against an app whose account (token) is
+// already set up.
+func newV3APIFixtureOn(t *testing.T, application *app.App, handler http.Handler, token, path string) *v3APIFixture {
+	t.Helper()
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +78,7 @@ func newV3APIFixture(t *testing.T) *v3APIFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.recipientDeviceID = reservation.DeviceID
 	f.claimToken, _, err = auth.NewToken()
 	if err != nil {
 		t.Fatal(err)

@@ -103,6 +103,51 @@ backup restored within its window.
   appears leaked. The server stores only the recovery key's verification key
   and id, never the key, and refuses a small-order or invalid one.
 
+### Approved-device lists (L1-2, D94)
+
+Each account has a signed list of the devices that may hold its MLS leaves
+(design [`designs/L1-approved-device-list.md`](designs/L1-approved-device-list.md)).
+The server stores and serves it. It holds no signing key, so it cannot create
+a version or put a device on a list; it can still refuse, withhold or delay
+versions, which clients treat as denial of service. Migration 0051 adds
+`device_list_versions` (the signed statements, at most 4 KiB each) and
+`device_list_devices` (derived from them in the same transaction, for the
+gates below). No setting, no new dependency.
+
+- **Routes.** `GET /api/v1/accounts/{id}/device-list?after=N` (at most 64
+  statements, with `head_version` and `more`), `POST /api/v1/device-lists/query`
+  (up to 100 `{account_id, after}` items, at most 256 statements in the
+  answer, `more` and `found` per item) and `POST /api/v1/account/device-list`
+  (migration genesis with recent auth, repair removal of already revoked
+  devices, recovery version). Readers are the account itself and accounts that
+  share a conversation with it; any other request, and an unknown account,
+  get the same 404 (`found: false` in a batch).
+- **New field.** Setup, register, both device-link approvals, device revoke
+  and `PUT /account/recovery-key` take an optional `device_list` (a signed
+  version). It is checked and stored in the same transaction as the change.
+  An account with no list stays as before. Once an account has a list, a link
+  approval and a recovery-key change must carry one (400
+  `device_list_required`); a revocation without one is still taken and a
+  listed device removes the revoked sibling later (repair).
+- **Errors.** A wrong version or `prev_hash` is 409 `device_list_conflict`
+  with `head_version` (refresh, re-sign, retry); a statement that is
+  malformed, breaks a chain rule, fails its signature or does not match the
+  request is 400 `invalid_device_list`. Only the account, the version and the
+  change kind reach the audit trail (`account.device_list_updated`); a
+  statement is never logged. Own devices get a `device_list.updated {version}`
+  sync event; peers refresh before each decision instead.
+- **Gates.** For an account with a list, pending changes, key-package claims
+  and commit bundles name only devices on its head. Clients do not rely on
+  this. An account with no list is unchanged.
+- **Recovery.** A recovery claim against an account whose list names no
+  recovery key (a key set before L1, not yet confirmed on a device) gets the
+  same 401 as no key at all. The user's own correct key is not counted toward
+  the D79 cap and takes no account backoff; a wrong key counts as before.
+- **Not here yet.** The key-package check that the leaf signature key equals
+  the device's `signing_key` (bug-hunt Q-1) is not enforced: it waits for L1-1
+  and the client work (L1-3) so test fixtures and the shipped app keep
+  working.
+
 Native FCM and APNs use the matching `PRIVATE_MESSENGER_FCM_*` and
 `PRIVATE_MESSENGER_APNS_*` environment secrets. Push payloads are fixed generic
 wake events. Calls require a self-hosted coturn-compatible shared secret via
