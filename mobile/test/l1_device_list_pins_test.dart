@@ -264,6 +264,42 @@ void main() {
           LeafVerdict.unapproved);
     });
 
+    test(
+        'a device added within a minute of the last fetch is approved, not '
+        'judged on the stale pin (review fix)', () async {
+      final full = statements(0);
+      final keys = keysOf(0);
+      server.chain = full.sublist(0, 3);
+      await pins.refresh(account(0));
+      final e4 = keys['dev_e4e4e4e4e4e4e4e4']!;
+      expect(
+          (await store.loadDeviceListPin(account(0)))!
+              .standing(idBytes('dev_e4e4e4e4e4e4e4e4'), e4),
+          PinStanding.unknown);
+      // The account links a device 30 s later; its leaf arrives at once.
+      now = now.add(const Duration(seconds: 30));
+      server.chain = full;
+      expect(
+          await pins.judge(
+              idBytes(account(0)), idBytes('dev_e4e4e4e4e4e4e4e4'), e4),
+          LeafVerdict.approved);
+      expect(await pins.approvedKey(account(0), 'dev_e4e4e4e4e4e4e4e4'), e4);
+      // A ghost the list never names forces at most one fetch per
+      // [minForcedRefresh] per account.
+      final before = server.fetches;
+      for (var i = 0; i < 5; i++) {
+        expect(
+            await pins.judge(idBytes(account(0)), idBytes('dev_ghost'),
+                Uint8List(32)..[0] = 7),
+            LeafVerdict.unapproved);
+      }
+      expect(server.fetches, before);
+      now = now.add(const Duration(seconds: 6));
+      await pins.judge(
+          idBytes(account(0)), idBytes('dev_ghost'), Uint8List(32)..[0] = 7);
+      expect(server.fetches, before + 1);
+    });
+
     test('an account with no list or an unreachable one is checking', () async {
       expect(
           await pins.judge(

@@ -175,6 +175,51 @@ void main() {
     await bob.send('now');
   }, skip: skip);
 
+  test(
+      'a Welcome leaf of a non-participant stays held: a later re-judge by '
+      'list alone does not approve it (review fix)', () async {
+    final mallory = await client('acct_mallory', 'dev_mallory');
+    final bob = await client('acct_bob', 'dev_bob');
+    // Mallory's real list approves her device, and Bob's view knows it; but
+    // conv_1 is Bob's chat with Alice, so Mallory is no participant.
+    await mallory.trust(bob);
+    await bob.trust(mallory);
+    bob.service.conversationAuthority = _Members({'acct_alice', 'acct_bob'});
+    await mallory.service
+        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await _accept(mallory, [bob], const []);
+    final held = (await bob.store.loadApprovalLeaves('conv_1'))
+        .where((leaf) => leaf.verdict != LeafVerdict.approved)
+        .toList();
+    expect(held.map((leaf) => String.fromCharCodes(leaf.deviceId)),
+        ['dev_mallory']);
+    // The first send judges the held leaf again; it must stay held.
+    await expectLater(
+        bob.send('x'), throwsA(isA<ConversationApprovalHeldException>()));
+    expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
+  }, skip: skip);
+
+  test(
+      'a message from a leaf judged unapproved on a stale view is judged '
+      'again before it is hidden (review fix)', () async {
+    final alice = await client('acct_alice', 'dev_alice');
+    final bob = await client('acct_bob', 'dev_bob');
+    await alice.trust(bob);
+    await alice.service
+        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await _accept(alice, [bob], const []);
+    // Bob judged dev_alice before his view of her list had it.
+    expect(
+        (await bob.store.loadApprovalLeaves('conv_1'))
+            .firstWhere(
+                (leaf) => String.fromCharCodes(leaf.deviceId) == 'dev_alice')
+            .verdict,
+        LeafVerdict.unapproved);
+    await bob.trust(alice);
+    await bob.receive(alice, await alice.send('hello'));
+    expect((await bob.history()).single.body, 'hello');
+  }, skip: skip);
+
   test('an unreachable list is "checking": held, then released', () async {
     final alice = await client('acct_alice', 'dev_alice');
     final bob = await client('acct_bob', 'dev_bob');
@@ -224,6 +269,19 @@ void main() {
 }
 
 int _serverIds = 0;
+
+class _Members implements ConversationAuthority {
+  _Members(this.members);
+  final Set<String> members;
+  @override
+  Set<String> memberAccounts(String conversationId) => members;
+  @override
+  String? roleOf(String conversationId, String accountId) => null;
+  @override
+  String? conversationKind(String conversationId) => null;
+  @override
+  String? conversationChannel(String conversationId) => null;
+}
 
 class _Client {
   _Client(this.service, this.store, this.accountId, this.deviceId, this.lists);

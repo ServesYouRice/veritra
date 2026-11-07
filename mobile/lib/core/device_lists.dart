@@ -108,12 +108,17 @@ class DeviceListPins {
     required this.verifier,
     DateTime Function()? clock,
     this.minRefresh = const Duration(minutes: 1),
+    this.minForcedRefresh = const Duration(seconds: 5),
   }) : _clock = clock ?? (() => DateTime.now().toUtc());
 
   final LocalStore store;
   final DeviceListSource source;
   final DeviceListVerifier verifier;
   final Duration minRefresh;
+
+  /// The shortest gap between two fetches of one account when the pin does
+  /// not approve a pair a decision needs (see [_refreshFor]).
+  final Duration minForcedRefresh;
   final DateTime Function() _clock;
   final Map<String, DateTime> _lastFetch = <String, DateTime>{};
   final Map<String, DeviceListState> _lastState = <String, DeviceListState>{};
@@ -412,10 +417,35 @@ class DeviceListPins {
   /// The add gate stages only with this key, never one the server sent.
   Future<Uint8List?> approvedKey(String accountId, String deviceId) async {
     final device = utf8.encode(deviceId);
-    final status = await refresh(accountId);
+    final status =
+        await _refreshFor(accountId, (pin) => pin.listedKey(device) != null);
     final pin = status.pin;
     if (status.state != DeviceListState.ok || pin == null) return null;
     return pin.listedKey(device);
+  }
+
+  /// [refresh], then once more past the one-minute limit (but at most every
+  /// [minForcedRefresh]) when the answer does not [satisfies] the decision.
+  ///
+  /// The design refreshes "at most once a minute per account", which turns
+  /// a device linked within a minute of the last fetch into "unapproved" on
+  /// a stale pin, and a message from it would be hidden for good. A leaf or
+  /// an add the pin does not approve is itself the sign that the list may
+  /// have moved, so it may fetch again, bounded per account so that leaves a
+  /// member invents cannot make this device hammer the server.
+  Future<DeviceListStatus> _refreshFor(
+      String accountId, bool Function(DeviceListPin pin) satisfies) async {
+    final status = await refresh(accountId);
+    if (status.state == DeviceListState.conflict) return status;
+    final pin = status.pin;
+    if (status.state == DeviceListState.ok && pin != null && satisfies(pin)) {
+      return status;
+    }
+    final last = _lastFetch[accountId];
+    if (last != null && _clock().difference(last) < minForcedRefresh) {
+      return status;
+    }
+    return refresh(accountId, force: true);
   }
 
   /// Judges one leaf against its account's pin, refreshing it first when
@@ -434,8 +464,10 @@ class DeviceListPins {
       return LeafVerdict.unapproved;
     }
     final DeviceListPin pin;
-    final status =
-        refreshFirst ? await refresh(account) : await _stored(account);
+    final status = refreshFirst
+        ? await _refreshFor(account,
+            (pin) => pin.standing(deviceId, signingKey) == PinStanding.approved)
+        : await _stored(account);
     switch (status.state) {
       case DeviceListState.empty:
       case DeviceListState.unavailable:
@@ -443,7 +475,10 @@ class DeviceListPins {
       case DeviceListState.conflict:
         return LeafVerdict.unapproved;
       case DeviceListState.ok:
-        pin = status.pin!;
+        final stored = status.pin;
+        // `ok` with no pin (a pin cleared since the last refresh): undecided.
+        if (stored == null) return LeafVerdict.checking;
+        pin = stored;
     }
     return switch (pin.standing(deviceId, signingKey)) {
       PinStanding.approved => LeafVerdict.approved,

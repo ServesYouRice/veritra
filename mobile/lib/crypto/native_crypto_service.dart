@@ -376,16 +376,23 @@ class NativeCryptoService
 
   /// Judges every leaf of [conversationId]'s group (D94). A leaf already
   /// approved with the same key keeps its row unless [rejudgeApproved]; a
-  /// leaf whose row is not approved is judged again. With
-  /// [participants] (a Welcome), a leaf of an account that is not one of the
-  /// conversation's participants is unapproved whatever its list says.
+  /// leaf whose row is not approved is judged again.
+  ///
+  /// The conversation's participants (when the app knows them) bound the
+  /// roster: with [welcome] every leaf of an account that is not a
+  /// participant is unapproved whatever its list says, and on any later
+  /// judgment a leaf that was not approved before must still pass that
+  /// check to become approved, so a re-judge by list alone can never undo
+  /// the Welcome's roster check. A leaf new to the group after a commit is
+  /// judged by its list only (the design's rule for commits).
   Future<ApprovalLeafChange> _judgeGroup(
     String conversationId, {
-    Set<String>? participants,
+    bool welcome = false,
     bool rejudgeApproved = false,
   }) async {
     final leaves = _requiredDevice().groupMembers(conversationId);
     final previous = await localStore.loadApprovalLeaves(conversationId);
+    final participants = _participantsOf(conversationId);
     final now = _clock().toUtc().millisecondsSinceEpoch;
     final budget = Stopwatch()..start();
     final rows = <ApprovalLeaf>[];
@@ -395,6 +402,9 @@ class NativeCryptoService
               row.sameLeaf(leaf.accountId, leaf.deviceId) &&
               _sameBytes(row.signingKey, leaf.signingKey))
           .firstOrNull;
+      final wasHeld = previous.any((row) =>
+          row.sameLeaf(leaf.accountId, leaf.deviceId) &&
+          row.verdict != LeafVerdict.approved);
       LeafVerdict verdict;
       if (known != null &&
           known.verdict == LeafVerdict.approved &&
@@ -404,7 +414,9 @@ class NativeCryptoService
         verdict = await _judgeLeaf(leaf,
             network: budget.elapsed < deviceListGroupBudget);
       }
-      if (participants != null && verdict == LeafVerdict.approved) {
+      if (participants != null &&
+          (welcome || wasHeld) &&
+          verdict == LeafVerdict.approved) {
         String? account;
         try {
           account = utf8.decode(leaf.accountId);
@@ -474,7 +486,10 @@ class NativeCryptoService
   }
 
   /// What the sender leaf of a received message was judged (D94). A group
-  /// with no rows yet is judged first; a leaf with no row is unapproved.
+  /// with no rows yet is judged first. A sender with no row (rows that an
+  /// own commit's re-judge did not write) or with a row that is not
+  /// approved is judged once more before its text is dropped: the list may
+  /// be reachable now, or name a device added after the last refresh.
   Future<LeafVerdict> _senderVerdict(
       String conversationId, String accountId, String deviceId) async {
     var rows = await localStore.loadApprovalLeaves(conversationId);
@@ -486,9 +501,9 @@ class NativeCryptoService
     final row = rows
         .where((row) => row.sameLeaf(idBytes(accountId), idBytes(deviceId)))
         .firstOrNull;
-    if (row == null) return LeafVerdict.unapproved;
-    if (row.verdict == LeafVerdict.checking) {
-      // Try once more: the list may be reachable now.
+    if (row == null ||
+        row.verdict == LeafVerdict.checking ||
+        row.verdict == LeafVerdict.unapproved) {
       final change = await _judgeGroup(conversationId);
       await localStore.saveApprovalLeaves(change);
       return change.leaves
@@ -1325,9 +1340,7 @@ class NativeCryptoService
           final ApprovalLeafChange approval;
           if (await _hasGroup(message.conversationId)) {
             approval = await _judgeGroup(message.conversationId,
-                participants: message.kind == 'welcome'
-                    ? _participantsOf(message.conversationId)
-                    : null);
+                welcome: message.kind == 'welcome');
           } else {
             approval = ApprovalLeafChange(
                 conversationId: message.conversationId,
