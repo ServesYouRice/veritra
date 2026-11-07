@@ -47,6 +47,11 @@ public final class WakeRulesTest {
         catch (IllegalArgumentException expected) { checks++; }
         try { EndpointRules.nextGeneration(-1); throw new AssertionError(); }
         catch (IllegalArgumentException expected) { checks++; }
+        // Opt-in follows the build flag and is never part of bootstrap.
+        check(Boolean.FALSE.equals(WakeRules.installReply(false).get("can_opt_in")));
+        check(Boolean.TRUE.equals(WakeRules.installReply(true).get("can_opt_in")));
+        check(WakeRules.installReply(true).keySet().equals(new java.util.HashSet<>(java.util.Arrays.asList("protocol", "native_silent", "worker_attached", "can_opt_in"))));
+        check(Boolean.FALSE.equals(WakeRules.bootstrap(false, true, "demo", true).get("can_opt_in")));
         check(!WakeRules.profile("../demo")); check(!WakeRules.profile("demo\n"));
         Map<String, Object> uiBootstrap = WakeRules.bootstrap(false, true, "demo", false);
         check("ui".equals(uiBootstrap.get("launch"))); check(Boolean.TRUE.equals(uiBootstrap.get("ui_attached")));

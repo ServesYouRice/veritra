@@ -10,6 +10,18 @@ fun quotedBuildValue(name: String): String {
     return "\"$value\""
 }
 
+// Flutter passes every --dart-define to Gradle as "dart-defines": base64
+// "NAME=value" entries joined by commas. Native phone notices (D52) exist only
+// in a demo build that also asks for them; this is decided here at build time,
+// never from a value Dart sends at runtime, and never in a release build type.
+fun dartDefine(name: String): String? {
+    val raw = providers.gradleProperty("dart-defines").orNull ?: return null
+    return raw.split(',').mapNotNull {
+        runCatching { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull()
+    }.lastOrNull { it.startsWith("$name=") }?.substringAfter('=')
+}
+val phoneNoticesBuild = dartDefine("VERITRA_DEMO") == "true" && dartDefine("VERITRA_PHONE_NOTICES") == "true"
+
 android {
     namespace = "org.veritra.private_messenger"
     compileSdk = flutter.compileSdkVersion
@@ -34,6 +46,7 @@ android {
         buildConfigField("String", "VERITRA_FCM_API_KEY", quotedBuildValue("VERITRA_FCM_API_KEY"))
         buildConfigField("String", "VERITRA_FCM_PROJECT_ID", quotedBuildValue("VERITRA_FCM_PROJECT_ID"))
         buildConfigField("String", "VERITRA_FCM_SENDER_ID", quotedBuildValue("VERITRA_FCM_SENDER_ID"))
+        buildConfigField("boolean", "VERITRA_PHONE_NOTICES", phoneNoticesBuild.toString())
     }
 
     buildTypes {
@@ -41,6 +54,8 @@ android {
             // Release artifacts are intentionally unsigned until an operator
             // supplies a reviewed signing configuration. Never ship debug keys.
             signingConfig = null
+            // Release builds never carry phone notices, whatever the defines.
+            buildConfigField("boolean", "VERITRA_PHONE_NOTICES", "false")
         }
     }
 }

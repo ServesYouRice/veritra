@@ -39,6 +39,11 @@ import 'sync/sync_service.dart';
 /// by side on one machine, each with its own data and keys.
 const bool _demoBuild = bool.fromEnvironment('VERITRA_DEMO');
 
+/// D52 demo switch, off unless the build says so. Native reads the same
+/// define at build time and decides on its own; this only lets the bridge
+/// accept native's answer. Release (`main.dart`) has no such path.
+const bool _phoneNotices = bool.fromEnvironment('VERITRA_PHONE_NOTICES');
+
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   if (!_demoBuild) {
@@ -55,7 +60,7 @@ Future<void> main(List<String> args) async {
   }
   final namespace = profile == null ? 'demo' : 'demo-$profile';
   usePastedImageProfile(namespace);
-  final bridge = PlatformWakeWorkerBridge();
+  final bridge = PlatformWakeWorkerBridge(allowOptIn: _phoneNotices);
   // One store and one AppState per process (D52 contract): a background
   // wake and the UI share them, so two owners never race on MLS state.
   SecureLocalStore? localStore;
@@ -111,37 +116,47 @@ Future<void> main(List<String> args) async {
   }
 
   BackgroundWakeRunner? runner;
+
+  /// Installs the native worker for [state]'s account and reports whether
+  /// native allows phone notices. Used by a cold background start and, when
+  /// the demo switch is on, by the UI process after sign-in.
+  Future<bool> installWorker(AppState state) async {
+    final worker = runner = BackgroundWakeRunner(
+      profile: namespace,
+      bridge: bridge,
+      restoreExisting: state.restoreForBackgroundWake,
+      catchUp: state.catchUpForBackgroundWake,
+      mayStart: () => !state.foregroundActive,
+    );
+    // Sign-out revokes the native permit and scheduled work before the
+    // private notice state is cleared. It cancels without draining: the
+    // session generation already fences any late commit, and waiting here
+    // could wait on a restore queued behind this very sign-out. The worker
+    // stays uninstalled until the next sign-in or process start.
+    state.beforeLocalSessionClear = () async {
+      worker.cancelForForeground();
+      await bridge.uninstall(namespace);
+    };
+    final installed = await bridge.install(
+        profile: namespace, onRun: worker.run, onCancel: worker.cancel);
+    if (!installed) {
+      state.beforeLocalSessionClear = null;
+      runner = null;
+      return false;
+    }
+    return bridge.canOptIn;
+  }
+
   final launch = WakeLaunchCoordinator(
     bridge: bridge,
     profile: namespace,
     // Reached only when native reports a background launch bound to this
     // compiled profile with its silent path installed. Native cold execution
-    // and server opt-in stay disabled (can_opt_in:false), so today this runs
-    // nowhere; it is the guarded D52 wiring for the later reviewed enablement.
+    // exists only in builds made with VERITRA_PHONE_NOTICES; otherwise native
+    // never starts this and nothing registers for muted-mention wakes.
     onBackground: () async {
       final state = build(background: true);
-      final worker = runner = BackgroundWakeRunner(
-        profile: namespace,
-        bridge: bridge,
-        restoreExisting: state.restoreForBackgroundWake,
-        catchUp: state.catchUpForBackgroundWake,
-        mayStart: () => !state.foregroundActive,
-      );
-      // Sign-out revokes the native permit and scheduled work before the
-      // private notice state is cleared. It cancels without draining: the
-      // session generation already fences any late commit, and waiting here
-      // could wait on a restore queued behind this very sign-out. The worker
-      // stays uninstalled until the next process start.
-      state.beforeLocalSessionClear = () async {
-        worker.cancelForForeground();
-        await bridge.uninstall(namespace);
-      };
-      final installed = await bridge.install(
-          profile: namespace, onRun: worker.run, onCancel: worker.cancel);
-      if (!installed) {
-        state.beforeLocalSessionClear = null;
-        runner = null;
-      }
+      if (await installWorker(state)) state.allowPhoneNotices();
     },
     // The UI takes over: cancel any wake first, then wait for its atomic
     // work to drain before the foreground owner starts.
@@ -153,6 +168,9 @@ Future<void> main(List<String> args) async {
     },
     onUi: () async {
       final state = build(background: false);
+      if (_phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
+        state.phoneNoticeInstaller = () => installWorker(state);
+      }
       localStore?.allowForegroundInitialization();
       final desktop = await DesktopServices.startIfSupported(state);
       runApp(VeritraApp(state: state, desktop: desktop));

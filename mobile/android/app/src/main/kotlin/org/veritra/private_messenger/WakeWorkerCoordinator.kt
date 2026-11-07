@@ -11,7 +11,8 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodChannel
 
 object WakeWorkerCoordinator {
-    const val COLD_EXECUTION_ENABLED = false
+    /** Build-time only (demo + VERITRA_PHONE_NOTICES, never release). */
+    val COLD_EXECUTION_ENABLED: Boolean = BuildConfig.VERITRA_PHONE_NOTICES
     private const val JOB_ID = 4103
     private val main = Handler(Looper.getMainLooper())
     private var channel: MethodChannel? = null
@@ -53,8 +54,7 @@ object WakeWorkerCoordinator {
                             result.error("wake_storage_unavailable", null, null)
                         } else {
                             profile = name
-                            result.success(mapOf("protocol" to 1, "native_silent" to true,
-                                "worker_attached" to true, "can_opt_in" to false))
+                            result.success(WakeRules.installReply(COLD_EXECUTION_ENABLED))
                             pendingStart?.let { pending ->
                                 pendingStart = null
                                 main.removeCallbacks(pending.timeout)

@@ -541,6 +541,31 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// device's private notice state is cleared: logout, relink, identity
   /// change. Set only by the demo entry point that installed the worker.
   Future<void> Function()? beforeLocalSessionClear;
+
+  /// Demo-only phone notices (D52). The demo entry point sets
+  /// [phoneNoticeInstaller]; it installs the native worker for the signed-in
+  /// account and reports whether native allows phone wakes. Only then is
+  /// notice capture switched on and the push registration asked for
+  /// `local_decrypt_v1`. Release builds never set it, so both stay off.
+  Future<bool> Function()? phoneNoticeInstaller;
+  bool phoneNoticesAllowed = false;
+
+  /// A background process installs its worker before the wake runs; it calls
+  /// this once native said opt-in is allowed.
+  void allowPhoneNotices() => phoneNoticesAllowed = true;
+
+  void _applyNoticeCapture() {
+    final crypto = cryptoService;
+    if (crypto is! NoticeCaptureConsumer) return;
+    final consumer = crypto as NoticeCaptureConsumer;
+    try {
+      consumer.noticeCaptureEnabled = phoneNoticesAllowed;
+    } catch (_) {
+      // No active existing identity: no capture, and no opt-in registration.
+      phoneNoticesAllowed = false;
+    }
+  }
+
   AppLifecycleState _lifecycleState = AppLifecycleState.resumed;
   int _pendingWakeGeneration = 0;
 
@@ -4727,6 +4752,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       notificationPermission = await pushService.notificationPermission();
       _setPushState(PushState.registering);
       _pushInstance = '${current.accountId}:${current.deviceId}';
+      final installer = phoneNoticeInstaller;
+      if (installer != null) {
+        // The worker must be installed, and capture on, before the server is
+        // told this device decides mention notices locally.
+        var allowed = false;
+        try {
+          allowed = await installer();
+        } catch (_) {}
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        phoneNoticesAllowed = allowed;
+        _applyNoticeCapture();
+      }
       await _pushSubscription?.cancel();
       _pushSubscription = pushService.events.listen(_handlePushEvent);
       final wakeGeneration = await pushService.pendingWakeGeneration();
@@ -4851,13 +4888,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<bool> _registerEndpoint(Session current, ApiClient client,
       int ownerGeneration, PushEndpointEvent event) async {
     try {
+      // Every rotation carries the mode again: the server resets a
+      // subscription registered without it back to the generic mode.
+      final mode = phoneNoticesAllowed ? 'local_decrypt_v1' : null;
       final subscriptionId = event.provider == 'webpush'
           ? await client.registerWebPush(current.token,
               endpoint: event.endpoint,
               publicKey: event.publicKey,
-              authSecret: event.authSecret)
+              authSecret: event.authSecret,
+              notificationMode: mode)
           : await client.registerNativePush(current.token,
-              provider: event.provider, deviceToken: event.endpoint);
+              provider: event.provider,
+              deviceToken: event.endpoint,
+              notificationMode: mode);
       if (!_syncOwnerActive(current, ownerGeneration)) return false;
       _pushSubscriptionId = subscriptionId;
       pushProvider = event.provider;
@@ -4980,6 +5023,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (session != null || _isForeground) return false;
     final generation = ++_sessionGeneration;
     session = restored;
+    _applyNoticeCapture();
     try {
       _replaceApi(restored.baseUrl);
       _mutes
@@ -6776,6 +6820,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// "accepted, unfinished" marks are not dropped here: they follow the
   /// stored MLS outbox, not the session.
   void _resetSessionMemory() {
+    phoneNoticesAllowed = false;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
     _keyPackageRetryAt = null;
