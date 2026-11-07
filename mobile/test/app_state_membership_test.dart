@@ -4,9 +4,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
+import 'invite_binding_fixtures.dart';
 import 'test_crypto_service.dart';
 
 /// C1 actions of [AppState]: what reaches the server, and what stays local.
@@ -28,6 +30,35 @@ void main() {
     final secret = Uri.parse(url).fragment.substring(3);
     expect(api.createdLocators.single, isNot(contains(secret)));
     expect(state.errorFor(Ops.membership), isNull);
+
+    // The invitation is bound to this account's device key and the target:
+    // the key the engine reports and a tag only the link can reproduce.
+    expect(api.createdKeys.single, testDeviceSigningKey);
+    final tag = api.createdTags.single;
+    expect(tag, matches(RegExp(r'^[0-9a-f]{64}$')));
+    expect(
+        link.verifies(InviteBinding(
+          kind: InviteTargetKind.group,
+          targetId: 'conv_1',
+          inviterAccountId: 'acct_owner',
+          inviterDeviceId: 'dev_owner',
+          inviterSigningKey: testDeviceSigningKey,
+          tag: tag,
+        )),
+        isTrue);
+    expect(tag, isNot(contains(secret)));
+  });
+
+  test('no invitation is made without an engine that reads the device key',
+      () async {
+    final api = _Api();
+    final state = _state(api, crypto: UnavailableCryptoService());
+
+    final url = await state.createInviteLink(InviteTargetKind.group, 'conv_1');
+
+    expect(url, isNull);
+    expect(api.createdLocators, isEmpty);
+    expect(state.errorFor(Ops.membership), isNotNull);
   });
 
   test('a link of another server is refused before any request', () async {
@@ -49,8 +80,8 @@ void main() {
       () async {
     final api = _Api();
     final state = _state(api);
-    final link =
-        MembershipInviteLink.generate(origin: 'https://localhost:8080');
+    final link = _newLink();
+    api.binding = honestBinding(link);
 
     final good = await state.previewInviteLink('  ${link.url}\n');
     expect(good, isNotNull);
@@ -62,6 +93,87 @@ void main() {
     expect(dead, isNull);
     expect(state.errorFor(Ops.membership), isNotNull);
     expect(state.errorFor(Ops.membership), isNot(contains(link.locator)));
+  });
+
+  test('a preview whose binding does not match the link is refused', () async {
+    final link = _newLink();
+    final honest = honestBinding(link);
+    final other = _newLink();
+    final swaps = <String, InviteBinding>{
+      'another target': tampered(honest, targetId: 'conv_2'),
+      'another target kind': tampered(honest, kind: InviteTargetKind.community),
+      'another inviter account': tampered(honest, accountId: 'acct_mallory'),
+      'another inviter device': tampered(honest, deviceId: 'dev_mallory'),
+      'another signing key': tampered(honest, signingKey: _otherKey),
+      'a short signing key': tampered(honest, signingKey: _otherKey.sublist(1)),
+      'a tag of another link': honestBinding(other),
+      'an empty tag': tampered(honest, tag: ''),
+      'a tag in capitals': tampered(honest, tag: honest.tag.toUpperCase()),
+      'a truncated tag': tampered(honest, tag: honest.tag.substring(1)),
+    };
+    for (final entry in swaps.entries) {
+      final api = _Api()..binding = entry.value;
+      final state = _state(api);
+
+      final result = await state.previewInviteLink(link.url);
+
+      expect(result, isNull, reason: entry.key);
+      expect(state.errorFor(Ops.membership), isNotNull, reason: entry.key);
+      expect(api.requested, isEmpty, reason: entry.key);
+    }
+    // The untouched binding passes.
+    final api = _Api()..binding = honest;
+    final good = await _state(api).previewInviteLink(link.url);
+    expect(good, isNotNull);
+    expect(good!.preview.binding.targetId, 'conv_1');
+  });
+
+  test('a preview whose shown kind differs from the bound kind is refused',
+      () async {
+    final link = _newLink();
+    final api = _Api()
+      ..binding = honestBinding(link, kind: InviteTargetKind.community)
+      ..previewKind = InviteTargetKind.group;
+
+    expect(await _state(api).previewInviteLink(link.url), isNull);
+  });
+
+  test('a request answered with another target is withdrawn and refused',
+      () async {
+    final link = _newLink();
+    final honest = honestBinding(link);
+    final cases = <String, InviteBinding?>{
+      'no binding': null,
+      'another target': tampered(honest, targetId: 'conv_other'),
+      'another inviter': tampered(honest, accountId: 'acct_mallory'),
+      'the kind of another target':
+          tampered(honest, kind: InviteTargetKind.community),
+    };
+    for (final entry in cases.entries) {
+      final api = _Api()
+        ..binding = honest
+        ..requestBinding = entry.value
+        ..requestAnswersWithoutBinding = entry.value == null;
+      final state = _state(api);
+
+      final request = await state.requestToJoin(link);
+
+      expect(request, isNull, reason: entry.key);
+      expect(api.cancelled, <String>['jreq_1'], reason: entry.key);
+      expect(state.errorFor(Ops.membership), isNotNull, reason: entry.key);
+    }
+  });
+
+  test('a request answered with the link\'s own binding stands', () async {
+    final link = _newLink();
+    final api = _Api()..binding = honestBinding(link);
+    final state = _state(api);
+
+    final request = await state.requestToJoin(link);
+
+    expect(request, isNotNull);
+    expect(api.cancelled, isEmpty);
+    expect(state.errorFor(Ops.membership), isNull);
   });
 
   test('approving asks reconcile for the target group; declining does not',
@@ -177,10 +289,15 @@ void main() {
   });
 }
 
-AppState _state(ApiClient api) {
+final List<int> _otherKey = List<int>.generate(32, (i) => 0x70 + i);
+
+MembershipInviteLink _newLink() =>
+    MembershipInviteLink.generate(origin: 'https://localhost:8080');
+
+AppState _state(ApiClient api, {CryptoService? crypto}) {
   return AppState(
     apiClientFactory: (_) => api,
-    cryptoService: TestOnlyCryptoService(),
+    cryptoService: crypto ?? TestOnlyCryptoService(),
     localStore: MemoryLocalStore(),
     syncServiceFactory: (_, __) => _SyncService(),
   )
@@ -199,7 +316,15 @@ class _Api extends ApiClient {
 
   final List<String> createdLocators = <String>[];
   final List<String> createdTargets = <String>[];
+  final List<List<int>> createdKeys = <List<int>>[];
+  final List<String> createdTags = <String>[];
   final List<String> previewed = <String>[];
+  final List<String> requested = <String>[];
+  final List<String> cancelled = <String>[];
+  InviteBinding? binding;
+  InviteBinding? requestBinding;
+  bool requestAnswersWithoutBinding = false;
+  InviteTargetKind previewKind = InviteTargetKind.group;
   final List<String> decisions = <String>[];
   final List<String> removed = <String>[];
   int previewStatus = 200;
@@ -212,10 +337,14 @@ class _Api extends ApiClient {
     InviteTargetKind kind,
     String targetId, {
     required String locator,
+    required List<int> signingKey,
+    required String bindingTag,
     int maxUses = 10,
     Duration lifetime = const Duration(days: 7),
   }) async {
     createdLocators.add(locator);
+    createdKeys.add(signingKey);
+    createdTags.add(bindingTag);
     createdTargets.add('${kind.wire}:$targetId');
     return MembershipInvite(
       id: 'minv_1',
@@ -233,12 +362,30 @@ class _Api extends ApiClient {
     previewed.add(locator);
     if (previewStatus != 200) throw ApiException(previewStatus);
     return InvitePreview(
-      kind: InviteTargetKind.group,
+      kind: previewKind,
       targetName: 'Hikers',
       inviterUsername: 'alice',
       expiresAt: DateTime.utc(2026, 11, 14),
       alreadyMember: false,
+      binding: binding!,
     );
+  }
+
+  @override
+  Future<JoinRequest> requestToJoin(String token, String locator) async {
+    requested.add(locator);
+    return JoinRequest(
+      id: 'jreq_1',
+      kind: (requestBinding ?? binding)?.kind ?? InviteTargetKind.group,
+      status: JoinRequestStatus.pending,
+      createdAt: DateTime.utc(2026, 11, 7),
+      binding: requestAnswersWithoutBinding ? null : requestBinding ?? binding,
+    );
+  }
+
+  @override
+  Future<void> cancelJoinRequest(String token, String requestId) async {
+    cancelled.add(requestId);
   }
 
   @override

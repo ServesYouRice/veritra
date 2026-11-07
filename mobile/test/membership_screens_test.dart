@@ -10,6 +10,7 @@ import 'package:private_messenger/features/communities/membership_screens.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
+import 'invite_binding_fixtures.dart';
 import 'test_crypto_service.dart';
 
 const _origin = 'https://localhost:8080';
@@ -43,6 +44,7 @@ void main() {
       final api = _Api();
       final state = _state(api);
       final link = MembershipInviteLink.generate(origin: _origin);
+      api.link = link;
       await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
       await tester.pumpAndSettle();
       expect(find.text('No requests yet.'), findsOneWidget);
@@ -77,6 +79,7 @@ void main() {
       final api = _Api()..previewDead = true;
       final state = _state(api);
       final link = MembershipInviteLink.generate(origin: _origin);
+      api.link = link;
       await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField), link.url);
@@ -135,10 +138,22 @@ void main() {
           .single
           .data!;
       expect(shown, startsWith('$_origin/join#v1.'));
+      final made =
+          MembershipInviteLink.tryParse(shown, expectedOrigin: _origin)!;
+      expect(made.locator, url);
+      // The binding sent with the link verifies against it, for this account
+      // and device and the key the engine reports.
+      final sent = api.createdBindings.single;
+      expect(sent.signingKey, testDeviceSigningKey);
       expect(
-          MembershipInviteLink.tryParse(shown, expectedOrigin: _origin)!
-              .locator,
-          url);
+          made.bindingTag(
+            kind: InviteTargetKind.community,
+            targetId: 'comm_1',
+            inviterAccountId: 'acct_owner',
+            inviterDeviceId: 'dev_owner',
+            inviterSigningKey: testDeviceSigningKey,
+          ),
+          sent.tag);
 
       await tester.tap(find.byTooltip('Copy link'));
       await tester.pump();
@@ -270,6 +285,9 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: _origin);
 
   final List<String> createdLocators = <String>[];
+  final List<({List<int> signingKey, String tag})> createdBindings =
+      <({List<int> signingKey, String tag})>[];
+  MembershipInviteLink? link;
   final List<String> previewed = <String>[];
   final List<String> requested = <String>[];
   final List<String> decisions = <String>[];
@@ -288,10 +306,13 @@ class _Api extends ApiClient {
     InviteTargetKind kind,
     String targetId, {
     required String locator,
+    required List<int> signingKey,
+    required String bindingTag,
     int maxUses = 10,
     Duration lifetime = const Duration(days: 7),
   }) async {
     createdLocators.add(locator);
+    createdBindings.add((signingKey: signingKey, tag: bindingTag));
     final invite = MembershipInvite(
       id: 'minv_${invites.length + 1}',
       maxUses: maxUses,
@@ -323,6 +344,7 @@ class _Api extends ApiClient {
       inviterUsername: 'alice',
       expiresAt: DateTime.utc(2026, 11, 14),
       alreadyMember: alreadyMember,
+      binding: honestBinding(link!),
     );
   }
 
@@ -335,6 +357,7 @@ class _Api extends ApiClient {
       status: JoinRequestStatus.pending,
       createdAt: DateTime.utc(2026, 11, 7),
       targetName: 'Hikers',
+      binding: honestBinding(link!),
     );
     own.add(request);
     return request;

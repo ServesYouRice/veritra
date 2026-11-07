@@ -925,6 +925,8 @@ class ApiClient {
     InviteTargetKind kind,
     String targetId, {
     required String locator,
+    required List<int> signingKey,
+    required String bindingTag,
     int maxUses = 10,
     Duration lifetime = const Duration(days: 7),
   }) async {
@@ -934,6 +936,8 @@ class ApiClient {
       token: token,
       body: <String, Object?>{
         'locator': locator,
+        'signing_key': base64.encode(signingKey),
+        'binding_tag': bindingTag,
         'max_uses': maxUses,
         'expires_in_seconds': lifetime.inSeconds,
       },

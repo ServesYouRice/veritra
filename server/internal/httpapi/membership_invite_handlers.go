@@ -32,7 +32,11 @@ type locatorRequest struct {
 }
 
 type createMembershipInviteRequest struct {
-	Locator          string `json:"locator"`
+	Locator string `json:"locator"`
+	// SigningKey and BindingTag are what the app bound the invitation to
+	// (D90). The device is the session's, never a field of the request.
+	SigningKey       []byte `json:"signing_key"`
+	BindingTag       string `json:"binding_tag"`
 	MaxUses          int    `json:"max_uses"`
 	ExpiresInSeconds int64  `json:"expires_in_seconds"`
 }
@@ -84,12 +88,20 @@ func (a *API) createMembershipInvite(w http.ResponseWriter, r *http.Request, pri
 		}
 		lifetime = time.Duration(req.ExpiresInSeconds) * time.Second
 	}
+	if principal.DeviceID == "" {
+		// A session without a device has no key to bind the invitation to.
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
 	invite, err := a.Store.CreateMembershipInvite(r.Context(), storage.CreateMembershipInviteInput{
-		Target:    target,
-		CreatedBy: principal.AccountID,
-		Locator:   req.Locator,
-		MaxUses:   req.MaxUses,
-		ExpiresAt: time.Now().UTC().Add(lifetime),
+		Target:            target,
+		CreatedBy:         principal.AccountID,
+		CreatedByDeviceID: principal.DeviceID,
+		SigningKey:        req.SigningKey,
+		BindingTag:        req.BindingTag,
+		Locator:           req.Locator,
+		MaxUses:           req.MaxUses,
+		ExpiresAt:         time.Now().UTC().Add(lifetime),
 	})
 	if err != nil {
 		handleStorageError(w, err)

@@ -75,9 +75,29 @@ Uint8List sha256(List<int> message) {
 }
 
 /// Lowercase hex of [sha256].
-String sha256Hex(List<int> message) => [
-      for (final byte in sha256(message)) byte.toRadixString(16).padLeft(2, '0')
-    ].join();
+String sha256Hex(List<int> message) => hexOf(sha256(message));
+
+/// Lowercase hex of [bytes].
+String hexOf(List<int> bytes) =>
+    [for (final byte in bytes) byte.toRadixString(16).padLeft(2, '0')].join();
+
+/// HMAC-SHA256 (RFC 2104, FIPS 198-1) over [sha256]. A key longer than the
+/// 64-byte block is hashed first, as the RFC says. Used to bind an invitation
+/// to the link secret (`membership_invite_link.dart`).
+Uint8List hmacSha256(List<int> key, List<int> message) {
+  const blockSize = 64;
+  final keyBytes = key.length > blockSize ? sha256(key) : key;
+  final block = Uint8List(blockSize)..setRange(0, keyBytes.length, keyBytes);
+  final inner = Uint8List(blockSize + message.length);
+  final outer = Uint8List(blockSize + 32);
+  for (var i = 0; i < blockSize; i++) {
+    inner[i] = block[i] ^ 0x36;
+    outer[i] = block[i] ^ 0x5c;
+  }
+  inner.setRange(blockSize, inner.length, message);
+  outer.setRange(blockSize, outer.length, sha256(inner));
+  return sha256(outer);
+}
 
 const int _mask = 0xffffffff;
 

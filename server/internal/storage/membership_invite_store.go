@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"errors"
@@ -39,6 +40,7 @@ const (
 	maxListedJoinRequests        = 200
 	maxListedOwnRequests         = 50
 	maxMembershipInviteUses      = 1000
+	signingKeyLength             = 32
 )
 
 // MembershipTarget names a group (a conversation of kind group) or a community.
@@ -113,12 +115,13 @@ func inviteAdminRoleTx(ctx context.Context, q queryRower, target MembershipTarge
 }
 
 // usableInviteSQL is the SQL form of usableInviteTx for a query that aliases
-// membership_invites as i: not revoked or expired, uses left, and its creator
-// an active owner or admin of the target. It takes one argument, the current
+// membership_invites as i: not revoked or expired, uses left, its creating
+// device not revoked, and its creator an active owner or admin of the target. It takes one argument, the current
 // time. Counting caps, listing requests and approving use the same test, so a
 // request nobody can approve is never listed or counted.
 var usableInviteSQL = `(i.revoked_at IS NULL AND i.uses < i.max_uses AND i.expires_at > ?
 	AND EXISTS (SELECT 1 FROM accounts ca WHERE ca.id = i.created_by AND ca.deleted_at IS NULL)
+	AND EXISTS (SELECT 1 FROM devices cd WHERE cd.id = i.created_by_device_id AND cd.revoked_at IS NULL)
 	AND EXISTS (SELECT 1 FROM memberships cm WHERE cm.account_id = i.created_by AND cm.role IN ('` + domain.RoleOwner + `', '` + domain.RoleAdmin + `')
 		AND ((i.community_id IS NOT NULL AND cm.community_id = i.community_id) OR (i.conversation_id IS NOT NULL AND cm.conversation_id = i.conversation_id))))`
 
@@ -126,6 +129,14 @@ type inviteRow struct {
 	id        string
 	target    MembershipTarget
 	createdBy string
+}
+
+// inviteBindingTx reads what the creating device bound invitation id to.
+func inviteBindingTx(ctx context.Context, q queryRower, invite inviteRow) (domain.InviteBinding, error) {
+	binding := domain.InviteBinding{TargetKind: invite.target.Kind, TargetID: invite.target.ID, InviterAccountID: invite.createdBy}
+	err := q.QueryRowContext(ctx, `SELECT created_by_device_id, creator_signing_key, binding_tag FROM membership_invites WHERE id = ?`, invite.id).
+		Scan(&binding.InviterDeviceID, &binding.InviterSigningKey, &binding.Tag)
+	return binding, err
 }
 
 // usableInviteTx loads the invitation whose where clause matches and returns
@@ -155,6 +166,13 @@ func usableInviteTx(ctx context.Context, tx *sql.Tx, where string, arg interface
 		return inviteRow{}, err
 	}
 	if active == 0 {
+		return inviteRow{}, ErrMembershipInviteUnavailable
+	}
+	var deviceLive int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices d JOIN membership_invites i ON i.created_by_device_id = d.id WHERE i.id = ? AND d.revoked_at IS NULL`, row.id).Scan(&deviceLive); err != nil {
+		return inviteRow{}, err
+	}
+	if deviceLive == 0 {
 		return inviteRow{}, ErrMembershipInviteUnavailable
 	}
 	if err := inviteAdminRoleTx(ctx, tx, row.target, row.createdBy); err != nil {
@@ -190,18 +208,26 @@ func targetNameTx(ctx context.Context, q queryRower, target MembershipTarget) (s
 
 // CreateMembershipInviteInput describes a new invitation. Locator is derived
 // by the app from the link secret; the secret itself never reaches the server.
+//
+// CreatedByDeviceID is the session's device. SigningKey is the key the app
+// bound into BindingTag; it must equal the device's registered signing key,
+// so a tag over any other key is refused here. The server cannot check the
+// tag itself: that needs the secret.
 type CreateMembershipInviteInput struct {
-	Target    MembershipTarget
-	CreatedBy string
-	Locator   string
-	MaxUses   int
-	ExpiresAt time.Time
+	Target            MembershipTarget
+	CreatedBy         string
+	CreatedByDeviceID string
+	SigningKey        []byte
+	BindingTag        string
+	Locator           string
+	MaxUses           int
+	ExpiresAt         time.Time
 }
 
 // CreateMembershipInvite stores an invitation for a group or community the
 // actor owns or administers.
 func (s *Store) CreateMembershipInvite(ctx context.Context, input CreateMembershipInviteInput) (domain.MembershipInvite, error) {
-	if !input.Target.valid() || !validLocator(input.Locator) || input.MaxUses < 1 || input.MaxUses > maxMembershipInviteUses {
+	if !input.Target.valid() || !validLocator(input.Locator) || !validLocator(input.BindingTag) || input.CreatedByDeviceID == "" || len(input.SigningKey) != signingKeyLength || input.MaxUses < 1 || input.MaxUses > maxMembershipInviteUses {
 		return domain.MembershipInvite{}, ErrInvalidInput
 	}
 	now := time.Now().UTC()
@@ -221,6 +247,19 @@ func (s *Store) CreateMembershipInvite(ctx context.Context, input CreateMembersh
 	if err := inviteAdminRoleTx(ctx, tx, input.Target, input.CreatedBy); err != nil {
 		return domain.MembershipInvite{}, err
 	}
+	// The binding names a live device of the creating account, with the
+	// signing key the server has on record for it.
+	var registered []byte
+	err = tx.QueryRowContext(ctx, `SELECT signing_key FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NULL`, input.CreatedByDeviceID, input.CreatedBy).Scan(&registered)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.MembershipInvite{}, ErrInvalidInput
+	}
+	if err != nil {
+		return domain.MembershipInvite{}, err
+	}
+	if subtle.ConstantTimeCompare(registered, input.SigningKey) != 1 {
+		return domain.MembershipInvite{}, ErrInvalidInput
+	}
 	community, conversation := input.Target.columns()
 	active, err := countRows(ctx, tx, `SELECT COUNT(*) FROM membership_invites WHERE community_id IS ? AND conversation_id IS ? AND revoked_at IS NULL AND expires_at > ? AND uses < max_uses`, community, conversation, formatTime(now))
 	if err != nil {
@@ -229,8 +268,8 @@ func (s *Store) CreateMembershipInvite(ctx context.Context, input CreateMembersh
 	if active >= maxActiveInvitesPerTarget {
 		return domain.MembershipInvite{}, ErrJoinRequestLimit
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO membership_invites(id, community_id, conversation_id, created_by, locator_hash, max_uses, expires_at, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, community, conversation, input.CreatedBy, hashLocator(input.Locator), input.MaxUses, formatTime(expires), formatTime(now)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO membership_invites(id, community_id, conversation_id, created_by, created_by_device_id, creator_signing_key, binding_tag, locator_hash, max_uses, expires_at, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, community, conversation, input.CreatedBy, input.CreatedByDeviceID, registered, input.BindingTag, hashLocator(input.Locator), input.MaxUses, formatTime(expires), formatTime(now)); err != nil {
 		// A repeated locator: the secret is 256 bits, so this is a client bug or a replay.
 		return domain.MembershipInvite{}, ErrInvalidInput
 	}
@@ -347,7 +386,11 @@ func (s *Store) PreviewMembershipInvite(ctx context.Context, accountID, locator 
 	if err != nil {
 		return domain.MembershipInvitePreview{}, err
 	}
-	return domain.MembershipInvitePreview{TargetKind: invite.target.Kind, TargetName: name, InviterUsername: inviter, ExpiresAt: parseTime(expires), AlreadyMember: member}, nil
+	binding, err := inviteBindingTx(ctx, tx, invite)
+	if err != nil {
+		return domain.MembershipInvitePreview{}, err
+	}
+	return domain.MembershipInvitePreview{TargetKind: invite.target.Kind, TargetName: name, InviterUsername: inviter, ExpiresAt: parseTime(expires), AlreadyMember: member, Binding: binding}, nil
 }
 
 func mapUnavailableToNotFound(err error) error {
@@ -396,6 +439,10 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 	if member {
 		return domain.JoinRequest{}, false, ErrAlreadyMember
 	}
+	binding, err := inviteBindingTx(ctx, tx, invite)
+	if err != nil {
+		return domain.JoinRequest{}, false, err
+	}
 	community, conversation := invite.target.columns()
 	var existingID, existingInvite string
 	var existingCreated string
@@ -407,7 +454,7 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 		// A pending request whose own invitation is no longer usable is
 		// replaced; otherwise the same request stands.
 		if _, usableErr := usableInviteTx(ctx, tx, `id = ?`, existingInvite); usableErr == nil {
-			return domain.JoinRequest{ID: existingID, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: parseTime(existingCreated)}, false, nil
+			return domain.JoinRequest{ID: existingID, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: parseTime(existingCreated), Binding: &binding}, false, nil
 		} else if !errors.Is(usableErr, ErrMembershipInviteUnavailable) {
 			return domain.JoinRequest{}, false, usableErr
 		}
@@ -436,7 +483,7 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 	if err := tx.Commit(); err != nil {
 		return domain.JoinRequest{}, false, err
 	}
-	return domain.JoinRequest{ID: id, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: now}, true, nil
+	return domain.JoinRequest{ID: id, TargetKind: invite.target.Kind, Status: domain.JoinRequestPending, CreatedAt: now, Binding: &binding}, true, nil
 }
 
 // ListJoinRequests lists the pending requests for a target, with usernames,

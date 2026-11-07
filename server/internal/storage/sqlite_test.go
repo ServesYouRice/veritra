@@ -1331,6 +1331,7 @@ func registerTestMember(t *testing.T, ctx context.Context, store *Store, inviteC
 		PasswordHash:            hash,
 		DeviceName:              username + " phone",
 		KeyPackage:              []byte(username + "-key-package"),
+		SigningKey:              bytes.Repeat([]byte{byte(len(username))}, 32),
 	})
 	if err != nil {
 		t.Fatalf("register member %s: %v", username, err)

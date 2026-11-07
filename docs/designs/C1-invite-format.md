@@ -1,7 +1,8 @@
 # C1: invitation links and join requests
 
 Status 2026-11-07. Built on the owner's approval of the format (secret after
-the `#`, requests an admin approves). Server migration 0048. Read with
+the `#`, requests an admin approves; bound to the target, account and device
+keys by D90, see "Binding" below). Server migration 0048. Read with
 [C1-membership-plan](C1-membership-plan.md) and
 [C1-progress](C1-progress.md).
 
@@ -40,8 +41,89 @@ Limit, stated plainly: the locator authenticates nothing end to end. A
 malicious server could file requests for accounts that send it a locator, but
 every request still waits for an admin, and joining changes only the
 server's membership record. Membership never means encrypted access: that
-follows the existing staged MLS commits (card I51). Binding an invitation to
-the target's device keys is not done here and needs its own reviewed design.
+follows the existing staged MLS commits (card I51). What ties the link to its
+target is the binding below.
+
+## Binding to the target, account and device keys (D90)
+
+Status 2026-11-07. Decision D90: the invitation is bound to the inviter's
+target, account and device keys before merge. The joiner checks the binding
+from the link secret, so a server that never saw the secret cannot swap the
+target, the inviting account or the inviting device's key without the check
+failing.
+
+```
+binding_key = SHA-256("veritra/membership-invite/v1/binding-key\0" || secret)
+message     = "veritra/membership-invite/v1/binding\0"
+              || lp(origin) || lp(target_kind) || lp(target_id)
+              || lp(inviter_account_id) || lp(inviter_device_id)
+              || lp(inviter_signing_key)
+tag         = hex(HMAC-SHA256(binding_key, message))
+```
+
+`lp(x)` is a 16-bit big-endian length and the bytes, so adjacent fields
+cannot trade characters. `origin` is the canonical server origin of the link.
+`target_kind` is `group` or `community`. `inviter_signing_key` is the 32-byte
+Ed25519 public key of the inviting device's MLS credential, the same key the
+server holds as `devices.signing_key`. The key label differs from the locator
+label, so the locator the server sees is no key and gives no tag. Both sides
+pin one vector: `mobile/test/membership_invite_link_test.dart` and
+`TestInviteBindingTagVector` (HMAC-SHA256 cases from RFC 4231 are pinned on the
+Dart side, where the HMAC is written on the existing SHA-256).
+
+**Creating.** The app reads its own device's signing key from the native
+engine (the existing `pm_crypto_device_signing_public_key`, behind a small
+Dart interface; builds without the engine, including
+`UnavailableCryptoService`, make no invitation), generates the secret, and
+sends `locator`, `signing_key` and `binding_tag` in the body. The device and
+account are the session's, never fields of the request. The server stores the
+creating device's id and the key it holds on record for it, and refuses (400
+`invalid_input`) a body whose key differs from that record, a session with no
+device, and a tag that is not 64 lowercase hex characters. It cannot check the
+tag: that needs the secret. An invitation is bound to its device, so it stops
+working when that device is revoked.
+
+**Joining.** `POST /membership-invites/preview` returns `binding` (target
+kind and id, inviter account id, inviter device id, inviter signing key, tag)
+and `POST /membership-invites/requests` returns it again on the answer. The
+app recomputes the tag from the link and compares in constant time, and
+checks that the kind it shows equals the bound kind.
+
+- On preview: a mismatch, a missing binding or a key of the wrong length
+  shows the ordinary "this link no longer works" message and files nothing.
+- On request: the answer must carry the binding of this very link. Otherwise
+  the app withdraws the request (best effort) and shows the same message, so a
+  server cannot show the genuine target at preview and file against another.
+
+What this proves: whoever made the link named exactly this target, inviting
+account, device and device key, and the server did not change any of them. It
+adds no round trip and no new key material, and needs no change to the crypto
+ABI.
+
+Limits, stated plainly:
+
+- **No signature.** The tag is a MAC keyed by the link secret, not a
+  signature by the device. Anyone holding the link can compute tags, so a
+  server that colludes with a recipient of the link can still swap the target
+  for that recipient. A device signature the joiner verifies needs a signing
+  entry point and a verifier in the crypto ABI, which ABI 12 does not have on
+  purpose (TASK-007 removed the raw signer; the enrollment-proof signer has
+  its own domain and mints a key package). C7's reserved ABI 13 adds
+  credential-key sign and verify over a domain allowlist; moving the binding
+  onto it, with a new domain label, is the follow-up and a format version
+  bump (`v2`).
+- **The device key is committed, not cross-checked.** The joiner learns the
+  inviting device's key from the server. Checking it against the account's
+  signed device list needs L1, and against the MLS roster needs C7's member
+  signature-key read. Until then it is bound to the link, not proven to belong
+  to the inviting account.
+- **Names are not bound.** The target name and the inviter's username are
+  server-supplied text shown for orientation; the bound target is the id.
+  Encrypted names wait for W11 and C3.
+- **Existing devices.** A device registered without a signing key (before
+  enrollment proofs) cannot create an invitation.
+- **Needs independent review.** This is a security decision; D90 and AGENTS.md
+  ask for one before the invitation format is final.
 
 ## Rules
 
@@ -53,7 +135,8 @@ the target's device keys is not done here and needs its own reviewed design.
   (default 1 from the API, 10 from the app, at most 1000). A use is counted
   when a request is approved, not when it is filed.
 - It stops working when revoked, expired, used up, when its creator is
-  deleted, or when its creator is no longer owner or admin of the target.
+  deleted, when the device that made it is revoked, or when its creator is no
+  longer owner or admin of the target.
   Every unusable or unknown locator answers 404, so links cannot be probed.
   A block between requester and creator also answers 404.
 - A request grants nothing: no membership, envelope, attachment, key package

@@ -30,6 +30,7 @@ class NativeCryptoService
     implements
         BoundedMlsConversationCryptoService,
         ConversationAuthorityConsumer,
+        DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
@@ -121,6 +122,21 @@ class NativeCryptoService
         _pendingEnrollment = true;
         _firstState = null;
         return device.createEnrollmentCredential(reservation.challenge);
+      });
+
+  @override
+  Future<Uint8List> deviceSigningPublicKey({
+    required String accountId,
+    required String deviceId,
+  }) =>
+      _serial(() async {
+        final device = _requiredDevice();
+        if (_pendingEnrollment ||
+            _accountId != accountId ||
+            _deviceId != deviceId) {
+          throw StateError('the active identity is not this device');
+        }
+        return Uint8List.fromList(device.signingPublicKey());
       });
 
   // C6 reports (ABI 12). Stateless: none touches the device or its state.

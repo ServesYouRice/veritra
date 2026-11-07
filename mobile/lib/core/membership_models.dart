@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 /// What a membership invitation leads to: a group or a whole community.
 enum InviteTargetKind {
   group('group'),
@@ -13,6 +16,61 @@ enum InviteTargetKind {
       if (kind.wire == value) return kind;
     }
     return null;
+  }
+}
+
+/// What the creating device bound an invitation to (D90): the target, the
+/// inviting account and device, and that device's signing key. [tag] is the
+/// HMAC the creating app derived from the link secret over these fields and
+/// the server's origin. The server cannot make or check it; the joiner
+/// recomputes it from the link (`MembershipInviteLink.verifies`) and refuses
+/// the invitation when it does not match.
+class InviteBinding {
+  const InviteBinding({
+    required this.kind,
+    required this.targetId,
+    required this.inviterAccountId,
+    required this.inviterDeviceId,
+    required this.inviterSigningKey,
+    required this.tag,
+  });
+
+  final InviteTargetKind kind;
+  final String targetId;
+  final String inviterAccountId;
+  final String inviterDeviceId;
+  final Uint8List inviterSigningKey;
+
+  /// 64 lowercase hex characters.
+  final String tag;
+
+  factory InviteBinding.fromJson(Object? json) {
+    if (json is! Map) throw const FormatException('no invitation binding');
+    final kind = InviteTargetKind.fromWire(json['target_kind']);
+    final targetId = json['target_id'];
+    final accountId = json['inviter_account_id'];
+    final deviceId = json['inviter_device_id'];
+    final key = json['inviter_signing_key'];
+    final tag = json['tag'];
+    if (kind == null ||
+        targetId is! String ||
+        targetId.isEmpty ||
+        accountId is! String ||
+        accountId.isEmpty ||
+        deviceId is! String ||
+        deviceId.isEmpty ||
+        key is! String ||
+        tag is! String) {
+      throw const FormatException('bad invitation binding');
+    }
+    return InviteBinding(
+      kind: kind,
+      targetId: targetId,
+      inviterAccountId: accountId,
+      inviterDeviceId: deviceId,
+      inviterSigningKey: Uint8List.fromList(base64.decode(key)),
+      tag: tag,
+    );
   }
 }
 
@@ -49,6 +107,7 @@ class InvitePreview {
     required this.inviterUsername,
     required this.expiresAt,
     required this.alreadyMember,
+    required this.binding,
   });
 
   final InviteTargetKind kind;
@@ -59,6 +118,10 @@ class InvitePreview {
   final DateTime expiresAt;
   final bool alreadyMember;
 
+  /// What the creating device bound the link to. Not trusted until
+  /// `MembershipInviteLink.verifies` accepts it.
+  final InviteBinding binding;
+
   factory InvitePreview.fromJson(Map<String, Object?> json) {
     final kind = InviteTargetKind.fromWire(json['target_kind']);
     if (kind == null) throw const FormatException('unknown target kind');
@@ -68,6 +131,7 @@ class InvitePreview {
       inviterUsername: (json['inviter_username'] as String?) ?? '',
       expiresAt: DateTime.parse(json['expires_at']! as String),
       alreadyMember: json['already_member'] == true,
+      binding: InviteBinding.fromJson(json['binding']),
     );
   }
 }
@@ -102,6 +166,7 @@ class JoinRequest {
     this.accountId,
     this.username,
     this.decidedAt,
+    this.binding,
   });
 
   final String id;
@@ -113,6 +178,11 @@ class JoinRequest {
   final String? accountId;
   final String? username;
   final DateTime? decidedAt;
+
+  /// Only on the answer to a request to join: what the invitation it went
+  /// through was bound to. Not trusted until
+  /// `MembershipInviteLink.verifies` accepts it.
+  final InviteBinding? binding;
 
   factory JoinRequest.fromJson(Map<String, Object?> json) {
     final kind = InviteTargetKind.fromWire(json['target_kind']);
@@ -136,6 +206,9 @@ class JoinRequest {
       accountId: text('account_id'),
       username: text('username'),
       decidedAt: decided == null ? null : DateTime.parse(decided),
+      binding: json['binding'] == null
+          ? null
+          : InviteBinding.fromJson(json['binding']),
     );
   }
 }

@@ -17,6 +17,33 @@ func decodeBody(t *testing.T, body []byte, dest interface{}) {
 	}
 }
 
+const testBindingTag = "abababababababababababababababababababababababababababababababab"
+
+// inviteBody is a create-invitation body for the session behind token: the
+// session's device key and a stand-in binding tag (only the app can compute
+// the real one, from the link secret).
+func inviteBody(t *testing.T, handler http.Handler, token string, extra map[string]interface{}) map[string]interface{} {
+	t.Helper()
+	status, body := doJSON(t, handler, http.MethodGet, "/api/v1/devices/me", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("list devices: status=%d body=%s", status, body)
+	}
+	var devices struct {
+		Devices []struct {
+			SigningKey []byte `json:"signing_key"`
+		} `json:"devices"`
+	}
+	decodeBody(t, body, &devices)
+	if len(devices.Devices) == 0 || len(devices.Devices[0].SigningKey) != 32 {
+		t.Fatalf("devices = %s", body)
+	}
+	request := map[string]interface{}{"locator": testInviteLocator, "signing_key": devices.Devices[0].SigningKey, "binding_tag": testBindingTag}
+	for key, value := range extra {
+		request[key] = value
+	}
+	return request
+}
+
 func TestGroupInviteJoinRequestFlowAPI(t *testing.T) {
 	handler, ownerToken, _ := newTestHandlerWithOwnerDevice(t)
 	groupID := createConversation(t, handler, ownerToken)
@@ -24,15 +51,15 @@ func TestGroupInviteJoinRequestFlowAPI(t *testing.T) {
 	outsiderToken := registerMember(t, handler, ownerToken, "inviteoutsider")
 
 	// Only an admin of the group may invite; an outsider is refused.
-	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", outsiderToken, map[string]interface{}{"locator": testInviteLocator, "max_uses": 2})
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", outsiderToken, inviteBody(t, handler, outsiderToken, map[string]interface{}{"max_uses": 2}))
 	if status != http.StatusForbidden {
 		t.Fatalf("outsider creates invite: status=%d body=%s", status, body)
 	}
-	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, map[string]interface{}{"locator": "bad", "max_uses": 2})
+	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, map[string]interface{}{"locator": "bad", "max_uses": 2}))
 	if status != http.StatusBadRequest {
 		t.Fatalf("bad locator: status=%d body=%s", status, body)
 	}
-	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, map[string]interface{}{"locator": testInviteLocator, "max_uses": 2})
+	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, map[string]interface{}{"max_uses": 2}))
 	if status != http.StatusCreated {
 		t.Fatalf("create invite: status=%d body=%s", status, body)
 	}
@@ -54,12 +81,37 @@ func TestGroupInviteJoinRequestFlowAPI(t *testing.T) {
 	if status != http.StatusOK || !bytes.Contains(body, []byte(`"target_kind":"group"`)) {
 		t.Fatalf("preview: status=%d body=%s", status, body)
 	}
+	// The preview carries the binding (D90) for the joiner to check.
+	var preview struct {
+		Binding struct {
+			TargetID          string `json:"target_id"`
+			InviterAccountID  string `json:"inviter_account_id"`
+			InviterDeviceID   string `json:"inviter_device_id"`
+			InviterSigningKey []byte `json:"inviter_signing_key"`
+			Tag               string `json:"tag"`
+		} `json:"binding"`
+	}
+	decodeBody(t, body, &preview)
+	if preview.Binding.TargetID != groupID || preview.Binding.InviterAccountID == "" || preview.Binding.InviterDeviceID == "" ||
+		len(preview.Binding.InviterSigningKey) != 32 || preview.Binding.Tag != testBindingTag {
+		t.Fatalf("preview binding = %+v", preview.Binding)
+	}
+	for _, mutate := range []map[string]interface{}{
+		{"binding_tag": "not-a-tag"},
+		{"binding_tag": nil},
+		{"signing_key": nil},
+		{"signing_key": make([]byte, 32)},
+	} {
+		if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+groupID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, mutate)); status != http.StatusBadRequest {
+			t.Fatalf("create invite with %v: status=%d body=%s", mutate, status, body)
+		}
+	}
 	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/membership-invites/preview", aliceToken, map[string]string{"locator": strings.Repeat("f", 64)})
 	if status != http.StatusNotFound {
 		t.Fatalf("preview of an unknown link: status=%d body=%s", status, body)
 	}
 	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/membership-invites/requests", aliceToken, map[string]string{"locator": testInviteLocator})
-	if status != http.StatusCreated {
+	if status != http.StatusCreated || !bytes.Contains(body, []byte(`"binding":{`)) || !bytes.Contains(body, []byte(`"tag":"`+testBindingTag+`"`)) {
 		t.Fatalf("request: status=%d body=%s", status, body)
 	}
 	var request struct {
@@ -138,7 +190,7 @@ func TestCommunityInviteAndMemberRemovalAPI(t *testing.T) {
 	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]string{"name": "general"}); status != http.StatusCreated {
 		t.Fatalf("create channel: status=%d body=%s", status, body)
 	}
-	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/invites", ownerToken, map[string]interface{}{"locator": testInviteLocator, "max_uses": 5, "expires_in_seconds": 3600}); status != http.StatusCreated {
+	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, map[string]interface{}{"max_uses": 5, "expires_in_seconds": 3600})); status != http.StatusCreated {
 		t.Fatalf("create community invite: status=%d body=%s", status, body)
 	}
 	for _, token := range []string{bobToken, carolToken} {

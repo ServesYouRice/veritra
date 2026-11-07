@@ -28,14 +28,40 @@ extension MembershipActions on AppState {
   /// Creates an invitation for a group or community the account owns or
   /// administers and returns the link to share. The link holds the secret and
   /// is not stored anywhere: the server keeps a hash of the locator only.
+  ///
+  /// The invitation is bound (D90) to the target, this account and device, and
+  /// the device's signing key by a tag derived from the secret, so the joiner
+  /// can tell that the target was not swapped on the way. The key comes from
+  /// the native engine; without it (any build that is not the reviewed
+  /// engine) no invitation is made.
   Future<String?> createInviteLink(InviteTargetKind kind, String targetId) {
     return _membershipCall<String>((current, client) async {
+      // Only the native engine reads the device key; the unavailable
+      // service does not implement this, so it is refused (D90).
+      final DeviceSigningKeyCryptoService keys;
+      if (cryptoService case final DeviceSigningKeyCryptoService engine) {
+        keys = engine;
+      } else {
+        throw UserFacingException(l10n.errorActionUnavailable);
+      }
+      final signingKey = await keys.deviceSigningPublicKey(
+        accountId: current.accountId,
+        deviceId: current.deviceId,
+      );
       final link = MembershipInviteLink.generate(origin: client.baseUrl);
       await client.createMembershipInvite(
         current.token,
         kind,
         targetId,
         locator: link.locator,
+        signingKey: signingKey,
+        bindingTag: link.bindingTag(
+          kind: kind,
+          targetId: targetId,
+          inviterAccountId: current.accountId,
+          inviterDeviceId: current.deviceId,
+          inviterSigningKey: signingKey,
+        ),
       );
       return link.url;
     });
@@ -79,6 +105,13 @@ extension MembershipActions on AppState {
           current.token,
           link.locator,
         );
+        // What the server says the link leads to must be what the device that
+        // made the link bound it to. A swapped target fails here, before the
+        // person sees it or any request is filed.
+        if (preview.binding.kind != preview.kind ||
+            !link.verifies(preview.binding)) {
+          throw UserFacingException(l10n.joinLinkUnusable);
+        }
         return (link: link, preview: preview);
       } on ApiException catch (err) {
         if (err.statusCode == 404) {
@@ -94,7 +127,23 @@ extension MembershipActions on AppState {
   Future<JoinRequest?> requestToJoin(MembershipInviteLink link) {
     return _membershipCall<JoinRequest>((current, client) async {
       try {
-        return await client.requestToJoin(current.token, link.locator);
+        final request = await client.requestToJoin(current.token, link.locator);
+        // The answer must carry the binding of this very link; otherwise the
+        // server filed the request against something else (a swap between
+        // the preview and the request). Withdraw it, best effort.
+        final binding = request.binding;
+        if (binding == null ||
+            binding.kind != request.kind ||
+            !link.verifies(binding)) {
+          try {
+            await client.cancelJoinRequest(current.token, request.id);
+          } on Object {
+            // The request stays pending on a server that lies; an admin sees
+            // it as filed through a link that was never theirs to approve.
+          }
+          throw UserFacingException(l10n.joinLinkUnusable);
+        }
+        return request;
       } on ApiException catch (err) {
         if (err.statusCode == 404) {
           throw UserFacingException(l10n.joinLinkUnusable);

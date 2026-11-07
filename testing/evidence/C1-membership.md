@@ -39,6 +39,31 @@ locally to resolve; that change is not in the branch.
 - Also passed: `l10n_locales_test`, `api_contract_test`, `ui_remaining_test`,
   `conversation_quality_test`, `k0_recovery_no_peer_test`.
 
+## Invitation binding (D90), 2026-11-07
+
+- Server, run locally: `go test ./...` in `server/` (storage, httpapi and the
+  rest) passes. New: `membership_invite_binding_test.go` (binding stored and
+  returned with the preview and the request answer; a body whose key, device
+  or tag does not match the creating device is refused; an invitation stops
+  working when its device is revoked; the tag vector), and binding cases in
+  `membership_invite_handlers_test.go`.
+- Dart, locally: the pure-Dart parts (SHA-256, HMAC-SHA256, the binding tag and
+  its verifier, binding JSON) were run with the Dart 3.12.0 SDK against the
+  RFC 4231 cases 1, 2 and 6, an empty key and message, and the tag vector
+  shared with the server (all equal to Python's `hmac`); `dart analyze` is
+  clean on those three files; `dart format --language-version=3.4` was run
+  on every changed Dart file. The Flutter tests (`membership_invite_link_test`,
+  `membership_api_test`, `app_state_membership_test`,
+  `membership_screens_test`) are not run locally (no Flutter); CI on the pull
+  request runs them.
+- Covered by those tests: a creating app sends the engine's device key and a
+  tag that verifies against its own link; no invitation without an engine that
+  reads the key; a preview refused for another target, kind, account, device,
+  key, a tag of another link, or a malformed tag, with no request filed; a
+  request answered with another binding or none is withdrawn and refused.
+
 ## Not covered
 
 - No device run, no native MLS lifecycle test of approval or removal.
+- The binding is a MAC, not a device signature, and the inviting device's key
+  is not checked against a device list or the MLS roster (needs L1 and C7).

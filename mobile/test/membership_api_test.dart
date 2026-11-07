@@ -47,6 +47,16 @@ Future<(ApiClient, List<_Call>)> _client(
 Map<String, Object?> _bodyOf(_Call call) =>
     jsonDecode(call.body) as Map<String, Object?>;
 
+/// A binding as the server sends it: the key is standard base64 of 32 bytes.
+final Map<String, Object?> _bindingJson = <String, Object?>{
+  'target_kind': 'group',
+  'target_id': 'conv_1',
+  'inviter_account_id': 'acct_alice',
+  'inviter_device_id': 'dev_alice',
+  'inviter_signing_key': base64.encode(List<int>.generate(32, (i) => i)),
+  'tag': 'cd' * 32,
+};
+
 void main() {
   final link =
       MembershipInviteLink.generate(origin: 'https://chat.example.org');
@@ -67,15 +77,26 @@ void main() {
       InviteTargetKind.community,
       'comm_1',
       locator: link.locator,
+      signingKey: List<int>.generate(32, (i) => i),
+      bindingTag: 'ab' * 32,
     );
     expect(invite.id, 'minv_1');
     expect(invite.maxUses, 10);
     final call = calls.single;
     expect(call.method, 'POST');
     expect(call.path, '/api/v1/communities/comm_1/invites');
-    expect(_bodyOf(call).keys.toSet(),
-        <String>{'locator', 'max_uses', 'expires_in_seconds'});
+    expect(_bodyOf(call).keys.toSet(), <String>{
+      'locator',
+      'signing_key',
+      'binding_tag',
+      'max_uses',
+      'expires_in_seconds',
+    });
     expect(_bodyOf(call)['locator'], link.locator);
+    // The device key goes as standard base64, as the server's JSON bytes do.
+    expect(base64.decode(_bodyOf(call)['signing_key']! as String),
+        List<int>.generate(32, (i) => i));
+    expect(_bodyOf(call)['binding_tag'], 'ab' * 32);
     expect(_bodyOf(call)['expires_in_seconds'], 7 * 24 * 3600);
     // The secret is the part of the link after "v1." in its fragment.
     final secret = Uri.parse(link.url).fragment.substring(3);
@@ -111,6 +132,7 @@ void main() {
           'inviter_username': 'alice',
           'expires_at': '2026-11-14T10:00:00Z',
           'already_member': false,
+          'binding': _bindingJson,
         };
       }
       return <String, Object?>{
@@ -118,14 +140,21 @@ void main() {
         'target_kind': 'group',
         'status': 'pending',
         'created_at': '2026-11-07T10:00:00Z',
+        'binding': _bindingJson,
       };
     });
     final preview = await client.previewMembershipInvite('tok', link.locator);
     expect(preview.kind, InviteTargetKind.group);
     expect(preview.targetName, 'Hikers');
     expect(preview.inviterUsername, 'alice');
+    expect(preview.binding.targetId, 'conv_1');
+    expect(preview.binding.inviterAccountId, 'acct_alice');
+    expect(preview.binding.inviterDeviceId, 'dev_alice');
+    expect(preview.binding.inviterSigningKey, List<int>.generate(32, (i) => i));
+    expect(preview.binding.tag, 'cd' * 32);
     final request = await client.requestToJoin('tok', link.locator);
     expect(request.status, JoinRequestStatus.pending);
+    expect(request.binding!.tag, 'cd' * 32);
     expect(calls.map((c) => c.path), <String>[
       '/api/v1/membership-invites/preview',
       '/api/v1/membership-invites/requests',
@@ -234,6 +263,32 @@ void main() {
       client.listOwnJoinRequests('tok'),
       throwsA(isA<ApiResponseException>()),
     );
+  });
+
+  test('a preview without a usable binding is a bad response', () async {
+    final broken = <Map<String, Object?>?>[
+      null,
+      <String, Object?>{..._bindingJson, 'target_kind': 'planet'},
+      <String, Object?>{..._bindingJson, 'target_id': ''},
+      <String, Object?>{..._bindingJson, 'inviter_signing_key': 7},
+      <String, Object?>{..._bindingJson, 'inviter_signing_key': '!!not base64'},
+      <String, Object?>{..._bindingJson, 'tag': null},
+    ];
+    for (final binding in broken) {
+      final (client, _) = await _client((_) => <String, Object?>{
+            'target_kind': 'group',
+            'target_name': 'Hikers',
+            'inviter_username': 'alice',
+            'expires_at': '2026-11-14T10:00:00Z',
+            'already_member': false,
+            if (binding != null) 'binding': binding,
+          });
+      await expectLater(
+        client.previewMembershipInvite('tok', link.locator),
+        throwsA(isA<ApiResponseException>()),
+        reason: '$binding',
+      );
+    }
   });
 
   test('the new server error codes have client mappings', () {

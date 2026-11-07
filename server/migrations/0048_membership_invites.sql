@@ -12,12 +12,24 @@
 -- community channels belong to their community and take no invitation).
 -- uses counts approvals, so max_uses bounds how many accounts one link can
 -- bring in. Revoking an invitation cancels its pending requests.
+--
+-- Binding (D90). The creating device also binds the invitation to its target,
+-- account and device keys: binding_tag is HMAC-SHA256, keyed from the link
+-- secret, over the origin, target, creating account, creating device and that
+-- device's signing key. The server cannot compute or check it (it never has
+-- the secret); it stores the tag and the creating device's id and signing key
+-- (taken from devices, never from the request) and returns them with the
+-- preview, so the joiner can recompute the tag from the link and refuse a
+-- swapped target. The invitation stops working when that device is revoked.
 
 CREATE TABLE membership_invites (
   id TEXT PRIMARY KEY,
   community_id TEXT REFERENCES communities(id) ON DELETE CASCADE,
   conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,
   created_by TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  created_by_device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+  creator_signing_key BLOB NOT NULL CHECK (length(creator_signing_key) = 32),
+  binding_tag TEXT NOT NULL CHECK (length(binding_tag) = 64),
   locator_hash TEXT NOT NULL UNIQUE CHECK (length(locator_hash) = 64),
   max_uses INTEGER NOT NULL CHECK (max_uses BETWEEN 1 AND 1000),
   uses INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0),
