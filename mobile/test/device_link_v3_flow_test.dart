@@ -646,6 +646,24 @@ void main() {
       skip: skip);
 
   test(
+      'L1: a server that swaps the claimed signing key after the code was '
+      'checked gets no approval and no change-2 version',
+      () => _withWorld((w) async {
+            final sas = await w.claimAndRefresh();
+            // The record the source fetches again at approval names another
+            // key; its transcript_hash field is left as the real one.
+            w.server.link = <String, Object?>{
+              ...w.server.link!,
+              'claimed_signing_key': base64Encode(List<int>.filled(32, 7)),
+            };
+            await w.source.approveActiveDeviceLink(sas);
+            expect(w.source.errorFor(Ops.deviceLink), isNotNull);
+            expect(w.server.link!['state'], 'claimed',
+                reason: 'nothing may be approved for a swapped key');
+          }),
+      skip: skip);
+
+  test(
       'a restart while the claim waits resumes it, and the claim is replayed '
       'byte for byte',
       () => _withWorld((w) async {

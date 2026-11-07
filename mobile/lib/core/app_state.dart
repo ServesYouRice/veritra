@@ -29,6 +29,7 @@ import '../crypto/native_crypto_bindings.dart'
         idBytes;
 import 'device_lists.dart';
 import '../crypto/sha256.dart';
+import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';

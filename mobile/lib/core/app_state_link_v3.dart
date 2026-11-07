@@ -470,13 +470,40 @@ extension DeviceLinkV3Actions on AppState {
         // key of the transcript native verified (claim tag and typed code)
         // before it released the approval tag; a server record that no
         // longer matches that transcript is refused first.
+        //
+        // The record was fetched again just now, so its fields are the
+        // server's word: comparing its `transcript_hash` field with native's
+        // proves nothing about `claimed_device_id` or `claimed_signing_key`.
+        // The transcript is recomputed from the very fields the version will
+        // name and must equal the one native verified, and the recipient
+        // must be the device the confirmation stored.
         final verified = (await crypto.k2Inspect(id)).verification;
-        if (!_constantTimeBytesEqual(
-            verified.transcriptHash, link.bytes('transcript_hash'))) {
+        final recipient = link.recipientDeviceId;
+        if (recipient == null ||
+            recipient != row.peerDeviceId ||
+            link.origin != row.origin ||
+            link.accountId != current.accountId) {
+          throw const K2TransferException('the claim changed');
+        }
+        final recipientKey = link.bytes('claimed_signing_key');
+        final transcript = deviceLinkV3TranscriptHash(K2LinkContext(
+          id: id,
+          accountId: link.accountId,
+          nonce: link.bytes('link_nonce'),
+          sourceDeviceId: current.deviceId!,
+          sourceSigningKey: link.bytes('existing_signing_key'),
+          recipientDeviceId: recipient,
+          recipientSigningKey: recipientKey,
+          transferPublicKey: link.bytes('transfer_public_key'),
+        ));
+        if (!_constantTimeBytesEqual(verified.transcriptHash, transcript) ||
+            !_constantTimeBytesEqual(
+                verified.transcriptHash, link.bytes('transcript_hash'))) {
           throw const K2TransferException('the claim changed');
         }
         approved = await _approveLinkWithDeviceList(
-            client, current, link, request.approvalTag);
+            client, current, link, request.approvalTag,
+            recipientDeviceId: recipient, recipientSigningKey: recipientKey);
       case 'approved' || 'consumed':
         if (link.fields['approval_tag'] != base64Encode(request.approvalTag)) {
           throw const K2TransferException('another approval is stored');

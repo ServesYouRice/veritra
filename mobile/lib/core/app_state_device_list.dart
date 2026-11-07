@@ -125,17 +125,20 @@ extension AppStateDeviceList on AppState {
   /// The change-2 version a K2 link approval carries: this account's head
   /// plus the new device with the signing key the link's authenticated
   /// transcript names. Called only after the claim tag and the typed code
-  /// verified (the approval request exists only then).
+  /// verified (the approval request exists only then). [recipientDeviceId]
+  /// and [recipientSigningKey] must be the pair whose recomputed transcript
+  /// hash equals the one native verified; the caller checks that.
   Future<DeviceLinkV3Record> _approveLinkWithDeviceList(
     ApiClient client,
     Session current,
     DeviceLinkV3Record link,
-    List<int> approvalTag,
-  ) async {
+    List<int> approvalTag, {
+    required String recipientDeviceId,
+    required List<int> recipientSigningKey,
+  }) async {
     late DeviceLinkV3Record approved;
-    final recipient = link.recipientDeviceId;
-    if (recipient == null) throw StateError('the link names no device');
-    final newKey = link.bytes('claimed_signing_key');
+    final recipient = recipientDeviceId;
+    final newKey = Uint8List.fromList(recipientSigningKey);
     await _signAndSend(
       current,
       (head) {
