@@ -25,6 +25,7 @@ import (
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/mlswire/mlswiretest"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 func TestAccountExportRequiresRecentAuthentication(t *testing.T) {
@@ -454,6 +455,7 @@ func TestLogoutAndDeviceRevocationInvalidateSessions(t *testing.T) {
 
 func TestSetupRejectsNonProductionKeyPackage(t *testing.T) {
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 	application, err := app.New(context.Background(), config.Config{
 		Addr:         ":0",
 		DataDir:      dir,
@@ -516,6 +518,7 @@ func TestLoginBackoffIsBoundedAndAccountPrivacySafe(t *testing.T) {
 
 func TestSetupRejectsInvalidUsername(t *testing.T) {
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 	application, err := app.New(context.Background(), config.Config{
 		Addr:         ":0",
 		DataDir:      dir,
@@ -912,6 +915,7 @@ func newTestAppWithOwnerConfig(t *testing.T, mutate func(*config.Config)) (*app.
 	if mutate != nil {
 		mutate(&cfg)
 	}
+	storagetest.SeedMigrated(t, dbPath)
 	application, err := app.New(context.Background(), cfg, nil)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
@@ -943,6 +947,7 @@ func newTestAppWithOwnerConfig(t *testing.T, mutate func(*config.Config)) (*app.
 func newTestHandlerWithOwnerDevice(t *testing.T) (http.Handler, string, string) {
 	t.Helper()
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 	application, err := app.New(context.Background(), config.Config{
 		Addr:         ":0",
 		DataDir:      dir,
@@ -1572,6 +1577,7 @@ func TestSetupStatusReportsAttachmentCap(t *testing.T) {
 	for name, limit := range map[string]int64{"default": 0, "operator": 5 << 20} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
+			storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 			application, err := app.New(context.Background(), config.Config{
 				Addr:         ":0",
 				DataDir:      dir,

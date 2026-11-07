@@ -17,6 +17,7 @@ import (
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/mlswire/mlswiretest"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 const rotateHeader = "X-Veritra-Rotate-Session"
@@ -33,6 +34,7 @@ func newRotationOwner(t *testing.T) rotationOwner {
 	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "private-messenger.db")
+	storagetest.SeedMigrated(t, dbPath)
 	application, err := app.New(context.Background(), config.Config{
 		Addr:         ":0",
 		DataDir:      dir,

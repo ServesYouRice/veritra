@@ -21,7 +21,10 @@ jobs:
         with:
           go-version-file: .go-version
       - name: Test with race detector and coverage
-        run: go test -race -coverprofile=coverage.out ./...
+        # -timeout is per package; the 10-minute default left the slowest
+        # package (internal/storage, about 6 minutes locally under -race, more
+        # on a runner) no headroom. The job limit above still applies.
+        run: go test -race -timeout 15m -coverprofile=coverage.out ./...
         working-directory: server
       - name: gofmt
         run: |

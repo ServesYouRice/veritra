@@ -14,11 +14,13 @@ import (
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/mlswire/mlswiretest"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 func newLimitedHandler(t *testing.T, limits config.Limits) (http.Handler, string) {
 	t.Helper()
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 	application, err := app.New(context.Background(), config.Config{
 		Addr: ":0", DataDir: dir, DatabasePath: filepath.Join(dir, "private-messenger.db"),
 		StoragePath: filepath.Join(dir, "blobs"), InstanceName: "Test Messenger", SetupToken: "test-setup-token",

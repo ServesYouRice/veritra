@@ -83,9 +83,13 @@ func TestShutdownCutsOffStalledRequestWithinBudget(t *testing.T) {
 	}
 }
 
+// waitUntil polls for a precondition the test needs before it measures
+// anything. The deadline only bounds a hang: it is far above any start-up or
+// scheduling delay (a loaded -race runner needed more than the 3 s that was
+// here), and none of the timing assertions depend on it.
 func waitUntil(t *testing.T, ok func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for !ok() {
 		if time.Now().After(deadline) {
 			t.Fatal("condition not reached")

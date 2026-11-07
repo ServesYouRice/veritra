@@ -13,6 +13,7 @@ import (
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 func TestProductionSetupTokenIsRequiredOnlyUntilOwnerExists(t *testing.T) {
@@ -138,6 +139,7 @@ func TestServeCancellationDrainsRealtimeAndStopsListener(t *testing.T) {
 func deploymentConfig(t *testing.T) config.Config {
 	t.Helper()
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 	return config.Config{
 		Addr:          "127.0.0.1:0",
 		DataDir:       dir,

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 const monitoringDir = "../../../deploy/kubernetes/examples/monitoring"
@@ -45,6 +46,7 @@ func TestAlertRuleFilesMatch(t *testing.T) {
 // every runbook link must point at an existing operations.md heading.
 func TestAlertRulesReferenceExportedMetricsAndRunbooks(t *testing.T) {
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 	application, err := New(context.Background(), config.Config{
 		Addr: ":0", DataDir: dir, DatabasePath: filepath.Join(dir, "private-messenger.db"),
 		StoragePath: filepath.Join(dir, "blobs"), InstanceName: "test", EnableMetrics: true,

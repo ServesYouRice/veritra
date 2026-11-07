@@ -38,7 +38,12 @@ func serveOverPipe(t *testing.T, k keepalive, outbound <-chan []byte) (net.Conn,
 // queued behind an outbound write that takes nearly writeWait still leaves
 // time for the pong (VAL-239).
 func TestKeepaliveSlowButHealthyPeerStaysConnected(t *testing.T) {
-	k := scaledKeepalive(60) // 500ms ping, 1s pong wait, 166ms write wait
+	// Same relation as production at 1/20: 1.5s ping, 3s pong wait, 500ms
+	// write wait. At 1/60 the pong had only 500ms to come back after a ping
+	// that waited behind one 100ms read and its own 100ms read plus the 100ms
+	// reply sleep, so about 200ms of scheduler delay disconnected a healthy
+	// peer on a loaded runner. Here the same path leaves about 600ms.
+	k := scaledKeepalive(20)
 	outbound := make(chan []byte, 64)
 	stopFeeding := make(chan struct{})
 	t.Cleanup(func() { close(stopFeeding) })

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 func withFilesystem(t *testing.T, avail, size uint64) {
@@ -40,6 +41,7 @@ func TestInstanceStorageDerivesFromTheBlobVolume(t *testing.T) {
 func TestStartupLogsResolvedLimitsAndAccountFitsInstance(t *testing.T) {
 	withFilesystem(t, 1<<30, 2<<30) // 2 GiB volume: 184 MiB derived
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "db"))
 	var logs bytes.Buffer
 	application, err := New(context.Background(), config.Config{
 		Addr: ":0", DataDir: dir, DatabasePath: filepath.Join(dir, "db"), StoragePath: filepath.Join(dir, "blobs"),
@@ -64,6 +66,7 @@ func TestStartupLogsResolvedLimitsAndAccountFitsInstance(t *testing.T) {
 
 func TestLowDiskGuardFollowsTheSampler(t *testing.T) {
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "db"))
 	application, err := New(context.Background(), config.Config{
 		Addr: ":0", DataDir: dir, DatabasePath: filepath.Join(dir, "db"), StoragePath: filepath.Join(dir, "blobs"),
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
