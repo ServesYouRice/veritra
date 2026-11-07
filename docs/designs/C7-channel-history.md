@@ -322,9 +322,13 @@ and private-channel groups) is sent in two parts:
      - Any other channel (`members_from_join`, `keyless`, `unsure`,
        `closed`, or no chain state): `key_c` random; the slot holds the
        head (or 512 zero bytes) and a zero entry.
-     A slot's plaintext is a function of the chain and the removals up to
-     `for_epoch` only, so every honest sender writes identical bytes for it
-     (only the nonce differs): there is nothing to race over.
+     The head in a slot is the head **as of `for_epoch`** (the last
+     record applied before the first message of a later epoch, in sync
+     order), not the sender's current head, so a slot's plaintext is a
+     function of the chain and the removals up to `for_epoch` only and
+     every honest sender writes identical bytes for it (only the nonce
+     differs): there is nothing to race over. Devices therefore keep the
+     current period's record bytes, not only their hashes.
    - **Missing `history_sync`.** If none follows a membership commit, C0's
      reconcile coordinator sends one; every other device waits a jittered
      delay that grows with group size, and cancels it when it applies a
@@ -348,12 +352,14 @@ and private-channel groups) is sent in two parts:
      becomes `ok` when a later valid slot gives a matching key, or a record
      with its key becomes the head. C3/C4 visibility holds because private
      channels are their own groups.
-   - **Generation entry and backward walk.** The entry (128 bytes) is
-     `u64 E_cur | key_commit[32] | u64 E_prev | CHK_prev[32] |
-     lp(prev_group_id) | u64 E_prev_close`, zero-padded: the current
-     generation's opening epoch and `sha256("veritra-c7-chk-v1" | key)`,
-     and a wrap of the previous generation of the same period (zeros at
-     the period's first generation). A slot is sealed under `key_c`, so
+   - **Generation entry and backward walk.** The entry is `u64 E_cur |
+     key_commit[32] | u64 E_prev | CHK_prev[32]` (80 bytes, zero-padded to
+     128): the current generation's opening epoch and
+     `sha256("veritra-c7-chk-v1" | key)`, and a wrap of the previous
+     generation **in the same group** (it closes at `E_cur`). The wrap is
+     zero at the period's first generation and when the previous
+     generation lives in another group; then the walk continues through
+     the move message (decision 11). A slot is sealed under `key_c`, so
      a newcomer holding `CHK_g` opens the slot of any stored
      `history_sync` whose `for_epoch` falls in generation `g` (at least
      the one that followed the removal opening `g`) and learns `g - 1`.
@@ -365,9 +371,12 @@ and private-channel groups) is sent in two parts:
      when, in that group, it meets a message it could not fully apply (a
      P1 `invalid` body, a D54 undecryptable message, a message refused as
      `SENDER_REMOVED`, or one passed over as expired or beyond the
-     past-epoch window, I33), and marks one channel `unsure` when a live
-     post in it carries a signed `gen` the device does not hold for that
-     channel (the sender applied a record this device did not). It clears
+     past-epoch window, I33), and, while a channel is `ok`, marks it
+     `unsure` when a live post in it carries a signed `gen` above the
+     highest generation the device knows for it (the sender applied a
+     record this device did not; a lower `gen` is a lagging sender and
+     harmless). A `keyless` channel is not moved to `unsure` by this, so
+     its path to `ok` stays open. It clears
      only by row 3 or row 5 with a record whose `epoch` is above the
      triggering message's epoch. A quiet channel may stay `unsure` until
      its next record: a gap (I3), never a leak.
@@ -492,8 +501,9 @@ and private-channel groups) is sent in two parts:
     new generation there with the record's random key.
     - The compact form adds `lp(close_group_id)` (the old group) and a
       128-byte wrap field, always present: for a narrowing move (open to
-      private) of a `full` channel it is a generation entry wrapping the
-      old group's current generation, and the move message's body is
+      private) of a `full` channel it wraps the old group's current
+      generation as `u64 E_prev | CHK_prev[32] | lp(prev_group_id) |
+      u64 E_prev_close` (at most 114 bytes, zero-padded), and the move message's body is
       sealed under the new key, so a newcomer walking back opens it;
       otherwise it is 128 random bytes. A widening move (private to open)
       starts a new period with no wrap. Same size in every mode.
@@ -508,7 +518,7 @@ seq 5 at epoch 10 (key `K10`). Members A, B, R and others hold `K10`.
 | Step | What happens | Keys | R |
 |---|---|---|---|
 | 1 | A commits the removal of R, producing epoch 20 | Every device merging it derives `K20 = Export(…, C, G, 20)` in the same transaction. Generation 10 closes at 20; posts at epoch 20 on seal under `K20` | Not in epoch 20: cannot derive `K20` |
-| 2 | A sends `HS20` (`for_epoch = 20`) | Slot `C`: head seq 5, entry (`E_cur = 20`, commit of `K20`, wrap `K10`, 10, `G`, 20), sealed under `K20` | Cannot read it |
+| 2 | A sends `HS20` (`for_epoch = 20`) | Slot `C`: head seq 5, entry (`E_cur = 20`, commit of `K20`, wrap: `E_prev = 10`, `K10`), sealed under `K20` | Cannot read it |
 | 3 | B commits the add of N, producing 21 (no waiting), and sends `HS21` | Slot `C`: `key_c = K20`, the same head and entry bytes as `HS20`'s. N: row 1, checks `key_commit`, `ok`; walks back: `HS20`'s slot (sealed under `K20`) gives `K10` with window [10, 20) | |
 
 If B's add wins the epoch race instead (add produces 20, the removal is
@@ -734,7 +744,10 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   - `pm_crypto_group_c7_rekey(handle, group_id, community_id, channel_id,
     epoch) -> 32 bytes`: `MLS-Exporter("veritra-c7-rekey-v1",
     lp(community_id) | lp(channel_id) | lp(group_id) | u64(epoch), 32)`,
-    refused unless `epoch` is the group's current epoch (new);
+    refused unless `epoch` is the group's current epoch (new; built on
+    OpenMLS 0.9.2 `MlsGroup::export_secret`,
+    `src/group/mls_group/exporting.rs`, which exports from the current
+    epoch only and refuses an inactive group);
   - a decrypt that also returns the message's epoch (a new export;
     `pm_crypto_group_decrypt` at `crypto/rust/src/ffi.rs:1521` stays);
   - a read of a member's signature key from the current tree, by account
@@ -753,8 +766,8 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   history route, the former-member key route, the group-level exception,
   the C2 change, the replay check, refusals of legacy edit/delete and
   paging in community conversations, the `history-hide` call.
-- **Local DB:** per channel the head, applied record hashes, highest valid
-  `seq`, status, and the current period's generations (opening epoch,
+- **Local DB:** per channel the head, the current period's records (bytes
+  and hashes), highest valid `seq`, status, and the current period's generations (opening epoch,
   group, key, window); per group the floor and the last removal's
   exported values; per row its period and generation. In the sealed
   database, written in the MLS transaction; deleted on the device's own
