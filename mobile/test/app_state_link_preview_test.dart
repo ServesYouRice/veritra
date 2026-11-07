@@ -70,7 +70,7 @@ void main() {
   });
 
   test('a failed build still sends the message', () async {
-    final sent = state.replyTo('conv_1', 'dev_x:action', _text);
+    final sent = state.sendMessageTo('conv_1', _text);
     await Future<void>.delayed(Duration.zero);
     previews.gate.completeError(StateError('network down'));
     expect(await sent, isTrue);
