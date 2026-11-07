@@ -1,19 +1,64 @@
 {
-  "description": "C6 franking v1 and report sealing known-answer vector (docs/crypto.md, change log ABI 12, and the Franking v1 section). Checked by crypto/rust/src/report_tests.rs, server/internal/franking/franking_test.go and mobile/test/c6_report_crypto_test.dart.",
+  "description": "C6 franking v1 and report sealing known-answer vector (docs/crypto.md, change log ABI 12, and the Franking v1 section). Checked by crypto/rust/src/report_tests.rs, server/internal/franking/franking_test.go and mobile/test/c6_report_crypto_test.dart. Sections: commitment and commitment_cases (HMAC, with wire_json), malformed_frank and unfranked_frank_in_body (wire spellings every side must refuse or read as unfranked), report_hpke (sealed by Rust) and report_hpke_go_sealed (sealed by Go crypto/hpke, opened by Rust and Dart). Regenerate only with a reviewed reason; a changed byte here is a wire change.",
   "commitment": {
-    "key_hex": "0707070707070707070707070707070707070707070707070707070707070707",
-    "conversation_id": "conv_11111111111111111111111111111111",
-    "sender_device_id": "dev_22222222222222222222222222222222",
     "action_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "commit_hex": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+    "conversation_id": "conv_11111111111111111111111111111111",
+    "key_hex": "0707070707070707070707070707070707070707070707070707070707070707",
     "payload": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"}}",
-    "wire_json": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"}}",
-    "commit_hex": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a"
+    "sender_device_id": "dev_22222222222222222222222222222222",
+    "wire_json": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"}}"
   },
+  "commitment_cases": [
+    {
+      "action_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commit_hex": "7caf34f380243d91210e2d4936ab7f009a189cb7a54ad429c04f346a492c00eb",
+      "conversation_id": "conv_11111111111111111111111111111111",
+      "key_hex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "name": "channel_hidden_escaped_text",
+      "payload": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"channel_id\":\"chan_33333333333333333333333333333333\",\"hidden\":true,\"body\":{\"text\":\"café \\\"quoted\\\" \\\\ \\n 日本語 😀 über\"}}",
+      "sender_device_id": "dev_22222222222222222222222222222222",
+      "wire_json": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"channel_id\":\"chan_33333333333333333333333333333333\",\"hidden\":true,\"body\":{\"text\":\"café \\\"quoted\\\" \\\\ \\n 日本語 😀 über\"},\"frank\":{\"k\":\"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"}}"
+    },
+    {
+      "action_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "commit_hex": "90f679106f254c7c1ba0ba392a91697aad51b84f8f9f39c31f0f63acf68fb0dd",
+      "conversation_id": "conv_11111111111111111111111111111111",
+      "key_hex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+      "name": "multibyte_utf8_text",
+      "payload": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"café 日本語 😀\"}}",
+      "sender_device_id": "dev_22222222222222222222222222222222",
+      "wire_json": "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"café 日本語 😀\"},\"frank\":{\"k\":\"KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=\"}}"
+    }
+  ],
+  "malformed_frank": [
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"}, \"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"}}",
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{ \"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"}}",
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\",\"x\":1}}",
+    "{\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"},\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"}}",
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_v7-_s=\"}}",
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\"}}",
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw==\"}}",
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwd=\"}}",
+    "[1]",
+    "not json",
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"},\"body\":{\"text\":\"hi\"},\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"}}"
+  ],
+  "unfranked_frank_in_body": [
+    "{\"v\":2,\"type\":\"text\",\"conversation_id\":\"conv_11111111111111111111111111111111\",\"sender_device_id\":\"dev_22222222222222222222222222222222\",\"action_id\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"body\":{\"text\":\"hi\",\"frank\":{\"k\":\"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=\"}}}"
+  ],
   "report_hpke": {
-    "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
-    "public_hex": "8dcbee9a985dc115462bcbbb8239e673e4fa5c2e0e4426bda93639e173b7661d",
     "aad": "veritra-c6-vector-aad",
     "plaintext": "report vector",
-    "sealed_hex": "565250319f721efe1f0b885c8afbd616c5f3a660e4debf2498d543c737ec555d157fc716e7b3a4f8a6157ae3b0494f42a81759c46ca35d103648fe7196a1b936a0"
+    "public_hex": "8dcbee9a985dc115462bcbbb8239e673e4fa5c2e0e4426bda93639e173b7661d",
+    "sealed_hex": "565250319f721efe1f0b885c8afbd616c5f3a660e4debf2498d543c737ec555d157fc716e7b3a4f8a6157ae3b0494f42a81759c46ca35d103648fe7196a1b936a0",
+    "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
+  },
+  "report_hpke_go_sealed": {
+    "aad": "veritra-c6-go-sealed-aad",
+    "plaintext": "go-sealed report é 日本",
+    "public_hex": "c84d08c16c677b635981b33854352fba8bcfe04c64ef97d258569156b3c0990e",
+    "sealed_hex": "5652503170329ac4245c2e2e457351bf4bf8bf824068aacdbc79ca90bec1e1fbcb3e7d0cb7728cadaf0b06825ebb006257df6131b7e4dce15985d78cafec14076aebfc8475d69cf9d2ecba5fa2fb",
+    "seed_hex": "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f"
   }
 }

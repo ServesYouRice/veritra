@@ -462,6 +462,15 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     key with Go's own HKDF and `crypto/hpke` DeriveKeyPair and opens the
     Rust-sealed report with `crypto/hpke`, an independent RFC 9180
     implementation (test only; the server never opens reports).
+    The vector also holds extra commitment cases (a `channel_id` and
+    `hidden` payload, escaped and multi-byte UTF-8 text), one report sealed
+    by Go's `crypto/hpke` that Rust and Dart open, and the malformed `frank`
+    spellings, which Rust and Go check with a strict test-side reader and
+    Dart with `splitFrank`. Review fixes (2026-11-06, no ABI change):
+    `franking.Commit` now has the Rust size bounds; `report_seal` refuses
+    every low-order X25519 point (including non-canonical spellings) as
+    invalid input and maps any other seal failure to `PM_CRYPTO_ERROR`;
+    `frankWireJson` refuses an empty object.
   - **Dart.** `ReportCryptoService` (`crypto_service.dart`), implemented by
     `NativeCryptoService`; `UnavailableCryptoService` refuses every method
     with `StateError`. `mobile/lib/crypto/franking.dart` holds the `P` and
