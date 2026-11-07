@@ -92,6 +92,29 @@ Map<String, Object?> messageDecoration(Map<String, Object?> body,
   };
 }
 
+/// `format_json` for export: the same decoration without the B2 `link_preview`
+/// key, or null when nothing else is left. Used by the K2 history snapshot and
+/// the backup so a 22 KiB thumbnail per row never counts against their 64 MiB
+/// caps, and so an older reader (which allows only `entities` and `mentions`)
+/// still accepts the snapshot. A value that is not a JSON object is returned
+/// unchanged; the readers reject it as before.
+String? formatJsonWithoutPreview(String? formatJson) {
+  if (formatJson == null || !formatJson.contains('"link_preview"')) {
+    return formatJson;
+  }
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(formatJson);
+  } on FormatException {
+    return formatJson;
+  }
+  if (decoded is! Map || !decoded.containsKey('link_preview')) {
+    return formatJson;
+  }
+  final rest = Map<Object?, Object?>.of(decoded)..remove('link_preview');
+  return rest.isEmpty ? null : jsonEncode(rest);
+}
+
 /// Marker parsing happens only on the sender. Received text is never parsed.
 Map<String, Object?> composeMessage(String input,
     {Map<String, String> accountsByUsername = const {}}) {

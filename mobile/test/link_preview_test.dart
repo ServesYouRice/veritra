@@ -323,20 +323,65 @@ void main() {
           preferences: const <LocalConversationPref>[],
         );
 
-    test('a stored preview survives an export and import', () {
-      final preview = LinkPreview(
-        url: url,
-        title: 'Veritra',
-        thumbnail: LinkPreviewThumbnail(
-          png: fakePng(64, 48),
-          width: 64,
-          height: 48,
-        ),
-      );
+    final preview = LinkPreview(
+      url: url,
+      title: 'Veritra',
+      thumbnail: LinkPreviewThumbnail(
+        png: fakePng(64, 48),
+        width: 64,
+        height: 48,
+      ),
+    );
+    final bold = <Object?>[
+      <String, Object?>{'type': 'bold', 'offset': 0, 'length': 4},
+    ];
+
+    /// The snapshot bytes with the first row's `format_json` replaced, as a
+    /// B2 build that kept previews in snapshots would have written them.
+    List<int> withFormat(List<int> bytes, String formatJson) {
+      final root = jsonDecode(utf8.decode(bytes)) as Map<String, Object?>;
+      final messages = (root['messages'] as List).cast<Map<String, Object?>>();
+      messages.first['formatJson'] = formatJson;
+      return utf8.encode(jsonEncode(root));
+    }
+
+    test('an export leaves the whole preview out', () {
+      final stored = jsonEncode(<String, Object?>{
+        'entities': bold,
+        'link_preview': preview.toWire(),
+      });
+      final bytes = snapshot(row(stored)).encode();
+      expect(utf8.decode(bytes), isNot(contains('link_preview')));
+      expect(utf8.decode(bytes), isNot(contains('thumb')));
+      final kept = HistorySnapshot.decode(bytes).messages.single.formatJson!;
+      expect((jsonDecode(kept) as Map).keys, <String>['entities']);
+    });
+
+    test('a row that held only a preview exports without format_json', () {
+      final stored =
+          jsonEncode(<String, Object?>{'link_preview': preview.toWire()});
+      final copy = HistorySnapshot.decode(snapshot(row(stored)).encode());
+      expect(copy.messages.single.formatJson, isNull);
+      expect(copy.messages.single.body, text);
+    });
+
+    test('formatJsonWithoutPreview keeps everything else', () {
+      expect(formatJsonWithoutPreview(null), isNull);
+      expect(formatJsonWithoutPreview('{"entities":[]}'), '{"entities":[]}');
+      expect(formatJsonWithoutPreview('not json "link_preview"'),
+          'not json "link_preview"');
+      const onlyPreview = '{"link_preview":{}}';
+      expect(formatJsonWithoutPreview(onlyPreview), isNull);
+      const mixed = '{"mentions":[],"link_preview":{"url":"x"}}';
+      expect(formatJsonWithoutPreview(mixed), '{"mentions":[]}');
+    });
+
+    test('an import still accepts and re-validates a preview', () {
+      final bytes = snapshot(row(null)).encode();
       final stored = jsonEncode(<String, Object?>{
         'link_preview': preview.toWire(),
       });
-      final copy = HistorySnapshot.decode(snapshot(row(stored)).encode());
+      final copy = HistorySnapshot.decode(withFormat(bytes, stored));
       final back = jsonDecode(copy.messages.single.formatJson!) as Map;
       expect(back['link_preview'], preview.toWire());
     });
@@ -347,11 +392,10 @@ void main() {
           'url': 'https://bank.example/',
           'title': 'Bank',
         },
-        'entities': <Object?>[
-          <String, Object?>{'type': 'bold', 'offset': 0, 'length': 4},
-        ],
+        'entities': bold,
       });
-      final copy = HistorySnapshot.decode(snapshot(row(stored)).encode());
+      final bytes = withFormat(snapshot(row(null)).encode(), stored);
+      final copy = HistorySnapshot.decode(bytes);
       final back = jsonDecode(copy.messages.single.formatJson!) as Map;
       expect(back.containsKey('link_preview'), isFalse);
       expect(back.containsKey('entities'), isTrue);

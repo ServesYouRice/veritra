@@ -449,9 +449,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   server never fetch. No ABI, server API, migration or local schema change
   (counters stay ABI 12, schema 18, migration 0046): the received preview
   lives in the existing `format_json`. Adds one Dart dependency, `html`
-  0.15.7 (with `csslib` 1.0.2), owner-approved for B2. The K2 history
-  snapshot reader accepts the new `format_json` key, so an older build
-  cannot import a snapshot that contains one.
+  0.15.7 (with `csslib` 1.0.2); the owner's approval is not yet recorded as
+  a decision in STATE.md, so the merge waits for it. A preview never leaves
+  the device in a K2 history snapshot or a backup: both writers remove the
+  whole `link_preview` key from `format_json` (about 22 KiB of thumbnail a
+  row would push a long history over their 64 MiB caps, and a build older
+  than B2 rejects a snapshot with the key). The K2 reader still accepts it.
+  Keeping previews across a transfer needs a snapshot/backup format bump,
+  which is a separate decision.
 
 - **C6 foundation, report seal and franking commitment, ABI 12
   (2026-11-01):** additive; the Dart binding and the header now pin ABI 12
@@ -1745,10 +1750,14 @@ link cannot be used to learn that a recipient read a message.
   clears the preview with the text.
 - **Local storage.** A received preview is kept under the key `link_preview`
   of the row's existing `format_json`. No column, table, migration or
-  schema number changes. The K2 history snapshot and backup readers accept
-  the key and re-validate it against the text; a build older than B2
-  rejects a snapshot that contains it (its reader allows only `entities` and
-  `mentions`). Notifications and message search never read it.
+  schema number changes. The K2 history snapshot and backup writers drop
+  the whole key from `format_json` (and the field itself when nothing else
+  is left), so exports stay small and older readers still accept them: a
+  copied or restored history shows text and formatting but no preview
+  cards. The K2 snapshot reader still accepts the key and re-validates it
+  against the text. The backup reader does not inspect `format_json`; a
+  stored preview is checked again when a message is drawn
+  (`chat_screen.dart`). Notifications and message search never read it.
 - **Residuals.** (1) The site, and anyone on the path, sees the sender's
   address and that it was asked for this page, once, when the message is
   sent. (2) The address check happens before the connection; a name that
