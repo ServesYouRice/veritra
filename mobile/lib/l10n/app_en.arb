@@ -962,5 +962,17 @@
   "recoveryKeyOriginMismatch": "This device uses {current}, but the server's recovery address is {origin}. Recovery works only from {origin}.",
   "@recoveryKeyOriginMismatch": {
     "placeholders": {"current": {"type": "String", "example": "https://chat.example.org:8443"}, "origin": {"type": "String", "example": "https://chat.example.org"}}
-  }
+  },
+  "voiceNoteRecord": "Record a voice note",
+  "voiceNoteStop": "Stop and attach",
+  "voiceNoteDiscard": "Discard recording",
+  "voiceNoteRecording": "Recording {time}",
+  "@voiceNoteRecording": {"placeholders": {"time": {"type": "String"}}},
+  "voiceNotePermissionDenied": "Microphone access is off. Allow it in the system settings to record.",
+  "voiceNoteRecordFailed": "The recording could not be started.",
+  "voiceNotePlay": "Play",
+  "voiceNotePause": "Pause",
+  "voiceNoteSemantics": "Voice note, {size}",
+  "@voiceNoteSemantics": {"placeholders": {"size": {"type": "String"}}},
+  "voiceNotePlayFailed": "The voice note could not be played."
 }

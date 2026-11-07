@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io' show File;
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart' show XFile;
@@ -35,6 +36,8 @@ import 'emoji_picker.dart';
 import 'message_request_screen.dart';
 import 'message_ticks.dart';
 import 'typing_line.dart';
+import 'voice_notes.dart';
+import 'voice_recorder.dart';
 import '../../core/receipts_state.dart' show MessageTick;
 
 /// Conversation detail screen. Pushed from the chat list, or the detail pane
@@ -75,6 +78,15 @@ class _ChatScreenState extends State<ChatScreen> {
 
   /// Files waiting to be sent from this conversation (W9, B4).
   final _attachments = ComposerAttachments();
+
+  /// Records a voice note into [_attachments] (B1).
+  late final VoiceRecorderController _voice = VoiceRecorderController(
+    backend: RecordPluginBackend(),
+    newFile: newVoiceNotePath,
+    onAutoStop: (file) {
+      if (mounted) unawaited(_addVoiceNote(file));
+    },
+  );
 
   /// The key of the message the next send replies to, if any. The message
   /// itself is read from the current history ([_replyTarget]), never kept.
@@ -219,6 +231,7 @@ class _ChatScreenState extends State<ChatScreen> {
     composer.dispose();
     unawaited(_attachments.clear());
     _attachments.dispose();
+    _voice.dispose();
     super.dispose();
   }
 
@@ -460,6 +473,11 @@ class _ChatScreenState extends State<ChatScreen> {
                       ),
                     if (!readOnly && widget.state.attachmentsAvailable)
                       AttachmentTray(tray: _attachments),
+                    if (!readOnly && widget.state.attachmentsAvailable)
+                      VoiceRecorderBar(
+                        controller: _voice,
+                        onStop: _stopVoiceNote,
+                      ),
                     if (!readOnly)
                       _Composer(
                         enabled: conversation != null,
@@ -480,6 +498,10 @@ class _ChatScreenState extends State<ChatScreen> {
                         onPasteFiles: widget.state.attachmentsAvailable
                             ? _pasteFiles
                             : null,
+                        onVoice: widget.state.attachmentsAvailable
+                            ? _startVoiceNote
+                            : null,
+                        voiceListenable: _voice,
                         onEditLast: widget.state.messageActionsAvailable
                             ? _editLast
                             : null,
@@ -514,6 +536,30 @@ class _ChatScreenState extends State<ChatScreen> {
   Future<void> _addFiles(List<XFile> files, {Set<String>? temporary}) =>
       addAttachmentFiles(context, widget.state, _attachments, files,
           temporaryPaths: temporary ?? const <String>{});
+
+  Future<void> _startVoiceNote() async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await _voice.start();
+    if (result == VoiceStartResult.started) return;
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(result == VoiceStartResult.permissionDenied
+            ? l10n.voiceNotePermissionDenied
+            : l10n.voiceNoteRecordFailed),
+      ));
+  }
+
+  Future<void> _stopVoiceNote() async {
+    final file = await _voice.finish();
+    if (file != null && mounted) await _addVoiceNote(file);
+  }
+
+  /// The finished recording waits on the tray; Send encrypts and uploads it
+  /// like any other file.
+  Future<void> _addVoiceNote(XFile file) =>
+      _addFiles(<XFile>[file], temporary: <String>{file.path});
 
   /// Ctrl+V with files or an image on the clipboard; false means the
   /// clipboard held neither and the text paste goes ahead.
@@ -1235,6 +1281,10 @@ class _MessageList extends StatelessWidget {
                     ? null
                     : () => onMessageActions!(local, mine),
                 senderLabel: _senderLabel(senderAccountId),
+                onLoadVoiceNote: state.attachmentsAvailable
+                    ? (entry) => decryptVoiceNote(state, entry,
+                        conversationId: conversationId)
+                    : null,
                 onOpenAttachment: state.attachmentsAvailable
                     ? (entry) => openAttachment(
                           context,
@@ -1523,6 +1573,7 @@ class _MessageBubble extends StatelessWidget {
     this.tick,
     this.onActions,
     this.onOpenAttachment,
+    this.onLoadVoiceNote,
     this.onMention,
     this.starred = false,
     this.copiedHistory = false,
@@ -1536,6 +1587,9 @@ class _MessageBubble extends StatelessWidget {
 
   /// Opens one attachment of an attachment message.
   final void Function(AttachmentEntry entry)? onOpenAttachment;
+
+  /// Decrypts a voice note to a temporary file for inline playback.
+  final Future<File> Function(AttachmentEntry entry)? onLoadVoiceNote;
   final void Function(String accountId)? onMention;
   final bool starred;
   final bool copiedHistory;
@@ -1634,11 +1688,19 @@ class _MessageBubble extends StatelessWidget {
     }
     return <Widget>[
       for (final entry in entries)
-        AttachmentTile(
-          entry: entry,
-          onOpen:
-              onOpenAttachment == null ? null : () => onOpenAttachment!(entry),
-        ),
+        if (entry.isVoiceNote && onLoadVoiceNote != null)
+          VoiceNoteTile(
+            key: ValueKey<String>('voice-${entry.id}'),
+            entry: entry,
+            load: () => onLoadVoiceNote!(entry),
+          )
+        else
+          AttachmentTile(
+            entry: entry,
+            onOpen: onOpenAttachment == null
+                ? null
+                : () => onOpenAttachment!(entry),
+          ),
     ];
   }
 
@@ -2001,6 +2063,8 @@ class _Composer extends StatelessWidget {
     this.onAttach,
     this.attaching = false,
     this.onPasteFiles,
+    this.onVoice,
+    this.voiceListenable,
     this.onEditLast,
   });
 
@@ -2016,6 +2080,11 @@ class _Composer extends StatelessWidget {
   /// Ctrl+V attaches files or an image from the clipboard (desktop); the
   /// result is false when it held none.
   final Future<bool> Function()? onPasteFiles;
+
+  /// Starts a voice note; null where attachments are unavailable. The
+  /// button is disabled while [voiceListenable] (the recorder) is recording.
+  final VoidCallback? onVoice;
+  final VoiceRecorderController? voiceListenable;
 
   /// Up in an empty field edits the newest own message.
   final VoidCallback? onEditLast;
@@ -2165,6 +2234,17 @@ class _Composer extends StatelessWidget {
                       ),
                     )),
               ),
+              if (onVoice != null && voiceListenable != null)
+                ListenableBuilder(
+                  listenable: voiceListenable!,
+                  builder: (context, _) => IconButton(
+                    onPressed: enabled && !voiceListenable!.isRecording
+                        ? onVoice
+                        : null,
+                    icon: const Icon(Icons.mic_none),
+                    tooltip: context.l10n.voiceNoteRecord,
+                  ),
+                ),
               const SizedBox(width: BoneSpacing.xs),
               IconButton.filled(
                 onPressed: canSend ? () => onSend() : null,
