@@ -80,10 +80,8 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   final rows = _history();
-  final rawBytes = rows.fold<int>(
-    0,
-    (sum, m) => sum + utf8.encode(m.formatJson!).length,
-  );
+  final rawBytes =
+      rows.fold<int>(0, (sum, m) => sum + utf8.encode(m.formatJson!).length);
 
   test('the fixture really is over the cap without the fix', () {
     expect(rawBytes, greaterThan(_cap));
@@ -115,26 +113,22 @@ void main() {
 
   test('a backup of thousands of previewed rows stays under the cap', () async {
     final store = MemoryLocalStore();
-    await store.saveSession(
-      const Session(
-        baseUrl: 'https://chat.example.org',
-        token: 'tok',
-        accountId: 'acct_1',
-        deviceId: 'dev_own',
-        deviceSecret: 'secret',
-      ),
-    );
+    await store.saveSession(const Session(
+      baseUrl: 'https://chat.example.org',
+      token: 'tok',
+      accountId: 'acct_1',
+      deviceId: 'dev_own',
+      deviceSecret: 'secret',
+    ));
     StoredCryptoState state(int counter) => StoredCryptoState(
-      counter: counter,
-      stateKey: List<int>.filled(32, 7),
-      sealedState: <int>[counter, 2, 3],
-    );
+        counter: counter,
+        stateKey: List<int>.filled(32, 7),
+        sealedState: <int>[counter, 2, 3]);
     await store.saveCryptoState(state(1), 10);
     await store.saveSnapshot(
-      <Conversation>[Conversation(id: 'conv', kind: 'dm', title: 'Chat')],
-      const <String, List<ReceivedMessageEnvelope>>{},
-      10,
-    );
+        <Conversation>[Conversation(id: 'conv', kind: 'dm', title: 'Chat')],
+        const <String, List<ReceivedMessageEnvelope>>{},
+        10);
     final effects = <MessageEffect>[
       for (final m in rows)
         InsertMessageEffect(
@@ -150,17 +144,15 @@ void main() {
           formatJson: m.formatJson,
         ),
     ];
-    await store.commitMlsTransition(
-      MlsStateTransition(
-        messageId: 'application:11:m',
-        conversationId: 'conv',
-        expectedCounter: 1,
-        expectedCursor: 10,
-        state: state(2),
-        cursor: 11,
-        messageEffects: effects,
-      ),
-    );
+    await store.commitMlsTransition(MlsStateTransition(
+      messageId: 'application:11:m',
+      conversationId: 'conv',
+      expectedCounter: 1,
+      expectedCursor: 10,
+      state: state(2),
+      cursor: 11,
+      messageEffects: effects,
+    ));
     final backup = await store.exportBackup();
     expect(backup.length, lessThan(_cap));
     expect(utf8.decode(backup), isNot(contains('link_preview')));
