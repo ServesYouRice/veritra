@@ -303,8 +303,8 @@ class NativeCryptoBindings {
             _ThreeSlicesOutputDart>('pm_crypto_c7_seal'),
         _c7Open = library.lookupFunction<_ThreeSlicesOutputNative,
             _ThreeSlicesOutputDart>('pm_crypto_c7_open'),
-        _c7Verify = library.lookupFunction<_VerifyNative, _VerifyDart>(
-            'pm_crypto_c7_verify'),
+        _c7Verify = library
+            .lookupFunction<_VerifyNative, _VerifyDart>('pm_crypto_c7_verify'),
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
@@ -681,8 +681,7 @@ class NativeCryptoBindings {
   /// `sha256("veritra-c7-chk-v1" | key)` (ABI 13): a record's `chk_commit`.
   Uint8List c7ChkCommit(Uint8List key) {
     _bounded(key, c7KeyBytes, exact: true);
-    final commit = _withSlice(
-        key,
+    final commit = _withSlice(key,
         (slice) => _output((out) => _c7ChkCommit(slice, out), maximum: 32));
     if (commit.length != 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -763,8 +762,7 @@ class NativeCryptoBindings {
     try {
       final status = _withSlice(
           Uint8List.fromList(utf8.encode(domain)),
-          (d) => _withByteLists(
-              <List<int>>[publicKey, message, signature],
+          (d) => _withByteLists(<List<int>>[publicKey, message, signature],
               (s) => _c7Verify(d, s[0], s[1], s[2], ok)));
       _check(status);
       return ok.value == 1;
