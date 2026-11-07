@@ -16,6 +16,7 @@ import (
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/storage"
+	"private-messenger/server/internal/storage/storagetest"
 	"private-messenger/server/internal/uploads"
 	"private-messenger/server/migrations"
 )
@@ -48,6 +49,7 @@ func newRetentionHarness(t *testing.T) *retentionHarness {
 	ctx := context.Background()
 	dir := t.TempDir()
 	path := filepath.Join(dir, "retention.db")
+	storagetest.SeedMigrated(t, path)
 	store, err := storage.Open(ctx, config.Config{
 		Addr: ":0", DataDir: dir, DatabasePath: path,
 		StoragePath: filepath.Join(dir, "blobs"), InstanceName: "test",

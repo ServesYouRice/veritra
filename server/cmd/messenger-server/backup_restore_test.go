@@ -18,6 +18,7 @@ import (
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/storage"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 // seedInstance creates a migrated instance whose database and one encrypted
@@ -31,6 +32,10 @@ func seedInstance(t *testing.T, label string) config.Config {
 // directory outside the data directory.
 func seedInstanceAt(t *testing.T, cfg config.Config, label string) config.Config {
 	t.Helper()
+	// Start from a database that is already at the current schema; migrate
+	// below still verifies every applied checksum. Applying all migrations
+	// from scratch costs seconds per call under -race.
+	storagetest.SeedMigrated(t, cfg.DatabasePath)
 	if err := migrate(context.Background(), cfg, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}

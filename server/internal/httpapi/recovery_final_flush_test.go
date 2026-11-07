@@ -13,6 +13,7 @@ import (
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/storage"
+	"private-messenger/server/internal/storage/storagetest"
 	"private-messenger/server/migrations"
 )
 
@@ -36,7 +37,10 @@ func (w *stallingFlushWriter) Flush() {
 
 // The lease is renewed until the final flush has finished. A client that
 // stalls on the last flush must not let the lease lapse, or the completion
-// is refused and the one-time capability stays usable.
+// is refused and the one-time capability stays usable. The test proves the
+// renewal by observing the stored deadline move, not by hoping a short lease
+// survives a fixed sleep: that raced the renewer against the wall clock and
+// failed on loaded CI machines (-race on shared runners).
 func TestRecoveryLeaseSurvivesAStalledFinalFlush(t *testing.T) {
 	previous := recoveryLeaseRenewInterval
 	recoveryLeaseRenewInterval = 10 * time.Millisecond
@@ -45,6 +49,7 @@ func TestRecoveryLeaseSurvivesAStalledFinalFlush(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	cfg := config.Config{DataDir: dir, DatabasePath: filepath.Join(dir, "private-messenger.db"), StoragePath: filepath.Join(dir, "blobs")}
+	storagetest.SeedMigrated(t, cfg.DatabasePath)
 	store, err := storage.Open(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -91,12 +96,36 @@ func TestRecoveryLeaseSurvivesAStalledFinalFlush(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the final flush never started")
 	}
-	// While the flush is stuck, the lease would run out within a moment if
-	// nothing renewed it.
-	if _, err := db.Exec(`UPDATE backup_blobs SET recovery_lease_expires_at = ?`, time.Now().UTC().Add(150*time.Millisecond).Format("2006-01-02T15:04:05.000000000Z")); err != nil {
+	// Replace the lease with one that is short of the full lifetime, so that a
+	// renewal is visible in the stored deadline. It is far longer than any
+	// scheduling delay, so a slow machine cannot lapse it: the test waits for
+	// the renewer to run instead of racing a wall-clock window against it.
+	const staged = 30 * time.Second
+	setLease := time.Now().UTC().Add(staged)
+	if _, err := db.Exec(`UPDATE backup_blobs SET recovery_lease_expires_at = ?`, setLease.Format("2006-01-02T15:04:05.000000000Z")); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	// While the flush is stuck, only the renewer can move the deadline past
+	// the staged one (a renewal sets it a full lifetime ahead). If renewal
+	// stopped before the final flush, the deadline would never move.
+	renewed := false
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		var expires string
+		if err := db.QueryRow(`SELECT recovery_lease_expires_at FROM backup_blobs`).Scan(&expires); err != nil {
+			t.Fatal(err)
+		}
+		at, err := time.Parse("2006-01-02T15:04:05.000000000Z", expires)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if at.After(setLease.Add(staged)) {
+			renewed = true
+			break
+		}
+	}
+	if !renewed {
+		t.Fatal("the lease was not renewed while the final flush was stalled")
+	}
 	close(w.release)
 	select {
 	case <-done:

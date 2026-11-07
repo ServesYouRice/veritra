@@ -16,6 +16,7 @@ import (
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/storage"
+	"private-messenger/server/internal/storage/storagetest"
 	"private-messenger/server/migrations"
 )
 
@@ -38,6 +39,7 @@ func (p *recordingPush) SendEncryptedEventAvailable(_ context.Context, notificat
 func newPushTestAPI(t *testing.T, providers ...string) (*API, domain.Principal, *recordingPush) {
 	t.Helper()
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "db.sqlite"))
 	store, err := storage.Open(context.Background(), config.Config{
 		DataDir: dir, DatabasePath: filepath.Join(dir, "db.sqlite"), StoragePath: filepath.Join(dir, "blobs"),
 	})

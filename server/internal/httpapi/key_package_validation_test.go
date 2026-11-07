@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"private-messenger/server/internal/mlswire/mlswiretest"
 	"private-messenger/server/internal/storage"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 // badKeyPackages are uploads that are not one MLS KeyPackage: what test
@@ -34,7 +36,9 @@ func requireAPIError(t *testing.T, label string, status int, response []byte, wa
 // parse as an RFC 9420 KeyPackage, and accepts the client's real encoding.
 func TestDeviceKeyPackageStructuralValidation(t *testing.T) {
 	t.Run("setup", func(t *testing.T) {
-		application := openRecoveryApp(t, t.TempDir(), "")
+		dir := t.TempDir()
+		storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
+		application := openRecoveryApp(t, dir, "")
 		t.Cleanup(func() { _ = application.Close() })
 		handler := application.Handler()
 		enrollment := reserveEnrollment(t, handler, "/api/v1/setup/owner/enrollment", "")

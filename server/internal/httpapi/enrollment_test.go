@@ -10,10 +10,12 @@ import (
 	"private-messenger/server/internal/app"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/mlswire/mlswiretest"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 func TestOwnerEnrollmentBindsReservedIdentityAndCredentialSignature(t *testing.T) {
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "private-messenger.db"))
 	application, err := app.New(context.Background(), config.Config{
 		Addr:         ":0",
 		DataDir:      dir,

@@ -26,6 +26,7 @@ import (
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/httpapi"
 	"private-messenger/server/internal/mlswire/mlswiretest"
+	"private-messenger/server/internal/storage/storagetest"
 )
 
 // K0 recovery enrollment, package R2: HTTP behaviour.
@@ -75,6 +76,7 @@ func newRecoveryFixture(t *testing.T, origin string) *recoveryFixture {
 	t.Helper()
 	dir := t.TempDir()
 	f := &recoveryFixture{t: t, dir: dir, dbPath: filepath.Join(dir, "private-messenger.db")}
+	storagetest.SeedMigrated(t, f.dbPath)
 	f.app = openRecoveryApp(t, dir, origin)
 	t.Cleanup(func() { _ = f.app.Close() })
 	f.handler = f.app.Handler()

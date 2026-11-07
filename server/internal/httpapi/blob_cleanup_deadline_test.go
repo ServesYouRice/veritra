@@ -10,6 +10,7 @@ import (
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/storage"
+	"private-messenger/server/internal/storage/storagetest"
 	"private-messenger/server/internal/uploads"
 	"private-messenger/server/migrations"
 )
@@ -39,6 +40,7 @@ func TestUncommittedBlobCleanupQueuesAfterADeleteTimeout(t *testing.T) {
 	defer func() { blobCleanupTimeout = previous }()
 
 	dir := t.TempDir()
+	storagetest.SeedMigrated(t, filepath.Join(dir, "db.sqlite"))
 	store, err := storage.Open(context.Background(), config.Config{
 		DataDir: dir, DatabasePath: filepath.Join(dir, "db.sqlite"), StoragePath: filepath.Join(dir, "blobs"),
 	})
