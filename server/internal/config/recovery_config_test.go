@@ -67,3 +67,48 @@ func TestValidPublicOrigin(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadPasskeysOffByDefaultAndRefusesUnsuitableOrigins(t *testing.T) {
+	t.Setenv("PRIVATE_MESSENGER_ENV", "development")
+	t.Setenv("PRIVATE_MESSENGER_PUBLIC_ORIGIN", "https://chat.example.com")
+	t.Setenv("PRIVATE_MESSENGER_PASSKEYS", "")
+	cfg, err := Load()
+	if err != nil || cfg.Passkeys.Enabled {
+		t.Fatalf("default: enabled=%v err=%v", cfg.Passkeys.Enabled, err)
+	}
+	t.Setenv("PRIVATE_MESSENGER_PASSKEYS", "on")
+	cfg, err = Load()
+	if err != nil || !cfg.Passkeys.Enabled || cfg.Passkeys.RPID != "chat.example.com" {
+		t.Fatalf("on: %+v err=%v", cfg.Passkeys, err)
+	}
+	for _, origin := range []string{"", "https://chat.example.com:8443", "https://203.0.113.9", "https://localhost", "http://localhost", "http://127.0.0.1:8080", "https://intranet", "https://[2001:db8::1]"} {
+		t.Setenv("PRIVATE_MESSENGER_PUBLIC_ORIGIN", origin)
+		if _, err := Load(); err == nil {
+			t.Fatalf("passkeys accepted public origin %q", origin)
+		}
+	}
+	t.Setenv("PRIVATE_MESSENGER_PUBLIC_ORIGIN", "https://chat.example.com")
+	t.Setenv("PRIVATE_MESSENGER_PASSKEYS", "maybe")
+	if _, err := Load(); err == nil {
+		t.Fatal("PRIVATE_MESSENGER_PASSKEYS=maybe accepted")
+	}
+}
+
+func TestParsePasskeyApps(t *testing.T) {
+	fp := "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99"
+	cfg, err := ParsePasskeys("https://chat.example.com", "com.veritra.app:"+fp+", com.veritra.app:"+fp, "ABCDE12345.com.veritra.app")
+	if err != nil || len(cfg.AndroidApps) != 1 || cfg.AndroidApps[0].FingerprintText() != fp || len(cfg.AppleAppIDs) != 1 {
+		t.Fatalf("%+v err=%v", cfg, err)
+	}
+	if got := cfg.AndroidApps[0].Origin(); got != "android:apk-key-hash:qrvM3e7_ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJk" {
+		t.Fatalf("origin %q", got)
+	}
+	for _, bad := range []string{"com.veritra.app", "bad:" + fp, "com.veritra.app:AABB", "com.veritra.app:zz"} {
+		if _, err := ParsePasskeys("https://chat.example.com", bad, ""); err == nil {
+			t.Fatalf("android app %q accepted", bad)
+		}
+	}
+	if _, err := ParsePasskeys("https://chat.example.com", "", "not-an-app-id"); err == nil {
+		t.Fatal("bad apple app id accepted")
+	}
+}

@@ -250,9 +250,53 @@ networks). Monitor `veritra_rate_limit_buckets`,
 `veritra_rate_limit_evictions_total`, `veritra_login_backoff_entries` and
 `veritra_login_backoff_evictions_total` as aggregate pressure signals.
 Sessions enforce a 30-day idle limit and a 30-day absolute lifetime using
-server-side last-use state. Token rotation is deferred until the client/server
+server-side last-use state, counted from the last password **or passkey**
+sign-in (each with the device secret). Token rotation is deferred until the client/server
 refresh exchange is idempotent; logout, device revocation, password change and
 offline owner reset still revoke sessions immediately.
+
+## Passkeys
+
+A passkey replaces the password at sign-in, and only there, on a device that
+is already enrolled: the device ID and secret are checked at both steps. It
+never adds a device, never counts as recent authentication (logout-all,
+password change, invites, device removal and link, export, account delete,
+adding or removing a passkey and K0 cancel stay password-only) and is never
+accepted in a K0 claim. K0 recovery completion deletes the account's
+passkeys. The design is
+[`designs/B7-passkeys.md`](designs/B7-passkeys.md).
+
+Passkeys are **off** until the operator opts in:
+
+- `PRIVATE_MESSENGER_PASSKEYS=on`. Startup fails unless
+  `PRIVATE_MESSENGER_PUBLIC_ORIGIN` is set, uses `https`, has no port and
+  names a DNS host with a dot (no IP address, no `localhost`).
+- `PRIVATE_MESSENGER_PASSKEY_ANDROID_APPS`: comma list of
+  `package:SHA256-fingerprint` as `keytool` prints it. It builds
+  `/.well-known/assetlinks.json` and the accepted Android origins. Debug,
+  emulator and release builds have different fingerprints.
+- `PRIVATE_MESSENGER_PASSKEY_APPLE_APP_IDS`: comma list of
+  `TEAMID.bundle.id`. It builds `/.well-known/apple-app-site-association`.
+  The Apple app must also list the host in its associated domains at build
+  time.
+
+Both well-known files are served by the Go server with no redirect; the
+shipped Caddy and Traefik setups already pass every path through. They answer
+404 while passkeys are off or their list is empty.
+
+**The hostname is permanent.** The passkey's relying party ID is the host of
+`PRIVATE_MESSENGER_PUBLIC_ORIGIN`. If you change the hostname, every passkey
+stops working (together with K0 proofs and device identity) and users fall
+back to their password. **Privacy:** on Android, Google's Digital Asset Links
+service verifies the host, and on Apple platforms Apple's CDN fetches the
+association file, so Google or Apple learns the instance host name. The user's
+credential manager stores the host name and username. Each user opts in by
+adding a passkey. Linux builds stay password-only.
+
+Sign-in failures share the device's password sign-in budget when the device
+secret was valid (3 failures start a delay), and take a separate per-address
+passkey budget otherwise. Logs, audit rows and sync events carry the passkey
+row ID only, never the credential ID, key, challenge or ceremony ID.
 
 ## Account export
 

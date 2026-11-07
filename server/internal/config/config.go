@@ -60,6 +60,9 @@ type Config struct {
 	// recovery proof is verified against it, never against Host or
 	// forwarded headers. Empty turns account recovery off (503).
 	PublicOrigin string
+	// Passkeys turns passkey sign-in on (B7). Off unless the operator opts
+	// in, and then only for a public origin that qualifies (LoadPasskeys).
+	Passkeys PasskeyConfig
 	// RecoveryActiveWindow is how recently a device must have been seen to
 	// count as active; RecoveryWait is how long a recovery waits while one is
 	// (D49, D78). Zero means the default.
@@ -187,6 +190,9 @@ func Load() (Config, error) {
 	}
 	if cfg.PublicOrigin != "" && !ValidPublicOrigin(cfg.PublicOrigin) {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_PUBLIC_ORIGIN must be a canonical origin such as https://chat.example.com (lower-case host, no path, no default port)")
+	}
+	if err := loadPasskeys(&cfg); err != nil {
+		return Config{}, err
 	}
 	if _, err := daysEnv("PRIVATE_MESSENGER_RECOVERY_ACTIVE_WINDOW_DAYS", maxRecoveryDays, &cfg.RecoveryActiveWindow); err != nil {
 		return Config{}, err

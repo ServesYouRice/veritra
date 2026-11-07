@@ -660,6 +660,10 @@ func revokeDeviceTx(ctx context.Context, tx *sql.Tx, accountID, deviceID, eventT
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE device_id = ?`, deviceID); err != nil {
 		return 0, err
 	}
+	// A revoked device keeps no open passkey ceremony.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM passkey_ceremonies WHERE device_id = ?`, deviceID); err != nil {
+		return 0, err
+	}
 	if err := retireDeviceLinksV3ForDevice(ctx, tx, accountID, deviceID); err != nil {
 		return 0, err
 	}

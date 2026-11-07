@@ -71,6 +71,9 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 	} else if strings.TrimSpace(a.DefaultInstanceName) != "" {
 		response["instance_name"] = strings.TrimSpace(a.DefaultInstanceName)
 	}
+	if a.Passkeys != nil {
+		response["passkeys"] = a.passkeySetupStatus()
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 

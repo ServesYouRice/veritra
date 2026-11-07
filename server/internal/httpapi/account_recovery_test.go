@@ -688,3 +688,24 @@ func TestClassifyAccountRecoveryRoutes(t *testing.T) {
 		}
 	}
 }
+
+// B7 S2: completion means every device was lost, so it deletes the account's
+// passkeys, user handle and open ceremonies in its transaction (O5).
+func TestAccountRecoveryCompletionDeletesPasskeys(t *testing.T) {
+	f := newRecoveryFixture(t, recoveryTestOrigin)
+	f.ownerRK = f.setRK(f.ownerToken)
+	f.makeOwnerIdle()
+	f.exec(`INSERT INTO passkey_user_handles(account_id, user_handle, created_at) VALUES(?, randomblob(32), '2026-01-01T00:00:00Z')`, f.ownerAccountID)
+	f.exec(`INSERT INTO passkey_credentials(id, account_id, credential_id, public_key, algorithm, sign_count, backup_eligible, backup_state, name, created_at) VALUES('pk_1', ?, randomblob(32), randomblob(77), -7, 0, 1, 1, 'Passkey 1', '2026-01-01T00:00:00Z')`, f.ownerAccountID)
+	f.exec(`INSERT INTO passkey_ceremonies(id, kind, account_id, device_id, session_data, created_at, expires_at) VALUES('cer_1', 'login', ?, ?, X'7B7D', '2026-01-01T00:00:00Z', '2999-01-01T00:00:00Z')`, f.ownerAccountID, f.ownerDeviceID)
+	reservation := f.reserve("owner")
+	claimed := f.claimOK(claimBody(t, reservation, "owner-password-123", f.ownerRK, recoveryTestOrigin))
+	if status, body := f.status(claimed.RequestID, claimed.ClaimToken); status != http.StatusOK || !bytes.Contains(body, []byte(`"completed"`)) {
+		t.Fatalf("completion status=%d body=%s", status, body)
+	}
+	for _, table := range []string{"passkey_credentials", "passkey_user_handles", "passkey_ceremonies"} {
+		if n := f.count(`SELECT COUNT(*) FROM ` + table); n != 0 {
+			t.Fatalf("%s kept %d rows after recovery completion", table, n)
+		}
+	}
+}

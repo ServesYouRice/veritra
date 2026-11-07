@@ -10,6 +10,8 @@ func TestClassifyRoute(t *testing.T) {
 		"/api/v1/setup/owner":                            CredentialRoute,
 		"/api/v1/auth/login":                             CredentialRoute,
 		"/api/v1/auth/reauth":                            CredentialRoute,
+		"/api/v1/auth/passkey":                           CredentialRoute,
+		"/api/v1/auth/passkey/options":                   CredentialRoute,
 		"/api/v1/register":                               CredentialRoute,
 		"/api/v1/recovery":                               CredentialRoute,
 		"/api/v1/device-links/claim":                     CredentialRoute,
