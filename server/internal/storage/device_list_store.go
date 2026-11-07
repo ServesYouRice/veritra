@@ -366,6 +366,11 @@ func sameIDSet(got, want []string) bool {
 // server already revoked) or a recovery version (change 4). Each has its own
 // rule; the route's recent-auth check for change 6 is the handler's.
 func (s *Store) PublishDeviceList(ctx context.Context, accountID, deviceID string, raw []byte) (DeviceListResult, error) {
+	// The rules below name the caller as the signer; an empty id would skip that
+	// check, and every change kind this route takes is sent from a device.
+	if deviceID == "" {
+		return DeviceListResult{}, ErrForbidden
+	}
 	parsed, err := devicelist.Parse(raw)
 	if err != nil {
 		return DeviceListResult{}, ErrInvalidDeviceList

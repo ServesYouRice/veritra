@@ -74,6 +74,12 @@ func TestDevicelessCallerIsRefusedOnAnAccountWithAHead(t *testing.T) {
 		}
 	})
 
+	t.Run("publish", func(t *testing.T) {
+		if _, err := store.PublishDeviceList(ctx, owner.Account.ID, "", someStatement); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("publish with no caller device: %v, want ErrForbidden", err)
+		}
+	})
+
 	t.Run("revocation with a version", func(t *testing.T) {
 		if _, err := store.db.ExecContext(ctx, `INSERT INTO devices(id, account_id, name, key_package, created_at) VALUES('dev_extra', ?, 'Laptop', x'00', ?)`, owner.Account.ID, nowString()); err != nil {
 			t.Fatal(err)

@@ -1074,14 +1074,14 @@ func TestDevicelessSessionCannotApproveALinkOrChangeRecoveryOrRevokeOnAList(t *t
 
 	authPub, _, _ := ed25519.GenerateKey(rand.Reader)
 	put := map[string]interface{}{"rk_auth_pub": []byte(authPub), "rk_id": bytes.Repeat([]byte{0x42}, 16)}
-	if status, body := w.do(http.MethodPut, "/api/v1/account/recovery-key", token, put); status < 400 || status >= 500 {
+	if status, body := w.do(http.MethodPut, "/api/v1/account/recovery-key", token, put); status != http.StatusForbidden || !jsonErrorIs(body, "recent_auth_required") {
 		t.Fatalf("recovery key: status=%d body=%s", status, body)
 	}
 	if w.count(`SELECT COUNT(*) FROM account_recovery_keys`) != 0 || w.headVersion(w.owner.accountID) != 1 {
 		t.Fatal("a refused recovery key changed state")
 	}
 	status, body := w.do(http.MethodDelete, "/api/v1/devices/"+w.owner.deviceID, token, map[string]interface{}{"device_list": listed})
-	if status < 400 || status >= 500 {
+	if status != http.StatusForbidden || !jsonErrorIs(body, "recent_auth_required") {
 		t.Fatalf("revoke: status=%d body=%s", status, body)
 	}
 	if w.count(`SELECT COUNT(*) FROM devices WHERE id = ? AND revoked_at IS NULL`, w.owner.deviceID) != 1 {
