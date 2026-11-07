@@ -60,3 +60,14 @@ silent gap. Splitting account marks by conversation would need a migration.
    accept the conservative pause?
 3. Which agent owns `app_state.dart`, `models.dart`, `api_client.dart` and
    the local schema number for the client slice, once W8/K2 release them?
+
+## Update 2026-11-07: prerequisite 1 built as a hybrid (agent/c1-p1)
+
+One conversation's MLS failure now pauses only that conversation (local
+schema 20, a pause table, replay through the scoped conversation route). It
+is not the design's account stream and per-scope cursors; see
+[C1-sync-isolation](C1-sync-isolation.md), "Built slice (P1)", and
+`testing/evidence/C1-P1-conversation-pause.md`. It needs an Opus review and
+stays inert unless `PRIVATE_MESSENGER_SCOPED_SYNC` is on. The D92 answers
+stand: the conservative prune pause stays and the C1 client steps own the
+shared client files.

@@ -11,6 +11,7 @@ import 'package:path_provider/path_provider.dart';
 import '../core/models.dart';
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
+import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart';
 import 'backup_exclusion.dart';
 import 'encrypted_database.dart';
@@ -665,6 +666,40 @@ abstract class LocalStore {
   Future<void> saveSyncRecovery(SyncRecovery? recovery);
   Future<SyncRecovery?> loadSyncRecovery();
 
+  /// The paused conversations (C1 prerequisite 1), by conversation id.
+  /// A conversation's MLS failure pauses it alone: the global cursor moves
+  /// past its later crypto events without applying them, and an explicit
+  /// replay applies them in order. Removed with the device identity.
+  Future<List<ConversationPause>> loadConversationPauses();
+  Future<ConversationPause?> loadConversationPause(String conversationId);
+
+  /// Records the failure of [conversationId] at [failedEventId]. A new pause
+  /// resumes after the event just below it. Throws
+  /// [ConversationPauseLimitReached] when [maxConversationPauses] are held.
+  Future<ConversationPause> pauseConversation({
+    required String conversationId,
+    required int failedEventId,
+    required SyncFailureKind kind,
+    String? failedEventType,
+    String? failedRef,
+    void Function()? checkCanCommit,
+  });
+
+  /// Moves the global cursor past [eventId], an event of a paused
+  /// conversation, without applying it. Throws unless the conversation is
+  /// paused in the same step and the cursor is [expectedCursor].
+  Future<void> skipPausedConversationEvent({
+    required String conversationId,
+    required int eventId,
+    required int expectedCursor,
+    void Function()? checkCanCommit,
+  });
+
+  /// Removes a conversation's pause (the replay finished, or the
+  /// conversation was left). With [generation], only that failure's.
+  Future<bool> clearConversationPause(String conversationId,
+      {int? generation, void Function()? checkCanCommit});
+
   /// When this device last made an encrypted backup (card I45).
   Future<void> saveLastBackupAt(DateTime at);
   Future<DateTime?> loadLastBackupAt();
@@ -898,6 +933,7 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, LocalConversationPref> _conversationPrefs = {};
   String? _syncLeaseKey;
   SyncRecovery? _syncRecovery;
+  final Map<String, ConversationPause> _pauses = <String, ConversationPause>{};
   DateTime? _lastBackupAt;
   final Map<String, StoredDraft> _drafts = <String, StoredDraft>{};
   final Map<String, DateTime?> _mutes = <String, DateTime?>{};
@@ -929,6 +965,101 @@ class MemoryLocalStore implements LocalStore {
   Future<SyncRecovery?> loadSyncRecovery() async => _syncRecovery;
 
   @override
+  Future<List<ConversationPause>> loadConversationPauses() async {
+    final ids = _pauses.keys.toList()..sort();
+    return <ConversationPause>[for (final id in ids) _pauses[id]!];
+  }
+
+  @override
+  Future<ConversationPause?> loadConversationPause(
+          String conversationId) async =>
+      _pauses[conversationId];
+
+  @override
+  Future<ConversationPause> pauseConversation({
+    required String conversationId,
+    required int failedEventId,
+    required SyncFailureKind kind,
+    String? failedEventType,
+    String? failedRef,
+    void Function()? checkCanCommit,
+  }) async {
+    checkCanCommit?.call();
+    if (conversationId.isEmpty ||
+        conversationId.length > maxPausedConversationIdLength ||
+        (failedEventType?.length ?? 0) > maxPausedEventTypeLength ||
+        failedEventId <= 0) {
+      throw const FormatException('invalid conversation pause');
+    }
+    final existing = _pauses[conversationId];
+    final now = DateTime.now().toUtc();
+    final ConversationPause next;
+    if (existing == null) {
+      if (_pauses.length >= maxConversationPauses) {
+        throw const ConversationPauseLimitReached();
+      }
+      next = ConversationPause(
+        conversationId: conversationId,
+        resumeAfter: failedEventId - 1,
+        failedEventId: failedEventId,
+        failedEventType: failedEventType,
+        failedRef: failedRef,
+        kind: kind,
+        recordedAt: now,
+      );
+    } else {
+      if (failedEventId <= existing.resumeAfter) {
+        throw StateError('pause failure is behind the replayed events');
+      }
+      next = ConversationPause(
+        conversationId: conversationId,
+        resumeAfter: existing.resumeAfter,
+        failedEventId: failedEventId,
+        failedEventType: failedEventType,
+        failedRef: failedRef,
+        kind: kind,
+        recordedAt: now,
+        generation: existing.generation + 1,
+      );
+    }
+    checkCanCommit?.call();
+    _pauses[conversationId] = next;
+    return next;
+  }
+
+  @override
+  Future<void> skipPausedConversationEvent({
+    required String conversationId,
+    required int eventId,
+    required int expectedCursor,
+    void Function()? checkCanCommit,
+  }) async {
+    checkCanCommit?.call();
+    final pause = _pauses[conversationId];
+    if (pause == null) throw StateError('conversation is not paused');
+    if (_syncCursor != expectedCursor ||
+        eventId <= expectedCursor ||
+        eventId <= pause.resumeAfter) {
+      throw StateError('stale paused sync event skip');
+    }
+    checkCanCommit?.call();
+    _syncCursor = eventId;
+  }
+
+  @override
+  Future<bool> clearConversationPause(String conversationId,
+      {int? generation, void Function()? checkCanCommit}) async {
+    checkCanCommit?.call();
+    final existing = _pauses[conversationId];
+    if (existing == null ||
+        (generation != null && existing.generation != generation)) {
+      return false;
+    }
+    _pauses.remove(conversationId);
+    return true;
+  }
+
+  @override
   Future<void> acquireSyncLease(LocalSyncLease lease) async {
     _syncLeaseKey = lease.key;
   }
@@ -954,6 +1085,7 @@ class MemoryLocalStore implements LocalStore {
     _syncCursor = 0;
     _cryptoState = null;
     _cryptoRecords.clear();
+    _pauses.clear();
     // Their native half goes with the MLS state; the ledger stays.
     _historyTransfers.clear();
     _processedMlsMessages.clear();
@@ -1098,6 +1230,7 @@ class MemoryLocalStore implements LocalStore {
       throw StateError('crypto state counter must increase');
     }
     _cryptoRecords.clear();
+    _pauses.clear();
     _setCryptoState(state);
     _syncCursor = syncCursor;
   }
@@ -1127,10 +1260,22 @@ class MemoryLocalStore implements LocalStore {
     if (_processedMlsMessages.contains(transition.messageId)) {
       throw StateError('MLS message was already processed');
     }
+    // An event behind the global cursor is a replay of a paused
+    // conversation's event (C1 P1): it leaves the cursor alone.
+    final replay = transition.cursor <= _syncCursor;
+    final replayed = _pauses[transition.conversationId];
+    if (replay &&
+        (replayed == null || transition.cursor <= replayed.resumeAfter)) {
+      throw StateError('stale or incomplete MLS state transition');
+    }
+    if (!replay && replayed != null) {
+      throw ConversationSyncPausedException(transition.conversationId);
+    }
     _validateMlsTransition(
       transition,
       currentCounter: _cryptoState?.counter ?? 0,
       currentCursor: _syncCursor,
+      allowBehindCursor: replay,
     );
     final nextMessages = <String, List<ReceivedMessageEnvelope>>{
       for (final entry in _snapshot?.messagesByConversation.entries ??
@@ -1184,9 +1329,14 @@ class MemoryLocalStore implements LocalStore {
     _processedMlsMessages.add(transition.messageId);
     final resolved = transition.resolvedMlsOutboxKey;
     if (resolved != null) _mlsOutbox.remove(resolved);
-    _syncCursor = transition.cursor;
+    if (replay) {
+      _pauses[transition.conversationId] =
+          replayed!.copyWith(resumeAfter: transition.cursor);
+    } else {
+      _syncCursor = transition.cursor;
+    }
     _snapshot = CachedSnapshot(
-      cursor: transition.cursor,
+      cursor: _syncCursor,
       conversations: _snapshot?.conversations ?? const <Conversation>[],
       messagesByConversation: nextMessages,
     );
@@ -1249,8 +1399,14 @@ class MemoryLocalStore implements LocalStore {
   Future<void> commitSyncEvent(SyncEventCommit commit) async {
     commit.checkCanCommit?.call();
     if (_processedMlsMessages.contains(commit.eventKey)) return;
-    if (commit.expectedCursor != _syncCursor ||
-        commit.cursor <= commit.expectedCursor) {
+    if (commit.expectedCursor != _syncCursor) {
+      throw StateError('stale sync event commit');
+    }
+    // Behind the global cursor only as a replay of a paused conversation's
+    // event (C1 P1).
+    final replay = commit.cursor <= commit.expectedCursor;
+    final replayed = _pauses[commit.conversationId];
+    if (replay && (replayed == null || commit.cursor <= replayed.resumeAfter)) {
       throw StateError('stale sync event commit');
     }
     final nextMessages = <String, List<ReceivedMessageEnvelope>>{
@@ -1300,9 +1456,14 @@ class MemoryLocalStore implements LocalStore {
     _history = nextHistory;
     _historyNamespace = nextNamespace;
     _processedMlsMessages.add(commit.eventKey);
-    _syncCursor = commit.cursor;
+    if (replay) {
+      _pauses[commit.conversationId] =
+          replayed!.copyWith(resumeAfter: commit.cursor);
+    } else {
+      _syncCursor = commit.cursor;
+    }
     _snapshot = CachedSnapshot(
-      cursor: commit.cursor,
+      cursor: _syncCursor,
       conversations: _snapshot?.conversations ?? const <Conversation>[],
       messagesByConversation: nextMessages,
     );
@@ -1325,6 +1486,11 @@ class MemoryLocalStore implements LocalStore {
       currentCounter: _cryptoState?.counter ?? 0,
       currentCursor: _syncCursor,
     );
+    for (final message in transition.messages) {
+      if (_pauses.containsKey(message.conversationId)) {
+        throw ConversationSyncPausedException(message.conversationId);
+      }
+    }
     if (transition.messages
         .any((message) => _mlsOutbox.containsKey(message.idempotencyKey))) {
       throw StateError('duplicate MLS outbox idempotency key');
@@ -1368,6 +1534,9 @@ class MemoryLocalStore implements LocalStore {
       currentCounter: _cryptoState?.counter ?? 0,
       currentCursor: _syncCursor,
     );
+    if (_pauses.containsKey(transition.envelope.conversationId)) {
+      throw ConversationSyncPausedException(transition.envelope.conversationId);
+    }
     final existing = _outboxRecords[transition.envelope.idempotencyKey];
     if (existing != null) {
       throw StateError('outbox idempotency key conflict');
@@ -1475,6 +1644,7 @@ class MemoryLocalStore implements LocalStore {
     }
     _session = promotion.session;
     _cryptoRecords.clear();
+    _pauses.clear();
     _setCryptoState(state);
     _syncCursor = 0;
     _promotions.add(EnrollmentPromotionRow(
@@ -1771,6 +1941,7 @@ class MemoryLocalStore implements LocalStore {
     _mlsOutbox.clear();
     _cryptoState = null;
     _cryptoRecords.clear();
+    _pauses.clear();
     // Transfers go with the MLS state; the ledger and a pending enrollment
     // stay (finding 4).
     _historyTransfers.clear();
@@ -1831,6 +2002,7 @@ class MemoryLocalStore implements LocalStore {
     _session = null;
     _cryptoState = null;
     _cryptoRecords.clear();
+    _pauses.clear();
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
     _peerVerifications.clear();
@@ -2425,6 +2597,59 @@ class SecureLocalStore implements LocalStore {
           ?.toUtc();
 
   @override
+  Future<List<ConversationPause>> loadConversationPauses() async =>
+      (await _database()).readConversationPauses();
+
+  @override
+  Future<ConversationPause?> loadConversationPause(
+          String conversationId) async =>
+      (await _database()).readConversationPause(conversationId);
+
+  @override
+  Future<ConversationPause> pauseConversation({
+    required String conversationId,
+    required int failedEventId,
+    required SyncFailureKind kind,
+    String? failedEventType,
+    String? failedRef,
+    void Function()? checkCanCommit,
+  }) async =>
+      (await _database()).writeConversationPause(
+        conversationId: conversationId,
+        failedEventId: failedEventId,
+        kind: kind,
+        failedEventType: failedEventType,
+        failedRef: failedRef,
+        leaseKey: _syncLeaseKey,
+        checkCanCommit: checkCanCommit,
+      );
+
+  @override
+  Future<void> skipPausedConversationEvent({
+    required String conversationId,
+    required int eventId,
+    required int expectedCursor,
+    void Function()? checkCanCommit,
+  }) async =>
+      (await _database()).skipPausedConversationEvent(
+        conversationId: conversationId,
+        eventId: eventId,
+        expectedCursor: expectedCursor,
+        leaseKey: _syncLeaseKey,
+        checkCanCommit: checkCanCommit,
+      );
+
+  @override
+  Future<bool> clearConversationPause(String conversationId,
+          {int? generation, void Function()? checkCanCommit}) async =>
+      (await _database()).clearConversationPause(
+        conversationId,
+        generation: generation,
+        leaseKey: _syncLeaseKey,
+        checkCanCommit: checkCanCommit,
+      );
+
+  @override
   Future<SyncRecovery?> loadSyncRecovery() async =>
       SyncRecovery.decode(await (await _database())
           .readMetadata(EncryptedLocalDatabase.syncRecoveryName));
@@ -2637,6 +2862,9 @@ class SecureLocalStore implements LocalStore {
       transition,
       currentCounter: transition.expectedCounter,
       currentCursor: transition.expectedCursor,
+      // The database transaction decides whether an event behind the
+      // cursor is a replay of a paused conversation (C1 P1).
+      allowBehindCursor: true,
     );
     await (await _database()).commitMlsTransition(
       messageId: transition.messageId,
@@ -4282,12 +4510,13 @@ void _validateMlsTransition(
   MlsStateTransition transition, {
   required int currentCounter,
   required int currentCursor,
+  bool allowBehindCursor = false,
 }) {
   _validateCryptoState(transition.state);
   if (transition.expectedCounter != currentCounter ||
       transition.expectedCursor != currentCursor ||
       transition.state.counter != currentCounter + 1 ||
-      transition.cursor <= currentCursor) {
+      (transition.cursor <= currentCursor && !allowBehindCursor)) {
     throw StateError('stale or incomplete MLS state transition');
   }
   if (transition.messageId.isEmpty || transition.conversationId.isEmpty) {

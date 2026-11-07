@@ -461,6 +461,55 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   rules, the receive table, the report aad and the routes are in
   [Franking v1](#franking-v1-c6) ("What is wired"); evidence in
   `testing/evidence/C6-wiring.md`.
+- **C1 prerequisite 1, one conversation's MLS failure pauses only that
+  conversation (2026-11-07):** no ABI, payload, wire or server change; local
+  schema 20 adds one table. Design:
+  [`C1-sync-isolation`](designs/C1-sync-isolation.md), "Built slice (P1)".
+  Behind `PRIVATE_MESSENGER_SCOPED_SYNC`; off, nothing here activates and
+  every failure stops the device as before.
+  - **I33 now.** A failure at one conversation's event (`mlsControlMissing`,
+    `mlsControlMalformed`, `mlsState`, `applicationUndecryptable`,
+    `applicationMissing`, `unsupportedEvent`) still stops that
+    conversation at that event and never skips it. It stops the device only
+    when it cannot be isolated: the server cannot serve the same event again
+    from `GET /api/v1/conversations/{id}/sync-events` (route off, 403, 409,
+    another event under the id), the native handle no longer answers after
+    the restore, more than 1,000 conversations are paused, or the failure is
+    not about one conversation (storage, no crypto, expired cursor, D70
+    record limit). D54 is unchanged: control messages stay fail-closed.
+  - **What a pause does.** The pause row (`local_conversation_pauses`:
+    `resume_after`, failed event id/type/server id, kind, generation; no
+    content) is written first. The global cursor then moves past the
+    conversation's later crypto events by itself: no processed marker, no
+    state change. The conversation's group stays where the failed event left
+    it. Every other conversation, its sends and its sealing carry on.
+  - **Outgoing work is refused for a paused conversation**, in the service
+    and again inside the storage transactions: application encryption, call
+    signals, staging a commit (membership, self-update, revocation),
+    finishing or abandoning a staged commit, and the MLS outbox send. Queued
+    items stay queued. Leaving is allowed.
+  - **Retry is explicit and replays.** It reads the conversation's own
+    stream from `resume_after`, applies the events in order up to the global
+    cursor only, with each event's effects and the new `resume_after` in one
+    transaction and the global cursor and counter rules unchanged
+    (`counter + 1`), then removes the pause. A failure pauses it again at
+    that event. Events above the global cursor are left to the global
+    stream. A different event under the failed id keeps the original
+    failure. Nothing is skipped, retried in a loop or reset.
+  - **Storage rule.** A transition behind the global cursor is accepted only
+    for a paused conversation, above `resume_after`, at or below the cursor,
+    and it does not move the cursor; a cursor-advancing transition for a
+    paused group is refused. Cleared with the cursor and MLS state whenever
+    those are replaced (identity change, backup restore, clear).
+  - **Not done.** The design's account stream, per-scope cursors and
+    `ScopedMlsTransition` are not built (see the design note). A leftover
+    pause of a conversation the user was removed from stays until the group
+    is dropped.
+  - Tests: `mobile/test/c1_conversation_pause_store_test.dart`,
+    `mobile/test/c1_native_pause_test.dart`,
+    `mobile/test/app_state_catch_up_test.dart`,
+    `mobile/test/chat_sync_paused_test.dart`,
+    `server/internal/httpapi/scoped_sync_handlers_test.go`.
 
 - **C6 foundation, report seal and franking commitment, ABI 12
   (2026-11-01):** additive; the Dart binding and the header now pin ABI 12

@@ -501,6 +501,7 @@
   "chatComposerHint": "Poruka",
   "chatComposerCounter": "{length} / {max}",
   "chatPausedNotice": "Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.",
+  "chatSyncPausedNotice": "Poruke u ovom razgovoru su pauzirane: ažuriranje šifrovanja nije moglo da se primeni. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.",
   "chatRemovalHoldNotice": "Vaša poruka čeka da se završi ažuriranje šifrovanja posle uklanjanja člana, a zatim se šalje.",
   "chatNoPeerReadOnly": "Niko drugi u ovom razgovoru ne može ponovo da doda ovaj uređaj, pa je istorija ovde samo za čitanje. Započnite novi razgovor da biste slali poruke.",
   "chatNoPeerCheckFailed": "Trenutno ne možemo da proverimo članove ovog razgovora. Pokušajte ponovo za trenutak.",
