@@ -126,7 +126,7 @@ void main() {
     await expectLater(
         alice.service.processMlsMessage(
             alice.commitFrom(bob, updateA, eventA1, damaged)),
-        throwsA(isNot(isA<ConversationSyncPausedException>())));
+        throwsA(isA<NativeCryptoException>()));
     expect(await alice.service.deviceHandleUsable(), isTrue);
     expect(await alice.epoch('conv_a'), epochA);
     expect((await alice.store.loadCryptoState())!.counter, counter);
