@@ -460,7 +460,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `mls/list.rs`, `ffi/l1_calls.rs`, `mls.rs`, `recovery.rs`; Dart:
   `mobile/lib/crypto/l1_device_list.dart`. Vector:
   `testing/vectors/l1-device-list-v1.json` (Rust and the Go test
-  `server/internal/httpapi/l1_device_list_vector_test.go`, an independent
+  `server/internal/httpapi/vdl1_vector_test.go`, an independent
   test-only reimplementation, check all of it; Dart checks the statements
   through the native calls).
   - **Format and rules (VDL1).** Exactly as the design: body, statement,

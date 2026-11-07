@@ -1,5 +1,5 @@
 {
-  "description": "L1 approved-device list (docs/designs/L1-approved-device-list.md, step L1-1, ABI 14): VDL1 statements, the signature and hash labels, two valid chains (every change kind), single-fault refusals and Ed25519 edge cases. Every signing seed is a fixed test value. Checked by crypto/rust/src/l1_tests.rs, server/internal/httpapi/l1_device_list_vector_test.go and mobile/test/l1_device_list_native_test.dart. Changing any value is a protocol change. Regenerate: cargo test --lib l1::tests::print_vector -- --ignored --nocapture.",
+  "description": "L1 approved-device list (docs/designs/L1-approved-device-list.md, step L1-1, ABI 14): VDL1 statements, the signature and hash labels, two valid chains (every change kind), single-fault refusals and Ed25519 edge cases. Every signing seed is a fixed test value. Checked by crypto/rust/src/l1_tests.rs, server/internal/httpapi/vdl1_vector_test.go and mobile/test/l1_device_list_native_test.dart. Changing any value is a protocol change. Regenerate: cargo test --lib l1::tests::print_vector -- --ignored --nocapture.",
   "inputs": {
     "account_id": "acct_00112233445566778899aabbccddeeff",
     "devices": [

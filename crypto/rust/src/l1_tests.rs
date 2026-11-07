@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 /// `testing/vectors/l1-device-list-v1.json`: the shared known-answer vector
 /// for the approved-device list. Rust checks all of it; the Go server tests
-/// (`server/internal/httpapi/l1_device_list_vector_test.go`) check it with an
+/// (`server/internal/httpapi/vdl1_vector_test.go`) check it with an
 /// independent reimplementation; Dart checks it through the native calls
 /// (`mobile/test/l1_device_list_native_test.dart`). Every signing seed is a
 /// fixed test value, so the file regenerates byte for byte:
@@ -1323,7 +1323,7 @@ fn compute() -> Value {
         .collect();
     json!({
         "version": 1,
-        "description": "L1 approved-device list (docs/designs/L1-approved-device-list.md, step L1-1, ABI 14): VDL1 statements, the signature and hash labels, two valid chains (every change kind), single-fault refusals and Ed25519 edge cases. Every signing seed is a fixed test value. Checked by crypto/rust/src/l1_tests.rs, server/internal/httpapi/l1_device_list_vector_test.go and mobile/test/l1_device_list_native_test.dart. Changing any value is a protocol change. Regenerate: cargo test --lib l1::tests::print_vector -- --ignored --nocapture.",
+        "description": "L1 approved-device list (docs/designs/L1-approved-device-list.md, step L1-1, ABI 14): VDL1 statements, the signature and hash labels, two valid chains (every change kind), single-fault refusals and Ed25519 edge cases. Every signing seed is a fixed test value. Checked by crypto/rust/src/l1_tests.rs, server/internal/httpapi/vdl1_vector_test.go and mobile/test/l1_device_list_native_test.dart. Changing any value is a protocol change. Regenerate: cargo test --lib l1::tests::print_vector -- --ignored --nocapture.",
         "labels": {
             "signature": String::from_utf8(LABEL_SIG.to_vec()).unwrap(),
             "hash": String::from_utf8(LABEL_HASH.to_vec()).unwrap(),

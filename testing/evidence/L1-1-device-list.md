@@ -37,8 +37,10 @@ for them. The `docs/crypto.md` change log entry "L1-1" is the full list.
   group members), 4 in `mls::records::records_tests` (held seed survives seal
   and restore; the record is what ABI 13 wrote without a seed and is refused
   by ABI 13's decoder with one; legacy format 3 refuses to drop a seed).
-- Go: `go test ./internal/httpapi -run TestL1Vector`. An independent,
-  test-only reimplementation written from the design (not from the Rust code)
+- Go: `go test ./internal/httpapi -run TestVDL1Vector`
+  (`server/internal/httpapi/vdl1_vector_test.go`; its helpers carry a
+  `vdl1Vec` prefix so they cannot clash with the server step's production
+  code). An independent, test-only reimplementation written from the design (not from the Rust code)
   agrees on all 72 refusals, including the reason, signs every step with Go's
   own `crypto/ed25519` byte for byte, and re-derives the list recovery key by
   HKDF. The edge-case test pins where Go's verifier is laxer than the
@@ -58,6 +60,9 @@ for them. The `docs/crypto.md` change log entry "L1-1" is the full list.
   `stage_membership_commit_checked` fails
   `adds_carry_the_expected_signing_key_and_commits_report_their_pairs`.
 - Also run: `go vet ./...` and `go test ./internal/httpapi` (whole package).
+- `scripts/verify-mobile-crypto.sh` now also names the nine new exported
+  symbols; `nm -D` on the release library shows all nine (the script itself
+  needs the Android and iOS artifacts, which CI builds).
 - Not run: the `scripts/test` and `scripts/lint` wrappers as a whole (the
   narrower checks above were run), iOS and Android native builds (CI).
 
