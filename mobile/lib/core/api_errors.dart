@@ -86,6 +86,11 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'device_link_limit_reached': ApiErrorKind.conflict,
   'conversation_limit_reached': ApiErrorKind.conflict,
   'conversation_member_limit_reached': ApiErrorKind.conflict,
+  // C1 membership invitations and join requests.
+  'already_member': ApiErrorKind.conflict,
+  'join_request_resolved': ApiErrorKind.conflict,
+  'invite_unavailable': ApiErrorKind.conflict,
+  'join_request_limit_reached': ApiErrorKind.conflict,
   // Invalid request.
   'invalid_posting_policy': ApiErrorKind.invalidRequest,
   'posting_policy_not_supported': ApiErrorKind.invalidRequest,
@@ -105,6 +110,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_device_id': ApiErrorKind.invalidRequest,
   'invalid_device_name': ApiErrorKind.invalidRequest,
   'invalid_expires_at': ApiErrorKind.invalidRequest,
+  'invalid_expires_in': ApiErrorKind.invalidRequest,
   'invalid_input': ApiErrorKind.invalidRequest,
   'invalid_invite_id': ApiErrorKind.invalidRequest,
   'invalid_json': ApiErrorKind.invalidRequest,

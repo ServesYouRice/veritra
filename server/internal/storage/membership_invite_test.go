@@ -594,3 +594,17 @@ func TestRemoveCommunityMember(t *testing.T) {
 		t.Fatalf("events for a channel-less removal = %d", n)
 	}
 }
+
+// The app derives the locator from the link secret (mobile
+// test/membership_invite_link_test.dart pins the same locator); the store
+// keeps only this hash of it. The vector ties the two sides together.
+func TestHashLocatorVector(t *testing.T) {
+	const locator = "4437d01b5bc6825b22a3de68051fee45b5809368049546cf0a8169cdb2ddcc52"
+	const want = "281c1a375133b420d423b226a9281ac28614e9d252d85ea61972c5c17567981a"
+	if got := hashLocator(locator); got != want {
+		t.Fatalf("hashLocator = %s, want %s", got, want)
+	}
+	if !validLocator(locator) || validLocator(strings.ToUpper(locator)) || validLocator(locator[1:]) {
+		t.Fatal("validLocator accepts the wrong shapes")
+	}
+}
