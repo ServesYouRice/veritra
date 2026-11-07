@@ -7,8 +7,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 03 `TASK-003` Enforce unique device identities in the roster and remove every leaf of a revoked identity
 - [x] 04 `TASK-004` Inspect incoming commits structurally before merging in process_commit
 - [x] 05 `TASK-005` Validate Welcome sender and ratchet-tree roster before persisting a joined group
-- [ ] 06 `TASK-006` Authorize committers, inviters and identity-key bindings against the section-52f8711c03564f2607ba13c6/Q-002 trust anchor
-  - Blocked: needs the L1 approved-device list as the trust anchor. What L1 must provide is in docs/crypto.md (a2eb69e).
+- [x] 06 `TASK-006` Authorize committers, inviters and identity-key bindings against the section-52f8711c03564f2607ba13c6/Q-002 trust anchor
+  - Done with L1-3 (D94, D100 A): adds gated by the pinned key, every commit and Welcome leaf judged, approval hold and hidden messages. Follow-ups in docs/crypto.md (L1-3 entry).
 - [x] 07 `TASK-007` Remove the raw-bytes signing oracle on the MLS identity key
 - [x] 08 `TASK-008` Reject past-epoch application messages from senders no longer in the roster
 - [x] 09 `TASK-009` Distinguish unsupported sealed-state format from corruption

@@ -43,7 +43,7 @@
       "result": "fixed",
       "failedBefore": null,
       "test": null,
-      "proof": "Commits 0b3346f, f7d66d9. The failing-test evidence is in each commit message.",
+      "proof": "Commits 0b3346f, f7d66d9. The failing-test evidence is in each commit message. TASK-006 (identity-key bindings against the trust anchor): L1-3, D94/D100 A. Adds carry the signing key the approved-device list pins (Rust refuses another), unlisted devices are never claimed or staged, every commit and Welcome leaf is judged against the pins and the verdicts commit with the group state; an unapproved leaf holds the conversation (nothing encrypted) and its messages are hidden. The commit/Welcome is applied, not refused (D94). Tests: mobile/test/l1_native_gate_test.dart, l1_device_list_pins_test.dart, l1_app_state_lists_test.dart.",
       "checkedEndToEnd": false
     },
     {
@@ -54,7 +54,7 @@
       "result": "fixed",
       "failedBefore": null,
       "test": null,
-      "proof": "Commits 44d4c64. The failing-test evidence is in each commit message.",
+      "proof": "Commits 44d4c64. The failing-test evidence is in each commit message. TASK-006 (identity-key bindings against the trust anchor): L1-3, D94/D100 A. Adds carry the signing key the approved-device list pins (Rust refuses another), unlisted devices are never claimed or staged, every commit and Welcome leaf is judged against the pins and the verdicts commit with the group state; an unapproved leaf holds the conversation (nothing encrypted) and its messages are hidden. The commit/Welcome is applied, not refused (D94). Tests: mobile/test/l1_native_gate_test.dart, l1_device_list_pins_test.dart, l1_app_state_lists_test.dart.",
       "checkedEndToEnd": false
     },
     {

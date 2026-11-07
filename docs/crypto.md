@@ -227,7 +227,10 @@ a real account. L1, the signed approved-device list, must give the core:
 With L1 the identity-only check on past-epoch senders (TASK-008) can also
 compare signing keys.
 
-**Built so far: L1-1, the crypto layer (ABI 14).** The signed list format
+**Built: L1-1 (crypto, ABI 14), L1-2 (server, migration 0051) and L1-3
+(mobile, local schema 26); see the change log.** The design is
+[`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
+**L1-1, the crypto layer (ABI 14).** The signed list format
 and its verifier, the signing calls, the recovery signer, the expected-key
 add and the per-leaf pair outputs are in; see the change log entry "L1-1"
 below. The trust anchor still has no caller: pins, the add gate, the holds
@@ -448,6 +451,61 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **L1-3, approved-device list, mobile (2026-11-07, D94, D100):** local
+  schema 26 (21 to 25 are reserved for other packages); no ABI, payload or
+  server change. Design: [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
+  - **Pins.** `local_device_list_heads`, `_keys`, `_conflicts` and
+    `local_approval_leaves` (never in a backup, cleared with the identity).
+    `DeviceListPins` (`mobile/lib/core/device_lists.dart`) pins a chain on
+    first sight (whole chain verified in Rust), then moves only forward with
+    `device_list_check_step`; it re-reads the pinned head on every refresh, so
+    another statement at the pinned version is checked as a whole chain and,
+    if it verifies, becomes a sticky conflict with both statements kept. A
+    lower head, a gap or a bad step is "unavailable" and changes nothing.
+    Refreshes are rate-limited to one a minute per account, and an own
+    `device_list.updated` event clears the limit.
+  - **The add gate (TASK-006).** Every staged add (conversation creation,
+    reconcile, re-adds) uses change list version 2 with the signing key the
+    pin lists for that device, never one the server sent; Rust refuses a key
+    package with another key. A device not approved now is neither claimed nor
+    staged (`DeviceListNotApprovedException`, the change stays pending with
+    the TASK-029 backoff). Without pins nothing is added (fail closed).
+  - **Receiving.** A commit or Welcome is applied as before, never refused for
+    an L1 reason. Every leaf of the group (`pm_crypto_group_members`) is then
+    judged (`approved`, `removed`, `unapproved`, `checking`) and the verdicts
+    commit in the same transaction as the group state. A Welcome's roster is
+    also checked against the conversation's participants. Judging waits at
+    most 10 s per leaf and 15 s per group for the server, then reads only the
+    stored pins.
+  - **The approval hold.** While any leaf is not `approved`, the conversation
+    encrypts nothing (messages, call signals, self-updates:
+    `ConversationApprovalHeldException`); a removal commit is still allowed.
+    The hold lifts only on local evidence: a commit that removes the leaf, or
+    a refreshed pin that approves it. A group with no rows (from before L1, or
+    rows lost after an own commit) is judged before it is next used.
+  - **Message verdicts.** A message from a leaf that is not `approved` or
+    `removed` is replaced by an `unapproved:` placeholder; its text is not
+    stored. A `removed` leaf's messages are shown (not yet marked).
+  - **Signing.** Genesis at setup and registration; change 2 at K2 link
+    approval, built from the transcript the native K2 state verified (claim
+    tag and typed code) and only after the approval request exists, so never
+    before both checks (TASK-010/048 condition); change 3 at revoke and as a
+    repair for siblings the server shows revoked; change 5 at recovery-key
+    set and replace (`rk_list_pub`); the recovery seed is held at a K0-R claim
+    and change 4 is posted at completion, before key packages; change 6 (the
+    migration genesis) from Settings after the user ticks their devices. Every
+    signed version is re-signed on a 409 `device_list_conflict`, up to 3 times.
+  - **Not built yet (follow-ups):** the retype fallback when no recovery seed
+    is held and the confirmation of a pre-L1 recovery key (both need a
+    screen); complete adds (staging every approved device that is not a leaf,
+    not only the ones the server lists); the "removed" mark on messages; the
+    per-conversation state lines ("Checking <name>'s devices"); the new
+    device's anchor only logs a mismatch. Change list version 1 is still
+    accepted by Rust; nothing in the app sends it any more.
+  - **TASK-010 and TASK-048 (commit-then-reveal and key commitment in device
+    linking, D100 A):** built in their own change (see its entry); this step
+    only signs change 2 after the link checks.
 
 - **L1-1, approved-device list, crypto layer, ABI 14 (2026-11-07, D94):**
   design [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).

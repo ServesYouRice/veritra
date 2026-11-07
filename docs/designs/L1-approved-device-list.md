@@ -1,7 +1,8 @@
 # L1: approved-device list
 
-**Status: proposed (2026-11-07); step L1-1 (the crypto layer, ABI 14) is built
-and listed in the `docs/crypto.md` change log, the other steps are not.** A
+**Status: steps L1-1 (crypto, ABI 14), L1-2 (server) and L1-3 (mobile, local
+schema 26) are built and listed in the `docs/crypto.md` change log, with the
+L1-3 follow-ups named there; L1-4 is left to L2 (D94) and L1-5 is open.** A
 design only, against `main` at `0073fe4`. It changes the crypto ABI, the server schema, the local schema
 and the recovery flow, so it needs an independent review (AGENTS.md:
 security, MLS ordering, recovery and credential decisions) and the owner's
