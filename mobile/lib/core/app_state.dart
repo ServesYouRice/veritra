@@ -1772,6 +1772,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
+      Uint8List? genesis;
       session = await api!.createOwner(
         username: username,
         password: password,
@@ -1779,13 +1780,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         enrollment: enrollment,
         credential: credential,
         setupToken: setupToken,
-        deviceList: await _signGenesis(enrollment),
+        deviceList: genesis = await _signGenesis(enrollment),
       );
       await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
+        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();
@@ -1924,6 +1926,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _opErrors.remove(Ops.devices);
       // L1 repair: take revoked siblings off the list. Never blocks.
       unawaited(_repairDeviceList(list).catchError((Object _) {}));
+      unawaited(_retryRecoveryDeviceList().catchError((Object _) {}));
       unawaited(_refreshOwnListState().catchError((Object _) {}));
     } finally {
       if (_refreshOwned(current, generation)) devicesLoaded = true;
@@ -2270,6 +2273,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final enrollment = await api!.reserveRegistrationEnrollment(inviteCode);
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
+      Uint8List? genesis;
       session = await api!.register(
         inviteCode: inviteCode,
         username: username,
@@ -2277,13 +2281,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         deviceName: config.deviceName,
         enrollment: enrollment,
         credential: credential,
-        deviceList: await _signGenesis(enrollment),
+        deviceList: genesis = await _signGenesis(enrollment),
       );
       await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
+        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();

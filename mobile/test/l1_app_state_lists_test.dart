@@ -45,6 +45,45 @@ void main() {
     expect(chain.head.entries.single.deviceId, idBytes(_own));
     expect(
         chain.head.entries.single.signingKey, await crypto.currentSigningKey());
+    // Review fix: the own genesis is the account's anchor, not something
+    // the first refresh takes from the server on trust: a server that shows
+    // another chain for the account is not adopted.
+    final pin = await crypto.localStore.loadDeviceListPin(_account);
+    expect(pin?.version, 1);
+    expect(pin?.headStatement, api.chain.single);
+  }, skip: skip);
+
+  test('the own genesis is pinned even when the server shows another chain',
+      () async {
+    final api = _ListApi(bindings);
+    final crypto =
+        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    // The server stores the real genesis but serves a made-up one: a ghost
+    // device that signed a genesis of its own for this account.
+    final ghost = bindings.createDevice(_account, 'dev_ghost');
+    addTearDown(ghost.close);
+    api.served = [
+      ghost.signDeviceList(
+          DeviceListBody(
+            accountId: idBytes(_account),
+            version: 1,
+            prevHash: DeviceListBody.zeroHash,
+            createdAtMs: 1,
+            change: DeviceListChange.genesis,
+            entries: [
+              DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
+            ],
+          ),
+          idBytes('dev_ghost')),
+    ];
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    final pin = await crypto.localStore.loadDeviceListPin(_account);
+    expect(pin?.headStatement, api.chain.single,
+        reason: 'the own genesis, not the chain the server served');
+    expect(pin?.standing(idBytes('dev_ghost'), ghost.signingPublicKey()),
+        PinStanding.unknown);
   }, skip: skip);
 
   test(
@@ -206,13 +245,19 @@ class _ListApi extends ApiClient {
     return _session;
   }
 
+  int listFetches = 0;
+
+  /// What fetches serve instead of [chain] (a lying server).
+  List<Uint8List>? served;
+
   @override
   Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
       {required int after}) async {
+    listFetches++;
     if (accountId != _account) return null;
-    final rest = chain.skip(after).toList();
+    final rest = (served ?? chain).skip(after).toList();
     return DeviceListPage(
-      headVersion: chain.length,
+      headVersion: (served ?? chain).length,
       more: false,
       statements: [
         for (var i = 0; i < rest.length; i++)

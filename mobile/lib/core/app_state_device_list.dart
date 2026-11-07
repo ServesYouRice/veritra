@@ -29,6 +29,10 @@ class _AppDeviceListSource implements DeviceListSource {
 /// (409 `device_list_conflict`) before the action is reported as failed.
 const int _deviceListSignAttempts = 3;
 
+/// The change-4 statement a K0-R completion signed and has not yet seen the
+/// server take (JSON: account, device, base64 statement). Public bytes.
+const String _recoveryStatementSetting = 'l1.recovery_list_statement';
+
 extension AppStateDeviceList on AppState {
   DeviceListCryptoService? get _listCrypto => switch (cryptoService) {
         final DeviceListCryptoService lists => lists,
@@ -51,6 +55,27 @@ extension AppStateDeviceList on AppState {
       change: DeviceListChange.genesis,
       entries: [DeviceListPair(idBytes(enrollment.deviceId), key)],
     ));
+  }
+
+  /// Pins this device's own genesis as its account's anchor right after
+  /// setup or registration, so the first refresh does not take the own
+  /// account by trust on first use from the server. A server that kept no
+  /// list at all (one from before L1, which ignores the field) gets no pin,
+  /// so the account stays "no list yet" as it is there; any list the server
+  /// shows is otherwise answered by this genesis, never adopted. Best
+  /// effort: without it the next refresh pins as before.
+  Future<void> _pinOwnGenesis(Session current, Uint8List? genesis) async {
+    final pins = _deviceListPins;
+    final account = current.accountId;
+    if (pins == null || genesis == null || account == null) return;
+    try {
+      final page = await pins.source.fetchDeviceList(account, after: 0);
+      if (page == null || page.headVersion == 0) return;
+      await pins.pinChain(account, [genesis], expectedHead: genesis);
+    } on Object catch (err) {
+      developer.log('L1 own genesis not pinned: ${err.runtimeType}',
+          name: 'veritra.l1');
+    }
   }
 
   /// Refreshes this account's own pin (forced). Null when the account has no
@@ -273,6 +298,11 @@ extension AppStateDeviceList on AppState {
   /// unless that head's recovery key is the held seed's. Without a held seed
   /// nothing is posted and peers keep this device out (K0-R's no-peer state)
   /// until the recovery key is typed again. Never throws.
+  ///
+  /// Signing drops the held seed for good, so the signed statement is stored
+  /// (it is public) before it is posted, and posted again from
+  /// [_retryRecoveryDeviceList] until the server takes it or the head names
+  /// this device: one failed request must not cost the only signature.
   Future<void> _postRecoveryDeviceList(Session recovered) async {
     final crypto = _listCrypto;
     final client = api;
@@ -287,26 +317,98 @@ extension AppStateDeviceList on AppState {
       return;
     }
     try {
-      final status = await pins.refresh(account, force: true);
-      final head = status.pin;
-      if (status.state != DeviceListState.ok || head == null) return;
-      final own = await crypto.currentSigningKey();
-      if (head.standing(idBytes(device), own) == PinStanding.approved) return;
-      final statement = await crypto.signRecoveryDeviceList(
-        prev: head.headStatement,
-        body: _nextBody(head, DeviceListChange.recovery,
-            [DeviceListPair(idBytes(device), own)]),
-        history: [
-          for (final key in head.keys)
-            DeviceListPair(key.deviceId, key.signingKey),
-        ],
-      );
-      await client.publishDeviceList(recovered.token, statement);
-      await pins.pinOwnStep(account, statement);
+      var statement = await _storedRecoveryStatement(account, device);
+      if (statement == null) {
+        final status = await pins.refresh(account, force: true);
+        final head = status.pin;
+        if (status.state != DeviceListState.ok || head == null) return;
+        final own = await crypto.currentSigningKey();
+        if (head.standing(idBytes(device), own) == PinStanding.approved) {
+          return;
+        }
+        statement = await crypto.signRecoveryDeviceList(
+          prev: head.headStatement,
+          body: _nextBody(head, DeviceListChange.recovery,
+              [DeviceListPair(idBytes(device), own)]),
+          history: [
+            for (final key in head.keys)
+              DeviceListPair(key.deviceId, key.signingKey),
+          ],
+        );
+        await localStore.saveSetting(
+            _recoveryStatementSetting,
+            jsonEncode(<String, Object?>{
+              'account_id': account,
+              'device_id': device,
+              'statement': base64Encode(statement),
+            }));
+      }
+      await _sendRecoveryStatement(recovered, statement);
     } on Object catch (err) {
       developer.log('L1 recovery version not posted: ${err.runtimeType}',
           name: 'veritra.l1');
     }
+  }
+
+  /// Posts a stored change-4 statement again (start, device refresh).
+  Future<void> _retryRecoveryDeviceList() async {
+    final current = session;
+    final account = current?.accountId;
+    final device = current?.deviceId;
+    if (current == null || account == null || device == null) return;
+    final statement = await _storedRecoveryStatement(account, device);
+    if (statement == null) return;
+    try {
+      await _sendRecoveryStatement(current, statement);
+    } on Object catch (err) {
+      developer.log('L1 recovery version not posted: ${err.runtimeType}',
+          name: 'veritra.l1');
+    }
+  }
+
+  Future<void> _sendRecoveryStatement(
+      Session current, Uint8List statement) async {
+    final client = api;
+    final pins = _deviceListPins;
+    final account = current.accountId;
+    if (client == null || pins == null || account == null) return;
+    try {
+      await client.publishDeviceList(current.token, statement);
+    } on ApiException catch (err) {
+      if (err.serverCode != 'device_list_conflict') rethrow;
+      // Taken already (a lost answer), or the head moved: done only if the
+      // head now names this device with its key.
+      final status = await pins.refresh(account, force: true);
+      final own = await _listCrypto?.currentSigningKey();
+      final head = status.pin;
+      if (own != null &&
+          head != null &&
+          head.standing(idBytes(current.deviceId ?? ''), own) ==
+              PinStanding.approved) {
+        await localStore.saveSetting(_recoveryStatementSetting, '');
+      }
+      return;
+    }
+    await localStore.saveSetting(_recoveryStatementSetting, '');
+    await pins.pinOwnStep(account, statement);
+  }
+
+  Future<Uint8List?> _storedRecoveryStatement(
+      String account, String device) async {
+    final raw = await localStore.loadSetting(_recoveryStatementSetting);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final value = jsonDecode(raw);
+      if (value is Map &&
+          value['account_id'] == account &&
+          value['device_id'] == device &&
+          value['statement'] is String) {
+        return base64Decode(value['statement'] as String);
+      }
+    } on FormatException {
+      // Unreadable: nothing to retry.
+    }
+    return null;
   }
 
   /// Whether this account has no approved-device list yet (an account from
