@@ -70,6 +70,9 @@ type API struct {
 	RecoveryActiveWindow time.Duration
 	RecoveryWait         time.Duration
 	RecoveryFailureCap   int
+	// ScopedSync turns on the per-scope sync routes (scoped_sync_handlers.go).
+	// Off, they are not registered and answer 404.
+	ScopedSync bool
 }
 
 // passwordService returns the account password verifier. PasswordCost is the
@@ -139,6 +142,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/calls/", a.withAuth(a.withWriteBudget(a.callSubroute)))
 	mux.HandleFunc("GET /api/v1/sync/ws", a.syncWebSocket)
 	mux.HandleFunc("GET /api/v1/sync/events", a.withAuth(a.syncEvents))
+	a.registerScopedSyncRoutes(mux)
 	mux.HandleFunc("GET /api/v1/search/metadata", a.withAuth(a.searchMetadata))
 	mux.HandleFunc("GET /api/v1/account/export", a.withRecentAuth(a.exportAccount))
 	mux.HandleFunc("DELETE /api/v1/account", a.withRecentAuth(a.deleteAccount))
