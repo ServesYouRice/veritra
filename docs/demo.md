@@ -78,7 +78,8 @@ The connect screen fills in the URL for you.
 
 - Packages (Debian/Ubuntu): `clang cmake ninja-build pkg-config libgtk-3-dev
   libsecret-1-dev liblzma-dev libnotify-dev
-  libayatana-appindicator3-dev`.
+  libayatana-appindicator3-dev libgstreamer1.0-dev
+  libgstreamer-plugins-base1.0-dev` (the last two play voice notes).
 - The app keeps its database key in the Secret Service keyring (GNOME
   Keyring or KWallet). A normal desktop session has one. Without it the app
   opens its recovery screen instead of starting.

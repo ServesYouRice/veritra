@@ -5036,6 +5036,66 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This poll is closed.'**
   String get pollClosedNotice;
+
+  /// No description provided for @voiceNoteRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'Record a voice note'**
+  String get voiceNoteRecord;
+
+  /// No description provided for @voiceNoteStop.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop and attach'**
+  String get voiceNoteStop;
+
+  /// No description provided for @voiceNoteDiscard.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard recording'**
+  String get voiceNoteDiscard;
+
+  /// No description provided for @voiceNoteRecording.
+  ///
+  /// In en, this message translates to:
+  /// **'Recording {time}'**
+  String voiceNoteRecording(String time);
+
+  /// No description provided for @voiceNotePermissionDenied.
+  ///
+  /// In en, this message translates to:
+  /// **'Microphone access is off. Allow it in the system settings to record.'**
+  String get voiceNotePermissionDenied;
+
+  /// No description provided for @voiceNoteRecordFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The recording could not be started.'**
+  String get voiceNoteRecordFailed;
+
+  /// No description provided for @voiceNotePlay.
+  ///
+  /// In en, this message translates to:
+  /// **'Play'**
+  String get voiceNotePlay;
+
+  /// No description provided for @voiceNotePause.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause'**
+  String get voiceNotePause;
+
+  /// No description provided for @voiceNoteSemantics.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice note, {size}'**
+  String voiceNoteSemantics(String size);
+
+  /// No description provided for @voiceNotePlayFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The voice note could not be played.'**
+  String get voiceNotePlayFailed;
 }
 
 class _AppLocalizationsDelegate

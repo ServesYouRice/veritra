@@ -3,12 +3,14 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  audioplayers_windows
   desktop_drop
   file_selector_windows
   flutter_secure_storage_windows
   flutter_webrtc
   local_notifier
   pasteboard
+  record_windows
   screen_retriever_windows
   tray_manager
   window_manager
