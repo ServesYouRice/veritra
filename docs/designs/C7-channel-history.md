@@ -190,7 +190,7 @@ and private-channel groups) is sent in two parts:
    | 3 | `X.seq = s + 1` and `X.prev = hash(H)` | Apply: new head |
    | 4 | Proposal, `X.seq <= s`, and `X.prev` equals the `prev` of the record applied at `X.seq` | Lost race: stale, ignore. Its sender discards its key and re-decides on the new state |
    | 5 | A `switch` or `move` proposal received live (not from a slot or the history fetch), authority checked, and either `X.seq > s` or status `closed` | Adopt `X` as head, status `ok` (recovery: the record states the whole setting) |
-   | 6 | Report, `X.seq < first seq this device holds` | Ignore; take no key from it |
+   | 6 | `X.seq <` the first seq this device holds (a newcomer meeting an older proposal or report) | Ignore; take no key from it |
    | 7 | Anything else: a report differing at `X.seq <= s`, `X.prev != hash(H)` at `s + 1`, or `X.seq > s + 1` | Fork or missed record: status `closed` |
 
    Rows are checked in order; row 5 comes before row 7, so an authorized
@@ -261,7 +261,9 @@ and private-channel groups) is sent in two parts:
    - **Missing or racing `history_sync`.** If none follows a membership
      commit, C0's reconcile coordinator sends one; every other device
      waits a jittered delay that grows with group size and cancels when it
-     sees one for that commit; a device whose delay runs out sends its own.
+     applies a **valid** one for that commit (`for_epoch` is inside the
+     body, so a stripped body cancels nothing); a device whose delay runs
+     out sends its own.
      So every device either applies one or sends one, and the barrier
      always clears. Duplicates resolve per slot by the ordering table
      (row 2 or row 4). No device ever sends a second `history_sync` for a
@@ -317,7 +319,8 @@ and private-channel groups) is sent in two parts:
      follows. `sig` in body0 covers the padded VAP1 as for any message;
      each slot record carries its own signature.
    - Size: `P(N) + 124 + 700 × N`, a function of `N` only (the server
-     knows `N`). VAP1's decoder accepts padding beyond the smallest
+     knows `N`). At C3's limit of 500 channels that is 372,652 bytes, about
+     497 KB in base64, inside the 1 MiB request read limit. VAP1's decoder accepts padding beyond the smallest
      bucket; receivers refuse any other length.
    - `kc_i` comes from the per-message `slot_key_i`, so a `full` channel's
      slot never repeats a value across messages.
@@ -354,11 +357,16 @@ and private-channel groups) is sent in two parts:
      and `ok`, for at most 24 hours; then it is sealed under a random key
      (newcomers see the earlier text: a gap). The UI shows a held edit as
      pending.
-   - **Deletes reach the server.** In a community conversation an author's
-     delete is the W7 `delete` payload **plus** a server delete of the
-     target envelope and its body (the C5 route that removes both, opened
-     to the target's author). The same in every mode, so newcomers never
-     fetch a deleted post, whatever the sealing. Deletes are not held.
+   - **Deletes reach the history route.** In a community conversation an
+     author's delete is the W7 `delete` payload **plus** a server call that
+     marks the target `history_hidden` (target's author only). The history
+     route never serves a hidden body; sync keeps serving envelope and body
+     until retention removes them, so no member meets a missing body (which
+     would make its group `unsure`). The same in every mode, so newcomers
+     never fetch a deleted post, whatever key sealed it. Deletes are not
+     held. (The review called this optional; it is adopted because a
+     delete sealed under a random key during a stale or `unsure` spell
+     would otherwise leave the post readable to newcomers.)
 
 8. **Who verifies a signature with which key.**
    - **Live members** need the key OpenMLS authenticated the sender with.
@@ -506,8 +514,12 @@ otherwise.
   columns, table, side field and 409 were never built and stay dropped.
 - **Pruning and deletes.** A body lives exactly as long as its envelope:
   the conversation's retention (and per-channel retention, D51) sets
-  `expires_at` alike; the sweeper and the C5 delete route remove both. The
-  C5 route is opened to a target's author for decision 7's deletes.
+  `expires_at` alike, and the sweeper removes both. `envelope_bodies`
+  gains `history_hidden` (decision 7), set by
+  `POST /api/v1/messages/{id}/history-hide` from the envelope's sender
+  account only. C5's moderator delete redacts the envelope today
+  (`docs/designs/C5-moderation.md`); if it ever removes the body, members
+  who have not synced the target turn `unsure`, for C5 and C7 to settle.
   Switching to `members_from_join` deletes nothing on the server. The
   confirm dialog says: "People who join later won't see earlier posts.
   Members who already have them keep them."
@@ -526,7 +538,7 @@ otherwise.
 - **History fetch.** `GET /api/v1/conversations/{id}/history?channel_id=&before=&limit=`,
   per calling device, the only route that serves pre-join bodies. It
   returns `{message_id, sender_device_id, action_id, channel_id,
-  created_at, epoch, body}` for unexpired, undeleted envelopes from
+  created_at, epoch, body}` for unexpired, undeleted, not `history_hidden` envelopes from
   unblocked senders that sync did not give this device: those before its
   `joined_after_event_id`, and those after it but in an epoch before its
   `joined_epoch` (the I51 withholding in `mls_group_store.go:779-783`).
@@ -547,7 +559,7 @@ otherwise.
 | Message sizes | The W7 256-byte bucket, as today; records and `history_sync` have fixed shapes | Coarser padding (L2) |
 | Per-channel retention (D51) | A long retention on one channel hints that it keeps history | The UI never couples the two settings |
 | Edits sent in a burst once a stale channel is rekeyed | Only after a lost rekey race: that some channel in the group is `full` | Rare; accepted |
-| Author deletes | Which post was deleted, in every mode (as for other conversations today) | None needed |
+| Author deletes (`history-hide`) | Which post its author deleted, in every mode (as for other conversations today) | None needed |
 | Membership commits waiting for a `history_sync` | Nothing about modes (every commit gets one) | None needed |
 | A `history_sync` from a second sender | A committer went offline | None needed |
 
@@ -614,8 +626,8 @@ otherwise.
   The core exposes no MLS exporter today; C7 does not need one.
 - **Server:** `sealed_body`, `envelope_bodies`, the history route, the
   group-level exception, the C2 change, the replay check, refusals of
-  legacy edit/delete and paging in community conversations, author access
-  to the C5 delete.
+  legacy edit/delete and paging in community conversations, the
+  `history-hide` call.
 - **Local DB:** per channel the head, applied record hashes, status, and
   the current period's keys with their windows; per group the floor; per
   row its period and generation; held edits. In the sealed database; not
@@ -675,7 +687,11 @@ round 2; 3 (ABI) is approved; 4 (server-checked admins) is moot.
    departed senders until L1, and mark those posts "from a former member";
    cost: a server colluding with any removed member (who holds old keys)
    can insert backdated posts in a departed member's name into a period
-   that member could read; (b) drop departed senders' posts for
+   that member could read. The server keeps a revoked device's
+   `signing_key` (`identity_store.go:649` only sets `revoked_at`) but
+   nulls it when an account is deleted (`account_store.go:170`), so a
+   deleted account's posts drop anyway, and (a) needs a route serving a
+   former member device's key to current members; (b) drop departed senders' posts for
    newcomers; cost: announcements by former admins disappear for every
    newcomer. **Recommended: (a) with the marker**, because (b) loses much
    of what `full` channels are for and the forgery needs a removed member
@@ -705,7 +721,7 @@ round 2; 3 (ABI) is approved; 4 (server-checked admins) is moot.
 | 7 ABI number, dependencies | ABI 13 or later with C4; AES-256-GCM and provider HKDF (owner question A); "C4 takes the same export" removed |
 | 8 `history_sync` unparseable | One layout, `P(N)`, exact size |
 | 9a-f Leaks | Per-message slot `kc`; byte-identical retries and body in the replay check; fixed-shape records; edits held in every channel; no server paging, history route defined; C6 report residual |
-| 10 Deleted post reaches newcomers | Two-pass import; author deletes also remove the envelope and body |
+| 10 Deleted post reaches newcomers | Two-pass import; author deletes also hide the body from the history route |
 | 11 Moves | `close_group_id` |
 | 12 C2 refusal | Applies only to envelopes with a `channel_id` |
 | 13 Smaller items | Legacy routes refused; history route serves I51-withheld envelopes and applies blocks; 512-byte record with a version byte; group-level depth; request rule; signature covers padded VAP1; `close_epoch` defined; no C4 governance messages; backup and snapshot exclusion |
