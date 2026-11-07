@@ -388,7 +388,7 @@ func (s *Store) approveDeviceLink(ctx context.Context, linkID, accountID, approv
 		Changes: []devicelist.Change{devicelist.ChangeAdd},
 		Signer:  approverDeviceID,
 		Added:   []devicelist.Entry{{DeviceID: deviceID, SigningKey: link.ClaimedSigningKey}},
-	}, approverDeviceID != "", now)
+	}, true, now)
 	if err != nil {
 		return domain.DeviceLink{}, domain.Device{}, 0, nil, nil, err
 	}

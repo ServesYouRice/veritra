@@ -153,7 +153,16 @@ func genesisDeviceListRule(deviceID string, signingKey []byte) DeviceListRule {
 // recovery-key change) must then say how, so an old client cannot create an
 // unlisted device or a head with no recovery key. Accounts with no head stay
 // as they were before L1.
+//
+// It fails closed on a caller with no device: every rule here is signed by a
+// device, and insertDeviceListTx skips the signer check for an empty Signer,
+// so an empty one is ErrForbidden when a version is sent, and when the
+// account has a head and requiredWithHead is set (a device-less caller can
+// never sign the version the head requires).
 func optionalDeviceListTx(ctx context.Context, tx *sql.Tx, accountID string, raw []byte, rule DeviceListRule, requiredWithHead bool, now string) (*DeviceListResult, error) {
+	if rule.Signer == "" && len(raw) != 0 {
+		return nil, ErrForbidden
+	}
 	if len(raw) == 0 {
 		if !requiredWithHead {
 			return nil, nil
@@ -163,6 +172,9 @@ func optionalDeviceListTx(ctx context.Context, tx *sql.Tx, accountID string, raw
 			return nil, err
 		}
 		if has {
+			if rule.Signer == "" {
+				return nil, ErrForbidden
+			}
 			return nil, ErrDeviceListRequired
 		}
 		return nil, nil

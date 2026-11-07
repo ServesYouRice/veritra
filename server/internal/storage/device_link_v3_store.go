@@ -466,7 +466,7 @@ func (s *Store) ApproveDeviceLinkV3WithDeviceList(ctx context.Context, id, accou
 		Changes: []devicelist.Change{devicelist.ChangeAdd},
 		Signer:  sourceDeviceID,
 		Added:   []devicelist.Entry{{DeviceID: link.RecipientDeviceID, SigningKey: link.SigningKey}},
-	}, sourceDeviceID != "", nowText)
+	}, true, nowText)
 	if err != nil {
 		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err
 	}

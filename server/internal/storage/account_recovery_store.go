@@ -708,7 +708,7 @@ func (s *Store) SetRecoveryKeyWithDeviceList(ctx context.Context, accountID, cal
 		Changes:        []devicelist.Change{devicelist.ChangeRecoveryKey},
 		Signer:         callerDeviceID,
 		RecoveryKeySet: true,
-	}, callerDeviceID != "", now)
+	}, true, now)
 	if err != nil {
 		return RecoveryKeyResult{}, err
 	}

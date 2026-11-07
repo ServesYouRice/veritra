@@ -103,6 +103,10 @@ func (a *API) getDeviceLinkV3(w http.ResponseWriter, r *http.Request, principal 
 }
 
 func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
+		return
+	}
 	var req struct {
 		ProtocolVersion  string `json:"protocol_version"`
 		ClaimRequestHash string `json:"claim_request_hash"`

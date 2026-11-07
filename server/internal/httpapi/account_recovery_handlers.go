@@ -432,6 +432,11 @@ func recoveryKeyPayload(available bool, status storage.RecoveryKeyStatus) map[st
 }
 
 func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	// The change-5 version is signed by the calling device.
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
+		return
+	}
 	var req struct {
 		RKAuthPub []byte `json:"rk_auth_pub"`
 		RKID      []byte `json:"rk_id"`

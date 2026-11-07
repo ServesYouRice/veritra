@@ -756,6 +756,11 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
+		// The approval is signed into the device list by the approving device.
+		if principal.DeviceID == "" {
+			writeError(w, http.StatusBadRequest, "device_session_required")
+			return
+		}
 		if !recentlyAuthenticated(principal) {
 			writeError(w, http.StatusForbidden, "recent_auth_required")
 			return
@@ -1022,6 +1027,11 @@ func (a *API) revokeDevice(w http.ResponseWriter, r *http.Request, principal dom
 		DeviceList []byte `json:"device_list,omitempty"`
 	}
 	if !decodeOptionalJSON(w, r, &req) || !checkDeviceListField(w, req.DeviceList) {
+		return
+	}
+	// A version has to be signed by the calling device.
+	if len(req.DeviceList) != 0 && principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
 		return
 	}
 	eventID, listResult, err := a.Store.RevokeDeviceWithDeviceList(r.Context(), principal.AccountID, principal.DeviceID, deviceID, req.DeviceList)

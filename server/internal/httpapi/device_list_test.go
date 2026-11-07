@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/app"
+	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/httpapi"
@@ -585,33 +586,39 @@ func TestLinkV3ApproveRequiresAndStoresTheDeviceListVersion(t *testing.T) {
 	}
 }
 
+// claimV2Link creates a v2 device link as the owner and claims it, ready for
+// approval.
+func (w *dlWorld) claimV2Link() (string, testEnrollment) {
+	t := w.t
+	t.Helper()
+	status, response := w.do(http.MethodPost, "/api/v1/device-links", w.owner.token, map[string]interface{}{"code": strings.Repeat("c", 64)})
+	if status != http.StatusCreated {
+		t.Fatalf("create device link status=%d body=%s", status, response)
+	}
+	var created struct {
+		DeviceLink struct {
+			ID   string `json:"id"`
+			Code string `json:"code"`
+		} `json:"device_link"`
+	}
+	if err := json.Unmarshal(response, &created); err != nil {
+		t.Fatal(err)
+	}
+	enrollment := reserveEnrollment(t, w.handler, "/api/v1/device-links/claim-enrollment", created.DeviceLink.Code)
+	claim := map[string]interface{}{
+		"code": created.DeviceLink.Code, "device_name": "linked tablet", "device_key_package": mlswiretest.KeyPackage(),
+		"transcript_hash": bytes.Repeat([]byte{7}, 32), "claim_tag": bytes.Repeat([]byte{8}, 32),
+	}
+	addEnrollmentProof(claim, enrollment)
+	if status, response = w.do(http.MethodPost, "/api/v1/device-links/claim", "", claim); status != http.StatusAccepted {
+		t.Fatalf("claim status=%d body=%s", status, response)
+	}
+	return created.DeviceLink.ID, enrollment
+}
+
 func TestLinkV2ApproveRequiresAndStoresTheDeviceListVersion(t *testing.T) {
 	w := newDLWorld(t, true)
-	linkID, enrollment := func() (string, testEnrollment) {
-		status, response := w.do(http.MethodPost, "/api/v1/device-links", w.owner.token, map[string]interface{}{"code": strings.Repeat("c", 64)})
-		if status != http.StatusCreated {
-			t.Fatalf("create device link status=%d body=%s", status, response)
-		}
-		var created struct {
-			DeviceLink struct {
-				ID   string `json:"id"`
-				Code string `json:"code"`
-			} `json:"device_link"`
-		}
-		if err := json.Unmarshal(response, &created); err != nil {
-			t.Fatal(err)
-		}
-		enrollment := reserveEnrollment(t, w.handler, "/api/v1/device-links/claim-enrollment", created.DeviceLink.Code)
-		claim := map[string]interface{}{
-			"code": created.DeviceLink.Code, "device_name": "linked tablet", "device_key_package": mlswiretest.KeyPackage(),
-			"transcript_hash": bytes.Repeat([]byte{7}, 32), "claim_tag": bytes.Repeat([]byte{8}, 32),
-		}
-		addEnrollmentProof(claim, enrollment)
-		if status, response = w.do(http.MethodPost, "/api/v1/device-links/claim", "", claim); status != http.StatusAccepted {
-			t.Fatalf("claim status=%d body=%s", status, response)
-		}
-		return created.DeviceLink.ID, enrollment
-	}()
+	linkID, enrollment := w.claimV2Link()
 	device := dlActor{deviceID: enrollment.DeviceID, pub: enrollment.SigningKey}
 	approve := func(statement []byte) (int, []byte) {
 		body := map[string]interface{}{"transcript_hash": bytes.Repeat([]byte{7}, 32), "approval_tag": bytes.Repeat([]byte{9}, 32)}
@@ -1036,5 +1043,48 @@ func TestDeviceListAuditCarriesOnlyAccountVersionAndChange(t *testing.T) {
 	}
 	if seen == 0 {
 		t.Fatal("no audit event for the added version")
+	}
+}
+
+// A session with no device cannot sign the version a list needs: the v2
+// approval refuses it with device_session_required (D94, fail closed), changes
+// nothing, and the recovery-key and revoke routes refuse it too (recent
+// authentication already needs a device).
+func TestDevicelessSessionCannotApproveALinkOrChangeRecoveryOrRevokeOnAList(t *testing.T) {
+	w := newDLWorld(t, true)
+	linkID, enrollment := w.claimV2Link()
+	token := "deviceless-session-token-for-d94"
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
+	later := time.Now().UTC().Add(time.Hour).Format("2006-01-02T15:04:05.000000000Z")
+	w.exec(`INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, NULL, ?, ?, ?, ?, ?)`,
+		auth.HashToken(token), w.owner.accountID, later, now, now, now, later)
+
+	approve := map[string]interface{}{"transcript_hash": bytes.Repeat([]byte{7}, 32), "approval_tag": bytes.Repeat([]byte{9}, 32)}
+	if status, body := w.do(http.MethodPost, "/api/v1/device-links/"+linkID+"/approve", token, approve); status != http.StatusBadRequest || !jsonErrorIs(body, "device_session_required") {
+		t.Fatalf("approve: status=%d body=%s", status, body)
+	}
+	listed := w.ownerStatement(devicelist.ChangeAdd, []devicelist.Entry{w.owner.entry(), {DeviceID: enrollment.DeviceID, SigningKey: enrollment.SigningKey}}, nil, w.owner)
+	approve["device_list"] = listed
+	if status, body := w.do(http.MethodPost, "/api/v1/device-links/"+linkID+"/approve", token, approve); status != http.StatusBadRequest || !jsonErrorIs(body, "device_session_required") {
+		t.Fatalf("approve with a version: status=%d body=%s", status, body)
+	}
+	if w.count(`SELECT COUNT(*) FROM devices WHERE id = ?`, enrollment.DeviceID) != 0 || w.headVersion(w.owner.accountID) != 1 {
+		t.Fatal("a refused approval changed state")
+	}
+
+	authPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	put := map[string]interface{}{"rk_auth_pub": []byte(authPub), "rk_id": bytes.Repeat([]byte{0x42}, 16)}
+	if status, body := w.do(http.MethodPut, "/api/v1/account/recovery-key", token, put); status < 400 || status >= 500 {
+		t.Fatalf("recovery key: status=%d body=%s", status, body)
+	}
+	if w.count(`SELECT COUNT(*) FROM account_recovery_keys`) != 0 || w.headVersion(w.owner.accountID) != 1 {
+		t.Fatal("a refused recovery key changed state")
+	}
+	status, body := w.do(http.MethodDelete, "/api/v1/devices/"+w.owner.deviceID, token, map[string]interface{}{"device_list": listed})
+	if status < 400 || status >= 500 {
+		t.Fatalf("revoke: status=%d body=%s", status, body)
+	}
+	if w.count(`SELECT COUNT(*) FROM devices WHERE id = ? AND revoked_at IS NULL`, w.owner.deviceID) != 1 {
+		t.Fatal("a refused revoke revoked the device")
 	}
 }
