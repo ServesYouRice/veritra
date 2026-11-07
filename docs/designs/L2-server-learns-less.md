@@ -44,8 +44,8 @@ one. Other packages (L1, C7, #138) are claiming numbers in parallel.
 - **The proxy does log addresses.** The shipped Caddy profile
   (`deploy/caddy/Caddyfile`) deletes the URI and credential headers from its
   access and error logs but keeps `remote_ip`, timestamps, user agent and
-  sizes. The Traefik edge in `deploy/kubernetes` has the same question (to
-  confirm in L2-2; confidence 60% that it logs addresses by default).
+  sizes. Nothing in `deploy/kubernetes` turns on a Traefik access log; the
+  private `infra` repo decides that, so L2-2 documents keeping it off.
 - **Times are stored exactly:** `devices.last_seen_at`
   (`identity_store.go:370`), every `created_at`, and W5's delivery and read
   cursors (D47).
@@ -84,10 +84,16 @@ The adversary is the server operator, or someone who has taken the host.
   package, `history_sync`, K2 transfer chunks. Buckets: 256-byte multiples
   up to 4 KiB, then powers of two up to the route's cap (`mls_handlers.go`
   reads at most 6 MiB and 12 MiB).
-- The padding goes inside the encrypted or signed container (MLS
-  `PrivateMessage` padding for messages and commits; a receiver-stripped
-  pad inside the signed bytes for key packages and Welcomes). An outer pad
-  the server strips would show it the real length, so it is not used.
+- The padding goes inside the encrypted or signed bytes and only the
+  receiver strips it; an outer pad the server strips would show it the real
+  length. Application messages use MLS `PrivateMessage` padding.
+- `crypto/rust` sets no wire-format policy, so commits most likely go out as
+  OpenMLS's default `PublicMessage` (confidence 65%, to confirm first).
+  Then commits need either a pure-ciphertext policy (its own crypto change,
+  and the server can no longer read D28 roster changes from the commit) or a
+  pad inside the D28 bundle. Default: pad inside the bundle.
+- Key packages carry a padding extension; the server's structural check
+  (`server/internal/mlswire`) must accept it, which is a server change.
 - `VAP1` stays on 256-byte multiples. Larger buckets for payloads would need
   a `VAP2`, which older apps refuse, so it is out of scope.
 - **Counters: +1 ABI** (padding policy passed to commit and Welcome creation,
@@ -134,8 +140,10 @@ and every admin or membership route stay identified.
   | Dedupe `UNIQUE(sender_device_id, idempotency_key)` | Key on `(conversation_id, random 128-bit idempotency key)` |
   | D25 sender binding | From MLS sender data (ABI change above) |
   | C2 `posting_restricted` | Server cannot refuse; members' apps drop disallowed posts (C2's client half). In admins-only conversations the app sends identified |
-  | C6 franking attribution | The report carries the franking opening; the moderator checks the sender from the commitment, not a server row. Needs C6 owner review: its G-conditions assume the row |
+  | C6 franking attribution | **Unsolved.** The sender writes `sender_device_id` into the franking HMAC itself, so member M could send a sealed message naming victim S (honest receivers drop it), then report it and frame S. Today the authenticated server row stops that. Sealed messages are therefore **not reportable**; conversations with reporting on send identified. Fixing it needs asymmetric franking: new crypto, its own package |
+  | The sender's own copy comes back in fan-out | The server cannot leave the sender out, and OpenMLS cannot decrypt its own `PrivateMessage`, so under I33 sync would stop. The sending device recognises its own message by the random idempotency key held in its outbox and skips it |
   | Blocked senders hidden by the server | Hidden by the receiving app only |
+  | Other readers of the column (0044 prune check, B8 message requests, revocation store, account export) | Each is listed and checked in the L2-3 PR before the column becomes nullable |
   | Per-device send limits | Per-token limits; tokens are rationed per member per epoch |
   | D28 commits | Unchanged: commits stay identified |
 
@@ -147,14 +155,17 @@ and every admin or membership route stay identified.
 
 ### L2-4 Reproducible, signed server builds (Sonnet)
 
-- `scripts/verify-server-build.sh <tag>`: checks out the tag, builds the
-  image with the pinned Go digest, `SOURCE_DATE_EPOCH` from the commit,
-  and compares the digest with the one `release.yml` published and attested.
+- `scripts/verify-server-build.sh <tag>`: checks out the tag, builds with
+  the pinned Go digest and `SOURCE_DATE_EPOCH` from the commit, and compares
+  the per-platform server binary SHA-256 and image manifest digest with the
+  release. Not the multi-arch index: its provenance (`mode=max`) and SBOM
+  attestations embed per-run data, so it differs every build.
 - Pin the remaining unpinned inputs it finds (Go module proxy via
   `go.sum`, BuildKit version).
 - The release keeps GitHub provenance; adding a keyless signature
   (`cosign`) is owner question 4.
-- The published digest is the measurement L3's proof hook reports.
+- L3 builds its expected VM measurement from this verified binary; the
+  image digest is an input to that measurement, not the measurement itself.
 - **Counters: none.**
 
 ### L2-5 Own-device alert (deferred from L1 by D94)
@@ -183,7 +194,9 @@ Copied from L1-4 so the two designs agree:
   not linkable to the device in stored rows; dedupe works without a sender;
   identified routes still refuse a token. Rust/Dart: sender taken from MLS
   matches the leaf; a forged sender in the outer frame has no effect.
-  Grep test: no sealed send stores a device id. Demo e2e: two clients chat
+  Grep test: no sealed send stores a device id. The sender gets its own
+  sealed message back and skips it without stopping sync. A report of a
+  sealed message is refused. Demo e2e: two clients chat
   with sealed sender on; C2 and C6 tests updated to their new paths.
 - **L2-4:** CI job rebuilds the last tag and compares digests; a changed
   byte in the tree changes the digest.
@@ -195,9 +208,10 @@ Copied from L1-4 so the two designs agree:
 
 ## Open questions for the owner
 
-1. **Sealed sender at all?** It changes C2's server refusal and C6's
-   attribution. **Default: yes, application messages only, built after
-   C2 and C6 land**, with admins-only conversations sending identified.
+1. **Sealed sender at all?** It removes C2's server refusal and cannot be
+   reported safely (C6). **Default: yes, application messages only, built
+   after C2 and C6 land; admins-only conversations and conversations with
+   reporting on send identified**, so sealed messages are never reportable.
 2. **New dependency for anonymous credentials.** **Default: allow one
    reviewed crate** (to be named in the L2-3 PR with its licence), or skip
    L2-3.
