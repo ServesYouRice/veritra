@@ -506,6 +506,26 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **TASK-010 and TASK-048 (commit-then-reveal and key commitment in device
     linking, D100 A):** built in their own change (see its entry); this step
     only signs change 2 after the link checks.
+  - **Independent review fixes:** change 2 names the pair whose v3
+    transcript hash, recomputed in Dart (`k2_transcript.dart`, the
+    `link_v3.rs` vector), equals the one native verified; before, the
+    re-fetched record's key was signed, and a server could swap it. Every
+    judgment knows the participants, so a re-judge by list alone no longer
+    undoes the Welcome's roster check. A pin that does not approve a pair a
+    decision needs is fetched again past the one-minute limit (at most every
+    5 s per account), and a sender with no row or an unapproved row is judged
+    again before its text is dropped, so a device linked within a minute of
+    the last fetch is not hidden for good. The signed change 4 is stored and
+    posted again until the server takes it. Setup and registration pin their
+    own genesis. Call signals from a leaf that is not approved are dropped.
+  - **Known gaps after review:** a leaf approved once is not judged again
+    (a device removed by change 3 stays approved until its MLS removal
+    lands, so D68's residual is not closed yet); a conflict is sticky with
+    no clear path, and a made-up genesis from the server alone triggers it;
+    text from a `checking` sender is dropped, not kept hidden (owner
+    question); judging a commit can wait about 25 s for the server inside
+    the crypto queue, more than a 20 s background wake; first sight refuses
+    chains over 256 versions.
 
 - **L1-1, approved-device list, crypto layer, ABI 14 (2026-11-07, D94):**
   design [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
