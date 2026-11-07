@@ -2820,6 +2820,154 @@ class AppLocalizationsSr extends AppLocalizations {
   String recoveryKeyOriginMismatch(String current, String origin) {
     return 'Овај уређај користи $current, али адреса сервера за опоравак је $origin. Опоравак ради само преко адресе $origin.';
   }
+
+  @override
+  String get joinTitle => 'Придружи се линком';
+
+  @override
+  String get joinLinkLabel => 'Позивни линк';
+
+  @override
+  String get joinLinkHint => 'Налепите линк који сте добили';
+
+  @override
+  String get joinCheck => 'Провери линк';
+
+  @override
+  String get joinLinkInvalid => 'Ово није позивни линк за овај сервер.';
+
+  @override
+  String get joinLinkUnusable => 'Овај линк више не ради. Затражите нови.';
+
+  @override
+  String get joinKindGroup => 'Група';
+
+  @override
+  String get joinKindCommunity => 'Заједница';
+
+  @override
+  String joinInvitedBy(String username) {
+    return 'Позвао вас је $username';
+  }
+
+  @override
+  String get joinRequestButton => 'Затражи придруживање';
+
+  @override
+  String get joinRequestNote =>
+      'Власник или администратор мора да одобри ваш захтев. До тада немате приступ.';
+
+  @override
+  String get joinAlreadyMember => 'Већ сте члан.';
+
+  @override
+  String get joinRequestSent =>
+      'Захтев је послат. Остаје међу вашим захтевима док неко не одлучи.';
+
+  @override
+  String get joinYourRequests => 'Ваши захтеви';
+
+  @override
+  String get joinNoRequests => 'Још нема захтева.';
+
+  @override
+  String get joinStatusPending => 'Чека одобрење';
+
+  @override
+  String get joinStatusApproved =>
+      'Одобрено. Шифровани приступ следи када уређај неког члана ажурира групу.';
+
+  @override
+  String get joinStatusRejected => 'Одбијено';
+
+  @override
+  String get joinStatusCancelled => 'Отказано';
+
+  @override
+  String get joinCancelRequest => 'Откажи захтев';
+
+  @override
+  String get membInviteSection => 'Позивни линкови';
+
+  @override
+  String get membInviteManage => 'Позиви и захтеви за придруживање';
+
+  @override
+  String get membInviteCreate => 'Направи позивни линк';
+
+  @override
+  String get membInviteCreateDetail =>
+      'Важи 7 дана и за највише 10 људи, а сваку особу и даље морате да одобрите.';
+
+  @override
+  String get membInviteCreatedNote =>
+      'Копирајте овај линк сада. Није сачуван на серверу и не може се поново приказати.';
+
+  @override
+  String get membInviteCopy => 'Копирај линк';
+
+  @override
+  String get membInviteCopied => 'Линк је копиран.';
+
+  @override
+  String get membInviteNone => 'Нема активних линкова.';
+
+  @override
+  String membInviteUses(int used, int max, String date) {
+    return '$used од $max искоришћено · истиче $date';
+  }
+
+  @override
+  String get membInviteRevoke => 'Опозови линк';
+
+  @override
+  String get joinReqSection => 'Захтеви за придруживање';
+
+  @override
+  String get joinReqNone => 'Нико не чека.';
+
+  @override
+  String joinReqAskedAt(String date) {
+    return 'Затражено $date';
+  }
+
+  @override
+  String joinReqApprove(String username) {
+    return 'Одобри $username';
+  }
+
+  @override
+  String joinReqReject(String username) {
+    return 'Одбиј $username';
+  }
+
+  @override
+  String get joinReqRejectedSnack => 'Захтев је одбијен.';
+
+  @override
+  String communityRemoveTitle(String username) {
+    return 'Уклонити $username из заједнице?';
+  }
+
+  @override
+  String get communityRemoveMessage =>
+      'Одмах губе приступ свим каналима. Поруке које су већ на њиховим уређајима нису обрисане.';
+
+  @override
+  String get communityRemoveConfirm => 'Уклони';
+
+  @override
+  String get communityLeaveTitle => 'Напустити ову заједницу?';
+
+  @override
+  String get communityLeave => 'Напусти заједницу';
+
+  @override
+  String get communityLeaveDetail =>
+      'Напуштате све канале одједном. Поново се можете придружити новим линком.';
+
+  @override
+  String get communityLeaveConfirm => 'Напусти';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -5642,4 +5790,152 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String recoveryKeyOriginMismatch(String current, String origin) {
     return 'Ovaj uređaj koristi $current, ali adresa servera za oporavak je $origin. Oporavak radi samo preko adrese $origin.';
   }
+
+  @override
+  String get joinTitle => 'Pridruži se linkom';
+
+  @override
+  String get joinLinkLabel => 'Pozivni link';
+
+  @override
+  String get joinLinkHint => 'Nalepite link koji ste dobili';
+
+  @override
+  String get joinCheck => 'Proveri link';
+
+  @override
+  String get joinLinkInvalid => 'Ovo nije pozivni link za ovaj server.';
+
+  @override
+  String get joinLinkUnusable => 'Ovaj link više ne radi. Zatražite novi.';
+
+  @override
+  String get joinKindGroup => 'Grupa';
+
+  @override
+  String get joinKindCommunity => 'Zajednica';
+
+  @override
+  String joinInvitedBy(String username) {
+    return 'Pozvao vas je $username';
+  }
+
+  @override
+  String get joinRequestButton => 'Zatraži pridruživanje';
+
+  @override
+  String get joinRequestNote =>
+      'Vlasnik ili administrator mora da odobri vaš zahtev. Do tada nemate pristup.';
+
+  @override
+  String get joinAlreadyMember => 'Već ste član.';
+
+  @override
+  String get joinRequestSent =>
+      'Zahtev je poslat. Ostaje među vašim zahtevima dok neko ne odluči.';
+
+  @override
+  String get joinYourRequests => 'Vaši zahtevi';
+
+  @override
+  String get joinNoRequests => 'Još nema zahteva.';
+
+  @override
+  String get joinStatusPending => 'Čeka odobrenje';
+
+  @override
+  String get joinStatusApproved =>
+      'Odobreno. Šifrovani pristup sledi kada uređaj nekog člana ažurira grupu.';
+
+  @override
+  String get joinStatusRejected => 'Odbijeno';
+
+  @override
+  String get joinStatusCancelled => 'Otkazano';
+
+  @override
+  String get joinCancelRequest => 'Otkaži zahtev';
+
+  @override
+  String get membInviteSection => 'Pozivni linkovi';
+
+  @override
+  String get membInviteManage => 'Pozivi i zahtevi za pridruživanje';
+
+  @override
+  String get membInviteCreate => 'Napravi pozivni link';
+
+  @override
+  String get membInviteCreateDetail =>
+      'Važi 7 dana i za najviše 10 ljudi, a svaku osobu i dalje morate da odobrite.';
+
+  @override
+  String get membInviteCreatedNote =>
+      'Kopirajte ovaj link sada. Nije sačuvan na serveru i ne može se ponovo prikazati.';
+
+  @override
+  String get membInviteCopy => 'Kopiraj link';
+
+  @override
+  String get membInviteCopied => 'Link je kopiran.';
+
+  @override
+  String get membInviteNone => 'Nema aktivnih linkova.';
+
+  @override
+  String membInviteUses(int used, int max, String date) {
+    return '$used od $max iskorišćeno · ističe $date';
+  }
+
+  @override
+  String get membInviteRevoke => 'Opozovi link';
+
+  @override
+  String get joinReqSection => 'Zahtevi za pridruživanje';
+
+  @override
+  String get joinReqNone => 'Niko ne čeka.';
+
+  @override
+  String joinReqAskedAt(String date) {
+    return 'Zatraženo $date';
+  }
+
+  @override
+  String joinReqApprove(String username) {
+    return 'Odobri $username';
+  }
+
+  @override
+  String joinReqReject(String username) {
+    return 'Odbij $username';
+  }
+
+  @override
+  String get joinReqRejectedSnack => 'Zahtev je odbijen.';
+
+  @override
+  String communityRemoveTitle(String username) {
+    return 'Ukloniti $username iz zajednice?';
+  }
+
+  @override
+  String get communityRemoveMessage =>
+      'Odmah gube pristup svim kanalima. Poruke koje su već na njihovim uređajima nisu obrisane.';
+
+  @override
+  String get communityRemoveConfirm => 'Ukloni';
+
+  @override
+  String get communityLeaveTitle => 'Napustiti ovu zajednicu?';
+
+  @override
+  String get communityLeave => 'Napusti zajednicu';
+
+  @override
+  String get communityLeaveDetail =>
+      'Napuštate sve kanale odjednom. Ponovo se možete pridružiti novim linkom.';
+
+  @override
+  String get communityLeaveConfirm => 'Napusti';
 }

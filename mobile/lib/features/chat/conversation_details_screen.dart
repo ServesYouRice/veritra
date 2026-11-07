@@ -13,6 +13,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../communities/membership_screens.dart';
 import 'chat_list_screen.dart';
 import 'mute_sheet.dart';
 import 'safety_number_screen.dart';
@@ -220,6 +221,31 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
+              // C1: invitation links and join requests of a group, for its
+              // owners and admins. A DM or a community channel has none.
+              if (conversation.isGroup &&
+                  const <String>{'owner', 'admin'}
+                      .contains(myRole)) ...<Widget>[
+                const SizedBox(height: BoneSpacing.sm),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      leading: const Icon(Icons.link),
+                      title: Text(l10n.membInviteManage),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => MembershipManageScreen(
+                            state: state,
+                            kind: InviteTargetKind.group,
+                            targetId: conversationId,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               SectionHeader(l10n.settingsSectionSafety),
               TileGroup(
                 children: <Widget>[

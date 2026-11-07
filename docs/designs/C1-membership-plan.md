@@ -93,7 +93,11 @@ existing signed-in accounts. Instance registration remains its own flow.
   list/detail titles, and is distributed only to current authorized members.
 
 The invitation wire format, verifier/proof, secret lifecycle and binding to
-the exact target/account/device keys need an independent design review.
+the exact target/account/device keys need an independent design review. The
+format and the binding (D90) are specified in
+[C1-invite-format](C1-invite-format.md): a secret-keyed tag over the target,
+account and device keys, checked by the joiner. A device signature waits for
+C7's ABI 13.
 Do not equate a server-returned invitation label or a server-side boolean
 approval with end-to-end authentication. Reusing the L0 codec/QR patterns
 does not mean reusing its cryptographic domains or its device-link protocol.
