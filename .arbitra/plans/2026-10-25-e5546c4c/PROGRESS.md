@@ -45,8 +45,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 37 `TASK-037` Make _startSync failures observable and recoverable
 - [x] 38 `TASK-038` Report restoreFromBackup failure when the restored session does not come up
   - Done; owner questions left: restore-failure kind (Q-003) and whether a 401-rejected restored session counts as failure (VAL-053).
-- [ ] 39 `TASK-039` Hold sends after a member removal until the MLS removal commit is applied
-  - Blocked on owner question Q-001.
+- [x] 39 `TASK-039` Hold sends after a member removal until the MLS removal commit is applied
+  - Fixed 8ad0f01 (D68): sends are held until the MLS removal commit applies; tests in app_state_removal_hold_test.dart and chat_removal_hold_test.dart.
 - [x] 40 `TASK-040` Keep the deepest history cursor across newest-page refreshes when pages overlap
 - [x] 41 `TASK-041` Send read receipts only for a conversation still selected and in the foreground
 - [x] 42 `TASK-042` Contain storage failures in the application outbox flush and retry scheduler
@@ -114,8 +114,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 100 `TASK-100` Demo e2e: add a Bob catch-up barrier before asserting he never received 'without bob'
 - [x] 101 `TASK-101` Desktop notifier: make the unreadable-mute case reach the mute lookup and assert it
 - [x] 102 `TASK-102` Mute-clearing test: store a mute before each clear and assert both clear paths
-- [ ] 103 `TASK-103` Drafts: cover a debounced, unflushed edit at sign-out and at session expiry
-  - Partial: draft flush at expiry needs an owner decision (test kept skipped).
+- [x] 103 `TASK-103` Drafts: cover a debounced, unflushed edit at sign-out and at session expiry
+  - Fixed 58adb7e (D65): pending drafts flush before sign-out and session end clear data (`_flushDraftsBeforeSessionEnd`); no skipped draft test remains.
 - [x] 104 `TASK-104` Make the MLS rollback test assert the surviving messages, not just the absence of msg_2
 - [x] 105 `TASK-105` Make the hard-coded string guard scan whole files and cover the missing string parameters
 - [ ] 106 `TASK-106` Stop trusting server-stamped expiry without an authenticated source (gated on section-26579cea45f35cfc5617fb36/UQ-1)
@@ -138,8 +138,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 122 `TASK-122` Close the demo-boundary scan bypasses: imports, tear-offs, named constructors and unanchored exemptions
 - [x] 123 `TASK-123` Add opt-in registry verification that the pinned golang digest belongs to golang:${GO_VERSION}
 - [x] 124 `TASK-124` Detect all common dynamic Gradle versions across every Android build file and fail closed
-- [ ] 125 `TASK-125` Require an https services.gradle.org wrapper URL and a distribution checksum, and validate the wrapper JAR
-  - Partial: checker warns only; the Gradle distribution checksum could not be fetched here (403).
+- [x] 125 `TASK-125` Require an https services.gradle.org wrapper URL and a distribution checksum, and validate the wrapper JAR
+  - Closed by decision D72: the Gradle distribution checksum stays a warning; the checker warns.
 - [x] 126 `TASK-126` Build the release image from the captured commit and re-verify HEAD after checks
 - [x] 127 `TASK-127` Refuse server releases of commits not on the protected default branch
 - [x] 128 `TASK-128` Read Android minSdkVersion as Android does: signed, by resource ID, only from manifest-level uses-sdk
@@ -233,7 +233,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
 - [x] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
 - [ ] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner
-  - Skipped: needs an API change on both sides (see STATE.md Open work, hidden tail on every poll).
+  - Still open (checked 2026-11-07): semantics decided (D92, docs/designs/C1-scoped-sync-bounds.md) but `scanned_through` is in no server or app code yet; STATE.md Open work still lists the hidden-tail cost.
 - [x] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
 - [x] 211 `TASK-211` Require current conversation membership for message edit and delete
 - [x] 212 `TASK-212` Release attachment links, orphaned attachments and blobs when a message is deleted
@@ -303,8 +303,8 @@ The audit could not settle these, and most such reports do not hold. Check one o
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
 - [x] check 23 `C-5b3a9b001fbc` Lease-fencing test cannot detect writes leaked by the fenced writer
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
-- [ ] check 24 `C-7121f7bb1452` Backups carry the bearer token, device secret, and the sealed MLS state together with its key, so a backup can clone the device
-  - Blocked: needs an owner decision.
+- [x] check 24 `C-7121f7bb1452` Backups carry the bearer token, device secret, and the sealed MLS state together with its key, so a backup can clone the device
+  - Fixed by D71/D73: backups carry no bearer token, device secret or MLS state (local_store.dart backup format 6); a restore finishes by device link.
 - [x] check 25 `C-7bad26b22132` Overlapping preference saves can persist an older privacy choice
   - Checked: not a bug (secure storage writes are serialized in order). A related read-receipts refresh race was real and is fixed.
 - [x] check 26 `C-8eb6c45ffd50` Blob cleanup fallback reuses the deletion's exhausted deadline
@@ -329,8 +329,8 @@ The audit could not settle these, and most such reports do not hold. Check one o
   - Checked: not a bug.
 - [x] check 36 `C-c50026c8a635` join_group checks the group id only after into_group, and never checks for an existing local group
   - Checked: already fixed before this pass.
-- [ ] check 37 `C-c7c5faecddbb` Whole-state sealing has hard caps that make every later seal fail once exceeded
-  - Real: device wedges once a cap is hit (no data lost). Fix needs an FFI/format change; options listed for the owner.
+- [x] check 37 `C-c7c5faecddbb` Whole-state sealing has hard caps that make every later seal fail once exceeded
+  - Fixed by D70: per-group sealed state (format 4, ABI 10) has no total state cap; evidence testing/evidence/D70-per-group-sealed-state.md. One group record is still bounded, with a -8 stop that offers to leave.
 - [x] check 38 `C-d0ba626ecdd7` localStorage sync failure offers only Retry, leaving a damaged database with no in-app way out
   - Real; fixed on branch agent/busy-thompson-nv3ayb (PR #100).
 - [x] check 39 `C-d613befe2497` Device identities are not enforced unique, and member_index silently picks the first match
