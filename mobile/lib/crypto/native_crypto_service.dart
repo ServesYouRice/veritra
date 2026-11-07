@@ -39,6 +39,7 @@ import 'native_crypto_bindings.dart';
 class NativeCryptoService
     implements
         BoundedMlsConversationCryptoService,
+        ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
         EnrollmentPromotionCryptoService,
         K2TransferCryptoService,
@@ -1207,6 +1208,37 @@ class NativeCryptoService
     List<String> attachmentRefs = const <String>[],
     String? draftText,
   }) =>
+      _encryptPayload(conversationId, type, body,
+          attachmentRefs: attachmentRefs, draftText: draftText);
+
+  @override
+  Future<MessageEnvelope> encryptChannelPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    required String channelId,
+    required int layoutGeneration,
+    List<String> attachmentRefs = const <String>[],
+    String? draftText,
+  }) =>
+      _encryptPayload(conversationId, type, body,
+          attachmentRefs: attachmentRefs,
+          draftText: draftText,
+          routeChannelId: channelId,
+          routeGeneration: layoutGeneration);
+
+  /// [routeChannelId] and [routeGeneration] are given exactly for a post in a
+  /// community's shared group; any other pairing fails before anything is
+  /// encrypted, so a post can neither lose its channel nor gain one.
+  Future<MessageEnvelope> _encryptPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    required List<String> attachmentRefs,
+    required String? draftText,
+    String? routeChannelId,
+    int? routeGeneration,
+  }) =>
       _serial(() async {
         if (!_messageTypes.contains(type)) {
           throw ArgumentError.value(type, 'type', 'not a message payload');
@@ -1217,6 +1249,13 @@ class NativeCryptoService
         if (!await localStore.hasOutboxCapacity()) {
           throw const OutboxFullException();
         }
+        final sharedGroup =
+            _authority?.conversationKind(conversationId) == 'community_shared';
+        if (sharedGroup != (routeChannelId != null) ||
+            (routeChannelId != null && routeGeneration == null)) {
+          throw StateError('a channel is named exactly for a shared group');
+        }
+        final channelId = sharedGroup ? routeChannelId : null;
         try {
           final idempotencyKey = _randomIdempotencyKey();
           final deviceId = _deviceId!;
@@ -1233,10 +1272,7 @@ class NativeCryptoService
             body: body,
             frankKey: frankKey,
             hidden: type == AppPayloadType.pin,
-            channelId: _authority?.conversationKind(conversationId) ==
-                    'community_shared'
-                ? _authority?.conversationChannel(conversationId)
-                : null,
+            channelId: channelId,
           );
           final payload = framed.padded;
           final commit = bindings.frankCommit(
@@ -1260,9 +1296,10 @@ class NativeCryptoService
               'group_id': conversationId,
               'content_type': 'application',
               'payload_version': 1,
-              if (_authority?.conversationKind(conversationId) ==
-                  'community_shared')
-                'channel_id': _authority?.conversationChannel(conversationId),
+              if (channelId != null) ...<String, Object?>{
+                'channel_id': channelId,
+                'community_layout_generation': routeGeneration,
+              },
               // The epoch is already readable in the MLS message header. The
               // server uses it to withhold a message from a device that
               // joined after that epoch and cannot decrypt it (card I51).
@@ -1283,10 +1320,7 @@ class NativeCryptoService
                     type: type,
                     actionId: idempotencyKey,
                     body: body,
-                    channelId: _authority?.conversationKind(conversationId) ==
-                            'community_shared'
-                        ? _authority?.conversationChannel(conversationId)
-                        : null),
+                    channelId: channelId),
                 conversationId: conversationId,
                 senderAccountId: _accountId!,
                 senderDeviceId: deviceId,

@@ -291,6 +291,23 @@ abstract interface class ConversationAuthority {
   String? conversationChannel(String conversationId);
 }
 
+/// Sends into one channel of a community's shared group (C0). Kept apart
+/// from [MlsConversationCryptoService.encryptPayload] so that method, which
+/// every other conversation uses, does not change. The channel and the layout
+/// generation go into the clear envelope metadata (the server routes by them)
+/// and the channel again into the encrypted payload (the receiver checks it).
+abstract interface class ChannelRoutedCryptoService {
+  Future<MessageEnvelope> encryptChannelPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    required String channelId,
+    required int layoutGeneration,
+    List<String> attachmentRefs = const <String>[],
+    String? draftText,
+  });
+}
+
 abstract interface class ConversationAuthorityConsumer {
   set conversationAuthority(ConversationAuthority authority);
 }

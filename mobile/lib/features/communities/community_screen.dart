@@ -83,8 +83,9 @@ class CommunityScreen extends StatelessWidget {
                       state: state,
                       community: community,
                       onCreateChannel: () => _createChannel(context, community),
-                      onOpenChannel: (conversationId) =>
-                          _openChannel(context, conversationId),
+                      onOpenChannel: (conversationId, channelId) =>
+                          _openChannel(context, conversationId,
+                              channelId: channelId),
                     ),
                   if (_orphanChannels(state).isNotEmpty) ...<Widget>[
                     SectionHeader(context.l10n.communityOtherChannels),
@@ -110,7 +111,12 @@ class CommunityScreen extends StatelessWidget {
     );
   }
 
-  void _openChannel(BuildContext context, String conversationId) {
+  /// [channelId] is set for a channel inside a community's shared group,
+  /// which holds every open channel: the chat then shows and posts to that
+  /// channel only.
+  void _openChannel(BuildContext context, String conversationId,
+      {String? channelId}) {
+    state.selectChannel(conversationId, channelId);
     state.selectAndPrepare(conversationId);
     Navigator.of(context).push(
       sharedAxisRoute<void>(
@@ -133,6 +139,7 @@ class CommunityScreen extends StatelessWidget {
     return state.conversations
         .where((conversation) =>
             conversation.isChannel &&
+            !conversation.isCommunityShared &&
             (conversation.channelId == null ||
                 !known.contains(conversation.channelId)))
         .toList(growable: false);
@@ -251,7 +258,7 @@ class _CommunityCard extends StatelessWidget {
   final AppState state;
   final Community community;
   final VoidCallback onCreateChannel;
-  final void Function(String conversationId) onOpenChannel;
+  final void Function(String conversationId, String? channelId) onOpenChannel;
 
   @override
   Widget build(BuildContext context) {
@@ -303,7 +310,7 @@ class _CommunityCard extends StatelessWidget {
           for (final channel in channels)
             _ChannelTile(
               channel: channel,
-              conversationId: _conversationIdFor(channel.id),
+              conversationId: _conversationIdFor(channel),
               onOpen: onOpenChannel,
             ),
         ],
@@ -312,8 +319,12 @@ class _CommunityCard extends StatelessWidget {
   }
 
   /// The conversation backing a channel, if this account is a member of it.
-  String? _conversationIdFor(String channelId) => state.conversations
-      .where((conversation) => conversation.channelId == channelId)
+  /// A routed channel names its group; a legacy channel has a conversation
+  /// of its own that names the channel.
+  String? _conversationIdFor(Channel channel) => state.conversations
+      .where((conversation) => channel.isRouted
+          ? conversation.id == channel.conversationId
+          : conversation.channelId == channel.id)
       .firstOrNull
       ?.id;
 }
@@ -330,7 +341,7 @@ class _ChannelTile extends StatelessWidget {
 
   final Channel channel;
   final String? conversationId;
-  final void Function(String conversationId) onOpen;
+  final void Function(String conversationId, String? channelId) onOpen;
 
   @override
   Widget build(BuildContext context) {
@@ -341,7 +352,16 @@ class _ChannelTile extends StatelessWidget {
       leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
       title: Text(channel.name),
       subtitle: id == null ? Text(context.l10n.communityNotMember) : null,
-      onTap: id == null ? null : () => onOpen(id),
+      onTap: id == null
+          ? null
+          : () => onOpen(
+                id,
+                // Open and announcement channels share one group; a private
+                // channel is a group of its own.
+                channel.isRouted && channel.kind != 'private'
+                    ? channel.id
+                    : null,
+              ),
     );
   }
 }

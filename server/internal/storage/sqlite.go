@@ -58,6 +58,10 @@ type Store struct {
 	// counts their refusals (admission_store.go).
 	limits    config.Limits
 	admission *admission.Counters
+	// communityLayout makes CreateCommunity use the shared-group layout
+	// (community_layout_store.go). Routing of communities already in that
+	// layout does not depend on it.
+	communityLayout bool
 
 	// redactCursor is where the next PruneExpiredContent looks for message
 	// sync events that outlived their envelope (redactOrphanedMessageEvents).
@@ -143,7 +147,7 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
 	store := &Store{db: &dbRouter{reader: reader, writer: writer, writerAcquire: newWriterAcquireHistogram()},
-		sessions: newSessionPolicy(cfg), limits: resolveLimits(cfg.Limits), admission: &admission.Counters{}}
+		sessions: newSessionPolicy(cfg), limits: resolveLimits(cfg.Limits), admission: &admission.Counters{}, communityLayout: cfg.CommunityLayout}
 	return store, nil
 }
 
