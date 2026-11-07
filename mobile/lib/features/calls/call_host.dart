@@ -430,7 +430,6 @@ class _RoundButton extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         IconButton.filled(
-          tooltip: label,
           iconSize: 28,
           style: IconButton.styleFrom(
             minimumSize: const Size(64, 64),

@@ -69,6 +69,41 @@ void main() {
     });
   });
 
+  testWidgets('call controls build above the Navigator (no Overlay)',
+      (tester) async {
+    final log = <String>[];
+    late NativeCallService service;
+    late CallController controller;
+    await tester.runAsync(() async {
+      service = NativeCallService(
+          api: FakeCallApi(log),
+          token: 't',
+          crypto: FakeCallCrypto(log),
+          incoming: const Stream<IncomingCallSignal>.empty(),
+          media: FakeMediaFactory(log));
+      controller =
+          CallController(service: service, selfAccountId: 'acc_callee');
+    });
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: const SizedBox(),
+      builder: (context, child) => Stack(children: <Widget>[
+        child!,
+        Positioned.fill(
+            child: CallScreen(controller: controller, title: 'Ana')),
+      ]),
+    ));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const Key('call-hangup')), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.runAsync(() async {
+      controller.dispose();
+      await service.dispose();
+    });
+  });
+
   testWidgets('notice card is localized', (tester) async {
     await tester.pumpWidget(_app(
         CallNoticeCard(

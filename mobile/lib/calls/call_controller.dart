@@ -75,7 +75,7 @@ class CallController extends ChangeNotifier {
     try {
       final active = await service.start(conversation, video: withVideo);
       if (!_current(generation)) {
-        unawaited(service.end(active.session.id));
+        unawaited(_endQuietly(active.session.id));
         return;
       }
       _bind(active);
@@ -103,7 +103,7 @@ class CallController extends ChangeNotifier {
     try {
       final active = await service.answer(incoming.call, incoming.signal);
       if (!_current(generation)) {
-        unawaited(service.end(active.session.id));
+        unawaited(_endQuietly(active.session.id));
         return;
       }
       _incoming = null;
@@ -134,7 +134,14 @@ class CallController extends ChangeNotifier {
       if (phase == CallPhase.ringingOut) _reset();
       return;
     }
+    // (a callee still answering also has an id: handled below)
+    final unanswered = _incoming;
     _reset();
+    if (unanswered != null) {
+      // The callee never reached 'active': the server only allows reject.
+      unawaited(service.reject(unanswered.call).catchError((Object _) {}));
+      return;
+    }
     if (notice != null && conversation != null) {
       this.notice = CallNotice(notice, conversation);
     }
@@ -236,6 +243,9 @@ class CallController extends ChangeNotifier {
     if (_disposed) return;
     final call = incoming.call;
     if (call.createdBy == selfAccountId) return;
+    // A replayed offer of a call that has already expired must not ring.
+    final expires = call.expiresAt;
+    if (expires != null && !expires.isAfter(DateTime.now())) return;
     if (busy) {
       unawaited(service.reject(call).catchError((Object _) {}));
       notice = CallNotice(CallNoticeKind.busy, call.conversationId);
@@ -271,8 +281,13 @@ class CallController extends ChangeNotifier {
 
   void _fail(String conversation) {
     final id = callId;
+    final unanswered = _incoming;
     _reset();
-    if (id != null) unawaited(service.end(id).catchError((Object _) {}));
+    if (unanswered != null) {
+      unawaited(service.reject(unanswered.call).catchError((Object _) {}));
+    } else if (id != null) {
+      unawaited(_endQuietly(id));
+    }
     notice = CallNotice(CallNoticeKind.failed, conversation);
     notifyListeners();
   }
@@ -298,6 +313,9 @@ class CallController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _endQuietly(String id) =>
+      service.end(id).catchError((Object _) {});
+
   static Future<void> _platformSpeaker(bool on) => Helper.setSpeakerphoneOn(on);
 
   @override
@@ -311,7 +329,12 @@ class CallController extends ChangeNotifier {
     unawaited(_ends.cancel());
     unawaited(_remote?.cancel());
     if (hadCall && id != null) {
-      unawaited(service.end(id).catchError((Object _) {}));
+      final unanswered = _incoming;
+      if (unanswered != null) {
+        unawaited(service.reject(unanswered.call).catchError((Object _) {}));
+      } else {
+        unawaited(_endQuietly(id));
+      }
     }
     super.dispose();
   }
