@@ -356,8 +356,9 @@ proofs exist" is **not met**, and the receiver wiring cannot start under ABI
 - No code or doc builds a removal proof; only this design names one. A leave
   is still committed by another member on the server's word, and a kick is
   judged by nobody.
-- ABI 13's commit processing (`pm_crypto_group_process_commit`, `CommitOutcome`
-  in `crypto/rust/src/mls.rs`) returns `removed_any`, `added_any`, `new_epoch`,
+- ABI 13's commit processing (`CommitOutcome` in `crypto/rust/src/mls.rs`,
+  reached through `pm_crypto_group_c7_process_commit`; the plain
+  `pm_crypto_group_process_commit` Dart binds returns only a status) returns `removed_any`, `added_any`, `new_epoch`,
   `root` and `removed_self`. It merges inside Rust and gives Dart neither the
   committer, the removed accounts, nor a hook before the merge. The staged
   commit's committer and removed leaves are inside `inspect_commit` only.
@@ -369,15 +370,19 @@ proofs exist" is **not met**, and the receiver wiring cannot start under ABI
 Built in this slice instead (no ABI): the record codec v2
 (`governance_codec.dart`, vector `testing/vectors/c4-governance-record-v2.json`,
 format in `docs/crypto.md`), and the server's half of "Server differences to
-close" (migration 0054: one owner per group, ownership only by the owner's
-transfer to an admin, anyone may step down). Local schema 22 is **not used**:
+close" (migration 0054: one owner per group and per community, ownership only by
+the owner's transfer to an admin, anyone may step down). Local schema 22 is **not used**:
 the design needs no local table, and the local owner-activity clock has
 nothing to read until the record can be read from MLS.
 
-Removal proofs, once an ABI exists, need no new crypto: a kick is the
+**Sketch only, not reviewed protocol.** Removal proofs, once an ABI exists,
+may need no new crypto: a kick is the
 committer's own MLS-authenticated commit, judged by `mayActOn(committer,
 target)` against the record; a leave is proven by the leaver's own
-application message (MLS authenticates its sender) for that group, which a
+application message (MLS authenticates its sender) for that group, which
+must be a typed message bound to the epoch or it can be replayed (the leaver's
+own self-Remove proposal, sent by reference, is the more natural route:
+`inspect_commit` already reads `update.sender()` that way), which a
 receiver requires for each removed account it cannot attribute to a
 permitted committer. That also closes the "server forces out every elector"
 residual. It is not built; it needs the committer and removed accounts
@@ -398,7 +403,9 @@ unique index; extra owners of older groups became admins, the oldest
 membership stays owner), `ManageConversationMember` refuses `role = owner`
 except as the owner's transfer to a current admin (the old owner becomes an
 admin), and anyone may step down (the owner must transfer first). Community
-membership rows are untouched. Still open: no succession on the server, and
+membership rows follow the same rules (a second unique index; the community's
+creator is kept when fixing up old data). Review finding: option (a) taken
+because the community's role copies into channel conversations. Still open: no succession on the server, and
 account deletion of an owner (a follow-up). Apps never read these rows for
 roles, so the server and the signed record may still disagree safely.
 

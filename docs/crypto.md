@@ -2459,9 +2459,9 @@ if flags bit 1:
 
 Every list is sorted by the UTF-8 bytes of its key with no duplicates; ids
 are 1 to 255 bytes of UTF-8 that round-trip (no byte-order mark); numbers
-use 63 bits (the high bit is zero); the owner is in no list and no account
-is both admin and moderator; every elector is an admin; `since_rev`,
-`joined` revs and `opened` are at most `rev`; every voter is in the
+use 63 bits (the high bit is zero); the owner is in no role list (admins, moderators; `joined` and the
+electorate may name it) and no account is both admin and moderator; every elector is an admin; `since_rev`,
+`joined` revs and `opened` are at most `rev`; ids must round-trip through UTF-8 (no lone surrogates); every voter is in the
 electorate; at most 500 channels; at most 256 KiB in all; nothing follows
 the last field. A record that does not decode, or a version this app does
 not know, makes the commit invalid (sync stops under I33); it is never

@@ -731,8 +731,19 @@ func (s *Store) manageCommunityMemberTx(ctx context.Context, tx *sql.Tx, communi
 		}
 		return nil, err
 	}
+	// C4 (D80): one owner; anyone may step down (the owner must transfer
+	// first); ownership moves only by the owner's transfer to an admin.
+	if actorAccountID == targetAccountID {
+		if actorRole == domain.RoleOwner || domain.RoleRank(role) >= domain.RoleRank(actorRole) {
+			return nil, ErrForbidden
+		}
+		return s.applyCommunityRoleTx(ctx, tx, communityID, actorAccountID, role)
+	}
 	if !domain.CanManageMembers(actorRole) || domain.RoleRank(role) > domain.RoleRank(actorRole) {
 		return nil, ErrForbidden
+	}
+	if role == domain.RoleOwner {
+		return s.transferCommunityOwnershipTx(ctx, tx, communityID, actorAccountID, actorRole, targetAccountID)
 	}
 	var activeTarget int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = ? AND deleted_at IS NULL`, targetAccountID).Scan(&activeTarget); err != nil {
@@ -768,6 +779,41 @@ func (s *Store) manageCommunityMemberTx(ctx context.Context, tx *sql.Tx, communi
 			return nil, err
 		}
 	}
+	return s.applyCommunityRoleTx(ctx, tx, communityID, targetAccountID, role)
+}
+
+// transferCommunityOwnershipTx moves a community's ownership from the acting
+// owner to a current admin of the community; the old owner becomes an admin.
+func (s *Store) transferCommunityOwnershipTx(ctx context.Context, tx *sql.Tx, communityID, ownerAccountID, ownerRole, targetAccountID string) ([]int64, error) {
+	if ownerRole != domain.RoleOwner {
+		return nil, ErrForbidden
+	}
+	var targetRole string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE community_id = ? AND account_id = ?`, communityID, targetAccountID).Scan(&targetRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrForbidden
+		}
+		return nil, err
+	}
+	if targetRole != domain.RoleAdmin {
+		return nil, ErrForbidden
+	}
+	// The one-owner indexes need the old owner to step down first.
+	first, err := s.applyCommunityRoleTx(ctx, tx, communityID, ownerAccountID, domain.RoleAdmin)
+	if err != nil {
+		return nil, err
+	}
+	second, err := s.applyCommunityRoleTx(ctx, tx, communityID, targetAccountID, domain.RoleOwner)
+	if err != nil {
+		return nil, err
+	}
+	return append(first, second...), nil
+}
+
+// applyCommunityRoleTx writes the target's role on its community row and on
+// the community's join conversations and private channels, with an event per
+// conversation. The caller has checked the change is allowed.
+func (s *Store) applyCommunityRoleTx(ctx context.Context, tx *sql.Tx, communityID, targetAccountID, role string) ([]int64, error) {
 	createdAt := nowString()
 	membershipID, err := domain.NewID("mbr")
 	if err != nil {

@@ -1494,8 +1494,10 @@ func TestMigrationSingleOwnerDemotesExtraOwners(t *testing.T) {
 		t.Fatalf("create group: %v", err)
 	}
 	// Rebuild the pre-0054 state: no index, two owners.
-	if _, err := store.db.ExecContext(ctx, `DROP INDEX memberships_one_owner_per_conversation`); err != nil {
-		t.Fatalf("drop index: %v", err)
+	for _, name := range []string{"memberships_one_owner_per_conversation", "memberships_one_owner_per_community"} {
+		if _, err := store.db.ExecContext(ctx, `DROP INDEX `+name); err != nil {
+			t.Fatalf("drop index: %v", err)
+		}
 	}
 	if _, err := store.db.ExecContext(ctx, `UPDATE memberships SET role = 'owner' WHERE conversation_id = ? AND account_id = ?`, group.ID, other.Account.ID); err != nil {
 		t.Fatalf("second owner: %v", err)
@@ -1510,5 +1512,87 @@ func TestMigrationSingleOwnerDemotesExtraOwners(t *testing.T) {
 	roles := conversationRoles(t, ctx, store, group.ID)
 	if roles[owner.Account.ID] != domain.RoleOwner || roles[other.Account.ID] != domain.RoleAdmin {
 		t.Fatalf("roles after migration = %#v want the creator to stay owner", roles)
+	}
+}
+
+func TestMigrationSingleOwnerFixesCommunitiesToo(t *testing.T) {
+	ctx := context.Background()
+	f := newCommunityFixture(t, ctx)
+	if _, err := f.store.ManageConversationMember(ctx, f.conversation.ID, f.owner.Account.ID, f.insider.Account.ID, domain.RoleMember); err != nil && !errors.Is(err, ErrForbidden) {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"memberships_one_owner_per_conversation", "memberships_one_owner_per_community"} {
+		if _, err := f.store.db.ExecContext(ctx, `DROP INDEX `+name); err != nil {
+			t.Fatalf("drop %s: %v", name, err)
+		}
+	}
+	// Pre-0054 state: the insider is a second owner of the community and of
+	// every conversation it is in, with an older membership than the owner's.
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE memberships SET role = 'owner', created_at = '2000-01-01T00:00:00Z' WHERE account_id = ?`, f.insider.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	script, err := migrations.FS.ReadFile("0054_single_owner.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ { // a second run changes nothing
+		if _, err := f.store.db.ExecContext(ctx, string(script)); err != nil {
+			t.Fatalf("run %d: %v", i, err)
+		}
+	}
+	roles := conversationRoles(t, ctx, f.store, f.conversation.ID)
+	if roles[f.owner.Account.ID] != domain.RoleOwner || roles[f.insider.Account.ID] == domain.RoleOwner {
+		t.Fatalf("channel roles = %#v: the community's creator must keep ownership", roles)
+	}
+	var community string
+	if err := f.store.db.QueryRowContext(ctx, `SELECT account_id FROM memberships WHERE community_id = ? AND role = 'owner'`, f.community.ID).Scan(&community); err != nil || community != f.owner.Account.ID {
+		t.Fatalf("community owner = %q err=%v", community, err)
+	}
+}
+
+func TestCommunityOwnershipRules(t *testing.T) {
+	ctx := context.Background()
+	f := newCommunityFixture(t, ctx)
+	owner, insider := f.owner.Account.ID, f.insider.Account.ID
+	role := func(account string) string {
+		var r string
+		if err := f.store.db.QueryRowContext(ctx, `SELECT role FROM memberships WHERE community_id = ? AND account_id = ?`, f.community.ID, account).Scan(&r); err != nil {
+			t.Fatalf("role of %s: %v", account, err)
+		}
+		return r
+	}
+	// No handing owner to a plain member, no stepping up, no owner step-down.
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, owner, insider, domain.RoleOwner); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("owner to a member: %v", err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, insider, insider, domain.RoleAdmin); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("step up: %v", err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, owner, owner, domain.RoleAdmin); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("owner steps down without transfer: %v", err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, owner, insider, domain.RoleAdmin); err != nil {
+		t.Fatalf("promote admin: %v", err)
+	}
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, insider, insider, domain.RoleOwner); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("admin takes owner: %v", err)
+	}
+	// The transfer reaches the community row and the channel conversation.
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, owner, insider, domain.RoleOwner); err != nil {
+		t.Fatalf("transfer: %v", err)
+	}
+	if role(owner) != domain.RoleAdmin || role(insider) != domain.RoleOwner {
+		t.Fatalf("community roles = %s / %s", role(owner), role(insider))
+	}
+	roles := conversationRoles(t, ctx, f.store, f.conversation.ID)
+	if roles[owner] != domain.RoleAdmin || roles[insider] != domain.RoleOwner {
+		t.Fatalf("channel roles after transfer = %#v", roles)
+	}
+	// The former owner may now step down; legacy channel creation still works.
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, owner, owner, domain.RoleMember); err != nil {
+		t.Fatalf("step down: %v", err)
+	}
+	if _, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "more", "", insider); err != nil {
+		t.Fatalf("channel after transfer: %v", err)
 	}
 }

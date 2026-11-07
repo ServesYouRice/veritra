@@ -77,8 +77,11 @@ void main() {
   test('vector invalid cases are refused', () {
     expect(invalid, isNotEmpty);
     for (final e in invalid.entries) {
-      expect(() => decodeGovernance(_unhex(e.value as String)),
-          throwsA(isA<GovernanceCodecException>()),
+      final item = e.value as Map<String, dynamic>;
+      expect(
+          () => decodeGovernance(_unhex(item['hex'] as String)),
+          throwsA(isA<GovernanceCodecException>().having(
+              (x) => x.message, 'message', contains(item['reason'] as String))),
           reason: e.key);
     }
   });
@@ -133,6 +136,7 @@ void main() {
           election: election,
         );
     final bad = <String, GovernanceState>{
+      'lone surrogate id': s(moderators: {'\uD800'}),
       'owner is admin': s(admins: {'o': 1}),
       'owner is moderator': s(moderators: {'o'}),
       'admin and moderator': s(admins: {'a': 1}, moderators: {'a'}),
@@ -156,32 +160,53 @@ void main() {
 
 /// Hand-built bad encodings. Built from a valid record so each differs in one
 /// way. Offsets are into the `genesis` encoding.
-Map<String, String> _invalid() {
+Map<String, Map<String, String>> _invalid() {
   final g = encodeGovernance(GovernanceState.genesis('o')).toList();
   // genesis: ver(1) rev(8) ownerRev(8) flags(1) ownerLen(2) 'o'(1) then
   // admins(2) mods(2) channels(2) joined(2)+{len(2) 'o' since(8)}.
   String h(List<int> b) => _hex(b);
   List<int> with_(int at, int value) => [...g]..[at] = value;
   const flags = 17;
+  // genesis: version(0) rev(1-8) owner_rev(9-16) flags(17) owner_len(18-19)
+  // owner 'o'(20) admin_count(21-22) moderator_count(23-24) channel_count
+  // (25-26) joined_count(27-28) joined entry.
   final unsortedMods = [
-    ...g.sublist(0, 22),
-    0, 2, 0, 1, 0x62, 0, 1, 0x61, // two moderators b, a
-    ...g.sublist(24),
+    ...g.sublist(0, 23),
+    0, 2, 0, 1, 0x62, 0, 1, 0x61, // two moderators: b, then a
+    ...g.sublist(25),
   ];
+  final dupMods = [
+    ...g.sublist(0, 23),
+    0, 2, 0, 1, 0x61, 0, 1, 0x61, // a twice
+    ...g.sublist(25),
+  ];
+  Map<String, String> bad(String hex, String reason) =>
+      {'hex': hex, 'reason': reason};
   return {
-    'version_1': h(with_(0, 1)),
-    'version_3': h(with_(0, 3)),
-    'unknown_flag_bit': h(with_(flags, 4)),
-    'election_flag_without_body': h(with_(flags, 2)),
-    'owner_rev_above_rev': h(with_(16, 1)),
-    'empty_input': '',
-    'moderators_unsorted': h(unsortedMods),
-    'rev_high_bit_set': h(with_(1, 0x80)),
-    'id_not_utf8': h([...g.sublist(0, 19), 0xff, ...g.sublist(20)]),
-    'id_with_bom': h([
-      ...g.sublist(0, 17),
-      0, 0, 4, 0xef, 0xbb, 0xbf, 0x61, // owner = BOM + 'a'
-      ...g.sublist(20),
-    ]),
+    'version_1': bad(h(with_(0, 1)), 'unknown version'),
+    'version_3': bad(h(with_(0, 3)), 'unknown version'),
+    'unknown_flag_bit': bad(h(with_(flags, 4)), 'unknown flag'),
+    'election_flag_without_body': bad(h(with_(flags, 2)), 'truncated'),
+    'owner_rev_above_rev': bad(h(with_(16, 1)), 'owner_rev'),
+    'empty_input': bad('', 'truncated'),
+    'moderators_unsorted': bad(h(unsortedMods), 'not sorted'),
+    'moderators_duplicate': bad(h(dupMods), 'not sorted'),
+    'rev_high_bit_set': bad(h(with_(1, 0x80)), 'number too large'),
+    'id_not_utf8':
+        bad(h([...g.sublist(0, 20), 0xff, ...g.sublist(21)]), 'UTF-8'),
+    'id_with_bom': bad(
+        h([
+          ...g.sublist(0, 18),
+          0, 4, 0xef, 0xbb, 0xbf, 0x61, // owner = BOM + 'a'
+          ...g.sublist(21),
+        ]),
+        'canonical'),
+    'owner_is_also_admin': bad(
+        h([
+          ...g.sublist(0, 21),
+          0, 1, 0, 1, 0x6f, 0, 0, 0, 0, 0, 0, 0, 0, 0, // admin 'o' since 0
+          ...g.sublist(23),
+        ]),
+        'owner also'),
   };
 }

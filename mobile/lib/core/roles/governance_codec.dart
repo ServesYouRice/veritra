@@ -217,9 +217,14 @@ void _checkShape(GovernanceState s) {
 }
 
 void _checkId(String id) {
-  final n = utf8.encode(id).length;
-  if (n < 1 || n > maxGovernanceIdBytes) {
+  final bytes = utf8.encode(id);
+  if (bytes.isEmpty || bytes.length > maxGovernanceIdBytes) {
     throw const GovernanceCodecException('id length');
+  }
+  // A lone surrogate encodes as U+FFFD and would not decode back to the same
+  // string, so the committer and every receiver could hold different states.
+  if (utf8.decode(bytes) != id) {
+    throw const GovernanceCodecException('id is not valid Unicode');
   }
 }
 
