@@ -148,6 +148,9 @@ void main() {
 
   setUp(() async {
     ReportsService.forgetFiledReports();
+    // The tests that need the native seal fail on `crypto` when the library
+    // is required and missing; the model and store tests run without it.
+    if (nativeCryptoLibraryPath == null) return;
     crypto = NativeCryptoService(
         bindings: NativeCryptoBindings.open(requireNativeCryptoLibrary()),
         localStore: MemoryLocalStore());
