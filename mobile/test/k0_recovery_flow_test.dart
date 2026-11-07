@@ -478,6 +478,37 @@ void main() {
           isTrue);
     });
 
+    // Signed out with the device kept (its MLS state stays): the sign-in
+    // screen still offers recovery. The server completes the claim before
+    // the promotion runs, so the promotion must not refuse here; the old
+    // device's local state goes, as any identity change drops it.
+    test('completion replaces a signed-out device that kept its state',
+        () async {
+      await store.saveSession(const Session(
+        baseUrl: k0Origin,
+        token: '',
+        accountId: 'acct_me',
+        deviceId: 'dev_old',
+        username: 'alice',
+        deviceSecret: 'secret_old',
+      ));
+      await store.saveCryptoState(
+          StoredCryptoState(
+              counter: 5,
+              stateKey: List<int>.filled(32, 5),
+              sealedState: const <int>[5]),
+          3);
+      await completeRecovery();
+      expect(promoting.promotions, [EnrollmentPromotionOutcome.promoted]);
+      final stored = (await store.loadSession())!;
+      expect(stored.deviceId, 'dev_new');
+      expect(stored.token, 'tok_new');
+      expect((await store.loadCryptoState())!.counter, 1);
+      expect(await store.loadSyncCursor(), 0);
+      expect(await store.loadPendingEnrollment(), isNull);
+      expect(state.session?.deviceId, 'dev_new');
+    });
+
     test('an emptied MLS state never resumes the frozen claim', () async {
       await completeRecovery();
       final frozen = promoting.resumed.last;

@@ -706,8 +706,11 @@ abstract class LocalStore {
   /// promoted (review finding 4): a retry of the same promotion answers
   /// [EnrollmentPromotionOutcome.alreadyPromoted] without touching the
   /// active state; any other promotion of a ledgered identity, a pending
-  /// row that differs, a stored MLS state or another session throws
-  /// [EnrollmentPromotionRefused] and changes nothing.
+  /// row that differs, another signed-in session, or a stored MLS state of
+  /// the pending identity throws [EnrollmentPromotionRefused] and changes
+  /// nothing. A signed-out identity of another device (a sign-out that kept
+  /// the device) is replaced, its local state dropped as [saveSession] drops
+  /// it on an identity change.
   ///
   /// The ledger is kept by sign-out, a cached clear, an identity change and
   /// a backup restore; only [clear] drops it (with the pending enrollment).
@@ -913,23 +916,30 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> saveSession(Session session) async {
     if (_session != null && _identityChanged(_session!, session)) {
-      await clearCachedState();
-      _syncCursor = 0;
-      _cryptoState = null;
-      _cryptoRecords.clear();
-      // Their native half goes with the MLS state; the ledger stays.
-      _historyTransfers.clear();
-      _processedMlsMessages.clear();
-      _mlsOutbox.clear();
-      _peerVerifications.clear();
-      _history.clear();
-      _historyNamespace = HistoryNamespace();
-      _conversationPrefs.clear();
-      _syncLeaseKey = null;
-      _syncRecovery = null;
-      _lastBackupAt = null;
+      await _clearIdentityState();
     }
     _session = session;
+  }
+
+  /// What an identity change drops (shared by [saveSession] and a promotion
+  /// that replaces a signed-out identity). A pending enrollment and the
+  /// promotion ledger stay.
+  Future<void> _clearIdentityState() async {
+    await clearCachedState();
+    _syncCursor = 0;
+    _cryptoState = null;
+    _cryptoRecords.clear();
+    // Their native half goes with the MLS state; the ledger stays.
+    _historyTransfers.clear();
+    _processedMlsMessages.clear();
+    _mlsOutbox.clear();
+    _peerVerifications.clear();
+    _history.clear();
+    _historyNamespace = HistoryNamespace();
+    _conversationPrefs.clear();
+    _syncLeaseKey = null;
+    _syncRecovery = null;
+    _lastBackupAt = null;
   }
 
   @override
@@ -1374,6 +1384,11 @@ class MemoryLocalStore implements LocalStore {
             _historyTransfers[_transferKey(transfer.origin, transfer.linkId)],
             transfer);
     final state = PendingEnrollment._fromRow(pending)!.state!;
+    if (promotionReplacesSignedOutIdentity(
+        request: request,
+        existingSession: _session == null ? null : _sessionJson(_session!))) {
+      await _clearIdentityState();
+    }
     _session = promotion.session;
     _cryptoRecords.clear();
     _setCryptoState(state);
@@ -2748,7 +2763,17 @@ class SecureLocalStore implements LocalStore {
   Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
       EnrollmentPromotion promotion) async {
     final request = promotion._toRequest();
-    return (await _database()).promotePendingEnrollment(request);
+    final database = await _database();
+    final previous = _sessionFromJson(await database.readSessionJson());
+    final outcome = await database.promotePendingEnrollment(request);
+    // As [saveSession]: replacing a signed-out identity dropped its stored
+    // sync lease with the rest of its state.
+    if (outcome == EnrollmentPromotionOutcome.promoted &&
+        previous != null &&
+        _identityChanged(previous, promotion.session)) {
+      _syncLeaseKey = null;
+    }
+    return outcome;
   }
 
   @override
