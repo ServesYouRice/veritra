@@ -1530,6 +1530,18 @@ class NativeCryptoService
             // ratchet already advanced, so commit and drop the signal (P4).
             if (!error.kind.ratchetAdvanced) rethrow;
           }
+          // L1 (D94): a device that is not on its account's list never rings
+          // or signals as that account; its signal is dropped like any
+          // other that cannot be used.
+          if (plaintext != null) {
+            final verdict = await _senderVerdict(
+                call.conversationId, senderAccountId, senderDeviceId);
+            if (verdict != LeafVerdict.approved &&
+                verdict != LeafVerdict.removed) {
+              plaintext.fillRange(0, plaintext.length, 0);
+              plaintext = null;
+            }
+          }
           // The state and cursor always commit from here (P4, D54). A
           // payload that is not a valid call signal is dropped: no row and
           // no signal.

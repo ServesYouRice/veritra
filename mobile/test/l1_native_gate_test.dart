@@ -142,6 +142,27 @@ void main() {
     expect(row.body, isNull);
     expect(await carol.store.loadSyncCursor(), event);
 
+    // Nor does it ring as acct_alice (review fix): its call signal is
+    // dropped, the cursor moves on.
+    final ring = await ghost.service.encryptCallSignal(
+        'conv_1', <String, Object?>{'type': 'offer', 'sdp': 'v=0'});
+    final ringEvent = carol.nextEvent();
+    expect(
+        await carol.service.processCallSignal(
+            CallSession(
+              id: 'call_1',
+              conversationId: 'conv_1',
+              createdBy: 'acct_alice',
+              invitedAccountId: 'acct_carol',
+              state: 'ringing',
+              version: 1,
+              metadata: ring.metadata,
+              createdAt: DateTime.now().toUtc(),
+            ),
+            ringEvent),
+        isNull);
+    expect(await carol.store.loadSyncCursor(), ringEvent);
+
     // Alice's real device still speaks normally.
     final real = await alice.send('really me');
     await carol.receive(alice, real);
