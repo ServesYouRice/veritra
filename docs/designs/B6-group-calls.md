@@ -1,8 +1,9 @@
 # B6: group calls and voice rooms
 
-**Status: proposed, not yet built.** Revision 1 (2026-11-07), against `main`
-at the commit this lands on. Needs independent review (crypto boundary, MLS
-ordering) before any build step.
+**Status: proposed, not yet built.** Revision 2 (2026-11-07). Revision 1
+had one independent review (key schedule, frame encryption, threats); its
+five blocking points are fixed here. Needs the independent crypto review
+before S2 lands.
 
 - **Package:** B6 in the `STATE.md` build plan (route "Opus designs").
 - **Done when:** "Encrypted voice rooms and screen share modelled on
@@ -69,6 +70,12 @@ A voice room you can drop into at any time does not fit `call_sessions`
   `call_id` and the parent `conversation_id` (a required group context
   extension; participants refuse a Welcome where they differ from the room
   they asked to join).
+- Words: a **room** is lasting (a voice channel, or a group's call
+  button); a **call** is one call group's life in it. `call_id` names the
+  call, and the call group's `group_id` is what joins sign.
+- Two first joiners at once: the server's join route hands out the call
+  (creating it under compare-and-set), so only one device creates the
+  group; the other joins it.
 - When the room empties, every device drops the group. The next join makes
   a new one. A call group is **never** written to sealed state (D70), K1
   backups or K2 transfer. A crash means leave and rejoin.
@@ -82,21 +89,35 @@ A voice room you can drop into at any time does not fit `call_sessions`
    server checks the account may use the conversation, as today, and
    returns the current participants and the call group's epoch.
 2. The joiner makes a **fresh KeyPackage for this call only** (not from
-   its uploaded pool, so busy rooms never drain it) and signs
-   `"veritra-b6-join-v1" | lp(call_id) | sha256(key_package)` with its
-   credential key (a new sign domain, like C7's).
-3. Participants' apps check, before anyone commits:
-   - the signature, under the signature key the parent group holds for
-     that device (`pm_crypto_group_member_signature_key`);
-   - the KeyPackage's credential and signature key equal that same leaf;
-   - the `call_id` is this room's.
-   A failure is dropped and counted; no commit.
+   its uploaded pool, so busy rooms never drain it; made in memory, outside
+   sealed state, D70) and signs
+   `"veritra-b6-join-v1" | lp(group_id) | lp(nonce) | u64(expires_at) |
+   sha256(key_package)` with its credential key (a new sign domain, like
+   C7's). `nonce` is a fresh value from the join route; `expires_at` is at
+   most 60 s ahead.
+3. **Every device checks every leaf**, not only the committer:
+   - the committer, before committing; every member, on each Add in a
+     commit it receives; the joiner, on every leaf of its Welcome;
+   - check: the leaf's credential and signature key equal that device's
+     leaf in the parent group (`pm_crypto_group_member_signature_key`),
+     and for a new Add, the join signature, `group_id`, nonce and expiry;
+   - a KeyPackage already seen in this call is refused.
+   A commit or Welcome that fails is refused: the member leaves and
+   rejoins, the joiner does not join. Each failure is counted.
 4. **Who commits:** the participant with the lowest leaf index commits
    within 200 ms; any other participant commits after 2 s if no commit has
    arrived. The server accepts one commit per epoch (compare-and-set on the
    room's epoch, the existing ordering rule for MLS messages) and rejects
-   the rest with 409. Joins that arrive close together go in one commit.
-5. The joiner processes the Welcome; everyone else processes the commit.
+   the rest with 409. The fallback delay is staggered by leaf rank
+   (2 s, plus 500 ms per rank), so members do not all commit at once.
+   Joins that arrive close together go in one commit.
+   **Every call-group commit is staged:** stage, post, merge on 200,
+   discard on 409 and work out again what still needs committing. The
+   immediate-merge calls (`pm_crypto_group_remove_member`, `_self_update`)
+   are never used for call groups.
+5. The server accepts a Welcome only together with its winning commit (the
+   existing commit bundle, `mls_handlers.go`). The joiner processes only
+   that Welcome; everyone else processes the commit.
 
 ### Leaving
 
@@ -110,6 +131,9 @@ A voice room you can drop into at any time does not fit `call_sessions`
 - A member's app also removes a device whose SFU presence ended per the
   server; a false "gone" from the server only cuts that person off (denial
   of service), it never adds anyone.
+- **Removed from the parent, removed from the call.** When a commit in the
+  parent group removes a device (a leave, a revocation, a member removal),
+  members commit a Remove for it in the call group too.
 
 ### Media keys
 
@@ -121,9 +145,10 @@ K(s,t) = HKDF-SHA256(salt = "veritra-b6-sender-v1", ikm = E,
                      info = u32(leaf_index s) | u8(stream t), 32 bytes)
 ```
 
-- `t` is the stream slot: 0 voice, 1 camera, 2 screen, 3 screen audio. One
-  key is used by exactly one encoder, so nonces from one sender never meet
-  another sender's under the same key.
+- `t` is the stream slot: 0 voice, 1 camera, 2 screen, 3 screen audio.
+  Keys differ per sender and slot. Simulcast runs up to three encoders
+  under one camera key, so S1 must confirm the IV includes the SSRC and
+  never repeats.
 - `K(s,t)` is handed to the frame cryptor's key provider for participant
   `s:t` at key index `n mod 16` (the key ring). The cryptor's own ratchet is
   off (window 0); MLS epochs are the only rekey.
@@ -139,12 +164,13 @@ K(s,t) = HKDF-SHA256(salt = "veritra-b6-sender-v1", ikm = E,
 ### Switching keys
 
 - A device installs the new epoch's keys as soon as it merges the commit.
-- A sender switches to its new key as soon as the server accepts the
-  commit (its own) or it merges it (someone else's). Receivers that are a
+- A sender switches to its new key only after it has merged the commit
+  (its own after the server's 200, or someone else's). Receivers that are a
   few hundred milliseconds behind drop a few frames; the cryptor's failure
   tolerance hides a short gap.
-- Old keys stay in the ring for 10 s after a switch, then are wiped (set to
-  zero bytes, then removed).
+- Old keys stay in the ring for 10 s after a switch, then are removed.
+  "Removed", not "wiped": keys pass through Dart, Java or Objective-C and
+  libwebrtc's own copies, which we cannot zero.
 - No periodic rekey is needed for nonce limits at call lengths, but every
   device self-updates once an hour to bound how long one key lives.
 
@@ -159,7 +185,15 @@ Recommendation: **A now**, keeping the MLS-derived key schedule above,
 which is the part that carries the security. Revisit B if libwebrtc ships
 an RFC 9605 transform. *Confidence A is the right first step: about 75%.*
 
-Details to check in S1, not assumed:
+**Required cryptor settings (fail closed).** The defaults fail open:
+`discardFrameWhenCryptorNotReady` defaults to false and key derivation to
+PBKDF2, and the Darwin code reads a missing discard value as no. B6 sets:
+discard on, no magic bytes (so no frame can skip decryption), `sharedKey`
+off (per-participant keys), HKDF, ratchet window 0, and the cryptor attached
+before the track is published. A frame with no key is dropped, never sent
+or played in clear.
+
+Details to check in S1, not assumed (the libwebrtc C++ was not read):
 - which bytes stay clear per codec (VP8 key and delta frames, Opus, H.264
   NAL headers) so the SFU's packetizer still works;
 - IV construction, so no IV repeats under one key across restarts of an
@@ -212,6 +246,7 @@ How it fits "calls behind interfaces":
 | **What is said, roughly** | SFU | Opus variable bitrate packet sizes can hint at words. Default: constant bitrate for voice (O4) |
 | Mute | SFU | A muted track stops sending. Accepted (O4) |
 | Epoch mod 16 | SFU | The key index in each frame's trailer |
+| Which track belongs to which device | Nobody | Each device announces its track ids in an MLS message in the call group; receivers attach keys by that, not by the SFU's names |
 | Media content, keys, the real roster | Nobody | The roster shown in the app is the call group's MLS membership, not the server's list |
 
 ## Scaling limits
@@ -263,15 +298,22 @@ Default caps (**O3**): **25 devices with video, 50 voice only.** Bigger
 |---|---|
 | Server adds a stranger's device | Refused: its key does not match a leaf of the parent group |
 | Server adds a hidden device of a real member (the L1 gap) | **Passes today**, as for messages: the parent group holds that device. L1 closes it. The device shows in the room's roster |
-| Server replays an old join | Refused: the join signature binds `call_id` and a fresh KeyPackage |
+| Server replays an old join | Refused: the signature binds the call group's id, a fresh nonce and a 60 s expiry; a KeyPackage seen before is refused |
+| Server hands a joiner a fake group of its own leaves | Refused: the joiner checks every Welcome leaf against the parent group |
+| Malicious member adds a stranger | Refused: every member checks every Add it receives |
+| Device removed from the conversation keeps listening | No: the parent group's removal triggers a call-group Remove |
+| A member fakes another sender's frames | **Possible**: every member holds every sender's key (as in DAVE). Accepted; per-frame signatures are a later option |
+| SFU replays frames within an epoch | Possible to a small extent; S1 checks whether the cryptor refuses repeated IVs. Accepted if not |
+| A lost commit race forks the group | No: commits are staged and merged only on the server's 200 |
 | Server or SFU keeps forwarding to a device that left | It holds only old keys; the next epoch locks it out |
 | Server falsely reports someone left | That person is cut off (denial of service only) |
 | Server withholds a leave | Members still get the leaver's encrypted "leaving" message and commit the Remove. If the leaver crashed, it keeps old keys until the SFU drops it |
 | SFU reads or changes media | It cannot decrypt; a changed frame fails AES-GCM and is dropped |
 | SFU learns who speaks and roughly what | Reduced by O4 (constant bitrate, no DTX, no audio level) |
-| Media key copied out of memory | Keys live in libwebrtc's memory during the call (the boundary exception); wiped 10 s after each switch and when the call ends |
+| Media key copied out of memory | Keys live in app and libwebrtc memory during the call (the boundary exception); removed 10 s after each switch and when the call ends |
+| Frames sent in clear before a key is set | No: discard-when-not-ready on, cryptor attached before publishing |
 | Two members commit at once | The server takes one per epoch; the other retries on the new epoch |
-| A member's app is malicious | It can record what it hears, as in any call. It cannot add devices from outside the parent group |
+| A member's app is malicious | It can record what it hears and fake others' frames (above). It cannot add devices from outside the parent group: the others refuse the commit |
 | Joining member hears earlier talk | No: every join is a new epoch (O7) |
 
 ## Build steps
@@ -283,7 +325,7 @@ Default caps (**O3**): **25 devices with video, 50 voice only.** Bigger
 | S2 | Crypto core: the media-key call (exporter label `veritra-b6-media-v1` plus the per-sender HKDF, `K(s,t)` out only), the join sign domain `veritra-b6-join-v1` and its verify, group context extension check. Vector `testing/vectors/b6-media-v1.json`; Rust, Go and Dart check it | **one crypto ABI bump**, number reserved by the coordinator | Rust tests: keys differ per epoch, sender and stream; a removed device cannot derive the next epoch's keys; the join signature cannot verify as an MLS or C7 signature; `docs/crypto.md` entry | Sonnet; **independent crypto review before merge** |
 | S3 | Server: rooms and participants tables, join and leave routes, per-epoch commit compare-and-set, `RoomMedia` interface and LiveKit tokens, signed webhooks, retention sweep, room caps, admission limits, config and startup checks, `operations.md` | **one server migration**, number reserved by the coordinator | Go tests (below), `go test -race`, `go vet`, `govulncheck`, `scripts/test` | Sonnet; Opus review |
 | S4 | Deployment: SFU in Compose and the k3s base with its ports and network policy, `scripts/smoke-deploy.sh` joins a room, `THIRD_PARTY_NOTICES.md` | none | Smoke passes against a real SFU container | Sonnet; owner approves O1 first |
-| S5 | App engine: join, commit roles, key install and wipe, roster from MLS, leave and rejoin on failure, in memory only | none | Dart tests (below); `scripts/check-demo-boundary.sh` passes | Opus review (MLS ordering) |
+| S5 | App engine: join, commit roles, key install and wipe, roster from MLS, leave and rejoin on failure, in memory only | none | Dart tests (below); `scripts/check-demo-boundary.sh` passes. Fail-closed cryptor settings asserted | Opus review (MLS ordering) |
 | S6 | UI: room screen, tiles, mute, desktop and Android screen share, English and Serbian strings | none | Widget tests; CI green on every platform | Sonnet |
 | S7 | Evidence: demo e2e with three clients and a local SFU; bandwidth and CPU at 5, 25 and 50 voices | none | `testing/evidence/B6-group-calls.md` | Sonnet; phone runs wait for G24-era devices |
 
@@ -304,7 +346,10 @@ O1; S5 after S2 and S3; S6 after S5.
   rooms swept at end.
 - **Dart, with a fake SFU and in-process groups:** join and leave each move
   the epoch and keys; a KeyPackage whose key differs from the parent leaf is
-  refused; a replayed join is refused; a forged "left" removes but never
+  refused, by the committer, by every receiver and by the joiner; a Welcome
+  with a leaf outside the parent group is refused; a replayed or expired
+  join is refused; a 409 discards the staged commit (no fork); a parent
+  removal leads to a call Remove; a frame before key install is dropped; a forged "left" removes but never
   adds; the roster follows MLS, not the server list; old keys wiped after
   10 s; no key in logs or local storage; a failed commit leads to leave and
   rejoin.
