@@ -11,6 +11,8 @@ import '../storage/encrypted_database.dart'
     show
         DeleteMessageEffect,
         EditMessageEffect,
+        EnrollmentPromotionOutcome,
+        HistoryTransferProgress,
         InsertMessageEffect,
         LocalMessageKind,
         LocalMessageState,
@@ -28,6 +30,7 @@ class NativeCryptoService
     implements
         BoundedMlsConversationCryptoService,
         ConversationAuthorityConsumer,
+        EnrollmentPromotionCryptoService,
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
         NoticeCaptureConsumer,
@@ -100,6 +103,9 @@ class NativeCryptoService
     EnrollmentReservation reservation,
   ) =>
       _serial(() async {
+        // An identity this database already promoted is never enrolled
+        // again under the same IDs (schema 18 ledger).
+        await _refusePromoted(reservation.accountId, reservation.deviceId);
         noticeCaptureEnabled = false;
         _noticeOrigin = null;
         _device?.close();
@@ -223,6 +229,9 @@ class NativeCryptoService
         if (state.counter != 1 || state.stateKey.length != 32) {
           throw StateError('pending enrollment state is invalid');
         }
+        // A frozen pre-join state whose identity was promoted once must not
+        // open again, whatever the active MLS state is (finding 4).
+        await _refusePromoted(accountId, deviceId);
         final restored = _formatChecked(() => bindings.restoreRecords(accountId,
                 deviceId, state.stateKey, state.counter, state.sealedState, [
               for (final change in state.changes)
@@ -292,7 +301,12 @@ class NativeCryptoService
           if (!_pendingEnrollment ||
               _accountId != accountId ||
               _deviceId != deviceId ||
-              _device == null) {
+              _device == null ||
+              // Promoted once: its MLS state was lost (a restore, an
+              // identity change), and the frozen pending state is no
+              // replacement for it (finding 4).
+              await localStore.isEnrollmentPromoted(
+                  accountId: accountId, deviceId: deviceId)) {
             throw StateError('protected MLS state is unavailable');
           }
           final first = _firstState ??= () {
@@ -320,6 +334,78 @@ class NativeCryptoService
         _deviceId = deviceId;
         _pendingEnrollment = false;
       });
+
+  @override
+  Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
+    Session session, {
+    required String kind,
+    required String promotionId,
+    HistoryTransferProgress? transfer,
+  }) =>
+      _serial(() async {
+        final origin = canonicalizeServerOrigin(session.baseUrl);
+        final accountId = session.accountId;
+        final deviceId = session.deviceId;
+        if (accountId == null ||
+            accountId.isEmpty ||
+            deviceId == null ||
+            deviceId.isEmpty ||
+            session.token.isEmpty) {
+          throw StateError('authenticated device identity is unavailable');
+        }
+        final first = _firstState;
+        if (!_pendingEnrollment ||
+            _device == null ||
+            first == null ||
+            _accountId != accountId ||
+            _deviceId != deviceId) {
+          throw StateError('no pending enrollment identity');
+        }
+        // The store checks the pending row, the ledger, the MLS state and
+        // the session in the same transaction that writes them.
+        final outcome =
+            await localStore.promotePendingEnrollment(EnrollmentPromotion(
+          kind: kind,
+          session: session,
+          promotionId: promotionId,
+          expectedState: first,
+          promotedAt: _clock().toUtc(),
+          transfer: transfer,
+        ));
+        if (outcome == EnrollmentPromotionOutcome.promoted) {
+          // The device in memory is exactly the state just stored.
+          _firstState = null;
+          _deviceCounter = first.counter;
+        } else {
+          // An earlier promotion committed: the stored state is the
+          // identity, and the frozen one is never used again.
+          _device?.close();
+          _device = null;
+          _deviceCounter = null;
+          first.stateKey.fillRange(0, first.stateKey.length, 0);
+          _firstState = null;
+          _pendingEnrollment = false;
+          final stored = await localStore.loadCryptoState();
+          if (stored == null) {
+            throw StateError('protected MLS state is unavailable');
+          }
+          final restored = await _openStored(accountId, deviceId, stored);
+          _device = restored.device;
+          _deviceCounter = restored.counter;
+        }
+        _adoptNoticeOrigin(origin, accountId, deviceId);
+        _accountId = accountId;
+        _deviceId = deviceId;
+        _pendingEnrollment = false;
+        return outcome;
+      });
+
+  Future<void> _refusePromoted(String accountId, String deviceId) async {
+    if (await localStore.isEnrollmentPromoted(
+        accountId: accountId, deviceId: deviceId)) {
+      throw StateError('this enrollment was already promoted');
+    }
+  }
 
   @override
   Future<void> activateExistingSessionBounded(Session session,

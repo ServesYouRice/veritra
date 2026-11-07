@@ -4,6 +4,8 @@ import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/l10n/l10n.dart';
+import 'package:private_messenger/storage/encrypted_database.dart'
+    show EnrollmentPromotionOutcome, PendingEnrollmentConflict;
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'k0_recovery_fakes.dart';
@@ -428,6 +430,79 @@ void main() {
       expect(state.pendingAccountRecovery, isNull);
       expect(await persisted(), isNull);
       expect(crypto.abandons, 1);
+    });
+  });
+
+  group('R4 promotion ledger (schema 18, finding 4)', () {
+    late K0PromotingCrypto promoting;
+
+    setUp(() {
+      state.dispose();
+      promoting = K0PromotingCrypto(store);
+      state = k0App(server, store, promoting, apis: apis);
+    });
+
+    Future<void> completeRecovery() async {
+      final ok = await state.startAccountRecovery(
+        baseUrl: k0Origin,
+        username: 'alice',
+        password: 'pw',
+        recoveryKey: k0Display,
+      );
+      expect(ok, isTrue, reason: state.errorFor(Ops.accountRecovery));
+      server.statusAnswers.add(const AccountRecoveryStatus(
+        phase: AccountRecoveryPhase.completed,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+        username: 'alice',
+        role: 'member',
+        token: 'tok_new',
+      ));
+      expect(await state.checkAccountRecovery(), isTrue,
+          reason: state.errorFor(Ops.accountRecovery));
+    }
+
+    test('completion promotes in one step with a ledger row', () async {
+      await store.saveSession(restoredAccountSession(
+          baseUrl: k0Origin, accountId: 'acct_me', username: 'alice'));
+      await completeRecovery();
+      expect(promoting.promotions, [EnrollmentPromotionOutcome.promoted]);
+      expect(promoting.activated, isEmpty);
+      expect((await store.loadCryptoState())!.counter, 1);
+      expect((await store.loadSession())!.token, 'tok_new');
+      expect(await store.loadSyncCursor(), 0);
+      expect(await store.loadPendingEnrollment(), isNull);
+      expect(
+          await store.isEnrollmentPromoted(
+              accountId: 'acct_me', deviceId: 'dev_new'),
+          isTrue);
+    });
+
+    test('an emptied MLS state never resumes the frozen claim', () async {
+      await completeRecovery();
+      final frozen = promoting.resumed.last;
+      state.dispose();
+      // The MLS state is gone (an identity change and back), the session
+      // names the recovered device again.
+      await store.saveSession(k0SignedIn);
+      await store.saveSession(server.session());
+      expect(await store.loadCryptoState(), isNull);
+      await expectLater(
+          store.savePendingEnrollment(PendingEnrollment(
+            kind: PendingEnrollment.kindAccountRecovery,
+            origin: k0Origin,
+            accountId: 'acct_me',
+            deviceId: 'dev_new',
+            payloadJson: '{}',
+            state: frozen,
+          )),
+          throwsA(isA<PendingEnrollmentConflict>()));
+      final resumedBefore = promoting.resumed.length;
+      state = k0App(server, store, promoting, apis: apis);
+      await state.tryRestoreSession();
+      expect(promoting.resumed.length, resumedBefore);
+      expect(promoting.promotions, hasLength(1));
+      expect(await store.loadCryptoState(), isNull);
     });
   });
 

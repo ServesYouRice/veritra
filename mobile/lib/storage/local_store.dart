@@ -290,6 +290,63 @@ class PendingEnrollment {
   String toString() => 'PendingEnrollment($kind)';
 }
 
+/// Makes a pending enrollment of [kind] the active identity [session]
+/// (schema 18, [LocalStore.promotePendingEnrollment]). [expectedState] is the
+/// frozen state the native service opened; [promotionId] names what made
+/// the promotion (the K2 claim request digest, the K0 request ID) so a
+/// retry is recognised.
+class EnrollmentPromotion {
+  const EnrollmentPromotion({
+    required this.kind,
+    required this.session,
+    required this.promotionId,
+    required this.expectedState,
+    required this.promotedAt,
+    this.transfer,
+  });
+
+  final String kind;
+  final Session session;
+  final String promotionId;
+  final StoredCryptoState expectedState;
+  final DateTime promotedAt;
+
+  /// An incoming K2 transfer that starts with the identity.
+  final HistoryTransferProgress? transfer;
+
+  EnrollmentPromotionRequest _toRequest() {
+    _validateCryptoState(expectedState);
+    final String origin;
+    try {
+      origin = canonicalizeServerOrigin(session.baseUrl);
+    } on FormatException {
+      throw const EnrollmentPromotionRefused('invalid promotion');
+    }
+    final row = PendingEnrollment(
+      kind: kind,
+      origin: origin,
+      accountId: session.accountId ?? '',
+      deviceId: session.deviceId ?? '',
+      payloadJson: '',
+      state: expectedState,
+    )._toRow();
+    return EnrollmentPromotionRequest(
+      kind: kind,
+      origin: origin,
+      accountId: row.accountId,
+      deviceId: row.deviceId,
+      promotionId: promotionId,
+      session: _sessionJson(session),
+      expectedState: row.state!,
+      promotedAt: promotedAt.toUtc().millisecondsSinceEpoch,
+      transfer: transfer,
+    );
+  }
+
+  @override
+  String toString() => 'EnrollmentPromotion($kind)';
+}
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -640,6 +697,56 @@ abstract class LocalStore {
   Future<bool> deletePendingEnrollment(
       {required String kind, String? deviceId});
 
+  /// Makes the pending enrollment the active identity in one step (schema
+  /// 18): session, its frozen MLS state at counter 1, cursor 0, a promotion
+  /// ledger row and an optional incoming history transfer; the pending
+  /// enrollment goes. A restored account's history stays.
+  ///
+  /// The ledger, not an empty MLS state, decides whether an identity was
+  /// promoted (review finding 4): a retry of the same promotion answers
+  /// [EnrollmentPromotionOutcome.alreadyPromoted] without touching the
+  /// active state; any other promotion of a ledgered identity, a pending
+  /// row that differs, a stored MLS state or another session throws
+  /// [EnrollmentPromotionRefused] and changes nothing.
+  ///
+  /// The ledger is kept by sign-out, a cached clear, an identity change and
+  /// a backup restore; only [clear] drops it (with the pending enrollment).
+  /// While it names an identity, [loadPendingEnrollment] drops that
+  /// identity's pending row and [savePendingEnrollment] refuses one.
+  Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
+      EnrollmentPromotion promotion);
+
+  /// Whether this database ever promoted [accountId]/[deviceId] (on any
+  /// server origin).
+  Future<bool> isEnrollmentPromoted(
+      {required String accountId, required String deviceId});
+
+  /// K2 history transfer progress (schema 18), keyed by canonical origin and
+  /// link. Rows exist only for the active identity and go wherever its MLS
+  /// state goes (an identity change, a backup restore, [clear]); never in a
+  /// backup or a history snapshot.
+  Future<HistoryTransferProgress?> loadHistoryTransfer(
+      String origin, String linkId);
+  Future<List<HistoryTransferProgress>> loadHistoryTransfers();
+
+  /// Stores [transfer] under [mergeHistoryTransfer]'s rules. Throws
+  /// [HistoryTransferConflict] for another identity or a changed frozen
+  /// field, [FormatException] for an invalid row.
+  Future<void> saveHistoryTransfer(HistoryTransferProgress transfer);
+
+  /// Stores a native transfer mutation ([state], under
+  /// [commitLocalMlsState]'s expected-counter rules; the cursor stays) and
+  /// [transfer] together: neither half is ever stored alone.
+  Future<void> commitHistoryTransferState({
+    required int expectedCounter,
+    required int expectedCursor,
+    required StoredCryptoState state,
+    required HistoryTransferProgress transfer,
+  });
+
+  /// Deletes the transfer; returns whether one was deleted.
+  Future<bool> deleteHistoryTransfer(String origin, String linkId);
+
   /// The sealed MLS records (D70), ordered by kind, then id. Cleared with
   /// the crypto state.
   Future<List<StoredCryptoRecord>> loadCryptoRecords();
@@ -810,6 +917,8 @@ class MemoryLocalStore implements LocalStore {
       _syncCursor = 0;
       _cryptoState = null;
       _cryptoRecords.clear();
+      // Their native half goes with the MLS state; the ledger stays.
+      _historyTransfers.clear();
       _processedMlsMessages.clear();
       _mlsOutbox.clear();
       _peerVerifications.clear();
@@ -1207,16 +1316,146 @@ class MemoryLocalStore implements LocalStore {
       _cryptoState == null ? null : _copyCryptoState(_cryptoState!);
 
   PendingEnrollmentRow? _pendingEnrollment;
+  final List<EnrollmentPromotionRow> _promotions = <EnrollmentPromotionRow>[];
+  final Map<String, HistoryTransferProgress> _historyTransfers =
+      <String, HistoryTransferProgress>{};
+
+  List<EnrollmentPromotionRow> _promotionsFor(
+          String accountId, String deviceId) =>
+      [
+        for (final row in _promotions)
+          if (row.accountId == accountId && row.deviceId == deviceId) row,
+      ];
 
   @override
-  Future<PendingEnrollment?> loadPendingEnrollment() async =>
-      PendingEnrollment._fromRow(_pendingEnrollment);
+  Future<PendingEnrollment?> loadPendingEnrollment() async {
+    final row = _pendingEnrollment;
+    if (row != null && _promotionsFor(row.accountId, row.deviceId).isNotEmpty) {
+      _pendingEnrollment = null;
+      return null;
+    }
+    return PendingEnrollment._fromRow(row);
+  }
 
   @override
   Future<void> savePendingEnrollment(PendingEnrollment enrollment) async {
+    if (_promotionsFor(enrollment.accountId, enrollment.deviceId).isNotEmpty) {
+      throw const PendingEnrollmentConflict();
+    }
     _pendingEnrollment =
         mergePendingEnrollment(_pendingEnrollment, enrollment._toRow());
   }
+
+  @override
+  Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
+      EnrollmentPromotion promotion) async {
+    final request = promotion._toRequest();
+    final pending = _pendingEnrollment;
+    final outcome = decideEnrollmentPromotion(
+      request: request,
+      ledger: _promotionsFor(request.accountId, request.deviceId),
+      pending: pending,
+      cryptoStateStored: _cryptoState != null,
+      existingSession: _session == null ? null : _sessionJson(_session!),
+    );
+    if (outcome == EnrollmentPromotionOutcome.alreadyPromoted) {
+      if (pending != null &&
+          pending.accountId == request.accountId &&
+          pending.deviceId == request.deviceId) {
+        _pendingEnrollment = null;
+      }
+      return outcome;
+    }
+    // Everything that can refuse runs before the first change.
+    final transfer = request.transfer;
+    final mergedTransfer = transfer == null
+        ? null
+        : mergeHistoryTransfer(
+            _historyTransfers[_transferKey(transfer.origin, transfer.linkId)],
+            transfer);
+    final state = PendingEnrollment._fromRow(pending)!.state!;
+    _session = promotion.session;
+    _cryptoRecords.clear();
+    _setCryptoState(state);
+    _syncCursor = 0;
+    _promotions.add(EnrollmentPromotionRow(
+      kind: request.kind,
+      origin: request.origin,
+      accountId: request.accountId,
+      deviceId: request.deviceId,
+      promotionId: request.promotionId,
+      promotedAt: request.promotedAt,
+    ));
+    if (mergedTransfer != null) {
+      _historyTransfers[
+              _transferKey(mergedTransfer.origin, mergedTransfer.linkId)] =
+          mergedTransfer;
+    }
+    _pendingEnrollment = null;
+    return outcome;
+  }
+
+  @override
+  Future<bool> isEnrollmentPromoted(
+          {required String accountId, required String deviceId}) async =>
+      _promotionsFor(accountId, deviceId).isNotEmpty;
+
+  static String _transferKey(String origin, String linkId) =>
+      '$origin\u0000$linkId';
+
+  @override
+  Future<HistoryTransferProgress?> loadHistoryTransfer(
+          String origin, String linkId) async =>
+      _historyTransfers[_transferKey(origin, linkId)];
+
+  @override
+  Future<List<HistoryTransferProgress>> loadHistoryTransfers() async {
+    final values = _historyTransfers.values.toList()
+      ..sort((a, b) {
+        final byOrigin = a.origin.compareTo(b.origin);
+        return byOrigin != 0 ? byOrigin : a.linkId.compareTo(b.linkId);
+      });
+    return values;
+  }
+
+  HistoryTransferProgress _mergedActiveTransfer(
+      HistoryTransferProgress transfer) {
+    validateHistoryTransfer(transfer);
+    if (!historyTransferIsActive(
+        transfer,
+        _session == null ? null : _sessionJson(_session!),
+        _cryptoState != null)) {
+      throw const HistoryTransferConflict(
+          'the transfer is not for the active identity');
+    }
+    return mergeHistoryTransfer(
+        _historyTransfers[_transferKey(transfer.origin, transfer.linkId)],
+        transfer);
+  }
+
+  @override
+  Future<void> saveHistoryTransfer(HistoryTransferProgress transfer) async {
+    final merged = _mergedActiveTransfer(transfer);
+    _historyTransfers[_transferKey(merged.origin, merged.linkId)] = merged;
+  }
+
+  @override
+  Future<void> commitHistoryTransferState({
+    required int expectedCounter,
+    required int expectedCursor,
+    required StoredCryptoState state,
+    required HistoryTransferProgress transfer,
+  }) async {
+    _validateLocalMlsState(expectedCounter, expectedCursor, state,
+        currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
+    final merged = _mergedActiveTransfer(transfer);
+    _setCryptoState(state);
+    _historyTransfers[_transferKey(merged.origin, merged.linkId)] = merged;
+  }
+
+  @override
+  Future<bool> deleteHistoryTransfer(String origin, String linkId) async =>
+      _historyTransfers.remove(_transferKey(origin, linkId)) != null;
 
   @override
   Future<bool> deletePendingEnrollment(
@@ -1433,6 +1672,9 @@ class MemoryLocalStore implements LocalStore {
     _mlsOutbox.clear();
     _cryptoState = null;
     _cryptoRecords.clear();
+    // Transfers go with the MLS state; the ledger and a pending enrollment
+    // stay (finding 4).
+    _historyTransfers.clear();
     _processedMlsMessages.clear();
     _peerVerifications.clear();
     final kept = withoutPendingHistory(
@@ -1485,6 +1727,8 @@ class MemoryLocalStore implements LocalStore {
   Future<void> clear() async {
     _noticeState = LocalNoticeState();
     _pendingEnrollment = null;
+    _promotions.clear();
+    _historyTransfers.clear();
     _session = null;
     _cryptoState = null;
     _cryptoRecords.clear();
@@ -2499,6 +2743,58 @@ class SecureLocalStore implements LocalStore {
           {required String kind, String? deviceId}) async =>
       (await _database())
           .deletePendingEnrollment(kind: kind, deviceId: deviceId);
+
+  @override
+  Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
+      EnrollmentPromotion promotion) async {
+    final request = promotion._toRequest();
+    return (await _database()).promotePendingEnrollment(request);
+  }
+
+  @override
+  Future<bool> isEnrollmentPromoted(
+          {required String accountId, required String deviceId}) async =>
+      (await (await _database()).readEnrollmentPromotions(
+              accountId: accountId, deviceId: deviceId))
+          .isNotEmpty;
+
+  @override
+  Future<HistoryTransferProgress?> loadHistoryTransfer(
+          String origin, String linkId) async =>
+      (await _database()).readHistoryTransfer(origin, linkId);
+
+  @override
+  Future<List<HistoryTransferProgress>> loadHistoryTransfers() async =>
+      (await _database()).readHistoryTransfers();
+
+  @override
+  Future<void> saveHistoryTransfer(HistoryTransferProgress transfer) async =>
+      (await _database()).writeHistoryTransfer(transfer);
+
+  @override
+  Future<void> commitHistoryTransferState({
+    required int expectedCounter,
+    required int expectedCursor,
+    required StoredCryptoState state,
+    required HistoryTransferProgress transfer,
+  }) async {
+    _validateLocalMlsState(expectedCounter, expectedCursor, state,
+        currentCounter: expectedCounter, currentCursor: expectedCursor);
+    await (await _database()).commitHistoryTransferState(
+      transfer: transfer,
+      expectedCounter: expectedCounter,
+      expectedCursor: expectedCursor,
+      counter: state.counter,
+      stateKey: state.stateKey,
+      sealedState: state.sealedState,
+      recordChanges: _recordWrites(state),
+      leaseKey: _syncLeaseKey,
+    );
+  }
+
+  @override
+  Future<bool> deleteHistoryTransfer(String origin, String linkId) async =>
+      (await _database()).deleteHistoryTransfer(origin, linkId);
 
   @override
   Future<List<StoredCryptoRecord>> loadCryptoRecords() async => [
