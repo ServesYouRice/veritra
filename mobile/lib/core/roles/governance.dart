@@ -45,7 +45,8 @@ const Duration electionWait = Duration(days: 7);
 bool mayOpenElectionNow({
   required DateTime now,
   required DateTime lastOwnerActivity,
-}) => now.difference(lastOwnerActivity) >= ownerInactivityWait;
+}) =>
+    now.difference(lastOwnerActivity) >= ownerInactivityWait;
 
 /// Local clock rule: may this app vote (or, in a claim, take ownership) now?
 /// [openedSeen] is when this app saw the election open.
@@ -67,8 +68,8 @@ class Election {
     required this.opened,
     required Set<String> electorate,
     Map<String, String> votes = const {},
-  }) : electorate = Set.unmodifiable(electorate),
-       votes = Map.unmodifiable(votes);
+  })  : electorate = Set.unmodifiable(electorate),
+        votes = Map.unmodifiable(votes);
 
   /// The record `rev` that opened it.
   final int opened;
@@ -113,6 +114,7 @@ class GovernanceState {
   GovernanceState({
     required this.rev,
     required this.owner,
+    required this.ownerRev,
     Map<String, int> admins = const {},
     Set<String> moderators = const {},
     this.adminsOnlyPosting = false,
@@ -120,16 +122,16 @@ class GovernanceState {
     Set<String> electors = const {},
     this.election,
     Map<String, int> joined = const {},
-  }) : admins = Map.unmodifiable(admins),
-       moderators = Set.unmodifiable(moderators),
-       announcementChannels = Set.unmodifiable(announcementChannels),
-       electors = Set.unmodifiable(electors),
-       joined = Map.unmodifiable(joined);
+  })  : admins = Map.unmodifiable(admins),
+        moderators = Set.unmodifiable(moderators),
+        announcementChannels = Set.unmodifiable(announcementChannels),
+        electors = Set.unmodifiable(electors),
+        joined = Map.unmodifiable(joined);
 
   /// The first state, written when the creator makes the MLS group: the
   /// creator owns it, nobody else holds a role, nothing is restricted.
-  factory GovernanceState.genesis(String creator) =>
-      GovernanceState(rev: 0, owner: creator, joined: {creator: 0});
+  factory GovernanceState.genesis(String creator) => GovernanceState(
+      rev: 0, owner: creator, ownerRev: 0, joined: {creator: 0});
 
   /// Previous + 1 on every written change. A pruning at a removal keeps it.
   final int rev;
@@ -138,6 +140,18 @@ class GovernanceState {
   /// is no longer in the roster, which counts as inactivity and nothing more.
   /// Null only in a malformed or legacy state; no rule here produces it.
   final String? owner;
+
+  /// The [rev] of the owner's last role decision: its last commit that itself
+  /// changed the owner, admins, moderators, electors or a posting field.
+  /// Pruning, the dead-election clear, an add's `joined` stamp and the forced
+  /// cancel never move it, so [requiredRecord] never stamps it; a win or a
+  /// claim stamps its own rev, because the new owner's tenure starts there.
+  /// It never moves backwards. Owner decision 2026-11-07: an election opened
+  /// from the D82 fallback (no elector present) lets only admins vote whose
+  /// `since` is at or before it. Whoever the owner left in place at its last
+  /// role decision still counts; admins put in power afterwards, while it
+  /// made none, never do. Receivers can check this without a clock.
+  final int ownerRev;
 
   /// Admin account to the [rev] at which it became admin (seniority).
   final Map<String, int> admins;
@@ -170,6 +184,7 @@ class GovernanceState {
     int? rev,
     String? owner,
     bool clearOwner = false,
+    int? ownerRev,
     Map<String, int>? admins,
     Set<String>? moderators,
     bool? adminsOnlyPosting,
@@ -178,17 +193,19 @@ class GovernanceState {
     Election? election,
     bool clearElection = false,
     Map<String, int>? joined,
-  }) => GovernanceState(
-    rev: rev ?? this.rev,
-    owner: clearOwner ? null : (owner ?? this.owner),
-    admins: admins ?? this.admins,
-    moderators: moderators ?? this.moderators,
-    adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
-    announcementChannels: announcementChannels ?? this.announcementChannels,
-    electors: electors ?? this.electors,
-    election: clearElection ? null : (election ?? this.election),
-    joined: joined ?? this.joined,
-  );
+  }) =>
+      GovernanceState(
+        rev: rev ?? this.rev,
+        owner: clearOwner ? null : (owner ?? this.owner),
+        ownerRev: ownerRev ?? this.ownerRev,
+        admins: admins ?? this.admins,
+        moderators: moderators ?? this.moderators,
+        adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
+        announcementChannels: announcementChannels ?? this.announcementChannels,
+        electors: electors ?? this.electors,
+        election: clearElection ? null : (election ?? this.election),
+        joined: joined ?? this.joined,
+      );
 
   /// The account's role. Meaningful only for an account in the MLS roster.
   BuiltInRole roleOf(String account) {
@@ -250,6 +267,7 @@ class GovernanceState {
       other is GovernanceState &&
       other.rev == rev &&
       other.owner == owner &&
+      other.ownerRev == ownerRev &&
       _mapEq(other.admins, admins) &&
       _setEq(other.moderators, moderators) &&
       other.adminsOnlyPosting == adminsOnlyPosting &&
@@ -260,16 +278,17 @@ class GovernanceState {
 
   @override
   int get hashCode => Object.hash(
-    rev,
-    owner,
-    admins.length,
-    moderators.length,
-    adminsOnlyPosting,
-    announcementChannels.length,
-    electors.length,
-    election,
-    joined.length,
-  );
+        rev,
+        owner,
+        ownerRev,
+        admins.length,
+        moderators.length,
+        adminsOnlyPosting,
+        announcementChannels.length,
+        electors.length,
+        election,
+        joined.length,
+      );
 }
 
 /// Why a change was refused. Stable codes for logs and tests.
@@ -308,12 +327,16 @@ class GovernanceCheck {
 ///
 /// Ownership (D81, D82) moves in two ways. The owner transfers it to a
 /// current admin. Or an election wins: any commit by the owner while one is
-/// open must clear it; an account may open one (an elector, else every admin;
-/// with no admin in the roster the longest-serving member claims), vote once
-/// for an admin in the roster, or close it if it is in the snapshot; the
-/// commit holding the vote of more than half of the snapshot must itself set
-/// the owner and clear the election. Waiting periods are local
-/// ([mayOpenElectionNow], [mayVoteNow]).
+/// open must clear it; an account may open one (an elector, else every admin
+/// who was admin by `ownerRev`; with no admin in the roster the
+/// longest-serving member claims), vote once for an admin in the roster, or
+/// close it if it is in the snapshot; the commit holding the vote of more
+/// than half of the snapshot must itself set the owner and clear the
+/// election. Waiting periods are local ([mayOpenElectionNow],
+/// [mayVoteNow]); what receivers can check instead is `ownerRev`: the D82
+/// snapshot holds only admins who were admin by then. An owner commit that
+/// changes roles or posting sets it to its own rev, a win sets it to the
+/// winning rev, nothing else moves it.
 GovernanceCheck validateTransition(
   GovernanceState prev,
   GovernanceState next,
@@ -336,6 +359,9 @@ GovernanceCheck validateTransition(
   if (!next.electors.every(next.admins.containsKey)) {
     return no(GovernanceReject.badShape);
   }
+  if (next.ownerRev > next.rev) {
+    return no(GovernanceReject.badShape);
+  }
   if (next.announcementChannels.length > maxAnnouncementChannels ||
       next.announcementChannels.any((c) => c.isEmpty)) {
     return no(GovernanceReject.badShape);
@@ -349,12 +375,16 @@ GovernanceCheck validateTransition(
   }
   // An admin keeps its seniority; a new admin starts at this rev.
   for (final e in next.admins.entries) {
-    final since = prev.roleOf(e.key) == BuiltInRole.admin
-        ? prev.admins[e.key]
-        : next.rev;
+    final since =
+        prev.roleOf(e.key) == BuiltInRole.admin ? prev.admins[e.key] : next.rev;
     if (e.value != since) return no(GovernanceReject.badShape);
   }
-  // `joined` is written once, when an account is added.
+  // `joined` is written once, when an account is added, and only a removal
+  // (already pruned in [prev]) drops it. Dropping another member's entry
+  // would disable the no-admin claim for good.
+  if (!next.joined.keys.toSet().containsAll(prev.joined.keys)) {
+    return no(GovernanceReject.badShape);
+  }
   for (final e in next.joined.entries) {
     final was = prev.joined[e.key];
     final ok = was != null
@@ -434,6 +464,23 @@ GovernanceCheck validateTransition(
     if (r != null) return no(r);
   }
 
+  // The owner's last role decision. Only an owner commit that itself changes
+  // the owner, admins, moderators, electors or a posting field (and a win,
+  // which starts a new owner's tenure) moves it, and then to this rev.
+  // Pruning, the dead-election clear, an add's `joined` stamp and the
+  // forced cancel are not the owner's decisions and leave it. Else a rogue
+  // admin would stamp it itself and make its stand-ins old enough to vote, or
+  // an automatic owner commit would do it for the rogue.
+  final ownChange = transfer ||
+      !_mapEq(next.admins, prev.admins) ||
+      !_setEq(next.moderators, prev.moderators) ||
+      !_setEq(next.electors, prev.electors) ||
+      next.adminsOnlyPosting != prev.adminsOnlyPosting ||
+      !_setEq(next.announcementChannels, prev.announcementChannels);
+  final expectedOwnerRev =
+      handover || (ownerActs && ownChange) ? next.rev : prev.ownerRev;
+  if (next.ownerRev != expectedOwnerRev) return no(GovernanceReject.badShape);
+
   // Role changes. A won election moves exactly the roles `_checkWin` fixed.
   if (handover) return const GovernanceCheck.ok();
   final accounts = {
@@ -499,8 +546,7 @@ GovernanceReject? _checkWin(
   final old = prev.owner;
   final admins = {...prev.admins}..remove(winner);
   if (old != null && members.contains(old)) admins[old] = next.rev;
-  final ok =
-      _mapEq(next.admins, admins) &&
+  final ok = _mapEq(next.admins, admins) &&
       _setEq(next.electors, prev.electors.difference({winner})) &&
       _setEq(next.moderators, prev.moderators.difference({winner})) &&
       next.adminsOnlyPosting == prev.adminsOnlyPosting &&
@@ -547,7 +593,15 @@ GovernanceReject? _checkElection(
         for (final a in prev.electors)
           if (members.contains(a)) a,
       };
-      electorate = electors.isNotEmpty ? electors : admins;
+      // D82: with no elector present every admin in the roster votes, but only
+      // those already admin when the owner last committed (`ownerRev`). The
+      // admins put in power since then, while the owner was silent, never do.
+      electorate = electors.isNotEmpty
+          ? electors
+          : {
+              for (final a in admins)
+                if (prev.admins[a]! <= prev.ownerRev) a,
+            };
       if (!electorate.contains(actor)) return GovernanceReject.election;
     }
     return _setEq(now.electorate, electorate)
@@ -576,17 +630,27 @@ GovernanceReject? _checkElection(
   return null;
 }
 
-/// The whole check for one MLS commit. [prev] is the state before it,
-/// [next] the state its GroupContext carries after it ([prev] when the commit
-/// does not change the extension), [before] and [after] the rosters. Every
-/// account whose last device the commit removes is pruned first
-/// ([GovernanceState.removeAccount]). An add stamps `joined`, and an owner
-/// commit clears an open election; each of those rewrites the record at
-/// `rev + 1`. The result must be exactly [next], or [next] must be a valid
-/// change by [committer] from it.
-GovernanceCheck validateCommit(
+/// The record a commit must carry when the committer changes nothing itself:
+/// every account whose last device the commit removes is pruned
+/// ([GovernanceState.removeAccount]); an election with nobody from its
+/// snapshot left in the roster is cleared (nobody could close it, and no new
+/// one could open); both keep `rev`. Then an add stamps `joined`, and an
+/// owner commit clears an open election; each of those rewrites the record at
+/// `rev + 1`. It never stamps `ownerRev`: only the owner's own role or
+/// posting change does, and that is a change by the committer. A bare owner
+/// commit (self-update, reconcile, revocation) carries no record. Commit
+/// producers use this to build their record, and [validateCommit] checks
+/// against it, so the two cannot drift.
+GovernanceState requiredRecord(
   GovernanceState prev,
-  GovernanceState next,
+  String committer, {
+  required Set<String> before,
+  required Set<String> after,
+}) =>
+    _required(prev, committer, before: before, after: after).record;
+
+({GovernanceState base, GovernanceState record, bool cancel}) _required(
+  GovernanceState prev,
   String committer, {
   required Set<String> before,
   required Set<String> after,
@@ -595,25 +659,50 @@ GovernanceCheck validateCommit(
   for (final gone in before.difference(after)) {
     base = base.removeAccount(gone);
   }
+  final el = base.election;
+  if (el != null && !el.electorate.any(after.contains)) {
+    base = base.copyWith(clearElection: true);
+  }
   final added = after.difference(before);
   final cancel =
       prev.owner != null && committer == prev.owner && base.election != null;
-  var expected = base;
+  var record = base;
   if (added.isNotEmpty || cancel) {
-    expected = base.copyWith(
+    record = base.copyWith(
       rev: base.rev + 1,
       clearElection: cancel,
       joined: {...base.joined, for (final a in added) a: base.rev + 1},
     );
   }
+  return (base: base, record: record, cancel: cancel);
+}
+
+/// The whole check for one MLS commit. [prev] is the state before it,
+/// [next] the state its GroupContext carries after it ([prev] when the commit
+/// does not change the extension), [before] and [after] the rosters.
+/// [next] must be exactly [requiredRecord], or a valid change by [committer]
+/// from the pruned record.
+GovernanceCheck validateCommit(
+  GovernanceState prev,
+  GovernanceState next,
+  String committer, {
+  required Set<String> before,
+  required Set<String> after,
+}) {
+  final (:base, record: expected, :cancel) = _required(
+    prev,
+    committer,
+    before: before,
+    after: after,
+  );
   if (next == expected) return const GovernanceCheck.ok();
   if (next == prev) {
     return GovernanceCheck.no(
       cancel
           ? GovernanceReject.election
           : base != prev
-          ? GovernanceReject.notPruned
-          : GovernanceReject.badRev,
+              ? GovernanceReject.notPruned
+              : GovernanceReject.badRev,
     );
   }
   return validateTransition(
@@ -621,6 +710,6 @@ GovernanceCheck validateCommit(
     next,
     committer,
     members: after,
-    added: added,
+    added: after.difference(before),
   );
 }

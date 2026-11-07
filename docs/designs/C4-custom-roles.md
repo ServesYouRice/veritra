@@ -140,10 +140,15 @@ state (`removeAccount`): the account loses its role, its elector flag, its
 `joined` entry, and its votes and votes for it. The **owner is never pruned**
 (D81): a removed owner stays owner, and nobody inherits. Pruning alone needs
 no role, so any committer may carry it; a removal that does not prune is
-refused (`notPruned`). `validateCommit` prunes first, then checks any further
-change against the pruned state. Two commits also rewrite the record at
+refused (`notPruned`). An election with nobody from its snapshot left in the
+roster is cleared in the same step (nobody could close it, and no new one
+could open). `validateCommit` prunes first, then checks any further change
+against the pruned state. No commit drops a `joined` entry of a member who
+stays. Two things also rewrite the record at
 `rev + 1`: an add stamps `joined`, and an owner commit clears an open
-election. The check refuses anything else.
+election. Neither moves `owner_rev` (below); a bare owner commit (the owner's
+self-update, a reconcile, a revocation) carries no record at all. The check
+refuses anything else.
 
 `validateCommit` does not judge whether the removal itself was allowed.
 That is C1/C5's receiver check (`mayActOn(committer, target)` for a kick). A
@@ -174,12 +179,12 @@ recovery (D49, D78): a wait that the real owner can cancel.
 
 | Step | Who | What every app checks (in `validateCommit`) |
 |---|---|---|
-| 1. Open | An elector in the roster | No election is open. The commit writes `election = {opened: rev, electorate: [electors in the roster now], votes: {}}`. The snapshot never grows |
+| 1. Open | An elector in the roster (D82: an admin who was admin by `owner_rev`) | No election is open. The commit writes `election = {opened: rev, electorate: [electors in the roster now], votes: {}}`. The snapshot never grows |
 | 2. Wait | Nobody | Nothing: the waits are local rules (below) |
-| 3. Owner cancels | Any owner device | Every owner commit while an election is open must clear it. The owner's app does this by itself, after a random delay of up to 24 hours |
+| 3. Owner cancels | Any owner device | Every owner commit while an election is open must clear it (the cancel does not move `owner_rev`, below). The owner's app cancels by itself, after a random delay of up to 24 hours |
 | 3b. Close | Any account in the snapshot | Clears the election (fail-safe: nobody gains anything) |
 | 4. Vote | An account in the snapshot, in the roster | Has not voted; names an admin in the roster |
-| 5. Win | The commit holding the deciding vote | When one candidate has votes from more than half of the **snapshot** (removals never lower this), that same commit must set `owner` to them and clear `election`. The old owner, if still a member, becomes an admin (exempt from the usual hierarchy check for this one commit) |
+| 5. Win | The commit holding the deciding vote | When one candidate has votes from more than half of the **snapshot** (removals never lower this), that same commit must set `owner` to them, set `owner_rev` to its own rev, and clear `election`. The old owner, if still a member, becomes an admin (exempt from the usual hierarchy check for this one commit) |
 
 Votes are **ordinary governance commits**. MLS already proves who sent each
 commit (sender credential bound to the envelope, D25) and the server holds
@@ -222,9 +227,16 @@ about the group state. An honest app refuses:
 
 Owner activity is any owner commit **or application message** the app has
 received in the group, so an owner who chats but rarely commits is not
-challenged. A transfer or a win restarts every app's clock. A majority of
-honest elector apps therefore enforces the timing; one rogue admin can open
-early but cannot win.
+challenged. A transfer or a win restarts every app's clock.
+
+Receivers cannot refuse a commit for its timing, so **the waits bind honest
+committers only**. When most of the snapshot is honest, their apps enforce
+the timing: one rogue elector can open early but cannot win. When most of
+the snapshot is not (a snapshot of one elector or a claim; a rogue admin's
+stand-ins are kept out by `owner_rev`, below), the open, the votes and the
+win can follow each other within minutes, and the owner may get no chance to
+cancel. An honest app that sees a win its own clock would have refused
+should say so to the user.
 
 ### No admin left
 
@@ -232,7 +244,9 @@ Only when **no admin is in the roster**: the longest-serving member (the
 smallest `joined`, then the smallest account id; never the owner) may open a
 claim. After the 7-day wait and 30 days of owner inactivity (local rules)
 it commits `owner = itself`. An owner commit cancels the claim. If that
-member is also inactive, nobody inherits.
+member is also inactive, nobody inherits. `owner_rev` does not gate claims:
+an owner who only adds members must not lose its group's claim path (the
+reviewed attempt to gate it was dropped, owner decision 2026-11-07).
 
 ### New record fields (record codec v2)
 
@@ -243,6 +257,8 @@ member is also inactive, nobody inherits.
 - `joined`: account to the `rev` at which its first device was added. Every
   add commit writes it (this touches C1's add path); a removal drops it, so
   a re-added member starts again.
+- `owner_rev`: the `rev` of the owner's last role decision (genesis 0); see
+  below.
 
 One shared function must compute what each kind of commit has to change
 (add, remove, owner commit, open, close, vote, win), used by both the
@@ -253,34 +269,91 @@ the group's sync under I33.
 
 If no elector is in the roster when an election opens (the owner never
 promoted or confirmed any admin still present), the snapshot holds **every
-admin in the roster** instead (owner decision D82). The rest is unchanged:
+admin in the roster who was already admin at or before `owner_rev`**
+(owner decision D82, narrowed 2026-11-07, below). The rest is unchanged:
 same waits, the owner can cancel, more than half of the snapshot must agree.
+If admins are in the roster but none was admin by then, nobody can open: the
+group keeps its absent owner.
+
+### The owner's last role decision (`owner_rev`, owner decision 2026-11-07)
+
+Receivers cannot check the 30 and 7 days, so a rogue admin could promote
+stand-ins under D82 (all admins vote when no elector is present), open an
+election, have them vote and win in about five commits. The owner chose
+option (b): the record keeps `owner_rev`, a `rev`, and a D82 snapshot may
+hold only admins whose `since` is at or before it. Admins promoted after it
+never vote. This is deterministic (no clock, no server timestamp), so every
+app enforces it. The owner then refined which commits move it: a first
+version moved it on every owner commit, but then the owner's own automatic
+commits (the forced cancel, an Update, a reconcile) would move it for the
+rogue.
+
+- **What moves it.** An owner commit moves `owner_rev` to its own `rev`
+  only when the owner itself changes `owner`, `admins`, `moderators`,
+  `electors` or a posting field (`adminsOnlyPosting`, announcement
+  channels). Pruning, the dead-election clear, an add's `joined` stamp and
+  the forced cancel do **not** move it. `requiredRecord` never stamps it.
+- **A bare owner commit carries no record.** A self-update, reconcile or
+  revocation by the owner needs no record rewrite and is not refused.
+- **Only that moves it.** A non-owner commit must keep `owner_rev`, an owner
+  commit that decides nothing must keep it, and it can never exceed `rev`.
+  Else the rogue would stamp it itself.
+- **A win stamps its own rev** (a claim too), so the new owner's tenure
+  starts there and every admin of the old one, the old owner included,
+  still counts.
+- **D82 snapshot** = admins in the roster with `since <= owner_rev`.
+  `since == owner_rev` counts (the owner's own promotion). Electors are
+  owner-chosen and need no check.
+- **Claims are not gated.** The reviewed variant (a claimant must have
+  joined by `owner_rev`) is dropped: it would have blocked a claim in any
+  group whose owner only adds members.
+
+Closed, each pinned as refused in the engine's tests: stand-ins promoted
+after the owner's last role decision cannot open, vote or win, including
+after the owner's forced cancel, add or removal; a non-owner cannot move
+`owner_rev`, nor can an owner commit that decides nothing.
+
+Cost: an admin promoted by another admin never votes under D82 until the
+owner makes a role or posting decision after it. The roles screen should
+list admins promoted by others since `owner_rev` and prompt the owner to
+flag electors (which closes the D82 path for good).
 
 ### Residuals (accepted)
 
 - A server that hides the owner for 37 days or more, while a majority of
   the electors goes along, gets a handover. The server alone cannot do it.
   K0's recovery accepts the same kind of risk.
-- Until C1 makes a leaver prove its own leave, the server can force out
-  every admin and let the longest-serving member claim ownership after the
-  waits.
+- A deliberate owner role or posting decision made after a rogue admin's
+  promotions (any admin or moderator change, an elector flag, a posting
+  switch) makes those stand-ins old enough (pinned in a test). The owner's
+  own automatic commits do not. Mitigation: the roles screen lists admins
+  promoted by others since `owner_rev` and prompts the owner to flag
+  electors; flagging even one admin closes the D82 path altogether.
+- Server plus one owner-era admin: until C1 makes a leaver prove its own
+  leave, the server can force out every elector (in the opening commit or
+  before it), and the one remaining admin who was admin by `owner_rev` is a
+  snapshot of one and wins at once (pinned in a test). The same holds for
+  a server that forces out every admin and lets the longest-serving member
+  claim. A peer admin cannot kick an admin (hierarchy), so only a forced
+  removal gets there. C1's removal proofs are a prerequisite for wiring C4
+  receivers. `owner_rev` cannot close this: it needs the elector set as of
+  `owner_rev`, which changes D82's rule (owner's call).
+- A snapshot of one elector, or a claim, has no honest majority to enforce
+  the waits: that one account can win at once. An admin who was admin by
+  `owner_rev` and is the whole snapshot is the same.
 - A rogue elector can keep opening (or closing) elections. Each automatic
   cancel tells the server roughly when the owner was online; the random
   delay blurs this but does not hide it.
-- With no elector present (D82), a rogue admin can promote stand-ins and
-  outvote the other admins after the waits. The owner can still cancel
-  any time before the win, and confirming even one admin as an elector
-  closes this path.
 - If the electors themselves are inactive, no majority forms; the group
   keeps its absent owner.
 
 ## Built and not built
 
-Built: the rules engine and 45 tests (posting, hierarchy as on the server,
+Built: the rules engine and 62 tests (posting, hierarchy as on the server,
 step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
-open, cancel, close, vote, win, claim, electors, `joined`; the local waits as
-pure helpers; the commit-level check). Not built: the ABI above, the record codec (format in
-`docs/crypto.md`), wiring into commit processing, local storage (none is
+open, cancel, close, vote, win, claim, electors, `joined`, `owner_rev`; the
+local waits as pure helpers; the commit-level check). Not built: the ABI
+above, the record codec (format in `docs/crypto.md`), wiring into commit processing, local storage (none is
 needed beyond MLS state), UI, and the server half of the ownership rules
 (below).
 
@@ -304,6 +377,15 @@ deletion.
    to someone no admin chose.
 2. **Moderators making moderators.** Allowed, as on the server today. If
    not wanted, change the server and this rule together.
+3. **D82 stand-ins win without a wait: decided (2026-11-07).** The owner
+   chose option (b): the record keeps `owner_rev`, the `rev` of the owner's
+   last role decision, and the D82 snapshot holds only admins who were admin
+   at or before it. Admins promoted after it never vote; an admin promoted
+   while the owner was active still does. Refinement the same day: only an
+   owner commit that itself changes `owner`, `admins`, `moderators`,
+   `electors` or a posting field moves it; the forced cancel, pruning, an
+   add and a bare owner commit do not, and claims are not gated. See "The
+   owner's last role decision". What stays open is listed in the residuals.
 
 ## History
 
