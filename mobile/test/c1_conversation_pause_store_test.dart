@@ -406,14 +406,11 @@ void main() {
     });
 
     test('a failure with an over-long event type never pauses', () {
-      SyncEventFailure failure(String type) => SyncEventFailure(
-          SyncFailureKind.unsupportedEvent,
-          eventId: 5,
-          eventType: type,
-          conversationId: 'conv_a');
+      SyncEventFailure failure(String type) =>
+          SyncEventFailure(SyncFailureKind.unsupportedEvent,
+              eventId: 5, eventType: type, conversationId: 'conv_a');
       expect(failurePausesConversation(failure('mls.future')), isTrue);
-      expect(
-          failurePausesConversation(failure('x' * maxPausedEventTypeLength)),
+      expect(failurePausesConversation(failure('x' * maxPausedEventTypeLength)),
           isTrue);
       expect(
           failurePausesConversation(

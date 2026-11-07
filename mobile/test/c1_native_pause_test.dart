@@ -150,8 +150,8 @@ void main() {
         .processApplicationMessage(alice.envelopeFrom(bob, newB), eventB2);
     expect(await alice.epoch('conv_b'), epochB + 1);
     expect(await alice.epoch('conv_a'), epochA);
-    expect((await alice.store.loadMessages('conv_b')).single.body,
-        'b new epoch');
+    expect(
+        (await alice.store.loadMessages('conv_b')).single.body, 'b new epoch');
     expect(await alice.store.loadSyncCursor(), eventB2);
     final before = (await alice.store.loadCryptoState())!.counter;
 
@@ -173,10 +173,10 @@ void main() {
         eventA2);
     expect(await alice.store.loadSyncCursor(), eventB2);
     expect(await alice.epoch('conv_b'), epochB + 1);
-    expect((await alice.store.loadMessages('conv_a')).single.body,
-        'a new epoch');
-    expect((await alice.store.loadMessages('conv_b')).single.body,
-        'b new epoch');
+    expect(
+        (await alice.store.loadMessages('conv_a')).single.body, 'a new epoch');
+    expect(
+        (await alice.store.loadMessages('conv_b')).single.body, 'b new epoch');
 
     // With the pause lifted, A works in its new epoch both ways.
     expect(await alice.store.clearConversationPause('conv_a'), isTrue);
@@ -267,8 +267,8 @@ class _Client {
 
   /// The sync event that delivers [payload], a copy of [item]'s commit, from
   /// [from] to this device.
-  MlsMessage commitFrom(_Client from, PendingMlsMessage item, int eventId,
-      List<int> payload) {
+  MlsMessage commitFrom(
+      _Client from, PendingMlsMessage item, int eventId, List<int> payload) {
     return MlsMessage(
       id: 'mls_${item.conversationId}',
       conversationId: item.conversationId,
