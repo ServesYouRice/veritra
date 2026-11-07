@@ -24,6 +24,7 @@ import '../push/notice_decisions.dart';
 import '../push/wake_worker_bridge.dart' show WakeNoticeResult;
 import '../storage/history_snapshot.dart' show HistoryConversation;
 import '../storage/local_store.dart';
+import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
 import 'api_client.dart';
@@ -502,6 +503,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Why sync stopped, when it did (I33). Kept durably by the local store.
   SyncRecovery? syncRecovery;
+
+  /// Conversations paused by their own MLS failure, by conversation id (C1
+  /// prerequisite 1). Sync goes on for every other conversation. Kept
+  /// durably by the local store; loaded at the start of each sync pass.
+  Map<String, ConversationPause> conversationPauses =
+      const <String, ConversationPause>{};
+
+  /// Whether [conversationId] is paused by a sync failure of its own.
+  bool conversationSyncPaused(String conversationId) =>
+      conversationPauses.containsKey(conversationId);
+
+  /// The pause of [conversationId], or null.
+  ConversationPause? conversationPauseFor(String conversationId) =>
+      conversationPauses[conversationId];
+
+  /// Conversations whose user asked for a retry; the next foreground pass
+  /// replays them before it reads the global stream.
+  final Set<String> _pauseReplayRequests = <String>{};
   SessionLifecycle lifecycle = SessionLifecycle.initializing;
   String? recoveryMessage;
 
@@ -2339,6 +2358,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         conversationId,
         'me',
       );
+      // A pause (C1 P1) stays until the group is dropped, so a pass that
+      // already holds later events of the conversation still holds them
+      // back ([_dropLeftConversations] lifts it). Without that drop there
+      // is nothing to wait for.
+      if (_mlsCrypto is! MlsStateMaintenanceCryptoService) {
+        await _dropConversationPause(conversationId);
+      }
       conversations = conversations
           .where((conversation) => conversation.id != conversationId)
           .toList(growable: false);
@@ -2636,6 +2662,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await mls.deleteConversationState(conversationId);
         await _changeLeftConversations(
             current, (ids) => ids.difference(<String>{conversationId}));
+        // The group is gone, and the server sends nothing more for it: a
+        // pause of the conversation (C1 P1) has nothing left to hold.
+        await _dropConversationPause(conversationId);
       } catch (err) {
         // Body-free: no conversation id.
         developer.log('mls_left_group_drop_failed ${err.runtimeType}',
@@ -3529,6 +3558,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // A paused or departed conversation ends the wait; the attempt then
       // reports the pause or sends nothing.
       if (mlsConversationFailed(conversationId) ||
+          conversationSyncPaused(conversationId) ||
           !conversations.any((item) => item.id == conversationId)) {
         return true;
       }
@@ -3794,6 +3824,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       if (mlsConversationFailed(conversation.id)) {
         throw const ConversationPausedException();
+      }
+      if (conversationSyncPaused(conversation.id)) {
+        throw ConversationSyncPausedException(conversation.id);
       }
       final mls = _mlsCrypto;
       // D68: checked again inside the queue, right before encryption.
@@ -5222,10 +5255,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         stored = null;
       }
+      if (stored != null && wake == null) {
+        // A stop recorded for one conversation's event, from before pauses
+        // existed, becomes that conversation's pause when the server can
+        // serve the event again. The cursor never passed it.
+        if (await _pauseStoredRecovery(
+            stored, current, client, ownerGeneration)) {
+          await localStore.saveSyncRecovery(null);
+          stored = null;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+      }
       if (stored != null) {
         _enterSyncRecovery(stored);
         return;
       }
+      await _loadConversationPauses(current, ownerGeneration);
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       // Envelopes an earlier pass committed but could not show. A history
       // that still cannot be read keeps them for the next pass; it must not
       // stop this one, or one bad read would block all sync.
@@ -5236,6 +5282,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
       if (wake == null) {
         await _dropLeftConversations(current, ownerGeneration);
+        if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+        await _replayRequestedPauses(current, client, ownerGeneration);
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
       }
       // Pending-changes reads finished before this fetch starts (D68).
@@ -5316,6 +5364,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             if (!_syncOwnerActive(current, ownerGeneration)) return;
             await wake?.check();
 
+            if (_heldBackByPause(event)) {
+              // A paused conversation's crypto events are passed over by
+              // the cursor alone (C1 P1): its group stays where the failed
+              // event left it, and a replay applies them in order.
+              if (!await commitProjections()) return;
+              await _skipPausedEvent(event, wake);
+              continue;
+            }
             if (_isCryptoSyncEvent(event.type)) {
               if (!await commitProjections()) return;
               if (_mlsCrypto == null) {
@@ -5324,8 +5380,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                     eventType: event.type,
                     conversationId: event.conversationId);
               }
-              final envelope = await _processCryptoSyncEvent(event, repair,
-                  wake: wake, client: client);
+              final ReceivedMessageEnvelope? envelope;
+              try {
+                envelope = await _processCryptoSyncEvent(event, repair,
+                    wake: wake, client: client);
+              } catch (err) {
+                // One conversation's failure pauses that conversation
+                // alone; anything that is not about one conversation stops
+                // the device as before (I33). A background pass leaves the
+                // decision to the foreground.
+                if (wake != null ||
+                    err is! SyncEventFailure ||
+                    !failurePausesConversation(err) ||
+                    !await _pauseConversationAt(
+                        err, current, client, ownerGeneration)) {
+                  rethrow;
+                }
+                await _skipPausedEvent(event, wake);
+                continue;
+              }
               if (envelope != null) {
                 received.add(envelope);
                 if (received.length >= _receivedBatchLimit) {
@@ -5340,10 +5413,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               if (!_knownProjectionEvent(event.type) &&
                   _failsClosedEvent(event.type)) {
                 if (!await commitProjections()) return;
-                throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+                final unsupported = SyncEventFailure(
+                    SyncFailureKind.unsupportedEvent,
                     eventId: event.id,
                     eventType: event.type,
                     conversationId: event.conversationId);
+                if (wake != null ||
+                    !failurePausesConversation(unsupported) ||
+                    !await _pauseConversationAt(
+                        unsupported, current, client, ownerGeneration)) {
+                  throw unsupported;
+                }
+                await _skipPausedEvent(event, wake);
+                continue;
               }
               projections.add(event);
               continue;
@@ -5533,6 +5615,342 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     syncError = recovery.localizedMessage(l10n);
     _setConnectionStatus(ConnectionStatus.offline);
     notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------
+  // Per-conversation MLS failure isolation (C1 prerequisite 1)
+  //
+  // A failure that belongs to one conversation's event pauses that
+  // conversation, not the device: the failure is recorded durably with the
+  // event it stopped at, the global cursor moves past that conversation's
+  // later crypto events without applying them, and every other
+  // conversation keeps syncing. Nothing is dropped. A retry replays the
+  // conversation's own stream (`GET /conversations/{id}/sync-events`) in
+  // order up to the global cursor and lifts the pause. A failure that is
+  // not about one conversation (storage, no crypto, an expired cursor, a
+  // failed restore of the native handle, no way to fetch the event again)
+  // still stops the device, as before.
+  // ---------------------------------------------------------------------
+
+  /// Whether [event] belongs to a paused conversation and would change its
+  /// MLS state. Projection events (a refresh request) are not held back.
+  bool _heldBackByPause(SyncEvent event) {
+    final conversationId = event.conversationId;
+    if (conversationId == null) return false;
+    if (!conversationPauses.containsKey(conversationId)) return false;
+    return _isCryptoSyncEvent(event.type) ||
+        (!_knownProjectionEvent(event.type) && _failsClosedEvent(event.type));
+  }
+
+  /// Moves the global cursor past [event] of a paused conversation without
+  /// applying it. The store refuses unless the pause is durable in the same
+  /// step.
+  Future<void> _skipPausedEvent(SyncEvent event, WakeRunContext? wake) async {
+    await localStore.skipPausedConversationEvent(
+      conversationId: event.conversationId!,
+      eventId: event.id,
+      expectedCursor: await localStore.loadSyncCursor(),
+      checkCanCommit: wake?.checkCanCommit,
+    );
+  }
+
+  /// The server id a sync event points at (an MLS message or an envelope),
+  /// so a replay can tell that the event under an id changed. Not content.
+  String? _failedRefOf(SyncEvent event) {
+    final ref = event.type == 'mls.message.created'
+        ? _mlsMessageIdFromPayload(event.payload)
+        : _messageIdFromSyncEvent(event);
+    return ref != null && ref.length <= 128 ? ref : null;
+  }
+
+  /// Pauses the conversation [failure] names, if that is safe. Returns
+  /// false, and the caller stops the device as before, when:
+  /// - the native handle no longer answers (every group would fail next),
+  /// - the server cannot serve this event again from the conversation's own
+  ///   stream (nothing may be passed over that cannot be fetched again),
+  /// - the pause table is full.
+  /// A connection problem while checking is rethrown: the event fails the
+  /// same way on the next pass, which checks again.
+  Future<bool> _pauseConversationAt(SyncEventFailure failure, Session current,
+      ApiClient client, int ownerGeneration) async {
+    final conversationId = failure.conversationId;
+    final eventId = failure.eventId;
+    if (conversationId == null || eventId == null) return false;
+    final Object? mls = _mlsCrypto;
+    if (mls is MlsDeviceHealthCryptoService &&
+        !await mls.deviceHandleUsable()) {
+      return false;
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return false;
+    final SyncEvent? served;
+    try {
+      final page = await client.conversationSyncEvents(
+          current.token, conversationId,
+          after: eventId - 1, limit: 1);
+      served = page.firstOrNull;
+    } catch (err) {
+      if (_isTransientSyncError(err) ||
+          (err is ApiException && err.statusCode == 401)) {
+        rethrow;
+      }
+      return false;
+    }
+    if (served == null ||
+        served.id != eventId ||
+        served.conversationId != conversationId ||
+        (failure.eventType != null && served.type != failure.eventType)) {
+      return false;
+    }
+    final ConversationPause pause;
+    try {
+      pause = await localStore.pauseConversation(
+        conversationId: conversationId,
+        failedEventId: eventId,
+        kind: failure.kind,
+        failedEventType: served.type,
+        failedRef: _failedRefOf(served),
+      );
+    } on ConversationPauseLimitReached {
+      return false;
+    }
+    if (_syncOwnerActive(current, ownerGeneration)) {
+      conversationPauses = <String, ConversationPause>{
+        ...conversationPauses,
+        conversationId: pause,
+      };
+      // Body-free: no conversation id, event or server text.
+      developer.log('sync_conversation_paused ${failure.kind.name}',
+          name: 'veritra.sync');
+      notifyListeners();
+    }
+    return true;
+  }
+
+  /// Turns a global stop recorded for one conversation's event (before
+  /// pauses existed) into that conversation's pause. False when it is not
+  /// one, or when the pause is not safe (see [_pauseConversationAt]).
+  Future<bool> _pauseStoredRecovery(SyncRecovery stored, Session current,
+      ApiClient client, int ownerGeneration) async {
+    final eventId = stored.eventId;
+    if (eventId == null || stored.conversationId == null) return false;
+    // The cursor never passed a stopped event.
+    if (eventId <= await localStore.loadSyncCursor()) return false;
+    final failure = SyncEventFailure(stored.kind,
+        eventId: eventId,
+        eventType: stored.eventType,
+        conversationId: stored.conversationId);
+    if (!failurePausesConversation(failure)) return false;
+    return _pauseConversationAt(failure, current, client, ownerGeneration);
+  }
+
+  /// Loads the durable pauses into [conversationPauses].
+  Future<void> _loadConversationPauses(
+      Session current, int ownerGeneration) async {
+    final stored = await localStore.loadConversationPauses();
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    final loaded = <String, ConversationPause>{
+      for (final pause in stored) pause.conversationId: pause,
+    };
+    var changed = loaded.length != conversationPauses.length;
+    for (final entry in loaded.entries) {
+      final known = conversationPauses[entry.key];
+      if (known == null || known.generation != entry.value.generation) {
+        changed = true;
+      }
+    }
+    conversationPauses = loaded;
+    if (changed) notifyListeners();
+  }
+
+  /// Forgets the pause of a conversation the user left. The server sends
+  /// none of its events after the leave.
+  Future<void> _dropConversationPause(String conversationId) async {
+    _pauseReplayRequests.remove(conversationId);
+    try {
+      await localStore.clearConversationPause(conversationId);
+    } catch (_) {
+      // Left in place: it only holds back events the server no longer sends.
+    }
+    if (conversationPauses.containsKey(conversationId)) {
+      conversationPauses = <String, ConversationPause>{
+        for (final entry in conversationPauses.entries)
+          if (entry.key != conversationId) entry.key: entry.value,
+      };
+      notifyListeners();
+    }
+  }
+
+  /// Asks the next foreground pass to replay a paused conversation from the
+  /// event it stopped at. Applies the same events in the same order; if the
+  /// cause remains the conversation stays paused with the failure recorded
+  /// again. Nothing is skipped.
+  Future<void> retryConversationPause(String conversationId) async {
+    final pause = conversationPauses[conversationId];
+    if (pause == null || !pause.retryable) return;
+    _pauseReplayRequests.add(conversationId);
+    await _catchUpSyncEvents();
+  }
+
+  Future<void> _replayRequestedPauses(
+      Session current, ApiClient client, int ownerGeneration) async {
+    while (_pauseReplayRequests.isNotEmpty) {
+      final conversationId = _pauseReplayRequests.first;
+      _pauseReplayRequests.remove(conversationId);
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      await _replayPausedConversation(
+          conversationId, current, client, ownerGeneration);
+    }
+  }
+
+  /// Marks a conversation whose stream the server no longer keeps: it stays
+  /// paused and only leaving it is offered.
+  Future<void> _pauseExpired(String conversationId) async {
+    final latest = await localStore.loadConversationPause(conversationId);
+    if (latest == null) return;
+    final next = await localStore.pauseConversation(
+      conversationId: conversationId,
+      failedEventId: max(latest.failedEventId, latest.resumeAfter + 1),
+      kind: SyncFailureKind.cursorExpired,
+      failedEventType: latest.failedEventType,
+      failedRef: latest.failedRef,
+    );
+    conversationPauses = <String, ConversationPause>{
+      ...conversationPauses,
+      conversationId: next,
+    };
+    notifyListeners();
+  }
+
+  /// Applies a paused conversation's events in order, from the one above
+  /// what was already replayed up to the global cursor, then lifts the
+  /// pause. Events above the global cursor are left to the global stream,
+  /// which reaches them next. Runs inside the sync owner's pass, before it
+  /// reads the global stream, under the same lease and crypto queue. Only
+  /// an explicit retry runs it: a failing event is never retried on every
+  /// pass.
+  Future<void> _replayPausedConversation(String conversationId, Session current,
+      ApiClient client, int ownerGeneration) async {
+    final pause = await localStore.loadConversationPause(conversationId);
+    if (pause == null || !pause.retryable) return;
+    final generation = pause.generation;
+    final through = await localStore.loadSyncCursor();
+    var after = pause.resumeAfter;
+    final received = <ReceivedMessageEnvelope>[];
+    const pageSize = 200;
+    try {
+      while (true) {
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        final List<SyncEvent> events;
+        try {
+          events = await client.conversationSyncEvents(
+              current.token, conversationId,
+              after: after, limit: pageSize);
+        } on ApiException catch (err) {
+          if (err.statusCode == 403) {
+            // No longer a member: the leave or removal settles the rest, and
+            // the pause stays until the group is dropped.
+            return;
+          }
+          if (err.statusCode == 409 &&
+              err.serverCode == 'conversation_recovery_required') {
+            await _pauseExpired(conversationId);
+            return;
+          }
+          rethrow;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        var last = after;
+        for (final event in events) {
+          if (event.id <= last || event.conversationId != conversationId) {
+            throw StateError('conversation sync events are not in order');
+          }
+          last = event.id;
+        }
+        final due = events.where((event) => event.id <= through).toList();
+        final repair = _SyncPageRepair(
+          client: client,
+          token: current.token,
+          events: due,
+          processed: localStore.hasProcessedMlsMessage,
+        );
+        for (final event in due) {
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          if (event.id == pause.failedEventId &&
+              _replayEventChanged(pause, event)) {
+            // The server now serves another event under the id that
+            // failed. The original failure stays recorded; replacing it
+            // needs a reviewed repair path, not a silent retry.
+            developer.log('sync_conversation_replay_event_changed',
+                name: 'veritra.sync');
+            return;
+          }
+          final isCrypto = _isCryptoSyncEvent(event.type);
+          final unknownCrypto = !isCrypto &&
+              !_knownProjectionEvent(event.type) &&
+              _failsClosedEvent(event.type);
+          if (!isCrypto && !unknownCrypto) {
+            // A projection event: the global stream already handled it.
+            after = event.id;
+            continue;
+          }
+          try {
+            if (unknownCrypto) {
+              throw SyncEventFailure(SyncFailureKind.unsupportedEvent,
+                  eventId: event.id,
+                  eventType: event.type,
+                  conversationId: conversationId);
+            }
+            final envelope = await _processCryptoSyncEvent(event, repair,
+                wake: null, client: client);
+            if (envelope != null) {
+              received.add(envelope);
+              if (received.length >= _receivedBatchLimit) {
+                await _publishReceived(received, current, ownerGeneration);
+              }
+            }
+          } catch (err) {
+            if (err is! SyncEventFailure ||
+                !failurePausesConversation(err) ||
+                !await _pauseConversationAt(
+                    err, current, client, ownerGeneration)) {
+              rethrow;
+            }
+            // Paused again, at this event. Whatever applied before it
+            // stays applied and moved the resume point with it.
+            return;
+          }
+          after = event.id;
+        }
+        if (due.length < events.length || events.length < pageSize) break;
+      }
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      final cleared = await localStore.clearConversationPause(conversationId,
+          generation: generation);
+      if (cleared && _syncOwnerActive(current, ownerGeneration)) {
+        conversationPauses = <String, ConversationPause>{
+          for (final entry in conversationPauses.entries)
+            if (entry.key != conversationId) entry.key: entry.value,
+        };
+        // Membership may have moved on while the conversation was paused.
+        _mlsReconcileRequested = true;
+        notifyListeners();
+      }
+    } finally {
+      try {
+        await _publishReceived(received, current, ownerGeneration);
+      } catch (_) {
+        // Shown by the next pass, like any committed envelope.
+      }
+    }
+  }
+
+  /// Whether the server's event at the id that failed is not the one that
+  /// failed (another type, or another message it points at).
+  bool _replayEventChanged(ConversationPause pause, SyncEvent event) {
+    final type = pause.failedEventType;
+    if (type != null && event.type != type) return true;
+    final ref = _failedRefOf(event);
+    return pause.failedRef != null && ref != null && ref != pause.failedRef;
   }
 
   /// Clears the recovery record and applies the stopped event once more. If
@@ -5934,7 +6352,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           }
           resolved = fetched;
         }
-        if (resolved.id != id) {
+        if (resolved.id != id ||
+            (event.conversationId != null &&
+                resolved.conversationId != event.conversationId)) {
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         await _ensureConversationAuthority(resolved.conversationId,
@@ -5973,6 +6393,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         try {
           call = CallSession.fromJson(Map<String, Object?>.from(payload));
         } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        if (event.conversationId != null &&
+            call.conversationId != event.conversationId) {
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         final Map<String, Object?>? signal;
@@ -6319,6 +6743,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _pendingWakeGeneration = 0;
     deviceRecoveryRequired = false;
     syncRecovery = null;
+    conversationPauses = const <String, ConversationPause>{};
+    _pauseReplayRequests.clear();
   }
 
   Future<void> _persistSnapshot() async {
@@ -6756,6 +7182,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final failed = <String>{};
     final now = DateTime.now().toUtc();
     for (final entry in byConversation.entries) {
+      // A conversation paused by its own sync failure keeps its queued
+      // commits and Welcomes untouched, unsent and unfinished (C1 P1): its
+      // group must not move until a replay has applied the missed events.
+      if (conversationSyncPaused(entry.key)) continue;
       for (final message in entry.value) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (message.terminal) {
@@ -7925,7 +8355,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return blocksLoaded && peer != null && !isBlocked(peer);
   }
 
+  /// Whether MLS work for [conversationId] must wait: control messages
+  /// queued ahead of it, or a pause of the conversation itself (C1 P1),
+  /// which keeps reconcile, revocation commits and self-updates away from
+  /// its group.
   Future<bool> _hasPendingMlsWork(String conversationId) async =>
+      conversationSyncPaused(conversationId) ||
       (await localStore.pendingMlsMessages())
           .any((message) => message.conversationId == conversationId);
 

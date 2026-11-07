@@ -13,11 +13,14 @@ import 'notice_outbox.dart';
 import '../core/models.dart' show Conversation, Session;
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
+import '../sync/conversation_pause.dart';
+import '../sync/sync_recovery.dart' show SyncFailureKind;
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
 part 'pending_enrollment_sql.dart';
 part 'k2_transfer_sql.dart';
+part 'conversation_pause_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -555,7 +558,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 18;
+  static const currentSchemaVersion = 20;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -767,6 +770,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createNoticeOutbox();
             await _createPendingEnrollment();
             await _createK2Transfer();
+            await _createConversationPauses();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -896,6 +900,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               await _createK2Transfer();
               await _ledgerActivatedPendingEnrollment();
             }
+            // C1 prerequisite 1 (schema 20; 19 belongs to C6): the
+            // per-conversation pause table. New table only, so code for
+            // schema 18 never names it.
+            if (from < 20) await _createConversationPauses();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -958,6 +966,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         .go();
     await delete(localCryptoStates).go();
     await delete(localCryptoRecords).go();
+    await _clearConversationPauses();
     // Their native half went with the MLS state; the promotion ledger
     // stays (finding 4).
     await _clearHistoryTransfers();
@@ -1002,6 +1011,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localOutboxEntries).go();
         await delete(localCryptoStates).go();
         await delete(localCryptoRecords).go();
+        await _clearConversationPauses();
         await _clearHistoryTransfers();
         await delete(localAccounts).go();
         if (sessionJson != null) {
@@ -1157,6 +1167,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localConversations).go();
         await delete(localCryptoStates).go();
         await delete(localCryptoRecords).go();
+        await _clearConversationPauses();
         // Transfers go with the MLS state that holds their native half. The
         // promotion ledger and a pending enrollment stay: a restored device
         // must still never reactivate an identity it already promoted.
@@ -1501,6 +1512,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           throw StateError('crypto state counter must increase');
         }
         await delete(localCryptoRecords).go();
+        await _clearConversationPauses();
         await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
@@ -1559,9 +1571,19 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             .getSingleOrNull();
         if ((previousState?.counter ?? 0) != expectedCounter ||
             (previousCursor?.cursor ?? 0) != expectedCursor ||
-            counter != expectedCounter + 1 ||
-            cursor <= expectedCursor) {
+            counter != expectedCounter + 1) {
           throw StateError('stale or incomplete MLS state transition');
+        }
+        // An event behind the global cursor is a replay of a paused
+        // conversation's event (C1 P1). It leaves the global cursor alone
+        // and moves that conversation's resume point instead.
+        final replay = cursor <= expectedCursor;
+        if (replay) {
+          await _assertReplayInTransaction(
+              conversationId, cursor, expectedCursor);
+        } else {
+          // Never apply a cursor-advancing transition to a paused group.
+          await _assertConversationNotPausedInTransaction(conversationId);
         }
         await failureInjector?.call(MlsCommitStage.afterValidation);
         checkCanCommit?.call();
@@ -1639,10 +1661,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await failureInjector?.call(MlsCommitStage.afterMarker);
         await failureInjector?.call(MlsCommitStage.beforeCursor);
         checkCanCommit?.call();
-        await into(localSyncStates).insertOnConflictUpdate(
-          LocalSyncStatesCompanion.insert(
-              singleton: const Value(1), cursor: Value(cursor)),
-        );
+        if (replay) {
+          await _advancePauseResumeInTransaction(conversationId, cursor);
+        } else {
+          await into(localSyncStates).insertOnConflictUpdate(
+            LocalSyncStatesCompanion.insert(
+                singleton: const Value(1), cursor: Value(cursor)),
+          );
+        }
         checkCanCommit?.call();
       });
 
@@ -1724,9 +1750,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         final previousCursor = await (select(localSyncStates)
               ..where((table) => table.singleton.equals(1)))
             .getSingleOrNull();
-        if ((previousCursor?.cursor ?? 0) != expectedCursor ||
-            cursor <= expectedCursor) {
+        if ((previousCursor?.cursor ?? 0) != expectedCursor) {
           throw StateError('stale sync event commit');
+        }
+        // Behind the global cursor only as a replay of a paused
+        // conversation's event (C1 P1); see [commitMlsTransition].
+        final replay = cursor <= expectedCursor;
+        if (replay) {
+          await _assertReplayInTransaction(
+              conversationId, cursor, expectedCursor);
         }
         checkCanCommit?.call();
         final envelopeExpiry = envelope == null
@@ -1773,10 +1805,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter: state?.counter ?? 0,
           ),
         );
-        await into(localSyncStates).insertOnConflictUpdate(
-          LocalSyncStatesCompanion.insert(
-              singleton: const Value(1), cursor: Value(cursor)),
-        );
+        if (replay) {
+          await _advancePauseResumeInTransaction(conversationId, cursor);
+        } else {
+          await into(localSyncStates).insertOnConflictUpdate(
+            LocalSyncStatesCompanion.insert(
+                singleton: const Value(1), cursor: Value(cursor)),
+          );
+        }
         checkCanCommit?.call();
       });
 
@@ -1835,6 +1871,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             messages.isEmpty) {
           throw StateError('stale or incomplete outgoing MLS transition');
         }
+        // No commit or Welcome is staged for a paused conversation (C1 P1).
+        for (final message in messages) {
+          await _assertConversationNotPausedInTransaction(
+              message.conversationId);
+        }
         await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
@@ -1891,6 +1932,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter != expectedCounter + 1) {
           throw StateError('stale outgoing application MLS transition');
         }
+        // Nothing is encrypted for a paused conversation (C1 P1).
+        await _assertConversationNotPausedInTransaction(conversationId);
         if (await (select(localOutboxEntries)
                   ..where(
                       (table) => table.idempotencyKey.equals(idempotencyKey)))
@@ -2215,6 +2258,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localOutboxEntries).go();
         await delete(localCryptoStates).go();
         await delete(localCryptoRecords).go();
+        await _clearConversationPauses();
         await delete(localAccounts).go();
         await delete(localMetadata).go();
         await _clearPendingEnrollment();
