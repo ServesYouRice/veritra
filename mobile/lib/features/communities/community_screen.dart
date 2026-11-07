@@ -12,6 +12,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
+import 'membership_screens.dart';
 import '../../ui/widgets/refresh_action.dart';
 
 /// Communities: create a community, add channels, and open channel
@@ -42,7 +43,16 @@ class CommunityScreen extends StatelessWidget {
     return Scaffold(
       appBar: LargeTitleBar(
         title: context.l10n.navCommunities,
-        actions: <Widget>[RefreshAction(onRefresh: state.refreshCommunities)],
+        actions: <Widget>[
+          IconButton(
+            tooltip: context.l10n.joinTitle,
+            icon: const Icon(Icons.link),
+            onPressed: () => Navigator.of(context).push(
+              sharedAxisRoute<void>((_) => JoinByLinkScreen(state: state)),
+            ),
+          ),
+          RefreshAction(onRefresh: state.refreshCommunities),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: state.busy ? null : () => _createCommunity(context),
@@ -83,6 +93,14 @@ class CommunityScreen extends StatelessWidget {
                       state: state,
                       community: community,
                       onCreateChannel: () => _createChannel(context, community),
+                      onOpenDetails: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => CommunityDetailsScreen(
+                            state: state,
+                            community: community,
+                          ),
+                        ),
+                      ),
                       onOpenChannel: (conversationId) =>
                           _openChannel(context, conversationId),
                     ),
@@ -245,12 +263,14 @@ class _CommunityCard extends StatelessWidget {
     required this.state,
     required this.community,
     required this.onCreateChannel,
+    required this.onOpenDetails,
     required this.onOpenChannel,
   });
 
   final AppState state;
   final Community community;
   final VoidCallback onCreateChannel;
+  final VoidCallback onOpenDetails;
   final void Function(String conversationId) onOpenChannel;
 
   @override
@@ -287,6 +307,7 @@ class _CommunityCard extends StatelessWidget {
                   ? context.l10n.communityNoChannels
                   : context.l10n.communityChannelCount(channels.length),
             ),
+            onTap: onOpenDetails,
             trailing: IconButton(
               tooltip: context.l10n.communityNewChannel,
               onPressed: state.busy ? null : onCreateChannel,

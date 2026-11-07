@@ -9,6 +9,7 @@ import 'account_recovery.dart';
 import 'admin_models.dart';
 import 'api_errors.dart';
 import 'device_link_v3_models.dart';
+import 'membership_models.dart';
 import 'models.dart';
 import 'server_origin.dart';
 import 'transport_policy.dart';
@@ -875,6 +876,161 @@ class ApiClient {
       '/api/v1/conversations/$conversationId/members',
       token: token,
       body: <String, Object?>{'account_id': accountId, 'role': role},
+    );
+  }
+
+  // C1: membership invitations, join requests and community membership.
+  // An invitation's secret never reaches these calls: they carry only the
+  // locator derived from it (`MembershipInviteLink.locator`), in a body.
+
+  static String _targetPath(InviteTargetKind kind, String id) {
+    final segment = Uri.encodeComponent(id);
+    return kind == InviteTargetKind.community
+        ? '/api/v1/communities/$segment'
+        : '/api/v1/conversations/$segment';
+  }
+
+  /// The roster of a community, with usernames, for its members.
+  Future<List<ConversationMember>> communityMembers(
+    String token,
+    String communityId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      '${_targetPath(InviteTargetKind.community, communityId)}/members',
+      token: token,
+    );
+    return _rows(json, 'members', ConversationMember.fromJson);
+  }
+
+  /// Leaves a community when [accountId] is `me`, or removes a member. The
+  /// server drops access to every channel at once; MLS removal follows
+  /// through each channel's reconcile and is not implied by the response.
+  Future<CommunityRemoval> removeCommunityMember(
+    String token,
+    String communityId,
+    String accountId,
+  ) async {
+    final json = await _jsonRequest(
+      'DELETE',
+      '${_targetPath(InviteTargetKind.community, communityId)}'
+          '/members/${Uri.encodeComponent(accountId)}',
+      token: token,
+    );
+    return _decode(() => CommunityRemoval.fromJson(json));
+  }
+
+  Future<MembershipInvite> createMembershipInvite(
+    String token,
+    InviteTargetKind kind,
+    String targetId, {
+    required String locator,
+    int maxUses = 10,
+    Duration lifetime = const Duration(days: 7),
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '${_targetPath(kind, targetId)}/invites',
+      token: token,
+      body: <String, Object?>{
+        'locator': locator,
+        'max_uses': maxUses,
+        'expires_in_seconds': lifetime.inSeconds,
+      },
+    );
+    return _decode(() => MembershipInvite.fromJson(json));
+  }
+
+  Future<List<MembershipInvite>> listMembershipInvites(
+    String token,
+    InviteTargetKind kind,
+    String targetId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      '${_targetPath(kind, targetId)}/invites',
+      token: token,
+    );
+    return _rows(json, 'invites', MembershipInvite.fromJson);
+  }
+
+  Future<void> revokeMembershipInvite(String token, String inviteId) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/membership-invites/${Uri.encodeComponent(inviteId)}',
+      token: token,
+    );
+  }
+
+  /// What a link leads to. A link that is unknown, revoked, expired or used
+  /// up is a 404, whichever it is.
+  Future<InvitePreview> previewMembershipInvite(
+    String token,
+    String locator,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/membership-invites/preview',
+      token: token,
+      body: <String, Object?>{'locator': locator},
+    );
+    return _decode(() => InvitePreview.fromJson(json));
+  }
+
+  /// Asks to join. Nothing is granted until an admin approves.
+  Future<JoinRequest> requestToJoin(String token, String locator) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/membership-invites/requests',
+      token: token,
+      body: <String, Object?>{'locator': locator},
+    );
+    return _decode(() => JoinRequest.fromJson(json));
+  }
+
+  /// Pending requests for a group or community, for its owners and admins.
+  Future<List<JoinRequest>> listJoinRequests(
+    String token,
+    InviteTargetKind kind,
+    String targetId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      '${_targetPath(kind, targetId)}/join-requests',
+      token: token,
+    );
+    return _rows(json, 'requests', JoinRequest.fromJson);
+  }
+
+  /// The signed-in account's own recent requests.
+  Future<List<JoinRequest>> listOwnJoinRequests(String token) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/join-requests',
+      token: token,
+    );
+    return _rows(json, 'requests', JoinRequest.fromJson);
+  }
+
+  Future<JoinRequest> decideJoinRequest(
+    String token,
+    String requestId, {
+    required bool approve,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/join-requests/${Uri.encodeComponent(requestId)}'
+          '/${approve ? 'approve' : 'reject'}',
+      token: token,
+    );
+    return _decode(() => JoinRequest.fromJson(_object(json, 'request')));
+  }
+
+  Future<void> cancelJoinRequest(String token, String requestId) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/join-requests/${Uri.encodeComponent(requestId)}',
+      token: token,
     );
   }
 

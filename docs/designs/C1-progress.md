@@ -60,3 +60,22 @@ silent gap. Splitting account marks by conversation would need a migration.
    accept the conservative pause?
 3. Which agent owns `app_state.dart`, `models.dart`, `api_client.dart` and
    the local schema number for the client slice, once W8/K2 release them?
+
+## 2026-11-07 round 2: invites, requests, leave and remove
+
+Owner approved the invite format (secret after `#`, requests an admin
+approves). Built, server and app: migration 0048, link with fragment secret,
+join requests and approval, community leave and remove, community member
+list with usernames, and the Flutter screens. Format, rules and limits are in
+[C1-invite-format](C1-invite-format.md). C1 is still **not** done:
+
+- Rename is not built. Group and community names must be encrypted metadata
+  (W11, C3), and neither exists; no plaintext rename route was added.
+- Approval records membership; encrypted access still follows the existing
+  staged MLS commits. C0 shared groups are not built, so a community join is
+  still one commit per channel.
+- Approval-gated invites are not the "open invites" that C0 blocks on the I33
+  halt, but per-conversation halting is still outstanding.
+- The server does not notify admins of a new request; they see it when they
+  open the list.
+- Not tested on a device. Dart changes were checked by CI only.

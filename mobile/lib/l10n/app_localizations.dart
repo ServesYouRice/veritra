@@ -4598,6 +4598,264 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device uses {current}, but the server\'s recovery address is {origin}. Recovery works only from {origin}.'**
   String recoveryKeyOriginMismatch(String current, String origin);
+
+  /// No description provided for @joinTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Join with a link'**
+  String get joinTitle;
+
+  /// No description provided for @joinLinkLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitation link'**
+  String get joinLinkLabel;
+
+  /// No description provided for @joinLinkHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste the link you were sent'**
+  String get joinLinkHint;
+
+  /// No description provided for @joinCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Check link'**
+  String get joinCheck;
+
+  /// No description provided for @joinLinkInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'This is not an invitation link for this server.'**
+  String get joinLinkInvalid;
+
+  /// No description provided for @joinLinkUnusable.
+  ///
+  /// In en, this message translates to:
+  /// **'This link no longer works. Ask for a new one.'**
+  String get joinLinkUnusable;
+
+  /// No description provided for @joinKindGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Group'**
+  String get joinKindGroup;
+
+  /// No description provided for @joinKindCommunity.
+  ///
+  /// In en, this message translates to:
+  /// **'Community'**
+  String get joinKindCommunity;
+
+  /// No description provided for @joinInvitedBy.
+  ///
+  /// In en, this message translates to:
+  /// **'Invited by {username}'**
+  String joinInvitedBy(String username);
+
+  /// No description provided for @joinRequestButton.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask to join'**
+  String get joinRequestButton;
+
+  /// No description provided for @joinRequestNote.
+  ///
+  /// In en, this message translates to:
+  /// **'An owner or admin has to approve your request. You get no access until then.'**
+  String get joinRequestNote;
+
+  /// No description provided for @joinAlreadyMember.
+  ///
+  /// In en, this message translates to:
+  /// **'You are already a member.'**
+  String get joinAlreadyMember;
+
+  /// No description provided for @joinRequestSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Request sent. It stays under Your requests until someone decides.'**
+  String get joinRequestSent;
+
+  /// No description provided for @joinYourRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'Your requests'**
+  String get joinYourRequests;
+
+  /// No description provided for @joinNoRequests.
+  ///
+  /// In en, this message translates to:
+  /// **'No requests yet.'**
+  String get joinNoRequests;
+
+  /// No description provided for @joinStatusPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for approval'**
+  String get joinStatusPending;
+
+  /// No description provided for @joinStatusApproved.
+  ///
+  /// In en, this message translates to:
+  /// **'Approved. Encrypted access follows once a member\'s device updates the group.'**
+  String get joinStatusApproved;
+
+  /// No description provided for @joinStatusRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'Declined'**
+  String get joinStatusRejected;
+
+  /// No description provided for @joinStatusCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancelled'**
+  String get joinStatusCancelled;
+
+  /// No description provided for @joinCancelRequest.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel request'**
+  String get joinCancelRequest;
+
+  /// No description provided for @membInviteSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitation links'**
+  String get membInviteSection;
+
+  /// No description provided for @membInviteManage.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitations and join requests'**
+  String get membInviteManage;
+
+  /// No description provided for @membInviteCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create invitation link'**
+  String get membInviteCreate;
+
+  /// No description provided for @membInviteCreateDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Works for 7 days and for up to 10 people, and each one still needs your approval.'**
+  String get membInviteCreateDetail;
+
+  /// No description provided for @membInviteCreatedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy this link now. It is not stored on the server and cannot be shown again.'**
+  String get membInviteCreatedNote;
+
+  /// No description provided for @membInviteCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy link'**
+  String get membInviteCopy;
+
+  /// No description provided for @membInviteCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Link copied.'**
+  String get membInviteCopied;
+
+  /// No description provided for @membInviteNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No active links.'**
+  String get membInviteNone;
+
+  /// No description provided for @membInviteUses.
+  ///
+  /// In en, this message translates to:
+  /// **'{used} of {max} used · expires {date}'**
+  String membInviteUses(int used, int max, String date);
+
+  /// No description provided for @membInviteRevoke.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke link'**
+  String get membInviteRevoke;
+
+  /// No description provided for @joinReqSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Join requests'**
+  String get joinReqSection;
+
+  /// No description provided for @joinReqNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No one is waiting.'**
+  String get joinReqNone;
+
+  /// No description provided for @joinReqAskedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Asked {date}'**
+  String joinReqAskedAt(String date);
+
+  /// No description provided for @joinReqApprove.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve {username}'**
+  String joinReqApprove(String username);
+
+  /// No description provided for @joinReqReject.
+  ///
+  /// In en, this message translates to:
+  /// **'Decline {username}'**
+  String joinReqReject(String username);
+
+  /// No description provided for @joinReqRejectedSnack.
+  ///
+  /// In en, this message translates to:
+  /// **'Request declined.'**
+  String get joinReqRejectedSnack;
+
+  /// No description provided for @communityRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {username} from the community?'**
+  String communityRemoveTitle(String username);
+
+  /// No description provided for @communityRemoveMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'They lose access to every channel at once. Messages already on their devices are not deleted.'**
+  String get communityRemoveMessage;
+
+  /// No description provided for @communityRemoveConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get communityRemoveConfirm;
+
+  /// No description provided for @communityLeaveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave this community?'**
+  String get communityLeaveTitle;
+
+  /// No description provided for @communityLeave.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave community'**
+  String get communityLeave;
+
+  /// No description provided for @communityLeaveDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'You leave every channel at once. You can join again with a new link.'**
+  String get communityLeaveDetail;
+
+  /// No description provided for @communityLeaveConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get communityLeaveConfirm;
 }
 
 class _AppLocalizationsDelegate

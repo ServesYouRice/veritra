@@ -2805,4 +2805,154 @@ class AppLocalizationsEn extends AppLocalizations {
   String recoveryKeyOriginMismatch(String current, String origin) {
     return 'This device uses $current, but the server\'s recovery address is $origin. Recovery works only from $origin.';
   }
+
+  @override
+  String get joinTitle => 'Join with a link';
+
+  @override
+  String get joinLinkLabel => 'Invitation link';
+
+  @override
+  String get joinLinkHint => 'Paste the link you were sent';
+
+  @override
+  String get joinCheck => 'Check link';
+
+  @override
+  String get joinLinkInvalid =>
+      'This is not an invitation link for this server.';
+
+  @override
+  String get joinLinkUnusable =>
+      'This link no longer works. Ask for a new one.';
+
+  @override
+  String get joinKindGroup => 'Group';
+
+  @override
+  String get joinKindCommunity => 'Community';
+
+  @override
+  String joinInvitedBy(String username) {
+    return 'Invited by $username';
+  }
+
+  @override
+  String get joinRequestButton => 'Ask to join';
+
+  @override
+  String get joinRequestNote =>
+      'An owner or admin has to approve your request. You get no access until then.';
+
+  @override
+  String get joinAlreadyMember => 'You are already a member.';
+
+  @override
+  String get joinRequestSent =>
+      'Request sent. It stays under Your requests until someone decides.';
+
+  @override
+  String get joinYourRequests => 'Your requests';
+
+  @override
+  String get joinNoRequests => 'No requests yet.';
+
+  @override
+  String get joinStatusPending => 'Waiting for approval';
+
+  @override
+  String get joinStatusApproved =>
+      'Approved. Encrypted access follows once a member\'s device updates the group.';
+
+  @override
+  String get joinStatusRejected => 'Declined';
+
+  @override
+  String get joinStatusCancelled => 'Cancelled';
+
+  @override
+  String get joinCancelRequest => 'Cancel request';
+
+  @override
+  String get membInviteSection => 'Invitation links';
+
+  @override
+  String get membInviteManage => 'Invitations and join requests';
+
+  @override
+  String get membInviteCreate => 'Create invitation link';
+
+  @override
+  String get membInviteCreateDetail =>
+      'Works for 7 days and for up to 10 people, and each one still needs your approval.';
+
+  @override
+  String get membInviteCreatedNote =>
+      'Copy this link now. It is not stored on the server and cannot be shown again.';
+
+  @override
+  String get membInviteCopy => 'Copy link';
+
+  @override
+  String get membInviteCopied => 'Link copied.';
+
+  @override
+  String get membInviteNone => 'No active links.';
+
+  @override
+  String membInviteUses(int used, int max, String date) {
+    return '$used of $max used · expires $date';
+  }
+
+  @override
+  String get membInviteRevoke => 'Revoke link';
+
+  @override
+  String get joinReqSection => 'Join requests';
+
+  @override
+  String get joinReqNone => 'No one is waiting.';
+
+  @override
+  String joinReqAskedAt(String date) {
+    return 'Asked $date';
+  }
+
+  @override
+  String joinReqApprove(String username) {
+    return 'Approve $username';
+  }
+
+  @override
+  String joinReqReject(String username) {
+    return 'Decline $username';
+  }
+
+  @override
+  String get joinReqRejectedSnack => 'Request declined.';
+
+  @override
+  String communityRemoveTitle(String username) {
+    return 'Remove $username from the community?';
+  }
+
+  @override
+  String get communityRemoveMessage =>
+      'They lose access to every channel at once. Messages already on their devices are not deleted.';
+
+  @override
+  String get communityRemoveConfirm => 'Remove';
+
+  @override
+  String get communityLeaveTitle => 'Leave this community?';
+
+  @override
+  String get communityLeave => 'Leave community';
+
+  @override
+  String get communityLeaveDetail =>
+      'You leave every channel at once. You can join again with a new link.';
+
+  @override
+  String get communityLeaveConfirm => 'Leave';
 }
