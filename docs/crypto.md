@@ -1953,8 +1953,10 @@ only if `validateCommit` accepts:
   must have `joined` at or before it, so admins promoted, or members added,
   after the owner went quiet never vote or claim. Residuals: an owner
   commit made after a rogue admin's promotions (an automatic cancel, an
-  Update) makes them old enough; and an admin who was already admin by then
-  and is the whole snapshot wins at once. Both are listed in the C4 doc.
+  Update) makes them old enough, so the stand-in path is closed only while
+  the owner's device makes no commit; and an admin who was already admin by
+  then and is the whole snapshot wins at once. Both are listed in the C4
+  doc.
 - Any other difference is a change by the committer, checked by
   `validateTransition` against the pruned record: `rev` + 1; everything
   named is in the roster after the commit; role changes as on the server

@@ -296,7 +296,8 @@ deterministic (no clock, no server timestamp), so every app enforces it.
   after the owner went quiet cannot claim.
 
 Paths this closes: stand-ins promoted after the owner's last commit (the
-one-account stuffed snapshot); and a claim by someone who joined after it.
+stuffed D82 snapshot); and a claim by someone who joined after it. The first
+holds only while the owner makes no commit (see the residuals).
 Pinned as refused in the engine's tests, each with a mutation check.
 
 Cost: an admin promoted by another admin while the owner chats but does not
@@ -326,8 +327,16 @@ commit never votes under D82 (the owner can confirm by any commit).
 - `owner_rev` cannot tell an owner's automatic commit from a manual one: an
   owner commit made after a rogue admin's promotions (the auto-cancel of an
   election the rogue opened, an Update, a reconcile) makes those stand-ins
-  old enough (pinned in a test). The owner's app should show admin
-  promotions it did not make. Confirming even one admin as an elector
+  old enough (pinned in a test). In effect: a rogue admin promotes
+  stand-ins, opens a throwaway election, the owner's app cancels it, and the
+  rogue then runs the whole takeover within minutes, before the next
+  cancel. So the stand-in path is closed only while the owner's device makes
+  no commit; an online owner is exposed, with one extra step. Narrowings
+  for the owner to choose (not built): the owner's app holds automatic
+  commits and asks whenever non-owner promotions exist since `owner_rev`
+  (no receiver change); or only an owner commit that changes something
+  besides the forced cancel moves `owner_rev` (a receiver rule, and a
+  narrower reading of "any commit"). Confirming even one admin as an elector
   closes the D82 path altogether.
 - An admin who was admin by `owner_rev` and is the only one (or most of the
   snapshot) wins at once under D82, as an elector does: the owner left it
