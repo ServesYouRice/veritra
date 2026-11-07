@@ -874,5 +874,15 @@
   "pollChooseOne": "Изаберите једну опцију",
   "pollChooseSeveral": "Изаберите једну или више опција",
   "pollClose": "Затвори анкету",
-  "pollClosedNotice": "Ова анкета је затворена."
+  "pollClosedNotice": "Ова анкета је затворена.",
+  "voiceNoteRecord": "Снимите гласовну поруку",
+  "voiceNoteStop": "Заустави и приложи",
+  "voiceNoteDiscard": "Одбаци снимак",
+  "voiceNoteRecording": "Снимање {time}",
+  "voiceNotePermissionDenied": "Приступ микрофону је искључен. Дозволите га у подешавањима система да бисте снимали.",
+  "voiceNoteRecordFailed": "Снимање није могло да почне.",
+  "voiceNotePlay": "Пусти",
+  "voiceNotePause": "Паузирај",
+  "voiceNoteSemantics": "Гласовна порука, {size}",
+  "voiceNotePlayFailed": "Гласовна порука није могла да се пусти."
 }

@@ -3066,4 +3066,39 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pollClosedNotice => 'This poll is closed.';
+
+  @override
+  String get voiceNoteRecord => 'Record a voice note';
+
+  @override
+  String get voiceNoteStop => 'Stop and attach';
+
+  @override
+  String get voiceNoteDiscard => 'Discard recording';
+
+  @override
+  String voiceNoteRecording(String time) {
+    return 'Recording $time';
+  }
+
+  @override
+  String get voiceNotePermissionDenied =>
+      'Microphone access is off. Allow it in the system settings to record.';
+
+  @override
+  String get voiceNoteRecordFailed => 'The recording could not be started.';
+
+  @override
+  String get voiceNotePlay => 'Play';
+
+  @override
+  String get voiceNotePause => 'Pause';
+
+  @override
+  String voiceNoteSemantics(String size) {
+    return 'Voice note, $size';
+  }
+
+  @override
+  String get voiceNotePlayFailed => 'The voice note could not be played.';
 }

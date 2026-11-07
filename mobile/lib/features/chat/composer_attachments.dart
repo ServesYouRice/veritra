@@ -13,6 +13,7 @@ import '../../core/owner_only.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
+import 'voice_recorder.dart' show VoiceFormat;
 
 /// Most files that can wait in the composer at once.
 const int maxPendingAttachments = 10;
@@ -264,6 +265,20 @@ Future<XFile> writePastedImage(Uint8List bytes) async {
   return XFile(file.path, name: name, mimeType: 'image/png');
 }
 
+/// A new, empty path for a voice recording in this profile's folder under
+/// the per-user application cache, the folder [purgePastedImages] clears at
+/// startup. Owner-only on Linux and macOS, like pasted images; the recording
+/// is not encrypted at rest and lives there only until it is sent or removed.
+Future<String> newVoiceNotePath(VoiceFormat format) async {
+  final folder = await _pastedImagesDirectory();
+  await folder.create(recursive: true);
+  restrictDirectoryToOwner(folder.parent);
+  restrictDirectoryToOwner(folder);
+  final random = Random.secure().nextInt(1 << 32).toRadixString(16);
+  final name = '$random-voice.${format.extension}';
+  return '${folder.path}${Platform.pathSeparator}$name';
+}
+
 /// Deletes this profile's pasted images left behind by an earlier run, and
 /// the shared temporary folder older versions wrote to. Another profile's
 /// folder is never touched. Call at startup.
@@ -367,7 +382,11 @@ class AttachmentTray extends StatelessWidget {
               children: <Widget>[
                 for (final item in tray.items)
                   InputChip(
-                    avatar: const Icon(Icons.insert_drive_file_outlined),
+                    avatar: Icon(
+                      (item.mediaType ?? '').startsWith('audio/')
+                          ? Icons.mic_none
+                          : Icons.insert_drive_file_outlined,
+                    ),
                     label: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 220),
                       child: Text(

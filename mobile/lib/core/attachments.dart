@@ -13,6 +13,17 @@ const Set<String> previewableImageTypes = <String>{
   'image/webp',
 };
 
+/// Audio types a voice note plays inline. Everything else audio-like is
+/// offered as a file only; the type comes from the sender and is not trusted.
+const Set<String> playableAudioTypes = <String>{
+  'audio/mp4',
+  'audio/aac',
+  'audio/mpeg',
+  'audio/ogg',
+  'audio/wav',
+  'audio/x-wav',
+};
+
 /// Metadata the server accepts with an uploaded attachment blob. It names
 /// the scheme only; keys, names and sizes travel inside the MLS message.
 const Map<String, Object?> attachmentUploadMetadata = <String, Object?>{
@@ -46,6 +57,9 @@ class AttachmentEntry {
   final Map<String, Object?> manifest;
 
   bool get isImage => previewableImageTypes.contains(mediaType);
+
+  /// A voice note, or other audio, that plays inline in the chat.
+  bool get isVoiceNote => playableAudioTypes.contains(mediaType);
 
   /// Parses one manifest entry, or returns null if it is malformed.
   static AttachmentEntry? tryParse(Object? raw, {String? conversationId}) {
@@ -153,6 +167,11 @@ String attachmentMediaType(String fileName, String? pickerType) {
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
   if (lower.endsWith('.gif')) return 'image/gif';
   if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.ogg') || lower.endsWith('.opus')) return 'audio/ogg';
+  if (lower.endsWith('.wav')) return 'audio/wav';
   return 'application/octet-stream';
 }
 

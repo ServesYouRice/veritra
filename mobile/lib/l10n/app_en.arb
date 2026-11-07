@@ -1044,5 +1044,17 @@
   "pollChooseOne": "Choose one",
   "pollChooseSeveral": "Choose one or more",
   "pollClose": "Close poll",
-  "pollClosedNotice": "This poll is closed."
+  "pollClosedNotice": "This poll is closed.",
+  "voiceNoteRecord": "Record a voice note",
+  "voiceNoteStop": "Stop and attach",
+  "voiceNoteDiscard": "Discard recording",
+  "voiceNoteRecording": "Recording {time}",
+  "@voiceNoteRecording": {"placeholders": {"time": {"type": "String"}}},
+  "voiceNotePermissionDenied": "Microphone access is off. Allow it in the system settings to record.",
+  "voiceNoteRecordFailed": "The recording could not be started.",
+  "voiceNotePlay": "Play",
+  "voiceNotePause": "Pause",
+  "voiceNoteSemantics": "Voice note, {size}",
+  "@voiceNoteSemantics": {"placeholders": {"size": {"type": "String"}}},
+  "voiceNotePlayFailed": "The voice note could not be played."
 }
