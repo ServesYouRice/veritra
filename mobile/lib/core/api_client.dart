@@ -1476,6 +1476,26 @@ class ApiClient {
     return _rows(json, 'events', SyncEvent.fromJson);
   }
 
+  /// The newest sync event id the server holds for this account, read from
+  /// the `latest_event_id` bound of an empty page (the cursor is past every
+  /// event, so no event or ciphertext comes back). Used to date a leave
+  /// (D70): every event from before it has an id at or below this.
+  Future<int> syncLatestEventId(String token) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/sync/events?after=$_pastEveryEventId&limit=1',
+      token: token,
+    );
+    return _decode(() {
+      final latest = json['latest_event_id'];
+      if (latest is! int || latest < 0) throw const FormatException();
+      return latest;
+    });
+  }
+
+  /// A cursor above any event id the server can have issued (2^53 - 1).
+  static const int _pastEveryEventId = 9007199254740991;
+
   Future<void> sendReaction(
     String token,
     String messageId,
