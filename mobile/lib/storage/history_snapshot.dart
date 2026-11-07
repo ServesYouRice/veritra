@@ -774,12 +774,18 @@ void _validateAttachments(LocalMessage m) {
         padded < plain ||
         padded > 48 * 1024 * 1024) _invalid();
     if (crypto['id'] is! String ||
+        crypto['action_id'] is! String ||
         crypto['file_name'] is! String ||
         crypto['media_type'] is! String ||
         (crypto['version'] != 1 && crypto['version'] != 2) ||
         crypto['algorithm'] != 'AES-256-GCM-chunked' ||
         crypto['conversation_id'] != m.conversationId ||
-        crypto['action_id'] != m.key.substring(m.senderDeviceId.length + 1) ||
+        // The attachment's own action ID (a random ID the sender chose when
+        // it encrypted the file, `AppState`'s `attachmentActionId`). It is
+        // the AAD context of the file, not the message's action ID: the
+        // upload happens before the message exists.
+        (crypto['action_id'] as String).isEmpty ||
+        (crypto['action_id'] as String).length > 128 ||
         base64Decode(crypto['key'] as String).length != 32 ||
         base64Decode(crypto['nonce_prefix'] as String).length != 8 ||
         crypto['chunk_size'] != 1048576 ||

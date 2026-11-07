@@ -460,6 +460,23 @@ void main() {
     expect(await target.readAsBytes(), body);
   });
 
+  test('a digest check that throws passes through and keeps the file',
+      () async {
+    final target = File('${dir.path}/content');
+    server.handler = (r) => serveBlob(r, body);
+    await expectLater(
+        client.download(
+            linkId: 'link-1',
+            auth: const HistorySessionAuth('t'),
+            expectedSha256: digest,
+            expectedSize: body.length,
+            target: target,
+            verifyDigest: (_) async => throw const FileSystemException('io')),
+        throwsA(isA<FileSystemException>()));
+    // Nothing said the bytes were wrong, so they stay for the next check.
+    expect(await target.readAsBytes(), body);
+  });
+
   test('metadata outside the server limits is refused before any request', () {
     expect(() => metadata(size: 0), throwsArgumentError);
     expect(() => metadata(size: maxHistoryCiphertextBytes + 1),

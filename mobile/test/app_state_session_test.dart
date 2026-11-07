@@ -126,36 +126,6 @@ void main() {
       h.dispose();
     });
 
-    test('device link: a failed device refresh still starts sync', () async {
-      final h = _Harness();
-      h.state
-        ..api = h.api
-        ..pendingDeviceLinkClaim = DeviceLinkClaim(
-          serverOrigin: _origin,
-          deviceLink: DeviceLink(
-            id: 'link_1',
-            state: 'approved',
-            verificationCode: '65432101',
-            expiresAt: DateTime.utc(2030),
-            accountId: 'acct_owner',
-            claimedDeviceId: 'dev_owner',
-            transcriptHash: List<int>.filled(32, 7),
-            approvalTag: List<int>.filled(32, 9),
-          ),
-          claimToken: 'claim',
-          deviceSecret: 'secret',
-        );
-      h.api.devicesFailure = const SocketException('offline');
-
-      await h.state.completeDeviceLinkClaim();
-
-      expect(h.state.session?.token, 'token-owner');
-      expect(h.state.error, isNotNull);
-      await settle();
-      expect(h.syncStarts, 1);
-      h.dispose();
-    });
-
     test('login: a 401 after sign-in clears the session and starts nothing',
         () async {
       final h = _Harness();

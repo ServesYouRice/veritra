@@ -198,7 +198,39 @@ class HistoryTransferMismatch implements Exception {
   String toString() => 'HistoryTransferMismatch';
 }
 
-class HistoryTransferClient {
+/// What `HistoryTransferService` needs from the transport, so its sequencing
+/// can be tested without sockets. [HistoryTransferClient] is the real one.
+abstract interface class HistoryTransferTransport {
+  Future<HistoryTransferReceipt> upload({
+    required String token,
+    required String linkId,
+    required HistoryTransferMetadata metadata,
+    required Stream<List<int>> Function() ciphertext,
+  });
+
+  Future<HistoryTransferReceipt> status(
+      String linkId, HistoryTransferAuth auth);
+
+  Future<int> download({
+    required String linkId,
+    required HistoryTransferAuth auth,
+    required String expectedSha256,
+    required int expectedSize,
+    required File target,
+    required Future<bool> Function(File complete) verifyDigest,
+  });
+
+  Future<HistoryTransferReceipt> acknowledge({
+    required String linkId,
+    required HistoryTransferAuth auth,
+    required String transferId,
+    required String ciphertextSha256,
+  });
+
+  Future<void> cancel(String linkId, HistoryTransferAuth auth);
+}
+
+class HistoryTransferClient implements HistoryTransferTransport {
   /// [transport] decides which origins may receive a session or claim token:
   /// HTTPS only unless the demo entry point passes its loopback policy. A
   /// refused origin fails here, before any request exists.
@@ -252,6 +284,7 @@ class HistoryTransferClient {
   /// returned without sending the body again, and a receipt for different
   /// metadata is refused. Only a missing resource (404) leads to the POST.
   /// A refusal of a first upload may still surface as a transport error.
+  @override
   Future<HistoryTransferReceipt> upload({
     required String token,
     required String linkId,
@@ -300,6 +333,7 @@ class HistoryTransferClient {
   }
 
   /// Receipt and, for the exact recipient while active, the opaque handoff.
+  @override
   Future<HistoryTransferReceipt> status(
           String linkId, HistoryTransferAuth auth) async =>
       HistoryTransferReceipt.fromJson(await _json(
@@ -315,8 +349,10 @@ class HistoryTransferClient {
   /// The ETag is the server's claim, not proof. [verifyDigest] is the native
   /// whole-ciphertext check against the digest from the verified handoff; it
   /// runs on every complete file, including one left by an earlier attempt.
-  /// When it fails the file is deleted and [HistoryTransferMismatch] thrown,
-  /// so a bad prefix is never resumed.
+  /// When it returns false the file is deleted and [HistoryTransferMismatch]
+  /// thrown, so a bad prefix is never resumed; when it throws, the error
+  /// passes through and the file is kept.
+  @override
   Future<int> download({
     required String linkId,
     required HistoryTransferAuth auth,
@@ -331,13 +367,14 @@ class HistoryTransferClient {
         expectedSha256: expectedSha256,
         expectedSize: expectedSize,
         target: target);
-    var verified = false;
-    try {
-      verified = await verifyDigest(target);
-    } finally {
-      if (!verified) await _discard(target);
+    // The file goes only when the check answers false (an authentication or
+    // digest failure). A check that throws (I/O, a missing record, a native
+    // library error) says nothing about the bytes, so the file stays.
+    final verified = await verifyDigest(target);
+    if (!verified) {
+      await _discard(target);
+      throw const HistoryTransferMismatch();
     }
-    if (!verified) throw const HistoryTransferMismatch();
     return length;
   }
 
@@ -420,6 +457,7 @@ class HistoryTransferClient {
 
   /// Recipient only, and only after the import transaction and its import
   /// ledger have committed. An exact replay returns the same receipt.
+  @override
   Future<HistoryTransferReceipt> acknowledge({
     required String linkId,
     required HistoryTransferAuth auth,
@@ -448,6 +486,7 @@ class HistoryTransferClient {
 
   /// Cancels the copy for the source or the recipient. Idempotent. Never
   /// unlinks or revokes a device.
+  @override
   Future<void> cancel(String linkId, HistoryTransferAuth auth) async {
     await _json(await (await _open('DELETE', _uri(linkId), auth))
         .close()

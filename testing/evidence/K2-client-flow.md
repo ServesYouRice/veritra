@@ -249,3 +249,193 @@ screens, two-device runs, independent review.
   over-block only on an account and device ID collision across servers;
   `_finishRecoveredSession` sets the in-memory session before a promotion
   that can still throw (pattern older than schema 18).
+
+## 2026-11-07: transfer orchestration on the schema-18 tables (no counter bump)
+
+Built the NativeCryptoService half of step 2: the native K2 controls and
+bundle streams (ABI 8 operations, present in the current ABI 12; no native
+change, no ABI bump) wired to the schema-18 promotion ledger and transfer
+progress rows, plus the HTTP sequencing. No schema change was needed (local
+schema stays 18). The v3 link screens, the AppState switch to v3 and the
+two-device runs are **not** built. Production messaging stays off.
+
+- `crypto/k2_transfer_crypto.dart`: `K2TransferCryptoService`, implemented by
+  `NativeCryptoService`. Each state-changing step is one `_serial` operation:
+  native call, seal as counter N+1, one expected-counter commit with the
+  progress row (`commitHistoryTransferState`; the sync cursor does not
+  move), restore of the committed state on any failure. Native streams are
+  opened and closed inside one operation; no HTTP happens inside the queue.
+- Source order: accept (committed), confirm (committed together with the
+  `approving` row, which proves the intent is durable before
+  `k2SourceApprovalRequest` releases the tag), approval POST, apply approval,
+  prepare (export, native begin/write/finish, ciphertext drained to a
+  `.part` file, flushed, renamed; handoff, manifest and `snapshot_ready` row
+  committed before any upload), upload, posted (`uploaded` row), cleanup after
+  the server shows the ACK. A commit whose outcome was lost keeps the file
+  (the stored row names it); a failed commit deletes it. A missing or short
+  cache after the handoff was committed is refused, never regenerated.
+- Receiver order: receive-begin and the enrollment proof run on the pending
+  device before its one seal (the pending state is frozen, so no schema 19);
+  after promotion the approval is applied as the first active commit (tag and
+  time live in the `awaiting_handoff` row's payload, since promotion deletes
+  the pending row), the handoff is checked against the pinned context and the
+  server receipt (transfer ID, digest, size, transcript) and committed with
+  the `downloading` row, the download is verified by feeding the whole file to
+  a native stream (no Dart SHA-256), native importing is committed, the
+  verified plaintext is read in memory into one import transaction (which
+  holds the import ledger) with the counter and creation time taken from the
+  authenticated native header, then `imported`, ACK, `acknowledged`, native
+  forget (committed), file and row removed.
+- `HistoryTransferService` (`crypto/history_transfer_service.dart`) resumes
+  either side from its stored row; `HistoryTransferTransport` is the interface
+  `HistoryTransferClient` now implements, so the sequencing is testable.
+  `abandon` cancels the server copy best effort and removes the local record,
+  file and row; `k2ExpireTransfers` sweeps native records and rows past their
+  deadline.
+- Choice: the source's `approving` row cannot know the final transfer deadline
+  (approval time plus seven days), and a row's deadline is frozen. It holds
+  the latest the native record can live (original link expiry plus seven
+  days); native enforces the real one.
+- Contract for the link flow: the recipient's `awaiting_handoff` row payload
+  carries `approval_tag` (base64), `approved_at` (epoch ms) and optionally
+  `claim_request_hash`.
+
+Checks (stand-in Dart 3.13.7 with Flutter stubs, system SQLite, release native
+library built from this tree; `test/k2_transfer_orchestration_test.dart`, 16
+passed): full source-to-recipient flow with two real services (history copied,
+state `restored`, cursor unchanged, native records gone, both devices still
+commit), tag refused before the intent commit, pending state refuses a new
+transfer record after its seal, lost commit outcome keeps the frozen copy,
+failed commit leaves no cache and the retry works, lost upload reply retried
+without a second copy, missing cache refused then abandoned, crash after the
+import is a no-op re-import (no duplicates, one ledger entry), crash after the
+ACK finished by the next call, corrupt download imports nothing and is fetched
+again, receipt naming another transfer refused before anything is kept,
+expired transfer refused then swept, importer refusal keeps the `downloaded`
+stage, a confirm whose outcome was lost retried onto the same row, a copy the server closed refused then abandoned. Also passing: `k2_history_transfer_client_test`, `k2_schema18_test`,
+`native_crypto_service_promotion_test`, `k2_native_streams_test`,
+`k2_native_controls_test`. `dart format --language-version=3.4` clean on lib
+and test; analyzer clean on the changed files. Not run locally: the full
+Flutter suite and `flutter analyze` (CI), the transport against the real Go
+handler, device runs. Independent Opus review of this slice is still owed
+(security, MLS ordering, credential handling).
+
+Left, in order: the v3 link screens and the AppState switch from the v2 clone
+path (which then need `K2TransferCryptoService`, the pending payload for the
+claim credentials, and a call to `HistoryTransferService`), two-device runs,
+independent review, removing the clone-restore path.
+
+Server facts checked against the Go handler for this slice
+(`device_history_transfer_handlers.go`, `device_history_transfer_store.go`):
+the upload handler rejects a body whose size or SHA-256 differs from the
+metadata (so a corrupt same-size cache cannot become the stored copy); the
+source can GET the transfer status with its own session while the link is
+inside its transfer window and sees `acknowledged` after the ACK; once that
+window passes the GET fails and the caller falls back to `abandon` or
+`k2ExpireTransfers`. A terminal state other than `active` or `acknowledged`
+(cancelled, expired) makes `send` refuse with a typed error.
+
+## 2026-11-07: v3 link screens and the AppState switch (no counter bump)
+
+AppState no longer has the v2 device-link path. The link and the history copy
+run on the v3 server routes and the transfer orchestration above. Local schema
+stays 18, crypto ABI unchanged, no migration, no new dependency. Production
+messaging stays off (`main.dart`, `UnavailableCryptoService` untouched).
+
+Review notes of the orchestration slice, closed first (commit b2601dd):
+
+- N1: an ACK the server refuses because it holds no active copy (404, 409, 410)
+  throws `K2TransferException`; the row stays `imported` and is abandoned.
+- N2: `k2VerifyDownload` answers false only when native rejects the
+  ciphertext (digest, header or chunk authentication); other failures pass
+  through, and `HistoryTransferClient.download` deletes the file only on false.
+- N3: a link ID is checked against the v3 alphabet before it names a file.
+- N4: `k2SweepOrphanCaches` removes `k2-source-*` files no row names, inside
+  the serial queue; `send` runs it before preparing a copy.
+- Codex finding on #123: a confirm retry with another claim digest is refused.
+
+What was built:
+
+- `core/app_state_link_v3.dart` (part of AppState): existing device (create
+  link, native accept of the claim and safety code, native confirm, approval
+  POST, native apply, then the copy) and new device (reserve, identity,
+  `k2ReceiveBegin`, enrollment proof, credentials, claim, poll, complete,
+  promotion through the ledger with the incoming transfer row). The three
+  credentials (claim token, device secret, initial session token), the frozen
+  signed claim and the reservation are stored in the `k2_link_v3` pending
+  enrollment before the claim is sent; a lost answer replays the same bytes.
+  A restart resumes the waiting claim, the source's `approving` row and the
+  incoming rows. `crypto/sha256.dart` is plain Dart (token hashes only; no
+  dependency, tested with FIPS vectors and the padding boundaries).
+- Screens: the link screen of the existing device and the claim form of the
+  new one use the v3 state; a banner shows the copy (sending, waiting,
+  receiving, temporary failure, ended). English and Serbian Cyrillic strings,
+  Latin regenerated with `scripts/l10n-sr-latn.py`, generated files with
+  `flutter gen-l10n`.
+- Removed with the v2 AppState path: its tests (`app_state_test`,
+  `app_state_session_test`, the AppState half of
+  `device_link_claim_binding_test`). The v2 `ApiClient` calls and their API
+  tests stay for v2 links. Backup clone-restore is not touched.
+
+Two defects the real-server run found in earlier slices, fixed here:
+
+- `captureHistory` required the attachment manifest's `action_id` to equal the
+  message's action ID, but the sender gives each file its own random ID
+  (`attachmentActionId`), so any history with an attachment could not be
+  exported. It now only requires a bounded string.
+- The export names conversations from the stored list, which is only saved at
+  some refreshes; the source now refreshes the conversation list after the
+  approval, before it exports.
+
+Checks (Flutter 3.44.0, Dart 3.12, real native library built from this tree):
+
+- `device_link_v3_flow_test.dart`, 8 passed: two real AppStates over an
+  in-memory link server and transfer resource: link, wrong code refused
+  natively, approval, promotion, copy, both sides clean; restart while the
+  claim waits (same signed claim replayed); restart after the approval
+  (source uploads, then the new device receives); a copy the server closed
+  ends on both; a revoked link drops the pending identity; a second claim and
+  a K0 recovery in progress are refused before any request; a bad code makes
+  no request; a forged approval is refused before `/complete`.
+- `demo_e2e_test.dart` against the real Go server (`go build` of the server,
+  data on tmpfs because this host's disk trips the server's low-disk guard):
+  passed, including the link with the restored device and the history copy
+  through the real handlers (upload, download, ACK). The test's API client
+  now uses `TransportPolicy.demo`, as `main_demo.dart` does.
+- All 180 Flutter test files pass locally (run in batches against the real
+  native library; one single `flutter test` run stalled on this host with no
+  test failing), including goldens and the l10n tests. `flutter analyze`,
+  `dart format --set-exit-if-changed .`, `scripts/check-mobile-dependencies.sh`
+  and `scripts/check-dart-licenses.sh` pass. One earlier demo e2e run timed out
+  waiting for sync (the known flake, #130) and passed on the rerun.
+
+Left, in order: two real devices; independent review (MLS ordering, the
+recovery and credential handling); retiring the clone-restore path after K1.
+The approval tag is verified natively before the new device asks the server
+to complete (`k2VerifyPendingApproval`: the apply runs on a scratch copy of the
+frozen pending state, which is closed at once, so nothing is sealed or
+stored), and applied again as the first active commit of the transfer. A tag
+that does not verify abandons the claim, makes no `/complete` call and leaves
+no pending row (`device_link_v3_flow_test`, forged approval). This needed no
+ABI or schema change. Reviewer: please check that the scratch restore of the
+frozen state is sound under the MLS ordering rules.
+
+## Review fixes B1 and B2 (after 49dfe33)
+
+- B1: the scratch check in `k2VerifyPendingApproval` passes
+  `now: max(_nowMs, approvedAt)` to native. `approved_at` is the server's
+  clock; a new device whose clock runs behind it made native refuse a genuine
+  approval as one from the future and abandon the link. The tag comparison and
+  the `approved_at <= link_expires_at` bound still run natively; the real apply
+  after promotion keeps the real clock and its retry. Test: the new device's
+  clock runs 5 s behind after the approval and the link still completes.
+- B2: the real claim-status answers a revoked, expired or unknown link with
+  400 `invalid_device_link` (never 410, never the state `revoked`). The new
+  device now ends the claim on that answer, and on any status error once a
+  still-`claimed` record is past its expiry. A `consumed` or `approved` link
+  keeps the resume path. The fake now answers as the real server does (400 for
+  revoked and expired); tests cover revoked, expired (400), expired with an
+  unnamed error (503, after a restart), and a 503 inside the expiry that
+  keeps the claim.
+- Checks: Flutter is not installed on this host; Dart is verified by CI on
+  PR #123 (see the PR for the run).
