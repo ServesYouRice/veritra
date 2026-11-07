@@ -1056,7 +1056,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get deviceLinkIntro =>
-      'Генеришите једнократни код, унесите га на новом уређају, а затим га овде одобрите помоћу верификационог кода који приказује нови уређај.';
+      'Генеришите једнократни код, унесите га на новом уређају, а затим га овде одобрите помоћу верификационог кода који приказује нови уређај. Ваша историја разговора се затим шифрована копира на нови уређај, па оба уређаја држите на мрежи.';
 
   @override
   String get deviceLinkCreate => 'Направи везу';
@@ -1105,6 +1105,60 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get deviceLinkApproveHint =>
       'Унесите осмоцифрени код приказан на новом уређају. Никада не користите код који вам је неко послао или прочитао.';
+
+  @override
+  String get deviceLinkUnavailableHere =>
+      'Повезивање уређаја није доступно у овој верзији.';
+
+  @override
+  String get deviceLinkAlreadyPending =>
+      'На овом уређају већ чека веза уређаја. Прво је проверите или откажите.';
+
+  @override
+  String get deviceLinkRecoveryInProgress =>
+      'На овом уређају чека опоравак налога, па се уређај не може повезати овде док се не заврши или откаже.';
+
+  @override
+  String get deviceLinkEnded =>
+      'Ова веза је отказана или је истекла. Затражите нову са свог другог уређаја.';
+
+  @override
+  String get deviceLinkCodeMismatch =>
+      'Тај код се не поклапа са оним на новом уређају. Проверите га и покушајте поново.';
+
+  @override
+  String get deviceLinkRefreshFirst =>
+      'Прво освежите статус, а затим одобрите уређај.';
+
+  @override
+  String get deviceLinkCancelWaiting => 'Откажи ову везу';
+
+  @override
+  String get deviceLinkWaitingApproval =>
+      'Чека се да ваш други уређај одобри. Оставите овај екран отворен.';
+
+  @override
+  String get historyCopySendWorking => 'Шаљем вашу историју на нови уређај…';
+
+  @override
+  String get historyCopySendWaiting =>
+      'Ваша историја је спремна. Чека се да је нови уређај прими.';
+
+  @override
+  String get historyCopyReceiveWorking =>
+      'Примам вашу историју са другог уређаја…';
+
+  @override
+  String get historyCopyReceiveWaiting =>
+      'Чека се да ваш други уређај пошаље историју. Оставите га на мрежи.';
+
+  @override
+  String get historyCopyFailed =>
+      'Копирање ваше историје није завршено. Покушаће се поново.';
+
+  @override
+  String get historyCopyEnded =>
+      'Копирање ваше историје је заустављено. Поново повежите уређај да бисте је копирали.';
 
   @override
   String get bannerQueued =>
@@ -3874,7 +3928,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get deviceLinkIntro =>
-      'Generišite jednokratni kod, unesite ga na novom uređaju, a zatim ga ovde odobrite pomoću verifikacionog koda koji prikazuje novi uređaj.';
+      'Generišite jednokratni kod, unesite ga na novom uređaju, a zatim ga ovde odobrite pomoću verifikacionog koda koji prikazuje novi uređaj. Vaša istorija razgovora se zatim šifrovana kopira na novi uređaj, pa oba uređaja držite na mreži.';
 
   @override
   String get deviceLinkCreate => 'Napravi vezu';
@@ -3923,6 +3977,60 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get deviceLinkApproveHint =>
       'Unesite osmocifreni kod prikazan na novom uređaju. Nikada ne koristite kod koji vam je neko poslao ili pročitao.';
+
+  @override
+  String get deviceLinkUnavailableHere =>
+      'Povezivanje uređaja nije dostupno u ovoj verziji.';
+
+  @override
+  String get deviceLinkAlreadyPending =>
+      'Na ovom uređaju već čeka veza uređaja. Prvo je proverite ili otkažite.';
+
+  @override
+  String get deviceLinkRecoveryInProgress =>
+      'Na ovom uređaju čeka oporavak naloga, pa se uređaj ne može povezati ovde dok se ne završi ili otkaže.';
+
+  @override
+  String get deviceLinkEnded =>
+      'Ova veza je otkazana ili je istekla. Zatražite novu sa svog drugog uređaja.';
+
+  @override
+  String get deviceLinkCodeMismatch =>
+      'Taj kod se ne poklapa sa onim na novom uređaju. Proverite ga i pokušajte ponovo.';
+
+  @override
+  String get deviceLinkRefreshFirst =>
+      'Prvo osvežite status, a zatim odobrite uređaj.';
+
+  @override
+  String get deviceLinkCancelWaiting => 'Otkaži ovu vezu';
+
+  @override
+  String get deviceLinkWaitingApproval =>
+      'Čeka se da vaš drugi uređaj odobri. Ostavite ovaj ekran otvoren.';
+
+  @override
+  String get historyCopySendWorking => 'Šaljem vašu istoriju na novi uređaj…';
+
+  @override
+  String get historyCopySendWaiting =>
+      'Vaša istorija je spremna. Čeka se da je novi uređaj primi.';
+
+  @override
+  String get historyCopyReceiveWorking =>
+      'Primam vašu istoriju sa drugog uređaja…';
+
+  @override
+  String get historyCopyReceiveWaiting =>
+      'Čeka se da vaš drugi uređaj pošalje istoriju. Ostavite ga na mreži.';
+
+  @override
+  String get historyCopyFailed =>
+      'Kopiranje vaše istorije nije završeno. Pokušaće se ponovo.';
+
+  @override
+  String get historyCopyEnded =>
+      'Kopiranje vaše istorije je zaustavljeno. Ponovo povežite uređaj da biste je kopirali.';
 
   @override
   String get bannerQueued =>

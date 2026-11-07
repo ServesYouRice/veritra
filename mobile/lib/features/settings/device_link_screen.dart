@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../../core/app_state.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/history_copy_banner.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
@@ -62,7 +63,9 @@ class DeviceLinkScreen extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: state.busy ? null : state.createDeviceLink,
+                onPressed: state.isBusy(Ops.deviceLink)
+                    ? null
+                    : state.createDeviceLink,
                 icon: const Icon(Icons.qr_code_2),
                 label: Text(
                   link == null
@@ -154,13 +157,15 @@ class DeviceLinkScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: BoneSpacing.lg),
                 OutlinedButton.icon(
-                  onPressed: state.busy ? null : state.refreshActiveDeviceLink,
+                  onPressed: state.isBusy(Ops.deviceLink)
+                      ? null
+                      : state.refreshActiveDeviceLink,
                   icon: const Icon(Icons.refresh),
                   label: Text(l10n.deviceLinkRefreshStatus),
                 ),
                 const SizedBox(height: 8),
                 FilledButton.icon(
-                  onPressed: state.busy ||
+                  onPressed: state.isBusy(Ops.deviceLink) ||
                           link.state != 'claimed' ||
                           link.verificationCode.isEmpty
                       ? null
@@ -169,10 +174,17 @@ class DeviceLinkScreen extends StatelessWidget {
                   label: Text(l10n.deviceLinkApproveDevice),
                 ),
               ],
-              if (state.error != null) ...<Widget>[
+              if (state.historyTransferStatus != null) ...<Widget>[
                 const SizedBox(height: 12),
                 Text(
-                  state.error!,
+                  historyCopyMessage(l10n, state.historyTransferStatus!),
+                  style: theme.textTheme.bodyMedium,
+                ),
+              ],
+              if (state.errorFor(Ops.deviceLink) != null) ...<Widget>[
+                const SizedBox(height: 12),
+                Text(
+                  state.errorFor(Ops.deviceLink)!,
                   style: TextStyle(color: theme.colorScheme.error),
                 ),
               ],

@@ -214,12 +214,11 @@ void main() {
       tester,
     ) async {
       final state = _state()
-        ..activeDeviceLink = DeviceLink(
+        ..activeDeviceLink = DeviceLinkV3View(
           id: 'dl_1',
           state: 'claimed',
           verificationCode: '12345678',
           expiresAt: DateTime.utc(2030),
-          code: 'PAIRCODE',
         );
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
@@ -231,19 +230,13 @@ void main() {
     testWidgets('approve needs a claimed link and exactly 8 typed digits', (
       tester,
     ) async {
-      final api = _ApproveApi();
-      final state = _state()..api = api;
-      await state.createDeviceLink();
-      state.activeDeviceLink = DeviceLink(
-        id: 'dl_1',
-        state: 'claimed',
-        verificationCode: '12345678',
-        expiresAt: DateTime.utc(2030),
-        code: 'PAIRCODE',
-        accountId: 'acct_0123456789abcdef',
-        transcriptHash: List<int>.filled(32, 7),
-        approvalTag: List<int>.filled(32, 9),
-      );
+      final state = _state()
+        ..activeDeviceLink = DeviceLinkV3View(
+          id: 'dl_1',
+          state: 'claimed',
+          verificationCode: '12345678',
+          expiresAt: DateTime.utc(2030),
+        );
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
@@ -262,65 +255,29 @@ void main() {
       await tester.enterText(find.byType(TextField), '1234567');
       await tester.pump();
       expect(tester.widget<FilledButton>(dialogApprove).onPressed, isNull);
-      expect(api.approvals, 0);
+      expect(state.errorFor(Ops.deviceLink), isNull);
 
       await tester.enterText(find.byType(TextField), '12345678');
       await tester.pump();
       expect(tester.widget<FilledButton>(dialogApprove).onPressed, isNotNull);
       await tester.tap(dialogApprove);
       await tester.pumpAndSettle();
-      expect(api.approvals, 1);
-    });
-
-    testWidgets('a different 8-digit code is never approved', (tester) async {
-      final api = _ApproveApi();
-      final state = _state()..api = api;
-      await state.createDeviceLink();
-      state.activeDeviceLink = DeviceLink(
-        id: 'dl_1',
-        state: 'claimed',
-        verificationCode: '12345678',
-        expiresAt: DateTime.utc(2030),
-        code: 'PAIRCODE',
-        accountId: 'acct_0123456789abcdef',
-        transcriptHash: List<int>.filled(32, 7),
-        approvalTag: List<int>.filled(32, 9),
-      );
-      await tester.pumpWidget(
-        MaterialApp(home: DeviceLinkScreen(state: state)),
-      );
-      final approveButton = find.widgetWithText(
-        FilledButton,
-        'Approve device',
-      );
-      await tester.ensureVisible(approveButton);
-      await tester.tap(approveButton);
-      await tester.pumpAndSettle();
-
-      final dialogApprove = find.descendant(
-        of: find.byType(AlertDialog),
-        matching: find.byType(FilledButton),
-      );
-      await tester.enterText(find.byType(TextField), '87654321');
-      await tester.pump();
-      // Whether the button stays disabled or the tap is refused, nothing
-      // reaches the server.
-      if (tester.widget<FilledButton>(dialogApprove).onPressed != null) {
-        await tester.tap(dialogApprove);
-        await tester.pumpAndSettle();
-      }
-      expect(api.approvals, 0);
+      // The typed code reached AppState, which refuses in this build (the
+      // test crypto service has no K2 operations); the native confirmation
+      // and the wrong-code refusal are covered with the real engine in
+      // device_link_v3_flow_test.dart.
+      expect(state.errorFor(Ops.deviceLink),
+          'Linking devices is not available in this build.');
       expect(state.activeDeviceLink?.state, isNot('approved'));
     });
 
     testWidgets('approve is disabled without a verified code', (tester) async {
       final state = _state()
-        ..activeDeviceLink = DeviceLink(
+        ..activeDeviceLink = DeviceLinkV3View(
           id: 'dl_1',
           state: 'claimed',
           verificationCode: '',
           expiresAt: DateTime.utc(2030),
-          code: 'PAIRCODE',
         );
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
@@ -342,28 +299,22 @@ void main() {
       expect(deviceLinkQrPayload('  '), isNull);
     });
 
-    testWidgets('the link screen never offers the server URI as a link', (
+    testWidgets('the link screen shows no server-provided link or origin', (
       tester,
     ) async {
-      final state = _state();
-      await state.createDeviceLink();
-      state.activeDeviceLink = DeviceLink(
-        id: 'dl_1',
-        state: 'pending',
-        verificationCode: '123456',
-        expiresAt: DateTime.utc(2030),
-        code: 'PAIRCODE',
-        linkUri: 'veritra://device-link?code=OTHER'
-            '&origin=https://attacker.example',
-      );
+      final state = _state()
+        ..activeDeviceLink = DeviceLinkV3View(
+          id: 'dl_1',
+          state: 'pending',
+          expiresAt: DateTime.utc(2030),
+        );
       await tester.pumpWidget(
         MaterialApp(home: DeviceLinkScreen(state: state)),
       );
       expect(find.text('LINK URI'), findsNothing);
       expect(find.textContaining('attacker'), findsNothing);
-      final qr = tester.widget<QrImageView>(find.byType(QrImageView));
-      expect(qr.key,
-          ValueKey<String>(deviceLinkQrPayload(state.activeDeviceLinkCode)!));
+      // No secret is held, so there is no QR to show.
+      expect(find.byType(QrImageView), findsNothing);
     });
   });
 }
@@ -430,26 +381,6 @@ class _Api extends ApiClient {
         accountId: 'acct_0123456789abcdef',
         protocolVersion: 'veritra-device-link-v2',
       );
-}
-
-class _ApproveApi extends _Api {
-  int approvals = 0;
-
-  @override
-  Future<DeviceLink> approveDeviceLink(
-    String token,
-    String linkId,
-    List<int> transcriptHash,
-    List<int> approvalTag,
-  ) async {
-    approvals++;
-    return DeviceLink(
-      id: linkId,
-      state: 'approved',
-      verificationCode: '',
-      expiresAt: DateTime.utc(2030),
-    );
-  }
 }
 
 class _SlowStore implements AppearanceStore {

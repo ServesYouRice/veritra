@@ -1866,7 +1866,7 @@ abstract class AppLocalizations {
   /// No description provided for @deviceLinkIntro.
   ///
   /// In en, this message translates to:
-  /// **'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows.'**
+  /// **'Generate a one-time code, enter it on the new device, then approve it here with the verification code the new device shows. Your chat history is then copied to the new device, encrypted, so keep both devices online.'**
   String get deviceLinkIntro;
 
   /// No description provided for @deviceLinkCreate.
@@ -1934,6 +1934,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Enter the 8-digit code shown on the new device. Never use a code you were sent or read out to you.'**
   String get deviceLinkApproveHint;
+
+  /// No description provided for @deviceLinkUnavailableHere.
+  ///
+  /// In en, this message translates to:
+  /// **'Linking devices is not available in this build.'**
+  String get deviceLinkUnavailableHere;
+
+  /// No description provided for @deviceLinkAlreadyPending.
+  ///
+  /// In en, this message translates to:
+  /// **'A device link is already waiting on this device. Check it or cancel it first.'**
+  String get deviceLinkAlreadyPending;
+
+  /// No description provided for @deviceLinkRecoveryInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'An account recovery is waiting on this device, so a device cannot be linked here until it is finished or cancelled.'**
+  String get deviceLinkRecoveryInProgress;
+
+  /// No description provided for @deviceLinkEnded.
+  ///
+  /// In en, this message translates to:
+  /// **'This link was cancelled or has expired. Ask your other device for a new one.'**
+  String get deviceLinkEnded;
+
+  /// No description provided for @deviceLinkCodeMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'That code does not match the one on the new device. Check it and try again.'**
+  String get deviceLinkCodeMismatch;
+
+  /// No description provided for @deviceLinkRefreshFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh the status first, then approve the device.'**
+  String get deviceLinkRefreshFirst;
+
+  /// No description provided for @deviceLinkCancelWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel this link'**
+  String get deviceLinkCancelWaiting;
+
+  /// No description provided for @deviceLinkWaitingApproval.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for your other device to approve. Keep this screen open.'**
+  String get deviceLinkWaitingApproval;
+
+  /// No description provided for @historyCopySendWorking.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending your history to the new device…'**
+  String get historyCopySendWorking;
+
+  /// No description provided for @historyCopySendWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Your history is ready. Waiting for the new device to receive it.'**
+  String get historyCopySendWaiting;
+
+  /// No description provided for @historyCopyReceiveWorking.
+  ///
+  /// In en, this message translates to:
+  /// **'Receiving your history from your other device…'**
+  String get historyCopyReceiveWorking;
+
+  /// No description provided for @historyCopyReceiveWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for your other device to send your history. Keep it online.'**
+  String get historyCopyReceiveWaiting;
+
+  /// No description provided for @historyCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Copying your history did not finish. It will be tried again.'**
+  String get historyCopyFailed;
+
+  /// No description provided for @historyCopyEnded.
+  ///
+  /// In en, this message translates to:
+  /// **'Copying your history stopped. Link the device again to copy it.'**
+  String get historyCopyEnded;
 
   /// No description provided for @bannerQueued.
   ///

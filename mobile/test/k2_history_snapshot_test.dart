@@ -242,6 +242,20 @@ void main() {
             .single
             .kind,
         'attachment');
+    // A real attachment carries its own random action ID, not the message's.
+    manifest['action_id'] = 'f' * 32;
+    expect(
+        HistorySnapshot.decode(snapshot([attachment()]).encode())
+            .messages
+            .single
+            .kind,
+        'attachment');
+    for (final bad in <Object?>[null, '', 7, 'a' * 129]) {
+      manifest['action_id'] = bad;
+      expect(() => snapshot([attachment()]).encode(), throwsFormatException,
+          reason: '$bad');
+    }
+    manifest['action_id'] = 'attachment';
     manifest['conversation_id'] = 'other';
     expect(() => snapshot([attachment()]).encode(), throwsFormatException);
     manifest['conversation_id'] = 'conv';

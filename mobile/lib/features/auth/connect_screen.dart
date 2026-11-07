@@ -7,7 +7,6 @@ import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import '../../core/app_state.dart';
 import '../settings/backup_screen.dart';
-import '../../core/models.dart';
 import '../../ui/about.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
@@ -154,7 +153,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
 
   Widget _build(BuildContext context) {
     final theme = Theme.of(context);
-    final pendingLink = widget.state.pendingDeviceLinkClaim?.deviceLink;
+    final pendingLink = widget.state.pendingDeviceLinkClaim;
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -310,7 +309,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
     );
   }
 
-  List<Widget> _linkDeviceFields(ThemeData theme, DeviceLink? pendingLink) {
+  List<Widget> _linkDeviceFields(
+      ThemeData theme, DeviceLinkClaimView? pendingLink) {
     return <Widget>[
       _Field(
         label: context.l10n.connectLinkCode,
@@ -351,6 +351,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
               letterSpacing: 3,
               color: theme.colorScheme.onSurface,
             ),
+          ),
+        ),
+        const SizedBox(height: BoneSpacing.sm),
+        Text(
+          context.l10n.deviceLinkWaitingApproval,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: widget.state.busy
+                ? null
+                : () => widget.state.abandonDeviceLinkClaim(),
+            child: Text(context.l10n.deviceLinkCancelWaiting),
           ),
         ),
       ],

@@ -8,6 +8,11 @@ import 'native_crypto_bindings.dart';
 /// refuses the bundle before any plaintext is released.
 const int k2HistoryPlaintextVersion = 1;
 
+/// The reason of the [K2TransferException] for a transfer the server no
+/// longer holds as an active copy (cancelled, expired, revoked or gone). The
+/// copy is over: the caller abandons it.
+const String k2ServerClosedReason = 'the server closed this copy';
+
 /// A K2 transfer step that must not happen. [reason] is fixed text: it never
 /// carries a key, a token, a handoff or any history.
 class K2TransferException implements Exception {

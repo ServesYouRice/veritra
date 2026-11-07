@@ -76,7 +76,7 @@ class HistoryTransferService {
       } else if (receipt.state != 'active') {
         // Cancelled, expired or revoked: the copy cannot finish. The caller
         // abandons it ([abandon]); a new link makes a new copy.
-        throw const K2TransferException('the server closed this copy');
+        throw const K2TransferException(k2ServerClosedReason);
       }
     }
     if (row.stage == HistoryTransferStage.acknowledged) {
@@ -148,7 +148,7 @@ class HistoryTransferService {
         if (err.statusCode == 404 ||
             err.statusCode == 409 ||
             err.statusCode == 410) {
-          throw const K2TransferException('the server closed this copy');
+          throw const K2TransferException(k2ServerClosedReason);
         }
         rethrow;
       }
