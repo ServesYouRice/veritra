@@ -252,13 +252,26 @@ void main() {
     // the groups add the new device.
     expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
         contains('hi owner'));
-    // A member device adds it to the group (I51); a non-coordinator only
-    // falls back after three minutes.
+    // A member device adds it to the group (I51). The server names the
+    // group device with the lowest id the coordinator. Linking sends the
+    // owner's devices an event but sends alice's none, so when alice's device
+    // is the coordinator it never runs a pass; the owner's device then steps
+    // in after the three-minute fallback, which is why the wait is long on
+    // that half of the runs. Device ids hold no content, so the CI log names
+    // the path this run took.
+    final ownerDeviceId = owner.state.session!.deviceId!;
+    final aliceDeviceId = offline.state.session!.deviceId!;
+    final coordinatorIsOwner = ownerDeviceId.compareTo(aliceDeviceId) < 0;
+    final linkWait = Stopwatch()..start();
     final replacementMls =
         replacement.state.cryptoService as MlsConversationCryptoService;
     await replacement.waitUntil(
         () async => await replacementMls.groupEpoch(conv) != null,
         timeout: const Duration(minutes: 4));
+    // ignore: avoid_print
+    print('demo e2e: linked device joined after '
+        '${linkWait.elapsed.inSeconds} s '
+        '(coordinator: ${coordinatorIsOwner ? 'owner' : 'alice'})');
     expect(await offline.state.sendMessageTo(conv, 'after restore'), isTrue);
     await replacement.waitFor(conv, (m) => m.body == 'after restore',
         timeout: const Duration(seconds: 90));

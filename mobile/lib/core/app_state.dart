@@ -6947,7 +6947,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final coordinator = change.coordinatorDeviceId == null ||
           change.coordinatorDeviceId == current.deviceId ||
           _mlsReconcileNow.contains(change.conversationId);
-      if (!coordinator && now.difference(firstSeen) < _reconcileFallback) {
+      if (!coordinator && now.difference(firstSeen) < reconcileFallback) {
         continue;
       }
       // Each conversation is reconciled on its own: one refusal (a device
@@ -7011,7 +7011,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (staged) await _flushMlsOutbox();
   }
 
-  static const _reconcileFallback = Duration(minutes: 3);
+  /// How long a device that is not the change's coordinator waits before it
+  /// commits the change itself. The wake armed by [_armMlsRetryWake] makes a
+  /// pass run when this ends, so the fallback does not depend on a sync event
+  /// arriving by chance.
+  @visibleForTesting
+  Duration reconcileFallback = const Duration(minutes: 3);
+
+  /// A little past the fallback, so a timer that fires early by a clock
+  /// rounding still finds it over.
+  static const _reconcileFallbackMargin = Duration(seconds: 1);
 
   // Membership changes that failed or whose commit bundle the server refused
   // back off (TASK-029). Plan defaults for bug-hunt Q-003 and Q-005: a
@@ -7166,6 +7175,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     for (final retry in _mlsStepRetries.values) {
       final due = retry.due;
       if (due != null) yield due;
+    }
+    // A change this device left to its coordinator becomes its own to commit
+    // when the fallback ends. A deadline already past is not listed: the
+    // pass that found it over has acted on it, and a change that still
+    // cannot be staged (sync not finished, say) is retried by the backoffs
+    // above, not by a wake that would fire again at once.
+    final now = DateTime.now().toUtc();
+    for (final firstSeen in _mlsPendingSeen.values) {
+      final due = firstSeen.add(reconcileFallback + _reconcileFallbackMargin);
+      if (due.isAfter(now)) yield due;
     }
   }
 
