@@ -22,7 +22,7 @@ func (p *blockingPush) SendEncryptedEventAvailable(ctx context.Context, _ push.N
 func registerWakeTarget(t *testing.T, api *API, principal domain.Principal) {
 	t.Helper()
 	if status, body := call(t, api.createPushSubscription, principal, http.MethodPost,
-		`{"provider":"fcm","endpoint":"`+fcmToken+`"}`); status != http.StatusCreated {
+		`{"provider":"fcm","endpoint":"`+fcmToken+`","notification_mode":"local_decrypt_v1"}`); status != http.StatusCreated {
 		t.Fatalf("register: %d %v", status, body)
 	}
 }

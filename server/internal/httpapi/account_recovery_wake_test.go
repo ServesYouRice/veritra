@@ -72,6 +72,13 @@ func (f *recoveryFixture) addPush(id, deviceID, endpoint string) {
 		id, f.ownerAccountID, device, endpoint, recoveryTestTime(time.Now()))
 }
 
+func (f *recoveryFixture) addLegacyPush(id, provider, endpoint string) {
+	f.t.Helper()
+	f.exec(`INSERT INTO push_subscriptions(id, account_id, device_id, provider, endpoint, public_key, auth_secret, created_at, notification_mode)
+		VALUES(?, ?, NULL, ?, ?, '', '', ?, 'legacy_generic')`,
+		id, f.ownerAccountID, provider, endpoint, recoveryTestTime(time.Now()))
+}
+
 func (f *recoveryFixture) reauth() {
 	f.t.Helper()
 	if status, body := f.do(http.MethodPost, "/api/v1/auth/reauth", f.ownerToken, map[string]string{"password": "owner-password-123", "device_secret": f.ownerDeviceSecret}, nil); status != http.StatusNoContent {
@@ -175,4 +182,32 @@ func TestRecoveryKeyChangeCancellingAClaimWakesOtherDevices(t *testing.T) {
 	f.reauth()
 	f.setRK(f.ownerToken)
 	rec.waitFor(t, 2)
+}
+
+// Only a wake that would show the legacy "New message" alert (legacy APNs)
+// is skipped; legacy FCM, web push and local-decrypt wakes are silent.
+func TestRecoveryWakeSkipsOnlyLegacyAPNs(t *testing.T) {
+	f, rec := newWakeFixture(t, nil)
+	f.addLegacyPush("push_legacy_apns", "apns", strings.Repeat("ab", 32))
+	f.addLegacyPush("push_legacy_fcm", "fcm", "fcm-legacy-0123456789-0123456789-0123")
+	f.addLegacyPush("push_legacy_web", "webpush", "https://push.example/legacy-web")
+	f.addPush("push_silent", "", "fcm-silent-0123456789-0123456789-0123")
+	f.claimOK(claimBody(t, f.reserve("owner"), "owner-password-123", f.ownerRK, recoveryTestOrigin))
+	sent := rec.waitFor(t, 3)
+	got := map[string]bool{}
+	for _, n := range sent {
+		if n.Provider == "apns" {
+			t.Fatalf("legacy APNs target was woken: %+v", n)
+		}
+		got[n.Provider+"/"+n.NotificationMode] = true
+	}
+	for _, want := range []string{"fcm/legacy_generic", "webpush/legacy_generic", "fcm/local_decrypt_v1"} {
+		if !got[want] {
+			t.Fatalf("missing wake %s in %v", want, got)
+		}
+	}
+	// The skipped subscription stays registered for ordinary message pushes.
+	if n := f.activeSubscriptions(); n != 4 {
+		t.Fatalf("active subscriptions = %d, want 4", n)
+	}
 }
