@@ -91,7 +91,7 @@ func (f *v3Fixture) claim(t *testing.T) DeviceLinkV3 {
 func (f *v3Fixture) approve(t *testing.T) DeviceLinkV3 {
 	t.Helper()
 	claimed := f.claim(t)
-	link, _, _, err := f.store.ApproveDeviceLinkV3(context.Background(), f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag)
+	link, _, _, _, err := f.store.ApproveDeviceLinkV3(context.Background(), f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,14 +204,14 @@ func TestDeviceLinkV3ApprovalIsSourceDeviceBoundAndIdempotent(t *testing.T) {
 	f := newV3Fixture(t)
 	ctx := context.Background()
 	claimed := f.claim(t)
-	if _, _, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, "different-device", claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag); !errors.Is(err, ErrDeviceLinkInvalid) {
+	if _, _, _, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, "different-device", claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag); !errors.Is(err, ErrDeviceLinkInvalid) {
 		t.Fatalf("sibling approved: %v", err)
 	}
-	first, device, event, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag)
+	first, device, event, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag)
 	if err != nil || event == 0 {
 		t.Fatalf("approval: %v", err)
 	}
-	second, sameDevice, repeatedEvent, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag)
+	second, sameDevice, repeatedEvent, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag)
 	if err != nil || repeatedEvent != 0 || !reflect.DeepEqual(first, second) || !reflect.DeepEqual(device, sameDevice) {
 		t.Fatalf("approval retry mutated state: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestDeviceLinkV3ApprovalIsSourceDeviceBoundAndIdempotent(t *testing.T) {
 			t.Fatalf("%s got %d want %d: %v", query, got, want, err)
 		}
 	}
-	if _, _, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, bytes.Repeat([]byte{7}, 32)); !errors.Is(err, ErrIdempotencyConflict) {
+	if _, _, _, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, bytes.Repeat([]byte{7}, 32)); !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("approval replacement: %v", err)
 	}
 	if _, err := f.store.DeviceLinkV3ForSource(ctx, f.link.ID, f.owner.Account.ID, device.ID); !errors.Is(err, ErrDeviceLinkInvalid) {
