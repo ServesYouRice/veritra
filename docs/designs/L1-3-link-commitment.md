@@ -83,8 +83,9 @@ without the user.
   derivation, so no client built on ABI 18 can compute a v2 SAS.
 - The server accepts only v4 on the K2 routes. Migration 0060 revokes
   pending and claimed links that have no commitment. Approved v3 links keep
-  their device and window. Their history copy ends, because clients drop
-  native v3 transfer records (below).
+  their device and window, but no client can finish them. Their history copy
+  cannot finish, because clients drop native v3 transfer records (below);
+  its progress row retries until it expires (follow-up: abandon it at once).
 - **Open (follow-up):** the server's legacy v2 routes (`POST
   /api/v1/device-links`, claim-enrollment, claim, approve, claim-status)
   still exist, and five Go HTTP tests build v2 links inline, including

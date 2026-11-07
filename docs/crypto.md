@@ -472,8 +472,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   12 `reveal_sas` and 13 `source_commitment`; and
   `pm_crypto_device_link_transcript_hash` (v2) is removed. Native transfer
   records move to item version 2. Version-1 (v3) records are dropped on load,
-  never refused, so a history copy in flight across the upgrade ends and the
-  device links again. Server migration 0060 adds four write-once columns,
+  never refused. A history copy in flight across the upgrade cannot finish: its
+  progress row keeps retrying until it expires (at most 7 days) and the device
+  links again (demo data only; mapping the missing record to an abandoned
+  copy is a follow-up). Server migration 0060 adds four write-once columns,
   revokes pending and claimed links that have no commitment, adds `POST
   .../v3/{id}/reveal` (source only) and refuses approval before the reveal
   (`409 reveal_required`). The source's session-only reveal and approve
