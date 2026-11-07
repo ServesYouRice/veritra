@@ -3279,6 +3279,17 @@
       "test": null,
       "proof": null,
       "checkedEndToEnd": null
+    },
+    {
+      "issue": "C-756306a5d202",
+      "title": "Endpoint rotations are discarded when Flutter is not listening",
+      "severity": "high",
+      "task": "TASK-012",
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/push_state_test.dart (pending record before subscriber; failed registration; stale instance; newer rotation), mobile/test/push_service_test.dart (pendingEndpoint/acknowledgeEndpoint), mobile/android/wake-tests WakeRulesTest (EndpointRules)",
+      "proof": "No failing run was captured first: the new tests need the new pendingEndpoint/acknowledgeEndpoint API, so on the old code they do not compile. The defect itself (emit-only callbacks, nullable sink) was confirmed by reading MainActivity.kt and VeritraPushService.kt. Native code is compiled only by CI.",
+      "checkedEndToEnd": false
     }
   ],
   "foundWhileFixing": [

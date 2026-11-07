@@ -127,8 +127,9 @@ class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
             }
-            // "unregister" is answered by SharedFlutterEngine's channel
-            // handler, which never forwards it here.
+            // "unregister", "pendingEndpoint" and "acknowledgeEndpoint" are
+            // answered by SharedFlutterEngine's channel handler (they need no
+            // Activity), which never forwards them here.
             "pendingWakeGeneration" ->
                 result.success(PushEventBridge.pendingWakeGeneration(applicationContext))
             "acknowledgeWake" -> {
@@ -137,15 +138,6 @@ class MainActivity : FlutterActivity() {
                     result.error("invalid_arguments", "Wake generation is required", null)
                 } else {
                     result.success(PushEventBridge.acknowledgeWake(applicationContext, generation))
-                }
-            }
-            "pendingEndpoint" -> result.success(PushEventBridge.pendingEndpoint(applicationContext))
-            "acknowledgeEndpoint" -> {
-                val generation = call.argument<Number>("generation")?.toLong()
-                if (generation == null || generation <= 0) {
-                    result.error("invalid_arguments", "Endpoint generation is required", null)
-                } else {
-                    result.success(PushEventBridge.acknowledgeEndpoint(applicationContext, generation))
                 }
             }
             else -> result.notImplemented()
