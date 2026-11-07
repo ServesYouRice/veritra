@@ -632,6 +632,7 @@
   "chatMessageUnsupported": "This message needs a newer version of Veritra",
   "chatMessageInvalid": "A message could not be read",
   "chatMessageUndecryptable": "Couldn't unlock this message",
+  "chatMessageUnapprovedDevice": "A message from a device that isn't approved was hidden.",
   "chatMessageWelcomeUnavailable": "Couldn't join this chat. Ask a member to add you again.",
   "chatReactionCount": "{reaction} {count}",
   "@chatReactionCount": {"placeholders": {"reaction": {"type": "String"}, "count": {"type": "int", "format": "decimalPattern"}}},
@@ -742,6 +743,8 @@
   "errorUnexpectedResponse": "The server returned an unexpected response.",
 
   "errorConversationPaused": "Sending is paused in this conversation.",
+  "errorConversationApprovalHeld": "Sending is paused: a device in this chat isn't on its owner's approved list, or the list couldn't be checked yet.",
+  "errorDeviceListNotApproved": "That device isn't on its owner's approved list yet. It will be added once it is.",
   "errorOutboxFull": "Your encrypted message queue is full. Send or discard a pending message before composing another.",
   "errorCryptoStateFormatUnsupported": "This device's encrypted data was saved in a format this version of the app cannot read. Link this device again to keep messaging.",
   "errorConversationTooLarge": "This conversation has grown too large for this device to store its encryption data. Nothing was changed. You can leave the conversation to keep the others working.",

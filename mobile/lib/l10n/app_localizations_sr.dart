@@ -1822,6 +1822,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatMessageUndecryptable => 'Ова порука није могла да се откључа';
 
   @override
+  String get chatMessageUnapprovedDevice =>
+      'Сакривена је порука са уређаја који није одобрен.';
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Придруживање овом ћаскању није успело. Замолите члана да вас поново дода.';
 
@@ -2191,6 +2195,14 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get errorConversationPaused => 'Слање је паузирано у овом разговору.';
+
+  @override
+  String get errorConversationApprovalHeld =>
+      'Слање је паузирано: уређај у овом ћаскању није на одобреној листи свог власника или листа још није могла да се провери.';
+
+  @override
+  String get errorDeviceListNotApproved =>
+      'Тај уређај још није на одобреној листи свог власника. Биће додат када буде.';
 
   @override
   String get errorOutboxFull =>
@@ -4948,6 +4960,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatMessageUndecryptable => 'Ova poruka nije mogla da se otključa';
 
   @override
+  String get chatMessageUnapprovedDevice =>
+      'Sakrivena je poruka sa uređaja koji nije odobren.';
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Pridruživanje ovom ćaskanju nije uspelo. Zamolite člana da vas ponovo doda.';
 
@@ -5320,6 +5336,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get errorConversationPaused => 'Slanje je pauzirano u ovom razgovoru.';
+
+  @override
+  String get errorConversationApprovalHeld =>
+      'Slanje je pauzirano: uređaj u ovom ćaskanju nije na odobrenoj listi svog vlasnika ili lista još nije mogla da se proveri.';
+
+  @override
+  String get errorDeviceListNotApproved =>
+      'Taj uređaj još nije na odobrenoj listi svog vlasnika. Biće dodat kada bude.';
 
   @override
   String get errorOutboxFull =>

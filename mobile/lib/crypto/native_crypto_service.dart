@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
+import '../core/device_lists.dart' show DeviceListPins;
 import '../core/models.dart';
 import '../core/server_origin.dart';
 import '../storage/encrypted_database.dart'
@@ -43,6 +44,7 @@ class NativeCryptoService
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
+        DeviceListCryptoService,
         DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
         K2TransferCryptoService,
@@ -239,6 +241,296 @@ class NativeCryptoService
           signingKey: signingKey,
           keyPackage: keyPackage,
           origin: origin);
+
+  // L1 approved-device list (D94). The rules live in Rust; the pins in the
+  // app. Without pins no add is staged and every leaf is "checking".
+
+  DeviceListPins? _deviceListPins;
+
+  @override
+  set deviceListPins(DeviceListPins? pins) => _deviceListPins = pins;
+
+  @override
+  DeviceListChainResult checkChain(
+          String accountId, List<List<int>> statements) =>
+      bindings.checkDeviceListChain(idBytes(accountId), statements);
+
+  @override
+  DeviceListSummary checkStep({
+    required String accountId,
+    required List<int>? prev,
+    required List<int> statement,
+    required List<DeviceListPair> history,
+  }) =>
+      bindings.checkDeviceListStep(
+          expectedAccountId: idBytes(accountId),
+          prev: prev,
+          statement: statement,
+          history: history);
+
+  @override
+  Future<Uint8List> signDeviceList(DeviceListBody body) => _serial(() async {
+        final device = _requiredDevice();
+        final deviceId = _deviceId;
+        if (deviceId == null) throw StateError('no device identity');
+        return device.signDeviceList(body, idBytes(deviceId));
+      });
+
+  @override
+  Future<Uint8List> currentSigningKey() => _serial(
+      () async => Uint8List.fromList(_requiredDevice().signingPublicKey()));
+
+  @override
+  Future<void> holdRecoveryListSeed(Uint8List entropy) => _serial(() async {
+        final device = _device;
+        // The seed must be in the record before the pending state is sealed
+        // once (the sealed state is reused as is).
+        if (!_pendingEnrollment || device == null || _firstState != null) {
+          throw StateError('no unsealed pending enrollment identity');
+        }
+        device.holdRecoveryListSeed(entropy);
+      });
+
+  @override
+  Future<Uint8List> signRecoveryDeviceList({
+    required List<int> prev,
+    required DeviceListBody body,
+    required List<DeviceListPair> history,
+    Uint8List? entropy,
+  }) =>
+      _serial(() async {
+        final previous = await _requiredState();
+        try {
+          final statement = _requiredDevice().signRecoveryDeviceList(
+              prev: prev, body: body, history: history, entropy: entropy);
+          // A held seed was dropped by the signing: store that at once.
+          if (entropy == null) {
+            await localStore.commitLocalMlsState(
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+            );
+          }
+          return statement;
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  @override
+  Future<bool> dropRecoveryListHold() => _serial(() async {
+        final previous = await _requiredState();
+        try {
+          final dropped = _requiredDevice().dropRecoveryListHold();
+          if (dropped) {
+            await localStore.commitLocalMlsState(
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+            );
+          }
+          return dropped;
+        } catch (_) {
+          await _restorePrevious(previous);
+          rethrow;
+        }
+      });
+
+  /// How long one leaf judgment may wait for the server before it is
+  /// recorded as "checking" (the commit is applied either way, D94).
+  static const Duration deviceListJudgeTimeout = Duration(seconds: 10);
+
+  /// The most one group judgment spends waiting for the server; leaves
+  /// judged after that read only the stored pins.
+  static const Duration deviceListGroupBudget = Duration(seconds: 15);
+
+  Future<LeafVerdict> _judgeLeaf(LeafPair leaf, {bool network = true}) async {
+    final accountId = _accountId;
+    final deviceId = _deviceId;
+    if (accountId != null &&
+        deviceId != null &&
+        _sameBytes(leaf.accountId, idBytes(accountId)) &&
+        _sameBytes(leaf.deviceId, idBytes(deviceId))) {
+      // This device's own leaf; a twin with another key is judged below.
+      final own = _device?.signingPublicKey();
+      if (own != null && _sameBytes(own, leaf.signingKey)) {
+        return LeafVerdict.approved;
+      }
+      return LeafVerdict.unapproved;
+    }
+    final pins = _deviceListPins;
+    if (pins == null) return LeafVerdict.checking;
+    try {
+      return await pins
+          .judge(leaf.accountId, leaf.deviceId, leaf.signingKey,
+              refreshFirst: network)
+          .timeout(deviceListJudgeTimeout);
+    } on Object {
+      return LeafVerdict.checking;
+    }
+  }
+
+  /// Judges every leaf of [conversationId]'s group (D94). A leaf already
+  /// approved with the same key keeps its row unless [rejudgeApproved]; a
+  /// leaf whose row is not approved is judged again. With
+  /// [participants] (a Welcome), a leaf of an account that is not one of the
+  /// conversation's participants is unapproved whatever its list says.
+  Future<ApprovalLeafChange> _judgeGroup(
+    String conversationId, {
+    Set<String>? participants,
+    bool rejudgeApproved = false,
+  }) async {
+    final leaves = _requiredDevice().groupMembers(conversationId);
+    final previous = await localStore.loadApprovalLeaves(conversationId);
+    final now = _clock().toUtc().millisecondsSinceEpoch;
+    final budget = Stopwatch()..start();
+    final rows = <ApprovalLeaf>[];
+    for (final leaf in leaves) {
+      final known = previous
+          .where((row) =>
+              row.sameLeaf(leaf.accountId, leaf.deviceId) &&
+              _sameBytes(row.signingKey, leaf.signingKey))
+          .firstOrNull;
+      LeafVerdict verdict;
+      if (known != null &&
+          known.verdict == LeafVerdict.approved &&
+          !rejudgeApproved) {
+        verdict = LeafVerdict.approved;
+      } else {
+        verdict = await _judgeLeaf(leaf,
+            network: budget.elapsed < deviceListGroupBudget);
+      }
+      if (participants != null && verdict == LeafVerdict.approved) {
+        String? account;
+        try {
+          account = utf8.decode(leaf.accountId);
+        } on FormatException {
+          account = null;
+        }
+        if (account == null || !participants.contains(account)) {
+          verdict = LeafVerdict.unapproved;
+        }
+      }
+      rows.add(ApprovalLeaf(
+        conversationId: conversationId,
+        accountId: leaf.accountId,
+        deviceId: leaf.deviceId,
+        signingKey: leaf.signingKey,
+        verdict: verdict,
+        updatedAt: now,
+      ));
+    }
+    return ApprovalLeafChange(
+        conversationId: conversationId, leaves: rows, replaceAll: true);
+  }
+
+  /// The participants a Welcome's roster must stay within, or null when the
+  /// app has not told this service (then only the lists are checked).
+  Set<String>? _participantsOf(String conversationId) {
+    final members = _authority?.memberAccounts(conversationId);
+    if (members == null || members.isEmpty) return null;
+    return {...members, if (_accountId != null) _accountId!};
+  }
+
+  /// Whether [conversationId] is held for an unapproved, removed or
+  /// undecided leaf (the approval hold, D94). A group never judged (from
+  /// before L1, or whose rows a crash lost) is judged now; leaves that are
+  /// not approved are judged again, so a list that now approves them, or a
+  /// commit that removed them, releases the hold from local evidence only.
+  @override
+  Future<bool> refreshApprovalHold(String conversationId) =>
+      _serial(() => _refreshApprovalHold(conversationId));
+
+  Future<bool> _refreshApprovalHold(String conversationId) async {
+    if (!await _hasGroup(conversationId)) return false;
+    final rows = await localStore.loadApprovalLeaves(conversationId);
+    if (rows.isNotEmpty &&
+        rows.every((row) => row.verdict == LeafVerdict.approved)) {
+      return false;
+    }
+    final change = await _judgeGroup(conversationId);
+    await localStore.saveApprovalLeaves(change);
+    return change.leaves.any((row) => row.verdict != LeafVerdict.approved);
+  }
+
+  Future<bool> _hasGroup(String conversationId) async {
+    try {
+      _requiredDevice().groupEpoch(conversationId);
+      return true;
+    } on NativeCryptoException {
+      return false;
+    }
+  }
+
+  /// Refuses to encrypt anything to [conversationId] while it is held.
+  Future<void> _requireApproved(String conversationId) async {
+    if (await _refreshApprovalHold(conversationId)) {
+      throw ConversationApprovalHeldException(conversationId);
+    }
+  }
+
+  /// What the sender leaf of a received message was judged (D94). A group
+  /// with no rows yet is judged first; a leaf with no row is unapproved.
+  Future<LeafVerdict> _senderVerdict(
+      String conversationId, String accountId, String deviceId) async {
+    var rows = await localStore.loadApprovalLeaves(conversationId);
+    if (rows.isEmpty) {
+      final change = await _judgeGroup(conversationId);
+      await localStore.saveApprovalLeaves(change);
+      rows = change.leaves;
+    }
+    final row = rows
+        .where((row) => row.sameLeaf(idBytes(accountId), idBytes(deviceId)))
+        .firstOrNull;
+    if (row == null) return LeafVerdict.unapproved;
+    if (row.verdict == LeafVerdict.checking) {
+      // Try once more: the list may be reachable now.
+      final change = await _judgeGroup(conversationId);
+      await localStore.saveApprovalLeaves(change);
+      return change.leaves
+              .where((leaf) =>
+                  leaf.sameLeaf(idBytes(accountId), idBytes(deviceId)))
+              .firstOrNull
+              ?.verdict ??
+          LeafVerdict.unapproved;
+    }
+    return row.verdict;
+  }
+
+  /// The keyed adds the pins approve, each with the key the pin lists (never
+  /// one the server sent). Packages of devices not approved now are left
+  /// out; reconcile offers them again later.
+  Future<List<({DeviceKeyPackage package, Uint8List signingKey})>> _gateAdds(
+      List<DeviceKeyPackage> adds) async {
+    final pins = _deviceListPins;
+    if (pins == null) return const [];
+    final out = <({DeviceKeyPackage package, Uint8List signingKey})>[];
+    for (final package in adds) {
+      Uint8List? key;
+      try {
+        key = await pins
+            .approvedKey(package.accountId, package.deviceId)
+            .timeout(deviceListJudgeTimeout);
+      } on Object {
+        key = null;
+      }
+      if (key != null) out.add((package: package, signingKey: key));
+    }
+    return out;
+  }
+
+  /// Writes this device's view of the group after its own commit merged.
+  /// Not atomic with the merge: if it is lost, the group has no rows and is
+  /// judged before it is next used (fail closed).
+  Future<void> _rejudgeAfterOwnCommit(String conversationId) async {
+    try {
+      if (!await _hasGroup(conversationId)) return;
+      await localStore.saveApprovalLeaves(await _judgeGroup(conversationId));
+    } on Object {
+      // Judged again before the next send.
+    }
+  }
 
   @override
   Future<StoredCryptoState> sealPendingEnrollment() => _serial(() async {
@@ -525,32 +817,34 @@ class NativeCryptoService
     String conversationId,
     List<DeviceKeyPackage> claimedPackages,
   ) =>
-      _serial(() async {
-        final previous = await _requiredState();
-        try {
-          final device = _requiredDevice();
-          device.createGroup(conversationId);
-          // One staged commit adds everyone (card I51). With nobody else to
-          // add, the bundle only records this device as the group's first
-          // member, so later devices can be added by reconcile.
-          final bundle = claimedPackages.isEmpty
-              ? const MlsCommitBundle(epoch: 0)
-              : _stage(device, conversationId, adds: claimedPackages);
-          await localStore.commitOutgoingMlsTransition(
-            OutgoingMlsStateTransition(
-              expectedCounter: previous.counter,
-              expectedCursor: await localStore.loadSyncCursor(),
-              state: _sealNext(previous),
-              messages: <PendingMlsMessage>[
-                _bundleItem(conversationId, bundle)
-              ],
-            ),
-          );
-        } catch (_) {
-          await _restorePrevious(previous);
-          rethrow;
-        }
-      });
+      _gateAdds(claimedPackages).then((approved) => _serial(() async {
+            final previous = await _requiredState();
+            try {
+              final device = _requiredDevice();
+              device.createGroup(conversationId);
+              // One staged commit adds everyone (card I51). With nobody else to
+              // add, the bundle only records this device as the group's first
+              // member, so later devices can be added by reconcile. A device
+              // the approved-device lists do not approve now is left out and
+              // added by reconcile once they do (L1, D94).
+              final bundle = approved.isEmpty
+                  ? const MlsCommitBundle(epoch: 0)
+                  : _stage(device, conversationId, adds: approved);
+              await localStore.commitOutgoingMlsTransition(
+                OutgoingMlsStateTransition(
+                  expectedCounter: previous.counter,
+                  expectedCursor: await localStore.loadSyncCursor(),
+                  state: _sealNext(previous),
+                  messages: <PendingMlsMessage>[
+                    _bundleItem(conversationId, bundle)
+                  ],
+                ),
+              );
+            } catch (_) {
+              await _restorePrevious(previous);
+              rethrow;
+            }
+          }));
 
   @override
   Future<void> stageMembershipChange(
@@ -558,34 +852,42 @@ class NativeCryptoService
     List<DeviceKeyPackage> adds = const <DeviceKeyPackage>[],
     List<MlsDeviceRef> removes = const <MlsDeviceRef>[],
   }) =>
-      _serial(() async {
-        if (adds.isEmpty && removes.isEmpty) {
-          throw ArgumentError('a membership change needs a device');
-        }
-        await _requireNotPaused(conversationId);
-        final previous = await _requiredState();
-        try {
-          final bundle = _stage(_requiredDevice(), conversationId,
-              adds: adds, removes: removes);
-          await localStore.commitOutgoingMlsTransition(
-            OutgoingMlsStateTransition(
-              expectedCounter: previous.counter,
-              expectedCursor: await localStore.loadSyncCursor(),
-              state: _sealNext(previous),
-              messages: <PendingMlsMessage>[
-                _bundleItem(conversationId, bundle)
-              ],
-            ),
-          );
-        } catch (_) {
-          await _restorePrevious(previous);
-          rethrow;
-        }
-      });
+      _gateAdds(adds).then((approved) => _serial(() async {
+            if (adds.isEmpty && removes.isEmpty) {
+              throw ArgumentError('a membership change needs a device');
+            }
+            if (approved.isEmpty && removes.isEmpty) {
+              // No device of this change is on its account's approved-device
+              // list now: nothing is staged and the change stays pending.
+              throw DeviceListNotApprovedException(
+                  [for (final add in adds) add.deviceId]);
+            }
+            await _requireNotPaused(conversationId);
+            final previous = await _requiredState();
+            try {
+              final bundle = _stage(_requiredDevice(), conversationId,
+                  adds: approved, removes: removes);
+              await localStore.commitOutgoingMlsTransition(
+                OutgoingMlsStateTransition(
+                  expectedCounter: previous.counter,
+                  expectedCursor: await localStore.loadSyncCursor(),
+                  state: _sealNext(previous),
+                  messages: <PendingMlsMessage>[
+                    _bundleItem(conversationId, bundle)
+                  ],
+                ),
+              );
+            } catch (_) {
+              await _restorePrevious(previous);
+              rethrow;
+            }
+          }));
 
   @override
   Future<void> stageSelfUpdate(String conversationId) => _serial(() async {
         await _requireNotPaused(conversationId);
+        // A fresh path secret would be encrypted to every leaf (D94).
+        await _requireApproved(conversationId);
         final previous = await _requiredState();
         try {
           final staged = _requiredDevice().stageSelfUpdate(conversationId);
@@ -656,6 +958,9 @@ class NativeCryptoService
             state: _sealNext(previous),
             resolvedMlsOutboxKey: item.idempotencyKey,
           );
+          if (bundle.hasCommit) {
+            await _rejudgeAfterOwnCommit(item.conversationId);
+          }
         } catch (_) {
           await _restorePrevious(previous);
           rethrow;
@@ -821,32 +1126,43 @@ class NativeCryptoService
     }
   }
 
+  /// Stages a commit with change list version 2 (L1, ABI 14): every add
+  /// names the signing key the approved-device list pins for it, and Rust
+  /// refuses a key package that holds another. [adds] come only from
+  /// [_gateAdds].
   MlsCommitBundle _stage(
     NativeCryptoDevice device,
     String conversationId, {
-    List<DeviceKeyPackage> adds = const <DeviceKeyPackage>[],
+    List<({DeviceKeyPackage package, Uint8List signingKey})> adds = const [],
     List<MlsDeviceRef> removes = const <MlsDeviceRef>[],
     String? revocationDeviceId,
   }) {
-    final staged = device.stageCommit(
+    final staged = device.stageCommitKeyed(
       conversationId,
-      adds: <({List<int> keyPackage, String accountId, String deviceId})>[
-        for (final package in adds)
+      adds: [
+        for (final add in adds)
           (
-            keyPackage: package.keyPackage,
-            accountId: package.accountId,
-            deviceId: package.deviceId,
+            keyPackage: add.package.keyPackage,
+            accountId: idBytes(add.package.accountId),
+            deviceId: idBytes(add.package.deviceId),
+            signingKey: add.signingKey,
           ),
       ],
-      removes: removes,
+      removes: [
+        for (final remove in removes)
+          (
+            accountId: idBytes(remove.accountId),
+            deviceId: idBytes(remove.deviceId),
+          ),
+      ],
     );
     return MlsCommitBundle(
       epoch: staged.epoch,
       commit: staged.commit,
       welcome: staged.welcome,
       added: <MlsDeviceRef>[
-        for (final package in adds)
-          (accountId: package.accountId, deviceId: package.deviceId),
+        for (final add in adds)
+          (accountId: add.package.accountId, deviceId: add.package.deviceId),
       ],
       removed: removes,
       revocationDeviceId: revocationDeviceId,
@@ -918,6 +1234,7 @@ class NativeCryptoService
                 cursor: message.syncEventId,
                 resolvedMlsOutboxKey: bundle.idempotencyKey,
               ));
+              await _rejudgeAfterOwnCommit(message.conversationId);
               return;
             }
             if (message.kind == 'commit') {
@@ -998,6 +1315,23 @@ class NativeCryptoService
             default:
               throw StateError('unsupported MLS transport message');
           }
+          // L1 (D94): the commit or Welcome is applied, never refused for a
+          // list reason. Every leaf of the group is judged now and the
+          // verdicts commit with the state, so a crash cannot leave the
+          // merged group unjudged. A group this device left has no leaves.
+          final ApprovalLeafChange approval;
+          if (await _hasGroup(message.conversationId)) {
+            approval = await _judgeGroup(message.conversationId,
+                participants: message.kind == 'welcome'
+                    ? _participantsOf(message.conversationId)
+                    : null);
+          } else {
+            approval = ApprovalLeafChange(
+                conversationId: message.conversationId,
+                leaves: const [],
+                replaceAll: true);
+          }
+          checkCanCommit?.call();
           final next = _sealNext(previous);
           await localStore.commitMlsTransition(MlsStateTransition(
             checkCanCommit: checkCanCommit,
@@ -1007,6 +1341,7 @@ class NativeCryptoService
             expectedCursor: previousCursor,
             state: next,
             cursor: message.syncEventId,
+            approvalLeaves: approval,
           ));
         } catch (_) {
           await _restorePrevious(previous);
@@ -1073,6 +1408,7 @@ class NativeCryptoService
           String conversationId, Map<String, Object?> signal) =>
       _serial(() async {
         await _requireNotPaused(conversationId);
+        await _requireApproved(conversationId);
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         final actionId = _randomIdempotencyKey();
@@ -1262,6 +1598,7 @@ class NativeCryptoService
           throw ArgumentError.value(type, 'type', 'not a message payload');
         }
         await _requireNotPaused(conversationId);
+        await _requireApproved(conversationId);
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         if (!await localStore.hasOutboxCapacity()) {
@@ -1481,6 +1818,31 @@ class NativeCryptoService
             return null;
           }
           plaintext = decrypted;
+          // L1 (D94): a message from a leaf that is not approved never
+          // speaks as its account. The ratchet has moved, so the state and
+          // the cursor commit; the text is not kept.
+          final verdict = await _senderVerdict(envelope.conversationId,
+              envelope.senderAccountId, envelope.senderDeviceId);
+          if (verdict != LeafVerdict.approved &&
+              verdict != LeafVerdict.removed) {
+            plaintext.fillRange(0, plaintext.length, 0);
+            await localStore.commitMlsTransition(MlsStateTransition(
+              checkCanCommit: operationFence,
+              messageId: marker,
+              conversationId: envelope.conversationId,
+              expectedCounter: previous.counter,
+              expectedCursor: cursor,
+              state: _sealNext(previous),
+              cursor: syncEventId,
+              messageEffects: <MessageEffect>[
+                _placeholderRow(
+                    envelope,
+                    '$unapprovedSenderKeyPrefix$syncEventId:${envelope.id}',
+                    LocalMessageKind.invalid),
+              ],
+            ));
+            return null;
+          }
         } on NativeCryptoException catch (error) {
           if (!error.kind.ratchetAdvanced) rethrow;
           // The ratchet already advanced, so the message can never be

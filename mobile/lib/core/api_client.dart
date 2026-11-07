@@ -9,6 +9,7 @@ import 'account_recovery.dart';
 import 'admin_models.dart';
 import 'api_errors.dart';
 import 'device_link_v3_models.dart';
+import 'device_lists.dart' show DeviceListPage;
 import 'membership_models.dart';
 import 'models.dart';
 import 'server_origin.dart';
@@ -271,7 +272,8 @@ class ApiClient {
   }
 
   Future<DeviceLinkV3Record> approveDeviceLinkV3(
-      Session owner, DeviceLinkV3Record expected, List<int> approvalTag) async {
+      Session owner, DeviceLinkV3Record expected, List<int> approvalTag,
+      {List<int>? deviceList}) async {
     _v3Owner(owner);
     if (expected.origin != baseUrl ||
         expected.accountId != owner.accountId ||
@@ -290,6 +292,7 @@ class ApiClient {
               'transcript_hash':
                   base64Encode(expected.bytes('transcript_hash')),
               'approval_tag': base64Encode(approvalTag),
+              if (deviceList != null) 'device_list': base64Encode(deviceList),
             }),
         id: expected.id,
         owner: owner);
@@ -386,6 +389,7 @@ class ApiClient {
     required EnrollmentCredential credential,
     String setupToken = '',
     String? instanceName,
+    List<int>? deviceList,
   }) async {
     final json = await _jsonRequest(
       'POST',
@@ -400,6 +404,7 @@ class ApiClient {
         'device_key_package': base64Encode(credential.deviceKeyPackage),
         'signing_key': base64Encode(credential.signingKey),
         'challenge_signature': base64Encode(credential.challengeSignature),
+        if (deviceList != null) 'device_list': base64Encode(deviceList),
       },
       extraHeaders: setupToken.isEmpty
           ? const <String, String>{}
@@ -415,6 +420,7 @@ class ApiClient {
     required String deviceName,
     required EnrollmentReservation enrollment,
     required EnrollmentCredential credential,
+    List<int>? deviceList,
   }) async {
     final json = await _jsonRequest(
       'POST',
@@ -428,6 +434,7 @@ class ApiClient {
         'device_key_package': base64Encode(credential.deviceKeyPackage),
         'signing_key': base64Encode(credential.signingKey),
         'challenge_signature': base64Encode(credential.challengeSignature),
+        if (deviceList != null) 'device_list': base64Encode(deviceList),
       },
     );
     return _sessionFromAuthJson(json, fallbackUsername: username);
@@ -562,6 +569,7 @@ class ApiClient {
     String token, {
     required List<int> rkAuthPub,
     required List<int> rkId,
+    List<int>? deviceList,
   }) async {
     final json = await _jsonRequest(
       'PUT',
@@ -570,6 +578,7 @@ class ApiClient {
       body: <String, Object?>{
         'rk_auth_pub': base64Encode(rkAuthPub),
         'rk_id': base64Encode(rkId),
+        if (deviceList != null) 'device_list': base64Encode(deviceList),
       },
     );
     return _decode(() => RecoveryKeyStatus.fromJson(json));
@@ -663,8 +672,42 @@ class ApiClient {
     );
   }
 
-  Future<void> revokeDevice(String token, String deviceId) async {
-    await _jsonRequest('DELETE', '/api/v1/devices/$deviceId', token: token);
+  Future<void> revokeDevice(String token, String deviceId,
+      {List<int>? deviceList}) async {
+    await _jsonRequest('DELETE', '/api/v1/devices/$deviceId',
+        token: token,
+        body: deviceList == null
+            ? null
+            : <String, Object?>{'device_list': base64Encode(deviceList)});
+  }
+
+  /// One page of [accountId]'s approved-device list after version [after]
+  /// (L1). Null when the server answers 404: an unknown account, or one
+  /// this account shares no conversation with (the same answer for both).
+  Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
+      {required int after}) async {
+    try {
+      final json = await _jsonRequest(
+          'GET',
+          '/api/v1/accounts/${Uri.encodeComponent(accountId)}/device-list'
+              '?after=$after',
+          token: token);
+      return _decode(() => DeviceListPage.fromJson(json));
+    } on ApiException catch (error) {
+      if (error.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
+  /// `POST /api/v1/account/device-list`: a migration genesis, a repair
+  /// removal or a recovery version. Returns the version stored.
+  Future<int> publishDeviceList(String token, List<int> statement) async {
+    final json = await _jsonRequest('POST', '/api/v1/account/device-list',
+        token: token,
+        body: <String, Object?>{'device_list': base64Encode(statement)});
+    final version = json['version'];
+    if (version is! int) throw const ApiResponseException();
+    return version;
   }
 
   /// Returns one bounded page of the versioned account export. The server
@@ -1924,15 +1967,17 @@ class ApiClient {
     String token,
     String linkId,
     List<int> transcriptHash,
-    List<int> approvalTag,
-  ) async {
+    List<int> approvalTag, {
+    List<int>? deviceList,
+  }) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/device-links/$linkId/approve',
       token: token,
       body: <String, Object?>{
         'transcript_hash': base64Encode(transcriptHash),
-        'approval_tag': base64Encode(approvalTag)
+        'approval_tag': base64Encode(approvalTag),
+        if (deviceList != null) 'device_list': base64Encode(deviceList),
       },
     );
     return _decode(() => DeviceLink.fromJson(_object(json, 'device_link')));

@@ -1809,6 +1809,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatMessageUndecryptable => 'Couldn\'t unlock this message';
 
   @override
+  String get chatMessageUnapprovedDevice =>
+      'A message from a device that isn\'t approved was hidden.';
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Couldn\'t join this chat. Ask a member to add you again.';
 
@@ -2176,6 +2180,14 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get errorConversationPaused =>
       'Sending is paused in this conversation.';
+
+  @override
+  String get errorConversationApprovalHeld =>
+      'Sending is paused: a device in this chat isn\'t on its owner\'s approved list, or the list couldn\'t be checked yet.';
+
+  @override
+  String get errorDeviceListNotApproved =>
+      'That device isn\'t on its owner\'s approved list yet. It will be added once it is.';
 
   @override
   String get errorOutboxFull =>

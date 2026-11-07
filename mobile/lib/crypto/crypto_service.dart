@@ -4,7 +4,9 @@ import '../core/models.dart';
 import '../storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
+import '../core/device_lists.dart' show DeviceListPins, DeviceListVerifier;
 import 'mls_commit_bundle.dart';
+import 'native_crypto_bindings.dart' show DeviceListBody, DeviceListPair;
 import 'app_payload.dart';
 
 class ConversationSafetyNumber {
@@ -138,6 +140,65 @@ abstract interface class MlsStateMaintenanceCryptoService {
   /// or delete may call this, never a server event (docs/crypto.md,
   /// "Rejoining a conversation"). Returns whether a group was stored.
   Future<bool> deleteConversationState(String conversationId);
+}
+
+/// The L1 approved-device list (D94) through the native engine. Only an
+/// engine that does real MLS implements it, and that engine gates every add
+/// and judges every leaf against [deviceListPins]: until they are set, it
+/// stages no add and judges every leaf as "checking" (fail closed).
+abstract interface class DeviceListCryptoService implements DeviceListVerifier {
+  /// The pins the add gate and the leaf judge use. Set by the app once the
+  /// session's API and store are known; null again on sign-out.
+  set deviceListPins(DeviceListPins? pins);
+
+  /// Signs [body] as this device and returns the whole statement. Works for
+  /// a pending enrollment too, so a genesis can travel with setup or
+  /// registration.
+  Future<Uint8List> signDeviceList(DeviceListBody body);
+
+  /// The current (possibly pending) device's MLS signing key.
+  Future<Uint8List> currentSigningKey();
+
+  /// Keeps the recovery list seed derived from [entropy] in the sealed
+  /// pending enrollment (K0-R claim, D94 question 1).
+  Future<void> holdRecoveryListSeed(Uint8List entropy);
+
+  /// Signs change 4 from the held seed, or from [entropy] when given.
+  Future<Uint8List> signRecoveryDeviceList({
+    required List<int> prev,
+    required DeviceListBody body,
+    required List<DeviceListPair> history,
+    Uint8List? entropy,
+  });
+
+  /// Drops a held recovery list seed. Returns whether one was held.
+  Future<bool> dropRecoveryListHold();
+
+  /// Whether [conversationId] is held because one of its leaves is not
+  /// approved now (judging it again first). While held, nothing is
+  /// encrypted to it; a removal may still be committed.
+  Future<bool> refreshApprovalHold(String conversationId);
+}
+
+/// A membership change named only devices that are not on their accounts'
+/// approved-device lists now (L1, D94). Nothing was staged; the change stays
+/// pending and is offered again.
+class DeviceListNotApprovedException implements Exception {
+  const DeviceListNotApprovedException(this.deviceIds);
+  final List<String> deviceIds;
+
+  @override
+  String toString() => 'DeviceListNotApprovedException';
+}
+
+/// Encryption to a conversation was refused because one of its devices is
+/// not on its account's approved-device list (the approval hold, D94).
+class ConversationApprovalHeldException implements Exception {
+  const ConversationApprovalHeldException(this.conversationId);
+  final String conversationId;
+
+  @override
+  String toString() => 'ConversationApprovalHeldException';
 }
 
 /// Whether the native device handle still answers (C1 prerequisite 1).

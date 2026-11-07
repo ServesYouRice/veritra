@@ -181,7 +181,8 @@ class _LinkApi extends ApiClient {
 
   @override
   Future<DeviceLinkV3Record> approveDeviceLinkV3(
-      Session owner, DeviceLinkV3Record expected, List<int> approvalTag) async {
+      Session owner, DeviceLinkV3Record expected, List<int> approvalTag,
+      {List<int>? deviceList}) async {
     final link = server.link!;
     expect(expected.fields['claim_request_hash'], link['claim_request_hash']);
     if (link['state'] == 'claimed') {

@@ -133,6 +133,7 @@ class _RegisterApi extends ApiClient {
     required String deviceName,
     required EnrollmentReservation enrollment,
     required EnrollmentCredential credential,
+    List<int>? deviceList,
   }) async {
     registrations++;
     throw StateError('registration must not be reached');

@@ -866,6 +866,7 @@ class _Api extends ApiClient {
     required EnrollmentCredential credential,
     String setupToken = '',
     String? instanceName,
+    List<int>? deviceList,
   }) async =>
       signedIn;
 
@@ -877,6 +878,7 @@ class _Api extends ApiClient {
     required String deviceName,
     required EnrollmentReservation enrollment,
     required EnrollmentCredential credential,
+    List<int>? deviceList,
   }) async =>
       signedIn;
 

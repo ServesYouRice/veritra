@@ -3003,6 +3003,12 @@ abstract class AppLocalizations {
   /// **'Couldn\'t unlock this message'**
   String get chatMessageUndecryptable;
 
+  /// No description provided for @chatMessageUnapprovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'A message from a device that isn\'t approved was hidden.'**
+  String get chatMessageUnapprovedDevice;
+
   /// No description provided for @chatMessageWelcomeUnavailable.
   ///
   /// In en, this message translates to:
@@ -3554,6 +3560,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Sending is paused in this conversation.'**
   String get errorConversationPaused;
+
+  /// No description provided for @errorConversationApprovalHeld.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending is paused: a device in this chat isn\'t on its owner\'s approved list, or the list couldn\'t be checked yet.'**
+  String get errorConversationApprovalHeld;
+
+  /// No description provided for @errorDeviceListNotApproved.
+  ///
+  /// In en, this message translates to:
+  /// **'That device isn\'t on its owner\'s approved list yet. It will be added once it is.'**
+  String get errorDeviceListNotApproved;
 
   /// No description provided for @errorOutboxFull.
   ///
