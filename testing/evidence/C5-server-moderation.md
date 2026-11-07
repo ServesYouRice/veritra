@@ -14,3 +14,10 @@ timeout and slow-mode call fails both tests.
 Commands: `go vet ./internal/...`, `go test ./internal/storage
 ./internal/httpapi`, full `go test ./...` in the check script.
 Not built: apps, delete-others, escalation (see the C5 design status).
+
+Opus review (independent): three blockers fixed. The Flutter contract test
+needed the three new error codes (`timed_out`, `slow_mode`, `invalid_seconds`;
+`ErrBanned` was dead and is removed); a timeout also refuses edits and
+reactions; only admins and above lift bans. Also: banned accounts get no invite
+preview, `banned_by` has no cascade, slow mode reads the last post with
+`LIMIT 1`. Flutter `api_contract_test` passes.

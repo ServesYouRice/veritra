@@ -61,6 +61,9 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'mls_not_in_group': ApiErrorKind.permission,
   'setup_authorization_required': ApiErrorKind.permission,
   'posting_restricted': ApiErrorKind.permission,
+  'timed_out': ApiErrorKind.permission,
+  'slow_mode': ApiErrorKind.rateLimited,
+  'invalid_seconds': ApiErrorKind.invalidRequest,
   // Not found or gone.
   'not_found': ApiErrorKind.notFound,
   'blob_not_found': ApiErrorKind.notFound,

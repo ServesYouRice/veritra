@@ -5,8 +5,10 @@ delete-others not built.** Built: bans (`member_bans`; kick then record in
 one transaction; refuses add, channel add, join request), kick, timeout
 (`memberships.timeout_until`, send refused `timed_out`), slow mode
 (`channels.slow_mode_seconds`, send refused 429 `slow_mode` with
-`Retry-After`; moderators and above exempt; the server cannot tell a post from
-a reaction or edit, so all envelopes count), paused invites
+`Retry-After`; moderators and above exempt; it counts every new envelope,
+because the server cannot tell a post from a control message, so future
+channel control envelopes would be throttled too; a timeout also refuses
+edits and reactions), paused invites
 (`communities.invites_paused_until`, an invitation of that community is
 unusable), and the audit log (`moderation_events`, ids and action kinds, admins
 and above read it). Routes in `httpapi/moderation_handlers.go`; tests in
@@ -18,8 +20,13 @@ authority check on receipt, and for communities C7's `history-hide`, which
 is not built); key-package claim refusal for banned accounts (adds already
 refuse them, and a claim needs a member to ask); escalation and instance ban
 (not part of this package). A ban removes via the same path as C1's removal
-(`removeCommunityMemberTx`), so it inherits that path's limits (C0 shared
-groups are not covered by it yet). Original status: proposed. Written against `main` at `f1b4a36`. Builds on C0
+(`removeCommunityMemberTx`; it covers an active layout's shared and private
+conversations). Admins and above lift bans; moderators ban members they
+outrank. Known gaps: the pending-request list does not hide requests an
+active pause makes unapprovable; the C1 community remove route writes no
+audit row; leaving and rejoining clears a timeout; the instance owner's
+escalation action kinds need a table rebuild when added; MLS commits of
+legacy groups are not wire-checked by the timeout. Original status: proposed. Written against `main` at `f1b4a36`. Builds on C0
 (shared group, `channel_id`), C1 (membership), C4 (the signed built-in
 role state, `docs/designs/C4-custom-roles.md`) and C6 (sealed reports, design on `agent/C6`). Needs Opus review
 before the server parts land. Revision 2 (2026-11-01) adds escalation to the

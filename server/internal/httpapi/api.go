@@ -499,8 +499,6 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "posting_restricted")
 	case errors.Is(err, storage.ErrTimedOut):
 		writeError(w, http.StatusForbidden, "timed_out")
-	case errors.Is(err, storage.ErrBanned):
-		writeError(w, http.StatusForbidden, "banned")
 	case errors.Is(err, storage.ErrSlowMode):
 		var slow storage.SlowModeError
 		if errors.As(err, &slow) {

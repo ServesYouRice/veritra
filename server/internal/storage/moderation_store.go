@@ -10,8 +10,6 @@ import (
 )
 
 var (
-	// ErrBanned: the account is banned from this community.
-	ErrBanned = errors.New("account is banned from this community")
 	// ErrTimedOut: the sender is in a timeout and may not post.
 	ErrTimedOut = errors.New("account is timed out")
 	// ErrSlowMode: the sender posted in this channel too recently.
@@ -173,7 +171,9 @@ func (s *Store) UnbanCommunityMember(ctx context.Context, communityID, actorAcco
 	if err != nil {
 		return err
 	}
-	if !domain.CanManageMembers(role) {
+	// Admins and above lift bans: a moderator must not undo an admin's ban or
+	// a pre-ban only an admin can place (rank rule on every action).
+	if !domain.CanManageInvites(role) {
 		return ErrForbidden
 	}
 	result, err := tx.ExecContext(ctx, `DELETE FROM member_bans WHERE community_id = ? AND account_id = ?`, communityID, targetAccountID)
@@ -364,23 +364,15 @@ func (s *Store) ListModerationEvents(ctx context.Context, communityID, actorAcco
 // the channel the post names in a shared group, or "" for a legacy channel
 // conversation (then the conversation's own channel applies).
 func checkPostingAllowedTx(ctx context.Context, tx *sql.Tx, conversationID, accountID, senderRole, routeChannelID string, now time.Time) error {
+	if err := checkNotTimedOutTx(ctx, tx, conversationID, accountID, now); err != nil {
+		return err
+	}
 	var communityID, convChannel sql.NullString
 	if err := tx.QueryRowContext(ctx, `SELECT community_id, channel_id FROM conversations WHERE id = ?`, conversationID).Scan(&communityID, &convChannel); err != nil {
 		return err
 	}
 	if !communityID.Valid {
 		return nil
-	}
-	var timeout sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT timeout_until FROM memberships WHERE community_id = ? AND account_id = ?`, communityID.String, accountID).Scan(&timeout)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if timeout.Valid {
-		end := parseTime(timeout.String)
-		if domain.TimedOut(&end, now) {
-			return ErrTimedOut
-		}
 	}
 	channelID := routeChannelID
 	if channelID == "" && convChannel.Valid {
@@ -390,7 +382,7 @@ func checkPostingAllowedTx(ctx context.Context, tx *sql.Tx, conversationID, acco
 		return nil
 	}
 	var seconds int64
-	err = tx.QueryRowContext(ctx, `SELECT slow_mode_seconds FROM channels WHERE id = ?`, channelID).Scan(&seconds)
+	err := tx.QueryRowContext(ctx, `SELECT slow_mode_seconds FROM channels WHERE id = ?`, channelID).Scan(&seconds)
 	if errors.Is(err, sql.ErrNoRows) || seconds == 0 {
 		return nil
 	}
@@ -399,11 +391,11 @@ func checkPostingAllowedTx(ctx context.Context, tx *sql.Tx, conversationID, acco
 	}
 	var last sql.NullString
 	if routeChannelID != "" {
-		err = tx.QueryRowContext(ctx, `SELECT MAX(created_at) FROM message_envelopes WHERE conversation_id = ? AND sender_account_id = ? AND json_extract(crypto_metadata_json, '$.channel_id') = ?`, conversationID, accountID, routeChannelID).Scan(&last)
+		err = tx.QueryRowContext(ctx, `SELECT created_at FROM message_envelopes WHERE conversation_id = ? AND sender_account_id = ? AND json_extract(crypto_metadata_json, '$.channel_id') = ? ORDER BY created_at DESC LIMIT 1`, conversationID, accountID, routeChannelID).Scan(&last)
 	} else {
-		err = tx.QueryRowContext(ctx, `SELECT MAX(created_at) FROM message_envelopes WHERE conversation_id = ? AND sender_account_id = ?`, conversationID, accountID).Scan(&last)
+		err = tx.QueryRowContext(ctx, `SELECT created_at FROM message_envelopes WHERE conversation_id = ? AND sender_account_id = ? ORDER BY created_at DESC LIMIT 1`, conversationID, accountID).Scan(&last)
 	}
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	var lastPost *time.Time
@@ -413,6 +405,25 @@ func checkPostingAllowedTx(ctx context.Context, tx *sql.Tx, conversationID, acco
 	}
 	if wait := domain.SlowModeWait(senderRole, time.Duration(seconds)*time.Second, lastPost, now); wait > 0 {
 		return SlowModeError{Wait: wait}
+	}
+	return nil
+}
+
+// checkNotTimedOutTx refuses an account in a timeout in the community the
+// conversation belongs to. It guards every way of adding content: new posts,
+// edits and reactions (a timeout must not be sidestepped by rewriting or
+// reacting to an older message).
+func checkNotTimedOutTx(ctx context.Context, tx *sql.Tx, conversationID, accountID string, now time.Time) error {
+	var timeout sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT m.timeout_until FROM conversations c JOIN memberships m ON m.community_id = c.community_id AND m.account_id = ? WHERE c.id = ?`, accountID, conversationID).Scan(&timeout)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if timeout.Valid {
+		end := parseTime(timeout.String)
+		if domain.TimedOut(&end, now) {
+			return ErrTimedOut
+		}
 	}
 	return nil
 }

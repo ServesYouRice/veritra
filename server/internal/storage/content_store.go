@@ -177,6 +177,10 @@ func (s *Store) createReaction(ctx context.Context, messageID, accountID string,
 	if !member {
 		return "", 0, ErrNotMember
 	}
+	// C5: a timeout also stops reactions.
+	if err := checkNotTimedOutTx(ctx, tx, conversationID, accountID, time.Now().UTC()); err != nil {
+		return "", 0, err
+	}
 	id, err := domain.NewID("react")
 	if err != nil {
 		return "", 0, err

@@ -342,6 +342,15 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
+	// C5: a timeout also stops edits of earlier messages.
+	var editedConversation string
+	if err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM message_envelopes WHERE id = ?`, messageID).Scan(&editedConversation); err == nil {
+		if err := checkNotTimedOutTx(ctx, tx, editedConversation, accountID, time.Now().UTC()); err != nil {
+			return domain.MessageEnvelope{}, 0, err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	now := nowString()
 	result, err := tx.ExecContext(ctx, `
 		UPDATE message_envelopes

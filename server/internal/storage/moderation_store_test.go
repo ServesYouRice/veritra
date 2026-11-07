@@ -281,3 +281,56 @@ func TestPausedInvitesRefuseUseUntilResumed(t *testing.T) {
 		t.Fatalf("request after resume: %v", err)
 	}
 }
+
+func TestTimeoutAlsoStopsEditsAndReactions(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice := f.people[0]
+	f.addMember(t, ctx, alice, domain.RoleMember)
+	if _, err := f.store.ManageConversationMember(ctx, f.conv.ID, f.owner.Account.ID, alice.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	message, _, err := f.store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+		ConversationID: f.conv.ID, SenderAccountID: alice.Account.ID, SenderDeviceID: alice.Device.ID,
+		IdempotencyKey: "e1", Ciphertext: []byte("x"), CryptoProtocol: "mls-openmls-todo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.UpdateMessageEnvelope(ctx, message.ID, alice.Account.ID, []byte("y"), "mls-openmls-todo", nil); !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("edit while timed out: %v", err)
+	}
+	if err := f.store.CreateReaction(ctx, message.ID, alice.Account.ID, []byte("r")); !errors.Is(err, ErrTimedOut) {
+		t.Fatalf("reaction while timed out: %v", err)
+	}
+	if _, err := f.store.SetMemberTimeout(ctx, f.comm.ID, f.admin.Account.ID, alice.Account.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.CreateReaction(ctx, message.ID, alice.Account.ID, []byte("r")); err != nil {
+		t.Fatalf("reaction after clearing: %v", err)
+	}
+}
+
+func TestModeratorCannotLiftBansAndBannedSeesNoPreview(t *testing.T) {
+	ctx := context.Background()
+	f := newInviteFixture(t, ctx, config.Limits{})
+	alice, bob := f.people[0], f.people[1]
+	f.addMember(t, ctx, alice, domain.RoleModerator)
+	f.addMember(t, ctx, bob, domain.RoleMember)
+	f.invite(t, ctx, f.communityTarget(), f.admin, testLocator(8), 9)
+	if _, err := f.store.BanCommunityMember(ctx, f.comm.ID, f.admin.Account.ID, bob.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.UnbanCommunityMember(ctx, f.comm.ID, alice.Account.ID, bob.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("moderator unbans: %v", err)
+	}
+	if _, err := f.store.PreviewMembershipInvite(ctx, bob.Account.ID, testLocator(8)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("banned account previews: %v", err)
+	}
+	if _, err := f.store.PreviewMembershipInvite(ctx, f.people[2].Account.ID, testLocator(8)); err != nil {
+		t.Fatalf("someone else previews: %v", err)
+	}
+}

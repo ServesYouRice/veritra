@@ -384,6 +384,14 @@ func (s *Store) PreviewMembershipInvite(ctx context.Context, accountID, locator 
 	} else if blocked {
 		return domain.MembershipInvitePreview{}, ErrNotFound
 	}
+	// C5: a banned account sees no preview, as for any unusable link.
+	if invite.target.Kind == domain.InviteTargetCommunity {
+		if banned, err := communityBannedTx(ctx, tx, invite.target.ID, accountID); err != nil {
+			return domain.MembershipInvitePreview{}, err
+		} else if banned {
+			return domain.MembershipInvitePreview{}, ErrNotFound
+		}
+	}
 	name, err := targetNameTx(ctx, tx, invite.target)
 	if err != nil {
 		return domain.MembershipInvitePreview{}, err

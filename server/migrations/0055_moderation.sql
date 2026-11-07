@@ -4,7 +4,7 @@
 CREATE TABLE member_bans (
   community_id TEXT NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
   account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  banned_by TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  banned_by TEXT NOT NULL, -- no foreign key: deleting the banner must not lift the ban
   created_at TEXT NOT NULL,
   PRIMARY KEY (community_id, account_id)
 );
