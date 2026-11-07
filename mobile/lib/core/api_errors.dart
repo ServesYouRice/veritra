@@ -75,6 +75,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'idempotency_conflict': ApiErrorKind.conflict,
   'call_version_conflict': ApiErrorKind.conflict,
   'mls_epoch_conflict': ApiErrorKind.conflict,
+  'version_conflict': ApiErrorKind.conflict,
   'mls_group_legacy': ApiErrorKind.conflict,
   'mls_commit_bundle_required': ApiErrorKind.conflict,
   'mls_change_pending': ApiErrorKind.conflict,
@@ -149,6 +150,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'community_id_required': ApiErrorKind.invalidRequest,
   'invalid_inbox': ApiErrorKind.invalidRequest,
   'invalid_limit': ApiErrorKind.invalidRequest,
+  'invalid_profile': ApiErrorKind.invalidRequest,
 
   // Rate limits and quotas on request volume.
   'login_backoff': ApiErrorKind.rateLimited,
@@ -162,6 +164,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'write_rate_limited': ApiErrorKind.rateLimited,
   // Size and storage.
   'upload_too_large': ApiErrorKind.tooLarge,
+  'profile_too_large': ApiErrorKind.tooLarge,
   'storage_quota_exceeded': ApiErrorKind.storageFull,
   'server_storage_low': ApiErrorKind.storageFull,
   // Encryption contract.

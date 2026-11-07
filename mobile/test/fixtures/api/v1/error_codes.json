@@ -74,6 +74,7 @@
     "invalid_member": "invalidRequest",
     "invalid_name": "invalidRequest",
     "invalid_posting_policy": "invalidRequest",
+    "invalid_profile": "invalidRequest",
     "invalid_public_key": "invalidRequest",
     "invalid_push_subscription": "invalidRequest",
     "invalid_recovery_key": "invalidRequest",
@@ -114,6 +115,7 @@
     "plaintext_message_fields_forbidden": "encryption",
     "posting_policy_not_supported": "invalidRequest",
     "posting_restricted": "permission",
+    "profile_too_large": "tooLarge",
     "push_provider_unavailable": "unavailable",
     "push_subscription_failed": "server",
     "push_test_rate_limited": "rateLimited",
@@ -153,6 +155,7 @@
     "unauthorized": "authentication",
     "upload_failed": "server",
     "upload_too_large": "tooLarge",
+    "version_conflict": "conflict",
     "weak_password": "invalidRequest",
     "write_rate_limited": "rateLimited"
   }
