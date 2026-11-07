@@ -117,6 +117,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/device-links/claim", a.claimDeviceLink)
 	a.registerDeviceLinkV3Routes(mux)
 	a.registerAccountRecoveryRoutes(mux)
+	a.registerDeviceListRoutes(mux)
 	mux.HandleFunc("POST /api/v1/communities", a.withAuth(a.withWriteBudget(a.createCommunity)))
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
 	a.registerMembershipInviteRoutes(mux)
@@ -492,6 +493,13 @@ func handleStorageError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, storage.ErrUnauthorized):
 		writeError(w, http.StatusUnauthorized, "unauthorized")
+	case errors.Is(err, storage.ErrInvalidDeviceList):
+		writeError(w, http.StatusBadRequest, "invalid_device_list")
+	case errors.Is(err, storage.ErrDeviceListRequired):
+		writeError(w, http.StatusBadRequest, "device_list_required")
+	case errors.Is(err, storage.ErrDeviceListConflict):
+		head, _ := storage.DeviceListConflictHead(err)
+		writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "device_list_conflict", "head_version": head})
 	case errors.Is(err, storage.ErrNotMember), errors.Is(err, storage.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, storage.ErrPostingRestricted):

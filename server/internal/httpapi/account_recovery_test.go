@@ -47,6 +47,8 @@ type recoveryFixture struct {
 	ownerDeviceID     string
 	ownerDeviceSecret string
 	ownerRK           ed25519.PrivateKey
+	// ownerKey is the owner device's signing key (its enrollment key).
+	ownerKey ed25519.PrivateKey
 }
 
 func recoveryTestTime(t time.Time) string {
@@ -107,6 +109,7 @@ func newRecoveryFixture(t *testing.T, origin string) *recoveryFixture {
 		t.Fatal(err)
 	}
 	f.ownerAccountID, f.ownerToken, f.ownerDeviceID, f.ownerDeviceSecret = decoded.Account.ID, decoded.Token, decoded.Device.ID, decoded.DeviceSecret
+	f.ownerKey = enrollment.PrivateKey
 	f.db = openSessionTestDB(t, f.dbPath)
 	return f
 }

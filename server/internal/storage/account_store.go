@@ -220,6 +220,10 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		`DELETE FROM backup_blobs WHERE account_id = ?`,
 		`DELETE FROM account_recovery_keys WHERE account_id = ?`,
 		`DELETE FROM account_recovery_requests WHERE account_id = ?`,
+		// A deleted account's approved-device list goes with it (L1-2). The
+		// account row stays as a deleted marker, so the cascade does not run.
+		`DELETE FROM device_list_devices WHERE account_id = ?`,
+		`DELETE FROM device_list_versions WHERE account_id = ?`,
 		// A deleted owner's report key must not keep receiving reports.
 		`DELETE FROM report_inbox_keys WHERE set_by_account_id = ?`,
 		// Nor may the copies sealed to it stay: only that owner could open them.
