@@ -1687,8 +1687,13 @@ class NativeCryptoService
                 if (change.sealed != null) change.sealed!
             ]));
         try {
+          // approved_at is the server's clock. A clock here that runs behind
+          // it would make native refuse a genuine approval as one from the
+          // future, so only this scratch check lifts `now` to it. The tag and
+          // the link-expiry bound are still checked natively, and the real
+          // apply after promotion keeps the real clock and its retry.
           scratch.device.k2ApplyApproval(id, approvalTag,
-              approvedAt: approvedAt, now: _nowMs);
+              approvedAt: approvedAt, now: max(_nowMs, approvedAt));
           return true;
         } on NativeCryptoException catch (err) {
           if (err.kind == NativeCryptoError.operationFailed) return false;

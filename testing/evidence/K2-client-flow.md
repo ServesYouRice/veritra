@@ -419,3 +419,23 @@ that does not verify abandons the claim, makes no `/complete` call and leaves
 no pending row (`device_link_v3_flow_test`, forged approval). This needed no
 ABI or schema change. Reviewer: please check that the scratch restore of the
 frozen state is sound under the MLS ordering rules.
+
+## Review fixes B1 and B2 (after 49dfe33)
+
+- B1: the scratch check in `k2VerifyPendingApproval` passes
+  `now: max(_nowMs, approvedAt)` to native. `approved_at` is the server's
+  clock; a new device whose clock runs behind it made native refuse a genuine
+  approval as one from the future and abandon the link. The tag comparison and
+  the `approved_at <= link_expires_at` bound still run natively; the real apply
+  after promotion keeps the real clock and its retry. Test: the new device's
+  clock runs 5 s behind after the approval and the link still completes.
+- B2: the real claim-status answers a revoked, expired or unknown link with
+  400 `invalid_device_link` (never 410, never the state `revoked`). The new
+  device now ends the claim on that answer, and on any status error once a
+  still-`claimed` record is past its expiry. A `consumed` or `approved` link
+  keeps the resume path. The fake now answers as the real server does (400 for
+  revoked and expired); tests cover revoked, expired (400), expired with an
+  unnamed error (503, after a restart), and a 503 inside the expiry that
+  keeps the claim.
+- Checks: Flutter is not installed on this host; Dart is verified by CI on
+  PR #123 (see the PR for the run).

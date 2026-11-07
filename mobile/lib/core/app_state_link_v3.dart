@@ -747,16 +747,25 @@ extension DeviceLinkV3Actions on AppState {
       status =
           await client.deviceLinkV3ClaimStatus(expected, pending.claimToken);
     } on ApiException catch (err) {
+      // The real server answers a revoked, expired or unknown link with 400
+      // invalid_device_link (it never sends the state 'revoked'); 401, 404
+      // and 410 mean the claim or its credentials are gone.
       if (err.statusCode == 401 ||
           err.statusCode == 404 ||
-          err.statusCode == 410) {
-        // Revoked, expired or replaced: the claim can never be approved.
+          err.statusCode == 410 ||
+          (err.statusCode == 400 && err.serverCode == 'invalid_device_link') ||
+          _claimWindowPassed(pending)) {
+        // The claim can never be approved.
         await _abandonDeviceLinkClaimNow();
         throw UserFacingException(l10n.deviceLinkEnded);
       }
       _scheduleLinkPoll();
       rethrow;
     } catch (_) {
+      if (_claimWindowPassed(pending)) {
+        await _abandonDeviceLinkClaimNow();
+        throw UserFacingException(l10n.deviceLinkEnded);
+      }
       _scheduleLinkPoll();
       rethrow;
     }
@@ -775,6 +784,13 @@ extension DeviceLinkV3Actions on AppState {
         _scheduleLinkPoll();
     }
   }
+
+  /// A claim still waiting for approval whose link has expired: the server
+  /// refuses it from now on, so a status error cannot be waited out. A
+  /// claim already approved or consumed is left to the transfer window.
+  bool _claimWindowPassed(_PendingLinkV3 pending) =>
+      pending.record?['state'] == 'claimed' &&
+      DateTime.now().millisecondsSinceEpoch > pending.expiresAt;
 
   /// The approval is in: completes at the server, then makes this device the
   /// account's active one in one local step that also starts the history

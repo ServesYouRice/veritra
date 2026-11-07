@@ -56,6 +56,9 @@ class _LinkServer {
   int completes = 0;
   bool revoked = false;
 
+  /// A failure the claim-status endpoint answers with, when set.
+  ApiException? statusFailure;
+
   Map<String, Object?> get record => Map<String, Object?>.from(link!);
 
   DeviceLinkV3Record view() => DeviceLinkV3Record.fromJson(
@@ -159,7 +162,19 @@ class _LinkApi extends ApiClient {
   @override
   Future<DeviceLinkV3Record> deviceLinkV3ClaimStatus(
       DeviceLinkV3Record expected, String claimToken) async {
-    if (server.revoked) throw ApiException(410, '{"error":"revoked"}');
+    // The real endpoint loads the link inside its valid window: a revoked,
+    // expired or unknown link is a 400 invalid_device_link, never a 410 and
+    // never the state 'revoked'. An approved or consumed link keeps
+    // answering 200 (the transfer window).
+    final link = server.link!;
+    final open = link['state'] == 'pending' || link['state'] == 'claimed';
+    final expired =
+        DateTime.parse(link['expires_at'] as String).isBefore(DateTime.now());
+    if (server.revoked || (open && expired)) {
+      throw ApiException(400, '{"error":"invalid_device_link"}');
+    }
+    final failure = server.statusFailure;
+    if (failure != null) throw failure;
     _checkClaimToken(claimToken);
     return server.view();
   }
@@ -428,9 +443,14 @@ class _World {
   late AppState fresh;
   NativeCryptoService? newCrypto;
 
+  /// How far the new device's clock runs behind the server's.
+  Duration newClockLag = Duration.zero;
+
   AppState newDevice() {
     final crypto = newCrypto = NativeCryptoService(
-        bindings: bindings, localStore: newStore, clock: DateTime.now);
+        bindings: bindings,
+        localStore: newStore,
+        clock: () => DateTime.now().subtract(newClockLag));
     return AppState(
       apiClientFactory: (_) => api,
       cryptoService: crypto,
@@ -484,6 +504,26 @@ class _World {
     expect(source.errorFor(Ops.deviceLink), isNull);
     expect(source.activeDeviceLink?.verificationCode, sas);
     return sas;
+  }
+
+  /// The new device restarts over its stored waiting claim, whose link
+  /// expiry is first moved to [expiresAt] (epoch milliseconds) when given.
+  /// The restart resumes the claim by itself, as at app start.
+  Future<void> restartFresh({int? expiresAt}) async {
+    if (expiresAt != null) {
+      final stored = (await newStore.loadPendingEnrollment())!;
+      final payload = jsonDecode(stored.payloadJson) as Map<String, Object?>;
+      payload['expires_at'] = expiresAt;
+      await newStore.savePendingEnrollment(PendingEnrollment(
+          kind: stored.kind,
+          origin: stored.origin,
+          accountId: stored.accountId,
+          deviceId: stored.deviceId,
+          payloadJson: jsonEncode(payload)));
+    }
+    retire(fresh);
+    fresh = newDevice();
+    await fresh.tryRestoreSession();
   }
 
   /// Runs [step] until [done], at most [limit] of wall-clock time: a slow
@@ -737,6 +777,85 @@ void main() {
             expect(w.fresh.pendingDeviceLinkClaim, isNull);
             expect(await w.newStore.loadPendingEnrollment(), isNull);
             expect(w.fresh.session, isNull);
+          }),
+      skip: skip);
+
+  test(
+      'a clock behind the server does not make a genuine approval read as '
+      'forged',
+      () => _withWorld((w) async {
+            final sas = await w.claimAndRefresh();
+            await w.source.approveActiveDeviceLink(sas);
+            expect(w.source.errorFor(Ops.deviceLink), isNull);
+            // The server stamped approved_at on its own clock, a few seconds
+            // ahead of this device's: native would refuse an approval from
+            // the future, so the scratch check lifts its time to approved_at.
+            w.newClockLag = const Duration(seconds: 5);
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull,
+                reason: w.fresh.errorFor(Ops.deviceLinkClaim));
+            expect(w.fresh.session?.deviceId, _newDevice);
+            expect(w.server.completes, 1);
+            expect(w.fresh.pendingDeviceLinkClaim, isNull);
+            expect(await w.newStore.loadPendingEnrollment(), isNull);
+            // The clock is right again: the copy goes on as usual.
+            w.newClockLag = Duration.zero;
+            await w.drain();
+            expect((await w.newStore.loadMessages('conv')).map((m) => m.body),
+                ['first', 'second']);
+          }),
+      skip: skip);
+
+  test(
+      'an expired waiting claim ends when the server answers 400 '
+      'invalid_device_link',
+      () => _withWorld((w) async {
+            await w.claimAndRefresh();
+            final past = DateTime.now().subtract(const Duration(seconds: 1));
+            w.server.link = <String, Object?>{
+              ...w.server.link!,
+              'expires_at': _iso(past),
+            };
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
+                contains('cancelled or has expired'));
+            expect(w.fresh.pendingDeviceLinkClaim, isNull);
+            expect(await w.newStore.loadPendingEnrollment(), isNull);
+            expect(w.fresh.session, isNull);
+          }),
+      skip: skip);
+
+  test(
+      'a waiting claim past its expiry ends on any status error',
+      () => _withWorld((w) async {
+            await w.claimAndRefresh();
+            w.server.statusFailure = ApiException(503, '');
+            // The stored expiry is in the past; the restart resumes the claim
+            // and its status call fails with an error that names nothing.
+            final past = DateTime.now().subtract(const Duration(seconds: 1));
+            await w.restartFresh(expiresAt: past.millisecondsSinceEpoch);
+            await w.fresh.completeDeviceLinkClaim();
+            await w.until(() async => w.fresh.pendingDeviceLinkClaim == null);
+            expect(await w.newStore.loadPendingEnrollment(), isNull);
+            expect(w.fresh.session, isNull);
+          }),
+      skip: skip);
+
+  test(
+      'a waiting claim inside its expiry survives a status error',
+      () => _withWorld((w) async {
+            final sas = await w.claimAndRefresh();
+            w.server.statusFailure = ApiException(503, '');
+            await w.restartFresh();
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
+            expect(w.fresh.pendingDeviceLinkClaim, isNotNull);
+            expect(await w.newStore.loadPendingEnrollment(), isNotNull);
+            // The server comes back and the claim goes on to be approved.
+            w.server.statusFailure = null;
+            await w.source.approveActiveDeviceLink(sas);
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.session?.deviceId, _newDevice);
           }),
       skip: skip);
 
