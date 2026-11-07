@@ -1666,6 +1666,39 @@ class NativeCryptoService
       });
 
   @override
+  Future<bool> k2VerifyPendingApproval(K2TransferId id, List<int> approvalTag,
+          {required int approvedAt}) =>
+      _serial(() async {
+        final first = _firstState;
+        final accountId = _accountId;
+        final deviceId = _deviceId;
+        if (!_pendingEnrollment ||
+            first == null ||
+            accountId == null ||
+            deviceId == null) {
+          throw const K2TransferException('no pending enrollment identity');
+        }
+        // A scratch device from the frozen state: the approval is applied in
+        // memory only and the copy is closed, so nothing is sealed, stored
+        // or changed on the pending identity.
+        final scratch = _formatChecked(() => bindings.restoreRecords(accountId,
+                deviceId, first.stateKey, first.counter, first.sealedState, [
+              for (final change in first.changes)
+                if (change.sealed != null) change.sealed!
+            ]));
+        try {
+          scratch.device.k2ApplyApproval(id, approvalTag,
+              approvedAt: approvedAt, now: _nowMs);
+          return true;
+        } on NativeCryptoException catch (err) {
+          if (err.kind == NativeCryptoError.operationFailed) return false;
+          rethrow;
+        } finally {
+          scratch.device.close();
+        }
+      });
+
+  @override
   Future<K2Status> k2Inspect(K2TransferId id) =>
       _serial(() async => _requiredDevice().k2Inspect(id, now: _nowMs));
 

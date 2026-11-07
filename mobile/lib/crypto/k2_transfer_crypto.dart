@@ -68,6 +68,14 @@ abstract interface class K2TransferCryptoService {
       required List<int> deviceSecretHash,
       required List<int> initialSessionHash});
 
+  /// Checks the approval tag of a waiting link against the stored context
+  /// before the new device completes at the server, without changing any
+  /// state: the pending state is frozen, so the check runs on a scratch copy
+  /// of it that is dropped at once. False only when native rejects the tag
+  /// or time; anything else passes through.
+  Future<bool> k2VerifyPendingApproval(K2TransferId id, List<int> approvalTag,
+      {required int approvedAt});
+
   // --- Both roles ---
 
   /// Reads the native record (pending or active identity). Never mutates.

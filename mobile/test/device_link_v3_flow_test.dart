@@ -486,17 +486,36 @@ class _World {
     return sas;
   }
 
-  /// Runs both devices' transfer steps until neither has a row.
-  Future<void> drain({int rounds = 12}) async {
-    for (var i = 0; i < rounds; i++) {
-      await source.resumeHistoryTransfers();
-      if (fresh.session != null) await fresh.resumeHistoryTransfers();
-      if ((await sourceStore.loadHistoryTransfers()).isEmpty &&
-          (await newStore.loadHistoryTransfers()).isEmpty) {
-        return;
+  /// Runs [step] until [done], at most [limit] of wall-clock time: a slow
+  /// runner may need seconds for the export, the encryption and the import.
+  Future<void> until(Future<bool> Function() done,
+      {Future<void> Function()? step,
+      Duration limit = const Duration(seconds: 30)}) async {
+    final deadline = DateTime.now().add(limit);
+    while (!await done()) {
+      if (DateTime.now().isAfter(deadline)) {
+        fail('timed out after ${limit.inSeconds} s');
       }
+      await step?.call();
       await Future<void>.delayed(const Duration(milliseconds: 20));
     }
+  }
+
+  /// Runs both devices' transfer steps until neither has a row.
+  Future<void> drain() => until(
+          () async =>
+              (await sourceStore.loadHistoryTransfers()).isEmpty &&
+              (await newStore.loadHistoryTransfers()).isEmpty, step: () async {
+        await source.resumeHistoryTransfers();
+        if (fresh.session != null) await fresh.resumeHistoryTransfers();
+      });
+
+  /// Calls the source's transfer step until the copy is on the server (a
+  /// step already running, started by the approval, makes a call a no-op).
+  Future<void> sourceUploads() async {
+    await until(() async => transfer.stored != null,
+        step: source.resumeHistoryTransfers);
+    expect(transfer.stored, isNotNull);
   }
 
   final _gone = <AppState>{};
@@ -505,16 +524,6 @@ class _World {
   }
 
   void retire(AppState state) => _drop(state);
-
-  /// Calls the source's transfer step until the copy is on the server (a
-  /// step already running, started by the approval, makes a call a no-op).
-  Future<void> sourceUploads() async {
-    for (var i = 0; i < 50 && transfer.stored == null; i++) {
-      await source.resumeHistoryTransfers();
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-    }
-    expect(transfer.stored, isNotNull);
-  }
 
   Future<void> dispose() async {
     _drop(source);
@@ -690,6 +699,30 @@ void main() {
             expect(await w.newStore.loadMessages('conv'), isEmpty);
             w.fresh.dismissHistoryCopyNotice();
             expect(w.fresh.historyTransferStatus, isNull);
+          }),
+      skip: skip);
+
+  test(
+      'an approval the source never made is refused before the link completes',
+      () => _withWorld((w) async {
+            final sas = await w.claimAndRefresh();
+            await w.source.approveActiveDeviceLink(sas);
+            expect(w.source.errorFor(Ops.deviceLink), isNull);
+            // A server that substituted the link answers with a tag of its
+            // own; the new device pinned the real context when it claimed.
+            w.server.link = <String, Object?>{
+              ...w.server.link!,
+              'approval_tag': base64Encode(List<int>.filled(32, 7)),
+            };
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
+                contains('approval could not be verified'));
+            expect(w.server.completes, 0);
+            expect(w.fresh.session, isNull);
+            expect(w.fresh.pendingDeviceLinkClaim, isNull);
+            expect(await w.newStore.loadPendingEnrollment(), isNull);
+            expect(await w.newStore.loadSession(), isNull);
+            expect(await w.newStore.loadHistoryTransfers(), isEmpty);
           }),
       skip: skip);
 

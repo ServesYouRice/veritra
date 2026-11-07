@@ -1123,6 +1123,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ова веза је отказана или је истекла. Затражите нову са свог другог уређаја.';
 
   @override
+  String get deviceLinkApprovalInvalid =>
+      'То одобрење није могло да се провери, па уређај није повезан. Направите нову везу на свом другом уређају и покушајте поново.';
+
+  @override
   String get deviceLinkCodeMismatch =>
       'Тај код се не поклапа са оним на новом уређају. Проверите га и покушајте поново.';
 
@@ -3993,6 +3997,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get deviceLinkEnded =>
       'Ova veza je otkazana ili je istekla. Zatražite novu sa svog drugog uređaja.';
+
+  @override
+  String get deviceLinkApprovalInvalid =>
+      'To odobrenje nije moglo da se proveri, pa uređaj nije povezan. Napravite novu vezu na svom drugom uređaju i pokušajte ponovo.';
 
   @override
   String get deviceLinkCodeMismatch =>

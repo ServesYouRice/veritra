@@ -1959,6 +1959,12 @@ abstract class AppLocalizations {
   /// **'This link was cancelled or has expired. Ask your other device for a new one.'**
   String get deviceLinkEnded;
 
+  /// No description provided for @deviceLinkApprovalInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'That approval could not be verified, so this device was not linked. Create a new link on your other device and try again.'**
+  String get deviceLinkApprovalInvalid;
+
   /// No description provided for @deviceLinkCodeMismatch.
   ///
   /// In en, this message translates to:

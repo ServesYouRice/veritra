@@ -778,9 +778,9 @@ extension DeviceLinkV3Actions on AppState {
 
   /// The approval is in: completes at the server, then makes this device the
   /// account's active one in one local step that also starts the history
-  /// transfer. The approval tag is verified natively as the first active
-  /// commit of the transfer (`HistoryTransferService`), because the pending
-  /// state is frozen.
+  /// transfer. The approval tag is verified natively before the server is
+  /// asked to complete (on a scratch copy of the frozen pending state), and
+  /// applied again as the first active commit of the transfer.
   Future<void> _finishDeviceLink(
       _PendingLinkV3 pending, DeviceLinkV3Record status) async {
     if (status.id != pending.linkId ||
@@ -790,6 +790,19 @@ extension DeviceLinkV3Actions on AppState {
     }
     final client = _linkClient(pending.origin);
     final promoter = _linkPromotionCrypto;
+    // The approval is checked natively against the context pinned when this
+    // device claimed, before anything is completed at the server: a server
+    // that substituted the link cannot make this device join without the
+    // source's real approval.
+    final approved = await _k2.k2VerifyPendingApproval(
+      K2TransferId(pending.origin, pending.linkId),
+      status.bytes('approval_tag'),
+      approvedAt: _linkTimeMs(status.fields, 'approved_at'),
+    );
+    if (!approved) {
+      await _abandonDeviceLinkClaimNow();
+      throw UserFacingException(l10n.deviceLinkApprovalInvalid);
+    }
     final next = pending.withRecord(status.fields);
     await localStore.savePendingEnrollment(next.toEnrollment());
     await client.completeDeviceLinkV3(status, pending.claimToken,

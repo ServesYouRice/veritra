@@ -416,6 +416,7 @@
   "deviceLinkAlreadyPending": "A device link is already waiting on this device. Check it or cancel it first.",
   "deviceLinkRecoveryInProgress": "An account recovery is waiting on this device, so a device cannot be linked here until it is finished or cancelled.",
   "deviceLinkEnded": "This link was cancelled or has expired. Ask your other device for a new one.",
+  "deviceLinkApprovalInvalid": "That approval could not be verified, so this device was not linked. Create a new link on your other device and try again.",
   "deviceLinkCodeMismatch": "That code does not match the one on the new device. Check it and try again.",
   "deviceLinkRefreshFirst": "Refresh the status first, then approve the device.",
   "deviceLinkCancelWaiting": "Cancel this link",

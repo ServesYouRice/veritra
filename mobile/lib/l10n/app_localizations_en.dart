@@ -1114,6 +1114,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'This link was cancelled or has expired. Ask your other device for a new one.';
 
   @override
+  String get deviceLinkApprovalInvalid =>
+      'That approval could not be verified, so this device was not linked. Create a new link on your other device and try again.';
+
+  @override
   String get deviceLinkCodeMismatch =>
       'That code does not match the one on the new device. Check it and try again.';
 

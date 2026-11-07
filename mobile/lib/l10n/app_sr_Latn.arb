@@ -311,6 +311,7 @@
   "deviceLinkAlreadyPending": "Na ovom uređaju već čeka veza uređaja. Prvo je proverite ili otkažite.",
   "deviceLinkRecoveryInProgress": "Na ovom uređaju čeka oporavak naloga, pa se uređaj ne može povezati ovde dok se ne završi ili otkaže.",
   "deviceLinkEnded": "Ova veza je otkazana ili je istekla. Zatražite novu sa svog drugog uređaja.",
+  "deviceLinkApprovalInvalid": "To odobrenje nije moglo da se proveri, pa uređaj nije povezan. Napravite novu vezu na svom drugom uređaju i pokušajte ponovo.",
   "deviceLinkCodeMismatch": "Taj kod se ne poklapa sa onim na novom uređaju. Proverite ga i pokušajte ponovo.",
   "deviceLinkRefreshFirst": "Prvo osvežite status, a zatim odobrite uređaj.",
   "deviceLinkCancelWaiting": "Otkaži ovu vezu",

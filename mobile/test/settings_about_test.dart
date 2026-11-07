@@ -262,12 +262,11 @@ void main() {
       expect(tester.widget<FilledButton>(dialogApprove).onPressed, isNotNull);
       await tester.tap(dialogApprove);
       await tester.pumpAndSettle();
-      // The typed code reached AppState, which refuses in this build (the
-      // test crypto service has no K2 operations); the native confirmation
-      // and the wrong-code refusal are covered with the real engine in
+      // The typed code reached AppState, which has no link record behind
+      // this hand-built view and does nothing; the native confirmation and
+      // the wrong-code refusal are covered with the real engine in
       // device_link_v3_flow_test.dart.
-      expect(state.errorFor(Ops.deviceLink),
-          'Linking devices is not available in this build.');
+      expect(state.errorFor(Ops.deviceLink), isNull);
       expect(state.activeDeviceLink?.state, isNot('approved'));
     });
 

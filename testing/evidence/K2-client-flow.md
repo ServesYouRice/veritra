@@ -389,26 +389,33 @@ Two defects the real-server run found in earlier slices, fixed here:
 
 Checks (Flutter 3.44.0, Dart 3.12, real native library built from this tree):
 
-- `device_link_v3_flow_test.dart`, 7 passed: two real AppStates over an
+- `device_link_v3_flow_test.dart`, 8 passed: two real AppStates over an
   in-memory link server and transfer resource: link, wrong code refused
   natively, approval, promotion, copy, both sides clean; restart while the
   claim waits (same signed claim replayed); restart after the approval
   (source uploads, then the new device receives); a copy the server closed
   ends on both; a revoked link drops the pending identity; a second claim and
   a K0 recovery in progress are refused before any request; a bad code makes
-  no request.
+  no request; a forged approval is refused before `/complete`.
 - `demo_e2e_test.dart` against the real Go server (`go build` of the server,
   data on tmpfs because this host's disk trips the server's low-disk guard):
   passed, including the link with the restored device and the history copy
   through the real handlers (upload, download, ACK). The test's API client
   now uses `TransportPolicy.demo`, as `main_demo.dart` does.
-- `k2_transfer_orchestration_test` (21), `k2_history_transfer_client_test`,
-  `k2_history_snapshot_test`, `sha256_test` pass. `flutter analyze` and
-  `dart format --set-exit-if-changed .` clean.
+- All 180 Flutter test files pass locally (run in batches against the real
+  native library; one single `flutter test` run stalled on this host with no
+  test failing), including goldens and the l10n tests. `flutter analyze`,
+  `dart format --set-exit-if-changed .`, `scripts/check-mobile-dependencies.sh`
+  and `scripts/check-dart-licenses.sh` pass. One earlier demo e2e run timed out
+  waiting for sync (the known flake, #130) and passed on the rerun.
 
 Left, in order: two real devices; independent review (MLS ordering, the
 recovery and credential handling); retiring the clone-restore path after K1.
-Note for the reviewer: the approval tag is verified natively as the first
-active commit of the transfer (the pending state is frozen), after
-`/complete` and the promotion, not before; a refused tag abandons the copy but
-leaves the device linked.
+The approval tag is verified natively before the new device asks the server
+to complete (`k2VerifyPendingApproval`: the apply runs on a scratch copy of the
+frozen pending state, which is closed at once, so nothing is sealed or
+stored), and applied again as the first active commit of the transfer. A tag
+that does not verify abandons the claim, makes no `/complete` call and leaves
+no pending row (`device_link_v3_flow_test`, forged approval). This needed no
+ABI or schema change. Reviewer: please check that the scratch restore of the
+frozen state is sound under the MLS ordering rules.
