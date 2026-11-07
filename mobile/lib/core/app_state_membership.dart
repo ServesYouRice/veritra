@@ -44,9 +44,14 @@ extension MembershipActions on AppState {
       } else {
         throw UserFacingException(l10n.errorActionUnavailable);
       }
+      final accountId = current.accountId;
+      final deviceId = current.deviceId;
+      if (accountId == null || deviceId == null) {
+        throw UserFacingException(l10n.errorActionUnavailable);
+      }
       final signingKey = await keys.deviceSigningPublicKey(
-        accountId: current.accountId,
-        deviceId: current.deviceId,
+        accountId: accountId,
+        deviceId: deviceId,
       );
       final link = MembershipInviteLink.generate(origin: client.baseUrl);
       await client.createMembershipInvite(
@@ -58,8 +63,8 @@ extension MembershipActions on AppState {
         bindingTag: link.bindingTag(
           kind: kind,
           targetId: targetId,
-          inviterAccountId: current.accountId,
-          inviterDeviceId: current.deviceId,
+          inviterAccountId: accountId,
+          inviterDeviceId: deviceId,
           inviterSigningKey: signingKey,
         ),
       );
