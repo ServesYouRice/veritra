@@ -78,4 +78,5 @@ list with usernames, and the Flutter screens. Format, rules and limits are in
   halt, but per-conversation halting is still outstanding.
 - The server does not notify admins of a new request; they see it when they
   open the list.
-- Not tested on a device. Dart changes were checked by CI only.
+- Not tested on a device. Dart analyzer, formatter and the new tests ran
+  locally on Flutter 3.44.0 (see `testing/evidence/C1-membership.md`).
