@@ -19,6 +19,7 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// K2 v3 link and history copy through two real [AppState]s on the real
 /// native engine: the existing device creates a link, the new device claims
@@ -448,7 +449,7 @@ class _World {
   Duration newClockLag = Duration.zero;
 
   AppState newDevice() {
-    final crypto = newCrypto = NativeCryptoService(
+    final crypto = newCrypto = TestNativeCryptoService(
         bindings: bindings,
         localStore: newStore,
         clock: () => DateTime.now().subtract(newClockLag));
@@ -466,7 +467,7 @@ class _World {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     sourceStore =
         _Store(_snapshot(DateTime.now().millisecondsSinceEpoch, bodies));
-    sourceCrypto = NativeCryptoService(
+    sourceCrypto = TestNativeCryptoService(
         bindings: bindings, localStore: sourceStore, clock: DateTime.now);
     final credential = await sourceCrypto.createEnrollmentCredential(
         const EnrollmentReservation(
@@ -692,7 +693,7 @@ void main() {
             await w.newCrypto?.dispose();
             // The source comes back first and uploads; the new device then
             // comes back and receives, each from its stored row.
-            w.sourceCrypto = NativeCryptoService(
+            w.sourceCrypto = TestNativeCryptoService(
                 bindings: w.bindings,
                 localStore: w.sourceStore,
                 clock: DateTime.now);

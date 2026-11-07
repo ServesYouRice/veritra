@@ -16,6 +16,7 @@ import 'package:private_messenger/storage/history_snapshot.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// K2 orchestration on the native engine and the schema-18 tables: a source
 /// and a recipient, each a real `NativeCryptoService` on its own store,
@@ -299,9 +300,9 @@ class _Pair {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     clock = DateTime.now().toUtc();
     final now = clock.millisecondsSinceEpoch;
-    source = NativeCryptoService(
+    source = TestNativeCryptoService(
         bindings: bindings, localStore: sourceStore, clock: () => clock);
-    recipient = NativeCryptoService(
+    recipient = TestNativeCryptoService(
         bindings: bindings, localStore: recipientStore, clock: () => clock);
     cacheDir = '${dir.path}/cache';
     downloadDir = '${dir.path}/download';
@@ -481,7 +482,7 @@ void main() {
       pair.bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
       final store = _FaultStore();
       final service =
-          NativeCryptoService(bindings: pair.bindings, localStore: store);
+          TestNativeCryptoService(bindings: pair.bindings, localStore: store);
       await service.createEnrollmentCredential(const EnrollmentReservation(
           id: 'r',
           accountId: _account,
@@ -523,8 +524,8 @@ void main() {
     final dir = Directory.systemTemp.createTempSync('k2-orchestration');
     try {
       final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-      final service =
-          NativeCryptoService(bindings: bindings, localStore: _FaultStore());
+      final service = TestNativeCryptoService(
+          bindings: bindings, localStore: _FaultStore());
       final credential = await service.createEnrollmentCredential(
           const EnrollmentReservation(
               id: 'r',

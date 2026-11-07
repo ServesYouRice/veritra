@@ -1480,6 +1480,26 @@ NativeChangeSet _parseChangeSet(List<int> bytes, int generation) {
 }
 
 class NativeCryptoDevice implements Finalizable {
+  /// Every leaf of the group as `(account, device, signature key)` (L1,
+  /// ABI 14); see `l1_device_list.dart`.
+  List<LeafPair> groupMembers(String groupId) => _groupMembersImpl(groupId);
+
+  /// Stages a commit with change list version 2 (L1, ABI 14): each add
+  /// names the signing key its key package must hold.
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommitKeyed(
+    String groupId, {
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) =>
+      _stageCommitKeyedImpl(groupId, adds: adds, removes: removes);
+
   NativeCryptoDevice._(this._bindings, this._handle) {
     _bindings._deviceFinalizer.attach(this, _handle.cast(), detach: this);
   }

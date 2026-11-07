@@ -9,6 +9,7 @@ import 'package:private_messenger/sync/conversation_pause.dart';
 import 'package:private_messenger/sync/sync_recovery.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// C1 prerequisite 1 against real OpenMLS devices: one group is poisoned
 /// and paused, the other keeps receiving, sending and sealing, and a replay
@@ -231,7 +232,8 @@ class _Client {
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
     final local = MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: local);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: local);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,
@@ -245,7 +247,7 @@ class _Client {
   /// A new service over the same store, as after an app restart.
   Future<_Client> restart(NativeCryptoBindings bindings) async {
     await service.dispose();
-    final next = NativeCryptoService(bindings: bindings, localStore: store);
+    final next = TestNativeCryptoService(bindings: bindings, localStore: store);
     await next.activateSession(_session(accountId, deviceId));
     return _Client(next, store, accountId, deviceId, events);
   }

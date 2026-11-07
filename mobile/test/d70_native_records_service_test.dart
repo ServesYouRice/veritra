@@ -8,6 +8,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'l1_test_lists.dart';
 
 /// D70 S3 through [NativeCryptoService] and the real library: every
 /// transition stores its change set, a restart restores from the records,
@@ -78,7 +79,8 @@ void main() {
     final stale = MemoryLocalStore();
     await stale.saveCryptoState(
         StoredCryptoState(counter: 50, stateKey: key, sealedState: blob), 7);
-    final refused = NativeCryptoService(bindings: bindings, localStore: stale);
+    final refused =
+        TestNativeCryptoService(bindings: bindings, localStore: stale);
     await expectLater(
         refused.activateSession(_session('acct_fixture3', 'dev_src')),
         throwsA(anything));
@@ -96,7 +98,8 @@ void main() {
           generation: 40,
           sealed: const [1, 2, 3]),
     ]);
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.activateSession(_session('acct_fixture3', 'dev_src'));
 
     final snapshot = await store.loadCryptoSnapshot();
@@ -121,7 +124,8 @@ void main() {
 
     // The next activation is a plain restore; nothing migrates again.
     await service.dispose();
-    final again = NativeCryptoService(bindings: bindings, localStore: store);
+    final again =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await again.activateExistingSessionBounded(
         _session('acct_fixture3', 'dev_src'),
         checkCanCommit: () {});
@@ -226,7 +230,8 @@ void main() {
   test('a first activation whose store failed can be retried', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final store = _FailFirstSave();
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_dev_a',
       accountId: 'acct_a',
@@ -241,7 +246,7 @@ void main() {
     expect((await store.loadCryptoState())!.counter, 1);
     await service.dispose();
     final restarted =
-        NativeCryptoService(bindings: bindings, localStore: store);
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await restarted.activateSession(session);
     await restarted.dispose();
   }, skip: skip);
@@ -336,7 +341,8 @@ class _Client {
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
     final store = MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,
@@ -350,7 +356,7 @@ class _Client {
   /// A new service over the same store, as after an app restart.
   Future<_Client> restart(NativeCryptoBindings bindings) async {
     await service.dispose();
-    final next = NativeCryptoService(bindings: bindings, localStore: store);
+    final next = TestNativeCryptoService(bindings: bindings, localStore: store);
     await next.activateSession(_session(accountId, deviceId));
     return _Client(next, store, accountId, deviceId, events);
   }
