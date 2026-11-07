@@ -91,6 +91,9 @@ fn padding_never_shrinks_is_canonical_and_capped() {
         backup_padded_size(MAX_PADDED_HISTORY - 8),
         Ok(MAX_PADDED_HISTORY)
     );
+    for len in [65_900_000usize, 66_000_000, MAX_PADDED_HISTORY - 9] {
+        assert_eq!(backup_padded_size(len), Ok(MAX_PADDED_HISTORY), "{len}");
+    }
     assert!(backup_padded_size(MAX_PADDED_HISTORY - 7).is_err());
     assert!(backup_padded_size(usize::MAX).is_err());
     // Within 5% above the floor (plus the 64 KiB frame).

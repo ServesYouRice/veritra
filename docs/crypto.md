@@ -512,7 +512,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     `server/internal/httpapi/scoped_sync_handlers_test.go`.
 
 - **K1-1, backup container seal, peek and open, ABI 16 (2026-11-07):**
-  additive; the Dart binding and the header now pin ABI 16 exactly (ABIs 14
+  additive; the Dart binding and the header now pin ABI 16 exactly (the coordinator's allocation; ABIs 14
   and 15 belong to other packages). Design:
   [`K1-automatic-backups.md`](designs/K1-automatic-backups.md), owner
   defaults D91. Nothing calls it yet: no app, server or schema path uses the

@@ -588,12 +588,16 @@ class NativeCryptoBindings {
         plaintextVersion > 255) {
       throw ArgumentError('Invalid backup header value');
     }
-    return Uint8List.fromList(_withByteLists(
-        <List<int>>[account, device, rkPub, plaintext],
-        (slices) => _output(
-            (out) => _backupSeal(slices[0], slices[1], createdAtMs, counter,
-                plaintextVersion, slices[2], slices[3], out),
-            maximum: backupMaxPlaintextBytes + 64 * 1024 * 2 + 4096)));
+    // The plaintext goes through _withSlice, which wipes its native copy; a
+    // Dart-side copy of the whole snapshot is never made.
+    return Uint8List.fromList(_withSlice(
+        plaintext,
+        (plainSlice) => _withByteLists(
+            <List<int>>[account, device, rkPub],
+            (slices) => _output(
+                (out) => _backupSeal(slices[0], slices[1], createdAtMs, counter,
+                    plaintextVersion, slices[2], plainSlice, out),
+                maximum: backupMaxPlaintextBytes + 64 * 1024 * 2 + 4096))));
   }
 
   /// Reads the header of a backup from its first [backupPeekBytes] bytes,
@@ -648,14 +652,19 @@ class NativeCryptoBindings {
               // An empty device slice is how Rust reads "do not pin".
               _check(_backupOpen(cipherSlice, entropySlice, accountSlices[0],
                   deviceSlice, payload, sourceDevice, meta));
-              final plaintext = Uint8List.fromList(
-                  _take(payload.ref, maximum: backupMaxPlaintextBytes));
+              // Header first, plaintext last and returned as taken, so no
+              // unwiped second copy of the history exists and a header
+              // failure cannot leave one behind.
+              final header = _backupHeader(
+                  account,
+                  _take(sourceDevice.ref, maximum: 128),
+                  _take(meta.ref, maximum: 41));
+              final taken =
+                  _take(payload.ref, maximum: backupMaxPlaintextBytes);
               return OpenedBackup(
-                header: _backupHeader(
-                    account,
-                    _take(sourceDevice.ref, maximum: 128),
-                    _take(meta.ref, maximum: 41)),
-                plaintext: plaintext,
+                header: header,
+                plaintext:
+                    taken is Uint8List ? taken : Uint8List.fromList(taken),
               );
             } finally {
               if (payload.ref.data != nullptr) _free(payload.ref);
@@ -695,15 +704,25 @@ class NativeCryptoBindings {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
     final data = ByteData.sublistView(Uint8List.fromList(meta));
-    return BackupHeaderInfo(
-      accountId: utf8.decode(account),
-      sourceDeviceId: utf8.decode(device),
-      createdAtMs: data.getUint64(0),
-      counter: data.getUint64(8),
-      rkId: Uint8List.fromList(meta.sublist(16, 32)),
-      plaintextVersion: data.getUint8(32),
-      paddedSize: data.getUint64(33),
-    );
+    final createdAtMs = data.getUint64(0);
+    final counter = data.getUint64(8);
+    // Values at or above 2^63 read back negative; no honest header has one.
+    if (createdAtMs < 0 || counter < 0) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    try {
+      return BackupHeaderInfo(
+        accountId: utf8.decode(account),
+        sourceDeviceId: utf8.decode(device),
+        createdAtMs: createdAtMs,
+        counter: counter,
+        rkId: Uint8List.fromList(meta.sublist(16, 32)),
+        plaintextVersion: data.getUint8(32),
+        paddedSize: data.getUint64(33),
+      );
+    } on FormatException {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
   }
 
   /// Signs the recovery-enrollment proof for a claim (ABI 11):

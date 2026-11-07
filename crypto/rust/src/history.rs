@@ -526,8 +526,9 @@ fn backup_padded_size(payload_len: usize) -> Result<usize, HistoryError> {
     let bucket = signal_bucket(framed).max(MIN_BACKUP_PADDED);
     let rounded = bucket.div_ceil(FRAME_BUCKET) * FRAME_BUCKET;
     if rounded > MAX_PADDED_HISTORY {
-        // A payload just under the cap still fits unpadded to the frame.
-        return padded_size(payload_len);
+        // The bucket would pass the cap: clamp, as attachments do, so the
+        // top of the range is one size and not 64 KiB steps.
+        return Ok(MAX_PADDED_HISTORY);
     }
     Ok(rounded)
 }
