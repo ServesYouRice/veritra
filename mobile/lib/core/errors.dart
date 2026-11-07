@@ -8,6 +8,7 @@ import '../crypto/backup_service.dart';
 import '../crypto/crypto_service.dart'
     show CryptoRecordLimitExceeded, CryptoStateFormatUnsupported;
 import '../storage/local_store.dart';
+import '../sync/conversation_pause.dart' show ConversationSyncPausedException;
 import '../l10n/l10n.dart';
 
 /// Sending is refused because the server rejected an MLS control message
@@ -95,6 +96,9 @@ String describeError(
   }
   if (error is ConversationPausedException) {
     return strings.errorConversationPausedDetail;
+  }
+  if (error is ConversationSyncPausedException) {
+    return strings.errorConversationPaused;
   }
   if (error is CryptoStateFormatUnsupported) {
     return strings.errorCryptoStateFormatUnsupported;

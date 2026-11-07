@@ -27,6 +27,7 @@ import '../storage/encrypted_database.dart' show PinMessageEffect;
 import '../storage/history_snapshot.dart'
     show HistoryImportContext, HistorySnapshot;
 import '../storage/local_store.dart';
+import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
 import 'message_format.dart';
 import 'crypto_service.dart';
@@ -41,6 +42,7 @@ class NativeCryptoService
         ConversationAuthorityConsumer,
         EnrollmentPromotionCryptoService,
         K2TransferCryptoService,
+        MlsDeviceHealthCryptoService,
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
         NoticeCaptureConsumer,
@@ -541,6 +543,7 @@ class NativeCryptoService
         if (adds.isEmpty && removes.isEmpty) {
           throw ArgumentError('a membership change needs a device');
         }
+        await _requireNotPaused(conversationId);
         final previous = await _requiredState();
         try {
           final bundle = _stage(_requiredDevice(), conversationId,
@@ -563,6 +566,7 @@ class NativeCryptoService
 
   @override
   Future<void> stageSelfUpdate(String conversationId) => _serial(() async {
+        await _requireNotPaused(conversationId);
         final previous = await _requiredState();
         try {
           final staged = _requiredDevice().stageSelfUpdate(conversationId);
@@ -592,6 +596,7 @@ class NativeCryptoService
   Future<void> completeCommitBundle(PendingMlsMessage item) =>
       _serial(() async {
         final bundle = MlsCommitBundle.decode(item.payload);
+        await _requireNotPaused(item.conversationId);
         // Sync may have merged this accepted commit while the outbox worker
         // waited for the server's answer, settling its entry, and later
         // commits may have moved the group on since. Nothing is left to do,
@@ -641,6 +646,7 @@ class NativeCryptoService
   @override
   Future<void> abandonCommitBundle(PendingMlsMessage item) => _serial(() async {
         final bundle = MlsCommitBundle.decode(item.payload);
+        await _requireNotPaused(item.conversationId);
         // Already settled: a commit staged since belongs to a newer entry,
         // so clearing the pending commit here would drop that one instead.
         if (!await _isQueuedBundle(item)) return;
@@ -856,7 +862,8 @@ class NativeCryptoService
         }
         final previous = await _requiredState(checkCanCommit: checkCanCommit);
         final previousCursor = await localStore.loadSyncCursor();
-        if (message.syncEventId <= previousCursor) {
+        if (message.syncEventId <= previousCursor &&
+            !await _mayReplay(message.conversationId, message.syncEventId)) {
           throw StateError('unrecorded MLS message is behind the sync cursor');
         }
         try {
@@ -995,6 +1002,7 @@ class NativeCryptoService
             revocation.state != 'pending') {
           throw StateError('device is not the pending revocation coordinator');
         }
+        await _requireNotPaused(revocation.conversationId);
         final previous = await _requiredState();
         try {
           final bundle = _stage(
@@ -1045,6 +1053,7 @@ class NativeCryptoService
   Future<EncryptedCallSignal> encryptCallSignal(
           String conversationId, Map<String, Object?> signal) =>
       _serial(() async {
+        await _requireNotPaused(conversationId);
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         final actionId = _randomIdempotencyKey();
@@ -1109,8 +1118,10 @@ class NativeCryptoService
         if (await localStore.hasProcessedMlsMessage(marker)) return null;
         final previous = await _requiredState(checkCanCommit: checkCanCommit);
         final cursor = await localStore.loadSyncCursor();
-        if (syncEventId <= cursor)
+        if (syncEventId <= cursor &&
+            !await _mayReplay(call.conversationId, syncEventId)) {
           throw StateError('call signal is behind the sync cursor');
+        }
         if (senderDeviceId == _deviceId) {
           checkCanCommit?.call();
           await localStore.commitSyncEvent(SyncEventCommit(
@@ -1200,6 +1211,7 @@ class NativeCryptoService
         if (!_messageTypes.contains(type)) {
           throw ArgumentError.value(type, 'type', 'not a message payload');
         }
+        await _requireNotPaused(conversationId);
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         if (!await localStore.hasOutboxCapacity()) {
@@ -1355,7 +1367,8 @@ class NativeCryptoService
       if (await localStore.hasProcessedMlsMessage(marker)) return null;
       final previous = await _requiredState(checkCanCommit: operationFence);
       final cursor = await localStore.loadSyncCursor();
-      if (syncEventId <= cursor) {
+      if (syncEventId <= cursor &&
+          !await _mayReplay(envelope.conversationId, syncEventId)) {
         throw StateError('unrecorded application message is behind the cursor');
       }
       if (envelope.senderDeviceId == _deviceId) {
@@ -2430,6 +2443,33 @@ class NativeCryptoService
   /// at a closed handle. If the restore fails, the old handle (whose group
   /// state can no longer be trusted) is closed and the device left inactive:
   /// callers fail closed until the session is activated again.
+  /// Whether [eventId] of [conversationId] may be applied behind the sync
+  /// cursor: only a paused conversation's events above what was replayed
+  /// (C1 prerequisite 1). The store re-checks this inside the commit.
+  Future<bool> _mayReplay(String conversationId, int eventId) async {
+    final pause = await localStore.loadConversationPause(conversationId);
+    return pause != null && eventId > pause.resumeAfter;
+  }
+
+  /// Refuses MLS work that would change a paused conversation's group: its
+  /// state must stay where the failed event left it until a replay applies
+  /// the events in order. Queued messages stay queued.
+  Future<void> _requireNotPaused(String conversationId) async {
+    if (await localStore.loadConversationPause(conversationId) != null) {
+      throw ConversationSyncPausedException(conversationId);
+    }
+  }
+
+  @override
+  Future<bool> deviceHandleUsable() => _serial(() async {
+        try {
+          _requiredDevice().signingPublicKey();
+          return true;
+        } catch (_) {
+          return false;
+        }
+      });
+
   Future<void> _restorePrevious(StoredCryptoState previous) async {
     // A pending enrollment holds a fresh device whose key is in the issued
     // credential; reloading stored state would replace it and activation

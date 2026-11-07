@@ -140,6 +140,15 @@ abstract interface class MlsStateMaintenanceCryptoService {
   Future<bool> deleteConversationState(String conversationId);
 }
 
+/// Whether the native device handle still answers (C1 prerequisite 1).
+/// After one conversation's event fails and its group is restored, sync
+/// pauses only that conversation; if the handle itself is gone (a failed
+/// restore, a poisoned native lock) every conversation would fail next, so
+/// the caller stops the whole device instead.
+abstract interface class MlsDeviceHealthCryptoService {
+  Future<bool> deviceHandleUsable();
+}
+
 /// The public values derived from a K0 recovery key (ABI 11). [rkPub] is
 /// kept for K1 and never sent; [rkAuthPub] and [rkId] are what
 /// `PUT /api/v1/account/recovery-key` takes.

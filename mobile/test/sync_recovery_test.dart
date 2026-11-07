@@ -882,6 +882,17 @@ class _ScriptedApi extends ApiClient {
         .toList(growable: false);
   }
 
+  /// The per-conversation stream (C1 P1) is not served here, so a failure
+  /// at one conversation's event still stops the device (I33).
+  @override
+  Future<List<SyncEvent>> conversationSyncEvents(
+    String token,
+    String conversationId, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      throw ApiException(404, '{"error":"not_found"}');
+
   @override
   Future<Session> login({
     required String username,

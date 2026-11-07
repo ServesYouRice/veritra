@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -208,6 +209,251 @@ void main() {
       expect(harness.state.syncRecovery!.kind, SyncFailureKind.mlsState);
       expect(await store.loadSyncRecovery(), isNotNull);
       expect(api.syncCalls, 0);
+      harness.dispose();
+    });
+  });
+
+  group("one conversation's MLS failure pauses only it (C1 P1)", () {
+    test('a failed control message pauses its conversation, not the device',
+        () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+          _envelopeEvent(6, 'msg_held'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+
+      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      expect(harness.state.syncRecovery, isNull);
+      expect(harness.state.deviceRecoveryRequired, isFalse);
+      expect(await store.loadSyncRecovery(), isNull);
+      final pause = (await store.loadConversationPause('conv_1'))!;
+      expect(pause.kind, SyncFailureKind.mlsState);
+      expect(pause.failedEventId, 4);
+      expect(pause.resumeAfter, 3);
+      expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
+      expect(harness.state.conversationSyncPaused('conv_2'), isFalse);
+      // The other conversation went on. The paused one's later event was
+      // passed by the cursor alone: no marker, nothing applied.
+      expect(harness.crypto.order, <String>['msg_ok']);
+      expect(await store.hasProcessedMlsMessage('mls:4:mls_bad'), isFalse);
+      final held = await store.hasProcessedMlsMessage('application:6:msg_held');
+      expect(held, isFalse);
+      harness.dispose();
+    });
+
+    test('a retry applies the held events in order and lifts the pause',
+        () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+          _envelopeEvent(6, 'msg_held'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+
+      // The cause is gone, and a newer event of the conversation arrived.
+      harness.crypto.rejectedMls.clear();
+      api.events = <SyncEvent>[...api.events, _envelopeEvent(7, 'msg_new')];
+      await harness.state.retryConversationPause('conv_1');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 7);
+      await harness
+          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+
+      expect(await store.loadConversationPause('conv_1'), isNull);
+      expect(harness.crypto.order,
+          <String>['msg_ok', 'mls_bad', 'msg_held', 'msg_new']);
+      expect(await store.hasProcessedMlsMessage('mls:4:mls_bad'), isTrue);
+      final held = await store.hasProcessedMlsMessage('application:6:msg_held');
+      expect(held, isTrue);
+      expect(harness.state.syncRecovery, isNull);
+      harness.dispose();
+    });
+
+    test('a retry that fails again keeps the pause and skips nothing',
+        () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+          _envelopeEvent(6, 'msg_held'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+
+      await harness.state.retryConversationPause('conv_1');
+      await harness.waitFor(() async =>
+          (await store.loadConversationPause('conv_1'))?.generation == 2);
+      final pause = (await store.loadConversationPause('conv_1'))!;
+      expect(pause.failedEventId, 4);
+      expect(pause.resumeAfter, 3);
+      expect(await store.loadSyncCursor(), 6);
+      expect(harness.crypto.order, <String>['msg_ok']);
+      expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
+      expect(harness.state.syncRecovery, isNull);
+      harness.dispose();
+    });
+
+    test('a short page that is not the last one does not end the replay',
+        () async {
+      // Six held events, served two to a page.
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_a'),
+          _envelopeEvent(6, 'msg_b'),
+          _envelopeEvent(7, 'msg_c'),
+          _envelopeEvent(8, 'msg_d'),
+          _envelopeEvent(9, 'msg_e'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 9);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+      expect(harness.crypto.order, isEmpty);
+
+      harness.crypto.rejectedMls.clear();
+      api.conversationPageCap = 2;
+      await harness.state.retryConversationPause('conv_1');
+      await harness
+          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+
+      // Nothing at or below the cursor was left behind, and the pause went
+      // only after the last of them.
+      expect(await store.loadConversationPause('conv_1'), isNull);
+      expect(harness.crypto.order, <String>[
+        'mls_bad',
+        'msg_a',
+        'msg_b',
+        'msg_c',
+        'msg_d',
+        'msg_e',
+      ]);
+      expect(await store.loadSyncCursor(), 9);
+      harness.dispose();
+    });
+
+    test('a failure on a later short page keeps the pause where it stopped',
+        () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_a'),
+          _envelopeEvent(6, 'msg_b'),
+          _envelopeEvent(7, 'msg_c'),
+          _mlsEvent(8, 'mls_bad_too'),
+          _envelopeEvent(9, 'msg_d'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.addAll(<String>['mls_bad', 'mls_bad_too']);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 9);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+
+      // The first cause is gone, the second event still fails. It sits on
+      // the third page, so the replay has to get there to see it.
+      harness.crypto.rejectedMls.remove('mls_bad');
+      api.conversationPageCap = 2;
+      await harness.state.retryConversationPause('conv_1');
+      await harness.waitFor(() async =>
+          (await store.loadConversationPause('conv_1'))?.failedEventId == 8);
+
+      final pause = (await store.loadConversationPause('conv_1'))!;
+      expect(pause.resumeAfter, 7);
+      expect(harness.state.conversationSyncPaused('conv_1'), isTrue);
+      expect(harness.crypto.order, <String>[
+        'mls_bad',
+        'msg_a',
+        'msg_b',
+        'msg_c',
+      ]);
+      expect(await store.loadSyncCursor(), 9);
+      final last = await store.hasProcessedMlsMessage('application:9:msg_d');
+      expect(last, isFalse);
+      harness.dispose();
+    });
+
+    test('a stop recorded before pauses existed becomes the pause', () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+        ];
+      final store = MemoryLocalStore();
+      await store.saveSyncRecovery(SyncRecovery(
+        kind: SyncFailureKind.mlsState,
+        recordedAt: DateTime.utc(2026, 10, 1),
+        eventId: 4,
+        eventType: 'mls.message.created',
+        conversationId: 'conv_1',
+      ));
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+      expect(harness.state.syncRecovery, isNull);
+      expect(await store.loadSyncRecovery(), isNull);
+      final pause = (await store.loadConversationPause('conv_1'))!;
+      expect(pause.failedEventId, 4);
+      expect(pause.resumeAfter, 3);
+      expect(harness.crypto.order, <String>['msg_ok']);
+      harness.dispose();
+    });
+
+    test('without the conversation stream the device stops as before',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_bad'),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+        ];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      expect(harness.state.syncRecovery!.kind, SyncFailureKind.mlsState);
+      expect(await store.loadConversationPauses(), isEmpty);
+      expect(await store.loadSyncCursor(), 0);
+      expect(harness.crypto.order, isEmpty);
+      harness.dispose();
+    });
+
+    test('an event the server cannot serve again is never passed over',
+        () async {
+      // The conversation stream answers, but not with the failed event.
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..hideFromConversationStream.add(4)
+        ..events = <SyncEvent>[_mlsEvent(4, 'mls_bad')];
+      final store = MemoryLocalStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.rejectedMls.add('mls_bad');
+
+      await harness.waitFor(() => harness.state.syncRecovery != null);
+      expect(await store.loadConversationPauses(), isEmpty);
+      expect(await store.loadSyncCursor(), 0);
       harness.dispose();
     });
   });
@@ -557,6 +803,37 @@ class _ScriptedApi extends ApiClient {
   int deviceCalls = 0;
   bool failDevicesDuringSync = false;
 
+  /// Whether the per-conversation stream (C1 P1) is served. Off, a failure
+  /// at one conversation's event still stops the device (I33).
+  bool conversationRoute = false;
+
+  /// Event ids the conversation stream leaves out.
+  final Set<int> hideFromConversationStream = <int>{};
+
+  /// The most events one conversation page holds. A server may answer with
+  /// short pages, and the client halves a page that is over the response
+  /// limit, so a page below the asked size is not the end of the stream.
+  int? conversationPageCap;
+
+  @override
+  Future<List<SyncEvent>> conversationSyncEvents(
+    String token,
+    String conversationId, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    if (!conversationRoute) {
+      throw ApiException(404, '{"error":"not_found"}');
+    }
+    return events
+        .where((event) =>
+            event.conversationId == conversationId &&
+            event.id > after &&
+            !hideFromConversationStream.contains(event.id))
+        .take(min(limit, conversationPageCap ?? limit))
+        .toList(growable: false);
+  }
+
   @override
   Future<List<Conversation>> conversations(String token) async {
     conversationCalls++;
@@ -662,6 +939,9 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
 
   final LocalStore store;
   final List<String> applied = <String>[];
+
+  /// Every control and application message applied, in order.
+  final List<String> order = <String>[];
   final List<int> cursorAtApply = <int>[];
   final Set<String> rejectedMls = <String>{};
 
@@ -671,6 +951,7 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   @override
   Future<void> processMlsMessage(MlsMessage message) async {
     if (rejectedMls.contains(message.id)) throw StateError('commit rejected');
+    order.add(message.id);
     await store.commitSyncEvent(SyncEventCommit(
       eventKey: 'mls:${message.syncEventId}:${message.id}',
       conversationId: message.conversationId,
@@ -683,6 +964,7 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   Future<List<int>?> processApplicationMessage(
       ReceivedMessageEnvelope envelope, int syncEventId) async {
     applied.add(envelope.id);
+    order.add(envelope.id);
     cursorAtApply.add(await store.loadSyncCursor());
     if (envelope.ciphertext.length == 1 &&
         envelope.ciphertext.single == _neverDecrypts.single) {
