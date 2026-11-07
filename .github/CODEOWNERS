@@ -27,6 +27,7 @@
 /scripts/check-go-toolchain_test.py @ServesYouRice
 /scripts/check-rust-audit-expiry.sh @ServesYouRice
 /scripts/check-rust-audit-policy.py @ServesYouRice
+/scripts/check-rust-audit-policy_test.py @ServesYouRice
 /scripts/check-demo-boundary.sh @ServesYouRice
 /scripts/check-demo-boundary_test.py @ServesYouRice
 /scripts/check-demo-boundary-imports_test.py @ServesYouRice

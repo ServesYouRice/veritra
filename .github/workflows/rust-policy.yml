@@ -6,11 +6,15 @@ on:
       - "crypto/rust/audit-policy.json"
       - "scripts/check-rust-audit-policy.py"
       - "scripts/check-rust-audit-expiry.sh"
+      - "scripts/check-rust-audit-policy_test.py"
+      - "crypto/rust/Cargo.lock"
   pull_request:
     paths:
       - "crypto/rust/audit-policy.json"
       - "scripts/check-rust-audit-policy.py"
       - "scripts/check-rust-audit-expiry.sh"
+      - "scripts/check-rust-audit-policy_test.py"
+      - "crypto/rust/Cargo.lock"
   schedule:
     - cron: "17 0 * * *"
   workflow_dispatch:
@@ -26,3 +30,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Enforce the UTC Rust exception boundary
         run: sh scripts/check-rust-audit-expiry.sh --self-test
+      - name: Check each exception scope against Cargo.lock
+        run: |
+          python3 scripts/check-rust-audit-policy_test.py
+          sh scripts/check-rust-audit-expiry.sh --lockfile crypto/rust/Cargo.lock
