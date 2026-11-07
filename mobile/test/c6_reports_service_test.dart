@@ -423,6 +423,66 @@ void main() {
     expect(server.copies, isEmpty);
   }, skip: nativeSkip);
 
+  test('verification shows nothing about the sender unless it matches',
+      () async {
+    await ownerSetsUpKey();
+    await reporterTrustsAndFiles();
+    final owner = serviceFor(_ownerAccount);
+    final opened = await owner.open((await owner.list()).single);
+    ReportEnvelopeRecord record(
+            {String sender = 'acct_sender', List<int>? c}) =>
+        ReportEnvelopeRecord(
+          envelopeId: _envelope,
+          conversationId: _conversation,
+          senderAccountId: sender,
+          senderDeviceId: _sender,
+          frankCommit: c,
+          createdAt: DateTime.utc(2026, 11, 7),
+        );
+    // Unfranked: no sender shown.
+    server.record = record();
+    var result = await owner.verify(opened);
+    expect(result.verdict, ReportVerdict.unfranked);
+    expect(result.record, isNull);
+    // Wrong commitment: no sender shown.
+    server.record = record(c: List<int>.filled(32, 1));
+    result = await owner.verify(opened);
+    expect(result.verdict, ReportVerdict.mismatch);
+    expect(result.record, isNull);
+    // Reporter is the sender: never verified.
+    server.record = record(sender: _reporterAccount, c: commit);
+    expect((await owner.verify(opened)).verdict, ReportVerdict.mismatch);
+    server.record = record(c: commit);
+    result = await owner.verify(opened);
+    expect(result.verdict, ReportVerdict.verified);
+    expect(result.record?.senderAccountId, 'acct_sender');
+  }, skip: nativeSkip);
+
+  test('the preview is the proof that is sealed, not the edited message',
+      () async {
+    final reporter = serviceFor(_reporterAccount);
+    expect(
+        await reporter.previewText('$_sender:$_action'), 'the reported words');
+    expect(await reporter.previewText('dev:none'), isNull);
+  }, skip: nativeSkip);
+
+  test('a failed replace puts the old seed back', () async {
+    final owner = serviceFor(_ownerAccount);
+    final (key, _) = await owner.createKey();
+    server.keys.clear();
+    final failing = _FailingPut(server);
+    final broken = ReportsService(
+      api: failing,
+      token: _ownerAccount,
+      accountId: _ownerAccount,
+      crypto: crypto,
+      store: store,
+      seeds: seeds,
+    );
+    await expectLater(broken.createKey(replace: true), throwsA(anything));
+    expect((await owner.keyStatus()).publicKey, key);
+  }, skip: nativeSkip);
+
   test('report models bound what the server sends', () {
     Map<String, Object?> row() => {
           'id': 'row_1',
@@ -464,4 +524,14 @@ void main() {
     expect(frankCommitBytes, 32);
     expect(AppPayloadType.text.wireName, 'text');
   });
+}
+
+class _FailingPut extends _Server {
+  _FailingPut(_Server inner) {
+    record = inner.record;
+  }
+
+  @override
+  Future<int> putInstanceReportKey(String token, List<int> publicKey) async =>
+      throw ApiException(500, '{"error":"x"}');
 }

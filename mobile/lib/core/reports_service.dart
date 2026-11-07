@@ -175,6 +175,15 @@ class ReportsService {
 
   // ---- Reporter ----------------------------------------------------------
 
+  /// The text of exactly what a report of [messageKey] would reveal: the
+  /// canonical payload `P` kept at receive time, not the message as shown now
+  /// (an edit rewrites what is shown, never what was committed). Null when
+  /// the message has no text or no proof was kept.
+  Future<String?> previewText(String messageKey) async {
+    final reveal = await store.loadFrankReveal(messageKey);
+    return reveal == null ? null : _textOf(reveal.payload);
+  }
+
   /// Looks up where a report about [conversationId] goes and compares the
   /// recipients' keys with the pins.
   Future<ReportPlan> prepare(String conversationId) async {
@@ -290,14 +299,27 @@ class ReportsService {
     if (!replace && await seeds.load(api.baseUrl, accountId) != null) {
       throw StateError('a report key already exists on this device');
     }
+    final previous = await seeds.load(api.baseUrl, accountId);
     final seed = await crypto.generateReportKeySeed();
     try {
       final key = await crypto.reportPublicKey(seed);
       await seeds.save(api.baseUrl, accountId, seed);
-      final rev = await api.putInstanceReportKey(token, key);
-      return (key, rev);
+      try {
+        final rev = await api.putInstanceReportKey(token, key);
+        return (key, rev);
+      } catch (_) {
+        // Nothing was published: put the old seed back so the reports it
+        // opens stay readable.
+        if (previous != null) {
+          await seeds.save(api.baseUrl, accountId, previous);
+        } else {
+          await seeds.delete(api.baseUrl, accountId);
+        }
+        rethrow;
+      }
     } finally {
       seed.fillRange(0, seed.length, 0);
+      previous?.fillRange(0, previous.length, 0);
     }
   }
 
@@ -394,14 +416,19 @@ class ReportsService {
       }
       rethrow;
     }
+    // Context first: a record that does not describe this report proves
+    // nothing, whatever else it says.
+    if (record.envelopeId != body.envelopeId ||
+        record.conversationId != body.conversationId ||
+        record.conversationId != report.row.conversationId ||
+        record.senderDeviceId != body.senderDeviceId ||
+        record.senderAccountId == report.row.reporterAccountId ||
+        !_payloadContextMatches(body)) {
+      return const ReportVerification(ReportVerdict.mismatch);
+    }
     final commit = record.frankCommit;
     if (commit == null) {
-      return ReportVerification(ReportVerdict.unfranked, record: record);
-    }
-    if (record.conversationId != body.conversationId ||
-        record.senderDeviceId != body.senderDeviceId ||
-        !_payloadContextMatches(body)) {
-      return ReportVerification(ReportVerdict.mismatch, record: record);
+      return const ReportVerification(ReportVerdict.unfranked);
     }
     final computed = await crypto.frankCommit(
       key: Uint8List.fromList(body.frankKey),
@@ -414,7 +441,8 @@ class ReportsService {
       frankCommitEquals(computed, commit)
           ? ReportVerdict.verified
           : ReportVerdict.mismatch,
-      record: record,
+      // The sender is shown only for a match.
+      record: frankCommitEquals(computed, commit) ? record : null,
     );
   }
 
@@ -452,7 +480,9 @@ bool _payloadContextMatches(ReportBody body) {
 
 String? _textOf(List<int> payload) {
   final map = _payloadMap(payload);
-  if (map == null || map['type'] != 'text') return null;
+  if (map == null || (map['type'] != 'text' && map['type'] != 'reply')) {
+    return null;
+  }
   final body = map['body'];
   if (body is! Map) return null;
   final text = body['text'];

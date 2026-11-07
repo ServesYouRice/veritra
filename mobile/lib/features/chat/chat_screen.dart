@@ -856,8 +856,6 @@ class _ChatScreenState extends State<ChatScreen> {
           state: state,
           conversationId: conversationId,
           messageKey: message.key,
-          previewText:
-              message.kind == LocalMessageKind.text ? message.body : null,
         ),
       ));
       return;
