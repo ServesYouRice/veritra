@@ -453,6 +453,11 @@ int32_t pm_crypto_c7_verify(PmByteSlice domain, PmByteSlice public_key,
  *               device id, empty for kind 2) | [64] signature
  *   change    = 1 genesis, 2 add, 3 remove, 4 recovery, 5 recovery key,
  *               6 migration genesis
+ * Both check calls take a required expected_account_id (1 to 128 bytes, the
+ * account the caller asked about) and refuse a statement or chain of any other
+ * account with PM_CRYPTO_L1_CHAIN, a genesis included: a valid chain of
+ * another account never passes, so the caller needs no account comparison of
+ * its own (and cannot forget one).
  * pm_crypto_l1_check_step checks a statement as the version after prev (prev
  * empty for a genesis); history is every pair listed before (u16 n | n x
  * (lp(device_id) | [32] key), may be empty) and carries the no-return and
@@ -467,10 +472,12 @@ int32_t pm_crypto_c7_verify(PmByteSlice domain, PmByteSlice public_key,
  * | [32] key | u64 added_version | u64 removed_version, 0 while listed).
  * Both return PM_CRYPTO_OK or one of the PM_CRYPTO_L1_* kinds
  * (PM_CRYPTO_INVALID_ARGUMENT for a null output or a bad length). */
-int32_t pm_crypto_l1_check_step(PmByteSlice prev, PmByteSlice statement,
+int32_t pm_crypto_l1_check_step(PmByteSlice expected_account_id,
+                                PmByteSlice prev, PmByteSlice statement,
                                 PmByteSlice history,
                                 PmOwnedBuffer *out_summary);
-int32_t pm_crypto_l1_check_chain(PmByteSlice chain, PmOwnedBuffer *out_result);
+int32_t pm_crypto_l1_check_chain(PmByteSlice expected_account_id,
+                                 PmByteSlice chain, PmOwnedBuffer *out_result);
 /* The recovery-derived signer (D94: the seed stays sealed on the waiting
  * phone). hold derives the device-list seed from typed 30-byte RK entropy and
  * keeps only the seed in the sealed device record (seal afterwards; an older
@@ -503,7 +510,11 @@ int32_t pm_crypto_group_members(PmCryptoHandle *handle, PmByteSlice group_id,
  * same shape, one entry) for the committer, both read from the staged commit
  * and tree, never from a server label. A commit is never refused for an L1
  * reason: the app judges the pairs afterwards and holds the conversation. All
- * five outputs are checked first and are zero/null on failure. */
+ * five outputs are checked first and are zero/null on failure. Ids are raw
+ * bytes, not necessarily UTF-8 (a member can commit an Add whose credential
+ * holds any 1 to 128 bytes): carry them as bytes, and never fail once
+ * PM_CRYPTO_OK has come back, because the commit is already merged. Both pair
+ * buffers are encoded before the merge, so OK always comes with both. */
 int32_t pm_crypto_group_l1_process_commit(
     PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice commit,
     uint8_t *out_flags, uint64_t *out_epoch, PmOwnedBuffer *out_root,

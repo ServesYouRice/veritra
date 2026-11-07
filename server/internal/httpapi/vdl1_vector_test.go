@@ -223,8 +223,13 @@ func vdl1VecVerify(key []byte, s *vdl1VecStatement) string {
 }
 
 // vdl1VecCheck is the design's "Who may sign what" table, in the order the
-// vector's refusals assume: chain, rule, signature.
-func vdl1VecCheck(prev, next *vdl1VecStatement, history []vdl1VecPair) string {
+// vector's refusals assume: chain, rule, signature. expected is the account
+// the caller asked about: a statement of any other account is a chain fault,
+// genesis or not.
+func vdl1VecCheck(expected string, prev, next *vdl1VecStatement, history []vdl1VecPair) string {
+	if next.account != expected {
+		return "chain"
+	}
 	if next.change == 1 || next.change == 6 {
 		if prev != nil {
 			return "chain"
@@ -295,6 +300,49 @@ func vdl1VecCheck(prev, next *vdl1VecStatement, history []vdl1VecPair) string {
 	return vdl1VecVerify(key, next)
 }
 
+// vdl1VecCheckChain checks a packed chain (u16 count | count x (u16 len |
+// statement)) from its genesis, with the history built as it goes.
+func vdl1VecCheckChain(expected string, packed []byte) string {
+	if len(packed) < 2 {
+		return "malformed"
+	}
+	count := int(binary.BigEndian.Uint16(packed))
+	offset := 2
+	var previous *vdl1VecStatement
+	var history []vdl1VecPair
+	if count == 0 {
+		return "malformed"
+	}
+	for i := 0; i < count; i++ {
+		if offset+2 > len(packed) {
+			return "malformed"
+		}
+		length := int(binary.BigEndian.Uint16(packed[offset:]))
+		offset += 2
+		if offset+length > len(packed) {
+			return "malformed"
+		}
+		statement, problem := vdl1VecParse(packed[offset : offset+length])
+		offset += length
+		if problem != "" {
+			return problem
+		}
+		if problem := vdl1VecCheck(expected, previous, statement, history); problem != "" {
+			return problem
+		}
+		for _, pair := range statement.entries {
+			if !vdl1VecSeen(history, pair) {
+				history = append(history, pair)
+			}
+		}
+		previous = statement
+	}
+	if offset != len(packed) {
+		return "malformed"
+	}
+	return ""
+}
+
 type vdl1VecVector struct {
 	Labels struct {
 		Signature string `json:"signature"`
@@ -315,8 +363,9 @@ type vdl1VecVector struct {
 	} `json:"inputs"`
 	Outputs struct {
 		Chains []struct {
-			Name  string `json:"name"`
-			Steps []struct {
+			Name      string `json:"name"`
+			AccountID string `json:"account_id"`
+			Steps     []struct {
 				Version          uint64 `json:"version"`
 				Change           byte   `json:"change"`
 				StatementHex     string `json:"statement_hex"`
@@ -331,11 +380,18 @@ type vdl1VecVector struct {
 			ListIDHex   string `json:"list_id_hex"`
 			HeadVersion uint64 `json:"head_version"`
 		} `json:"chains"`
+		RefusedChains []struct {
+			Name              string `json:"name"`
+			ExpectedAccountID string `json:"expected_account_id"`
+			ChainHex          string `json:"chain_hex"`
+			Error             string `json:"error"`
+		} `json:"refused_chains"`
 		Refused []struct {
-			Name         string  `json:"name"`
-			PrevHex      *string `json:"prev_hex"`
-			StatementHex string  `json:"statement_hex"`
-			History      []struct {
+			Name              string  `json:"name"`
+			ExpectedAccountID string  `json:"expected_account_id"`
+			PrevHex           *string `json:"prev_hex"`
+			StatementHex      string  `json:"statement_hex"`
+			History           []struct {
 				DeviceID      string `json:"device_id"`
 				SigningKeyHex string `json:"signing_key_hex"`
 			} `json:"history"`
@@ -436,7 +492,7 @@ func TestVDL1VectorChains(t *testing.T) {
 			if problem != "" {
 				t.Fatalf("%s v%d: parse: %s", chain.Name, step.Version, problem)
 			}
-			if problem := vdl1VecCheck(previous, statement, history); problem != "" {
+			if problem := vdl1VecCheck(chain.AccountID, previous, statement, history); problem != "" {
 				t.Fatalf("%s v%d refused: %s", chain.Name, step.Version, problem)
 			}
 			if statement.version != step.Version || statement.change != step.Change || statement.signerKind != step.SignerKind || statement.signerID != step.SignerDeviceID {
@@ -499,6 +555,13 @@ func TestVDL1VectorChains(t *testing.T) {
 		if !bytes.Equal(packed, want) {
 			t.Fatalf("%s: chain_hex is not the packed statements", chain.Name)
 		}
+		// Whole, the chain verifies for its own account only.
+		if got := vdl1VecCheckChain(chain.AccountID, packed); got != "" {
+			t.Fatalf("%s: the whole chain is refused as %q", chain.Name, got)
+		}
+		if got := vdl1VecCheckChain(chain.AccountID+"x", packed); got != "chain" {
+			t.Fatalf("%s: asked for another account it is %q, want chain", chain.Name, got)
+		}
 		if chain.Name[0] == 'A' {
 			for _, change := range []byte{1, 2, 3, 4, 5} {
 				if !changes[change] {
@@ -534,10 +597,46 @@ func TestVDL1VectorRefusals(t *testing.T) {
 		if problem != "" {
 			got = problem
 		} else {
-			got = vdl1VecCheck(previous, statement, history)
+			got = vdl1VecCheck(refused.ExpectedAccountID, previous, statement, history)
 		}
 		if got != refused.Error {
 			t.Errorf("%s: refused as %q, the vector says %q", refused.Name, got, refused.Error)
+		}
+	}
+}
+
+// TestVDL1VectorRefusedChains: a real, validly signed chain of another
+// account must not verify for the account asked about (a server answering a
+// fetch with someone else's chain).
+func TestVDL1VectorRefusedChains(t *testing.T) {
+	vector := loadVDL1Vector(t)
+	found := false
+	for _, refused := range vector.Outputs.RefusedChains {
+		if refused.Name == "chain of another account" {
+			found = true
+		}
+		got := vdl1VecCheckChain(refused.ExpectedAccountID, vdl1VecHex(t, "chain_hex", refused.ChainHex))
+		if got != refused.Error {
+			t.Errorf("%s: refused as %q, the vector says %q", refused.Name, got, refused.Error)
+		}
+	}
+	if !found {
+		t.Fatal("the vector lost its 'chain of another account' refusal")
+	}
+	needed := map[string]bool{
+		"genesis of another account":                           false,
+		"migration genesis of another account":                 false,
+		"add of another account after its own genesis":         false,
+		"genesis of this account asked for as another account": false,
+	}
+	for _, refused := range vector.Outputs.Refused {
+		if _, ok := needed[refused.Name]; ok {
+			needed[refused.Name] = true
+		}
+	}
+	for name, ok := range needed {
+		if !ok {
+			t.Errorf("the vector lost its %q refusal", name)
 		}
 	}
 }

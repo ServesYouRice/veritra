@@ -8,6 +8,19 @@ part of 'native_crypto_bindings.dart';
 // Every rule lives in Rust (`crypto/rust/src/l1.rs`). This file only encodes
 // a body for the device to sign, joins it to its signature, and reads the
 // summaries Rust hands back, so the app never parses a statement itself.
+//
+// Account and device ids are BYTES here, never Strings. Rust reads an id out
+// of an MLS credential as 1 to 128 arbitrary bytes, so a member (or a server
+// colluding with one) can commit an Add whose ids are not UTF-8. Decoding
+// them as text would throw after the commit was already merged and break D94
+// (apply the commit, then hold; never stall sync). [idBytes] spells an
+// ordinary text id; nothing in this file ever decodes one.
+
+/// The bytes of a text id (UTF-8), for the callers that have a String.
+Uint8List idBytes(String text) => Uint8List.fromList(utf8.encode(text));
+
+String _hexOf(List<int> bytes) =>
+    bytes.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 
 /// What a device-list version does (the `change` byte).
 enum DeviceListChange {
@@ -38,27 +51,30 @@ const String deviceListSignLabel = 'veritra-l1-device-list-sig-v1';
 
 /// A listed device: its id and its MLS credential signing key.
 class DeviceListPair {
-  DeviceListPair(this.deviceId, List<int> signingKey)
-      : signingKey = Uint8List.fromList(signingKey) {
+  DeviceListPair(List<int> deviceId, List<int> signingKey)
+      : deviceId = Uint8List.fromList(deviceId),
+        signingKey = Uint8List.fromList(signingKey) {
     if (this.signingKey.length != 32) {
       throw ArgumentError('A device-list signing key is 32 bytes');
     }
   }
 
-  final String deviceId;
+  /// The id's bytes (see the note at the top of this file).
+  final Uint8List deviceId;
   final Uint8List signingKey;
 
   @override
   bool operator ==(Object other) =>
       other is DeviceListPair &&
-      other.deviceId == deviceId &&
+      _sameBytes(other.deviceId, deviceId) &&
       _sameBytes(other.signingKey, signingKey);
 
   @override
-  int get hashCode => Object.hash(deviceId, Object.hashAll(signingKey));
+  int get hashCode =>
+      Object.hash(Object.hashAll(deviceId), Object.hashAll(signingKey));
 
   @override
-  String toString() => 'DeviceListPair($deviceId)';
+  String toString() => 'DeviceListPair(${_hexOf(deviceId)})';
 }
 
 bool _sameBytes(List<int> a, List<int> b) {
@@ -74,14 +90,15 @@ bool _sameBytes(List<int> a, List<int> b) {
 /// else, so a mistake here fails closed.
 class DeviceListBody {
   DeviceListBody({
-    required this.accountId,
+    required List<int> accountId,
     required this.version,
     required List<int> prevHash,
     required this.createdAtMs,
     required this.change,
     required this.entries,
     List<int>? recoveryKey,
-  })  : prevHash = Uint8List.fromList(prevHash),
+  })  : accountId = Uint8List.fromList(accountId),
+        prevHash = Uint8List.fromList(prevHash),
         recoveryKey =
             recoveryKey == null ? null : Uint8List.fromList(recoveryKey) {
     if (this.prevHash.length != 32) {
@@ -92,7 +109,7 @@ class DeviceListBody {
     }
   }
 
-  final String accountId;
+  final Uint8List accountId;
   final int version;
   final Uint8List prevHash;
   final int createdAtMs;
@@ -110,8 +127,8 @@ class DeviceListBody {
     if (entries.isEmpty || entries.length > 16) {
       throw ArgumentError('A device list holds 1 to 16 devices');
     }
-    final sorted = [...entries]..sort((a, b) =>
-        _compareBytes(utf8.encode(a.deviceId), utf8.encode(b.deviceId)));
+    final sorted = [...entries]
+      ..sort((a, b) => _compareBytes(a.deviceId, b.deviceId));
     final out = BytesBuilder(copy: false);
     final data = ByteData(8);
     void u64(int value) {
@@ -128,7 +145,7 @@ class DeviceListBody {
     out
       ..add(utf8.encode('VDL1'))
       ..addByte(1);
-    lp(utf8.encode(accountId));
+    lp(accountId);
     u64(version);
     out.add(prevHash);
     u64(createdAtMs);
@@ -136,7 +153,7 @@ class DeviceListBody {
       ..addByte(change.code)
       ..addByte(sorted.length);
     for (final pair in sorted) {
-      lp(utf8.encode(pair.deviceId));
+      lp(pair.deviceId);
       out.add(pair.signingKey);
     }
     final key = recoveryKey;
@@ -165,12 +182,12 @@ int _compareBytes(List<int> a, List<int> b) {
 Uint8List assembleDeviceListStatement({
   required List<int> body,
   required int signerKind,
-  String? signerDeviceId,
+  List<int>? signerDeviceId,
   required List<int> signature,
 }) {
   if (signature.length != 64) throw ArgumentError('A signature is 64 bytes');
   final id = signerKind == deviceListSignerDevice
-      ? utf8.encode(signerDeviceId ?? '')
+      ? (signerDeviceId ?? const <int>[])
       : const <int>[];
   if (signerKind != deviceListSignerDevice &&
       signerKind != deviceListSignerRecovery) {
@@ -203,13 +220,13 @@ class DeviceListSummary {
   final DeviceListChange change;
   final int signerKind;
 
-  /// Empty for the recovery signer.
-  final String signerDeviceId;
+  /// Empty for the recovery signer. Bytes, not text.
+  final Uint8List signerDeviceId;
   final int version;
   final Uint8List listHash;
   final Uint8List prevHash;
   final int createdAtMs;
-  final String accountId;
+  final Uint8List accountId;
   final List<DeviceListPair> entries;
   final Uint8List? recoveryKey;
 }
@@ -238,15 +255,8 @@ class _SummaryReader {
 
   int u64() => ByteData.sublistView(take(8)).getUint64(0, Endian.big);
 
-  String text(int length) {
-    try {
-      return utf8.decode(take(length), allowMalformed: false);
-    } on FormatException {
-      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
-    }
-  }
-
-  String lpText() => text(u16());
+  /// A length-prefixed id, as the bytes Rust holds. Never decoded as text.
+  Uint8List lpBytes() => take(u16());
 
   bool get finished => offset == _data.length;
 }
@@ -257,16 +267,16 @@ DeviceListSummary _readSummary(_SummaryReader reader) {
   }
   final change = DeviceListChange.fromCode(reader.byte());
   final signerKind = reader.byte();
-  final signer = reader.lpText();
+  final signer = reader.lpBytes();
   final version = reader.u64();
   final listHash = reader.take(32);
   final prevHash = reader.take(32);
   final createdAtMs = reader.u64();
-  final account = reader.lpText();
+  final account = reader.lpBytes();
   final count = reader.byte();
   final entries = <DeviceListPair>[
     for (var i = 0; i < count; i++)
-      DeviceListPair(reader.lpText(), reader.take(32)),
+      DeviceListPair(reader.lpBytes(), reader.take(32)),
   ];
   final recoveryKey = switch (reader.byte()) {
     0 => null,
@@ -305,27 +315,32 @@ class DeviceListChainResult {
   final List<DeviceListListedPair> pairs;
 }
 
-/// A leaf of a group as `(account, device, signature key)`.
+/// A leaf of a group as `(account, device, signature key)`. The ids are the
+/// raw bytes of the leaf's credential, which need not be UTF-8: a leaf with
+/// an id nobody can spell is still a leaf, and the app holds it as
+/// unapproved instead of failing.
 class LeafPair {
-  LeafPair(this.accountId, this.deviceId, List<int> signingKey)
-      : signingKey = Uint8List.fromList(signingKey);
-  final String accountId;
-  final String deviceId;
+  LeafPair(List<int> accountId, List<int> deviceId, List<int> signingKey)
+      : accountId = Uint8List.fromList(accountId),
+        deviceId = Uint8List.fromList(deviceId),
+        signingKey = Uint8List.fromList(signingKey);
+  final Uint8List accountId;
+  final Uint8List deviceId;
   final Uint8List signingKey;
 
   @override
   bool operator ==(Object other) =>
       other is LeafPair &&
-      other.accountId == accountId &&
-      other.deviceId == deviceId &&
+      _sameBytes(other.accountId, accountId) &&
+      _sameBytes(other.deviceId, deviceId) &&
       _sameBytes(other.signingKey, signingKey);
 
   @override
-  int get hashCode =>
-      Object.hash(accountId, deviceId, Object.hashAll(signingKey));
+  int get hashCode => Object.hash(Object.hashAll(accountId),
+      Object.hashAll(deviceId), Object.hashAll(signingKey));
 
   @override
-  String toString() => 'LeafPair($accountId, $deviceId)';
+  String toString() => 'LeafPair(${_hexOf(accountId)}, ${_hexOf(deviceId)})';
 }
 
 List<LeafPair> _readLeafPairs(List<int> bytes) {
@@ -333,7 +348,7 @@ List<LeafPair> _readLeafPairs(List<int> bytes) {
   final count = reader.u16();
   final pairs = <LeafPair>[
     for (var i = 0; i < count; i++)
-      LeafPair(reader.lpText(), reader.lpText(), reader.take(32)),
+      LeafPair(reader.lpBytes(), reader.lpBytes(), reader.take(32)),
   ];
   if (!reader.finished) {
     throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -341,7 +356,24 @@ List<LeafPair> _readLeafPairs(List<int> bytes) {
   return pairs;
 }
 
+/// [_readLeafPairs] for a buffer a native call handed back after it had
+/// already changed state: a failure is a value (null), never an exception.
+List<LeafPair>? _tryReadLeafPairs(List<int>? bytes) {
+  if (bytes == null) return null;
+  try {
+    return _readLeafPairs(bytes);
+  } on NativeCryptoException {
+    return null;
+  }
+}
+
 /// What a commit did, read from MLS itself (ABI 13 flags, ABI 14 pairs).
+///
+/// The native call has already merged the commit when this is built (D94:
+/// apply the commit, then hold; never stall sync), so building it never
+/// throws. Rust encodes the pair buffers before the merge, so [unreadable]
+/// is not expected; if it is ever true (a damaged buffer), judge nothing and
+/// hold the conversation. The flags and [epoch] are still true.
 class CommitPairs {
   const CommitPairs({
     required this.removed,
@@ -351,7 +383,12 @@ class CommitPairs {
     required this.root,
     required this.addedLeaves,
     required this.committer,
+    this.unreadable = false,
   });
+
+  /// A pair buffer or the root could not be read after the merge: judge
+  /// nothing from this commit and hold the conversation.
+  final bool unreadable;
 
   /// At least one Remove proposal.
   final bool removed;
@@ -367,9 +404,12 @@ class CommitPairs {
   /// null. The caller wipes it once it has derived from it.
   final Uint8List? root;
 
-  /// The leaves the commit's Add proposals brought in.
+  /// The leaves the commit's Add proposals brought in (empty when
+  /// [unreadable]).
   final List<LeafPair> addedLeaves;
-  final LeafPair committer;
+
+  /// The committer; null only when [unreadable].
+  final LeafPair? committer;
 }
 
 List<int> _historyBytes(List<DeviceListPair> history) {
@@ -378,7 +418,7 @@ List<int> _historyBytes(List<DeviceListPair> history) {
   final out = BytesBuilder(copy: false)
     ..add(<int>[(history.length >> 8) & 0xff, history.length & 0xff]);
   for (final pair in history) {
-    final id = utf8.encode(pair.deviceId);
+    final id = pair.deviceId;
     if (id.isEmpty || id.length > 128) throw ArgumentError('invalid device id');
     out
       ..add(<int>[(id.length >> 8) & 0xff, id.length & 0xff])
@@ -394,12 +434,12 @@ List<int> encodeKeyedMembershipChanges({
   required List<
           ({
             List<int> keyPackage,
-            String accountId,
-            String deviceId,
+            List<int> accountId,
+            List<int> deviceId,
             List<int> signingKey
           })>
       adds,
-  required List<({String accountId, String deviceId})> removes,
+  required List<({List<int> accountId, List<int> deviceId})> removes,
 }) {
   if (adds.isEmpty && removes.isEmpty) {
     throw ArgumentError('a commit needs at least one change');
@@ -409,8 +449,7 @@ List<int> encodeKeyedMembershipChanges({
   }
   final out = BytesBuilder(copy: false)..addByte(2);
   void u16(int value) => out.add(<int>[(value >> 8) & 0xff, value & 0xff]);
-  void id(String value) {
-    final bytes = utf8.encode(value);
+  void id(List<int> bytes) {
     if (bytes.isEmpty || bytes.length > 128) {
       throw ArgumentError('invalid identity in membership change');
     }
@@ -448,26 +487,35 @@ List<int> encodeKeyedMembershipChanges({
 
 extension DeviceListBindings on NativeCryptoBindings {
   /// Checks [statement] as the version after [prev] (null for a genesis) and
-  /// returns its summary. [history] is every pair the chain listed before;
+  /// returns its summary. [expectedAccountId] is the account the caller asked
+  /// about: Rust refuses a statement of any other account, a genesis
+  /// included, as [NativeCryptoError.deviceListChain], so a valid chain of
+  /// another account (a server's substitute answer) never passes and the
+  /// caller needs no comparison of its own. [history] is every pair the chain
+  /// listed before;
   /// pass the app's keys table, since [prev] alone cannot know a device that
   /// was removed earlier (the no-return rule). Throws
   /// [NativeCryptoError.deviceListMalformed], `deviceListChain`,
   /// `deviceListRule` or `deviceListSignature` (checked in that order).
   DeviceListSummary checkDeviceListStep({
+    required List<int> expectedAccountId,
     List<int>? prev,
     required List<int> statement,
     List<DeviceListPair> history = const [],
   }) {
+    _bounded(expectedAccountId, 128);
     _bounded(statement, 4096);
     if (prev != null) _bounded(prev, 4096);
     final summary = _withDeviceListSlices(
       [
+        expectedAccountId,
         prev ?? const <int>[],
         statement,
         history.isEmpty ? const <int>[] : _historyBytes(history)
       ],
       (slices) => _output(
-          (out) => _l1CheckStep(slices[0], slices[1], slices[2], out),
+          (out) =>
+              _l1CheckStep(slices[0], slices[1], slices[2], slices[3], out),
           maximum: 8192),
     );
     final reader = _SummaryReader(summary);
@@ -480,7 +528,13 @@ extension DeviceListBindings on NativeCryptoBindings {
 
   /// Checks a whole chain from its genesis (at most 256 statements) and
   /// returns the head, the list identity and every pair it listed.
-  DeviceListChainResult checkDeviceListChain(List<List<int>> statements) {
+  /// [expectedAccountId] is the account the caller asked about; a chain of
+  /// any other account is refused as [NativeCryptoError.deviceListChain].
+  DeviceListChainResult checkDeviceListChain(
+    List<int> expectedAccountId,
+    List<List<int>> statements,
+  ) {
+    _bounded(expectedAccountId, 128);
     if (statements.isEmpty || statements.length > 256) {
       throw ArgumentError('A chain holds 1 to 256 statements');
     }
@@ -493,8 +547,9 @@ extension DeviceListBindings on NativeCryptoBindings {
         ..add(statement);
     }
     final result = _withByteLists(
-        <List<int>>[out.toBytes()],
-        (slices) => _output((buffer) => _l1CheckChain(slices[0], buffer),
+        <List<int>>[expectedAccountId, out.toBytes()],
+        (slices) => _output(
+            (buffer) => _l1CheckChain(slices[0], slices[1], buffer),
             maximum: 4 * 1024 * 1024));
     final reader = _SummaryReader(result);
     final head = _readSummary(reader);
@@ -503,7 +558,7 @@ extension DeviceListBindings on NativeCryptoBindings {
     final pairs = <DeviceListListedPair>[
       for (var i = 0; i < count; i++)
         DeviceListListedPair(
-          DeviceListPair(reader.lpText(), reader.take(32)),
+          DeviceListPair(reader.lpBytes(), reader.take(32)),
           reader.u64(),
           reader.u64(),
         ),
@@ -547,7 +602,7 @@ extension DeviceListDevice on NativeCryptoDevice {
   /// exactly this device, or a migration genesis that includes it
   /// ([NativeCryptoError.deviceListRule] otherwise; a malformed body is
   /// [NativeCryptoError.deviceListMalformed]).
-  Uint8List signDeviceList(DeviceListBody body, String ownDeviceId) {
+  Uint8List signDeviceList(DeviceListBody body, List<int> ownDeviceId) {
     final bytes = body.encode();
     final signature = _bindings._withByteLists(
         <List<int>>[utf8.encode(deviceListSignLabel), bytes],
@@ -688,33 +743,39 @@ extension DeviceListDevice on NativeCryptoDevice {
     final committer = calloc<_PmOwnedBuffer>();
     try {
       _bindings._check(call(flags, epoch, root, added, committer));
-      Uint8List? rootBytes;
-      if (root.ref.data != nullptr) {
-        rootBytes = Uint8List.fromList(_bindings._take(root.ref, maximum: 32));
-        root.ref
-          ..data = nullptr
-          ..len = 0;
+      // From here the commit is merged (D94): nothing below may throw. A
+      // buffer that cannot be read becomes `unreadable`, never an exception.
+      var unreadable = false;
+      List<int>? read(_PmOwnedBuffer buffer, int maximum,
+          {bool optional = false}) {
+        if (optional && buffer.data == nullptr) return null;
+        try {
+          final bytes = _bindings._take(buffer, maximum: maximum);
+          buffer
+            ..data = nullptr
+            ..len = 0;
+          return bytes;
+        } on Object {
+          unreadable = true;
+          return null;
+        }
       }
-      final addedBytes = _bindings._take(added.ref, maximum: 4 * 1024 * 1024);
-      added.ref
-        ..data = nullptr
-        ..len = 0;
-      final committerBytes = _bindings._take(committer.ref, maximum: 4096);
-      committer.ref
-        ..data = nullptr
-        ..len = 0;
-      final committers = _readLeafPairs(committerBytes);
-      if (committers.length != 1) {
-        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
-      }
+
+      final rootBytes = read(root.ref, 32, optional: true);
+      final addedLeaves = _tryReadLeafPairs(read(added.ref, 4 * 1024 * 1024));
+      final committers = _tryReadLeafPairs(read(committer.ref, 4096));
+      final onlyCommitter =
+          committers != null && committers.length == 1 ? committers[0] : null;
+      if (addedLeaves == null || onlyCommitter == null) unreadable = true;
       return CommitPairs(
         removed: flags.value & 1 != 0,
         added: flags.value & 2 != 0,
         removedSelf: flags.value & 4 != 0,
         epoch: epoch.value,
-        root: rootBytes,
-        addedLeaves: _readLeafPairs(addedBytes),
-        committer: committers.single,
+        root: rootBytes == null ? null : Uint8List.fromList(rootBytes),
+        addedLeaves: unreadable ? const <LeafPair>[] : addedLeaves!,
+        committer: unreadable ? null : onlyCommitter,
+        unreadable: unreadable,
       );
     } finally {
       if (root.ref.data != nullptr) _bindings._free(root.ref);
@@ -736,12 +797,12 @@ extension DeviceListDevice on NativeCryptoDevice {
     List<
             ({
               List<int> keyPackage,
-              String accountId,
-              String deviceId,
+              List<int> accountId,
+              List<int> deviceId,
               List<int> signingKey
             })>
         adds = const [],
-    List<({String accountId, String deviceId})> removes = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
   }) {
     final changes = encodeKeyedMembershipChanges(adds: adds, removes: removes);
     return _stage(groupId, changes, expectWelcome: adds.isNotEmpty);

@@ -270,6 +270,14 @@ typedef _ThreeSlicesOutputNative = Int32 Function(
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _ThreeSlicesOutputDart = int Function(
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _TwoSlicesOutputNative = Int32 Function(
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _TwoSlicesOutputDart = int Function(
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _FourSlicesOutputNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _FourSlicesOutputDart = int Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _VerifyNative = Int32 Function(
     _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
 typedef _VerifyDart = int Function(
@@ -372,10 +380,10 @@ class NativeCryptoBindings {
             .lookupFunction<_VerifyNative, _VerifyDart>('pm_crypto_c7_verify'),
         _c7Sign = library.lookupFunction<_HandleTwoSlicesOutputNative,
             _HandleTwoSlicesOutputDart>('pm_crypto_c7_sign'),
-        _l1CheckStep = library.lookupFunction<_ThreeSlicesOutputNative,
-            _ThreeSlicesOutputDart>('pm_crypto_l1_check_step'),
-        _l1CheckChain = library.lookupFunction<_LocatorNative, _LocatorDart>(
-            'pm_crypto_l1_check_chain'),
+        _l1CheckStep = library.lookupFunction<_FourSlicesOutputNative,
+            _FourSlicesOutputDart>('pm_crypto_l1_check_step'),
+        _l1CheckChain = library.lookupFunction<_TwoSlicesOutputNative,
+            _TwoSlicesOutputDart>('pm_crypto_l1_check_chain'),
         _l1Hold = library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
             'pm_crypto_l1_recovery_hold'),
         _l1HoldPublic =
@@ -496,8 +504,8 @@ class NativeCryptoBindings {
   final _ThreeSlicesOutputDart _c7Open;
   final _VerifyDart _c7Verify;
   final _HandleTwoSlicesOutputDart _c7Sign;
-  final _ThreeSlicesOutputDart _l1CheckStep;
-  final _LocatorDart _l1CheckChain;
+  final _FourSlicesOutputDart _l1CheckStep;
+  final _TwoSlicesOutputDart _l1CheckChain;
   final _HandleSliceDart _l1Hold;
   final _HandleOutputDart _l1HoldPublic;
   final _HandleByteOutputDart _l1HoldDrop;

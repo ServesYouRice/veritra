@@ -192,7 +192,8 @@ impl MlsDevice {
         let statement =
             l1::assemble_statement(body, &Signer::Recovery, &signature).map_err(refused)?;
         let parsed_statement = l1::parse_statement(&statement).map_err(refused)?;
-        l1::check_step(Some(&prev), &parsed_statement, history).map_err(refused)?;
+        l1::check_step(&self.account_id, Some(&prev), &parsed_statement, history)
+            .map_err(refused)?;
         if entropy.is_none() {
             self.held_list_seed = None;
         }

@@ -72,10 +72,14 @@ pub struct CommitOutcome {
     /// The epoch the commit produces.
     pub new_epoch: u64,
     /// L1 (ABI 14): the `(account, device, signature key)` of every leaf the
-    /// commit's Add proposals bring in, read from the staged commit.
-    pub added: Vec<LeafPair>,
-    /// L1: the committer's pair (this device's own for its own commit).
-    pub committer: LeafPair,
+    /// commit's Add proposals bring in, read from the staged commit, already
+    /// encoded (`l1::encode_leaf_pairs`). Encoded before the merge, so an
+    /// encoding failure refuses the commit with the group untouched and can
+    /// never be reported after the state has changed (D94).
+    pub added_pairs: Vec<u8>,
+    /// L1: the committer's pair (this device's own for its own commit), in
+    /// the same encoding and with the same ordering guarantee.
+    pub committer_pair: Vec<u8>,
     /// `MLS-Exporter("veritra-c7-rekey-v1", lp(group_id) | u64(new_epoch), 32)`
     /// for a removal commit that keeps this device; zeroized on drop.
     pub root: Option<tls_codec::SecretVLBytes>,
@@ -647,13 +651,20 @@ impl MlsDevice {
                 LeafPair::from_credential(leaf.credential(), leaf.signature_key().as_slice())
             })
             .collect::<Result<Vec<_>, _>>()?;
+        // Encode both buffers now: `commit_outcome` runs before the merge on
+        // both paths, so a failure here leaves the group as it was.
+        let added_triples: Vec<_> = added.iter().map(LeafPair::as_triple).collect();
+        let added_pairs =
+            crate::l1::encode_leaf_pairs(&added_triples).map_err(|_| MlsError::InvalidIdentity)?;
+        let committer_pair = crate::l1::encode_leaf_pairs(&[committer.as_triple()])
+            .map_err(|_| MlsError::InvalidIdentity)?;
         Ok(CommitOutcome {
             removed_any,
             added_any,
             removed_self,
             new_epoch,
-            added,
-            committer,
+            added_pairs,
+            committer_pair,
             root,
         })
     }

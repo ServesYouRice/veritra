@@ -22,17 +22,18 @@ for them. The `docs/crypto.md` change log entry "L1-1" is the full list.
   `pm_crypto_group_l1_*`, the L1 label on `pm_crypto_c7_sign`, and
   `out_rk_list_pub` on `pm_crypto_recovery_key_derive`.
 - Vector `testing/vectors/l1-device-list-v1.json`: two valid chains (every
-  change kind), 72 single-fault refusals, four Ed25519 edge cases, all from
+  change kind), 76 single-fault refusals, 2 whole-chain refusals (another
+  account's chain), four Ed25519 edge cases, all from
   fixed seeds (it regenerates byte for byte).
 - Dart: `mobile/lib/crypto/l1_device_list.dart` and the ABI 14 binding.
 
 ## Checks run
 
 - `cargo fmt --check` and `cargo clippy --all-targets -- -D warnings`: clean.
-- `cargo test` in `crypto/rust`: 178 library tests pass, all other suites pass.
-  New: 10 in `l1::tests` (vector file equals what the code produces, chains
+- `cargo test` in `crypto/rust`: 181 library tests pass, all other suites pass.
+  New: 11 in `l1::tests` (vector file equals what the code produces, chains
   step by step and whole, every refusal for its one reason, the edge cases,
-  label disjointness, history rules), 7 in `ffi::l1_tests` (the ABI as Dart
+  label disjointness, history rules), 9 in `ffi::l1_tests` (the ABI as Dart
   calls it: signing, chains, recovery hold and sign, keyed adds, commit pairs,
   group members), 4 in `mls::records::records_tests` (held seed survives seal
   and restore; the record is what ABI 13 wrote without a seed and is refused
@@ -41,7 +42,7 @@ for them. The `docs/crypto.md` change log entry "L1-1" is the full list.
   (`server/internal/httpapi/vdl1_vector_test.go`; its helpers carry a
   `vdl1Vec` prefix so they cannot clash with the server step's production
   code). An independent, test-only reimplementation written from the design (not from the Rust code)
-  agrees on all 72 refusals, including the reason, signs every step with Go's
+  agrees on all 76 refusals and both chain refusals, including the reason, signs every step with Go's
   own `crypto/ed25519` byte for byte, and re-derives the list recovery key by
   HKDF. The edge-case test pins where Go's verifier is laxer than the
   clients' strict one (a small-order key with R = identity and S = 0): the
@@ -49,7 +50,7 @@ for them. The `docs/crypto.md` change log entry "L1-1" is the full list.
 - Dart (Flutter 3.44.0, native library built with `cargo build --release`,
   `VERITRA_REQUIRE_NATIVE_CRYPTO=1`): `flutter analyze` clean,
   `dart format --set-exit-if-changed .` clean,
-  `test/l1_device_list_native_test.dart` (6 tests: both chains step by step
+  `test/l1_device_list_native_test.dart` (8 tests: both chains step by step
   and whole, every refusal, the derive vector, real devices signing a chain,
   recovery from the held seed and the typed key, keyed adds and commit pairs)
   and the whole `flutter test` run pass (2094 tests, 2 skipped, native
@@ -65,6 +66,22 @@ for them. The `docs/crypto.md` change log entry "L1-1" is the full list.
   needs the Android and iOS artifacts, which CI builds).
 - Not run: the `scripts/test` and `scripts/lint` wrappers as a whole (the
   narrower checks above were run), iOS and Android native builds (CI).
+
+## Review fixes on PR #142
+
+- **B1, nothing fails after a merge.** `commit_outcome` now encodes both pair
+  buffers before the merge (process and merge paths), `write_l1_pairs` only
+  copies, and Dart carries every id as bytes; `CommitPairs` reports a buffer it
+  cannot read as `unreadable` instead of throwing. Tests:
+  `ffi::l1_tests::a_non_utf8_device_id_in_an_add_is_merged_and_reported_as_bytes`
+  (account `c3 28 5f`, device `ff fe`: status OK, epoch 2, bytes returned,
+  members listed) and the Dart native test "an Add with a non-UTF-8 id is
+  merged and reported, never thrown" (also removes the leaf by its bytes).
+- **B2, the verifier is bound to the account.** `expected_account_id` on
+  `pm_crypto_l1_check_step` and `pm_crypto_l1_check_chain` (still ABI 14).
+  Tests: `ffi::l1_tests::the_chain_checks_are_bound_to_the_account_asked_about`,
+  `l1::tests::a_chain_of_another_account_is_refused_whole`, the vector's new
+  refusals in Rust, Go (`TestVDL1VectorRefusedChains`) and Dart.
 
 ## Where the build departs from the design
 

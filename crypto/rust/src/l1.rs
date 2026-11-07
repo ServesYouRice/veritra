@@ -432,13 +432,22 @@ fn seen_before(history: &[Pair], pair: &Pair) -> bool {
 /// no-return and one-key-one-device rules across the whole chain. A device
 /// that keeps its own table passes it here; [`check_chain`] builds it.
 ///
+/// `expected_account` is the account the caller asked about. A statement of
+/// any other account is refused as [`L1Error::Chain`], genesis or not, so a
+/// validly signed chain of another account (a server's substitute answer)
+/// can never pass for this one.
+///
 /// The order is parse (done), chain, rules, signature.
 pub fn check_step(
+    expected_account: &[u8],
     prev: Option<&Statement>,
     next: &Statement,
     history: &[Pair],
 ) -> Result<(), L1Error> {
     let body = &next.body;
+    if body.account_id != expected_account {
+        return Err(L1Error::Chain);
+    }
     if body.change.is_genesis() {
         return check_genesis(prev, next);
     }
@@ -543,8 +552,12 @@ pub struct ChainResult {
 }
 
 /// Checks a whole chain from its genesis: every step, with the no-return and
-/// one-key-one-device rules over the history so far.
-pub fn check_chain(statements: &[Statement]) -> Result<ChainResult, L1Error> {
+/// one-key-one-device rules over the history so far. Every statement must be
+/// of `expected_account` ([`L1Error::Chain`] otherwise).
+pub fn check_chain(
+    expected_account: &[u8],
+    statements: &[Statement],
+) -> Result<ChainResult, L1Error> {
     let first = statements.first().ok_or(L1Error::Malformed)?;
     if statements.len() > MAX_CHAIN_STATEMENTS {
         return Err(L1Error::Malformed);
@@ -553,7 +566,7 @@ pub fn check_chain(statements: &[Statement]) -> Result<ChainResult, L1Error> {
     let mut previous: Option<&Statement> = None;
     for statement in statements {
         let history: Vec<Pair> = pairs.iter().map(|listed| listed.pair.clone()).collect();
-        check_step(previous, statement, &history)?;
+        check_step(expected_account, previous, statement, &history)?;
         let version = statement.body.version;
         for entry in &statement.body.entries {
             if !pairs.iter().any(|listed| listed.pair == *entry) {

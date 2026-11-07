@@ -111,10 +111,23 @@ fn body(
     }
 }
 
+/// The account most tests here belong to.
+const ACCOUNT_A: &[u8] = b"acct_a";
+
 unsafe fn check_step(prev: &[u8], statement: &[u8], history: &[u8]) -> (i32, Vec<u8>) {
+    unsafe { check_step_for(ACCOUNT_A, prev, statement, history) }
+}
+
+unsafe fn check_step_for(
+    account: &[u8],
+    prev: &[u8],
+    statement: &[u8],
+    history: &[u8],
+) -> (i32, Vec<u8>) {
     let mut summary = PmOwnedBuffer::default();
     let status = unsafe {
         pm_crypto_l1_check_step(
+            slice(account),
             if prev.is_empty() { EMPTY } else { slice(prev) },
             slice(statement),
             if history.is_empty() {
@@ -363,7 +376,11 @@ fn real_devices_build_a_chain_the_abi_verifies_step_and_whole() {
         history.clear();
         let mut result = PmOwnedBuffer::default();
         assert_eq!(
-            pm_crypto_l1_check_chain(slice(&chain_bytes(&statements)), &mut result),
+            pm_crypto_l1_check_chain(
+                slice(ACCOUNT_A),
+                slice(&chain_bytes(&statements)),
+                &mut result
+            ),
             PM_CRYPTO_OK
         );
         let result = take(result);
@@ -371,7 +388,8 @@ fn real_devices_build_a_chain_the_abi_verifies_step_and_whole() {
             .iter()
             .map(|bytes| l1::parse_statement(bytes).unwrap())
             .collect();
-        let expected = l1::encode_chain_result(&l1::check_chain(&parsed).unwrap()).unwrap();
+        let expected =
+            l1::encode_chain_result(&l1::check_chain(ACCOUNT_A, &parsed).unwrap()).unwrap();
         assert_eq!(result, expected);
 
         // B signs nothing for a removed device, and a rollback to the second
@@ -384,22 +402,28 @@ fn real_devices_build_a_chain_the_abi_verifies_step_and_whole() {
         // Argument errors are not statement errors.
         let mut out = PmOwnedBuffer::default();
         assert_eq!(
-            pm_crypto_l1_check_step(EMPTY, EMPTY, EMPTY, &mut out),
+            pm_crypto_l1_check_step(slice(ACCOUNT_A), EMPTY, EMPTY, EMPTY, &mut out),
             PM_CRYPTO_INVALID_ARGUMENT
         );
         assert_eq!(
-            pm_crypto_l1_check_step(EMPTY, slice(&statements[0]), EMPTY, core::ptr::null_mut()),
+            pm_crypto_l1_check_step(
+                slice(ACCOUNT_A),
+                EMPTY,
+                slice(&statements[0]),
+                EMPTY,
+                core::ptr::null_mut()
+            ),
             PM_CRYPTO_INVALID_ARGUMENT
         );
         assert_eq!(
-            pm_crypto_l1_check_chain(slice(&[0, 0]), &mut out),
+            pm_crypto_l1_check_chain(slice(ACCOUNT_A), slice(&[0, 0]), &mut out),
             PM_CRYPTO_L1_MALFORMED
         );
         assert!(is_empty(&out));
         let mut truncated = chain_bytes(&statements);
         truncated.pop();
         assert_eq!(
-            pm_crypto_l1_check_chain(slice(&truncated), &mut out),
+            pm_crypto_l1_check_chain(slice(ACCOUNT_A), slice(&truncated), &mut out),
             PM_CRYPTO_L1_MALFORMED
         );
     }
@@ -1054,4 +1078,123 @@ fn adds_carry_the_expected_signing_key_and_commits_report_their_pairs() {
 fn derive_reports_the_list_key() {
     let derived = recovery::derive(&ENTROPY).unwrap();
     assert_eq!(derive_list_pub(&ENTROPY), derived.rk_list_pub.to_vec());
+}
+
+#[test]
+fn the_chain_checks_are_bound_to_the_account_asked_about() {
+    let a = member(b"acct_a", b"dev_a1");
+    let b = member(b"acct_a", b"dev_b1");
+    let statements = real_chain(&a, &b);
+    // The same valid chain, asked for as another account: refused as a chain
+    // error by the step check (genesis and later versions) and the whole.
+    let other: &[u8] = b"acct_other";
+    unsafe {
+        for (index, statement) in statements.iter().enumerate() {
+            let prev = if index == 0 {
+                &[][..]
+            } else {
+                &statements[index - 1]
+            };
+            let (status, summary) = check_step_for(other, prev, statement, &[]);
+            assert_eq!(status, PM_CRYPTO_L1_CHAIN, "step {}", index + 1);
+            assert!(summary.is_empty());
+        }
+        let chain = chain_bytes(&statements);
+        let mut out = PmOwnedBuffer::default();
+        assert_eq!(
+            pm_crypto_l1_check_chain(slice(other), slice(&chain), &mut out),
+            PM_CRYPTO_L1_CHAIN
+        );
+        assert!(is_empty(&out));
+        // A prefix of the account's own name is another account.
+        assert_eq!(
+            pm_crypto_l1_check_chain(slice(b"acct_"), slice(&chain), &mut out),
+            PM_CRYPTO_L1_CHAIN
+        );
+        // The expected account is required: empty and over-long arguments
+        // are argument errors, not statement errors.
+        let long = [b'x'; 129];
+        for bad in [EMPTY, slice(&long)] {
+            assert_eq!(
+                pm_crypto_l1_check_chain(bad, slice(&chain), &mut out),
+                PM_CRYPTO_INVALID_ARGUMENT
+            );
+            assert_eq!(
+                pm_crypto_l1_check_step(bad, EMPTY, slice(&statements[0]), EMPTY, &mut out),
+                PM_CRYPTO_INVALID_ARGUMENT
+            );
+        }
+        assert!(is_empty(&out));
+        // The right account still verifies.
+        assert_eq!(
+            pm_crypto_l1_check_chain(slice(ACCOUNT_A), slice(&chain), &mut out),
+            PM_CRYPTO_OK
+        );
+        take(out);
+    }
+}
+
+/// D94: a commit is applied, then held; it is never refused for an L1
+/// reason, and nothing fails after the merge. A member that commits an Add
+/// whose credential ids are not UTF-8 is merged, and the pairs come back as
+/// the raw bytes.
+#[test]
+fn a_non_utf8_device_id_in_an_add_is_merged_and_reported_as_bytes() {
+    let group = b"conv_l1_non_utf8";
+    let bad_account: &[u8] = b"\xc3\x28_acct";
+    let bad_device: &[u8] = b"\xff\xfe";
+    let alice = MlsDevice::new(b"acct_alice", b"dev_alice").unwrap();
+    let bob = MlsDevice::new(b"acct_bob", b"dev_bob").unwrap();
+    let mallory = MlsDevice::new(bad_account, bad_device).unwrap();
+    let mallory_key = mallory.signing_public_key().to_vec();
+    let bob_kp = bob.create_key_package().unwrap();
+    let mallory_kp = mallory.create_key_package().unwrap();
+    let mut alice_group = alice.create_group(group).unwrap();
+    let first: StagedCommitMessages = alice
+        .stage_membership_commit(
+            &mut alice_group,
+            &[MemberAdd {
+                key_package: &bob_kp,
+                account_id: b"acct_bob",
+                device_id: b"dev_bob",
+            }],
+            &[],
+        )
+        .unwrap();
+    alice.merge_pending_commit(&mut alice_group).unwrap();
+    bob.join_group(group, &first.welcome).unwrap();
+    let (alice, bob) = (new_handle(alice), new_handle(bob));
+    unsafe {
+        let changes = keyed_changes(&[(&mallory_kp, bad_account, bad_device, &mallory_key)], &[]);
+        let staged = stage(alice, group, &changes).unwrap();
+        // Bob merges it and is told the bytes, status OK.
+        let seen = l1_process(bob, group, &staged.commit);
+        assert_eq!(seen.status, PM_CRYPTO_OK);
+        assert_eq!(seen.epoch, 2);
+        assert_eq!(seen.flags, PM_CRYPTO_C7_COMMIT_ADDED);
+        assert_eq!(
+            seen.added,
+            vec![triple(bad_account, bad_device, &mallory_key)]
+        );
+        assert_eq!(seen.committer.len(), 1);
+        let mut epoch = 0u64;
+        let mut pending = 9u8;
+        assert_eq!(
+            pm_crypto_group_epoch(bob, slice(group), &mut epoch, &mut pending),
+            PM_CRYPTO_OK
+        );
+        assert_eq!(epoch, 2, "the commit is applied");
+        // Her own merge reports the same bytes, and the members are listed.
+        let own = l1_merge(alice, group);
+        assert_eq!(own.status, PM_CRYPTO_OK);
+        assert_eq!(own.added, seen.added);
+        let mut members = PmOwnedBuffer::default();
+        assert_eq!(
+            pm_crypto_group_members(bob, slice(group), &mut members),
+            PM_CRYPTO_OK
+        );
+        let leaves = parse_leaves(&take(members));
+        assert_eq!(leaves.len(), 3);
+        assert_eq!(leaves[2], triple(bad_account, bad_device, &mallory_key));
+    }
 }

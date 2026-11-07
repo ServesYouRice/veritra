@@ -472,8 +472,34 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     (refused as malformed): a key the strict verifier would refuse can never
     sign for its device. Failures are four kinds, checked in this order:
     malformed (`-11`), chain (`-13`), rule (`-14`), signature (`-12`), so a
-    statement with one fault reports it; the vector pins 72 single-fault
-    refusals.
+    statement with one fault reports it; the vector pins 76 single-fault
+    refusals and 2 whole-chain refusals.
+  - **The verifier is bound to the account asked about (review fix).**
+    `pm_crypto_l1_check_step` and `pm_crypto_l1_check_chain` take a required
+    `expected_account_id` (1 to 128 bytes; empty or longer is
+    `PM_CRYPTO_INVALID_ARGUMENT`) and refuse a statement or chain of any other
+    account as chain (`-13`), a genesis and a migration genesis included, as
+    the very first check. Without it a server could answer a fetch for
+    account A with a real, validly signed chain of account B (devices it
+    controls), and any missed account comparison in the caller would have
+    bypassed the trust anchor. It went in before ABI 14 shipped, so there is
+    no ABI 15. The vector gains `expected_account_id` on every refusal,
+    four "another account" refusals and `refused_chains` ("chain of another
+    account"), checked by Rust, Go and Dart; each valid chain also states its
+    `account_id`.
+  - **Ids are bytes, and nothing fails after a merge (review fix, D94).**
+    Rust reads an id out of an MLS credential as 1 to 128 arbitrary bytes, so
+    a member can commit an Add whose device or account id is not UTF-8. The
+    commit is merged by the time the pairs come back, so a Dart decode that
+    throws would stall sync. Dart now carries every account and device id as
+    bytes (`LeafPair`, `DeviceListPair`, the summaries, `DeviceListBody`,
+    keyed membership changes, so a bad leaf can also be removed by its
+    bytes), and `CommitPairs` never throws: a buffer it cannot read is
+    `unreadable` (judge nothing, hold the conversation). In Rust the pair
+    buffers are encoded inside `commit_outcome`, before the merge, on both the
+    process and the merge paths (C7's ABI 13 calls share it), so an encoding
+    failure refuses the commit with the group untouched and the FFI no longer
+    has an `unwrap_or_default` after the state changed.
   - **Where this extends the design.** (1) The no-return and
     one-key-one-device rules over the whole chain are enforced in Rust:
     `pm_crypto_l1_check_step` takes a `history` of every pair listed before

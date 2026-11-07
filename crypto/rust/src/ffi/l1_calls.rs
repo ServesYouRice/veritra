@@ -50,6 +50,12 @@ const MAX_CHAIN_BYTES: usize = 2 + l1::MAX_CHAIN_STATEMENTS * (2 + l1::MAX_STATE
 /// empty) and carries the no-return and one-key-one-device rules across the
 /// chain; `prev`'s entries count as history automatically.
 ///
+/// `expected_account_id` (required, 1 to 128 bytes) is the account the
+/// caller asked about. A statement of any other account, a genesis included,
+/// is refused with `PM_CRYPTO_L1_CHAIN`, so a valid chain of another account
+/// can never pass for this one; the caller needs no account comparison of
+/// its own.
+///
 /// Returns `PM_CRYPTO_OK`, or one of `PM_CRYPTO_L1_MALFORMED`, `_CHAIN`,
 /// `_RULE`, `_SIGNATURE` (checked in that order), or
 /// `PM_CRYPTO_INVALID_ARGUMENT` for a bad length or null output. Nothing is
@@ -60,6 +66,7 @@ const MAX_CHAIN_BYTES: usize = 2 + l1::MAX_CHAIN_STATEMENTS * (2 + l1::MAX_STATE
 /// writable.
 #[no_mangle]
 pub unsafe extern "C" fn pm_crypto_l1_check_step(
+    expected_account_id: PmByteSlice,
     prev: PmByteSlice,
     statement: PmByteSlice,
     history: PmByteSlice,
@@ -69,6 +76,7 @@ pub unsafe extern "C" fn pm_crypto_l1_check_step(
         if out_summary.is_null() {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
+        let expected = unsafe { borrowed(expected_account_id, crate::MAX_ACCOUNT_ID_BYTES)? };
         let prev = unsafe { borrowed_optional(prev, l1::MAX_STATEMENT_BYTES)? };
         let statement = unsafe { borrowed(statement, l1::MAX_STATEMENT_BYTES)? };
         let history = unsafe { borrowed_optional(history, MAX_HISTORY_BYTES)? };
@@ -79,7 +87,7 @@ pub unsafe extern "C" fn pm_crypto_l1_check_step(
             Some(l1::parse_statement(prev).map_err(l1_status)?)
         };
         let history = l1::decode_pairs(history).map_err(l1_status)?;
-        l1::check_step(prev.as_ref(), &next, &history).map_err(l1_status)?;
+        l1::check_step(expected, prev.as_ref(), &next, &history).map_err(l1_status)?;
         let summary = l1::encode_summary(&next).map_err(l1_status)?;
         unsafe { output(out_summary, summary) }
     })
@@ -90,13 +98,17 @@ pub unsafe extern "C" fn pm_crypto_l1_check_step(
 /// the no-return and one-key-one-device rules over the history so far. On
 /// success `out_result` holds `l1::encode_chain_result`: the head's summary,
 /// the list identity (`list_hash` of version 1) and every pair the chain
-/// listed with the versions that added and removed it. Errors as
+/// listed with the versions that added and removed it. `expected_account_id`
+/// (required, 1 to 128 bytes) is the account asked about: a chain of another
+/// account is refused with `PM_CRYPTO_L1_CHAIN`. Errors as
 /// [`pm_crypto_l1_check_step`].
 ///
 /// # Safety
-/// `chain` must be readable and `out_result` writable.
+/// `expected_account_id` and `chain` must be readable and `out_result`
+/// writable.
 #[no_mangle]
 pub unsafe extern "C" fn pm_crypto_l1_check_chain(
+    expected_account_id: PmByteSlice,
     chain: PmByteSlice,
     out_result: *mut PmOwnedBuffer,
 ) -> i32 {
@@ -104,9 +116,10 @@ pub unsafe extern "C" fn pm_crypto_l1_check_chain(
         if out_result.is_null() {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
+        let expected = unsafe { borrowed(expected_account_id, crate::MAX_ACCOUNT_ID_BYTES)? };
         let chain = unsafe { borrowed(chain, MAX_CHAIN_BYTES)? };
         let statements = l1::decode_chain(chain).map_err(l1_status)?;
-        let result = l1::check_chain(&statements).map_err(l1_status)?;
+        let result = l1::check_chain(expected, &statements).map_err(l1_status)?;
         let encoded = l1::encode_chain_result(&result).map_err(l1_status)?;
         unsafe { output(out_result, encoded) }
     })
@@ -274,21 +287,18 @@ pub unsafe extern "C" fn pm_crypto_group_members(
     })
 }
 
-/// Writes the two L1 extras of a commit outcome (never fails halfway: the
-/// shapes are bounded, and a failed encode would leave a null buffer, which
-/// a caller must treat as "judge nothing, hold").
+/// Writes the two L1 extras of a commit outcome. They were encoded before
+/// the merge (`MlsDevice::commit_outcome`), so this only copies bytes and
+/// cannot fail after the state has changed.
 unsafe fn write_l1_pairs(
     outcome: &crate::mls::CommitOutcome,
     out_added: *mut PmOwnedBuffer,
     out_committer: *mut PmOwnedBuffer,
 ) {
-    let added: Vec<_> = outcome.added.iter().map(|leaf| leaf.as_triple()).collect();
-    let added = l1::encode_leaf_pairs(&added).unwrap_or_default();
-    let committer = l1::encode_leaf_pairs(&[outcome.committer.as_triple()]).unwrap_or_default();
     // SAFETY: the caller checked both targets before the commit was applied.
     unsafe {
-        out_added.write(into_owned(added));
-        out_committer.write(into_owned(committer));
+        out_added.write(into_owned(outcome.added_pairs.clone()));
+        out_committer.write(into_owned(outcome.committer_pair.clone()));
     }
 }
 

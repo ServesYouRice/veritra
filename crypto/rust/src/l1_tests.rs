@@ -322,6 +322,38 @@ fn chain_b(cast: &Cast) -> Chain {
     Chain { statements }
 }
 
+fn with_account(mut body: Body, account: &[u8]) -> Body {
+    body.account_id = account.to_vec();
+    body
+}
+
+/// A real, validly signed chain of ANOTHER account whose devices are in the
+/// cast: genesis (A), add B (by A). A server can answer a fetch for
+/// `ACCOUNT` with this; the verifier must refuse it for `ACCOUNT`.
+fn chain_other(cast: &Cast) -> Chain {
+    let t = 1_700_200_000_000u64;
+    let v1 = with_account(
+        body_of(Change::Genesis, 1, None, t, entries(&[&cast.a]), None),
+        OTHER_ACCOUNT,
+    );
+    let first = by_device(&v1, &cast.a);
+    let v2 = with_account(
+        body_of(
+            Change::Add,
+            2,
+            Some(&parsed(&first)),
+            t + 1000,
+            entries(&[&cast.a, &cast.b]),
+            None,
+        ),
+        OTHER_ACCOUNT,
+    );
+    let second = by_device(&v2, &cast.a);
+    Chain {
+        statements: vec![first, second],
+    }
+}
+
 fn pairs_json(pairs: &[Pair]) -> Value {
     Value::Array(
         pairs
@@ -375,9 +407,10 @@ fn chain_json(name: &str, chain: &Chain) -> Value {
         })
         .collect();
     let statements: Vec<Statement> = chain.statements.iter().map(|b| parsed(b)).collect();
-    let result = check_chain(&statements).unwrap();
+    let result = check_chain(ACCOUNT, &statements).unwrap();
     json!({
         "name": name,
+        "account_id": String::from_utf8(result.head.body.account_id.clone()).unwrap(),
         "steps": steps,
         "chain_hex": chain_hex(&chain.statements),
         "list_id_hex": hex(&result.list_id),
@@ -393,6 +426,8 @@ fn chain_json(name: &str, chain: &Chain) -> Value {
 
 struct Refused {
     name: &'static str,
+    /// The account the caller asked about (`expected_account_id`).
+    expected_account: Vec<u8>,
     prev: Option<Vec<u8>>,
     statement: Vec<u8>,
     history: Vec<Pair>,
@@ -408,6 +443,7 @@ fn refusal(
 ) -> Refused {
     Refused {
         name,
+        expected_account: ACCOUNT.to_vec(),
         prev: prev.cloned(),
         statement,
         history: history.to_vec(),
@@ -744,6 +780,52 @@ fn refused_cases(cast: &Cast, a: &Chain) -> Vec<Refused> {
         &[],
         L1Error::Chain,
     ));
+    // ---- another account (the verifier is bound to the account asked about)
+    let other = chain_other(cast);
+    let other_v1 = other.statements[0].clone();
+    cases.push(refusal(
+        "genesis of another account",
+        None,
+        other_v1.clone(),
+        &[],
+        L1Error::Chain,
+    ));
+    cases.push(refusal(
+        "migration genesis of another account",
+        None,
+        by_device(
+            &with_account(
+                body_of(
+                    Change::MigrationGenesis,
+                    1,
+                    None,
+                    t,
+                    entries(&[&cast.a, &cast.b, &cast.c]),
+                    None,
+                ),
+                OTHER_ACCOUNT,
+            ),
+            &cast.b,
+        ),
+        &[],
+        L1Error::Chain,
+    ));
+    cases.push(refusal(
+        "add of another account after its own genesis",
+        Some(&other_v1),
+        other.statements[1].clone(),
+        &[],
+        L1Error::Chain,
+    ));
+    let mut asked_other = refusal(
+        "genesis of this account asked for as another account",
+        None,
+        a.statements[0].clone(),
+        &[],
+        L1Error::Chain,
+    );
+    asked_other.expected_account = OTHER_ACCOUNT.to_vec();
+    cases.push(asked_other);
     cases.push(refusal(
         "add with no previous version",
         None,
@@ -1244,6 +1326,7 @@ fn refused_json(cases: &[Refused]) -> Value {
             .map(|case| {
                 json!({
                     "name": case.name,
+                    "expected_account_id": String::from_utf8(case.expected_account.clone()).unwrap(),
                     "prev_hex": case.prev.as_ref().map(|bytes| hex(bytes)),
                     "statement_hex": hex(&case.statement),
                     "history": pairs_json(&case.history),
@@ -1305,6 +1388,26 @@ fn edge_cases() -> Vec<Value> {
     ]
 }
 
+/// Whole chains the verifier must refuse for the account it is asked about.
+/// Each chain is valid in itself; only the account is wrong.
+fn refused_chains(cast: &Cast, a: &Chain) -> Value {
+    let other = chain_other(cast);
+    json!([
+        {
+            "name": "chain of another account",
+            "expected_account_id": String::from_utf8(ACCOUNT.to_vec()).unwrap(),
+            "chain_hex": chain_hex(&other.statements),
+            "error": L1Error::Chain.name(),
+        },
+        {
+            "name": "chain of this account asked for as another account",
+            "expected_account_id": String::from_utf8(OTHER_ACCOUNT.to_vec()).unwrap(),
+            "chain_hex": chain_hex(&a.statements),
+            "error": L1Error::Chain.name(),
+        },
+    ])
+}
+
 fn compute() -> Value {
     let cast = cast();
     let a = chain_a(&cast);
@@ -1341,6 +1444,7 @@ fn compute() -> Value {
         "outputs": {
             "chains": [chain_json("A: every change except the migration genesis", &a), chain_json("B: migration genesis, remove, add", &b)],
             "refused": refused_json(&refused),
+            "refused_chains": refused_chains(&cast, &a),
             "edge_cases": edge_cases(),
         },
     })
@@ -1402,11 +1506,11 @@ fn the_vector_chains_verify_step_by_step_and_whole() {
                 unhex(&step["signature_hex"])
             );
             assert_eq!(pairs_of(&step["entries"]), statement.body.entries);
-            check_step(previous.as_ref(), &statement, &history).unwrap();
+            check_step(ACCOUNT, previous.as_ref(), &statement, &history).unwrap();
             // The history may also be empty: `prev` alone is enough for a
             // chain with no returns.
             if previous.is_some() {
-                check_step(previous.as_ref(), &statement, &[]).unwrap();
+                check_step(ACCOUNT, previous.as_ref(), &statement, &[]).unwrap();
             }
             for pair in &statement.body.entries {
                 if !history.contains(pair) {
@@ -1416,7 +1520,7 @@ fn the_vector_chains_verify_step_by_step_and_whole() {
             previous = Some(statement);
         }
         let statements = decode_chain(&unhex(&chain["chain_hex"])).unwrap();
-        let result = check_chain(&statements).unwrap();
+        let result = check_chain(ACCOUNT, &statements).unwrap();
         assert_eq!(result.list_id.as_slice(), unhex(&chain["list_id_hex"]));
         assert_eq!(
             result.head.body.version,
@@ -1457,13 +1561,56 @@ fn every_refusal_in_the_vector_is_refused_for_its_one_reason() {
         let prev = case["prev_hex"]
             .as_str()
             .map(|_| parsed(&unhex(&case["prev_hex"])));
+        let expected = case["expected_account_id"].as_str().unwrap().as_bytes();
         let result = parse_statement(&bytes)
-            .and_then(|statement| check_step(prev.as_ref(), &statement, &history));
+            .and_then(|statement| check_step(expected, prev.as_ref(), &statement, &history));
         assert_eq!(
             result.map_err(L1Error::name),
             Err(case["error"].as_str().unwrap()),
             "case: {name}"
         );
+    }
+    for name in [
+        "genesis of another account",
+        "migration genesis of another account",
+        "add of another account after its own genesis",
+        "genesis of this account asked for as another account",
+    ] {
+        assert!(
+            cases.iter().any(|case| case["name"] == name),
+            "missing case: {name}"
+        );
+    }
+}
+
+#[test]
+fn a_chain_of_another_account_is_refused_whole() {
+    let vector: Value = serde_json::from_str(VECTOR).unwrap();
+    let cases = vector["outputs"]["refused_chains"].as_array().unwrap();
+    assert!(cases
+        .iter()
+        .any(|case| case["name"] == "chain of another account"));
+    for case in cases {
+        let statements = decode_chain(&unhex(&case["chain_hex"])).unwrap();
+        let expected = case["expected_account_id"].as_str().unwrap().as_bytes();
+        assert_eq!(
+            check_chain(expected, &statements)
+                .map(drop)
+                .map_err(L1Error::name),
+            Err(case["error"].as_str().unwrap()),
+            "case: {}",
+            case["name"]
+        );
+    }
+    // The valid chains verify for their own account only.
+    for chain in vector["outputs"]["chains"].as_array().unwrap() {
+        let statements = decode_chain(&unhex(&chain["chain_hex"])).unwrap();
+        assert_eq!(
+            check_chain(OTHER_ACCOUNT, &statements).map(drop),
+            Err(L1Error::Chain)
+        );
+        let own = chain["account_id"].as_str().unwrap().as_bytes();
+        assert!(check_chain(own, &statements).is_ok());
     }
 }
 
@@ -1557,27 +1704,27 @@ fn history_is_only_extra_exclusion_and_prev_always_counts() {
     let readd_b = parsed(&readd_b);
     // Without history B is not known to have been removed: the caller must
     // pass it (the chain check does).
-    assert_eq!(check_step(Some(&s5), &readd_b, &[]), Ok(()));
+    assert_eq!(check_step(ACCOUNT, Some(&s5), &readd_b, &[]), Ok(()));
     let history = history_of(&[&chain.at(1), &chain.at(2), &chain.at(3), &chain.at(4), &s5]);
     assert_eq!(
-        check_step(Some(&s5), &readd_b, &history),
+        check_step(ACCOUNT, Some(&s5), &readd_b, &history),
         Err(L1Error::Rule)
     );
     // And check_chain, which builds the history itself, refuses the same.
     let mut statements: Vec<Statement> = (1..=5).map(|v| chain.at(v)).collect();
     statements.push(readd_b);
-    assert_eq!(check_chain(&statements), Err(L1Error::Rule));
+    assert_eq!(check_chain(ACCOUNT, &statements), Err(L1Error::Rule));
 }
 
 #[test]
 fn a_chain_must_start_at_version_one_and_stay_in_bounds() {
     let cast = cast();
     let chain = chain_a(&cast);
-    assert_eq!(check_chain(&[]), Err(L1Error::Malformed));
+    assert_eq!(check_chain(ACCOUNT, &[]), Err(L1Error::Malformed));
     let tail: Vec<Statement> = (2..=4).map(|v| chain.at(v)).collect();
-    assert_eq!(check_chain(&tail), Err(L1Error::Chain));
+    assert_eq!(check_chain(ACCOUNT, &tail), Err(L1Error::Chain));
     let mut out_of_order = vec![chain.at(1), chain.at(3)];
-    assert_eq!(check_chain(&out_of_order), Err(L1Error::Chain));
+    assert_eq!(check_chain(ACCOUNT, &out_of_order), Err(L1Error::Chain));
     out_of_order.clear();
     assert!(decode_chain(&[0, 0]).is_err());
     assert!(decode_chain(&[0, 1, 0, 0]).is_err());
