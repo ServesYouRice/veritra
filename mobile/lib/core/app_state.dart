@@ -5884,9 +5884,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
                 name: 'veritra.sync');
             return;
           }
-          final unknownCrypto = !_knownProjectionEvent(event.type) &&
+          final isCrypto = _isCryptoSyncEvent(event.type);
+          final unknownCrypto = !isCrypto &&
+              !_knownProjectionEvent(event.type) &&
               _failsClosedEvent(event.type);
-          if (!_isCryptoSyncEvent(event.type) && !unknownCrypto) {
+          if (!isCrypto && !unknownCrypto) {
             // A projection event: the global stream already handled it.
             after = event.id;
             continue;
