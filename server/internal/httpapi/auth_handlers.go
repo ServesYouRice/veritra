@@ -752,7 +752,7 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "transcript_hash_required")
 			return
 		}
-		link, device, eventID, err := a.Store.ApproveDeviceLinkWithSyncEvent(r.Context(), linkID, principal.AccountID, req.TranscriptHash, req.ApprovalTag)
+		link, device, eventID, notices, err := a.Store.ApproveDeviceLinkWithSyncEvent(r.Context(), linkID, principal.AccountID, req.TranscriptHash, req.ApprovalTag)
 		if err != nil {
 			switch {
 			case errors.Is(err, storage.ErrDeviceLinkVerificationFailed):
@@ -766,6 +766,10 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 		}
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
 		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+		for _, notice := range notices {
+			a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.MemberLinkEventType, ID: notice.EventID,
+				Payload: map[string]string{"account_id": notice.LinkedAccountID, "device_id": notice.DeviceID}, CreatedAt: time.Now().UTC()})
+		}
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "device_link.approved", map[string]string{"link_id": link.ID, "device_id": device.ID})
 		writeJSON(w, http.StatusOK, map[string]interface{}{"device_link": deviceLinkPayload(link), "device": device})
 	case parts[1] == "claim-status" && r.Method == http.MethodGet:

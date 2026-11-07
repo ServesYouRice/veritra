@@ -3,8 +3,16 @@ description: Veritra, a self-hosted, privacy-first messenger (Android, iOS and d
 publish_to: "none"
 version: 0.1.0+1
 
+# Dependabot's pub job resolves with the newest stable Flutter that satisfies
+# both constraints below (dependabot-core infer_sdk_versions.dart reads
+# environment.sdk and environment.flutter, each defaulting to "any"). Without
+# them it resolved with a newer Flutter whose SDK pins newer intl, matcher,
+# meta, test_api and vector_math (#121). Flutter 3.44.0 ships Dart 3.12. Move
+# both bounds, ci.yml's flutter-version and .github/dependabot.yml together
+# when the pinned Flutter SDK moves (decision D15).
 environment:
-  sdk: ">=3.4.0 <4.0.0"
+  sdk: ">=3.4.0 <3.13.0"
+  flutter: 3.44.0
 
 dependencies:
   drift: 2.34.4

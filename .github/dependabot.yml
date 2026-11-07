@@ -69,11 +69,13 @@ updates:
       dart-dependencies:
         patterns:
           - "*"
-        # `ignore` alone does not stop a grouped update from re-resolving
-        # these: group #121 floated intl, matcher, meta, test_api and
-        # vector_math past the pinned Flutter 3.44.0 SDK. Keep them out of the
-        # group; they move when the pinned Flutter SDK moves (decision D15).
-        # build_runner is held for the same reason (see its ignore above).
+        # Group #121 updated only drift_dev, flutter_webrtc and mobile_scanner;
+        # intl, matcher, meta, test_api and vector_math moved as solver
+        # collateral because Dependabot resolved with the newest Flutter.
+        # mobile/pubspec.yaml now pins environment.flutter and the Dart upper
+        # bound, which is the actual fix (decision D15). These excludes are
+        # kept as a harmless extra guard; build_runner is held for the reason
+        # given in its ignore above.
         exclude-patterns:
           - intl
           - matcher

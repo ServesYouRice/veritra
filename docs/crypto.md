@@ -553,13 +553,15 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 
 - **Coordinator notice (D96, 2026-11-07):** no ABI or schema change (the
   event type is free text, so migration 0050 is not needed). When a device
-  link is approved (v3 only), the server writes one `device.member_linked`
-  account event for each other account whose device is the lowest-id live
-  device of an MLS group the linking account belongs to (at most 64), in the
-  same transaction, and publishes it live. Payload: `account_id` and
-  `device_id` of the link, nothing else, no conversation id. The client
-  starts a membership pass on it; only the coordinator acts, the others keep
-  the 3-minute fallback. Not covered: the legacy v2 link route, and
+  link is approved, on the v3 route and on the legacy v2 route the shipped app
+  still uses (`POST /api/v1/device-links/{id}/approve`), the server writes one
+  `device.member_linked` account event for each other account whose device is
+  the lowest-id live device of an MLS group the linking account belongs to (at
+  most 64), in the same transaction as the device row, and publishes it live
+  after `device.updated`. The event-less `ApproveDeviceLink` store call
+  writes none. Payload: `account_id` and `device_id` of the link, nothing
+  else, no conversation id. The client starts a membership pass on it; only
+  the coordinator acts, the others keep the 3-minute fallback. Not covered:
   coordinators beyond the 64 cap.
 
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
