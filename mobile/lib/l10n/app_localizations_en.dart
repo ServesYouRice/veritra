@@ -3018,4 +3018,52 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get communityLeaveConfirm => 'Leave';
+
+  @override
+  String get pollComposerTitle => 'New poll';
+
+  @override
+  String get pollQuestionLabel => 'Question';
+
+  @override
+  String pollOptionLabel(String number) {
+    return 'Option $number';
+  }
+
+  @override
+  String get pollAddOption => 'Add option';
+
+  @override
+  String get pollRemoveOption => 'Remove option';
+
+  @override
+  String get pollMultipleChoice => 'Allow several answers';
+
+  @override
+  String get pollSend => 'Send poll';
+
+  @override
+  String get pollInvalidHint =>
+      'Add a question and at least two different options.';
+
+  @override
+  String get pollVisibleNotice =>
+      'Everyone in this chat can see who voted for what.';
+
+  @override
+  String pollVoteTotal(String count) {
+    return 'Votes: $count';
+  }
+
+  @override
+  String get pollChooseOne => 'Choose one';
+
+  @override
+  String get pollChooseSeveral => 'Choose one or more';
+
+  @override
+  String get pollClose => 'Close poll';
+
+  @override
+  String get pollClosedNotice => 'This poll is closed.';
 }

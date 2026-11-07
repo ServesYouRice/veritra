@@ -855,6 +855,9 @@ HistorySnapshot captureHistory(
   final rows = <LocalMessage>[];
   for (final m in messages) {
     if (m.kind == 'invalid' || m.kind == 'unverifiable') continue;
+    // Polls and their votes are not copied to a new device (B3): the reader
+    // below knows no `poll` kind and would refuse the whole snapshot.
+    if (m.kind == LocalMessageKind.poll) continue;
     if (m.state == 'pending' || (m.expiresAt != null && m.expiresAt! <= now))
       continue;
     if (!descriptors.containsKey(m.conversationId)) _invalid();

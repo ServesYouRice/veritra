@@ -1028,5 +1028,21 @@
   "communityLeaveTitle": "Leave this community?",
   "communityLeave": "Leave community",
   "communityLeaveDetail": "You leave every channel at once. You can join again with a new link.",
-  "communityLeaveConfirm": "Leave"
+  "communityLeaveConfirm": "Leave",
+  "pollComposerTitle": "New poll",
+  "pollQuestionLabel": "Question",
+  "pollOptionLabel": "Option {number}",
+  "@pollOptionLabel": {"placeholders": {"number": {"type": "String", "example": "3"}}},
+  "pollAddOption": "Add option",
+  "pollRemoveOption": "Remove option",
+  "pollMultipleChoice": "Allow several answers",
+  "pollSend": "Send poll",
+  "pollInvalidHint": "Add a question and at least two different options.",
+  "pollVisibleNotice": "Everyone in this chat can see who voted for what.",
+  "pollVoteTotal": "Votes: {count}",
+  "@pollVoteTotal": {"placeholders": {"count": {"type": "String", "example": "3"}}},
+  "pollChooseOne": "Choose one",
+  "pollChooseSeveral": "Choose one or more",
+  "pollClose": "Close poll",
+  "pollClosedNotice": "This poll is closed."
 }
