@@ -5,7 +5,7 @@ Rust 1.91.0, Flutter 3.44.0. Two builds of one commit from two different paths.
 
 | Target | Result | Evidence |
 |---|---|---|
-| Rust crypto library, Linux (`crypto-linux`) | **Byte-identical** (sha256 `40d01698...bc73c12`) | `W12-repro-crypto-linux.md`; run twice, same digest both times |
+| Rust crypto library, Linux (`crypto-linux`) | **Byte-identical** (sha256 `40d01698...eebeb73c12`) | `W12-repro-crypto-linux.md`; run twice, same digest both times |
 | Linux desktop bundle (`linux`) | **Not yet reproducible**: 18 of 30 files match (including the runner binary after the C/C++ path fix), 12 differ: `libapp.so` (Dart AOT) and the 11 C++ plugin `.so` files | `W12-repro-linux.md` |
 | Android APK | Not run: no Android SDK/NDK (host not reachable from here); script written, untested | n/a |
 | macOS | Not run: needs a Mac; script reuses the tested crypto script | n/a |

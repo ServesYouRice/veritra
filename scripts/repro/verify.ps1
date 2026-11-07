@@ -18,7 +18,7 @@ try {
   if ($diff) { $diff | Format-Table | Out-String | Write-Host; throw "builds differ" }
   Write-Host "identical ($($a.Count) files)"
 } finally {
-  foreach ($run in "a", "b") { git -C $Root worktree remove --force (Join-Path $Work "$run\src") 2>$null }
+  foreach ($run in "a", "b") { if (Test-Path (Join-Path $Work "$run\src")) { git -C $Root worktree remove --force (Join-Path $Work "$run\src") } }
   git -C $Root worktree prune
   Remove-Item -Recurse -Force $Work -ErrorAction SilentlyContinue
 }

@@ -4,7 +4,11 @@
 ;   iscc /DAppDir=C:\out\a /DAppVersion=0.1.0 /DOutDir=C:\out\installer release\windows\veritra.iss
 ;
 ; Not run here (no Windows). Inno Setup is a build tool, not a dependency of
-; the app; check its license (free, custom) with the owner before first use.
+; the app; the owner checks its license terms before first use.
+; Newer code-signing certificates may need a hardware token or cloud signing
+; instead of a PFX file: adjust the signtool line to what the CA provides.
+; Silent updates: an all-users install needs admin rights, and "skipifsilent"
+; below stops the app restarting; revisit with the update channel.
 ;
 ; SIGNING PLACEHOLDER (owner): after the owner buys a code-signing certificate,
 ; define a SignTool named "veritra" in Inno's IDE or pass
