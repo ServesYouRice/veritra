@@ -1,0 +1,104 @@
+# Release engineering (W12 and build-plan item 7)
+
+Everything here needs no account and no key. Nothing is signed or published.
+What is measured and what is only drafted is in
+[`testing/evidence/W12-release-engineering.md`](../testing/evidence/W12-release-engineering.md).
+The release gates (G24, G25, G27, `scripts/release-readiness.sh`) are untouched:
+these scripts make builds, they do not release anything.
+
+## Reproducible builds
+
+| Target | Build once | Build twice and compare | Runs on |
+|---|---|---|---|
+| Rust crypto library (Linux) | `scripts/repro/build.sh crypto-linux OUT` | `scripts/repro/verify.sh crypto-linux` | Linux |
+| Linux desktop | `scripts/repro/build.sh linux OUT` | `scripts/repro/verify.sh linux` | Linux |
+| Android APK (unsigned) | `scripts/repro/build.sh android OUT` | `scripts/repro/verify.sh android` | Linux, JDK 17, Android SDK + NDK |
+| macOS app (unsigned) | `scripts/repro/build.sh macos OUT` | `scripts/repro/verify.sh macos` | a Mac |
+| Windows app (unsigned) | `scripts\repro\build.ps1 -OutDir OUT` | `scripts\repro\verify.ps1` | Windows, VS 2022 Build Tools |
+
+`verify` builds from two clean copies of the **committed** HEAD in two different
+directories, so build paths, leftover files and uncommitted edits cannot hide a
+difference. It exits 0 only if every file digest matches.
+
+What the scripts pin (`scripts/repro/env.sh`, `build.ps1`):
+
+- **Clock:** `SOURCE_DATE_EPOCH` = the commit's time. Never "now".
+- **Toolchains:** Rust from `rust-toolchain.toml`, Flutter from `pubspec.yaml`
+  (`3.44.0`), JDK 17, Gradle from the wrapper (9.1.0). A wrong version stops the
+  build. Dependencies come from the lockfiles (`cargo --locked`,
+  `flutter pub get --enforce-lockfile`).
+- **Paths:** `--remap-path-prefix` for the checkout, cargo and rustc; fixed
+  `TZ`, `LC_ALL`; no incremental builds; no build-id (Linux), `/Brepro` (Windows).
+- **Release entry point only:** `lib/main.dart`. The demo entry point is never
+  built by these scripts.
+
+Known gaps (see the evidence file for what was measured):
+
+- A reproducible build is only as stable as the toolchain it pins. The Android
+  SDK, NDK and Gradle plugin versions are pinned by Flutter 3.44.0 and the
+  wrapper, but the SDK build-tools version is whatever is installed. For the
+  first real build, record it and pin it in the owner's build image.
+- Signing changes the file. The signature is added **after** `verify`, to the
+  digest-checked unsigned file; F-Droid and the update channel compare the
+  unsigned content.
+- The container image path already is deterministic (`release.yml`); these
+  scripts cover the apps.
+
+## Windows installer
+
+`release/windows/veritra.iss` is an Inno Setup 6 definition: per-user install by
+default, fixed `AppId` so updates replace the old install, Start-menu entry,
+optional desktop shortcut, uninstaller. It packages the folder
+`build.ps1` produced. Build line is in the file header.
+
+**Owner step (left open):** signing. Buy a code-signing certificate, then
+enable the two `SignTool`/`SignedUninstaller` lines and pass the `signtool`
+command on the `iscc` command line. The certificate and password stay outside
+this repository. Without signing, Windows SmartScreen warns on first run; that
+is expected for the unsigned draft.
+
+Open questions for the owner: Inno Setup's license (free, custom terms) is
+checked by the owner before first use; an MSIX alternative would need a
+Microsoft account or a self-managed certificate.
+
+## Update channel (design note, nothing built)
+
+Goal: a user's installed desktop app learns that a newer, genuine build exists,
+without a vendor service and without telemetry.
+
+1. **Where:** a static `update.json` on the GitHub release (or the user's own
+   server). Fields: `version`, `build`, `url`, `sha256`, `signature`, `notes`.
+2. **Trust:** the file is signed with an **update key**, separate from the
+   Windows code-signing certificate. The public key is compiled into the app.
+   An update that fails the signature, or whose installer digest differs from
+   `sha256`, is rejected. A downgrade (lower `build`) is rejected.
+3. **Check:** on start and once a day, one HTTPS `GET` of `update.json` with no
+   identifiers, no cookies, no counters. A setting turns it off.
+4. **Install:** the app downloads the installer, checks the digest, shows
+   "Version X is ready, restart to update", and starts the signed installer in
+   silent mode. Never silently, never without the user's click.
+5. **Never:** server-pushed updates, forced updates, or an update that changes
+   the crypto or the server address without showing it.
+6. **Messaging gate:** until G24/G25 pass there is no public release, so no
+   channel is switched on. A channel never delivers a build that
+   `scripts/release-readiness.sh` rejects.
+7. **Android and F-Droid:** F-Droid and Play update themselves; the app has no
+   update check on Android.
+
+Needs an owner decision (a key, so not mine): who holds the update signing key
+and how it is backed up (rotation would need a second key in the app).
+
+## F-Droid
+
+`release/fdroid/org.veritra.private_messenger.yml` is a draft recipe in
+`fdroiddata` format; nothing is submitted. Blockers, in order:
+
+1. **Firebase.** `mobile/android/app/build.gradle.kts` depends on Google's
+   `firebase-messaging`. F-Droid rejects non-free dependencies. It needs a
+   build flavor with UnifiedPush only (which the app already supports). Not
+   built: it is a code and policy change for the owner.
+2. **Messaging is off in release builds** until G24/G25.
+3. **Signing key.** Reproducible-build verification (F-Droid builds and compares
+   with the developer's signed APK) needs the owner's APK signing key.
+4. First real run: the NDK, the APK file name and the Rust bootstrap in the
+   recipe are written from the code, not tested.

@@ -1,0 +1,66 @@
+# DRAFT F-Droid build recipe (fdroiddata format). Nothing has been submitted.
+# Do not submit until ALL of these are true (see docs/release-engineering.md):
+#   1. G24/G25 passed and release builds have messaging enabled. Today
+#      release builds ship with messaging off (PM_CRYPTO_UNAVAILABLE).
+#   2. The Firebase dependency is gone from the F-Droid build. F-Droid rejects
+#      builds that include Google's firebase-messaging
+#      (mobile/android/app/build.gradle.kts). Needs an owner decision: a
+#      "fdroid" flavor with UnifiedPush only. No such flavor exists yet.
+#   3. F-Droid's own build server can compile the Rust crypto library (it
+#      needs the pinned Rust and the Android NDK in the recipe below).
+Categories:
+  - Internet
+  - Messaging
+License: AGPL-3.0-or-later
+AuthorName: Veritra
+SourceCode: https://github.com/ServesYouRice/veritra
+IssueTracker: https://github.com/ServesYouRice/veritra/issues
+
+AutoName: Veritra
+
+RepoType: git
+Repo: https://github.com/ServesYouRice/veritra.git
+
+# Anti-features F-Droid will probably ask for (remove what stops being true):
+#   NonFreeNet is NOT expected: the user's own server is the only network peer.
+AntiFeatures: {}
+
+Builds:
+  - versionName: 0.1.0
+    versionCode: 1
+    commit: REPLACE_WITH_RELEASE_TAG_COMMIT
+    timeout: 7200
+    sudo:
+      - apt-get update
+      - apt-get install -y openjdk-17-jdk-headless
+      - update-java-alternatives -a
+    # Flutter names an unsigned APK app-release.apk or app-release-unsigned.apk;
+    # confirm on the first real run.
+    output: mobile/build/app/outputs/flutter-apk/app-release.apk
+    srclibs:
+      - flutter@3.44.0
+    rm:
+      - mobile/ios
+      - mobile/macos
+      - mobile/windows
+      - mobile/linux
+    prebuild:
+      # Pinned Rust from rust-toolchain.toml, then the three Android ABIs.
+      - curl -fsSL https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+      - . $HOME/.cargo/env && rustup show active-toolchain
+      - . $HOME/.cargo/env && sh scripts/build-mobile-crypto.sh android
+    build:
+      - export PATH=$PATH:$$flutter$$/bin
+      - cd mobile && flutter pub get --enforce-lockfile
+      - cd mobile && flutter build apk --release --no-tree-shake-icons
+    ndk: 28.2.13676358   # flutter.ndkVersion of Flutter 3.44.0 (FlutterExtension.kt)
+
+# Reproducible-build verification (F-Droid builds it, compares with the
+# developer-signed APK, and publishes the developer signature if identical).
+# Needs the owner's APK signing key, which does not exist yet.
+Binaries: https://github.com/ServesYouRice/veritra/releases/download/v%v/veritra-%v.apk
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags
+CurrentVersion: 0.1.0
+CurrentVersionCode: 1
