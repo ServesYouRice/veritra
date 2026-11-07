@@ -161,6 +161,19 @@ until the package that builds it lands and adds its change-log entry.
   encrypted W11-style records; a private channel's key travels only in its
   own group. It proposes W7 payload types `info_key`, `info_key_request` and
   `info_update` (W7 owns that section; not yet registered).
+- [C7: history for new members](designs/C7-channel-history.md) (revision 7, reviewed, ready for build step 2,
+  planned, not built): every community message becomes a 68-byte `C7R1`
+  MLS reference plus a sealed body (an amendment of the W7 §1 framing, VAP1
+  unchanged inside the body); hidden W7 types `history_change`,
+  `history_sync`, `history_sync_request`; rekeys derived from the MLS
+  exporter at each removal epoch (owner, 2026-11-07); and an ABI after 12,
+  coordinated with C4 and subject to independent crypto review: commit
+  processing and merge that return whether the commit removed or added
+  members, the new epoch and a fixed-label exporter root, a decrypt that also returns the epoch, a
+  member signature-key read, an `inspect_commit` refusal of a changed leaf
+  signature key, credential-key sign/verify over a domain allowlist, and
+  HKDF plus AES-256-GCM sealing on existing dependencies.
+  Nothing here changes until C7 lands with its change-log entry.
 
 ## Device linking
 

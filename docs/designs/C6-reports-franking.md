@@ -130,6 +130,12 @@ Recommendation: A for both.
    and the server must route new reports only to the new key. Reports
    already sealed to the old key stay readable by the removed moderator;
    decide whether that is acceptable or the old inbox is re-sealed.
+9. **C7 hidden types** (`docs/designs/C7-channel-history.md`, decision 3).
+   `history_change`, `history_sync` and `history_sync_request` are never
+   franked (a `frank` member would push a record out of the 512-byte
+   bucket) and send 32 random bytes as `frank_commit`, so the server cannot
+   tell them apart. G5's refusal of unfranked payloads, if chosen, must
+   exempt these types after decoding.
 
 ## Conditions for the wiring steps (independent review of step 1, 2026-11-06)
 
