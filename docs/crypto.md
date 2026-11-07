@@ -2413,7 +2413,8 @@ once no old sender is left.
 
 ## Group role state (C4)
 
-Proposed, not implemented: no ABI, codec or payload exists yet. Design:
+Proposed: the record codec exists (Dart, no ABI); the ABI, the extension and
+the wiring do not. Design:
 `docs/designs/C4-custom-roles.md` (built-in roles only, D80). Rules engine:
 `mobile/lib/core/roles/governance.dart`.
 
@@ -2434,24 +2435,38 @@ writes the genesis record (itself as owner, nothing else) at group creation.
 Groups and a community's shared group carry it; a private channel's group
 does not, and is judged against the shared group's record (C0).
 
-**Format, version 1** (big-endian, canonical; any other byte string is
-invalid):
+**Format, version 2** (big-endian, canonical; any other byte string is
+invalid). Version 1 was documented but no build ever wrote it, so it is
+withdrawn and refused. Code: `mobile/lib/core/roles/governance_codec.dart`,
+vector `testing/vectors/c4-governance-record-v2.json`.
 
 ```
-u8  version = 1
+u8  version = 2
 u64 rev
-u8  flags            bit 0: admins_only_posting; other bits zero
+u64 owner_rev                                  never above rev
+u8  flags            bit 0 admins_only_posting, bit 1 election present; rest zero
 u16 owner_len || owner                         0 = no owner
-u16 admin_count     { u16 len || account || u64 since_rev }*
+u16 admin_count     { u16 len || account || u64 since_rev || u8 admin_flags }*
+                                               admin_flags bit 0: elector; rest zero
 u16 moderator_count { u16 len || account }*
-u16 channel_count   { u16 len || channel_id }*  announcement channels
+u16 channel_count   { u16 len || channel_id }* announcement channels
+u16 joined_count    { u16 len || account || u64 rev }*
+if flags bit 1:
+  u64 opened                                   never above rev
+  u16 electorate_count { u16 len || account }* at least one
+  u16 vote_count       { u16 len || voter || u16 len || candidate }*
 ```
 
-Lists are sorted by bytes with no duplicates; ids are 1 to 255 bytes; the
-owner is in no list and no account is in both lists; at most 500 channels;
-nothing follows the last field. A record that does not decode, or a version
-this app does not know, makes the commit invalid (sync stops under I33); it
-is never guessed at.
+Every list is sorted by the UTF-8 bytes of its key with no duplicates; ids
+are 1 to 255 bytes of UTF-8 that round-trip (no byte-order mark); numbers
+use 63 bits (the high bit is zero); the owner is in no list and no account
+is both admin and moderator; every elector is an admin; `since_rev`,
+`joined` revs and `opened` are at most `rev`; every voter is in the
+electorate; at most 500 channels; at most 256 KiB in all; nothing follows
+the last field. A record that does not decode, or a version this app does
+not know, makes the commit invalid (sync stops under I33); it is never
+guessed at. The codec checks shape only: whether a change is allowed is
+`validateCommit`.
 
 **Receiving a commit.** Rust stages it and hands Dart the committer
 account, the account roster before and after, and the record before and
@@ -2466,10 +2481,10 @@ only if `validateCommit` accepts:
   for committers and receivers alike). A record equal to that result is valid from
   any committer; a removal that leaves a departed account named is invalid.
   An add must stamp `joined` and an owner commit must clear an open election;
-  each rewrites the record at `rev` + 1 (record format v2, not built). Neither
+  each rewrites the record at `rev` + 1. Neither
   moves `owner_rev`, and `requiredRecord` never stamps it. A bare owner
   commit (self-update, reconcile, revocation) carries no record.
-  Record format v2 adds, to the v1 fields: `electors` (the per-admin "owner
+  Record format v2 carries: `electors` (the per-admin "owner
   chose this admin" flag), `election` (none, or `{opened, electorate,
   votes}`), `joined` (account to the `rev` of its first device's add) and
   `owner_rev` (a `u64`, genesis 0).

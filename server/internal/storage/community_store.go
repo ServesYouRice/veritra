@@ -1141,8 +1141,16 @@ func (s *Store) manageConversationMemberTx(ctx context.Context, tx *sql.Tx, conv
 	} else if shared {
 		return 0, ErrForbidden
 	}
+	if actorAccountID == targetAccountID {
+		return s.stepDownConversationMemberTx(ctx, tx, conversationID, actorAccountID, actorRole, role)
+	}
 	if !domain.CanManageMembers(actorRole) || domain.RoleRank(role) > domain.RoleRank(actorRole) {
 		return 0, ErrForbidden
+	}
+	// D80: a group has one owner and ownership only moves by the owner's
+	// transfer to a current admin (see transferConversationOwnershipTx).
+	if role == domain.RoleOwner {
+		return s.transferConversationOwnershipTx(ctx, tx, conversationID, actorAccountID, actorRole, targetAccountID)
 	}
 	var activeTarget int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = ? AND deleted_at IS NULL`, targetAccountID).Scan(&activeTarget); err != nil {
@@ -1203,6 +1211,60 @@ func (s *Store) manageConversationMemberTx(ctx context.Context, tx *sql.Tx, conv
 		return 0, err
 	}
 	return eventID, nil
+}
+
+// stepDownConversationMemberTx lets an account lower its own role (C4): anyone
+// may step down, nobody may step up, and the owner must transfer first.
+func (s *Store) stepDownConversationMemberTx(ctx context.Context, tx *sql.Tx, conversationID, accountID, currentRole, role string) (int64, error) {
+	if currentRole == domain.RoleOwner || domain.RoleRank(role) >= domain.RoleRank(currentRole) {
+		return 0, ErrForbidden
+	}
+	createdAt := nowString()
+	if _, err := tx.ExecContext(ctx, `UPDATE memberships SET role = ? WHERE conversation_id = ? AND account_id = ?`, role, conversationID, accountID); err != nil {
+		return 0, err
+	}
+	payload := map[string]string{"conversation_id": conversationID, "account_id": accountID, "role": role, "mls_coordination": "pending"}
+	return insertSyncEvent(ctx, tx, "membership.updated", nil, conversationID, payload, createdAt)
+}
+
+// transferConversationOwnershipTx moves ownership from the acting owner to a
+// current admin of the group; the old owner becomes an admin (C4, D80).
+func (s *Store) transferConversationOwnershipTx(ctx context.Context, tx *sql.Tx, conversationID, ownerAccountID, ownerRole, targetAccountID string) (int64, error) {
+	if ownerRole != domain.RoleOwner {
+		return 0, ErrForbidden
+	}
+	var targetRole string
+	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, targetAccountID).Scan(&targetRole); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrForbidden
+		}
+		return 0, err
+	}
+	if targetRole != domain.RoleAdmin {
+		return 0, ErrForbidden
+	}
+	var activeTarget int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = ? AND deleted_at IS NULL`, targetAccountID).Scan(&activeTarget); err != nil {
+		return 0, err
+	}
+	if activeTarget == 0 {
+		return 0, ErrNotFound
+	}
+	// The unique one-owner index forbids two owners at once, so the old owner
+	// steps down first.
+	if _, err := tx.ExecContext(ctx, `UPDATE memberships SET role = ? WHERE conversation_id = ? AND account_id = ?`, domain.RoleAdmin, conversationID, ownerAccountID); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE memberships SET role = ? WHERE conversation_id = ? AND account_id = ?`, domain.RoleOwner, conversationID, targetAccountID); err != nil {
+		return 0, err
+	}
+	createdAt := nowString()
+	oldOwner := map[string]string{"conversation_id": conversationID, "account_id": ownerAccountID, "role": domain.RoleAdmin, "mls_coordination": "pending"}
+	if _, err := insertSyncEvent(ctx, tx, "membership.updated", nil, conversationID, oldOwner, createdAt); err != nil {
+		return 0, err
+	}
+	newOwner := map[string]string{"conversation_id": conversationID, "account_id": targetAccountID, "role": domain.RoleOwner, "mls_coordination": "pending"}
+	return insertSyncEvent(ctx, tx, "membership.updated", nil, conversationID, newOwner, createdAt)
 }
 
 func (s *Store) ListConversationMembers(ctx context.Context, conversationID, requesterAccountID string) ([]domain.Membership, error) {

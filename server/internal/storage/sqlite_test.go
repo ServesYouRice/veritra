@@ -1020,8 +1020,18 @@ func TestDMUniquenessAndGroupMemberLifecycle(t *testing.T) {
 	if err := store.db.QueryRowContext(ctx, `SELECT payload_json FROM sync_events WHERE id = ?`, events.RemovedMemberEventID).Scan(&payload); err != nil || !strings.Contains(payload, `"mls_coordination":"pending"`) {
 		t.Fatalf("removal event payload=%s err=%v", payload, err)
 	}
+	// D80: ownership moves only to a current admin, and there is one owner.
+	if _, err := store.ManageConversationMember(ctx, group.ID, owner.Account.ID, member.Account.ID, domain.RoleOwner); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("owner to a plain member err=%v want %v", err, ErrForbidden)
+	}
+	if eventID, err := store.ManageConversationMember(ctx, group.ID, owner.Account.ID, member.Account.ID, domain.RoleAdmin); err != nil || eventID <= 0 {
+		t.Fatalf("promote admin event_id=%d err=%v", eventID, err)
+	}
 	if eventID, err := store.ManageConversationMember(ctx, group.ID, owner.Account.ID, member.Account.ID, domain.RoleOwner); err != nil || eventID <= 0 {
-		t.Fatalf("promote second owner event_id=%d err=%v", eventID, err)
+		t.Fatalf("transfer to admin event_id=%d err=%v", eventID, err)
+	}
+	if roles := conversationRoles(t, ctx, store, group.ID); roles[owner.Account.ID] != domain.RoleAdmin || roles[member.Account.ID] != domain.RoleOwner {
+		t.Fatalf("roles after transfer = %#v", roles)
 	}
 	if _, err := store.RemoveConversationMember(ctx, group.ID, owner.Account.ID, owner.Account.ID); err != nil {
 		t.Fatalf("owner leave after transfer: %v", err)
@@ -1389,4 +1399,116 @@ func testLinkLocator(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+func conversationRoles(t *testing.T, ctx context.Context, store *Store, conversationID string) map[string]string {
+	t.Helper()
+	rows, err := store.db.QueryContext(ctx, `SELECT account_id, role FROM memberships WHERE conversation_id = ?`, conversationID)
+	if err != nil {
+		t.Fatalf("list roles: %v", err)
+	}
+	defer rows.Close()
+	roles := map[string]string{}
+	for rows.Next() {
+		var account, role string
+		if err := rows.Scan(&account, &role); err != nil {
+			t.Fatalf("scan role: %v", err)
+		}
+		roles[account] = role
+	}
+	return roles
+}
+
+// C4 (D80): one owner; transfer only owner to admin; anyone may step down.
+func TestConversationOwnershipRules(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+
+	owner := createTestOwner(t, ctx, store)
+	accounts := map[string]AccountDevice{}
+	var ids []string
+	for _, name := range []string{"adm", "mod", "mem"} {
+		invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+		if err != nil {
+			t.Fatalf("invite %s: %v", name, err)
+		}
+		accounts[name] = registerTestMember(t, ctx, store, invite.Code, name)
+		ids = append(ids, accounts[name].Account.ID)
+	}
+	adm, mod, mem := accounts["adm"].Account.ID, accounts["mod"].Account.ID, accounts["mem"].Account.ID
+	group, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID, MemberAccountIDs: ids})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	for id, role := range map[string]string{adm: domain.RoleAdmin, mod: domain.RoleModerator} {
+		if _, err := store.ManageConversationMember(ctx, group.ID, owner.Account.ID, id, role); err != nil {
+			t.Fatalf("set %s: %v", role, err)
+		}
+	}
+	forbid := func(label, actor, target, role string) {
+		t.Helper()
+		if _, err := store.ManageConversationMember(ctx, group.ID, actor, target, role); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("%s: err=%v want %v", label, err, ErrForbidden)
+		}
+	}
+	forbid("admin cannot hand out owner", adm, mem, domain.RoleOwner)
+	forbid("admin cannot take owner", adm, adm, domain.RoleOwner)
+	forbid("moderator cannot hand out owner", mod, mem, domain.RoleOwner)
+	forbid("owner cannot step down without transferring", owner.Account.ID, owner.Account.ID, domain.RoleAdmin)
+	forbid("member cannot step up", mem, mem, domain.RoleModerator)
+	forbid("moderator cannot step up", mod, mod, domain.RoleAdmin)
+	forbid("same role is no step down", mod, mod, domain.RoleModerator)
+	forbid("owner to a moderator", owner.Account.ID, mod, domain.RoleOwner)
+	// A refused transfer changes nothing.
+	if roles := conversationRoles(t, ctx, store, group.ID); roles[owner.Account.ID] != domain.RoleOwner || roles[adm] != domain.RoleAdmin {
+		t.Fatalf("roles changed by refusals: %#v", roles)
+	}
+	// Anyone may step down.
+	if id, err := store.ManageConversationMember(ctx, group.ID, adm, adm, domain.RoleMember); err != nil || id <= 0 {
+		t.Fatalf("admin step down id=%d err=%v", id, err)
+	}
+	if id, err := store.ManageConversationMember(ctx, group.ID, mod, mod, domain.RoleMember); err != nil || id <= 0 {
+		t.Fatalf("moderator step down id=%d err=%v", id, err)
+	}
+	// The former admin is a member now, so a transfer to it is refused.
+	forbid("owner to a former admin", owner.Account.ID, adm, domain.RoleOwner)
+	// A second owner cannot exist, even by a raw write.
+	if _, err := store.db.ExecContext(ctx, `UPDATE memberships SET role = 'owner' WHERE conversation_id = ? AND account_id = ?`, group.ID, mem); err == nil {
+		t.Fatal("database accepted a second owner")
+	}
+}
+
+func TestMigrationSingleOwnerDemotesExtraOwners(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatalf("invite: %v", err)
+	}
+	other := registerTestMember(t, ctx, store, invite.Code, "other")
+	group, err := store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: owner.Account.ID, MemberAccountIDs: []string{other.Account.ID}})
+	if err != nil {
+		t.Fatalf("create group: %v", err)
+	}
+	// Rebuild the pre-0054 state: no index, two owners.
+	if _, err := store.db.ExecContext(ctx, `DROP INDEX memberships_one_owner_per_conversation`); err != nil {
+		t.Fatalf("drop index: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE memberships SET role = 'owner' WHERE conversation_id = ? AND account_id = ?`, group.ID, other.Account.ID); err != nil {
+		t.Fatalf("second owner: %v", err)
+	}
+	script, err := migrations.FS.ReadFile("0054_single_owner.sql")
+	if err != nil {
+		t.Fatalf("read migration: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, string(script)); err != nil {
+		t.Fatalf("run migration: %v", err)
+	}
+	roles := conversationRoles(t, ctx, store, group.ID)
+	if roles[owner.Account.ID] != domain.RoleOwner || roles[other.Account.ID] != domain.RoleAdmin {
+		t.Fatalf("roles after migration = %#v want the creator to stay owner", roles)
+	}
 }
