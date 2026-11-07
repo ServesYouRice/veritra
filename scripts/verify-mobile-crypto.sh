@@ -18,7 +18,11 @@ verify_symbols() {
     pm_crypto_frank_commit pm_crypto_c7_derive pm_crypto_c7_chk_commit \
     pm_crypto_c7_seal pm_crypto_c7_open pm_crypto_c7_sign pm_crypto_c7_verify \
     pm_crypto_group_c7_process_commit pm_crypto_group_c7_merge_pending_commit \
-    pm_crypto_group_c7_decrypt pm_crypto_group_member_signature_key; do
+    pm_crypto_group_c7_decrypt pm_crypto_group_member_signature_key \
+    pm_crypto_l1_check_step pm_crypto_l1_check_chain pm_crypto_l1_recovery_hold \
+    pm_crypto_l1_recovery_hold_public pm_crypto_l1_recovery_hold_drop \
+    pm_crypto_l1_sign_recovery pm_crypto_group_members \
+    pm_crypto_group_l1_process_commit pm_crypto_group_l1_merge_pending_commit; do
     case "$symbols" in
       *"$symbol"*) ;;
       *) echo "missing exported symbol: $symbol" >&2; return 1 ;;

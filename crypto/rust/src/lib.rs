@@ -13,6 +13,7 @@ compile_error!("Veritra's FFI crate requires panic=unwind");
 pub mod attachment;
 pub mod c7;
 mod ffi;
+pub mod l1;
 // K2 primitives are internal until the complete reviewed transfer path is wired.
 #[allow(dead_code)]
 mod history;
@@ -23,7 +24,7 @@ pub mod report;
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 13;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 14;
 
 #[cfg(test)]
 mod test_memory;

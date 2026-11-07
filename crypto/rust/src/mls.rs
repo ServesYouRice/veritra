@@ -14,9 +14,11 @@ use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTra
 
 #[allow(dead_code)]
 pub(crate) mod link_v3;
+mod list;
 mod records;
 mod state;
 mod storage;
+pub use list::{LeafPair, RecoverySignError};
 pub use records::{ChangeSet, RecordChange, RestoreLoader, SealError};
 pub(crate) use records::{MAX_SEALED_RECORD_BYTES, MAX_SEALED_ROOT_BYTES};
 #[allow(dead_code)]
@@ -69,6 +71,15 @@ pub struct CommitOutcome {
     pub removed_self: bool,
     /// The epoch the commit produces.
     pub new_epoch: u64,
+    /// L1 (ABI 14): the `(account, device, signature key)` of every leaf the
+    /// commit's Add proposals bring in, read from the staged commit, already
+    /// encoded (`l1::encode_leaf_pairs`). Encoded before the merge, so an
+    /// encoding failure refuses the commit with the group untouched and can
+    /// never be reported after the state has changed (D94).
+    pub added_pairs: Vec<u8>,
+    /// L1: the committer's pair (this device's own for its own commit), in
+    /// the same encoding and with the same ordering guarantee.
+    pub committer_pair: Vec<u8>,
     /// `MLS-Exporter("veritra-c7-rekey-v1", lp(group_id) | u64(new_epoch), 32)`
     /// for a removal commit that keeps this device; zeroized on drop.
     pub root: Option<tls_codec::SecretVLBytes>,
@@ -89,6 +100,9 @@ pub struct MlsDevice {
     pending_transfers: transfer::PendingTransfers,
     /// What was last sealed or restored in format 4 (D70).
     sealed: records::SealedState,
+    /// L1: the device-list recovery seed a waiting recovered phone holds
+    /// (D94). Sealed in the device record; never leaves Rust.
+    held_list_seed: Option<tls_codec::SecretVLBytes>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -135,6 +149,7 @@ impl MlsDevice {
             device_id: device_id.to_vec(),
             pending_transfers: Default::default(),
             sealed: Default::default(),
+            held_list_seed: None,
         })
     }
 
@@ -322,6 +337,24 @@ impl MlsDevice {
         adds: &[MemberAdd<'_>],
         removes: &[MemberIdentity<'_>],
     ) -> Result<StagedCommitMessages, MlsError> {
+        self.stage_membership_commit_checked(group, adds, &vec![None; adds.len()], removes)
+    }
+
+    /// [`Self::stage_membership_commit`] with the signature key each added
+    /// device is expected to hold (L1, ABI 14: change list version 2). Where
+    /// `expected_keys[i]` is `Some(key)`, a key package whose leaf signature
+    /// key differs is refused, which closes the gap between "the approved
+    /// list says key K" and "the key package the server handed over".
+    pub fn stage_membership_commit_checked(
+        &self,
+        group: &mut MlsGroup,
+        adds: &[MemberAdd<'_>],
+        expected_keys: &[Option<&[u8]>],
+        removes: &[MemberIdentity<'_>],
+    ) -> Result<StagedCommitMessages, MlsError> {
+        if expected_keys.len() != adds.len() {
+            return Err(MlsError::InvalidKeyPackage);
+        }
         if adds.is_empty() && removes.is_empty() {
             return Err(MlsError::InvalidState);
         }
@@ -330,7 +363,7 @@ impl MlsDevice {
         }
         let mut key_packages = Vec::with_capacity(adds.len());
         let mut added = Vec::with_capacity(adds.len());
-        for add in adds {
+        for (add, expected_key) in adds.iter().zip(expected_keys) {
             let key_package = KeyPackageIn::tls_deserialize_exact(add.key_package)
                 .map_err(|_| MlsError::InvalidKeyPackage)?
                 .validate(self.provider.crypto(), ProtocolVersion::Mls10)
@@ -340,6 +373,11 @@ impl MlsDevice {
             if basic_identity(key_package.leaf_node().credential())
                 .map_err(|_| MlsError::InvalidKeyPackage)?
                 != expected
+            {
+                return Err(MlsError::InvalidKeyPackage);
+            }
+            if expected_key
+                .is_some_and(|key| key_package.leaf_node().signature_key().as_slice() != key)
             {
                 return Err(MlsError::InvalidKeyPackage);
             }
@@ -492,7 +530,12 @@ impl MlsDevice {
         let id = group.group_id().as_slice().to_vec();
         self.in_group(&id, || {
             let staged = group.pending_commit().ok_or(MlsError::InvalidState)?;
-            let outcome = self.commit_outcome(group.group_id().as_slice(), staged)?;
+            let own = LeafPair {
+                account_id: self.account_id.clone(),
+                device_id: self.device_id.clone(),
+                signing_key: self.signing_public_key().to_vec(),
+            };
+            let outcome = self.commit_outcome(group.group_id().as_slice(), staged, own)?;
             group
                 .merge_pending_commit(&self.provider)
                 .map_err(|_| MlsError::GroupOperation)?;
@@ -576,6 +619,7 @@ impl MlsDevice {
         &self,
         group_id: &[u8],
         staged: &StagedCommit,
+        committer: LeafPair,
     ) -> Result<CommitOutcome, MlsError> {
         let removed_any = staged.remove_proposals().next().is_some();
         let added_any = staged.add_proposals().next().is_some();
@@ -600,11 +644,27 @@ impl MlsDevice {
         } else {
             None
         };
+        let added = staged
+            .add_proposals()
+            .map(|proposal| {
+                let leaf = proposal.add_proposal().key_package().leaf_node();
+                LeafPair::from_credential(leaf.credential(), leaf.signature_key().as_slice())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        // Encode both buffers now: `commit_outcome` runs before the merge on
+        // both paths, so a failure here leaves the group as it was.
+        let added_triples: Vec<_> = added.iter().map(LeafPair::as_triple).collect();
+        let added_pairs =
+            crate::l1::encode_leaf_pairs(&added_triples).map_err(|_| MlsError::InvalidIdentity)?;
+        let committer_pair = crate::l1::encode_leaf_pairs(&[committer.as_triple()])
+            .map_err(|_| MlsError::InvalidIdentity)?;
         Ok(CommitOutcome {
             removed_any,
             added_any,
             removed_self,
             new_epoch,
+            added_pairs,
+            committer_pair,
             root,
         })
     }
@@ -661,9 +721,19 @@ impl MlsDevice {
         // Inspect before merging: once merged, the leaves it brings in are
         // what decrypt() attributes messages to.
         inspect_commit(group, committer, &staged_commit)?;
+        // The committer's pair, from the tree before the merge (an update
+        // path cannot change it: `inspect_commit` keeps identity and key).
+        let committer_member = group
+            .member_at(committer)
+            .ok_or(MlsError::InvalidIdentity)?;
+        let committer_pair = LeafPair::from_credential(
+            &committer_member.credential,
+            &committer_member.signature_key,
+        )?;
         // The exporter root comes out of the staged commit, before the merge
         // replaces the epoch secrets. A failed merge drops (and wipes) it.
-        let outcome = self.commit_outcome(group.group_id().as_slice(), &staged_commit)?;
+        let outcome =
+            self.commit_outcome(group.group_id().as_slice(), &staged_commit, committer_pair)?;
         group
             .merge_staged_commit(&self.provider, *staged_commit)
             .map_err(|_| MlsError::GroupOperation)?;
