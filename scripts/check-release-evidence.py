@@ -429,10 +429,53 @@ def signing_pins(policy: dict[str, Any], errors: list[str] | None = None) -> dic
     return pins
 
 
+# Files whose working-tree bytes decide the gate, so they must be the
+# candidate's committed bytes: the policy (gate rules and signing pins) and
+# the canonical Go toolchain version.
+CANDIDATE_BOUND_FILES = ("release/release-policy.json", ".go-version")
+
+
+def candidate_binding_errors(root: Path, policy: dict[str, Any], candidate: str) -> list[str]:
+    """Why the checkout or the policy is not exactly the candidate commit's.
+
+    The caller's --root must be checked out at the candidate, each file in
+    ``CANDIDATE_BOUND_FILES`` must equal the candidate's committed blob, and
+    the policy the gate enforces (which --policy may take from elsewhere) must
+    parse to the candidate's committed policy. A drifted working tree, another
+    checkout or a substituted policy file all fail closed.
+    """
+    if git(root, "cat-file", "-e", f"{candidate}^{{commit}}") is None:
+        return ["candidate commit is not in the repository at --root"]
+    errors: list[str] = []
+    head = git_text(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if head != candidate:
+        errors.append("checkout at --root is not the candidate commit")
+    committed: dict[str, bytes] = {}
+    for name in CANDIDATE_BOUND_FILES:
+        blob = git(root, "cat-file", "blob", f"{candidate}:{name}")
+        if blob is None:
+            errors.append(f"candidate commit does not contain {name}")
+            continue
+        committed[name] = blob
+        try:
+            on_disk = (root / name).read_bytes()
+        except OSError:
+            on_disk = None
+        if on_disk != blob:
+            errors.append(f"working tree {name} differs from the candidate commit")
+    try:
+        committed_policy = json.loads(committed["release/release-policy.json"])
+    except (KeyError, ValueError):
+        committed_policy = None
+    if "release/release-policy.json" in committed and committed_policy != policy:
+        errors.append("release policy is not the candidate commit's release/release-policy.json")
+    return errors
+
+
 def preflight(
     root: Path, policy: dict[str, Any], candidate: str, approvals_commit: str | None
 ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-    errors: list[str] = []
+    errors: list[str] = candidate_binding_errors(root, policy, candidate)
     if policy.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"release policy schema version is not protected version {SCHEMA_VERSION}")
     if policy.get("required_ci_jobs") != list(REQUIRED_CI_JOBS):
@@ -1095,8 +1138,10 @@ def validate_manifest(
             errors.append("container digest is not an immutable sha256 digest")
         if container.get("commit") != candidate:
             errors.append("container commit label does not match candidate")
-        canonical_version = (root / ".go-version").read_text(encoding="utf-8").strip()
-        if container.get("toolchain") != canonical_version:
+        # The candidate's committed .go-version; the binding check above fails
+        # when the working tree differs from it.
+        go_version = git_text(root, "show", f"{candidate}:.go-version")
+        if container.get("toolchain") != go_version:
             errors.append("container toolchain does not match .go-version")
 
     if artifacts_dir is None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import posix_shell
 
+import contextlib
 import copy
 import hashlib
 import importlib.util
@@ -608,28 +609,37 @@ def manifest_approvals(root: Path, approvals_commit: str) -> dict[str, object]:
     return recorded
 
 
+FIXTURE_POLICY = {
+    "schema_version": 3,
+    "required_ci_jobs": list(JOBS),
+    "mobile_artifacts": MOBILE_POLICY,
+    "android": {"release_certificate_sha256": fingerprint(RELEASE_CERT)},
+    "ios": {"team_id": TEAM_ID, "bundle_id": BUNDLE_ID},
+    "approvals": APPROVALS_POLICY,
+}
+
+
+def policy_bytes(policy: object) -> bytes:
+    return (json.dumps(policy, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def fixture() -> tuple[Path, dict[str, object]]:
     global COMMIT, TREE, APPROVALS_COMMIT
     temp = Path(tempfile.mkdtemp(prefix="veritra-release-evidence-"))
     git(temp, "init", "-q", "-b", "main")
     base = commit_on(temp, "", {"README": b"base\n"}, "base")
-    COMMIT = commit_on(temp, base, {"src.txt": b"frozen candidate\n"}, "candidate")
+    # The policy and the toolchain version are part of the candidate commit:
+    # the checker binds both, and the checkout, to it.
+    COMMIT = commit_on(temp, base, {
+        "src.txt": b"frozen candidate\n",
+        ".go-version": b"1.25.12\n",
+        "release/release-policy.json": policy_bytes(FIXTURE_POLICY),
+    }, "candidate")
     TREE = git(temp, "rev-parse", f"{COMMIT}^{{tree}}")
     approved = commit_on(temp, COMMIT, approval_files(), "approve the candidate")
     # Later, unrelated work on the protected branch does not disturb them.
     APPROVALS_COMMIT = commit_on(temp, approved, {"README": b"later work\n"}, "later work")
     git(temp, "checkout", "-q", "--detach", COMMIT)
-    # Untracked, so checkouts in the cases below never touch them.
-    (temp / ".go-version").write_text("1.25.12\n", encoding="utf-8")
-    policy = {
-        "schema_version": 3,
-        "required_ci_jobs": list(JOBS),
-        "mobile_artifacts": MOBILE_POLICY,
-        "android": {"release_certificate_sha256": fingerprint(RELEASE_CERT)},
-        "ios": {"team_id": TEAM_ID, "bundle_id": BUNDLE_ID},
-        "approvals": APPROVALS_POLICY,
-    }
-    write_json(temp / "release/release-policy.json", policy)
     signed_digest = build_signed_ipa(temp / "dist" / SIGNED_IPA)
     manifest = {
         "schema_version": 3,
@@ -654,7 +664,45 @@ def fixture() -> tuple[Path, dict[str, object]]:
     return temp, manifest
 
 
-def run(root: Path, *extra: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+POLICY_PATH = "release/release-policy.json"
+
+
+@contextlib.contextmanager
+def candidate_policy(root: Path, policy: object):
+    """Run cases against a candidate whose committed policy is ``policy``.
+
+    The checker binds the policy to the candidate commit, so a case that needs
+    a different policy builds a new candidate commit that holds it (with its
+    own approvals and a later commit), points COMMIT, TREE and
+    APPROVALS_COMMIT at it, and restores them afterwards. It yields a function
+    that rebinds a manifest built for the fixture candidate to the new one.
+    """
+    global COMMIT, TREE, APPROVALS_COMMIT
+    old = (COMMIT, TREE, APPROVALS_COMMIT)
+    try:
+        new = commit_on(root, old[0], {POLICY_PATH: policy_bytes(policy)}, "candidate with a different policy")
+        COMMIT, TREE = new, git(root, "rev-parse", f"{new}^{{tree}}")
+        approved = commit_on(root, new, approval_files(), "approve the candidate with a different policy")
+        APPROVALS_COMMIT = commit_on(root, approved, {"README": b"later work\n"}, "later work")
+        git(root, "checkout", "-q", "--detach", new)
+
+        def rebind(manifest: dict[str, object]) -> dict[str, object]:
+            value = json.loads(json.dumps(manifest).replace(old[0], new))
+            value["approvals"] = manifest_approvals(root, APPROVALS_COMMIT)
+            return value
+
+        yield rebind
+    finally:
+        COMMIT, TREE, APPROVALS_COMMIT = old
+        git(root, "checkout", "-q", "--detach", COMMIT)
+
+
+def run(
+    root: Path, *extra: str, env: dict[str, str] | None = None, head: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    # The checker needs the checkout at the candidate: approval cases move HEAD,
+    # so each run starts from COMMIT unless ``head`` says otherwise.
+    git(root, "checkout", "-q", "--detach", head or COMMIT)
     # A later --approvals-commit in ``extra`` overrides the default one.
     environment = {
         key: value for key, value in os.environ.items() if key != "MOBILE_ARTIFACTS_DIR" and not key.startswith("GIT_")
@@ -693,10 +741,11 @@ def expect_blocked(
     absent: tuple[str, ...] = (),
     extra: tuple[str, ...] = (),
     env: dict[str, str] | None = None,
+    head: str | None = None,
 ) -> None:
     # Each negative case must fail for its own reason, not a leftover one.
     write_json(root / "dist/release-evidence.json", manifest)
-    result = run(root, *extra, env=env)
+    result = run(root, *extra, env=env, head=head)
     missing = [reason for reason in reasons if reason not in result.stderr]
     leaked = [text for text in absent if text in result.stderr]
     if result.returncode == 0 or missing or leaked:
@@ -938,8 +987,7 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, legacy, "release evidence schema version is not current", "release evidence has no approvals record")
 
     # The approval rules cannot be moved back into the candidate tree.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
     for tampered_approvals in (
         dict(APPROVALS_POLICY, production_crypto=dict(APPROVALS_POLICY["production_crypto"], path="release/production-crypto-approval.json")),
         {"independent_review": APPROVALS_POLICY["independent_review"]},
@@ -947,10 +995,8 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     ):
         policy = json.loads(original_policy)
         policy["approvals"] = tampered_approvals
-        write_json(policy_path, policy)
-        expect_blocked(root, valid, "release policy approvals do not match the protected set")
-    policy_path.write_text(original_policy, encoding="utf-8")
-    git(root, "checkout", "-q", "--detach", COMMIT)
+        with candidate_policy(root, policy) as rebind:
+            expect_blocked(root, rebind(valid), "release policy approvals do not match the protected set")
     expect_valid(root, valid)
 
 
@@ -1180,16 +1226,15 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     # The pins live in the policy. Unpinned (null, the repository today): no
     # iOS signed-release record counts, while Android and the preflight are
     # unaffected. A malformed pin blocks both gates.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
     try:
         for ios_pins in ({"team_id": None, "bundle_id": BUNDLE_ID}, {"team_id": TEAM_ID, "bundle_id": None},
                          {"team_id": None, "bundle_id": None}):
-            write_json(policy_path, dict(json.loads(original_policy), ios=ios_pins))
-            expect_blocked(root, valid, f"{label} cannot count until the iOS team and bundle IDs are pinned (pin first",
-                           "signed ios artifact is not the pinned bundle ID", no_signed,
-                           absent=("android signed-release", "release policy ios"))
-            expect_valid(root, valid, "--preflight")
+            with candidate_policy(root, dict(json.loads(original_policy), ios=ios_pins)) as rebind:
+                expect_blocked(root, rebind(valid), f"{label} cannot count until the iOS team and bundle IDs are pinned (pin first",
+                               "signed ios artifact is not the pinned bundle ID", no_signed,
+                               absent=("android signed-release", "release policy ios"))
+                expect_valid(root, rebind(valid), "--preflight")
         for ios_pins, bad in (
             ({"team_id": TEAM_ID.lower(), "bundle_id": BUNDLE_ID}, "team_id"),
             ({"team_id": TEAM_ID[:9], "bundle_id": BUNDLE_ID}, "team_id"),
@@ -1207,15 +1252,16 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
                 policy.pop("ios")
             else:
                 policy["ios"] = ios_pins
-            write_json(policy_path, policy)
             malformed = f"release policy ios.{bad} is not null or"
-            expect_blocked(root, valid, malformed, "pin first")
-            expect_blocked(root, valid, malformed, extra=("--preflight",))
+            with candidate_policy(root, policy) as rebind:
+                expect_blocked(root, rebind(valid), malformed, "pin first")
+                expect_blocked(root, rebind(valid), malformed, extra=("--preflight",))
         # Pinned to another team: the fixture's IPA no longer counts.
-        write_json(policy_path, dict(json.loads(original_policy), ios={"team_id": "ZZZZZ99999", "bundle_id": BUNDLE_ID}))
-        expect_blocked(root, valid, "signed ios provisioning profile is not for the pinned team and bundle ID", no_signed)
+        other_team = dict(json.loads(original_policy), ios={"team_id": "ZZZZZ99999", "bundle_id": BUNDLE_ID})
+        with candidate_policy(root, other_team) as rebind:
+            expect_blocked(root, rebind(valid), "signed ios provisioning profile is not for the pinned team and bundle ID", no_signed)
     finally:
-        policy_path.write_text(original_policy, encoding="utf-8")
+        git(root, "checkout", "-q", "--detach", COMMIT)
     expect_valid(root, valid)
 
     # Provenance must be a separate GitHub Actions build, never the simulator CI.
@@ -1252,8 +1298,7 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, variant(lambda m: m.__setitem__("schema_version", 1)), "release evidence schema version is not current")
 
     # The requirement cannot be dropped from the policy.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
     for tampered in (
         dict(MOBILE_POLICY, required=[]),
         dict(MOBILE_POLICY, required=[{"platform": "ios", "artifact_type": "simulator-debug"}]),
@@ -1264,13 +1309,12 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     ):
         policy = json.loads(original_policy)
         policy["mobile_artifacts"] = tampered
-        write_json(policy_path, policy)
-        expect_blocked(root, valid, "release policy mobile artifact rules do not match the protected set")
+        with candidate_policy(root, policy) as rebind:
+            expect_blocked(root, rebind(valid), "release policy mobile artifact rules do not match the protected set")
     policy = json.loads(original_policy)
     policy.pop("mobile_artifacts")
-    write_json(policy_path, policy)
-    expect_blocked(root, valid, "release policy mobile artifact rules do not match the protected set")
-    policy_path.write_text(original_policy, encoding="utf-8")
+    with candidate_policy(root, policy) as rebind:
+        expect_blocked(root, rebind(valid), "release policy mobile artifact rules do not match the protected set")
 
     # The writer's manifest shape passes, with the simulator record alongside.
     written = writer.build_manifest(
@@ -1604,24 +1648,23 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     # The pin lives in the policy. Unpinned (null, the repository today): no
     # Android signed-release record counts, whatever key signed it, while the
     # iOS record and the preflight are unaffected.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
 
-    def set_android_policy(android: object) -> None:
+    def android_policy(android: object):
         policy = json.loads(original_policy)
         if android is REMOVE:
             policy.pop("android")
         else:
             policy["android"] = android
-        write_json(policy_path, policy)
+        return candidate_policy(root, policy)
 
     unpinned = "pin the release certificate first"
     try:
-        set_android_policy({"release_certificate_sha256": None})
-        expect_blocked(root, valid, unpinned, "signer certificate is not the pinned release certificate", no_signed,
-                       absent=("ios signed-release", "release policy android"))
-        expect_blocked(root, with_android(apk("unpinned-own-key.apk", OTHER_CERT, signers=own_key)), unpinned, no_signed)
-        expect_valid(root, valid, "--preflight")
+        with android_policy({"release_certificate_sha256": None}) as rebind:
+            expect_blocked(root, rebind(valid), unpinned, "signer certificate is not the pinned release certificate", no_signed,
+                           absent=("ios signed-release", "release policy android"))
+            expect_blocked(root, rebind(with_android(apk("unpinned-own-key.apk", OTHER_CERT, signers=own_key))), unpinned, no_signed)
+            expect_valid(root, rebind(valid), "--preflight")
         good = fingerprint(RELEASE_CERT)
         for android in (
             {"release_certificate_sha256": good.upper()},
@@ -1636,17 +1679,17 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
             good,
             REMOVE,
         ):
-            set_android_policy(android)
             malformed = "release policy android.release_certificate_sha256 is not null or 64 lowercase hex characters"
-            expect_blocked(root, valid, malformed, unpinned)
-            expect_blocked(root, valid, malformed, extra=("--preflight",))
+            with android_policy(android) as rebind:
+                expect_blocked(root, rebind(valid), malformed, unpinned)
+                expect_blocked(root, rebind(valid), malformed, extra=("--preflight",))
         # Pinned to another key: the fixture's release-signed APK no longer counts.
-        set_android_policy({"release_certificate_sha256": fingerprint(OTHER_CERT)})
-        expect_blocked(root, valid, f"{label} signing certificate is not the pinned release certificate",
-                       "signed android artifact signer certificate is not the pinned release certificate", no_signed)
-        expect_valid(root, with_android(apk("pinned-other.apk", OTHER_CERT, signers=own_key)))
+        with android_policy({"release_certificate_sha256": fingerprint(OTHER_CERT)}) as rebind:
+            expect_blocked(root, rebind(valid), f"{label} signing certificate is not the pinned release certificate",
+                           "signed android artifact signer certificate is not the pinned release certificate", no_signed)
+            expect_valid(root, rebind(with_android(apk("pinned-other.apk", OTHER_CERT, signers=own_key))))
     finally:
-        policy_path.write_text(original_policy, encoding="utf-8")
+        git(root, "checkout", "-q", "--detach", COMMIT)
     expect_valid(root, valid)
 
 
@@ -1663,6 +1706,57 @@ def with_record_list(records: list[object], valid: dict[str, object]) -> dict[st
     manifest = copy.deepcopy(valid)
     manifest["mobile_artifacts"] = copy.deepcopy(records)
     return manifest
+
+
+def binding_cases(root: Path, valid: dict[str, object]) -> None:
+    """The policy and the checkout are the candidate commit's, exactly (TASK-131)."""
+    drifted = "working tree release/release-policy.json differs from the candidate commit"
+    policy_file = root / POLICY_PATH
+    committed = policy_file.read_bytes()
+    expect_valid(root, valid)
+    expect_valid(root, valid, "--preflight")
+    try:
+        # A working-tree policy that differs from the committed one, even by a
+        # harmless-looking change, blocks both gates.
+        for edited in (
+            policy_bytes(dict(FIXTURE_POLICY, required_ci_jobs=list(JOBS) + ["extra"])),
+            committed + b" ",
+            committed.replace(b"\n", b"\r\n"),
+        ):
+            policy_file.write_bytes(edited)
+            expect_blocked(root, valid, drifted)
+            expect_blocked(root, valid, drifted, extra=("--preflight",))
+        policy_file.unlink()
+        expect_blocked(root, valid, "missing evidence file")
+        policy_file.write_bytes(committed)
+        expect_valid(root, valid)
+        # Same for the canonical Go toolchain version.
+        (root / ".go-version").write_bytes(b"1.99.0\n")
+        expect_blocked(root, valid, "working tree .go-version differs from the candidate commit")
+        (root / ".go-version").write_bytes(b"1.25.12\n")
+        expect_valid(root, valid)
+        # A --policy file from elsewhere is not the candidate's committed policy.
+        other = root.parent / (root.name + "-other-policy.json")
+        try:
+            write_json(other, dict(FIXTURE_POLICY, android={"release_certificate_sha256": None}))
+            expect_blocked(root, valid, "release policy is not the candidate commit's release/release-policy.json",
+                           extra=("--policy", str(other)))
+            write_json(other, FIXTURE_POLICY)
+            expect_valid(root, valid, "--policy", str(other))  # the same content is fine
+        finally:
+            other.unlink(missing_ok=True)
+    finally:
+        policy_file.write_bytes(committed)
+        (root / ".go-version").write_bytes(b"1.25.12\n")
+    # A --root checked out at another commit is not the candidate, even when
+    # its tree holds the same policy (the approvals commit descends from it).
+    wrong = "checkout at --root is not the candidate commit"
+    expect_blocked(root, valid, wrong, head=APPROVALS_COMMIT)
+    expect_blocked(root, valid, wrong, head=APPROVALS_COMMIT, extra=("--preflight",))
+    # A candidate that is not in the repository at all.
+    expect_blocked(root, valid, "candidate commit is not in the repository at --root",
+                   extra=("--expected-commit", "0" * 40))
+    expect_valid(root, valid)
 
 
 def codeowners_cases() -> None:
@@ -1778,6 +1872,7 @@ def main() -> int:
         expect_valid(root, manifest)
         qa01_cases(root, manifest)
         approval_cases(root, manifest)
+        binding_cases(root, manifest)
         qa02_cases(root, manifest)
         android_cases(root, manifest)
         # The repository policy must equal the protected rules the fixtures use.
