@@ -5154,7 +5154,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'A message without text, such as an attachment. Its details are sent, not the file.'**
+  /// **'A message without text, such as an attachment. Its details are sent, including the key that opens the file, not the file itself.'**
   String get c6ReportPreviewNoText;
 
   /// C6 reports.
@@ -5298,7 +5298,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'If you already have a report key on another device, this replaces it. Reports already sent to the old key open only on that device, and people must trust your new key before they can report again.'**
+  /// **'If you already have a report key on another device, this replaces it. Reports already sent to the old key open only on a device that still holds that key, and are lost on this one. People must trust your new key before they can report again.'**
   String get c6ReportsKeyCreateBody;
 
   /// C6 reports.
@@ -5382,7 +5382,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Not a text message. Its details are in the report, not the file.'**
+  /// **'Not a text message. Its details, including the key that opens the file, are in the report, not the file itself.'**
   String get c6ReportsNoText;
 
   /// C6 reports.

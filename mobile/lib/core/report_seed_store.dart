@@ -46,7 +46,18 @@ Uint8List? _fromHex(String? text) {
 /// files; the value is also never written anywhere else.
 class SecureReportSeedStore implements ReportSeedStore {
   SecureReportSeedStore({FlutterSecureStorage? storage})
-      : _storage = storage ?? const FlutterSecureStorage();
+      : _storage = storage ??
+            const FlutterSecureStorage(
+              // Fail closed (I39): a keystore error must never delete the
+              // seed, or the database key that shares the plugin's store.
+              aOptions: AndroidOptions(resetOnError: false),
+              // Out of device backups and restores: the seed stays here.
+              iOptions: IOSOptions(
+                accessibility: KeychainAccessibility.first_unlock_this_device,
+              ),
+              // Unsigned demo builds have no data protection keychain.
+              mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+            );
 
   final FlutterSecureStorage _storage;
 

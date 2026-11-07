@@ -203,10 +203,7 @@ void main() {
     final h = _harness(role: 'member');
     h.api.kind = 'community';
     await tester.pumpWidget(_app(ReportMessageScreen(
-        state: h.state,
-        conversationId: 'conv_1',
-        messageKey: 'dev:a',
-        previewText: 'hi')));
+        state: h.state, conversationId: 'conv_1', messageKey: 'dev:a')));
     await tester.pumpAndSettle();
     expect(find.text('Reports to community moderators are not available yet.'),
         findsOneWidget);
@@ -228,13 +225,12 @@ void main() {
       conversationId: 'conv_1',
       envelopeId: 'env_1',
       frankKey: List<int>.filled(32, 7),
-      payload: utf8.encode('{"v":2}'),
+      payload: utf8.encode('{"type":"text","body":{"text":"the exact words"}}'),
     );
     await tester.pumpWidget(_app(ReportMessageScreen(
         state: h.state,
         conversationId: 'conv_1',
-        messageKey: 'dev_sender:a1',
-        previewText: 'the exact words')));
+        messageKey: 'dev_sender:a1')));
     await tester.pumpAndSettle();
 
     // What is sent is shown, and nothing is sent before the key is trusted.
@@ -267,8 +263,7 @@ void main() {
     await tester.pumpWidget(_app(ReportMessageScreen(
         state: h.state,
         conversationId: 'conv_1',
-        messageKey: 'dev_sender:none',
-        previewText: 'x')));
+        messageKey: 'dev_sender:none')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Trust and continue'));
     await tester.pumpAndSettle();

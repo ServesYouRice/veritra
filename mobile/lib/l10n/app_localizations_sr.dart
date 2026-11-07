@@ -3144,7 +3144,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportPreviewNoText =>
-      'Порука без текста, на пример прилог. Шаљу се њени подаци, не и датотека.';
+      'Порука без текста, на пример прилог. Шаљу се њени подаци, укључујући кључ којим се датотека отвара, али не и сама датотека.';
 
   @override
   String get c6ReportSend => 'Пошаљи пријаву';
@@ -3234,7 +3234,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportsKeyCreateBody =>
-      'Ако већ имаш кључ за пријаве на другом уређају, овај га замењује. Пријаве већ послате на стари кључ отварају се само на том уређају, а људи морају да поверују новом кључу пре следеће пријаве.';
+      'Ако већ имаш кључ за пријаве на другом уређају, овај га замењује. Пријаве већ послате на стари кључ отварају се само на уређају који још држи тај кључ, а на овом су изгубљене. Људи морају да поверују новом кључу пре следеће пријаве.';
 
   @override
   String get c6ReportsKeyReplace => 'Замени кључ';
@@ -3284,7 +3284,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportsNoText =>
-      'Није текстуална порука. Њени подаци су у пријави, не и датотека.';
+      'Није текстуална порука. Њени подаци, укључујући кључ којим се датотека отвара, налазе се у пријави, али не и сама датотека.';
 
   @override
   String c6ReportsReporter(String account) {
@@ -6492,7 +6492,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportPreviewNoText =>
-      'Poruka bez teksta, na primer prilog. Šalju se njeni podaci, ne i datoteka.';
+      'Poruka bez teksta, na primer prilog. Šalju se njeni podaci, uključujući ključ kojim se datoteka otvara, ali ne i sama datoteka.';
 
   @override
   String get c6ReportSend => 'Pošalji prijavu';
@@ -6582,7 +6582,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportsKeyCreateBody =>
-      'Ako već imaš ključ za prijave na drugom uređaju, ovaj ga zamenjuje. Prijave već poslate na stari ključ otvaraju se samo na tom uređaju, a ljudi moraju da poveruju novom ključu pre sledeće prijave.';
+      'Ako već imaš ključ za prijave na drugom uređaju, ovaj ga zamenjuje. Prijave već poslate na stari ključ otvaraju se samo na uređaju koji još drži taj ključ, a na ovom su izgubljene. Ljudi moraju da poveruju novom ključu pre sledeće prijave.';
 
   @override
   String get c6ReportsKeyReplace => 'Zameni ključ';
@@ -6632,7 +6632,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportsNoText =>
-      'Nije tekstualna poruka. Njeni podaci su u prijavi, ne i datoteka.';
+      'Nije tekstualna poruka. Njeni podaci, uključujući ključ kojim se datoteka otvara, nalaze se u prijavi, ali ne i sama datoteka.';
 
   @override
   String c6ReportsReporter(String account) {

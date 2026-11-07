@@ -505,14 +505,16 @@ func (s *Store) ReportEnvelopeRecord(ctx context.Context, accountID, reportRowID
 	if err != nil {
 		return ReportEnvelopeRecord{}, err
 	}
-	if !allowed {
+	// A copy past its retention that the sweeper has not removed yet is gone
+	// as far as listing goes, so it authorizes nothing either.
+	if !allowed || report.CreatedAt.Before(time.Now().UTC().Add(-ReportRetention)) {
 		return ReportEnvelopeRecord{}, ErrNotFound
 	}
 	var record ReportEnvelopeRecord
 	var created string
 	err = s.db.QueryRowContext(ctx, `
 		SELECT id, conversation_id, sender_account_id, sender_device_id, frank_commit, created_at
-		FROM message_envelopes WHERE id = ? AND conversation_id = ?`, envelopeID, report.ConversationID).
+		FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, envelopeID, report.ConversationID, nowString()).
 		Scan(&record.EnvelopeID, &record.ConversationID, &record.SenderAccountID, &record.SenderDeviceID, &record.FrankCommit, &created)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -22,17 +22,12 @@ class ReportMessageScreen extends StatefulWidget {
     required this.state,
     required this.conversationId,
     required this.messageKey,
-    required this.previewText,
     super.key,
   });
 
   final AppState state;
   final String conversationId;
   final String messageKey;
-
-  /// The text of the message as this device shows it, or null for a message
-  /// without text.
-  final String? previewText;
 
   @override
   State<ReportMessageScreen> createState() => _ReportMessageScreenState();
@@ -45,6 +40,7 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
   ReportPlan? _plan;
   _Phase _phase = _Phase.loading;
   String? _message;
+  String? _preview;
   bool _pinning = false;
 
   @override
@@ -65,6 +61,8 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       _message = null;
     });
     try {
+      // What is sealed is the kept proof, not the message as shown now.
+      final preview = await service.previewText(widget.messageKey);
       final plan = await service.prepare(widget.conversationId);
       if (!mounted) return;
       if (plan.isCommunity) {
@@ -73,6 +71,7 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       }
       setState(() {
         _plan = plan;
+        _preview = preview;
         _phase = _Phase.ready;
       });
     } catch (err) {
@@ -193,7 +192,7 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
                     borderRadius: BorderRadius.circular(BoneRadii.md),
                   ),
                   child: Text(
-                    widget.previewText ?? l10n.c6ReportPreviewNoText,
+                    _preview ?? l10n.c6ReportPreviewNoText,
                     maxLines: 12,
                     overflow: TextOverflow.ellipsis,
                   ),
