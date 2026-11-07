@@ -3009,6 +3009,12 @@ abstract class AppLocalizations {
   /// **'Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.'**
   String get chatPausedNotice;
 
+  /// No description provided for @chatSyncPausedNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in this conversation are paused: an encryption update could not be applied. Nothing was skipped, and other conversations keep working.'**
+  String get chatSyncPausedNotice;
+
   /// No description provided for @chatRemovalHoldNotice.
   ///
   /// In en, this message translates to:

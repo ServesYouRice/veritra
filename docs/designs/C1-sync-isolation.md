@@ -227,3 +227,80 @@ reviews the diff independently.
   newly discovered groups, K2 fresh identity and downgrade refusal.
 - Scoped UI shows a conversation warning while account connection and B
   remain healthy; no content/keys/ciphertext appear in logs or diagnostics.
+
+
+## Built slice (P1, 2026-11-07): a hybrid, not the full design
+
+Status: built on `agent/c1-p1`, needs an Opus review (MLS ordering) before
+merge. It meets the C1 prerequisite (one conversation's MLS failure no
+longer stops sync for every conversation) with a smaller change than the
+design above, and it is **inert unless the operator turns
+`PRIVATE_MESSENGER_SCOPED_SYNC` on**: the client probes the scoped
+conversation route, and without it every failure stops the device as before.
+Whether to turn it on (in the demo, or by default) is the owner's call.
+
+### What differs from the design
+
+| Design | Built |
+|---|---|
+| Account stream and one stream and cursor per conversation; the app reads no global stream | The global stream and cursor stay. Only a failed conversation gets a row |
+| Migration marker `G`, scope cursors, conversation recovery table | One table, `local_conversation_pauses` (schema 20), and no migration of old data |
+| `ScopedMlsTransition`, a separate API | The two existing transitions take one extra branch, enforced inside the SQL transaction |
+| Heads or per-conversation polling | Not needed: the stream is read for a paused conversation only, on an explicit retry, plus one probe read when a pause is created |
+| Startup round-robin over conversations | Not needed: unpaused conversations ride the unchanged global stream |
+
+### Why
+
+The global stream already carries the ordering the rest of the app relies on
+(Welcome before commit, leave floors, projections, own echoes, the D68 hold
+and the outgoing CAS on one cursor). Replacing it touches all of that in
+`app_state.dart` and the native service at once and cannot be run here
+(Flutter is not installed locally). The pause keeps that ordering for every
+conversation that is not failing and adds one durable per-conversation
+cursor for the one that is.
+
+### Rules (each is enforced in storage, not only in `app_state`)
+
+1. **No skip without a durable pause.** The pause row is written first. The
+   cursor moves past a paused conversation's crypto event only through
+   `skipPausedConversationEvent`, which fails unless that row exists in the
+   same transaction. A skip writes no processed marker.
+2. **Pause only what can be fetched again.** A pause is created only after
+   the conversation's own stream returns the failed event again under the same
+   id and type (`after=<id-1>&limit=1`), the native handle still answers, and
+   fewer than 1,000 conversations are paused. Otherwise the device stops, as
+   before.
+3. **Replay is a branch of the existing transitions.** `commitMlsTransition`
+   and `commitSyncEvent` accept an event behind the global cursor only when
+   its conversation is paused, it is above `resume_after`, and it is at or
+   below the cursor. They then leave the cursor alone, require the usual
+   `counter + 1` and expected counter, and move `resume_after` in the same
+   transaction. A cursor-advancing transition for a paused group is refused.
+4. **Replay runs in the sync owner's pass**, before it reads the global
+   stream, under the same lease and crypto queue, and only for an explicit
+   retry. It stops at the global cursor; the global stream then applies the
+   conversation's newer events normally.
+5. **Outgoing work for a paused conversation is refused** in the service and
+   again in the storage transactions. Queued items stay queued.
+6. **A group never moves out of order.** Sealing, sending and receiving in
+   other groups go on; the paused group's state is exactly what the failed
+   event found.
+
+### Known limits
+
+- Server retention still applies: if the server prunes the conversation's
+  events after `resume_after`, the replay gets 409
+  `conversation_recovery_required` and only leaving is offered.
+  The conservative prune pause stays (D92).
+- Hidden events skipped by the `scanned_through` cursor (D92) are not part of
+  this slice: the stream is read from `resume_after`, so a hidden tail is
+  walked, not skipped.
+- A pause of a conversation the user left stays until the next foreground
+  pass drops the group; a wake pass that meets the conversation's Welcome in
+  that window passes it by the cursor alone. This needs a failed group drop
+  and a re-add, and is not handled.
+- A pause of a conversation the user was removed from by others has no
+  screen to clear it (the replay answers 403 and keeps it); it only holds
+  one of the 1,000 slots.
+- A downgrade to a build before schema 20 was not tested; do not rely on it
+  being refused.

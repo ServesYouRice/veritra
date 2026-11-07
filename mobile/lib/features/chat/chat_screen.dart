@@ -17,6 +17,7 @@ import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../storage/encrypted_database.dart'
     show LocalMessage, LocalMessageKind, LocalMessageState;
 import '../../l10n/l10n.dart';
+import '../../sync/sync_recovery.dart' show SyncRecoveryChoice;
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -443,6 +444,12 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     if (readOnly)
                       const _NoPeerReadOnlyNotice()
+                    else if (conversation != null &&
+                        widget.state.conversationSyncPaused(conversation.id))
+                      _SyncPausedNotice(
+                        state: widget.state,
+                        conversationId: conversation.id,
+                      )
                     else if (conversation != null &&
                         widget.state.mlsConversationFailed(conversation.id))
                       const _PausedConversationNotice()
@@ -994,6 +1001,7 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.l10n,
     state.isMuted(conversationId),
     state.mlsConversationFailed(conversationId),
+    state.conversationPauseFor(conversationId)?.generation,
     state.readOnlyWithoutPeer(conversationId),
     state.sendHeldForRemoval(conversationId),
     state.isBusy(Ops.send),
@@ -2211,6 +2219,91 @@ class _PausedConversationNotice extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// C1 prerequisite 1: this conversation's own encryption update could not
+/// be applied, so only it is paused. Nothing was skipped, other
+/// conversations keep syncing, and the user may retry or leave.
+class _SyncPausedNotice extends StatelessWidget {
+  const _SyncPausedNotice({required this.state, required this.conversationId});
+
+  final AppState state;
+  final String conversationId;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final choices = state.conversationPauseFor(conversationId)?.choices ??
+        const <SyncRecoveryChoice>[];
+    return Semantics(
+      liveRegion: true,
+      container: true,
+      child: Container(
+        key: const ValueKey('sync-paused-notice'),
+        width: double.infinity,
+        color: scheme.errorContainer,
+        padding: const EdgeInsets.symmetric(
+          horizontal: BoneSpacing.gutter,
+          vertical: BoneSpacing.sm,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              context.l10n.chatSyncPausedNotice,
+              style: TextStyle(color: scheme.onErrorContainer),
+            ),
+            Wrap(
+              spacing: BoneSpacing.sm,
+              children: <Widget>[
+                if (choices.contains(SyncRecoveryChoice.retry))
+                  TextButton(
+                    key: const ValueKey('sync-paused-retry'),
+                    onPressed: state.busy
+                        ? null
+                        : () => state.retryConversationPause(conversationId),
+                    child: Text(context.l10n.bannerTryAgain),
+                  ),
+                if (choices.contains(SyncRecoveryChoice.leaveConversation))
+                  TextButton(
+                    key: const ValueKey('sync-paused-leave'),
+                    onPressed: state.busy ? null : () => _confirmLeave(context),
+                    child: Text(context.l10n.detailsLeave),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmLeave(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(context.l10n.detailsLeaveTitle),
+        content: Text(context.l10n.detailsLeaveMessage),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(context.l10n.commonCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(context.l10n.detailsLeaveConfirm),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final left = await state.leaveConversation(conversationId);
+    final error = state.errorFor(Ops.members);
+    if (!left && error != null && context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 }
 

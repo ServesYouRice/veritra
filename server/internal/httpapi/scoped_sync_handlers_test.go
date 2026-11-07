@@ -188,3 +188,37 @@ func TestScopedSyncConversationExpiryIsScoped(t *testing.T) {
 	}
 	getScopedSyncPage(t, handler, "/api/v1/sync/account-events?after="+strconv.FormatInt(cursor, 10), token, http.StatusOK)
 }
+
+// A client pauses one conversation only after it has read the failed event
+// back with after=<id-1>&limit=1 (C1 prerequisite 1, mobile
+// AppState._pauseConversationAt). The probe must return exactly that event
+// for every event the stream serves, including the first event a member can
+// see, with hidden rows below it, and must echo the requested scope.
+func TestScopedSyncProbeReturnsExactlyTheNamedEvent(t *testing.T) {
+	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, func(c *config.Config) { c.ScopedSync = true })
+	conversationID := createConversation(t, handler, ownerToken)
+	createMessage(t, handler, ownerToken, conversationID, "probe-before-join", []byte("ciphertext-0"))
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "probemember")
+	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/conversations/"+conversationID+"/members", ownerToken, map[string]interface{}{"account_id": memberID, "role": "member"}); status != http.StatusOK {
+		t.Fatalf("add member status=%d body=%s", status, body)
+	}
+	for i := 1; i <= 3; i++ {
+		createMessage(t, handler, ownerToken, conversationID, "probe-"+strconv.Itoa(i), []byte("ciphertext-"+strconv.Itoa(i)))
+	}
+	base := "/api/v1/conversations/" + conversationID + "/sync-events"
+	for name, token := range map[string]string{"owner": ownerToken, "member": memberToken} {
+		all := getScopedSyncPage(t, handler, base+"?after=0&limit=200", token, http.StatusOK)
+		if len(all.Events) < 3 {
+			t.Fatalf("%s sees %d events, want at least 3", name, len(all.Events))
+		}
+		for _, e := range all.Events {
+			probe := getScopedSyncPage(t, handler, base+"?after="+strconv.FormatInt(e.ID-1, 10)+"&limit=1", token, http.StatusOK)
+			if probe.Scope != "conversation" || probe.ScopeID != conversationID {
+				t.Fatalf("%s probe envelope scope=%q scope_id=%q", name, probe.Scope, probe.ScopeID)
+			}
+			if len(probe.Events) != 1 || probe.Events[0].ID != e.ID || probe.Events[0].ConversationID != conversationID {
+				t.Fatalf("%s probe for event %d returned %+v", name, e.ID, probe.Events)
+			}
+		}
+	}
+}

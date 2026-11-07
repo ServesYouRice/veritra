@@ -1484,6 +1484,34 @@ class ApiClient {
     return _rows(json, 'events', SyncEvent.fromJson);
   }
 
+  /// One conversation's own sync stream (C1 prerequisite 1), in event order.
+  /// The server serves it only when the operator turned scoped sync on, and
+  /// answers 404 otherwise. A conversation whose retention was pruned past
+  /// [after] answers 409 `conversation_recovery_required`; a non-member 403.
+  /// Only the events are read: the envelope's bounds are the account's, not
+  /// this stream's.
+  Future<List<SyncEvent>> conversationSyncEvents(
+    String token,
+    String conversationId, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    final id = Uri.encodeComponent(conversationId);
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = '/api/v1/conversations/$id/sync-events'
+          '?after=$after&limit=$pageLimit';
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
+    _decode(() {
+      if (json['scope'] != 'conversation' ||
+          json['scope_id'] != conversationId) {
+        throw const FormatException();
+      }
+    });
+    return _rows(json, 'events', SyncEvent.fromJson);
+  }
+
   /// The newest sync event id the server holds for this account, read from
   /// the `latest_event_id` bound of an empty page (the cursor is past every
   /// event, so no event or ciphertext comes back). Used to date a leave
