@@ -112,6 +112,12 @@ func largestChannel(ctx context.Context, tx *sql.Tx, communityID string) (int, e
 // checkNewConversationMember applies the member limit to the conversation
 // and the conversation limit to the account joining it.
 func (s *Store) checkNewConversationMember(ctx context.Context, tx *sql.Tx, conversationID, accountID string) error {
+	// C5: a banned account is not added to any conversation of the community.
+	if banned, err := conversationCommunityBannedTx(ctx, tx, conversationID, accountID); err != nil {
+		return err
+	} else if banned {
+		return ErrForbidden
+	}
 	members, err := conversationMemberCount(ctx, tx, conversationID)
 	if err != nil {
 		return err
@@ -126,6 +132,12 @@ func (s *Store) checkNewConversationMember(ctx context.Context, tx *sql.Tx, conv
 // so both the community and its largest channel must have room, and the
 // account must have room for every channel.
 func (s *Store) checkNewCommunityMember(ctx context.Context, tx *sql.Tx, communityID, accountID string) error {
+	// C5: a banned account is not added to the community.
+	if banned, err := communityBannedTx(ctx, tx, communityID, accountID); err != nil {
+		return err
+	} else if banned {
+		return ErrForbidden
+	}
 	layout, err := communityLayoutOf(ctx, tx, communityID)
 	if err != nil {
 		return err

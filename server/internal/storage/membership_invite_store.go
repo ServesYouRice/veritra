@@ -181,6 +181,16 @@ func usableInviteTx(ctx context.Context, tx *sql.Tx, where string, arg interface
 		}
 		return inviteRow{}, err
 	}
+	// C5: while a community's invitations are paused, none can be used.
+	if community.Valid {
+		var paused sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT invites_paused_until FROM communities WHERE id = ?`, community.String).Scan(&paused); err != nil {
+			return inviteRow{}, err
+		}
+		if paused.Valid && parseTime(paused.String).After(time.Now().UTC()) {
+			return inviteRow{}, ErrMembershipInviteUnavailable
+		}
+	}
 	return row, nil
 }
 
@@ -438,6 +448,14 @@ func (s *Store) RequestToJoin(ctx context.Context, accountID, locator string) (r
 	}
 	if member {
 		return domain.JoinRequest{}, false, ErrAlreadyMember
+	}
+	// C5: a banned account's request looks like any other unusable link.
+	if invite.target.Kind == domain.InviteTargetCommunity {
+		if banned, err := communityBannedTx(ctx, tx, invite.target.ID, accountID); err != nil {
+			return domain.JoinRequest{}, false, err
+		} else if banned {
+			return domain.JoinRequest{}, false, ErrNotFound
+		}
 	}
 	binding, err := inviteBindingTx(ctx, tx, invite)
 	if err != nil {

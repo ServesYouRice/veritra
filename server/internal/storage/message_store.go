@@ -103,6 +103,10 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if restricted && !domain.CanPostRestricted(senderRole) {
 		return domain.MessageEnvelope{}, false, 0, ErrPostingRestricted
 	}
+	// C5: a timeout and a channel's slow mode, by the server's clock.
+	if err := checkPostingAllowedTx(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, senderRole, route.channelID, now); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
 	for _, referenceID := range []*string{envelope.ReplyToID, envelope.ThreadRootID} {
 		if referenceID == nil || strings.TrimSpace(*referenceID) == "" {
 			continue
