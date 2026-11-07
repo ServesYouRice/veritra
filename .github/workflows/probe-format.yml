@@ -1,0 +1,21 @@
+name: probe-format
+on:
+  push:
+    branches: [agent/b2-ci-probe]
+permissions:
+  contents: read
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2
+        with:
+          channel: stable
+          flutter-version: "3.44.0"
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: mobile
+      - run: dart format .
+        working-directory: mobile
+      - run: git --no-pager diff
