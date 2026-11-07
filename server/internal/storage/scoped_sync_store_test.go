@@ -131,7 +131,7 @@ func TestScopedConversationSyncCrossesHiddenRunWithBudget(t *testing.T) {
 	var got []int64
 	pages := 0
 	for {
-		page, err := f.store.ListConversationSyncPage(ctx, who.Account.ID, who.Device.ID, f.conversation.ID, cursor, 100)
+		page, err := f.store.ListConversationSyncPage(ctx, who.Account.ID, who.Device.ID, f.conversation.ID, cursor, 100, true)
 		if err != nil {
 			t.Fatalf("page from %d: %v", cursor, err)
 		}
@@ -163,8 +163,26 @@ func TestScopedConversationSyncCrossesHiddenRunWithBudget(t *testing.T) {
 	if _, err := f.store.db.ExecContext(ctx, `DELETE FROM sync_prune_state`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.ListConversationSyncPage(ctx, who.Account.ID, who.Device.ID, f.conversation.ID, hidden[2], 100); err != nil {
+	if _, err := f.store.ListConversationSyncPage(ctx, who.Account.ID, who.Device.ID, f.conversation.ID, hidden[2], 100, true); err != nil {
 		t.Fatalf("hidden-row cursor: %v", err)
+	}
+}
+
+// Without the opt-in the scan has no budget: a client that does not know
+// scan_truncated still gets the later visible event.
+func TestScopedConversationSyncUnboundedIgnoresBudget(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	old := scopedSyncScanBudget
+	scopedSyncScanBudget = 3
+	t.Cleanup(func() { scopedSyncScanBudget = old })
+	for i := 0; i < 8; i++ {
+		f.send(t, ctx, "u"+string(rune('a'+i)), nil)
+	}
+	conversationSyncEvent(t, ctx, f.store, "conversation.updated", f.conversation.ID)
+	events, err := f.store.ListConversationSyncEvents(ctx, f.blocker.Account.ID, f.blocker.Device.ID, f.conversation.ID, 0, 100)
+	if err != nil || len(events) != 1 {
+		t.Fatalf("events = %v, %v", pageEventIDs(events), err)
 	}
 }
 

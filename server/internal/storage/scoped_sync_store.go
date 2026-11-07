@@ -83,16 +83,17 @@ func (s *Store) ListAccountSyncPage(ctx context.Context, accountID, deviceID str
 // returns ErrForbidden for a non-member and ErrSyncCursorExpired when
 // retention pruned an event of this scope the device could have been sent.
 func (s *Store) ListConversationSyncEvents(ctx context.Context, accountID, deviceID, conversationID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
-	page, err := s.ListConversationSyncPage(ctx, accountID, deviceID, conversationID, afterID, limit)
+	page, err := s.ListConversationSyncPage(ctx, accountID, deviceID, conversationID, afterID, limit, false)
 	return page.Events, err
 }
 
 // ListConversationSyncPage is ListConversationSyncEvents with the scan
-// position and a scan budget (C1 bounds, D92). Rows the device cannot see
+// position. Only when bounded (the client opted in) does a scan budget apply;
+// otherwise the scan is unbounded as before (C1 bounds, D92). Rows the device cannot see
 // stay hidden (the MLS join filter only grows, dead envelopes stay dead), or
 // are block-hidden, which D92 lets the cursor pass: an unblock does not
 // replay them through sync.
-func (s *Store) ListConversationSyncPage(ctx context.Context, accountID, deviceID, conversationID string, afterID int64, limit int) (SyncPage, error) {
+func (s *Store) ListConversationSyncPage(ctx context.Context, accountID, deviceID, conversationID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -122,7 +123,7 @@ func (s *Store) ListConversationSyncPage(ctx context.Context, accountID, deviceI
 	scanned := 0
 	truncated := false
 	for len(events) < limit && rows.Next() {
-		if scanned >= scopedSyncScanBudget {
+		if bounded && scanned >= scopedSyncScanBudget {
 			// A candidate exists beyond the budget: stop before it.
 			truncated = true
 			break

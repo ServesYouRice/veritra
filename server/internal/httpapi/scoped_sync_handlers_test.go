@@ -130,7 +130,7 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 	}
 
 	// A page past the end is an empty list, not null.
-	_, body := doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversationID+"/sync-events?after=999999", ownerToken, nil)
+	_, body := doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversationID+"/sync-events?after=999999&scan=bounded", ownerToken, nil)
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil || string(raw["events"]) != "[]" {
 		t.Fatalf("empty page body=%s err=%v", body, err)
@@ -140,9 +140,17 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 	if string(raw["scan_truncated"]) != "false" || string(raw["scanned_through"]) != "999999" {
 		t.Fatalf("empty page scan fields body=%s", body)
 	}
-	full := getScopedSyncPage(t, handler, "/api/v1/conversations/"+conversationID+"/sync-events?after=0&limit=200", ownerToken, http.StatusOK)
+	full := getScopedSyncPage(t, handler, "/api/v1/conversations/"+conversationID+"/sync-events?after=0&limit=200&scan=bounded", ownerToken, http.StatusOK)
 	if n := len(full.Events); n == 0 || full.ScannedThrough != full.Events[n-1].ID || full.ScanTruncated {
 		t.Fatalf("conversation scan fields %+v", full)
+	}
+	_, plain := doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversationID+"/sync-events?after=0&limit=200", ownerToken, nil)
+	var plainRaw map[string]json.RawMessage
+	if err := json.Unmarshal(plain, &plainRaw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plainRaw["scanned_through"]; ok {
+		t.Fatalf("scoped route sent scanned_through without the opt-in: %s", plain)
 	}
 	_, legacyBody := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=200", ownerToken, nil)
 	var legacyRaw map[string]json.RawMessage

@@ -97,7 +97,7 @@ list with usernames, and the Flutter screens. Format, rules and limits are in
 
 ## 2026-11-07: scanned-through paging (TASK-209, D92)
 
-The scoped conversation and account routes now add `scanned_through` (the
+The scoped conversation route, only when asked with `?scan=bounded` (the account route never), now adds `scanned_through` (the
 highest id examined, hidden rows included, never below the cursor) and
 `scan_truncated` (a 2,000-candidate scan budget ended the page early) to the
 envelope. A conversation cursor that names a row of its own scope, hidden or

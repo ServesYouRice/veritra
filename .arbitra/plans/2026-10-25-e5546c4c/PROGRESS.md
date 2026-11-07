@@ -119,7 +119,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 104 `TASK-104` Make the MLS rollback test assert the surviving messages, not just the absence of msg_2
 - [x] 105 `TASK-105` Make the hard-coded string guard scan whole files and cover the missing string parameters
 - [x] 106 `TASK-106` Stop trusting server-stamped expiry without an authenticated source (gated on section-26579cea45f35cfc5617fb36/UQ-1) — done 2026-11-07: sender-signed `expires_at` in the payload, shorter of it and the server time wins; no sender expiry falls back to the server time.
-  - Skipped: waits on UQ-1.
+  - Owner decided UQ-1 (2026-11-07, quiz): sender-signed expiry, shorter wins. Residual: a server can still choose a shorter time, and a payload with no sender expiry trusts the server time.
 - [x] 107 `TASK-107` Exercise the attachment manifest binding past the request gate
 - [x] 108 `TASK-108` Strengthen message search tests: backfill kind filter and a full-coverage server spy
 - [x] 109 `TASK-109` Fail, do not skip, native crypto tests in CI when VERITRA_CRYPTO_LIBRARY is unset
@@ -233,7 +233,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
 - [x] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
 - [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); legacy route unchanged, no heads route.
-  - Skipped: needs an API change on both sides (see STATE.md Open work, hidden tail on every poll).
+  - Built on the scoped routes behind `?scan=bounded` (opt-in). Not done: the legacy global stream still rescans its hidden tail, `_runOwnedCatchUp` does not persist a scanned-through cursor (that is C1-B2 to B4), no benchmark.
 - [x] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
 - [x] 211 `TASK-211` Require current conversation membership for message edit and delete
 - [x] 212 `TASK-212` Release attachment links, orphaned attachments and blobs when a message is deleted

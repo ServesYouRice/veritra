@@ -1761,7 +1761,7 @@ class ApiClient {
     final id = Uri.encodeComponent(conversationId);
     final json = await _shrinkingPage(limit, (pageLimit) {
       final path = '/api/v1/conversations/$id/sync-events'
-          '?after=$after&limit=$pageLimit';
+          '?after=$after&limit=$pageLimit&scan=bounded';
       return _jsonRequest('GET', path,
           token: token, maxResponseBytes: _maxCiphertextResponseBytes);
     });
