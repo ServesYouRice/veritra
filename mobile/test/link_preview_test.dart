@@ -82,8 +82,8 @@ void main() {
     });
 
     test('preview text drops control and bidi characters and is bounded', () {
-      expect(cleanPreviewText('  A‮b\u0000c \n\t d  ', 50), 'Abc d');
-      expect(cleanPreviewText('​‮ ', 50), isNull);
+      expect(cleanPreviewText('  A\u202Eb\u0000c \n\t d  ', 50), 'Abc d');
+      expect(cleanPreviewText('\u200B\u202E ', 50), isNull);
       expect(cleanPreviewText(5, 50), isNull);
       // The cut never leaves half of a surrogate pair.
       expect(cleanPreviewText('ab😀cd', 3), 'ab');
