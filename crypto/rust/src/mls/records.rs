@@ -445,7 +445,21 @@ impl MlsDevice {
             self.signer.public(),
             &self.provider,
         )?;
-        let plaintext = encode_owner(KIND_DEVICE, &records, transfers.as_slice());
+        // The L1 held seed follows the transfers; with none held the record
+        // is byte for byte what ABI 13 wrote, and with one an older library
+        // refuses it (its transfer decoder rejects trailing bytes).
+        let mut tail = SecretVLBytes::new(Vec::with_capacity(transfers.as_slice().len() + 40));
+        transfers
+            .as_slice()
+            .iter()
+            .for_each(|byte| tail.push(*byte));
+        if let Some(seed) = &self.held_list_seed {
+            super::list::encode_held_section(seed)
+                .as_slice()
+                .iter()
+                .for_each(|byte| tail.push(*byte));
+        }
+        let plaintext = encode_owner(KIND_DEVICE, &records, tail.as_slice());
         wipe_records(records);
         plaintext.ok_or(SealError::RecordLimit {
             kind: KIND_DEVICE,
@@ -767,7 +781,10 @@ impl RestoreLoader {
             return Err(MlsError::InvalidState);
         }
         let device_plaintext = self.device.take().ok_or(MlsError::InvalidState)?;
-        let (device_store, transfers) = decode_owner(KIND_DEVICE, device_plaintext.as_slice())?;
+        let (device_store, tail) = decode_owner(KIND_DEVICE, device_plaintext.as_slice())?;
+        let transfers_len = transfer::extent(tail)?;
+        let (transfers, held) = tail.split_at(transfers_len);
+        let held_list_seed = super::list::decode_held_section(held)?;
         let storage = PartitionedStorage::from_owners(
             device_store,
             std::mem::take(&mut self.groups),
@@ -801,6 +818,7 @@ impl RestoreLoader {
                 account_id: std::mem::take(&mut self.account_id),
                 device_id: std::mem::take(&mut self.device_id),
                 pending_transfers,
+                held_list_seed,
                 sealed: SealedState {
                     last_generation: self.generation,
                     manifest: std::mem::take(&mut self.manifest),

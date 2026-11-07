@@ -10,6 +10,7 @@ import '../core/models.dart';
 
 part 'k2_native_controls.dart';
 part 'k2_native_streams.dart';
+part 'l1_device_list.dart';
 
 /// Largest MLS application plaintext the app encrypts, so its ciphertext
 /// always fits the server's message routes (docs/crypto.md, "Message size").
@@ -197,10 +198,70 @@ typedef _LocatorNative = Int32 Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _LocatorDart = int Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _OutputNative = Int32 Function(Pointer<_PmOwnedBuffer>);
 typedef _OutputDart = int Function(Pointer<_PmOwnedBuffer>);
-typedef _RecoveryDeriveNative = Int32 Function(_PmByteSlice,
-    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
-typedef _RecoveryDeriveDart = int Function(_PmByteSlice,
-    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _RecoveryDeriveNative = Int32 Function(
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _RecoveryDeriveDart = int Function(
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _HandleByteOutputNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, Pointer<Uint8>);
+typedef _HandleByteOutputDart = int Function(
+    Pointer<_PmCryptoHandle>, Pointer<Uint8>);
+typedef _L1SignRecoveryNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1SignRecoveryDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1ProcessNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1ProcessDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1MergeNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1MergeDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
 typedef _RecoveryProofNative = Int32 Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RecoveryProofDart = int Function(_PmByteSlice, _PmByteSlice,
@@ -217,17 +278,21 @@ typedef _VerifyDart = int Function(
 /// The public values derived from a K0 recovery key (ABI 11). None is
 /// secret against the device. `rkPub` is integrity-critical and never goes
 /// to the server; `rkAuthPub` and `rkId` are what
-/// `PUT /api/v1/account/recovery-key` takes.
+/// `PUT /api/v1/account/recovery-key` takes. `rkListPub` (ABI 14, L1) is the
+/// public key of the device-list recovery signer, the key a `recoveryKey`
+/// version of the approved-device list names.
 class RecoveryKeyPublic {
   const RecoveryKeyPublic({
     required this.rkPub,
     required this.rkId,
     required this.rkAuthPub,
+    required this.rkListPub,
   });
 
   final Uint8List rkPub;
   final Uint8List rkId;
   final Uint8List rkAuthPub;
+  final Uint8List rkListPub;
 }
 
 class NativeCryptoBindings {
@@ -305,6 +370,29 @@ class NativeCryptoBindings {
             _ThreeSlicesOutputDart>('pm_crypto_c7_open'),
         _c7Verify = library
             .lookupFunction<_VerifyNative, _VerifyDart>('pm_crypto_c7_verify'),
+        _c7Sign = library.lookupFunction<_HandleTwoSlicesOutputNative,
+            _HandleTwoSlicesOutputDart>('pm_crypto_c7_sign'),
+        _l1CheckStep = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_l1_check_step'),
+        _l1CheckChain = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_l1_check_chain'),
+        _l1Hold = library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
+            'pm_crypto_l1_recovery_hold'),
+        _l1HoldPublic =
+            library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
+                'pm_crypto_l1_recovery_hold_public'),
+        _l1HoldDrop = library.lookupFunction<_HandleByteOutputNative,
+            _HandleByteOutputDart>('pm_crypto_l1_recovery_hold_drop'),
+        _l1SignRecovery =
+            library.lookupFunction<_L1SignRecoveryNative, _L1SignRecoveryDart>(
+                'pm_crypto_l1_sign_recovery'),
+        _groupMembers = library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_group_members'),
+        _groupL1Process =
+            library.lookupFunction<_L1ProcessNative, _L1ProcessDart>(
+                'pm_crypto_group_l1_process_commit'),
+        _groupL1Merge = library.lookupFunction<_L1MergeNative, _L1MergeDart>(
+            'pm_crypto_group_l1_merge_pending_commit'),
         _deviceLinkTranscript = library.lookupFunction<
             _DeviceLinkTranscriptNative,
             _DeviceLinkTranscriptDart>('pm_crypto_device_link_transcript_hash'),
@@ -347,7 +435,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 13) {
+    if (_abiVersion() != 14) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -407,6 +495,16 @@ class NativeCryptoBindings {
   final _ThreeSlicesOutputDart _c7Seal;
   final _ThreeSlicesOutputDart _c7Open;
   final _VerifyDart _c7Verify;
+  final _HandleTwoSlicesOutputDart _c7Sign;
+  final _ThreeSlicesOutputDart _l1CheckStep;
+  final _LocatorDart _l1CheckChain;
+  final _HandleSliceDart _l1Hold;
+  final _HandleOutputDart _l1HoldPublic;
+  final _HandleByteOutputDart _l1HoldDrop;
+  final _L1SignRecoveryDart _l1SignRecovery;
+  final _HandleSliceOutputDart _groupMembers;
+  final _L1ProcessDart _groupL1Process;
+  final _L1MergeDart _groupL1Merge;
 
   /// K0 recovery key entropy length (ABI 11).
   static const recoveryKeyEntropyBytes = 30;
@@ -461,29 +559,38 @@ class NativeCryptoBindings {
     }
   }
 
-  /// Derives `rk_pub`, `rk_id` and `rk_auth_pub` from [entropy] (ABI 11).
+  /// Derives `rk_pub`, `rk_id`, `rk_auth_pub` (ABI 11) and `rk_list_pub`
+  /// (ABI 14) from [entropy].
   RecoveryKeyPublic deriveRecoveryKey(Uint8List entropy) {
     _bounded(entropy, recoveryKeyEntropyBytes, exact: true);
     return _withSlice(entropy, (slice) {
       final rkPub = calloc<_PmOwnedBuffer>();
       final rkId = calloc<_PmOwnedBuffer>();
       final rkAuthPub = calloc<_PmOwnedBuffer>();
+      final rkListPub = calloc<_PmOwnedBuffer>();
       try {
-        _check(_recoveryDerive(slice, rkPub, rkId, rkAuthPub));
+        _check(_recoveryDerive(slice, rkPub, rkId, rkAuthPub, rkListPub));
         final pub = Uint8List.fromList(_take(rkPub.ref, maximum: 32));
         final id = Uint8List.fromList(_take(rkId.ref, maximum: 16));
         final auth = Uint8List.fromList(_take(rkAuthPub.ref, maximum: 32));
-        if (pub.length != 32 || id.length != 16 || auth.length != 32) {
+        final list = Uint8List.fromList(_take(rkListPub.ref, maximum: 32));
+        if (pub.length != 32 ||
+            id.length != 16 ||
+            auth.length != 32 ||
+            list.length != 32) {
           throw const NativeCryptoException(NativeCryptoError.invalidOutput);
         }
-        return RecoveryKeyPublic(rkPub: pub, rkId: id, rkAuthPub: auth);
+        return RecoveryKeyPublic(
+            rkPub: pub, rkId: id, rkAuthPub: auth, rkListPub: list);
       } finally {
         if (rkPub.ref.data != nullptr) _free(rkPub.ref);
         if (rkId.ref.data != nullptr) _free(rkId.ref);
         if (rkAuthPub.ref.data != nullptr) _free(rkAuthPub.ref);
+        if (rkListPub.ref.data != nullptr) _free(rkListPub.ref);
         calloc.free(rkPub);
         calloc.free(rkId);
         calloc.free(rkAuthPub);
+        calloc.free(rkListPub);
       }
     });
   }
@@ -1145,6 +1252,11 @@ class NativeCryptoBindings {
       -8 => NativeCryptoError.recordLimit,
       -9 => NativeCryptoError.welcomeKeyPackageUnavailable,
       -10 => NativeCryptoError.c7KeyMismatch,
+      -11 => NativeCryptoError.deviceListMalformed,
+      -12 => NativeCryptoError.deviceListSignature,
+      -13 => NativeCryptoError.deviceListChain,
+      -14 => NativeCryptoError.deviceListRule,
+      -15 => NativeCryptoError.deviceListNoSeed,
       _ => NativeCryptoError.unknown,
     });
   }
@@ -1232,6 +1344,25 @@ enum NativeCryptoError {
   /// sealed value's commitment. Not a data failure: try the next candidate
   /// key. [NativeCryptoBindings.c7Open] turns it into a `null` result.
   c7KeyMismatch,
+
+  /// ABI 14 (L1), the device-list calls: the bytes are not a canonical
+  /// statement. Checks run in the order malformed, chain, rule, signature,
+  /// so a statement with one fault reports it.
+  deviceListMalformed,
+
+  /// ABI 14 (L1): the statement's signature does not verify under the key
+  /// the rules name.
+  deviceListSignature,
+
+  /// ABI 14 (L1): wrong account, version or `prev_hash`, or no genesis.
+  deviceListChain,
+
+  /// ABI 14 (L1): the signer may not make this change, or the entries are
+  /// not what the change allows (also: a body this device may not sign).
+  deviceListRule,
+
+  /// ABI 14 (L1): recovery signing from the held seed, and none is held.
+  deviceListNoSeed,
 
   /// [NativeCryptoDevice.encrypt] only: the plaintext is larger than
   /// [maxSendablePlaintextBytes], so its ciphertext could not be sent.

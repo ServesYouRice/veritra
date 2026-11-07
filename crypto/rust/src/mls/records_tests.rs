@@ -1055,3 +1055,103 @@ fn restarts_from_records_match_a_twin_that_never_restarts() {
     }
     assert_eq!(world.view(&groups), twin.view(&groups));
 }
+
+// ---- L1 (ABI 14): the held device-list recovery seed -----------------------
+
+const ENTROPY: [u8; 30] = [0x31; 30];
+
+#[test]
+fn a_held_recovery_seed_survives_a_seal_and_a_restore() {
+    let mut recovered = device("recovered");
+    let mut table = SealedTable::start(&mut recovered, &KEY);
+    assert!(recovered.held_recovery_list_public().unwrap().is_none());
+    recovered.hold_recovery_list_seed(&ENTROPY).unwrap();
+    let public = recovered.held_recovery_list_public().unwrap().unwrap();
+    assert_eq!(
+        public,
+        crate::recovery::derive(&ENTROPY).unwrap().rk_list_pub
+    );
+    // Holding changes the device record, so the next seal carries it.
+    let set = table.commit(&mut recovered, &KEY);
+    assert!(summary(&set).contains(&(KIND_DEVICE, Vec::new(), true)));
+    let mut restored = restore(&table, "recovered").unwrap();
+    assert_eq!(restored.held_recovery_list_public().unwrap(), Some(public));
+    // Dropping it changes the record again, and the restore forgets it.
+    assert!(restored.drop_recovery_list_hold());
+    assert!(!restored.drop_recovery_list_hold());
+    table.commit(&mut restored, &KEY);
+    let forgotten = restore(&table, "recovered").unwrap();
+    assert!(forgotten.held_recovery_list_public().unwrap().is_none());
+}
+
+#[test]
+fn without_a_seed_the_device_record_is_what_abi_13_wrote_and_with_one_it_is_refused_by_it() {
+    let mut recovered = device("recovered");
+    let plain = recovered.device_plaintext().unwrap();
+    let (_, tail) = decode_owner(KIND_DEVICE, plain.as_slice()).unwrap();
+    // No held section: the whole tail is the transfer section, which the
+    // ABI 13 decoder reads to its end.
+    assert_eq!(transfer::extent(tail).unwrap(), tail.len());
+
+    recovered.hold_recovery_list_seed(&ENTROPY).unwrap();
+    let held = recovered.device_plaintext().unwrap();
+    let (_, held_tail) = decode_owner(KIND_DEVICE, held.as_slice()).unwrap();
+    assert_eq!(
+        held_tail.len(),
+        tail.len() + super::super::list::HELD_SECTION_BYTES
+    );
+    assert_eq!(transfer::extent(held_tail).unwrap(), tail.len());
+    // ABI 13 passed the whole tail to the transfer decoder, which refuses
+    // bytes after the section: a state with a seed fails closed there.
+    assert_eq!(
+        transfer::decode(
+            held_tail,
+            &recovered.account_id,
+            &recovered.device_id,
+            recovered.signer.public(),
+            &recovered.provider,
+        )
+        .err(),
+        Some(MlsError::InvalidState)
+    );
+    // The new reader accepts exactly the section it wrote and nothing else.
+    let section = &held_tail[tail.len()..];
+    assert!(super::super::list::decode_held_section(section)
+        .unwrap()
+        .is_some());
+    let longer = [section, &[0u8][..]].concat();
+    for bad in [&section[..section.len() - 1], longer.as_slice()] {
+        assert_eq!(
+            super::super::list::decode_held_section(bad).err(),
+            Some(MlsError::InvalidState)
+        );
+    }
+    let mut wrong_version = section.to_vec();
+    wrong_version[4] = 2;
+    assert_eq!(
+        super::super::list::decode_held_section(&wrong_version).err(),
+        Some(MlsError::InvalidState)
+    );
+}
+
+#[test]
+fn the_legacy_format_three_seal_refuses_to_drop_a_held_seed() {
+    let mut recovered = device("recovered");
+    assert!(recovered.seal_state(&KEY, 1).is_ok());
+    recovered.hold_recovery_list_seed(&ENTROPY).unwrap();
+    assert_eq!(
+        recovered.seal_state(&KEY, 2).err(),
+        Some(MlsError::InvalidState)
+    );
+}
+
+#[test]
+fn a_record_that_holds_a_seed_restores_only_under_its_own_key() {
+    let mut recovered = device("recovered");
+    recovered.hold_recovery_list_seed(&ENTROPY).unwrap();
+    let table = SealedTable::start(&mut recovered, &KEY);
+    assert!(table
+        .restore(b"acct_recovered", b"dev_recovered", &[0x56; 32])
+        .is_err());
+    assert!(restore(&table, "recovered").is_ok());
+}

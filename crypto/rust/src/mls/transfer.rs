@@ -835,6 +835,25 @@ pub(super) fn encode(
     Ok(output.0)
 }
 
+/// How many bytes the transfer section at the start of `bytes` takes: a
+/// `u16` count and that many `u32`-length-prefixed items. What follows is
+/// the L1 held-seed section, if any.
+pub(super) fn extent(bytes: &[u8]) -> Result<usize, MlsError> {
+    let mut reader = Reader { bytes, offset: 0 };
+    let count = reader.u16()? as usize;
+    if count > MAX_TRANSFERS {
+        return Err(MlsError::InvalidState);
+    }
+    for _ in 0..count {
+        let length = reader.u32()? as usize;
+        if length > MAX_TRANSFER_BYTES {
+            return Err(MlsError::InvalidState);
+        }
+        reader.take(length)?;
+    }
+    Ok(reader.offset)
+}
+
 pub(super) fn decode(
     bytes: &[u8],
     account: &[u8],

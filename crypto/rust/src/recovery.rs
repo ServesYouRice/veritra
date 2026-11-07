@@ -7,8 +7,10 @@
 //!  └─ PRK = HKDF-Extract(SHA-256, salt = "veritra-k0-v1", ikm = entropy)
 //!      ├─ HKDF-Expand(PRK, "veritra-k0 recovery-hpke", 32)
 //!      │    └─ DeriveKeyPair (DHKEM X25519, HKDF-SHA256) → rk_pub
-//!      └─ HKDF-Expand(PRK, "veritra-k0 recovery-auth", 32)
-//!           └─ Ed25519 seed → rk_auth_pub
+//!      ├─ HKDF-Expand(PRK, "veritra-k0 recovery-auth", 32)
+//!      │    └─ Ed25519 seed → rk_auth_pub
+//!      └─ HKDF-Expand(PRK, "veritra-k0 device-list", 32)      (L1, ABI 14)
+//!           └─ Ed25519 seed → rk_list_pub
 //! rk_id = SHA-256("veritra-k0-rk-id-v1" || rk_pub)[0..16]
 //! ```
 //!
@@ -35,6 +37,8 @@ pub const MAX_DISPLAY_INPUT_BYTES: usize = 256;
 pub const RK_PUB_BYTES: usize = 32;
 pub const RK_ID_BYTES: usize = 16;
 pub const RK_AUTH_PUB_BYTES: usize = 32;
+pub const RK_LIST_PUB_BYTES: usize = 32;
+pub const LIST_SEED_BYTES: usize = 32;
 pub const PROOF_SIGNATURE_BYTES: usize = 64;
 pub const MAX_CHALLENGE_BYTES: usize = 4096;
 pub const SIGNING_KEY_BYTES: usize = 32;
@@ -44,6 +48,9 @@ pub const MAX_ORIGIN_BYTES: usize = 2048;
 const EXTRACT_SALT: &[u8] = b"veritra-k0-v1";
 const HPKE_LABEL: &[u8] = b"veritra-k0 recovery-hpke";
 const AUTH_LABEL: &[u8] = b"veritra-k0 recovery-auth";
+/// L1: the key that signs an account's device-list recovery version. It is
+/// not the K0-R claim proof key: one key, one purpose.
+const LIST_LABEL: &[u8] = b"veritra-k0 device-list";
 const RK_ID_LABEL: &[u8] = b"veritra-k0-rk-id-v1";
 const CHECK_LABEL: &[u8] = b"veritra-k0-rk-check-v1";
 /// The proof label the server's `recoveryProofMessage` uses.
@@ -64,6 +71,8 @@ pub struct RecoveryPublic {
     pub rk_pub: [u8; RK_PUB_BYTES],
     pub rk_id: [u8; RK_ID_BYTES],
     pub rk_auth_pub: [u8; RK_AUTH_PUB_BYTES],
+    /// L1 (ABI 14): the public key of the device-list recovery signer.
+    pub rk_list_pub: [u8; RK_LIST_PUB_BYTES],
 }
 
 fn check_entropy(entropy: &[u8]) -> Result<(), RecoveryError> {
@@ -236,11 +245,46 @@ pub fn derive(entropy: &[u8]) -> Result<RecoveryPublic, RecoveryError> {
     let rk_auth_pub = auth_key(&crypto, prk.as_slice())?
         .verifying_key()
         .to_bytes();
+    let list_seed = list_seed_from_prk(&crypto, prk.as_slice())?;
+    let rk_list_pub = list_public(list_seed.as_slice())?;
     Ok(RecoveryPublic {
         rk_pub,
         rk_id,
         rk_auth_pub,
+        rk_list_pub,
     })
+}
+
+fn list_seed_from_prk(crypto: &RustCrypto, prk: &[u8]) -> Result<SecretVLBytes, RecoveryError> {
+    expand(crypto, prk, LIST_LABEL)
+}
+
+/// L1: the 32-byte seed of the device-list recovery signer, derived from the
+/// RK entropy. It never crosses the C ABI: the device record holds it (a
+/// waiting recovered phone) or Rust derives it for one signature.
+pub fn list_seed(entropy: &[u8]) -> Result<SecretVLBytes, RecoveryError> {
+    let crypto = RustCrypto::default();
+    let prk = prk(&crypto, entropy)?;
+    list_seed_from_prk(&crypto, prk.as_slice())
+}
+
+fn list_key(seed: &[u8]) -> Result<SigningKey, RecoveryError> {
+    let seed: &[u8; LIST_SEED_BYTES] = seed.try_into().map_err(|_| RecoveryError::InvalidInput)?;
+    Ok(SigningKey::from_bytes(seed))
+}
+
+/// The public key of a device-list recovery seed.
+pub fn list_public(seed: &[u8]) -> Result<[u8; RK_LIST_PUB_BYTES], RecoveryError> {
+    Ok(list_key(seed)?.verifying_key().to_bytes())
+}
+
+/// Signs `message` with the device-list recovery key held as `seed`. Only
+/// `l1.rs` calls this, with the fixed L1 signed message.
+pub(crate) fn list_sign(
+    seed: &[u8],
+    message: &[u8],
+) -> Result<[u8; PROOF_SIGNATURE_BYTES], RecoveryError> {
+    Ok(list_key(seed)?.sign(message).to_bytes())
 }
 
 fn append_length_prefixed(output: &mut Vec<u8>, value: &[u8]) -> Result<(), RecoveryError> {

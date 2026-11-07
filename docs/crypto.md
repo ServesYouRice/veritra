@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 13 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 14 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 13. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 14. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -226,6 +226,12 @@ a real account. L1, the signed approved-device list, must give the core:
 
 With L1 the identity-only check on past-epoch senders (TASK-008) can also
 compare signing keys.
+
+**Built so far: L1-1, the crypto layer (ABI 14).** The signed list format
+and its verifier, the signing calls, the recovery signer, the expected-key
+add and the per-leaf pair outputs are in; see the change log entry "L1-1"
+below. The trust anchor still has no caller: pins, the add gate, the holds
+and the message verdicts are L1-3 (mobile), the routes are L1-2 (server).
 
 ### Rejoining a conversation
 
@@ -442,6 +448,108 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **L1-1, approved-device list, crypto layer, ABI 14 (2026-11-07, D94):**
+  design [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
+  Additive except for one call (`pm_crypto_recovery_key_derive` gains the
+  output `out_rk_list_pub`); the header and the Dart binding pin ABI 14
+  exactly. **Nothing is wired into the app, the server or the schema**, no
+  local schema or migration changes, no new crate. **Every piece below needs
+  the Opus review and the independent crypto review the design asks for
+  before release; neither has been done.** Code: `crypto/rust/src/l1.rs`,
+  `mls/list.rs`, `ffi/l1_calls.rs`, `mls.rs`, `recovery.rs`; Dart:
+  `mobile/lib/crypto/l1_device_list.dart`. Vector:
+  `testing/vectors/l1-device-list-v1.json` (Rust and the Go test
+  `server/internal/httpapi/l1_device_list_vector_test.go`, an independent
+  test-only reimplementation, check all of it; Dart checks the statements
+  through the native calls).
+  - **Format and rules (VDL1).** Exactly as the design: body, statement,
+    `list_hash`, the signed message under `veritra-l1-device-list-sig-v1`
+    (disjoint from every other Veritra label, tested), the "Who may sign
+    what" table, strict parsing (one canonical spelling, 4 KiB, 1 to 16
+    sorted entries). Signatures are `verify_strict`. A listed signing key or
+    recovery key must be a canonical, valid, non-small-order Ed25519 point
+    (refused as malformed): a key the strict verifier would refuse can never
+    sign for its device. Failures are four kinds, checked in this order:
+    malformed (`-11`), chain (`-13`), rule (`-14`), signature (`-12`), so a
+    statement with one fault reports it; the vector pins 72 single-fault
+    refusals.
+  - **Where this extends the design.** (1) The no-return and
+    one-key-one-device rules over the whole chain are enforced in Rust:
+    `pm_crypto_l1_check_step` takes a `history` of every pair listed before
+    (the app's keys table; `prev`'s entries count automatically) and
+    `pm_crypto_l1_check_chain` builds it itself. The design left these to
+    Dart; with Rust holding them the vector can state the violations and Dart
+    cannot forget them. Passing an empty history checks only against `prev`
+    (a device removed earlier would not be caught), so L1-3 must pass its
+    table. (2) A recovery-key change (change 5) must actually change the
+    recovery key. (3) Key validity at parse, above.
+  - **Signing.** A device signs through `pm_crypto_c7_sign` with the L1 label
+    as `domain`, as the design says (one credential-key sign entry point).
+    The L1 label is not in the C7 domain list and `pm_crypto_c7_verify`
+    refuses it, so raw bytes can never be signed or verified under it. For
+    that label `message` is a body, not signed bytes: Rust parses it
+    strictly, requires this device's own account, requires a genesis to name
+    exactly this device with its own key and a migration genesis to include
+    it, refuses a recovery version, and signs
+    `label | SHA-256(body) | 0x01 | lp(own device id)` itself. The other
+    rules need the previous version and are checked by `check_step` before
+    a version is used.
+  - **Recovery signer (D94 default: the seed stays on the waiting phone).**
+    `rk_list_pub` joins the derive output (HKDF label `veritra-k0
+    device-list`; not the K0-R claim key). `pm_crypto_l1_recovery_hold`
+    derives the seed from typed entropy and keeps only the seed in the device
+    record as a tagged section after the transfers (`"VL1H" | 1 | seed`);
+    `_hold_public` reads its public key, `_hold_drop` forgets it,
+    `pm_crypto_l1_sign_recovery` signs change 4 from the held seed (dropped
+    once used) or from typed entropy (the retype fallback, nothing kept). It
+    signs only for a change-4 body naming this device alone with its own key,
+    and only a statement that passes `check_step` against the head at
+    completion and the history, so no signature is made for a version the
+    chain would refuse (the head's recovery key not being this seed's
+    included). A record without a seed is byte for byte what ABI 13 wrote; a
+    record with one is refused by ABI 13 (its transfer decoder rejects
+    trailing bytes), tested. The legacy format 3 seal refuses to drop a held
+    seed.
+  - **Adds carry the expected key.** Change list version 2 puts the 32-byte
+    signature key after each add's device id; `stage_membership_commit`
+    refuses a key package whose leaf signature key differs and stages
+    nothing. Version 1 is still accepted, because nothing sends version 2
+    yet; L1-3 moves every sender to version 2, after which version 1 should
+    be refused (a later ABI step).
+  - **Leaves, committer and added pairs.** `pm_crypto_group_members` returns
+    every leaf's `(account, device, signature key)`.
+    `pm_crypto_group_l1_process_commit` and
+    `pm_crypto_group_l1_merge_pending_commit` are the C7 commit calls plus
+    two outputs: the pairs of the commit's Add proposals and the committer's
+    pair, read from the staged commit and tree. The commit is never refused
+    for an L1 reason (D94 apply-then-hold): the app judges the pairs and
+    holds the conversation. The refusal of a changed leaf signature key,
+    which L1 needs, landed with C7 in ABI 13 (`inspect_commit`,
+    `c7_an_update_that_changes_the_signature_key_is_refused`).
+  - **Bug-hunt tasks.** TASK-006 (authorize committers, inviters and
+    identity-key bindings): the crypto layer now supplies the trust anchor
+    check, the committer and added pairs, the roster of a joined group, the
+    expected key on adds and the changed-key refusal; it deliberately does
+    not refuse in `process_commit` or `join_group` for an L1 reason (D94), so
+    the task closes with L1-3, which judges the pairs against the pins and
+    holds. TASK-010 and TASK-048 (SAS commit-then-reveal): L1 needs nothing
+    more from the crypto layer. L0 and K2 already authenticate the new
+    device's key to the old device under a MAC keyed by the QR-only secret,
+    and L1 only has the old device sign change 2 after that check; the
+    residual (a leaked QR secret held by whoever also controls the relay) is
+    unchanged by L1 and stays the owner decision Q-001. L1-3 must sign
+    change 2 only after the claim tag and typed code verify.
+  - **Remains for L1-3 (mobile)** and the other steps: pins and the keys
+    table (local schema), fetch and verify, the add gate and complete adds,
+    judging commits and Welcomes against the pins (and a Welcome roster
+    against the conversation's participants), the approval hold and message
+    verdicts, the own-account audit, genesis at setup and register, signing
+    at link approval (v2, v3) and on the new device's anchor, revoke, repair,
+    key set and replace, the recovery hold at claim and the change-4 post (or
+    the retype), migration genesis with review, confirmation of pre-L1 keys,
+    the one-time group audit, strings; L1-2 (server) owns the migration,
+    routes and honest-server gates.
 
 - **C6 D95, sealed envelope id, per-owner copies, local schema 19
   (2026-11-07):** no ABI or payload change. Local schema 19 (C6 only) adds
