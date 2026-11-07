@@ -14,6 +14,8 @@ import '../../core/composer_drafts.dart';
 import '../../core/message_history.dart';
 import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
+import '../../crypto/link_preview.dart';
+import '../../crypto/message_format.dart' show decodeDecoration;
 import '../../storage/encrypted_database.dart'
     show LocalMessage, LocalMessageKind, LocalMessageState;
 import '../../l10n/l10n.dart';
@@ -28,6 +30,7 @@ import '../search/search_screen.dart';
 import 'attachment_views.dart';
 import 'chat_desktop.dart';
 import 'formatted_message.dart';
+import 'link_preview_card.dart';
 import 'chat_list_screen.dart';
 import 'composer_attachments.dart';
 import 'conversation_details_screen.dart';
@@ -1617,6 +1620,21 @@ class _MessageBubble extends StatelessWidget {
               ? l10n.chatMessageInvalid
               : l10n.chatMessageUnsupported;
 
+  /// The sender's link preview (B2), re-validated against the text each time
+  /// it is drawn. Nothing is fetched here.
+  List<Widget> _linkPreviewCard(String text, Color foreground) {
+    final preview = LinkPreview.fromWire(
+        decodeDecoration(local?.formatJson)['link_preview'],
+        text: text);
+    if (preview == null) return const <Widget>[];
+    return <Widget>[
+      Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: LinkPreviewCard(preview: preview, color: foreground),
+      ),
+    ];
+  }
+
   /// The attachments of an attachment message. Entries that fail to parse,
   /// or name another conversation, are left out rather than shown.
   List<Widget> _attachmentTiles(BuildContext context) {
@@ -1802,15 +1820,16 @@ class _MessageBubble extends StatelessWidget {
                       )
                     else if (local?.kind == LocalMessageKind.attachment)
                       ..._attachmentTiles(context)
-                    else if (text != null)
+                    else if (text != null) ...<Widget>[
                       FormattedMessage(
                         text: text,
                         formatJson: local?.formatJson,
                         onMention: onMention,
                         style: theme.textTheme.bodyMedium
                             ?.copyWith(color: foreground),
-                      )
-                    else
+                      ),
+                      ..._linkPreviewCard(text, foreground),
+                    ] else
                       _RedactedBars(
                         byteLength: message.ciphertext.length,
                         contentWidth: maxWidth - _insetX,

@@ -2576,6 +2576,22 @@ class AppLocalizationsSr extends AppLocalizations {
       'Обавести ме када ме члан помене, чак и у утишаном ћаскању.';
 
   @override
+  String get b2LinkPreviews => 'Прегледи веза';
+
+  @override
+  String get b2LinkPreviewsDetail =>
+      'Када пошаљете везу, овај уређај може да преузме страницу и стави преглед у шифровану поруку. Сајт види адресу овог уређаја. Сервер и особе којима пишете никада не преузимају везу.';
+
+  @override
+  String get b2LinkPreviewsOff => 'Искључено';
+
+  @override
+  String get b2LinkPreviewsKnown => 'Само познати сајтови';
+
+  @override
+  String get b2LinkPreviewsAll => 'Сви сајтови';
+
+  @override
   String get w8HiddenSpoiler => 'Порука са скривеним спојлером';
 
   @override
@@ -5395,6 +5411,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get w8MentionsMutedDetail =>
       'Obavesti me kada me član pomene, čak i u utišanom ćaskanju.';
+
+  @override
+  String get b2LinkPreviews => 'Pregledi veza';
+
+  @override
+  String get b2LinkPreviewsDetail =>
+      'Kada pošaljete vezu, ovaj uređaj može da preuzme stranicu i stavi pregled u šifrovanu poruku. Sajt vidi adresu ovog uređaja. Server i osobe kojima pišete nikada ne preuzimaju vezu.';
+
+  @override
+  String get b2LinkPreviewsOff => 'Isključeno';
+
+  @override
+  String get b2LinkPreviewsKnown => 'Samo poznati sajtovi';
+
+  @override
+  String get b2LinkPreviewsAll => 'Svi sajtovi';
 
   @override
   String get w8HiddenSpoiler => 'Poruka sa skrivenim spojlerom';

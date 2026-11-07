@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart'
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/link_preview.dart';
 import '../crypto/message_format.dart';
 import '../crypto/device_link_code.dart';
 import '../crypto/attachment_crypto.dart';
@@ -31,6 +32,8 @@ import 'attachments.dart';
 import 'client_config.dart';
 import 'composer_drafts.dart';
 import 'errors.dart';
+import 'link_preview_service.dart';
+import 'link_preview_thumbnail.dart';
 import '../storage/message_search.dart';
 import 'message_history.dart';
 import '../storage/encrypted_database.dart'
@@ -291,6 +294,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// metadata only: never a live conversation, member list or permission.
   Map<String, HistoryConversation> _copiedHistory = {};
   bool mentionsInMutedChats = true;
+
+  /// Which links this device may fetch to build a preview for a message it
+  /// sends (B2). Receivers never fetch. Stored under `b2.link_preview`.
+  LinkPreviewMode linkPreviewMode = LinkPreviewMode.allowListed;
+
+  /// Replaceable in tests; the default builds previews over HTTPS.
+  LinkPreviewService linkPreviews =
+      LinkPreviewService(thumbnailEncoder: encodePngThumbnail);
+  final Set<String> _previewPending = <String>{};
   @override
   String? roleOf(String conversationId, String accountId) =>
       membersFor(conversationId)
@@ -321,6 +333,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> setMentionsInMutedChats(bool value) async {
     mentionsInMutedChats = value;
     await localStore.saveSetting('w8.mentions_muted', '$value');
+    notifyListeners();
+  }
+
+  Future<void> setLinkPreviewMode(LinkPreviewMode mode) async {
+    linkPreviewMode = mode;
+    await localStore.saveSetting('b2.link_preview', mode.name);
     notifyListeners();
   }
 
@@ -734,7 +752,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Scoped busy/error state. Callers pass an [Ops] key so one slow or failed
   /// action leaves every unrelated control usable.
-  bool isBusy(String op) => _busyOps.contains(op);
+  bool isBusy(String op) =>
+      _busyOps.contains(op) || (op == Ops.send && _previewPending.isNotEmpty);
   String? errorFor(String op) => _opErrors[op];
   void clearError(String op) {
     if (_opErrors.remove(op) != null) {
@@ -1455,6 +1474,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       };
       mentionsInMutedChats =
           await localStore.loadSetting('w8.mentions_muted') != 'false';
+      linkPreviewMode = linkPreviewModeFromName(
+          await localStore.loadSetting('b2.link_preview'));
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -1860,10 +1881,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final List<Conversation> list;
     final List<LocalConversationPref> prefs;
     final String? mentionsMuted;
+    final String? previewMode;
     try {
       list = await client.conversations(current.token);
       prefs = await localStore.loadConversationPrefs();
       mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
+      previewMode = await localStore.loadSetting('b2.link_preview');
     } catch (_) {
       if (!_refreshOwned(current, generation)) return;
       rethrow;
@@ -1872,6 +1895,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     conversations = list;
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
+    linkPreviewMode = linkPreviewModeFromName(previewMode);
     await _loadRequestState(grandfather: false);
     if (!_refreshOwned(current, generation)) return;
     // The server's list is the truth: a conversation no longer in it (an
@@ -3159,10 +3183,52 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Encrypts, queues, and delivers one message. Scoped to [Ops.send] so a
   /// slow or failed send only affects the composer, and the queued envelope
   /// stays retryable from its pending bubble either way.
-  Future<bool> sendMessageTo(String conversationId, String plaintext) =>
-      _sendPayload(conversationId, AppPayloadType.text,
-          _composedBody(conversationId, plaintext),
+  Future<bool> sendMessageTo(String conversationId, String plaintext) {
+    final body = _composedBody(conversationId, plaintext);
+    if (!_wantsLinkPreview(body)) {
+      return _sendPayload(conversationId, AppPayloadType.text, body,
           draftText: plaintext);
+    }
+    return _sendWithLinkPreview(
+        conversationId, AppPayloadType.text, body, plaintext);
+  }
+
+  /// Whether an outgoing body may get a link preview (B2): the setting is
+  /// not off and the text contains a link at all. Nothing is fetched here,
+  /// and a body that fails this goes straight to the queue.
+  bool _wantsLinkPreview(Map<String, Object?> body) {
+    final text = body['text'];
+    return linkPreviewMode != LinkPreviewMode.off &&
+        text is String &&
+        firstLinkInText(text) != null;
+  }
+
+  /// Sends [body] with a link preview when one can be built. This device
+  /// fetches it, here, before encryption; the server and the receivers never
+  /// see or fetch the link. Any failure sends the body unchanged. A second
+  /// send for the same conversation while this one is still building is
+  /// refused, so a repeated tap cannot send the same text twice.
+  Future<bool> _sendWithLinkPreview(String conversationId, AppPayloadType type,
+      Map<String, Object?> body, String draftText) async {
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (owner == null || !_previewPending.add(conversationId)) return false;
+    notifyListeners();
+    var sendable = body;
+    try {
+      final preview =
+          await linkPreviews.build(body['text'] as String, linkPreviewMode);
+      if (preview != null) sendable = bodyWithLinkPreview(body, preview);
+    } catch (_) {
+      // No preview: the message goes out as written.
+    } finally {
+      _previewPending.remove(conversationId);
+      notifyListeners();
+    }
+    // A sign-out or account switch during the fetch ends this send.
+    if (_disposed || !_syncOwnerActive(owner, generation)) return false;
+    return _sendPayload(conversationId, type, sendable, draftText: draftText);
+  }
 
   Map<String, Object?> _composedBody(String id, String text) =>
       composeMessage(text, accountsByUsername: {
@@ -3171,15 +3237,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       });
 
   /// Replies to the message with local history key [targetKey] (D22).
-  Future<bool> replyTo(String conversationId, String targetKey, String text) =>
-      _sendPayload(
-          conversationId,
-          AppPayloadType.reply,
-          <String, Object?>{
-            ..._composedBody(conversationId, text),
-            'reply_to_id': targetKey
-          },
+  Future<bool> replyTo(String conversationId, String targetKey, String text) {
+    final body = <String, Object?>{
+      ..._composedBody(conversationId, text),
+      'reply_to_id': targetKey
+    };
+    if (!_wantsLinkPreview(body)) {
+      return _sendPayload(conversationId, AppPayloadType.reply, body,
           draftText: text);
+    }
+    return _sendWithLinkPreview(
+        conversationId, AppPayloadType.reply, body, text);
+  }
 
   /// Replaces the text of one of this account's own messages.
   Future<bool> editMessage(
@@ -4873,6 +4942,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       };
       mentionsInMutedChats =
           await localStore.loadSetting('w8.mentions_muted') != 'false';
+      linkPreviewMode = linkPreviewModeFromName(
+          await localStore.loadSetting('b2.link_preview'));
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
         conversations = cached.conversations;
