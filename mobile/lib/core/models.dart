@@ -864,6 +864,7 @@ class Device {
     required this.createdAt,
     this.lastSeenAt,
     this.revokedAt,
+    this.signingKey,
   });
 
   final String id;
@@ -873,7 +874,21 @@ class Device {
   final DateTime? lastSeenAt;
   final DateTime? revokedAt;
 
+  /// The device's MLS signing key as the server holds it (32 bytes), for
+  /// the user's review in a migration genesis (L1); null when absent.
+  final List<int>? signingKey;
+
   factory Device.fromJson(Map<String, Object?> json) {
+    final key = json['signing_key'];
+    List<int>? signingKey;
+    if (key is String && key.isNotEmpty) {
+      try {
+        final decoded = base64Decode(key);
+        if (decoded.length == 32) signingKey = decoded;
+      } on FormatException {
+        signingKey = null;
+      }
+    }
     return Device(
       id: json['id'] as String,
       accountId: json['account_id'] as String,
@@ -881,6 +896,7 @@ class Device {
       createdAt: _parseRequiredTime(json['created_at']),
       lastSeenAt: _parseOptionalTime(json['last_seen_at']),
       revokedAt: _parseOptionalTime(json['revoked_at']),
+      signingKey: signingKey,
     );
   }
 }

@@ -1447,16 +1447,7 @@ class MemoryLocalStore implements LocalStore {
   Future<void> touchDeviceListPin(String accountId, int checkedAt) async {
     final pin = _deviceListPins[accountId];
     if (pin == null) return;
-    _deviceListPins[accountId] = DeviceListPin(
-      accountId: pin.accountId,
-      version: pin.version,
-      listHash: pin.listHash,
-      listId: pin.listId,
-      headStatement: pin.headStatement,
-      conflict: pin.conflict,
-      checkedAt: checkedAt,
-      keys: pin.keys,
-    );
+    _deviceListPins[accountId] = pin.copyWith(checkedAt: checkedAt);
   }
 
   @override
@@ -1469,16 +1460,7 @@ class MemoryLocalStore implements LocalStore {
   }) async {
     final pin = _deviceListPins[accountId];
     if (pin != null) {
-      _deviceListPins[accountId] = DeviceListPin(
-        accountId: pin.accountId,
-        version: pin.version,
-        listHash: pin.listHash,
-        listId: pin.listId,
-        headStatement: pin.headStatement,
-        conflict: true,
-        checkedAt: pin.checkedAt,
-        keys: pin.keys,
-      );
+      _deviceListPins[accountId] = pin.copyWith(conflict: true);
     }
     _deviceListConflicts.putIfAbsent('$accountId\u0000$version',
         () => [...pinnedStatement, ...otherStatement]);

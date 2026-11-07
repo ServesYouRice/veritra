@@ -27,7 +27,9 @@ extension DeviceListSql on EncryptedLocalDatabase {
         'head_statement BLOB NOT NULL '
         'CHECK(length(head_statement) BETWEEN 1 AND 4096), '
         "state TEXT NOT NULL CHECK(state IN ('ok', 'conflict')), "
-        'checked_at INTEGER NOT NULL)');
+        'checked_at INTEGER NOT NULL, '
+        'recovery_key BLOB CHECK(recovery_key IS NULL OR '
+        'length(recovery_key) = 32))');
     await customStatement('CREATE TABLE IF NOT EXISTS local_device_list_keys ('
         'account_id TEXT NOT NULL, '
         'device_id BLOB NOT NULL CHECK(length(device_id) BETWEEN 1 AND 128), '
@@ -79,6 +81,7 @@ extension DeviceListSql on EncryptedLocalDatabase {
       headStatement: head.read<Uint8List>('head_statement'),
       conflict: head.read<String>('state') == 'conflict',
       checkedAt: head.read<int>('checked_at'),
+      recoveryKey: head.read<Uint8List?>('recovery_key'),
       keys: [
         for (final row in keys)
           DeviceListKeyRow(
@@ -112,8 +115,8 @@ extension DeviceListSql on EncryptedLocalDatabase {
         }
         await customStatement(
             'INSERT OR REPLACE INTO local_device_list_heads (account_id, '
-            'version, list_hash, list_id, head_statement, state, checked_at) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            'version, list_hash, list_id, head_statement, state, checked_at, '
+            'recovery_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
             [
               pin.accountId,
               pin.version,
@@ -122,6 +125,9 @@ extension DeviceListSql on EncryptedLocalDatabase {
               Uint8List.fromList(pin.headStatement),
               pin.conflict ? 'conflict' : 'ok',
               pin.checkedAt,
+              pin.recoveryKey == null
+                  ? null
+                  : Uint8List.fromList(pin.recoveryKey!),
             ]);
         await customStatement(
             'DELETE FROM local_device_list_keys WHERE account_id = ?',

@@ -224,7 +224,10 @@ class NativeCryptoService
   Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy) async {
     final derived = bindings.deriveRecoveryKey(entropy);
     return RecoveryKeyValues(
-        rkPub: derived.rkPub, rkId: derived.rkId, rkAuthPub: derived.rkAuthPub);
+        rkPub: derived.rkPub,
+        rkId: derived.rkId,
+        rkAuthPub: derived.rkAuthPub,
+        rkListPub: derived.rkListPub);
   }
 
   @override

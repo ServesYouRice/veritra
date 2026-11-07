@@ -218,11 +218,17 @@ class RecoveryKeyValues {
     required this.rkPub,
     required this.rkId,
     required this.rkAuthPub,
+    this.rkListPub,
   });
 
   final Uint8List rkPub;
   final Uint8List rkId;
   final Uint8List rkAuthPub;
+
+  /// The L1 recovery signer's public key (ABI 14), which a change-5 version
+  /// puts on the account's approved-device list. Null from an engine
+  /// without L1.
+  final Uint8List? rkListPub;
 }
 
 /// K0 recovery (docs/designs/K0-recovery-enrollment.md, R3/R4). Kept apart

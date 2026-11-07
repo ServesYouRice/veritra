@@ -199,6 +199,7 @@ class DeviceListPins {
         headStatement: headStatement,
         conflict: false,
         checkedAt: _nowMs,
+        recoveryKey: chain.head.recoveryKey,
         keys: [
           for (final DeviceListListedPair listed in chain.pairs)
             DeviceListKeyRow(
@@ -316,6 +317,7 @@ class DeviceListPins {
       conflict: false,
       checkedAt: _nowMs,
       keys: keys,
+      recoveryKey: summary.recoveryKey,
     );
   }
 

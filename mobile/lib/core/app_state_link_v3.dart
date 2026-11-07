@@ -466,8 +466,17 @@ extension DeviceLinkV3Actions on AppState {
     final DeviceLinkV3Record approved;
     switch (link.state) {
       case 'claimed':
-        approved = await client.approveDeviceLinkV3(
-            current, link, request.approvalTag);
+        // L1: the change-2 version names the new device with the signing
+        // key of the transcript native verified (claim tag and typed code)
+        // before it released the approval tag; a server record that no
+        // longer matches that transcript is refused first.
+        final verified = (await crypto.k2Inspect(id)).verification;
+        if (!_constantTimeBytesEqual(
+            verified.transcriptHash, link.bytes('transcript_hash'))) {
+          throw const K2TransferException('the claim changed');
+        }
+        approved = await _approveLinkWithDeviceList(
+            client, current, link, request.approvalTag);
       case 'approved' || 'consumed':
         if (link.fields['approval_tag'] != base64Encode(request.approvalTag)) {
           throw const K2TransferException('another approval is stored');
@@ -859,6 +868,11 @@ extension DeviceLinkV3Actions on AppState {
     await localStore.deletePendingEnrollment(
         kind: PendingEnrollment.kindDeviceLinkV3, deviceId: pending.deviceId);
     await _finishSignIn(() async {
+      // L1: pin this account's list, which must name this device as added
+      // by the device that approved the link.
+      await _anchorLinkedDevice(linked,
+          approverDeviceId: status.sourceDeviceId,
+          approverSigningKey: status.bytes('existing_signing_key'));
       await _publishInitialMlsKeyPackages();
       await _refreshConversations(notify: true);
       await _refreshDevices();

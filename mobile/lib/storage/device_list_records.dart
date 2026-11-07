@@ -42,9 +42,33 @@ class DeviceListPin {
     required this.conflict,
     required this.checkedAt,
     required this.keys,
+    List<int>? recoveryKey,
   })  : listHash = Uint8List.fromList(listHash),
         listId = Uint8List.fromList(listId),
-        headStatement = Uint8List.fromList(headStatement);
+        headStatement = Uint8List.fromList(headStatement),
+        recoveryKey =
+            recoveryKey == null ? null : Uint8List.fromList(recoveryKey);
+
+  /// The head's recovery key (`rk_list_pub`), or null when it names none.
+  final Uint8List? recoveryKey;
+
+  /// The pairs the head lists now.
+  List<DeviceListKeyRow> get listed => [
+        for (final key in keys)
+          if (key.listed) key
+      ];
+
+  DeviceListPin copyWith({bool? conflict, int? checkedAt}) => DeviceListPin(
+        accountId: accountId,
+        version: version,
+        listHash: listHash,
+        listId: listId,
+        headStatement: headStatement,
+        conflict: conflict ?? this.conflict,
+        checkedAt: checkedAt ?? this.checkedAt,
+        keys: keys,
+        recoveryKey: recoveryKey,
+      );
 
   final String accountId;
   final int version;

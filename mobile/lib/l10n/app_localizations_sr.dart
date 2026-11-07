@@ -186,6 +186,23 @@ class AppLocalizationsSr extends AppLocalizations {
       'Генеришите код за упаривање за други уређај';
 
   @override
+  String get settingsDeviceListSetup => 'Одобрите своје уређаје';
+
+  @override
+  String get settingsDeviceListSetupDetail =>
+      'Ваши контакти не могу да додају ваше уређаје у ћаскања док не потврдите који су ваши.';
+
+  @override
+  String get deviceListReviewTitle => 'Који уређаји су ваши?';
+
+  @override
+  String get deviceListReviewBody =>
+      'Уклоните ознаку са сваког уређаја који не препознајете. Означени постају ваши одобрени уређаји, а остали се одјављују.';
+
+  @override
+  String get deviceListReviewConfirm => 'Одобри';
+
+  @override
   String get settingsLoadingDevices => 'Учитавање уређаја…';
 
   @override
@@ -2205,6 +2222,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Тај уређај још није на одобреној листи свог власника. Биће додат када буде.';
 
   @override
+  String get errorDeviceListConflict =>
+      'Одобрена листа уређаја вашег налога промењена је на начин који не може да се провери. Упоредите сигурносне бројеве са контактом пре него што промените уређаје.';
+
+  @override
   String get errorOutboxFull =>
       'Ваш ред шифрованих порука је пун. Пошаљите или одбаците поруку на чекању пре него што напишете нову.';
 
@@ -3322,6 +3343,23 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsLinkDeviceDetail =>
       'Generišite kod za uparivanje za drugi uređaj';
+
+  @override
+  String get settingsDeviceListSetup => 'Odobrite svoje uređaje';
+
+  @override
+  String get settingsDeviceListSetupDetail =>
+      'Vaši kontakti ne mogu da dodaju vaše uređaje u ćaskanja dok ne potvrdite koji su vaši.';
+
+  @override
+  String get deviceListReviewTitle => 'Koji uređaji su vaši?';
+
+  @override
+  String get deviceListReviewBody =>
+      'Uklonite oznaku sa svakog uređaja koji ne prepoznajete. Označeni postaju vaši odobreni uređaji, a ostali se odjavljuju.';
+
+  @override
+  String get deviceListReviewConfirm => 'Odobri';
 
   @override
   String get settingsLoadingDevices => 'Učitavanje uređaja…';
@@ -5344,6 +5382,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get errorDeviceListNotApproved =>
       'Taj uređaj još nije na odobrenoj listi svog vlasnika. Biće dodat kada bude.';
+
+  @override
+  String get errorDeviceListConflict =>
+      'Odobrena lista uređaja vašeg naloga promenjena je na način koji ne može da se proveri. Uporedite sigurnosne brojeve sa kontaktom pre nego što promenite uređaje.';
 
   @override
   String get errorOutboxFull =>
