@@ -3158,4 +3158,221 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get voiceNotePlayFailed => 'The voice note could not be played.';
+
+  @override
+  String get c6ReportMessage => 'Report message';
+
+  @override
+  String get c6ReportTitle => 'Report this message';
+
+  @override
+  String get c6ReportIntro =>
+      'This sends only this one message, with proof that it is genuine, to the owners of this server. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.';
+
+  @override
+  String get c6ReportPreviewLabel => 'This message will be sent';
+
+  @override
+  String get c6ReportPreviewNoText =>
+      'A message without text, such as an attachment. Its details are sent, not the file.';
+
+  @override
+  String get c6ReportSend => 'Send report';
+
+  @override
+  String get c6ReportSent => 'Report sent.';
+
+  @override
+  String c6ReportRecipientCount(int count) {
+    return 'Server owners who get a copy: $count';
+  }
+
+  @override
+  String get c6ReportPinTitle => 'Check the owner keys';
+
+  @override
+  String get c6ReportPinBody =>
+      'Ask each owner to read you the code from Settings, Reports, on their device. If it matches, trust it. If it does not, do not send the report.';
+
+  @override
+  String c6ReportOwnerKey(String owner, String fingerprint) {
+    return 'Owner $owner: $fingerprint';
+  }
+
+  @override
+  String get c6ReportKeyChanged =>
+      'This owner\'s key changed since you last trusted it. Ask them whether they changed it.';
+
+  @override
+  String get c6ReportKeyMissing =>
+      'An owner you trusted before gets no copy now. The server may be holding it back.';
+
+  @override
+  String get c6ReportTrust => 'Trust and continue';
+
+  @override
+  String get c6ReportCommunityUnavailable =>
+      'Reports to community moderators are not available yet.';
+
+  @override
+  String get c6ReportNoOwnerKey =>
+      'No server owner can receive reports yet. Ask them to set up a report key.';
+
+  @override
+  String get c6ReportNotReportable =>
+      'This message cannot be reported. It was received before reporting existed, was sent without proof, or has been deleted.';
+
+  @override
+  String get c6ReportKeysNotPinned =>
+      'An owner key is not trusted yet. Open the report again and check it.';
+
+  @override
+  String get c6ReportAlready => 'You already reported this message.';
+
+  @override
+  String get c6ReportUnavailable => 'Reporting is not available in this build.';
+
+  @override
+  String get c6ReportsTitle => 'Reports';
+
+  @override
+  String get c6ReportsSettingsDetail =>
+      'Messages people reported to you as server owner';
+
+  @override
+  String get c6ReportsKeySection => 'Report key';
+
+  @override
+  String get c6ReportsKeyNone =>
+      'This device has no report key. Without one, nobody can report to you.';
+
+  @override
+  String get c6ReportsKeyActive =>
+      'This device holds your report key. Read its code to people who ask to check it.';
+
+  @override
+  String c6ReportsKeyCode(String fingerprint) {
+    return 'Code: $fingerprint';
+  }
+
+  @override
+  String get c6ReportsKeyCreate => 'Create report key';
+
+  @override
+  String get c6ReportsKeyCreateTitle => 'Create a new report key here?';
+
+  @override
+  String get c6ReportsKeyCreateBody =>
+      'If you already have a report key on another device, this replaces it. Reports already sent to the old key open only on that device, and people must trust your new key before they can report again.';
+
+  @override
+  String get c6ReportsKeyReplace => 'Replace key';
+
+  @override
+  String get c6ReportsKeyPublish => 'Publish key again';
+
+  @override
+  String get c6ReportsKeyReady => 'Report key published.';
+
+  @override
+  String get c6ReportsEmpty => 'No reports';
+
+  @override
+  String get c6ReportsEmptyDetail =>
+      'Reports are kept until you dismiss them, or for 90 days.';
+
+  @override
+  String get c6ReportsCommunity => 'Community reports';
+
+  @override
+  String get c6ReportsCommunityUnavailable =>
+      'Not available yet. Moderator reports arrive with community roles.';
+
+  @override
+  String c6ReportsFiled(String when) {
+    return 'Reported $when';
+  }
+
+  @override
+  String get c6ReportsLocked => 'Cannot open';
+
+  @override
+  String get c6ReportsLockedNoSeed =>
+      'This device has no report key, so it cannot open this report. Open it on the device that made your key.';
+
+  @override
+  String get c6ReportsLockedOtherKey =>
+      'Sent to an older report key that this device does not hold.';
+
+  @override
+  String get c6ReportsLockedDamaged =>
+      'This report is damaged or was not meant for you.';
+
+  @override
+  String get c6ReportsMessageLabel => 'Reported message';
+
+  @override
+  String get c6ReportsNoText =>
+      'Not a text message. Its details are in the report, not the file.';
+
+  @override
+  String c6ReportsReporter(String account) {
+    return 'Reported by account $account';
+  }
+
+  @override
+  String c6ReportsSender(String account) {
+    return 'Sent by account $account';
+  }
+
+  @override
+  String get c6ReportsCheck => 'Check against the server record';
+
+  @override
+  String get c6ReportsChecking => 'Checking…';
+
+  @override
+  String get c6ReportsCheckNote =>
+      'Checking tells the server which message this report is about.';
+
+  @override
+  String get c6VerdictVerified => 'Matches the server record';
+
+  @override
+  String get c6VerdictVerifiedDetail =>
+      'The server recorded this exact message from this sender in this conversation. That is only as trustworthy as the server\'s own record.';
+
+  @override
+  String get c6VerdictMismatch => 'Does not match';
+
+  @override
+  String get c6VerdictMismatchDetail =>
+      'The server\'s record disagrees with this report. Treat it as unproven or forged.';
+
+  @override
+  String get c6VerdictGone => 'Cannot be checked';
+
+  @override
+  String get c6VerdictGoneDetail =>
+      'The server no longer has this message, so nothing can be compared.';
+
+  @override
+  String get c6VerdictUnfranked => 'Cannot be proven';
+
+  @override
+  String get c6VerdictUnfrankedDetail =>
+      'This message was sent by an app that adds no proof.';
+
+  @override
+  String get c6ReportsDismiss => 'Dismiss report';
+
+  @override
+  String get c6ReportsDismissTitle => 'Dismiss this report?';
+
+  @override
+  String get c6ReportsDismissBody =>
+      'This removes your copy for good. Other owners keep theirs.';
+
+  @override
+  String get c6ReportsDismissed => 'Report dismissed.';
 }

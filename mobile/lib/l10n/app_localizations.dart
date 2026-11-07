@@ -5192,6 +5192,366 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The voice note could not be played.'**
   String get voiceNotePlayFailed;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Report message'**
+  String get c6ReportMessage;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Report this message'**
+  String get c6ReportTitle;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This sends only this one message, with proof that it is genuine, to the owners of this server. It is sealed, so the server itself cannot read it. Nothing else from the chat is sent.'**
+  String get c6ReportIntro;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This message will be sent'**
+  String get c6ReportPreviewLabel;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'A message without text, such as an attachment. Its details are sent, not the file.'**
+  String get c6ReportPreviewNoText;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Send report'**
+  String get c6ReportSend;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Report sent.'**
+  String get c6ReportSent;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Server owners who get a copy: {count}'**
+  String c6ReportRecipientCount(int count);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Check the owner keys'**
+  String get c6ReportPinTitle;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Ask each owner to read you the code from Settings, Reports, on their device. If it matches, trust it. If it does not, do not send the report.'**
+  String get c6ReportPinBody;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {owner}: {fingerprint}'**
+  String c6ReportOwnerKey(String owner, String fingerprint);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This owner\'s key changed since you last trusted it. Ask them whether they changed it.'**
+  String get c6ReportKeyChanged;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'An owner you trusted before gets no copy now. The server may be holding it back.'**
+  String get c6ReportKeyMissing;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Trust and continue'**
+  String get c6ReportTrust;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports to community moderators are not available yet.'**
+  String get c6ReportCommunityUnavailable;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'No server owner can receive reports yet. Ask them to set up a report key.'**
+  String get c6ReportNoOwnerKey;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This message cannot be reported. It was received before reporting existed, was sent without proof, or has been deleted.'**
+  String get c6ReportNotReportable;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'An owner key is not trusted yet. Open the report again and check it.'**
+  String get c6ReportKeysNotPinned;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'You already reported this message.'**
+  String get c6ReportAlready;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Reporting is not available in this build.'**
+  String get c6ReportUnavailable;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports'**
+  String get c6ReportsTitle;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages people reported to you as server owner'**
+  String get c6ReportsSettingsDetail;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Report key'**
+  String get c6ReportsKeySection;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This device has no report key. Without one, nobody can report to you.'**
+  String get c6ReportsKeyNone;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This device holds your report key. Read its code to people who ask to check it.'**
+  String get c6ReportsKeyActive;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Code: {fingerprint}'**
+  String c6ReportsKeyCode(String fingerprint);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Create report key'**
+  String get c6ReportsKeyCreate;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Create a new report key here?'**
+  String get c6ReportsKeyCreateTitle;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'If you already have a report key on another device, this replaces it. Reports already sent to the old key open only on that device, and people must trust your new key before they can report again.'**
+  String get c6ReportsKeyCreateBody;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace key'**
+  String get c6ReportsKeyReplace;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Publish key again'**
+  String get c6ReportsKeyPublish;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Report key published.'**
+  String get c6ReportsKeyReady;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'No reports'**
+  String get c6ReportsEmpty;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Reports are kept until you dismiss them, or for 90 days.'**
+  String get c6ReportsEmptyDetail;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Community reports'**
+  String get c6ReportsCommunity;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Not available yet. Moderator reports arrive with community roles.'**
+  String get c6ReportsCommunityUnavailable;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Reported {when}'**
+  String c6ReportsFiled(String when);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot open'**
+  String get c6ReportsLocked;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This device has no report key, so it cannot open this report. Open it on the device that made your key.'**
+  String get c6ReportsLockedNoSeed;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent to an older report key that this device does not hold.'**
+  String get c6ReportsLockedOtherKey;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This report is damaged or was not meant for you.'**
+  String get c6ReportsLockedDamaged;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Reported message'**
+  String get c6ReportsMessageLabel;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Not a text message. Its details are in the report, not the file.'**
+  String get c6ReportsNoText;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Reported by account {account}'**
+  String c6ReportsReporter(String account);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent by account {account}'**
+  String c6ReportsSender(String account);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Check against the server record'**
+  String get c6ReportsCheck;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking…'**
+  String get c6ReportsChecking;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking tells the server which message this report is about.'**
+  String get c6ReportsCheckNote;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Matches the server record'**
+  String get c6VerdictVerified;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'The server recorded this exact message from this sender in this conversation. That is only as trustworthy as the server\'s own record.'**
+  String get c6VerdictVerifiedDetail;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Does not match'**
+  String get c6VerdictMismatch;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s record disagrees with this report. Treat it as unproven or forged.'**
+  String get c6VerdictMismatchDetail;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot be checked'**
+  String get c6VerdictGone;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'The server no longer has this message, so nothing can be compared.'**
+  String get c6VerdictGoneDetail;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot be proven'**
+  String get c6VerdictUnfranked;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This message was sent by an app that adds no proof.'**
+  String get c6VerdictUnfrankedDetail;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss report'**
+  String get c6ReportsDismiss;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss this report?'**
+  String get c6ReportsDismissTitle;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes your copy for good. Other owners keep theirs.'**
+  String get c6ReportsDismissBody;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Report dismissed.'**
+  String get c6ReportsDismissed;
 }
 
 class _AppLocalizationsDelegate

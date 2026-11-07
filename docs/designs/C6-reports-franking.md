@@ -298,6 +298,42 @@ Costs, for the owner to weigh (also in `testing/evidence/C6-wiring.md`):
   until it is, and once the envelope is gone, a report cannot show
   "verified against what the server recorded" (G1). Owner question.
 
+## Step 4 outcome (report screens)
+
+Built on branch `agent/c6` (see the pull request and
+`testing/evidence/C6-step4-reports.md`):
+
+- **Report a message.** "Report message" in the message menu of a message
+  someone else sent, offered only in a build with the reviewed engine
+  (`AppState.reportsAvailable`; the release gate is untouched). The screen
+  shows exactly the one message that will be sent, the owners' key codes
+  when a key is new or changed (a person pins it, D95), then sends one sealed
+  copy per owner. A message with no proof (unfranked, older, deleted) is
+  refused; a double tap files once.
+- **Owner inbox.** Settings, Reports (owners only): this device's report key
+  and code, the reports sent to this owner, one report at a time with the
+  revealed text, and "Check against the server record". Dismiss removes the
+  owner's own copy.
+- **Verification** (G1). The new `GET /reports/{id}/envelope` route gives the
+  recipient what the server recorded (sender, conversation, commitment); the
+  app recomputes the commitment. Four results: matches the server record,
+  does not match, cannot be checked (envelope gone), cannot be proven
+  (unfranked). The screen says a match is only as honest as the server's
+  record.
+- **Seed custody, safest default.** The seed is made on the owner's device
+  and kept only in the platform keystore, per server and account. It is never
+  copied, backed up or sent. A second device holds no seed: it can create a
+  new key (after a warning that this replaces the old one, that old reports
+  open only where the old seed is, and that reporters must trust the new key)
+  but cannot read reports sealed to the first device's key. Moving the seed
+  between devices is left to the owner (open question below).
+- **Community moderator inbox.** Shown as "not available yet" in the owner
+  screen and in the report screen; it waits for C4.
+
+Left: a way to move the seed to a second owner device; the reporter's
+"already reported" memory is per run (a durable one needs a local table, a
+schema change); the moderator inbox (C4).
+
 ## Owner decisions (2026-11-01)
 
 - Reports are sealed to the recipient's key; the server carries ciphertext only.

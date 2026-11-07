@@ -12,6 +12,7 @@ import 'device_link_v3_models.dart';
 import 'device_lists.dart' show DeviceListPage;
 import 'membership_models.dart';
 import 'models.dart';
+import 'report_models.dart';
 import 'server_origin.dart';
 import 'transport_policy.dart';
 
@@ -913,6 +914,104 @@ class ApiClient {
       _rows(json, 'events', AdminAuditEvent.fromJson),
       json['next_before']?.toString(),
     );
+  }
+
+  // C6 reports. The server routes sealed copies and learns nothing about the
+  // reported message; the envelope id travels only inside the sealed body and,
+  // at review time, to the recipient's envelope-record request (D95).
+
+  /// Where a report about a message of [conversationId] goes, and the keys to
+  /// seal one copy to each recipient. Members only.
+  Future<ReportInbox> getReportInbox(
+      String token, String conversationId) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/reports/inbox',
+        queryParameters: <String, String>{'conversation_id': conversationId},
+      ).toString(),
+      token: token,
+    );
+    return _decode(() => ReportInbox.fromJson(json));
+  }
+
+  /// Publishes the calling instance owner's report public key. Needs a recent
+  /// reauthentication. Returns the stored key revision.
+  Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
+    final json = await _jsonRequest(
+      'PUT',
+      '/api/v1/reports/inbox-keys/instance',
+      token: token,
+      body: <String, Object?>{'public_key': base64Encode(publicKey)},
+    );
+    return _decode(() {
+      final rev = json['key_rev'];
+      if (rev is! int || rev < 1) throw const FormatException('invalid rev');
+      return rev;
+    });
+  }
+
+  /// Files one report: a copy sealed to each recipient of the inbox.
+  Future<void> createReport(
+    String token, {
+    required String conversationId,
+    required String reportId,
+    required List<Map<String, Object?>> copies,
+  }) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/reports',
+      token: token,
+      body: <String, Object?>{
+        'conversation_id': conversationId,
+        'report_id': reportId,
+        'copies': copies,
+      },
+    );
+  }
+
+  /// The caller's own instance-owner inbox, oldest first, after [afterId].
+  Future<List<ReportCopyRow>> listOwnerReports(String token,
+      {String? afterId, int limit = 50}) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/reports',
+        queryParameters: <String, String>{
+          'inbox': 'instance_owner',
+          'limit': '$limit',
+          if (afterId != null && afterId.isNotEmpty) 'after_id': afterId,
+        },
+      ).toString(),
+      token: token,
+      maxResponseBytes: _maxCiphertextResponseBytes,
+    );
+    return _rows(json, 'reports', ReportCopyRow.fromJson);
+  }
+
+  /// Dismisses the caller's copy of a report.
+  Future<void> deleteReport(String token, String reportRowId) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/reports/${Uri.encodeComponent(reportRowId)}',
+      token: token,
+    );
+  }
+
+  /// What the server recorded for [envelopeId], a message of the conversation
+  /// report copy [reportRowId] was filed about. The one moment the server
+  /// learns an envelope id, from the recipient, at review time.
+  Future<ReportEnvelopeRecord> getReportEnvelope(
+      String token, String reportRowId, String envelopeId) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/reports/${Uri.encodeComponent(reportRowId)}/envelope',
+        queryParameters: <String, String>{'envelope_id': envelopeId},
+      ).toString(),
+      token: token,
+    );
+    return _decode(() => ReportEnvelopeRecord.fromJson(json));
   }
 
   Future<List<Community>> listCommunities(String token) async {
