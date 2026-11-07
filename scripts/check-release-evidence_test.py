@@ -482,7 +482,7 @@ def apk_digests(zip_bytes: bytes) -> dict[str, bytes]:
         chunks = [
             hashlib.new(name, b"\xa5" + struct.pack("<I", len(part)) + part).digest()
             for section in sections
-            for part in (section[i:i + 1 << 20] for i in range(0, len(section), 1 << 20))
+            for part in (section[i:i + (1 << 20)] for i in range(0, len(section), 1 << 20))
         ]
         result[name] = hashlib.new(name, b"\x5a" + struct.pack("<I", len(chunks)) + b"".join(chunks)).digest()
     return result
@@ -1751,6 +1751,10 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     other_digests = apk_digests(b"PK\x05\x06" + b"\0" * 18)
     expect_blocked(root, with_android(apk("replayed.apk", block=apk_signing_block([(APK_V2, lp(lp(apk_signer(RELEASE_CERT, APK_V2, other_digests))))]))),
                    "does not cover this APK's contents", no_signed)
+    # Sections over 2 MiB are chunked: the digests of a large APK verify too.
+    big = dist / "big.apk"
+    build_apk(big, before=(("assets/big.bin", random.Random(7).randbytes(2_600_000)),))
+    assert checker.apk_errors(big, fingerprint(RELEASE_CERT)) == []
     # Valid fixtures: SHA-512 PKCS#1 signatures verify as well.
     expect_valid(root, with_android(apk("sha512.apk", signer_options={"algorithm": 0x0104})))
     for bad in (fingerprint(RELEASE_CERT).upper(), fingerprint(RELEASE_CERT)[:63], "sha256:" + fingerprint(RELEASE_CERT), "", None, 7):

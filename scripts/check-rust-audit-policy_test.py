@@ -292,7 +292,8 @@ def main() -> int:
     scope_call = script.index('--lockfile "$LOCKFILE"')
     audit_call = script.index('cargo audit --file "$LOCKFILE"')
     assert scope_call < audit_call, "scope must be checked before cargo audit"
-    assert script.count("cargo audit ") == 1 or 'cargo audit --file' in script
+    commands = [line for line in script.splitlines() if line.startswith("cargo audit ")]
+    assert commands == ['cargo audit --file "$LOCKFILE" "$@"'], commands
 
     print("rust audit exception scope tests passed")
     return 0

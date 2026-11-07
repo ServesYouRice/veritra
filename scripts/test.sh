@@ -31,6 +31,7 @@ elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-dart-licenses_test.py"
   python "$ROOT/scripts/check-demo-boundary_test.py"
   python "$ROOT/scripts/check-go-toolchain_test.py"
+  python "$ROOT/scripts/check-rust-audit-policy_test.py"
   python "$ROOT/scripts/check-gradle-inputs_test.py"
   python "$ROOT/scripts/release-image_test.py"
 else

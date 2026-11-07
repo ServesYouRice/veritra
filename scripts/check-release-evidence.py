@@ -1468,7 +1468,8 @@ def validate_manifest(
             errors.append("container commit label does not match candidate")
         # The candidate's committed .go-version; the binding check above fails
         # when the working tree differs from it.
-        go_version = git_text(root, "show", f"{candidate}:.go-version")
+        blob = git(root, "cat-file", "blob", f"{candidate}:.go-version")
+        go_version = None if blob is None else blob.decode("utf-8", "replace").strip()
         if container.get("toolchain") != go_version:
             errors.append("container toolchain does not match .go-version")
 
