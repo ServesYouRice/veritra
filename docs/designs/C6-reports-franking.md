@@ -4,8 +4,12 @@
 franking v1 byte rules are built and independently reviewed (no blockers,
 findings fixed, conditions G1 to G6 below). Wiring steps 2 and 3 landed on
 2026-11-07 (see "Wiring outcome"): franking is on the wire and the server
-carries sealed reports. Not done: storing `kf` on receive (needs a local
-schema change), the community inbox key (needs C4) and the app's report
+carries sealed reports. Owner decision D95 is applied (see "D95 outcome"):
+receivers keep `kf` and `P` (local schema 19), the envelope id is sealed
+inside the report, one sealed copy per instance owner, owner keys pinned in
+the app, 90-day or dismissed retention, unfranked payloads accepted behind a
+switch. Not done: the community inbox key (needs C4), the owner's way to
+verify without the server learning the envelope id, and the app's report
 screens (step 4).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
 
@@ -82,17 +86,20 @@ Recommendation: A for both.
 - Migration: nullable `frank_commit BLOB` (32 bytes) on the envelope table,
   write-once (a trigger aborts any later change), plus `report_inbox_keys`
   and `reports`.
-- `POST /api/v1/reports` with `{conversation_id, envelope_id, key_rev, recipient_public_key,
-  sealed}` (opaque `sealed`). The server checks the reporter is a member and
-  the envelope is in that conversation, rate-limits through the write budget
-  and a per-reporter daily cap, and never logs the body. `key_rev` and the key make a
-  report sealed to a rotated key fail instead of landing in a dead inbox.
+- `POST /api/v1/reports` with `{conversation_id, report_id, copies:
+  [{inbox_id, key_rev, recipient_public_key, sealed}]}` (opaque `sealed`; the
+  envelope id is inside it, D95). The server checks the reporter is a member
+  and that the copies are exactly the current recipients, rate-limits through
+  the write budget and a per-reporter daily cap, and never logs the body.
+  `key_rev` and the key make a report sealed to a rotated key fail instead of
+  landing in a dead inbox.
 - Community reports route to the community's moderator inbox; owner reports to
   the instance owner. The B9 audit log records that a report was filed
   (report id and inbox kind), never content or the message id.
-- The server copies the sender, commitment and envelope time from its own
-  envelope row into the report, so they outlive the envelope (open item 2) and
-  the owner, who is not a member, gets them without any envelope fetch.
+- (Superseded by D95.) The first wiring copied the sender, commitment and
+  envelope time from the envelope row into the report. With the envelope id
+  sealed the server cannot, so a report row holds no message data; see "D95
+  outcome" for what that costs verification.
 - Details and the receive rule: `docs/crypto.md`, "Franking v1", "What is
   wired".
 
@@ -122,9 +129,9 @@ Recommendation: A for both.
 ## Open items and owner questions
 
 1. **Transport A or B** (above). Owner decision; A recommended.
-2. **Retention.** Reports need the envelope row. Keep the metadata and
-   `frank_commit` for a report window (30 days after delivery?) even after
-   acks, or add a server stamp later?
+2. **Retention.** Decided by D95 for reports: until dismissed or 90 days. An
+   envelope row still goes with its message, so verification after that is
+   open (see "D95 outcome", costs).
 3. **Canonical bytes.** `P` needs one fixed serialization and a franking
    vector in the W7 test vectors. Wire format: second-opinion review.
    Proposed and built (not sent): `docs/crypto.md`, "Franking v1", and
@@ -204,39 +211,92 @@ How steps 2 and 3 meet each condition. A wiring review checks the same list.
   `CHECK` of 32 bytes. The one code path that rewrites an envelope in place
   (the legacy edit route) refuses franked rows; the app sends edits as new
   envelopes.
-- **G4, aad binds routing.** `veritra-c6-report-aad-v1` over the inbox kind,
-  inbox id, recipient public key, conversation id, envelope id and reporter
-  account id (`docs/crypto.md`). Go and Dart build it from a shared vector.
-  The server stores the routed inbox, key and key revision in the report row,
-  so the recipient rebuilds the aad from the row. Residual: the report public
-  key itself comes from the server, so a server that substitutes it can read
-  reports. The report screens must show the key fingerprint; the owner's
-  report key should be pinned the way the K0 recovery key is. Owner question.
+- **G4, aad binds routing.** `veritra-c6-report-aad-v2` (D95) over the inbox
+  kind, inbox id (the owner's account id, or the community id), recipient
+  public key, conversation id, report id and reporter account id
+  (`docs/crypto.md`); the envelope id is sealed inside the body instead.
+  Go and Dart build it from a shared vector. The server stores the routed
+  inbox, key and key revision in the report row, so the recipient rebuilds the
+  aad from the row. Residual: the report public key itself comes from the
+  server, so a server that substitutes it can read reports. D95: the app pins
+  each owner's key and refuses a changed or unpinned one; the report screens
+  show the fingerprint when asking for a pin.
 - **G5, unfranked payloads.** Decided: accepted as unreportable. A franked
   payload whose commitment is missing or wrong is `invalid`. Rollout: every
   current sender is the new app, older apps and the C7 hidden types send no
   `frank` member and keep working. Switching to refusal (hidden types exempt
-  after decoding) is a one-line receiver change once no old sender is left.
+  after decoding) is `FrankingPolicy(acceptUnfranked: false)` once no old
+  sender is left (D95 built the switch, left off).
 - **G6, duplicate JSON keys.** Not needed while the only verifier is the Dart
   app, which works on the received bytes. Required before a second
   implementation verifies reveals.
 
 Deviations from the first design text, none of which changes the wire:
 
-- The report body names `key_rev` and the key sealed to, and the instance owners' inbox has one
-  published public key (any instance owner may publish it). Several owners
-  share that key's seed by hand; per-owner copies (C5 escalations) are a
-  later change if the owner wants them.
+- The report body names `key_rev` and the key sealed to. (First wiring: the
+  instance owners shared one published key. D95 replaced that with one key
+  and one sealed copy per owner.)
 - The community moderator inbox exists in the schema and the intake route,
   but no route publishes its key until C4 says how the seed reaches
   moderators (open item 8). Until then a community report is refused with
   `report_inbox_unavailable`.
-- A receiver must keep `kf` and `P` with each message to report it later. That
-  needs a local schema change and is not part of this wiring (design open
-  item for step 4; reported to the coordinator).
-- Reports stay until a recipient dismisses them (no retention window yet),
-  capped at 2000 per inbox and 20 a day per reporter. Open item 2 decides
-  the window.
+- A receiver must keep `kf` and `P` with each message to report it later.
+  Done by D95 (local schema 19), see "D95 outcome".
+- Reports stay until a recipient dismisses them, capped at 2000 per inbox and
+  20 a day per reporter. D95 adds the 90-day window.
+
+## D95 outcome (2026-11-07)
+
+Owner decision D95 applied on this branch (PR #125). What changed from the
+wiring above, and what each part rests on:
+
+- **`kf` and `P` kept (local schema 19, C6's number).** A receiver stores the
+  franking key and the exact canonical bytes with each live franked message,
+  plus the envelope id: table `local_frank_reveals`, written in the same
+  transaction as the MLS state and cursor, removed with the message (row
+  cascade, plus a trigger for delete-for-everyone and hide, which leave a
+  tombstone). A message received before the upgrade, an unfranked one and an
+  edit's own `frank` have none. Upgrade test: `mobile/test/c6_schema19_test.dart`.
+- **`envelope_id` sealed, never in clear.** It is a field of the body sealed
+  in every copy (`ReportBody`). `POST /reports` carries no envelope id; the
+  aad (v2) binds the report id instead. C7's question (a newcomer reporting a
+  pre-join post shows the server its channel was `full`) is answered: the
+  server learns nothing about the message.
+- **One sealed copy per owner.** Each instance owner publishes their own
+  report key (inbox id = account id). A report carries one copy per owner
+  that has published a key, and the server requires exactly that set at the
+  current keys. Each owner lists and dismisses their own copy; a deleted or
+  demoted owner's key and copies go. An owner who has not published a key
+  gets no copy.
+- **Owner keys pinned in the app.** `local_report_key_pins`, per server
+  origin and owner. A report is sealed only to keys equal to their pin; a
+  changed or never-pinned key is refused until a person pins it after seeing
+  its fingerprint; a pinned owner the server omits is surfaced. Closes G4's
+  residual (a server substituting the key) for the apps that pinned.
+- **Retention.** Dismissed (deleting your copy) or 90 days after filing, by
+  the retention sweeper; caps as built (20 reports a day per reporter, 2000
+  copies per inbox). This answers open item 2 for reports; an envelope row
+  still goes with its message (expiry, delete).
+- **Unfranked payloads.** Still accepted, behind `FrankingPolicy.acceptUnfranked`
+  (true). Flipping it to false refuses them, with the hidden payloads this
+  app does not understand exempt (design item 9). G5's one-line change is now
+  one argument.
+- **Error contract.** No new code; `message_not_reportable` is gone (the
+  server cannot tell). Version stays 1.
+
+Costs, for the owner to weigh (also in `testing/evidence/C6-wiring.md`):
+
+- The server no longer records the sender, commitment and time when a report
+  is filed, no longer refuses a report of the reporter's own or an unfranked
+  message, and no longer dedupes by message. The recipient's app checks the
+  first two against the revealed body, and the reporter's app dedupes.
+- An owner verifies a report by recomputing the commitment over the revealed
+  body and comparing it with the commitment the server recorded for the
+  envelope. Fetching that envelope's metadata means telling the server the
+  envelope id at review time (not at filing, and only to an owner, for one
+  envelope of a conversation that has a report). That route is not built;
+  until it is, and once the envelope is gone, a report cannot show
+  "verified against what the server recorded" (G1). Owner question.
 
 ## Owner decisions (2026-11-01)
 

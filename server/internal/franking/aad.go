@@ -6,28 +6,30 @@ const (
 	// Inbox kinds a sealed report is routed to.
 	InboxInstanceOwner = "instance_owner"
 	InboxCommunity     = "community"
-	// InstanceInboxID is the inbox id of the instance owners' inbox.
-	InstanceInboxID = "instance"
-
 	// PublicKeySize is the X25519 report public key length.
 	PublicKeySize = 32
 
-	aadLabel = "veritra-c6-report-aad-v1"
+	aadLabel = "veritra-c6-report-aad-v2"
 )
 
 // ReportRoute is what a sealed report's associated data binds (C6 condition
-// G4): the inbox it goes to (kind, id and the recipient public key, so a key
-// rotation also changes it), the conversation and message it is about, and
-// the reporter. A sealed report cannot be replayed into another inbox or
-// attributed to another reporter: the recipient's app rebuilds this from the
-// server's report row, and a report that was sealed for different values
-// does not open.
+// G4, D95): the inbox it goes to (kind, id and the recipient public key, so a
+// key rotation also changes it), the conversation it is about, the reporter,
+// and the report's own id. The message's envelope id is not here: D95 seals it
+// inside the report so the server never sees it. A report id is chosen by the
+// reporter's app and is the same in every copy of one report, so the copies
+// of one report belong together and a copy cannot be replayed as another
+// report. A sealed report cannot be moved into another inbox or attributed to
+// another reporter: the recipient's app rebuilds this from the server's
+// report row, and a report that was sealed for different values does not
+// open. For the instance owners' inbox, InboxID is the owner's account id (one
+// sealed copy per owner, D95); for a community it is the community id.
 type ReportRoute struct {
 	InboxKind         string
 	InboxID           string
 	RecipientKey      []byte
 	ConversationID    string
-	EnvelopeID        string
+	ReportID          string
 	ReporterAccountID string
 }
 
@@ -42,7 +44,7 @@ func ReportAAD(route ReportRoute) ([]byte, error) {
 	if len(route.RecipientKey) != PublicKeySize {
 		return nil, ErrInvalidInput
 	}
-	for _, id := range []string{route.InboxID, route.ConversationID, route.EnvelopeID, route.ReporterAccountID} {
+	for _, id := range []string{route.InboxID, route.ConversationID, route.ReportID, route.ReporterAccountID} {
 		if len(id) == 0 || len(id) > MaxIDSize {
 			return nil, ErrInvalidInput
 		}
@@ -53,7 +55,7 @@ func ReportAAD(route ReportRoute) ([]byte, error) {
 		[]byte(route.InboxID),
 		route.RecipientKey,
 		[]byte(route.ConversationID),
-		[]byte(route.EnvelopeID),
+		[]byte(route.ReportID),
 		[]byte(route.ReporterAccountID),
 	} {
 		var n [4]byte

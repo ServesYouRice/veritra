@@ -212,6 +212,8 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 		`DELETE FROM account_recovery_requests WHERE account_id = ?`,
 		// A deleted owner's report key must not keep receiving reports.
 		`DELETE FROM report_inbox_keys WHERE set_by_account_id = ?`,
+		// Nor may the copies sealed to it stay: only that owner could open them.
+		`DELETE FROM reports WHERE inbox_kind = 'instance_owner' AND inbox_id = ?`,
 	} {
 		if _, err := tx.ExecContext(ctx, query, accountID); err != nil {
 			return nil, err

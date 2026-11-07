@@ -515,8 +515,6 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "last_owner_required")
 	case errors.Is(err, storage.ErrIdempotencyConflict):
 		writeError(w, http.StatusConflict, "idempotency_conflict")
-	case errors.Is(err, storage.ErrReportNotReportable):
-		writeError(w, http.StatusConflict, "message_not_reportable")
 	case errors.Is(err, storage.ErrReportInboxUnavailable):
 		writeError(w, http.StatusConflict, "report_inbox_unavailable")
 	case errors.Is(err, storage.ErrReportInboxChanged):

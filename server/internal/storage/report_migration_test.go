@@ -48,18 +48,21 @@ func TestReportsMigrationUpgradesExistingEnvelopes(t *testing.T) {
 		t.Fatal("frank_commit changed after insert")
 	}
 
-	// A report refuses a commitment that is not 32 bytes and a sealed blob
-	// outside the Rust core's size bounds.
-	report := `INSERT INTO reports(id, inbox_kind, inbox_id, key_rev, recipient_public_key, conversation_id, envelope_id, reporter_account_id, sender_account_id, sender_device_id, action_id, frank_commit, envelope_created_at, sealed, created_at)
-		VALUES(?, 'instance_owner', 'instance', 1, ?, 'conv_dm', 'msg_ok', 'acct_b', 'acct_a', 'dev_a', 'k-ok', ?, '2026-01-02T00:00:00Z', ?, '2026-01-03T00:00:00Z')`
+	// A report copy refuses a sealed blob outside the Rust core's size bounds
+	// and a short report id. It has no column for the message (D95).
+	report := `INSERT INTO reports(id, report_id, inbox_kind, inbox_id, key_rev, recipient_public_key, conversation_id, reporter_account_id, sealed, created_at)
+		VALUES(?, ?, 'instance_owner', 'acct_a', 1, ?, 'conv_dm', 'acct_b', ?, '2026-01-03T00:00:00Z')`
 	key := bytes.Repeat([]byte{7}, 32)
-	if _, err := store.db.ExecContext(ctx, report, "rpt_1", key, []byte{1}, bytes.Repeat([]byte{1}, 60)); err == nil {
-		t.Fatal("report with a short commitment stored")
-	}
-	if _, err := store.db.ExecContext(ctx, report, "rpt_2", key, bytes.Repeat([]byte{1}, 32), []byte{1}); err == nil {
+	if _, err := store.db.ExecContext(ctx, report, "rpt_1", "rpt-migration-0001", key, []byte{1}); err == nil {
 		t.Fatal("report with a tiny sealed blob stored")
 	}
-	if _, err := store.db.ExecContext(ctx, report, "rpt_3", key, bytes.Repeat([]byte{1}, 32), bytes.Repeat([]byte{1}, 60)); err != nil {
+	if _, err := store.db.ExecContext(ctx, report, "rpt_2", "short", key, bytes.Repeat([]byte{1}, 60)); err == nil {
+		t.Fatal("report with a short report id stored")
+	}
+	if _, err := store.db.ExecContext(ctx, report, "rpt_3", "rpt-migration-0001", key, bytes.Repeat([]byte{1}, 60)); err != nil {
 		t.Fatalf("valid report refused: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx, report, "rpt_4", "rpt-migration-0001", key, bytes.Repeat([]byte{1}, 60)); err == nil {
+		t.Fatal("the same report id stored twice for one reporter and inbox")
 	}
 }

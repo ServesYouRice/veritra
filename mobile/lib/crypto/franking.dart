@@ -146,25 +146,29 @@ bool _equalAt(Uint8List bytes, int offset, Uint8List expected) {
 const String reportInboxInstanceOwner = 'instance_owner';
 const String reportInboxCommunity = 'community';
 
-const String _reportAadLabel = 'veritra-c6-report-aad-v1';
+const String _reportAadLabel = 'veritra-c6-report-aad-v2';
 const int _reportPublicKeyBytes = 32;
 const int _maxReportIdBytes = 128;
 
 /// The HPKE associated data of a sealed C6 report (`docs/crypto.md`, "Franking
-/// v1", report aad; condition G4): the label, then the inbox kind, the inbox
-/// id, the recipient's report public key, the conversation id, the envelope id
-/// and the reporter's account id, each with a big-endian u32 length in front.
-/// The reporter seals with it; the recipient rebuilds it from the server's
+/// v1", report aad; condition G4, D95): the label, then the inbox kind, the
+/// inbox id (the owner's account id for the instance owners, one sealed copy
+/// per owner; the community id for a community), the recipient's report public
+/// key, the conversation id, the report id and the reporter's account id, each
+/// with a big-endian u32 length in front. The report id is chosen by the
+/// reporter's app and is the same in every copy of one report. The envelope id
+/// is not here: it is sealed inside the report and never sent in clear. The
+/// reporter seals with this aad; the recipient rebuilds it from the server's
 /// report row, so a report sealed for other values does not open. Byte for
 /// byte the same as `franking.ReportAAD` in the server (shared vector
-/// `testing/vectors/c6-report-aad-v1.json`). Throws [FormatException] for an
+/// `testing/vectors/c6-report-aad-v2.json`). Throws [FormatException] for an
 /// unknown kind, a key that is not 32 bytes, or an id outside 1 to 128 bytes.
 Uint8List reportAad({
   required String inboxKind,
   required String inboxId,
   required List<int> recipientKey,
   required String conversationId,
-  required String envelopeId,
+  required String reportId,
   required String reporterAccountId,
 }) {
   if (inboxKind != reportInboxInstanceOwner &&
@@ -179,7 +183,7 @@ Uint8List reportAad({
     utf8.encode(inboxId),
     recipientKey,
     utf8.encode(conversationId),
-    utf8.encode(envelopeId),
+    utf8.encode(reportId),
     utf8.encode(reporterAccountId),
   ];
   for (final index in const [1, 3, 4, 5]) {

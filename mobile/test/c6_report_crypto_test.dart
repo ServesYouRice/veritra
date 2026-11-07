@@ -45,7 +45,7 @@ void main() {
 
   group('report aad (condition G4)', () {
     final aadVector = jsonDecode(
-      File('../testing/vectors/c6-report-aad-v1.json').readAsStringSync(),
+      File('../testing/vectors/c6-report-aad-v2.json').readAsStringSync(),
     ) as Map<String, dynamic>;
 
     Uint8List build(Map<String, dynamic> c) => reportAad(
@@ -53,7 +53,7 @@ void main() {
           inboxId: c['inbox_id'] as String,
           recipientKey: hex(c['recipient_key_hex']),
           conversationId: c['conversation_id'] as String,
-          envelopeId: c['envelope_id'] as String,
+          reportId: c['report_id'] as String,
           reporterAccountId: c['reporter_account_id'] as String,
         );
 
@@ -71,7 +71,7 @@ void main() {
       for (final field in const [
         'inbox_id',
         'conversation_id',
-        'envelope_id',
+        'report_id',
         'reporter_account_id',
       ]) {
         final changed = Map<String, dynamic>.of(base)
@@ -89,7 +89,7 @@ void main() {
         throwsFormatException,
       );
       expect(
-        () => build(Map<String, dynamic>.of(base)..['envelope_id'] = ''),
+        () => build(Map<String, dynamic>.of(base)..['report_id'] = ''),
         throwsFormatException,
       );
       expect(

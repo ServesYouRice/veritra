@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // C6 (docs/designs/C6-reports-franking.md): franking commitments on envelopes
@@ -44,10 +45,6 @@ func frankedMessage(t *testing.T, handler http.Handler, token, conversationID, k
 		t.Fatalf("unfranked response mentions frank_commit: %s", response)
 	}
 	return decoded.ID, string(response)
-}
-
-func sealedBytes() []byte {
-	return append([]byte("VRP1"), bytes.Repeat([]byte{9}, 64)...)
 }
 
 func commitOf(b byte) []byte { return bytes.Repeat([]byte{b}, 32) }
@@ -147,23 +144,21 @@ func openSQLite(t *testing.T, path string) *sql.DB {
 	return db
 }
 
+// reportBody is one stored copy as the API returns it. It deliberately has no
+// envelope, sender or commitment field: since D95 the server records none.
 type reportBody struct {
 	ID                 string `json:"id"`
+	ReportID           string `json:"report_id"`
 	InboxKind          string `json:"inbox_kind"`
 	InboxID            string `json:"inbox_id"`
 	KeyRev             int64  `json:"key_rev"`
 	RecipientPublicKey []byte `json:"recipient_public_key"`
 	ConversationID     string `json:"conversation_id"`
-	EnvelopeID         string `json:"envelope_id"`
 	ReporterAccountID  string `json:"reporter_account_id"`
-	SenderAccountID    string `json:"sender_account_id"`
-	SenderDeviceID     string `json:"sender_device_id"`
-	ActionID           string `json:"action_id"`
-	FrankCommit        []byte `json:"frank_commit"`
 	Sealed             []byte `json:"sealed"`
 }
 
-func listReportsAs(t *testing.T, handler http.Handler, token, query string) (int, []reportBody) {
+func listReportsAs(t *testing.T, handler http.Handler, token, query string) (int, []reportBody, string) {
 	t.Helper()
 	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/reports?"+query, token, nil)
 	var decoded struct {
@@ -174,34 +169,65 @@ func listReportsAs(t *testing.T, handler http.Handler, token, query string) (int
 			t.Fatal(err)
 		}
 	}
-	return status, decoded.Reports
+	return status, decoded.Reports, string(response)
 }
 
-func fileReport(t *testing.T, handler http.Handler, token, conversationID, envelopeID string, rev int64, key, sealed []byte) (int, string) {
+type reportCopy struct {
+	InboxID string
+	Rev     int64
+	Key     []byte
+	Sealed  []byte
+}
+
+func copyBody(c reportCopy) map[string]interface{} {
+	return map[string]interface{}{
+		"inbox_id":             c.InboxID,
+		"key_rev":              c.Rev,
+		"recipient_public_key": base64.StdEncoding.EncodeToString(c.Key),
+		"sealed":               base64.StdEncoding.EncodeToString(c.Sealed),
+	}
+}
+
+func fileReport(t *testing.T, handler http.Handler, token, conversationID, reportID string, copies ...reportCopy) (int, string) {
 	t.Helper()
+	list := []map[string]interface{}{}
+	for _, c := range copies {
+		list = append(list, copyBody(c))
+	}
 	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/reports", token, map[string]interface{}{
-		"conversation_id":      conversationID,
-		"envelope_id":          envelopeID,
-		"key_rev":              rev,
-		"recipient_public_key": base64.StdEncoding.EncodeToString(key),
-		"sealed":               base64.StdEncoding.EncodeToString(sealed),
+		"conversation_id": conversationID,
+		"report_id":       reportID,
+		"copies":          list,
 	})
 	return status, string(response)
 }
 
-func TestReportToInstanceOwnerFromGroup(t *testing.T) {
+func sealedWith(b byte) []byte {
+	return append([]byte("VRP1"), bytes.Repeat([]byte{b}, 64)...)
+}
+
+const reportIDOne = "rpt-0000000000000001"
+
+func putReportKey(t *testing.T, handler http.Handler, token string, key []byte) (int, string) {
+	t.Helper()
+	status, response := doJSON(t, handler, http.MethodPut, "/api/v1/reports/inbox-keys/instance", token, map[string]interface{}{"public_key": base64.StdEncoding.EncodeToString(key)})
+	return status, string(response)
+}
+
+func TestReportToEveryInstanceOwnerFromGroup(t *testing.T) {
 	handler, ownerToken, dbPath := newTestHandlerWithOwner(t)
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+	secondToken, secondID := registerMemberWithID(t, handler, ownerToken, "olga")
 	senderToken, senderID := registerMemberWithID(t, handler, ownerToken, "sender")
 	reporterToken, reporterID := registerMemberWithID(t, handler, ownerToken, "reporter")
 	outsiderToken := registerMember(t, handler, ownerToken, "outsider")
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, senderID)
 	addMember(t, handler, ownerToken, conversationID, reporterID)
-
-	commit := commitOf(0x5a)
-	franked, _ := frankedMessage(t, handler, senderToken, conversationID, "msg-a", commit)
-	unfranked, _ := frankedMessage(t, handler, senderToken, conversationID, "msg-b", nil)
-	own, _ := frankedMessage(t, handler, reporterToken, conversationID, "msg-own", commitOf(0x11))
+	db := openSQLite(t, dbPath)
+	if _, err := db.Exec(`UPDATE accounts SET role = 'owner' WHERE id = ?`, secondID); err != nil {
+		t.Fatal(err)
+	}
 
 	// Without a published key there is nowhere to send a report.
 	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/reports/inbox?conversation_id="+conversationID, reporterToken, nil)
@@ -209,130 +235,184 @@ func TestReportToInstanceOwnerFromGroup(t *testing.T) {
 		t.Fatalf("inbox before publish status=%d body=%s", status, response)
 	}
 
-	// Only an owner publishes the key; it must be 32 bytes.
-	key := bytes.Repeat([]byte{7}, 32)
-	put := func(token string, key []byte) (int, []byte) {
-		return doJSON(t, handler, http.MethodPut, "/api/v1/reports/inbox-keys/instance", token, map[string]interface{}{"public_key": base64.StdEncoding.EncodeToString(key)})
+	// Only an owner publishes a key, their own; it must be 32 bytes.
+	key1, key2 := bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 32)
+	if status, _ := putReportKey(t, handler, reporterToken, key1); status != http.StatusForbidden {
+		t.Fatalf("member published an owner key: %d", status)
 	}
-	if status, _ := put(reporterToken, key); status != http.StatusForbidden {
-		t.Fatalf("member published the owner key: %d", status)
-	}
-	if status, _ := put(ownerToken, key[:31]); status != http.StatusBadRequest {
+	if status, _ := putReportKey(t, handler, ownerToken, key1[:31]); status != http.StatusBadRequest {
 		t.Fatalf("short key status=%d", status)
 	}
-	if status, response := put(ownerToken, key); status != http.StatusOK || !strings.Contains(string(response), `"key_rev":1`) {
-		t.Fatalf("publish status=%d body=%s", status, response)
+	if status, body := putReportKey(t, handler, ownerToken, key1); status != http.StatusOK || !strings.Contains(body, `"key_rev":1`) || !strings.Contains(body, ownerID) {
+		t.Fatalf("publish status=%d body=%s", status, body)
 	}
 	// The same key again does not raise the revision.
-	if status, response := put(ownerToken, key); status != http.StatusOK || !strings.Contains(string(response), `"key_rev":1`) {
-		t.Fatalf("republish status=%d body=%s", status, response)
+	if status, body := putReportKey(t, handler, ownerToken, key1); status != http.StatusOK || !strings.Contains(body, `"key_rev":1`) {
+		t.Fatalf("republish status=%d body=%s", status, body)
 	}
 
-	// Members see the inbox and its key; outsiders do not.
-	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/reports/inbox?conversation_id="+conversationID, reporterToken, nil)
-	if status != http.StatusOK || !strings.Contains(string(response), `"inbox_kind":"instance_owner"`) || !strings.Contains(string(response), base64.StdEncoding.EncodeToString(key)) {
+	// Members see the recipients and their keys; outsiders do not. An owner
+	// who has not published a key is not a recipient yet.
+	inboxPath := "/api/v1/reports/inbox?conversation_id=" + conversationID
+	status, response = doJSON(t, handler, http.MethodGet, inboxPath, reporterToken, nil)
+	if status != http.StatusOK || !strings.Contains(string(response), `"inbox_kind":"instance_owner"`) || !strings.Contains(string(response), base64.StdEncoding.EncodeToString(key1)) || strings.Contains(string(response), secondID) {
 		t.Fatalf("inbox status=%d body=%s", status, response)
 	}
-	if status, _ := doJSON(t, handler, http.MethodGet, "/api/v1/reports/inbox?conversation_id="+conversationID, outsiderToken, nil); status != http.StatusForbidden {
+	if status, _ := doJSON(t, handler, http.MethodGet, inboxPath, outsiderToken, nil); status != http.StatusForbidden {
 		t.Fatalf("outsider inbox status=%d", status)
 	}
+	if status, body := putReportKey(t, handler, secondToken, key2); status != http.StatusOK {
+		t.Fatalf("second owner publish status=%d body=%s", status, body)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, inboxPath, reporterToken, nil)
+	if status != http.StatusOK || !strings.Contains(string(response), ownerID) || !strings.Contains(string(response), secondID) {
+		t.Fatalf("inbox with two owners status=%d body=%s", status, response)
+	}
 
-	// Refusals: unfranked message, own message, stale revision, bad sealed
-	// bytes, non-member, unknown message.
-	if status, body := fileReport(t, handler, reporterToken, conversationID, unfranked, 1, key, sealedBytes()); status != http.StatusConflict || !strings.Contains(body, "message_not_reportable") {
-		t.Fatalf("unfranked report status=%d body=%s", status, body)
+	first := reportCopy{InboxID: ownerID, Rev: 1, Key: key1, Sealed: sealedWith(1)}
+	second := reportCopy{InboxID: secondID, Rev: 1, Key: key2, Sealed: sealedWith(2)}
+
+	// Refusals: a missing owner copy, a duplicate, a stale revision, a wrong
+	// key, an unknown inbox, bad sealed bytes, a short report id, a
+	// non-member, no copies.
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+		t.Fatalf("one owner missing status=%d body=%s", status, body)
 	}
-	if status, body := fileReport(t, handler, reporterToken, conversationID, own, 1, key, sealedBytes()); status != http.StatusConflict || !strings.Contains(body, "message_not_reportable") {
-		t.Fatalf("own message report status=%d body=%s", status, body)
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first, first); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+		t.Fatalf("duplicate copy status=%d body=%s", status, body)
 	}
-	if status, body := fileReport(t, handler, reporterToken, conversationID, franked, 2, key, sealedBytes()); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+	stale := second
+	stale.Rev = 2
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first, stale); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
 		t.Fatalf("stale revision status=%d body=%s", status, body)
+	}
+	wrongKey := second
+	wrongKey.Key = bytes.Repeat([]byte{9}, 32)
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first, wrongKey); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+		t.Fatalf("wrong key status=%d body=%s", status, body)
+	}
+	stranger := second
+	stranger.InboxID = senderID
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first, stranger); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+		t.Fatalf("non-owner inbox status=%d body=%s", status, body)
 	}
 	for name, sealed := range map[string][]byte{
 		"no magic":  append([]byte("XXXX"), bytes.Repeat([]byte{9}, 64)...),
 		"too short": []byte("VRP1"),
 		"too long":  append([]byte("VRP1"), bytes.Repeat([]byte{9}, 262196)...),
 	} {
-		if status, body := fileReport(t, handler, reporterToken, conversationID, franked, 1, key, sealed); status != http.StatusBadRequest {
+		bad := second
+		bad.Sealed = sealed
+		if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first, bad); status != http.StatusBadRequest {
 			t.Fatalf("%s: status=%d body=%s", name, status, body)
 		}
 	}
-	if status, _ := fileReport(t, handler, outsiderToken, conversationID, franked, 1, key, sealedBytes()); status != http.StatusForbidden {
+	if status, body := fileReport(t, handler, reporterToken, conversationID, "short", first, second); status != http.StatusBadRequest {
+		t.Fatalf("short report id status=%d body=%s", status, body)
+	}
+	if status, _ := fileReport(t, handler, reporterToken, conversationID, reportIDOne); status != http.StatusBadRequest {
+		t.Fatalf("no copies status=%d", status)
+	}
+	if status, _ := fileReport(t, handler, outsiderToken, conversationID, reportIDOne, first, second); status != http.StatusForbidden {
 		t.Fatalf("outsider report status=%d", status)
 	}
-	if status, _ := fileReport(t, handler, reporterToken, conversationID, "msg_00000000000000000000000000000000", 1, key, sealedBytes()); status != http.StatusNotFound {
-		t.Fatalf("unknown message report status=%d", status)
-	}
 
-	// A good report. The response does not echo the sealed bytes.
-	sealed := sealedBytes()
-	status, body := fileReport(t, handler, reporterToken, conversationID, franked, 1, key, sealed)
-	if status != http.StatusCreated || strings.Contains(body, `"sealed"`) {
+	// A good report: one stored copy per owner. The response echoes neither
+	// the sealed bytes nor anything about a message.
+	status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first, second)
+	if status != http.StatusCreated || strings.Contains(body, `"sealed"`) || !strings.Contains(body, `"copies":2`) {
 		t.Fatalf("report status=%d body=%s", status, body)
 	}
-	if status, body := fileReport(t, handler, reporterToken, conversationID, franked, 1, key, sealed); status != http.StatusConflict || !strings.Contains(body, "already_reported") {
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, first, second); status != http.StatusConflict || !strings.Contains(body, "already_reported") {
 		t.Fatalf("duplicate report status=%d body=%s", status, body)
 	}
 
-	// The owner reads it, with routing fields and the server's own record of
-	// the sender and the commitment.
-	status, reports := listReportsAs(t, handler, ownerToken, "inbox=instance_owner")
+	// Each owner reads only their own copy, with its own sealed bytes. The
+	// server holds no envelope id, sender or commitment for it.
+	status, reports, raw := listReportsAs(t, handler, ownerToken, "inbox=instance_owner")
 	if status != http.StatusOK || len(reports) != 1 {
-		t.Fatalf("owner list status=%d reports=%d", status, len(reports))
+		t.Fatalf("first owner list status=%d reports=%d", status, len(reports))
 	}
 	got := reports[0]
-	if got.InboxKind != "instance_owner" || got.InboxID != "instance" || got.KeyRev != 1 || !bytes.Equal(got.RecipientPublicKey, key) ||
-		got.ConversationID != conversationID || got.EnvelopeID != franked || got.ReporterAccountID != reporterID ||
-		got.SenderAccountID != senderID || got.SenderDeviceID == "" || got.ActionID != "msg-a" ||
-		!bytes.Equal(got.FrankCommit, commit) || !bytes.Equal(got.Sealed, sealed) {
+	if got.InboxKind != "instance_owner" || got.InboxID != ownerID || got.ReportID != reportIDOne || got.KeyRev != 1 || !bytes.Equal(got.RecipientPublicKey, key1) ||
+		got.ConversationID != conversationID || got.ReporterAccountID != reporterID || !bytes.Equal(got.Sealed, first.Sealed) {
 		t.Fatalf("unexpected report: %+v", got)
 	}
+	for _, field := range []string{"envelope_id", "frank_commit", "sender_account_id", "sender_device_id", "action_id"} {
+		if strings.Contains(raw, field) {
+			t.Fatalf("report names %s: %s", field, raw)
+		}
+	}
+	status, secondReports, _ := listReportsAs(t, handler, secondToken, "inbox=instance_owner")
+	if status != http.StatusOK || len(secondReports) != 1 || secondReports[0].InboxID != secondID || !bytes.Equal(secondReports[0].Sealed, second.Sealed) {
+		t.Fatalf("second owner list status=%d reports=%+v", status, secondReports)
+	}
+	// No column of the table could hold the message's identity.
+	rows, err := db.Query(`SELECT name FROM pragma_table_info('reports')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(name, "envelope") || strings.Contains(name, "frank") || strings.Contains(name, "sender") || strings.Contains(name, "action") {
+			t.Fatalf("reports has column %q", name)
+		}
+	}
 
-	// Nobody else reads it: not the reporter, not the sender, not a bad inbox.
+	// Nobody else reads them: not the reporter, not the sender, not a bad inbox.
 	for name, token := range map[string]string{"reporter": reporterToken, "sender": senderToken, "outsider": outsiderToken} {
-		if status, _ := listReportsAs(t, handler, token, "inbox=instance_owner"); status != http.StatusForbidden {
+		if status, _, _ := listReportsAs(t, handler, token, "inbox=instance_owner"); status != http.StatusForbidden {
 			t.Fatalf("%s listed the owner inbox: %d", name, status)
 		}
 	}
-	if status, _ := listReportsAs(t, handler, ownerToken, "inbox=moderators"); status != http.StatusBadRequest {
+	if status, _, _ := listReportsAs(t, handler, ownerToken, "inbox=moderators"); status != http.StatusBadRequest {
 		t.Fatalf("bad inbox status=%d", status)
 	}
-	if status, _ := listReportsAs(t, handler, ownerToken, "inbox=community"); status != http.StatusBadRequest {
+	if status, _, _ := listReportsAs(t, handler, ownerToken, "inbox=community"); status != http.StatusBadRequest {
 		t.Fatalf("community without id status=%d", status)
 	}
 
-	// The report outlives its envelope: the row snapshot is what verifies.
-	db := openSQLite(t, dbPath)
-	if _, err := db.Exec(`DELETE FROM message_envelopes WHERE id = ?`, franked); err != nil {
-		t.Fatal(err)
+	// Rotating one owner's key makes the old revision refuse.
+	rotated := bytes.Repeat([]byte{6}, 32)
+	if status, body := putReportKey(t, handler, ownerToken, rotated); status != http.StatusOK || !strings.Contains(body, `"key_rev":2`) {
+		t.Fatalf("rotate status=%d body=%s", status, body)
 	}
-	if status, reports := listReportsAs(t, handler, ownerToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 1 || !bytes.Equal(reports[0].FrankCommit, commit) {
-		t.Fatalf("report did not survive its envelope: status=%d %+v", status, reports)
-	}
-
-	// Rotating the key makes older revisions refuse.
-	rotated := bytes.Repeat([]byte{8}, 32)
-	if status, response := put(ownerToken, rotated); status != http.StatusOK || !strings.Contains(string(response), `"key_rev":2`) {
-		t.Fatalf("rotate status=%d body=%s", status, response)
-	}
-	second, _ := frankedMessage(t, handler, senderToken, conversationID, "msg-c", commitOf(0x66))
-	if status, body := fileReport(t, handler, reporterToken, conversationID, second, 1, key, sealed); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+	if status, body := fileReport(t, handler, reporterToken, conversationID, "rpt-0000000000000002", first, second); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
 		t.Fatalf("report to the old key status=%d body=%s", status, body)
 	}
-	if status, body := fileReport(t, handler, reporterToken, conversationID, second, 2, rotated, sealed); status != http.StatusCreated {
+	first = reportCopy{InboxID: ownerID, Rev: 2, Key: rotated, Sealed: sealedWith(3)}
+	if status, body := fileReport(t, handler, reporterToken, conversationID, "rpt-0000000000000002", first, second); status != http.StatusCreated {
 		t.Fatalf("report to the new key status=%d body=%s", status, body)
 	}
 
-	// Dismissal is for people who can read the inbox, and looks like a
-	// missing report to everyone else.
+	// Dismissal is per copy and for people who can read that inbox; anyone
+	// else sees a missing report.
 	if status, _ := doJSON(t, handler, http.MethodDelete, "/api/v1/reports/"+got.ID, reporterToken, nil); status != http.StatusNotFound {
 		t.Fatalf("reporter dismissal status=%d", status)
+	}
+	if status, _ := doJSON(t, handler, http.MethodDelete, "/api/v1/reports/"+secondReports[0].ID, ownerToken, nil); status != http.StatusNotFound {
+		t.Fatalf("one owner dismissed another's copy: %d", status)
 	}
 	if status, _ := doJSON(t, handler, http.MethodDelete, "/api/v1/reports/"+got.ID, ownerToken, nil); status != http.StatusNoContent {
 		t.Fatalf("owner dismissal status=%d", status)
 	}
-	if status, reports := listReportsAs(t, handler, ownerToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 1 {
+	if status, reports, _ := listReportsAs(t, handler, ownerToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 1 {
 		t.Fatalf("after dismissal status=%d reports=%d", status, len(reports))
+	}
+	if status, reports, _ := listReportsAs(t, handler, secondToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 2 {
+		t.Fatalf("the other owner lost a copy: status=%d reports=%d", status, len(reports))
+	}
+
+	// A copy older than 90 days is no longer listed (the sweeper removes it).
+	if _, err := db.Exec(`UPDATE reports SET created_at = ? WHERE id = ?`, time.Now().UTC().Add(-91*24*time.Hour).Format("2006-01-02T15:04:05.000000000Z"), secondReports[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if status, reports, _ := listReportsAs(t, handler, secondToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 1 {
+		t.Fatalf("expired copy still listed: status=%d reports=%d", status, len(reports))
 	}
 
 	// The audit log records that reports were filed, never what they held.
@@ -340,7 +420,7 @@ func TestReportToInstanceOwnerFromGroup(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(string(response), "report.filed") {
 		t.Fatalf("audit status=%d body=%s", status, response)
 	}
-	for _, secret := range []string{base64.StdEncoding.EncodeToString(sealed), base64.StdEncoding.EncodeToString(commit), franked} {
+	for _, secret := range []string{base64.StdEncoding.EncodeToString(sealedWith(1)), reportIDOne} {
 		if strings.Contains(string(response), secret) {
 			t.Fatalf("audit log holds report content %q", secret)
 		}
@@ -349,20 +429,18 @@ func TestReportToInstanceOwnerFromGroup(t *testing.T) {
 
 func TestReportsAreCappedPerReporter(t *testing.T) {
 	handler, ownerToken, _ := newTestHandlerWithOwner(t)
-	senderToken, senderID := registerMemberWithID(t, handler, ownerToken, "sender")
+	ownerID := accountIDFromExport(t, handler, ownerToken)
 	reporterToken, reporterID := registerMemberWithID(t, handler, ownerToken, "reporter")
 	conversationID := createConversation(t, handler, ownerToken)
-	addMember(t, handler, ownerToken, conversationID, senderID)
 	addMember(t, handler, ownerToken, conversationID, reporterID)
 	capKey := bytes.Repeat([]byte{7}, 32)
-	if status, _ := doJSON(t, handler, http.MethodPut, "/api/v1/reports/inbox-keys/instance", ownerToken, map[string]interface{}{"public_key": base64.StdEncoding.EncodeToString(capKey)}); status != http.StatusOK {
+	if status, _ := putReportKey(t, handler, ownerToken, capKey); status != http.StatusOK {
 		t.Fatalf("publish status=%d", status)
 	}
 	var lastStatus int
 	var lastBody string
 	for i := 0; i < 21; i++ {
-		id, _ := frankedMessage(t, handler, senderToken, conversationID, "m"+string(rune('a'+i)), commitOf(byte(i+1)))
-		lastStatus, lastBody = fileReport(t, handler, reporterToken, conversationID, id, 1, capKey, sealedBytes())
+		lastStatus, lastBody = fileReport(t, handler, reporterToken, conversationID, "rpt-cap-"+strings.Repeat("x", 8)+string(rune('a'+i)), reportCopy{InboxID: ownerID, Rev: 1, Key: capKey, Sealed: sealedWith(byte(i))})
 		if i < 20 && lastStatus != http.StatusCreated {
 			t.Fatalf("report %d status=%d body=%s", i, lastStatus, lastBody)
 		}
@@ -407,12 +485,12 @@ func TestCommunityReportsRouteToModerators(t *testing.T) {
 		}
 		addMember(t, handler, ownerToken, conversationID, id)
 	}
-	franked, _ := frankedMessage(t, handler, senderToken, conversationID, "c-1", commitOf(0x42))
 
 	// No route publishes a community inbox key yet (C4 distributes it), so
 	// reporting is unavailable until one exists.
 	communityKey := bytes.Repeat([]byte{3}, 32)
-	if status, body := fileReport(t, handler, reporterToken, conversationID, franked, 1, communityKey, sealedBytes()); status != http.StatusConflict || !strings.Contains(body, "report_inbox_unavailable") {
+	community1 := reportCopy{InboxID: community.ID, Rev: 1, Key: communityKey, Sealed: sealedWith(5)}
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, community1); status != http.StatusConflict || !strings.Contains(body, "report_inbox_unavailable") {
 		t.Fatalf("report without community key status=%d body=%s", status, body)
 	}
 
@@ -425,26 +503,28 @@ func TestCommunityReportsRouteToModerators(t *testing.T) {
 		t.Fatalf("community inbox status=%d body=%s", status, response)
 	}
 	// A report sealed to another key is refused even at the current revision.
-	if status, body := fileReport(t, handler, reporterToken, conversationID, franked, 1, bytes.Repeat([]byte{4}, 32), sealedBytes()); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+	other := community1
+	other.Key = bytes.Repeat([]byte{4}, 32)
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, other); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
 		t.Fatalf("report to another key status=%d body=%s", status, body)
 	}
-	if status, body := fileReport(t, handler, reporterToken, conversationID, franked, 1, communityKey, sealedBytes()); status != http.StatusCreated {
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, community1); status != http.StatusCreated {
 		t.Fatalf("community report status=%d body=%s", status, body)
 	}
 
 	query := "inbox=community&community_id=" + community.ID
 	for name, token := range map[string]string{"community owner": ownerToken, "moderator": modToken} {
-		if status, reports := listReportsAs(t, handler, token, query); status != http.StatusOK || len(reports) != 1 || reports[0].InboxKind != "community" || reports[0].InboxID != community.ID || !bytes.Equal(reports[0].RecipientPublicKey, communityKey) {
+		if status, reports, _ := listReportsAs(t, handler, token, query); status != http.StatusOK || len(reports) != 1 || reports[0].InboxKind != "community" || reports[0].InboxID != community.ID || !bytes.Equal(reports[0].RecipientPublicKey, communityKey) {
 			t.Fatalf("%s list status=%d reports=%+v", name, status, reports)
 		}
 	}
 	for name, token := range map[string]string{"reporter": reporterToken, "sender": senderToken} {
-		if status, _ := listReportsAs(t, handler, token, query); status != http.StatusForbidden {
+		if status, _, _ := listReportsAs(t, handler, token, query); status != http.StatusForbidden {
 			t.Fatalf("%s listed the moderator inbox: %d", name, status)
 		}
 	}
 	// The instance owners' inbox does not show community reports.
-	if status, reports := listReportsAs(t, handler, ownerToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 0 {
+	if status, reports, _ := listReportsAs(t, handler, ownerToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 0 {
 		t.Fatalf("instance inbox status=%d reports=%d", status, len(reports))
 	}
 }

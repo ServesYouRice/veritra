@@ -18,6 +18,7 @@ part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
 part 'pending_enrollment_sql.dart';
 part 'k2_transfer_sql.dart';
+part 'frank_reveals_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -555,7 +556,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 18;
+  static const currentSchemaVersion = 19;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -767,6 +768,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createNoticeOutbox();
             await _createPendingEnrollment();
             await _createK2Transfer();
+            await _createFrankReveals();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -896,6 +898,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               await _createK2Transfer();
               await _ledgerActivatedPendingEnrollment();
             }
+            // C6 (D95): what a receiver keeps to report a message, and the
+            // pinned owner report keys. New tables only; no existing row
+            // changes, and a message received before this upgrade has no
+            // reveal (it cannot be reported).
+            if (from < 19) await _createFrankReveals();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -941,6 +948,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await delete(localMlsOutboxEntries).go();
     await delete(localPeerVerifications).go();
     await _clearHistoryNamespace();
+    await _clearFrankReveals();
     await delete(localMessages).go();
     await delete(localPins).go();
     await delete(localPendingPins).go();
@@ -1126,6 +1134,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         // outbox and the plain outbox do not (D71, D73): the device starts
         // like a freshly linked one, with no group state and cursor 0.
         await _clearHistoryNamespace();
+        await _clearFrankReveals();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localPins).go();
@@ -1531,6 +1540,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     List<LocalNoticeReference> noticeReferences = const [],
+    List<FrankReveal> frankReveals = const <FrankReveal>[],
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
@@ -1625,6 +1635,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           if (previous != null) previousNoticeKeys.add(ref.messageKey);
         }
         await _applyMessageEffects(messageEffects);
+        await _writeFrankRevealsInTransaction(frankReveals);
         await captureLocalNoticeReferences(
             noticeReferences, previousNoticeKeys, cursor, nowMs);
         await failureInjector?.call(MlsCommitStage.afterMessageEffects);
@@ -2224,6 +2235,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localMlsOutboxEntries).go();
         await delete(localPeerVerifications).go();
         await _clearHistoryNamespace();
+        await _clearFrankReveals();
+        await _clearReportKeyPins();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localDrafts).go();

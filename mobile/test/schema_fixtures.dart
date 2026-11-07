@@ -59,9 +59,20 @@ Future<void> stripPendingEnrollmentSchema(
   }
 }
 
+/// Remove schema19's franking reveals and pinned report keys (C6, D95) from a
+/// historical fixture. The trigger goes first: it names the table.
+Future<void> stripFrankRevealSchema(EncryptedLocalDatabase database) async {
+  await database
+      .customStatement('DROP TRIGGER IF EXISTS local_frank_reveals_tombstone');
+  for (final table in FrankRevealSql.tables) {
+    await database.customStatement('DROP TABLE IF EXISTS $table');
+  }
+}
+
 /// Remove schema18's promotion ledger and history transfer progress (K2)
 /// from a historical fixture.
 Future<void> stripK2TransferSchema(EncryptedLocalDatabase database) async {
+  await stripFrankRevealSchema(database);
   for (final table in K2TransferSql.tables) {
     await database.customStatement('DROP TABLE IF EXISTS $table');
   }

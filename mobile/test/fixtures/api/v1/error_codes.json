@@ -90,7 +90,6 @@
     "login_backoff": "rateLimited",
     "message_expired": "notFound",
     "message_id_required": "invalidRequest",
-    "message_not_reportable": "conflict",
     "mls_change_pending": "conflict",
     "mls_commit_bundle_required": "conflict",
     "mls_epoch_conflict": "conflict",

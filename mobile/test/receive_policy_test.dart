@@ -14,6 +14,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart'
     show quotedPreview;
 import 'package:private_messenger/l10n/app_localizations_en.dart';
+import 'package:private_messenger/crypto/app_payload.dart' show FrankingPolicy;
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -441,7 +442,24 @@ void main() {
           return _Received(plain == null ? null : utf8.decode(plain), item.id);
         }
 
-        expect((await deliver('f1', 'franked ok')).text, 'franked ok');
+        final first = await deliver('f1', 'franked ok');
+        expect(first.text, 'franked ok');
+        // The receiver keeps kf and the exact P with the message (schema 19),
+        // so it can report it: they recompute the sender's commitment.
+        final reveal = (await pair.store
+            .loadFrankReveal(messageKey(_senderDevice, 'f1')))!;
+        expect(reveal.frankKey, key);
+        expect(reveal.payload, utf8.encode(canonical('f1', 'franked ok')));
+        expect(reveal.envelopeId, first.envelopeId);
+        expect(reveal.conversationId, _conversation);
+        expect(
+            bindings.frankCommit(
+                key: Uint8List.fromList(reveal.frankKey),
+                conversationId: _conversation,
+                senderDeviceId: _senderDevice,
+                actionId: 'f1',
+                payload: Uint8List.fromList(reveal.payload)),
+            commitFor('f1', canonical('f1', 'franked ok')));
 
         final flipped = commitFor('f2', canonical('f2', 'flipped'));
         flipped[0] ^= 1;
@@ -476,10 +494,22 @@ void main() {
                 .map((m) => m.body),
             <String?>['franked ok']);
 
+        // Nothing was kept for a refused message.
+        for (final action in ['f2', 'f3', 'f4', 'f5', 'f6', 'f7']) {
+          expect(
+              await pair.store
+                  .loadFrankReveal(messageKey(_senderDevice, action)),
+              isNull,
+              reason: action);
+        }
+
         // No frank member is accepted, with or without an envelope
         // commitment: an older app's message, or a hidden type (G5).
         expect((await pair.receive(_frame(_payload('text', 'plain')))).text,
             'plain');
+        expect(
+            await pair.store.loadFrankReveal(messageKey(_senderDevice, 'auto')),
+            isNull);
         final unfranked = pair.envelope(
             pair.alice.encrypt(
                 _conversation, _frame(_payload('text', 'x', actionId: 'u1'))),
@@ -508,6 +538,115 @@ void main() {
         final text = await pair.bob.processApplicationMessage(
             pair.envelope(ciphertext, 'auto'), ++pair.events);
         expect(utf8.decode(text!), 'late');
+      });
+    });
+
+    group('${variant.key}, refusing unfranked payloads', skip: skip, () {
+      late Directory directory;
+      late _Pair pair;
+
+      setUp(() async {
+        directory = await Directory.systemTemp.createTemp('veritra-refuse-');
+        final store = await variant.value(directory);
+        pair = await _Pair.start(
+          NativeCryptoBindings.open(
+              configured ?? fail('set VERITRA_CRYPTO_LIBRARY')),
+          store,
+          policy: const FrankingPolicy(acceptUnfranked: false),
+        );
+      });
+
+      tearDown(() async {
+        await pair.dispose();
+        for (final db in databases) {
+          await db.close();
+        }
+        databases.clear();
+        await SecureLocalStore.releaseInstanceLocks();
+        if (await directory.exists()) await directory.delete(recursive: true);
+      });
+
+      test('the switch that refuses unfranked payloads (D95)', () async {
+        final bindings = NativeCryptoBindings.open(
+            configured ?? fail('set VERITRA_CRYPTO_LIBRARY'));
+        final key = Uint8List.fromList(List<int>.generate(32, (i) => i + 9));
+        Future<_Received> franked(String action, String text) async {
+          final json = jsonEncode(<String, Object?>{
+            ..._head(2, action),
+            'type': 'text',
+            'body': <String, Object?>{'text': text},
+          });
+          final wire = '${json.substring(0, json.length - 1)},'
+              '"frank":{"k":"${base64Encode(key)}"}}';
+          final item = pair.envelope(
+              pair.alice.encrypt(_conversation, _frame(wire)), action,
+              frankCommit: bindings.frankCommit(
+                  key: key,
+                  conversationId: _conversation,
+                  senderDeviceId: _senderDevice,
+                  actionId: action,
+                  payload: Uint8List.fromList(utf8.encode(json))));
+          final plain =
+              await pair.bob.processApplicationMessage(item, ++pair.events);
+          return _Received(plain == null ? null : utf8.decode(plain), item.id);
+        }
+
+        // Franked: accepted, and kept for a report.
+        expect((await franked('s1', 'franked')).text, 'franked');
+        expect(
+            await pair.store.loadFrankReveal(messageKey(_senderDevice, 's1')),
+            isNotNull);
+
+        // Unfranked: refused as an invalid row, and sync still moves on.
+        expect(
+            (await pair.receive(_frame(_payload('text', 'plain')),
+                    actionId: 's2'))
+                .text,
+            isNull);
+        expect(await pair.store.loadSyncCursor(), pair.events);
+        expect(
+            await pair.store.loadFrankReveal(messageKey(_senderDevice, 's2')),
+            isNull);
+        // An unfranked payload of a type this app understands is refused
+        // even when the envelope carries a commitment.
+        final unfrankedWithCommit = pair.envelope(
+            pair.alice.encrypt(
+                _conversation, _frame(_payload('text', 'x', actionId: 's3'))),
+            's3',
+            frankCommit: List<int>.filled(32, 9));
+        expect(
+            await pair.bob
+                .processApplicationMessage(unfrankedWithCommit, ++pair.events),
+            isNull);
+
+        // A hidden payload this app does not understand is never franked
+        // (design item 9, the C7 hidden types): exempt after decoding.
+        final hidden = jsonEncode(<String, Object?>{
+          ..._head(2, 's4'),
+          'type': 'history_change',
+          'hidden': true,
+          'body': <String, Object?>{'x': 1},
+        });
+        expect(
+            (await pair.receive(_frame(hidden), actionId: 's4')).text, isNull);
+        // An unknown type that is not hidden is not exempt.
+        final visible = jsonEncode(<String, Object?>{
+          ..._head(2, 's5'),
+          'type': 'sticker',
+          'body': <String, Object?>{'id': 'x'},
+        });
+        await pair.receive(_frame(visible), actionId: 's5');
+
+        final kinds = {
+          for (final row in await pair.messages()) row.key: row.kind
+        };
+        expect(kinds[messageKey(_senderDevice, 's1')], LocalMessageKind.text);
+        expect(kinds[messageKey(_senderDevice, 's4')],
+            LocalMessageKind.unsupported);
+        expect(kinds.values.where((k) => k == LocalMessageKind.invalid),
+            hasLength(3));
+        expect(kinds.containsKey(messageKey(_senderDevice, 's5')), isFalse);
+        expect(kinds.containsKey(messageKey(_senderDevice, 's2')), isFalse);
       });
     });
   }
@@ -624,9 +763,10 @@ class _Pair {
   int events = 0;
   int _counter = 0;
 
-  static Future<_Pair> start(
-      NativeCryptoBindings bindings, LocalStore store) async {
-    final bob = NativeCryptoService(bindings: bindings, localStore: store);
+  static Future<_Pair> start(NativeCryptoBindings bindings, LocalStore store,
+      {FrankingPolicy policy = const FrankingPolicy()}) async {
+    final bob = NativeCryptoService(
+        bindings: bindings, localStore: store, frankingPolicy: policy);
     await bob.createEnrollmentCredential(const EnrollmentReservation(
       id: 'res_bob',
       accountId: 'acct_bob',

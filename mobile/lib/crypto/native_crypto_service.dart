@@ -12,6 +12,7 @@ import '../storage/encrypted_database.dart'
         DeleteMessageEffect,
         EditMessageEffect,
         EnrollmentPromotionOutcome,
+        FrankReveal,
         HistoryTransferProgress,
         InsertMessageEffect,
         LocalMessageKind,
@@ -41,10 +42,15 @@ class NativeCryptoService
     required this.bindings,
     required this.localStore,
     DateTime Function()? clock,
+    this.frankingPolicy = const FrankingPolicy(),
   }) : _clock = clock ?? DateTime.now;
 
   final NativeCryptoBindings bindings;
   final LocalStore localStore;
+
+  /// What the receive path does with a payload that carries no franking key
+  /// (D95). Accepts them for now.
+  final FrankingPolicy frankingPolicy;
 
   /// The time key-package expiry is judged by (D70).
   final DateTime Function() _clock;
@@ -1433,8 +1439,9 @@ class NativeCryptoService
         List<MessageEffect> effects;
         List<int>? text;
         var noticePayload = false;
+        FrankReveal? reveal;
         try {
-          final outcome = _checkFranking(
+          final checked = _checkFranking(
             envelope,
             plaintext,
             AppPayloadCodec().classify(
@@ -1450,6 +1457,8 @@ class NativeCryptoService
                   : null) as String?,
             ),
           );
+          final outcome = checked.outcome;
+          reveal = checked.reveal;
           switch (outcome) {
             case DecodedAppPayload(:final payload):
               if (!_messageTypes.contains(payload.type)) {
@@ -1495,6 +1504,7 @@ class NativeCryptoService
           effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
           text = null;
           noticePayload = false;
+          reveal = null;
         }
         operationFence();
         await localStore.commitMlsTransition(MlsStateTransition(
@@ -1510,6 +1520,9 @@ class NativeCryptoService
           noticeReferences: noticePayload && capture != null
               ? _noticeReferences(capture.owner, envelope, syncEventId, effects)
               : const <LocalNoticeReference>[],
+          // A reveal for a row this transition does not leave live (an edit,
+          // an invalid placeholder) is dropped by the store, not an error.
+          frankReveals: reveal == null ? const <FrankReveal>[] : [reveal],
         ));
         return text;
       } catch (_) {
@@ -1528,23 +1541,33 @@ class NativeCryptoService
   /// |-----------------------------|-------------------------|-------------------|
   /// | malformed `frank`           | any                     | invalid           |
   /// | franked                     | missing or wrong        | invalid           |
-  /// | franked                     | matches                 | accepted          |
-  /// | no `frank` member           | any                     | accepted, but unreportable (G5) |
+  /// | franked                     | matches                 | accepted, with a reveal to keep |
+  /// | no `frank` member           | any                     | per [frankingPolicy] (D95) |
+  ///
+  /// With the policy that accepts unfranked payloads (today's), the last
+  /// row is accepted but unreportable. A policy that refuses them makes an
+  /// unfranked payload invalid, except a hidden payload this app does not
+  /// understand (design item 9: the C7 hidden types are never franked).
   ///
   /// A native failure while recomputing throws; the caller's `catch` turns
   /// that into an `invalid` row, never a stuck sync.
-  AppPayloadOutcome _checkFranking(ReceivedMessageEnvelope envelope,
-      List<int> plaintext, AppPayloadOutcome outcome) {
-    if (outcome is InvalidAppPayload) return outcome;
+  ({AppPayloadOutcome outcome, FrankReveal? reveal}) _checkFranking(
+      ReceivedMessageEnvelope envelope,
+      List<int> plaintext,
+      AppPayloadOutcome outcome) {
+    if (outcome is InvalidAppPayload) return (outcome: outcome, reveal: null);
     switch (AppPayloadCodec.frankOf(plaintext)) {
       case Unfranked():
-        return outcome;
+        if (frankingPolicy.acceptsUnfranked(outcome)) {
+          return (outcome: outcome, reveal: null);
+        }
+        return (outcome: const InvalidAppPayload(), reveal: null);
       case MalformedFrank():
-        return const InvalidAppPayload();
+        return (outcome: const InvalidAppPayload(), reveal: null);
       case Franked(:final canonical, :final key):
         final commit = envelope.frankCommit;
         if (commit == null || commit.length != frankCommitBytes) {
-          return const InvalidAppPayload();
+          return (outcome: const InvalidAppPayload(), reveal: null);
         }
         final expected = bindings.frankCommit(
           key: key,
@@ -1553,9 +1576,22 @@ class NativeCryptoService
           actionId: envelope.idempotencyKey,
           payload: canonical,
         );
-        return frankCommitEquals(expected, commit)
-            ? outcome
-            : const InvalidAppPayload();
+        if (!frankCommitEquals(expected, commit)) {
+          return (outcome: const InvalidAppPayload(), reveal: null);
+        }
+        // Kept so the message can be reported later (D95, schema 19): kf and
+        // the exact bytes P the commitment covers.
+        return (
+          outcome: outcome,
+          reveal: FrankReveal(
+            messageKey:
+                messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
+            conversationId: envelope.conversationId,
+            envelopeId: envelope.id,
+            frankKey: key,
+            payload: canonical,
+          ),
+        );
     }
   }
 

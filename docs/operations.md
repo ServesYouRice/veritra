@@ -699,7 +699,10 @@ after 64 batches or 10 seconds per class. Monitor
 `veritra_retention_backlog_rows` and
 `veritra_retention_oldest_age_seconds`; investigate a backlog that remains
 above 1,200 rows or an oldest age above one sweep interval after two sweeps.
-The metrics contain aggregate counts and ages only.
+The metrics contain aggregate counts and ages only. The same sweep deletes
+sealed abuse reports (C6, ciphertext the server cannot read) 90 days after they
+were filed, if the owner or moderator has not dismissed them first (D95); they
+are not part of the backlog metrics.
 
 Sync events keep a copy of each message envelope version. An expired message
 and a message deleted through the server's delete route lose those copies:

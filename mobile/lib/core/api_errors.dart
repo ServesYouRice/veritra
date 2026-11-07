@@ -134,7 +134,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
 
   // C6 franking and abuse reports.
   'invalid_frank_commit': ApiErrorKind.invalidRequest,
-  'message_not_reportable': ApiErrorKind.conflict,
   'report_inbox_unavailable': ApiErrorKind.conflict,
   'report_inbox_changed': ApiErrorKind.conflict,
   'already_reported': ApiErrorKind.conflict,
