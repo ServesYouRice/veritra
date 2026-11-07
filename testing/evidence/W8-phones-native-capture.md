@@ -10,11 +10,11 @@ warm/cold phone lifecycle run exists.
 Both `--dart-define=VERITRA_DEMO=true` and `--dart-define=VERITRA_PHONE_NOTICES=true`.
 
 - Android: `build.gradle.kts` reads Flutter's `dart-defines` Gradle property and
-  sets `BuildConfig.VERITRA_PHONE_NOTICES`; the `release` build type forces it
-  false. `WakeWorkerCoordinator.COLD_EXECUTION_ENABLED` and the `install`
+  sets `BuildConfig.VERITRA_PHONE_NOTICES`; the `release` and `profile` build
+  types force it false. `WakeWorkerCoordinator.COLD_EXECUTION_ENABLED` and the `install`
   reply's `can_opt_in` follow it.
-- iOS: `PhoneNoticeBuild` (Debug only) reads `DART_DEFINES` via the
-  `VeritraDartDefines` Info.plist key; `coldExecutionEnabled` and `install`'s
+- iOS: `PhoneNoticeBuild` reads `DART_DEFINES` via the `VeritraDartDefines`
+  Info.plist key, which only `Debug.xcconfig` fills (Release/Profile empty); `coldExecutionEnabled` and `install`'s
   `can_opt_in` follow it. Release is always false.
 - Dart: `main.dart` is untouched. Only `main_demo.dart` builds its bridge with
   `allowOptIn`, so any other bridge still treats `can_opt_in:true` as a bad reply.
@@ -47,3 +47,6 @@ registration generic.
 Android/iOS builds and lifecycle (Doze, quota, kill, iOS expiration, notification
 permission denied, logout during a job) - see the W8 evidence list. The Swift
 define parser has no test. The owner decides when a demo build turns the switch on.
+
+A demo UI that gets `can_opt_in:false` from native uninstalls its worker, so a
+build without the native flag cannot run warm background catch-up.

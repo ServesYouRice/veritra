@@ -139,12 +139,13 @@ Future<void> main(List<String> args) async {
     };
     final installed = await bridge.install(
         profile: namespace, onRun: worker.run, onCancel: worker.cancel);
-    if (!installed) {
-      state.beforeLocalSessionClear = null;
-      runner = null;
-      return false;
-    }
-    return bridge.canOptIn;
+    if (installed && bridge.canOptIn) return true;
+    // Native did not allow phone notices (a build without them): no worker
+    // may stay bound, so warm runs cannot catch up either.
+    if (installed) await bridge.uninstall(namespace);
+    state.beforeLocalSessionClear = null;
+    runner = null;
+    return false;
   }
 
   final launch = WakeLaunchCoordinator(

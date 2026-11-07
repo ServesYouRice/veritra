@@ -4752,8 +4752,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       notificationPermission = await pushService.notificationPermission();
       _setPushState(PushState.registering);
       _pushInstance = '${current.accountId}:${current.deviceId}';
+      phoneNoticesAllowed = false;
       final installer = phoneNoticeInstaller;
       if (installer != null) {
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         // The worker must be installed, and capture on, before the server is
         // told this device decides mention notices locally.
         var allowed = false;

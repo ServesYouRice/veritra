@@ -127,8 +127,8 @@ Native to Dart:
 `bootstrap` always says `can_opt_in:false`. `install` says `can_opt_in:true`
 only in a build made with both `--dart-define=VERITRA_DEMO=true` and
 `--dart-define=VERITRA_PHONE_NOTICES=true` (Android: a Gradle BuildConfig flag,
-forced false in the release build type; iOS: Debug configuration only, read from
-the build's `DART_DEFINES` through Info.plist). Native decides this at build
+forced false in the release and profile build types; iOS: only Debug.xcconfig
+copies the build's `DART_DEFINES` into Info.plist). Native decides this at build
 time; nothing Dart sends changes it, and the Dart bridge accepts a true reply
 only when constructed with `allowOptIn` (demo entry point). Release builds
 (`main.dart`, release build types) therefore stay at `can_opt_in:false` with

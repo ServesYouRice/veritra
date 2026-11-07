@@ -60,6 +60,11 @@ android {
     }
 }
 
+// Flutter adds a "profile" type that copies debug; keep it off like iOS Profile.
+android.buildTypes.matching { it.name == "profile" }.configureEach {
+    buildConfigField("boolean", "VERITRA_PHONE_NOTICES", "false")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

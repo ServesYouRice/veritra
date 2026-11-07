@@ -29,7 +29,7 @@
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>VeritraDartDefines</key>
-	<string>$(DART_DEFINES)</string>
+	<string>$(VERITRA_PLIST_DEFINES)</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>

@@ -336,22 +336,18 @@ final class IOSWakeJournal {
   }
 }
 
-/// Phone notices (D52) exist only in a Debug build made with both
+/// Phone notices (D52) exist only in a Debug-configuration build made with both
 /// `--dart-define=VERITRA_DEMO=true` and `--dart-define=VERITRA_PHONE_NOTICES=true`.
-/// Flutter writes the defines to DART_DEFINES, which Info.plist copies at build
-/// time; nothing Dart sends at runtime can change this, and Release is always off.
+/// Only Debug.xcconfig copies DART_DEFINES into Info.plist at build time; nothing Dart sends at runtime can change this, and Release is always off.
 enum PhoneNoticeBuild {
   static let enabled: Bool = {
-    #if DEBUG
+    // Empty outside the Debug xcconfig, so Release and Profile are always off.
     guard let raw = Bundle.main.object(forInfoDictionaryKey: "VeritraDartDefines") as? String else { return false }
-    return enabled(defines: raw)
-    #else
-    return false
-    #endif
+    return parse(defines: raw)
   }()
 
   /// base64 "NAME=value" entries joined by commas; the last entry for a name wins.
-  static func enabled(defines raw: String) -> Bool {
+  static func parse(defines raw: String) -> Bool {
     let entries = raw.split(separator: ",").compactMap { part in
       Data(base64Encoded: String(part)).flatMap { String(data: $0, encoding: .utf8) }
     }
