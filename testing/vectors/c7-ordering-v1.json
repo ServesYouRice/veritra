@@ -1,0 +1,1188 @@
+{
+ "version": 1,
+ "description": "C7 build step 3: ordering table rows 1-7 (Trace 2 and the remaining rows), the implicit genesis, generation windows (decision 6) and the 512-byte VAP1 slack of the compact record message. Records are symbolic: id is the record's identity (its hash), prev names the record it chains to (null: zeros). Checked by Dart (the app logic), Rust and Go (the same expectations, independently).",
+ "ordering": {
+  "sources": [
+   "proposal_live",
+   "proposal_history",
+   "report"
+  ],
+  "cases": [
+   {
+    "name": "trace2_every_row",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "r1",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "r1",
+       "status": "ok",
+       "highest_seq": 1
+      }
+     },
+     {
+      "record": {
+       "id": "r2",
+       "seq": 2,
+       "prev": "r1",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "r2",
+       "status": "ok",
+       "highest_seq": 2
+      }
+     },
+     {
+      "record": {
+       "id": "q2",
+       "seq": 2,
+       "prev": "r1",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 4,
+       "head": "r2",
+       "status": "ok",
+       "highest_seq": 2
+      }
+     },
+     {
+      "record": {
+       "id": "r2",
+       "seq": 2,
+       "prev": "r1",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": false,
+      "valid": true,
+      "expect": {
+       "row": 2,
+       "head": "r2",
+       "status": "ok",
+       "highest_seq": 2
+      }
+     },
+     {
+      "record": {
+       "id": "q2",
+       "seq": 2,
+       "prev": "r1",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 7,
+       "head": "r2",
+       "status": "closed",
+       "highest_seq": 2
+      }
+     },
+     {
+      "record": {
+       "id": "q3",
+       "seq": 3,
+       "prev": "q2",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 5,
+       "head": "q3",
+       "status": "ok",
+       "highest_seq": 3
+      }
+     },
+     {
+      "record": {
+       "id": "r5",
+       "seq": 5,
+       "prev": "r4",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 7,
+       "head": "q3",
+       "status": "closed",
+       "highest_seq": 5
+      }
+     },
+     {
+      "record": {
+       "id": "r6",
+       "seq": 6,
+       "prev": "r5",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 5,
+       "head": "r6",
+       "status": "ok",
+       "highest_seq": 6
+      }
+     }
+    ]
+   },
+   {
+    "name": "invalid_record_changes_nothing",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "r1",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": false,
+      "expect": {
+       "row": "invalid",
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "r9",
+       "seq": 9,
+       "prev": "r8",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": false,
+      "expect": {
+       "row": "invalid",
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "r1",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "r1",
+       "status": "ok",
+       "highest_seq": 1
+      }
+     }
+    ]
+   },
+   {
+    "name": "newcomer_first_head_then_older",
+    "steps": [
+     {
+      "record": {
+       "id": "n5",
+       "seq": 5,
+       "prev": "n4",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 20
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "n5",
+       "status": "ok",
+       "highest_seq": 5
+      }
+     },
+     {
+      "record": {
+       "id": "n5",
+       "seq": 5,
+       "prev": "n4",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 20
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 2,
+       "head": "n5",
+       "status": "ok",
+       "highest_seq": 5
+      }
+     },
+     {
+      "record": {
+       "id": "n3",
+       "seq": 3,
+       "prev": "n2",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 12
+      },
+      "source": "proposal_history",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 6,
+       "head": "n5",
+       "status": "ok",
+       "highest_seq": 5
+      }
+     },
+     {
+      "record": {
+       "id": "n4",
+       "seq": 4,
+       "prev": "n3",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 15
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 6,
+       "head": "n5",
+       "status": "ok",
+       "highest_seq": 5
+      }
+     },
+     {
+      "record": {
+       "id": "n6",
+       "seq": 6,
+       "prev": "n5",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 30
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "n6",
+       "status": "ok",
+       "highest_seq": 6
+      }
+     }
+    ]
+   },
+   {
+    "name": "no_key_given_is_keyless_then_key_arrives",
+    "steps": [
+     {
+      "record": {
+       "id": "n5",
+       "seq": 5,
+       "prev": "n4",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 20
+      },
+      "source": "report",
+      "key_given": false,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "n5",
+       "status": "keyless",
+       "highest_seq": 5
+      }
+     },
+     {
+      "event": "key_arrived",
+      "expect": {
+       "head": "n5",
+       "status": "ok",
+       "highest_seq": 5
+      }
+     }
+    ]
+   },
+   {
+    "name": "row3_opening_report_without_key",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "r1",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": false,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "r1",
+       "status": "keyless",
+       "highest_seq": 1
+      }
+     },
+     {
+      "record": {
+       "id": "r2",
+       "seq": 2,
+       "prev": "r1",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "r2",
+       "status": "keyless",
+       "highest_seq": 2
+      }
+     }
+    ]
+   },
+   {
+    "name": "row4_equal_seq_same_prev_is_a_lost_race_but_different_prev_is_a_fork",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "r1",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "r1",
+       "status": "ok",
+       "highest_seq": 1
+      }
+     },
+     {
+      "record": {
+       "id": "lost",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 4,
+       "head": "r1",
+       "status": "ok",
+       "highest_seq": 1
+      }
+     },
+     {
+      "record": {
+       "id": "lost_hist",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_history",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 4,
+       "head": "r1",
+       "status": "ok",
+       "highest_seq": 1
+      }
+     },
+     {
+      "record": {
+       "id": "fork",
+       "seq": 1,
+       "prev": "zz",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 7,
+       "head": "r1",
+       "status": "closed",
+       "highest_seq": 1
+      }
+     }
+    ]
+   },
+   {
+    "name": "row5_needs_a_live_switch_or_move_above_the_highest_valid_seq",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "c7",
+       "seq": 7,
+       "prev": "c6",
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 7,
+       "head": "r0",
+       "status": "closed",
+       "highest_seq": 7
+      }
+     },
+     {
+      "record": {
+       "id": "w8",
+       "seq": 8,
+       "prev": "w7",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_history",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 7,
+       "head": "r0",
+       "status": "closed",
+       "highest_seq": 8
+      }
+     },
+     {
+      "record": {
+       "id": "w9",
+       "seq": 9,
+       "prev": "w8",
+       "mode": "full",
+       "reason": "move",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 5,
+       "head": "w9",
+       "status": "ok",
+       "highest_seq": 9
+      }
+     },
+     {
+      "record": {
+       "id": "w9b",
+       "seq": 9,
+       "prev": "w8",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 7,
+       "head": "w9",
+       "status": "closed",
+       "highest_seq": 9
+      }
+     }
+    ]
+   },
+   {
+    "name": "a_closed_channel_stays_closed_until_row5",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "q2",
+       "seq": 2,
+       "prev": "r1",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 7,
+       "head": "r0",
+       "status": "closed",
+       "highest_seq": 2
+      }
+     },
+     {
+      "record": {
+       "id": "r1",
+       "seq": 1,
+       "prev": "r0",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "r1",
+       "status": "closed",
+       "highest_seq": 2
+      }
+     },
+     {
+      "record": {
+       "id": "s9",
+       "seq": 9,
+       "prev": "s8",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 5,
+       "head": "s9",
+       "status": "ok",
+       "highest_seq": 9
+      }
+     }
+    ]
+   },
+   {
+    "name": "unsure_clears_only_above_the_triggering_epoch",
+    "steps": [
+     {
+      "record": {
+       "id": "u0",
+       "seq": 0,
+       "prev": null,
+       "mode": "full",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "u0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "event": "unsure",
+      "epoch": 30,
+      "expect": {
+       "head": "u0",
+       "status": "unsure",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "u1",
+       "seq": 1,
+       "prev": "u0",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 29
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "u1",
+       "status": "unsure",
+       "highest_seq": 1
+      }
+     }
+    ]
+   },
+   {
+    "name": "unsure_clears_by_a_record_above_the_epoch",
+    "steps": [
+     {
+      "record": {
+       "id": "u0",
+       "seq": 0,
+       "prev": null,
+       "mode": "full",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "u0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "event": "unsure",
+      "epoch": 30,
+      "expect": {
+       "head": "u0",
+       "status": "unsure",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "u1",
+       "seq": 1,
+       "prev": "u0",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 31
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 3,
+       "head": "u1",
+       "status": "ok",
+       "highest_seq": 1
+      }
+     }
+    ]
+   },
+   {
+    "name": "unsure_never_moves_other_channels",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "event": "unsure",
+      "epoch": 30,
+      "expect": {
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "event": "unsure",
+      "epoch": 31,
+      "expect": {
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "implicit_genesis": {
+  "description": "A device holding no record for a channel treats it as members_from_join with no head: status ok, nothing sealed under a history key, no key handed over. The first record meets row 1 whatever its seq.",
+  "expect": {
+   "head": null,
+   "mode": "members_from_join",
+   "status": "ok",
+   "seals_under_history_key": false,
+   "hands_over_key": false,
+   "highest_seq": -1
+  },
+  "then_full_create": {
+   "record": {
+    "id": "g0",
+    "seq": 0,
+    "prev": null,
+    "mode": "full",
+    "reason": "create",
+    "epoch": 10
+   },
+   "source": "proposal_live",
+   "key_given": true,
+   "expect": {
+    "row": 1,
+    "head": "g0",
+    "status": "ok",
+    "mode": "full",
+    "seals_under_history_key": true
+   }
+  },
+  "then_keyless": {
+   "record": {
+    "id": "g5",
+    "seq": 5,
+    "prev": "g4",
+    "mode": "full",
+    "reason": "switch",
+    "epoch": 10
+   },
+   "source": "report",
+   "key_given": false,
+   "expect": {
+    "row": 1,
+    "head": "g5",
+    "status": "keyless",
+    "mode": "full",
+    "seals_under_history_key": false
+   }
+  }
+ },
+ "windows": [
+  {
+   "name": "inside the window",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 15,
+    "route_epoch": 15
+   },
+   "accept": true,
+   "reason": "in window"
+  },
+  {
+   "name": "first epoch of the generation",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 10,
+    "route_epoch": 10
+   },
+   "accept": true,
+   "reason": "E_g <= epoch"
+  },
+  {
+   "name": "last epoch before the close",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 19,
+    "route_epoch": 19
+   },
+   "accept": true,
+   "reason": "epoch < E_close"
+  },
+  {
+   "name": "closing epoch is dropped",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 20,
+    "route_epoch": 20
+   },
+   "accept": false,
+   "reason": "epoch >= E_close"
+  },
+  {
+   "name": "after the close",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 25,
+    "route_epoch": 25
+   },
+   "accept": false,
+   "reason": "epoch >= E_close"
+  },
+  {
+   "name": "before the generation opened",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 9,
+    "route_epoch": 9
+   },
+   "accept": false,
+   "reason": "epoch < E_g"
+  },
+  {
+   "name": "signed gen is not the generation",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 9,
+    "signed_group": "G",
+    "signed_epoch": 15,
+    "route_epoch": 15
+   },
+   "accept": false,
+   "reason": "gen mismatch"
+  },
+  {
+   "name": "signed group is another group",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "H",
+    "signed_epoch": 15,
+    "route_epoch": 15
+   },
+   "accept": false,
+   "reason": "group mismatch"
+  },
+  {
+   "name": "signed epoch differs from the route epoch",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 15,
+    "route_epoch": 16
+   },
+   "accept": false,
+   "reason": "epoch mismatch"
+  },
+  {
+   "name": "generation older than the current period",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 20
+   },
+   "period_start_epoch": 12,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 15,
+    "route_epoch": 15
+   },
+   "accept": false,
+   "reason": "not in current period"
+  },
+  {
+   "name": "open-ended current generation",
+   "generation": {
+    "epoch": 20,
+    "group": "G",
+    "close_epoch": null
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 20,
+    "signed_group": "G",
+    "signed_epoch": 500,
+    "route_epoch": 500
+   },
+   "accept": true,
+   "reason": "no close"
+  },
+  {
+   "name": "open-ended still needs E_g <= epoch",
+   "generation": {
+    "epoch": 20,
+    "group": "G",
+    "close_epoch": null
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 20,
+    "signed_group": "G",
+    "signed_epoch": 19,
+    "route_epoch": 19
+   },
+   "accept": false,
+   "reason": "epoch < E_g"
+  },
+  {
+   "name": "a rekey's close is the removal's epoch",
+   "generation": {
+    "epoch": 10,
+    "group": "G",
+    "close_epoch": 21
+   },
+   "period_start_epoch": 10,
+   "body": {
+    "signed_gen": 10,
+    "signed_group": "G",
+    "signed_epoch": 20,
+    "route_epoch": 20
+   },
+   "accept": true,
+   "reason": "epoch < E_close"
+  }
+ ],
+ "vap1_slack": {
+  "conversation_id": "conv_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "sender_device_id": "dev_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "action_id": "cccccccccccccccccccccccccccccccccccccccccccccccc",
+  "channel_id": "chan_dddddddddddddddddddddddddddddddd",
+  "cases": [
+   {
+    "name": "compact record",
+    "compact_bytes": 143,
+    "inner_json_bytes": 485,
+    "framed_bytes": 493,
+    "vap1_bytes": 512,
+    "slack": 19
+   },
+   {
+    "name": "move with a 36-byte close group id",
+    "compact_bytes": 309,
+    "close_group_id_bytes": 36,
+    "inner_json_bytes": 705,
+    "framed_bytes": 713,
+    "vap1_bytes": 768,
+    "slack": 55
+   }
+  ]
+ }
+}

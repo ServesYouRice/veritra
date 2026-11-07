@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 /// `testing/vectors/c7-primitives-v1.json`: known answers for the C7 crypto
 /// primitives. Rust checks all of it; Dart checks the stateless calls
 /// (`mobile/test/c7_primitives_test.dart`); the Go check arrives with the
-/// server (step 3). The exporter root
+/// server (`server/internal/c7vector`, step 3). The exporter root
 /// itself cannot be pinned here (OpenMLS offers no way to start a group from
 /// fixed secrets); `mls.rs` tests pin it as "the staged export equals the
 /// post-merge export, in every group", and this file pins the label and
@@ -786,4 +786,99 @@ fn a_post_signature_binds_every_field() {
     ] {
         assert_ne!(changed.unwrap(), base);
     }
+}
+
+// ---- the ordering vector (build step 3) -------------------------------------
+
+/// `testing/vectors/c7-ordering-v1.json`: the ordering table's rows, the
+/// implicit genesis, the generation windows and the 512-byte VAP1 slack. The
+/// table itself is app logic (Dart `c7_history.dart`, re-written in Go in
+/// `server/internal/c7vector`); Rust adds no table, so here it checks what the
+/// core's own encodings imply: the vector is well formed, covers every row,
+/// and its window and slack arithmetic follow the sizes the core enforces.
+const ORDERING: &str = include_str!("../../../testing/vectors/c7-ordering-v1.json");
+
+#[test]
+fn ordering_vector_is_well_formed_and_covers_every_row() {
+    let vector: Value = serde_json::from_str(ORDERING).expect("ordering vector parses");
+    let mut rows = std::collections::BTreeSet::new();
+    for case in vector["ordering"]["cases"].as_array().unwrap() {
+        for step in case["steps"].as_array().unwrap() {
+            let expect = &step["expect"];
+            if let Some(row) = expect["row"].as_u64() {
+                assert!((1..=7).contains(&row));
+                rows.insert(row.to_string());
+            } else if expect["row"] == "invalid" {
+                rows.insert("invalid".into());
+            }
+            if let Some(record) = step.get("record") {
+                // A record the core could encode: seq below the limit.
+                assert!(record["seq"].as_u64().unwrap() < u64::from(SEQ_LIMIT));
+            }
+        }
+    }
+    let want: Vec<String> = ["1", "2", "3", "4", "5", "6", "7", "invalid"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+    assert_eq!(rows.into_iter().collect::<Vec<_>>(), want);
+    assert_eq!(vector["implicit_genesis"]["expect"]["head"], Value::Null);
+    assert_eq!(
+        vector["implicit_genesis"]["expect"]["mode"],
+        "members_from_join"
+    );
+}
+
+#[test]
+fn window_cases_follow_decision_6() {
+    let vector: Value = serde_json::from_str(ORDERING).expect("ordering vector parses");
+    let windows = vector["windows"].as_array().unwrap();
+    assert!(windows.len() >= 10);
+    for window in windows {
+        let generation = &window["generation"];
+        let body = &window["body"];
+        let epoch = generation["epoch"].as_u64().unwrap();
+        let close = generation["close_epoch"].as_u64();
+        let signed_epoch = body["signed_epoch"].as_u64().unwrap();
+        let accepted = epoch >= window["period_start_epoch"].as_u64().unwrap()
+            && body["signed_gen"].as_u64().unwrap() == epoch
+            && body["signed_group"] == generation["group"]
+            && signed_epoch == body["route_epoch"].as_u64().unwrap()
+            && signed_epoch >= epoch
+            && close.is_none_or(|close| signed_epoch < close);
+        assert_eq!(accepted, window["accept"], "{}", window["name"]);
+    }
+}
+
+#[test]
+fn record_message_fits_the_smallest_bucket_with_the_stated_slack() {
+    let vector: Value = serde_json::from_str(ORDERING).expect("ordering vector parses");
+    let slack = &vector["vap1_slack"];
+    for case in slack["cases"].as_array().unwrap() {
+        let compact = case["compact_bytes"].as_u64().unwrap() as usize;
+        // The same key order as the app's inner JSON; base64 without a line
+        // break, standard alphabet.
+        let encoded_len = compact.div_ceil(3) * 4;
+        let inner = format!(
+            "{{\"v\":2,\"type\":\"history_change\",\"conversation_id\":\"{}\",\"sender_device_id\":\"{}\",\"action_id\":\"{}\",\"channel_id\":\"{}\",\"hidden\":true,\"body\":{{\"r\":\"{}\"}}}}",
+            slack["conversation_id"].as_str().unwrap(),
+            slack["sender_device_id"].as_str().unwrap(),
+            slack["action_id"].as_str().unwrap(),
+            slack["channel_id"].as_str().unwrap(),
+            "A".repeat(encoded_len)
+        );
+        let framed = inner.len() + 8;
+        let vap1 = framed.div_ceil(256) * 256;
+        assert_eq!(inner.len() as u64, case["inner_json_bytes"]);
+        assert_eq!(framed as u64, case["framed_bytes"]);
+        assert_eq!(vap1 as u64, case["vap1_bytes"]);
+        assert_eq!((vap1 - framed) as u64, case["slack"]);
+        assert!(vap1 <= MAX_VAP1_BYTES);
+    }
+    // The compact record in the primitives vector is the 143-byte case.
+    let primitives: Value = serde_json::from_str(VECTOR).unwrap();
+    assert_eq!(
+        unhex(&primitives["outputs"]["record_compact_hex"]).len(),
+        COMPACT_BYTES
+    );
 }
