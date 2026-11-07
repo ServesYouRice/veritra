@@ -5,13 +5,17 @@
 ABI are all in it). Written 2026-11-01 against `main` at `f1b4a36`, on K0
 and C0. Revision 2 (2026-11-01) made the setting changeable. Revision 3
 (2026-11-01, `main` at `63167ce`) hid the setting from the server.
-**Revision 4 (2026-11-07, `main` at `f23e456`)** answers the independent
-review of revision 3 ([evidence](../../testing/evidence/C7-rev3-review.md)):
-a removal floor and a membership barrier close the removal-then-add race,
-one ordering table replaces the contradicting rules, an "unsure" state
-covers lost records, signatures get a verifiable key, targeted actions
-follow their target's period, and authority follows D80's built-in roles.
-"Changes in revision 4" at the end maps each review item to its fix.
+Revision 4 (2026-11-07, `main` at `f23e456`) answered the review of
+revision 3 ([evidence](../../testing/evidence/C7-rev3-review.md)) with a
+removal floor, a membership barrier and one ordering table.
+**Revision 5 (2026-11-07)** answers the review of revision 4
+([evidence](../../testing/evidence/C7-rev4-review.md)): competing rekeys
+settle by a deterministic tie-break, so a server can no longer close only
+the `full` channels; `g` is compared only along `prev`; newcomers get a
+floor and a "keyless" state; record messages now fit the smallest post
+bucket; recovery, own proposals, moderator deletes, signatures, moves and
+local transactions are pinned down. "Changes in revision 5" at the end
+maps each review item to its fix.
 
 ## Problem
 
@@ -37,8 +41,9 @@ channels have it, or when that changes.
 - **I5. Uniform to the server.** Nothing the server stores, serves, counts
   or sees the timing of depends on a channel's setting: every community
   message, membership change, retry and newcomer fetch looks the same
-  whichever mode each channel is in. Residuals are listed under "What the
-  server still learns".
+  whichever mode each channel is in, and nothing the server can provoke
+  makes devices act differently by mode where it can see it. Residuals
+  are listed under "What the server still learns".
 - **I6. Removed members get nothing new.** No key that a removed member
   could have read is used to seal, or handed over, at or after the epoch
   its removal produced (decision 5).
@@ -67,31 +72,33 @@ and private-channel groups) is sent in two parts:
   and padded by `app_payload.dart` to 256-byte buckets. The W7 receive
   policy runs on it unchanged once the body is opened.
 - **A bad body never halts sync.** Once the reference decrypts, a missing
-  body, a hash or `kc` mismatch, a failed open or a bad signature is a P1
-  `invalid` row: the MLS state and cursor commit (otherwise a server that
-  strips one body would stop the conversation under I33). It also makes
-  the group "unsure" (decision 5).
+  body, a hash or `kc` mismatch or a failed open is a P1 `invalid` row:
+  the MLS state and cursor commit (otherwise a server that strips one body
+  would stop the conversation under I33). It also makes the group
+  "unsure" (decision 5).
 - `aad = lp(conversation_id) | lp(channel_id or "") | lp(sender_device_id) | lp(action_id)`,
   the envelope's own fields, so the server cannot move a body. `lp(x)` is
   a u16 big-endian length then the bytes, in every C7 encoding.
 - **The key is the only difference.** While the sender's device holds the
-  channel as `full` in a fresh generation `g` (decision 5):
+  channel as `full` in a fresh generation `g` with status `ok`
+  (decisions 4 and 5):
   `body_key = HKDF(CHK_g, "veritra-c7-post-v1", lp(community_id) | lp(channel_id) | lp(sender_device_id) | lp(action_id))`.
   Otherwise `body_key` is 32 random bytes that exist only inside the
   reference. The two cases are indistinguishable without `CHK_g`.
   Targeted actions follow their target's period instead (decision 7).
-- **Live members** decrypt the reference, check the body hash, open the
-  body with `body_key` and verify `sig`. They never need `CHK` to read.
+- **Live members** decrypt the reference, check the body hash and open the
+  body with `body_key`. They never need `CHK` to read. MLS authenticates
+  the reference, and the reference fixes the body's hash, so live members
+  need no second signature check (decision 8).
 - **Newcomers** never see the reference. They fetch bodies, derive
-  candidate `body_key`s from the `CHK`s they hold, and open what `kc`
-  matches.
+  candidate `body_key`s from the `CHK`s they hold, open what `kc` matches,
+  and verify `sig`.
 - **Signature** (`sig`), always present, Ed25519 by the sender device's
   MLS credential key over
   `"veritra-c7-post-sig-v1" | lp(community_id) | lp(channel_id) | lp(action_id) | lp(group_id) | u64(epoch) | lp(sender_device_id) | u32(g) | sha256(padded VAP1)`.
   `epoch` is the epoch the reference is encrypted in, `g` is 0 outside a
   fresh `full` generation, and the hash covers the whole padded VAP1
-  value, random padding included. Who checks it with which key is
-  decision 8.
+  value, random padding included.
 - **Retries are byte-identical.** The sender seals once, keeps the sealed
   body in the outbox record next to the MLS ciphertext, and resends both
   unchanged. An `action_id` is never sealed twice. The server's replay
@@ -109,100 +116,146 @@ and private-channel groups) is sent in two parts:
    posts can be read by people who join later", or the reverse).
 
 2. **Generations and periods.** A *generation* `g` (u32 per channel,
-   strictly increasing, from 1) has one key `CHK_g` (32 random bytes) and
-   lives in one MLS group. It starts at a switch to `full`, a create as
-   `full`, a rekey or a move. A *period* runs from a switch to `full` (or
-   a create as `full`, or a widening move) to the next record that leaves
-   `full`; it holds one or more generations. Devices keep the current
-   period's keys in the sealed local database and delete them when the
-   period ends. Keys never go into K1 backups or K2 bundles: the C7 tables
-   are added to `mobile/lib/storage/backup_exclusion.dart` and left out of
-   `mobile/lib/storage/history_snapshot.dart`, with a test for each. A
-   restored (D73) or newly linked device is added to the groups and gets
-   keys like any newcomer.
+   rising along each chain, from 1) has one key `CHK_g` (32 random bytes)
+   and lives in one MLS group. It starts at a switch to `full`, a create
+   as `full`, a rekey or a move. A *period* runs from a switch to `full`
+   (or a create as `full`, or a widening move) to the next record that
+   leaves `full`; it holds one or more generations. Devices keep the
+   current period's keys in the sealed local database and delete them when
+   the period ends. Keys never go into K1 backups or K2 bundles: the C7
+   tables are added to `mobile/lib/storage/backup_exclusion.dart` and left
+   out of `mobile/lib/storage/history_snapshot.dart`, with a test for
+   each. A restored (D73) or newly linked device is added to the groups
+   and gets keys like any newcomer.
 
-3. **Records.** One chain per channel. A record is a hidden W7 v2 payload,
-   `history_change`, proposed either in a message of the channel itself
-   (create, switch, move) or in a slot of a `history_sync` (rekey). Fields
-   and their fixed encoding (all ids at most 64 bytes; C7 refuses longer
+3. **Records.** One chain per channel. A record is a hidden W7 v2
+   payload, `history_change`, proposed either in a message of the channel
+   itself (create, switch, move) or in a slot of a `history_sync` (rekey).
+   Its **signed fields** are (all ids at most 64 bytes; C7 refuses longer
    ones, server ids are 36):
 
    ```
-   u8 version (=1) | lp(community_id) | lp(channel_id) | u32 seq | prev[32]
-   | u8 mode | u8 reason | u32 g | lp(group_id) | u64 epoch
-   | lp(close_group_id) | u64 close_epoch | chk_commit[32]
-   | lp(actor_device_id) | sig[64]
+   community_id, channel_id, u32 seq, prev[32], u8 mode, u8 reason, u32 g,
+   group_id, u64 epoch, close_group_id, u64 close_epoch, chk_commit[32],
+   actor_device_id
+   sig = Ed25519(actor credential key, "veritra-c7-history-v1"
+         | lp(community_id) | lp(channel_id) | u32 seq | prev | u8 mode
+         | u8 reason | u32 g | lp(group_id) | u64 epoch | lp(close_group_id)
+         | u64 close_epoch | chk_commit | lp(actor_device_id))
    ```
 
    - `seq`: 0 for `create`, +1 each record. `prev`: zeros at 0, else
-     `sha256(previous record's encoded bytes, sig included)`.
+     `sha256(full form of the previous record)` (below).
    - `mode`: 0 `members_from_join`, 1 `full`. `reason`: 0 `create`,
      1 `switch`, 2 `rekey`, 3 `move`.
    - `g`: the generation this record opens; for a record that leaves
-     `full`, the last generation + 1 (no key), so `g` rises on every record
-     that opens or closes.
+     `full`, the `prev` record's `g` + 1 (no key). Two records with the
+     same `prev` (siblings) may carry the same `g`.
    - `group_id`, `epoch`: the group and epoch of the message that carries
-     the proposal. A receiver checks both against the MLS message.
+     the proposal.
    - `close_group_id`, `close_epoch`: where and when the previous
      generation stops being valid (window end, decision 6). For a switch
      or create: this group and `epoch`. For a rekey: this group and the
-     generation's `stale_since` (decision 5). For a move: the old group
-     and the old group's epoch when the actor sent the move.
+     generation's `stale_since` (decision 5). For a move: decision 11.
    - `chk_commit`: `sha256("veritra-c7-chk-v1" | CHK_g)`, or zeros when the
      record opens no key.
-   - `sig`: Ed25519 by the actor's credential key over
-     `"veritra-c7-history-v1"` followed by every field above except `sig`.
-   - The encoding is zero-padded to **512 bytes** (the maximum is 485).
-   - **Always the same shape.** A record message always carries a 32-byte
-     key field: `CHK_g` when it opens a key, 32 random bytes otherwise, so
-     a switch on and a switch off fall in the same VAP1 bucket. A switch
-     to `full` seals its body under `HKDF(CHK_g, ...)` like any post of
-     `g`, so a later newcomer holding `CHK_g` reads it; any other record
-     message seals under a random key.
+   - **Full form** (slots and hashing): `u8 version (=1) | lp(community_id)
+     | lp(channel_id) | u32 seq | prev | u8 mode | u8 reason | u32 g |
+     lp(group_id) | u64 epoch | lp(close_group_id) | u64 close_epoch |
+     chk_commit | lp(actor_device_id) | sig`, zero-padded to **512 bytes**
+     (at most 485 used).
+   - **Compact form** (a proposal in a channel message): only the fields
+     the receiver cannot take from the message itself:
+     `u8 version (=1) | u32 seq | prev | u8 mode | u8 reason | u32 g |
+     u64 close_epoch | key[32] | sig` = **147 bytes**. A `move` adds
+     `lp(close_group_id) | wrap[128]` (decision 11). The receiver fills in
+     `community_id` and `channel_id` (payload context), `group_id` and
+     `epoch` (the MLS message, from the epoch-returning decrypt),
+     `actor_device_id` (the MLS-authenticated sender), `close_group_id`
+     (= `group_id` unless a move), and `chk_commit` (from `key` when the
+     record opens a key, else zeros), then rebuilds the full form and
+     checks `sig`. So a compact proposal is, by construction, sent by its
+     actor in the group and epoch it names.
+   - `key` is `CHK_g` when the record opens a key and 32 random bytes
+     otherwise. A switch to `full` (and a create as `full`) seals its body
+     under `HKDF(CHK_g, ...)` like any post of `g`, so a later newcomer
+     holding `CHK_g` reads it; every other record message seals under a
+     random key.
+   - **Size, exactly.** The VAP1 inner JSON (Dart's compact
+     `jsonEncode`, ids `conv_`/`dev_`/`chan_` plus 32 hex, a 48-hex
+     `action_id`) is
+     `{"v":2,"type":"history_change","conversation_id":…,"sender_device_id":…,"action_id":…,"channel_id":…,"hidden":true,"body":{"r":"<base64 of 147 bytes>"}}`:
+     489 bytes, 497 with the 8-byte VAP1 header, so a **512-byte VAP1**.
+     That is the smallest bucket any community post can have (an empty
+     text post is 280 bytes framed), the bucket of every text up to about
+     230 characters. A create, switch on and switch off are therefore
+     indistinguishable by size from short posts. (Revision 4's
+     `{record: base64(512), key: base64(32)}` was 1,043 bytes framed, a
+     1,280-byte VAP1: a visible class. Review finding 4.) A move is 721
+     bytes framed with server-length ids, a 768-byte VAP1; moves are
+     visible to the server anyway (a new group), and every move carries
+     the same fields in every mode.
    - **Create.** Every channel creation sends a `create` record, in both
      modes. A channel for which a device holds no record is
      `members_from_join` with no head: the "implicit genesis" the vectors
      pin. The next record it sees is handled by row 1 of the ordering
      table.
 
-4. **Ordering: sync order plus the `prev` chain.** The server cannot
-   sequence records it cannot see. Each device keeps per channel a *head*
-   (the last applied record), the hashes of the records it has applied in
-   the current period, and a *status*: `ok`, `unsure` or `closed`.
+4. **Ordering: sync order, the `prev` chain and one tie-break.** The
+   server cannot sequence records it cannot see. Each device keeps per
+   channel a *head* (the last applied record), the full-form hashes of the
+   records it has applied in the current period plus the hashes of known
+   rekey siblings, the highest `seq` it has seen in any valid record, and a
+   *status*: `ok`, `keyless`, `unsure` or `closed`.
 
-   A record is a **proposal** in the one message whose MLS-authenticated
-   sender is the record's `actor_device_id` and whose epoch and group equal
-   the record's `epoch` and `group_id`. Anywhere else (a `history_sync`
-   slot repeating the sender's head) it is a **report**.
+   A record is a **proposal** in the one message that carries it in
+   compact form (by construction from its actor, in its group and epoch).
+   In a `history_sync` slot it is a proposal when the slot's
+   `actor_device_id`, `group_id` and `epoch` equal the message's sender,
+   group and epoch, and a **report** (the sender repeating its head)
+   otherwise.
 
-   Validity first: encoding, signature, `chk_commit` against the carried
-   key, `g` above every earlier `g`, and authority (below). An invalid
-   record is ignored and leaves an `action` row. If the device's own
-   proposal comes back invalid, or not at all within a timeout, the app
-   tells the actor the change did not go through.
-   Then, for a valid record `X` against head `H` (`s` = `H.seq`), in sync
-   order, exactly one row applies:
+   **Validity** first: encoding, signature, `chk_commit` against the
+   carried key, `g` greater than the `g` of the record `prev` names (when
+   the device holds that record; siblings share a `g`), and authority
+   (below). An invalid record is ignored and leaves an `action` row. Then,
+   for a valid record `X` against head `H` (`s = H.seq`), in sync order,
+   the first matching row applies:
 
    | # | Condition | Result |
    |---|---|---|
-   | 1 | No head (newcomer, or implicit genesis) | Adopt `X` as head |
-   | 2 | `X` equals (byte for byte) the record applied at `X.seq` | No-op |
-   | 3 | `X.seq = s + 1` and `X.prev = hash(H)` | Apply: new head |
-   | 4 | Proposal, `X.seq <= s`, and `X.prev` equals the `prev` of the record applied at `X.seq` | Lost race: stale, ignore. Its sender discards its key and re-decides on the new state |
-   | 5 | A `switch` or `move` proposal received live (not from a slot or the history fetch), authority checked, and either `X.seq > s` or status `closed` | Adopt `X` as head, status `ok` (recovery: the record states the whole setting) |
-   | 6 | `X.seq <` the first seq this device holds (a newcomer meeting an older proposal or report) | Ignore; take no key from it |
-   | 7 | Anything else: a report differing at `X.seq <= s`, `X.prev != hash(H)` at `s + 1`, or `X.seq > s + 1` | Fork or missed record: status `closed` |
+   | 1 | No head (newcomer, or implicit genesis) | Adopt `X` as head; status `ok` if this message gives its key (or it opens none), else `keyless` |
+   | 2 | `X` equals a record this device knows at `X.seq` (applied, or a known sibling) | No-op |
+   | 3 | **Rekey sibling:** `X` and the rekey applied at `X.seq` are both rekeys with the same `prev`, and both opened at an epoch `>=` this device's floor | **Lower `sha256(full form)` wins**, whatever the arrival order. If `X` wins, it replaces the head (status `keyless` unless this message gives its key); the loser's hash is kept as a known sibling. Proposals and reports alike |
+   | 4 | `X.seq = s + 1` and `X.prev = hash(H)` | Apply: new head |
+   | 5 | Proposal, `X.seq <= s`, and `X.prev` equals the `prev` of the record applied at `X.seq` | Lost race: stale, ignore |
+   | 6 | A `switch` or `move` proposal decrypted live (not from a slot or the history fetch), authority checked, with `X.seq` above the highest `seq` this device has seen for the channel | Adopt as head, status `ok` (recovery: it states the whole setting) |
+   | 7 | `X.seq <` the first seq this device holds (a newcomer meeting an older record) | Ignore; take no key from it |
+   | 8 | Anything else | Fork or missed record: status `closed` |
 
-   Rows are checked in order; row 5 comes before row 7, so an authorized
-   live switch always recovers a closed or forked channel. It cannot be
-   replayed: MLS refuses a replayed message, and a key opened before the
-   removal floor is never used (decision 5).
-   - A sender applies its own proposal only when it comes back in sync
-     order, never at send time. Until then it seals as before the change.
-   - A `closed` channel seals under random keys, hands over no key, and
-     shows an error until row 5 recovers it.
-   - Newcomers use the same table; their first record comes from the
-     add-time `history_sync` (row 1).
+   - **Why the tie-break.** Two rekeys after the same removal are both
+     safe (each key is fresh, I6); only agreement matters. Settling them
+     by hash instead of by arrival means a server that shows two devices
+     different rekeys gets convergence at the next report, not a closed
+     channel. Rekeys exist only in `full` channels, so closing on them let
+     a server close exactly the `full` channels and watch the repair
+     (review finding 1; Trace 3). Posts sealed under a losing key are a
+     gap for later newcomers. Switches keep row 5: they carry an admin's
+     intent, and the actor is told.
+   - **Recovery** (row 6) requires a `seq` above anything seen, so a
+     server cannot hold back an old switch and deliver it after the
+     channel closed (review finding 5). MLS refuses a replayed message,
+     and a key opened before the removal floor is never used (decision 5).
+   - **Own proposals.** A device chains a proposal only from its applied
+     head and keeps at most one pending per channel. It applies its own
+     proposal only when it comes back in sync order; until then it seals
+     as before the change. If its switch, move or create loses (row 5),
+     comes back invalid, or does not come back within a timeout, the app
+     tells the actor the change did not go through. A rekey that loses
+     under row 3 needs nothing: the winner rekeyed.
+   - A `keyless`, `unsure` or `closed` channel seals under random keys,
+     hands over no key and proposes no rekey. `closed` shows an error
+     until row 6 recovers it.
    - **Authority** (D80, checked against the device's C4 state for the
      shared group, `governance.dart` `roleOf`):
      - `switch` and `move`: the actor's role is admin or owner.
@@ -212,10 +265,9 @@ and private-channel groups) is sent in two parts:
        this before C7 wires it; C7 follows whichever rule C4 records.
      - `rekey`: the actor is a current member of the group, and the
        record it chains from (`prev`) opened a `full` generation that is
-       stale on this device with `stale_since = close_epoch` (decision 5).
-       Judged against `prev`, not the current head, so a duplicate rekey
-       is valid and loses by row 4.
-   - Worked trace: "Trace 2" below.
+       stale on this device with `stale_since = close_epoch` (decision 5;
+       newcomers: decision 5, "Newcomers").
+   - Worked traces: Trace 2 (rows) and Trace 3 (tie-break).
 
 5. **Removal floor, `history_sync` and the membership barrier.**
    - **Epochs.** A message's epoch is the epoch it was encrypted in. A
@@ -230,14 +282,16 @@ and private-channel groups) is sent in two parts:
      a record applied late still gets the right value). A generation is
      **fresh** when its opening record's `epoch >= floor` of the group it
      lives in, and **stale** otherwise. Every member computes the same,
-     because removal commits are ordered by MLS. A newcomer applied no
-     earlier removal, so it relies on its `history_sync` sender for those
-     (trust limits).
-   - **Stale or unsure means no key use.** While a channel's generation is
-     stale, or its status is `unsure` or `closed`, the device seals posts
-     under random keys, hands over a random `key_c`, and holds edits
-     (decision 7). This replaces revision 3's per-device "rekey due" note:
-     every device knows a rekey is due.
+     because removal commits are ordered by MLS.
+   - **Newcomers** (review finding 3). A newcomer's removal list starts at
+     its join epoch and its floor is unset until it applies a removal, so
+     it treats a generation opened before its join as fresh until then. For a rekey of a generation
+     opened before its join it accepts any `close_epoch` with
+     `E_open < close_epoch <= join epoch`, because it cannot know earlier
+     removals; it trusts its `history_sync` sender for them (trust limits).
+   - **No key use unless fresh and `ok`.** While a channel's generation is
+     stale, or its status is not `ok`, the device seals posts under random
+     keys and hands over a random `key_c` (edits: decision 7).
    - **`history_sync`: one message after every membership commit.** After
      every add or remove commit in any community group, whatever the
      modes, the committer sends one group-level message (no `channel_id`).
@@ -247,55 +301,68 @@ and private-channel groups) is sent in two parts:
      - `ok`, stale `full` channel: **a rekey proposal**. `key_c` is a new
        `CHK_{g+1}`; the slot holds the rekey record (`close_epoch =
        stale_since`) and a wrap of generation `g`.
-     - Any other channel (`members_from_join`, `unsure`, `closed`, or a
-       device without chain state): `key_c` random, slot = head (or 64
+     - Any other channel (`members_from_join`, `keyless`, `unsure`,
+       `closed`, or no chain state): `key_c` random, slot = head (or 512
        zero bytes for no head). A random key never counts as a rekey.
    - **Barrier** (mode-independent): a device does not stage a membership
      commit in a group until it has applied a valid `history_sync` naming
      that group's latest membership commit (`for_epoch`, below). Every
      membership commit gets one in every mode, so this shows the server
-     nothing. It guarantees that add-time slots are computed after the
-     removal's rekey, so a newcomer is never handed a key a removed member
-     holds (Trace 1). It applies to removals too: a second removal waits
-     for the first one's rekey, so each rekey closes at the right epoch.
+     nothing. Add-time slots are then computed after the removal's rekey,
+     so a newcomer is never handed a key a removed member holds (Trace 1).
+     A second removal waits for the first one's rekey, so each rekey
+     closes at the right epoch.
    - **Missing or racing `history_sync`.** If none follows a membership
      commit, C0's reconcile coordinator sends one; every other device
      waits a jittered delay that grows with group size and cancels when it
      applies a **valid** one for that commit (`for_epoch` is inside the
      body, so a stripped body cancels nothing); a device whose delay runs
-     out sends its own.
-     So every device either applies one or sends one, and the barrier
-     always clears. Duplicates resolve per slot by the ordering table
-     (row 2 or row 4). No device ever sends a second `history_sync` for a
-     reason that depends on a mode.
+     out sends its own. A device that has its own membership commit queued
+     (a revocation, a kick) does not wait the delay: it sends the missing
+     `history_sync` at once, so a revocation is not held behind an offline
+     committer (same in every mode). Every device either applies one or
+     sends one, so the barrier always clears. Duplicates resolve per slot
+     by rows 2, 3 and 5. No device ever sends a second `history_sync` for
+     a reason that depends on a mode.
    - **`history_sync_request`.** A newcomer that has applied no
      `history_sync` for the commit that added it within a fixed timeout
      sends one `history_sync_request` (group-level). Whether it sends
      depends only on whether the committer's message arrived, never on
      modes. Answering follows the same jitter rule.
    - **Handover.** Newcomers added by the commit read `key_c` for each
-     channel, check it against the slot record's `chk_commit` (a mismatch
-     means no key: the slot was random), and so hold the current key and
-     setting of each channel from one fixed-size message. C3/C4 visibility
-     holds because private channels are their own groups.
+     channel and check it against the slot record's `chk_commit`. A match
+     gives status `ok`; a mismatch (a random slot from a `keyless`,
+     `unsure` or `closed` sender) gives the head with status **`keyless`**.
+     A `keyless` channel becomes `ok` when a later valid `history_sync`
+     slot reports the same head with a matching key, or a record that
+     carries its key becomes the head. C3/C4 visibility holds because
+     private channels are their own groups.
    - **Backward wrap.** A rekey slot is sealed under the new key and wraps
      the previous generation (`g`, `CHK_g`, its group and opening epoch;
      its end is the record's `close_group_id`/`close_epoch`). A newcomer
      holding the current `CHK` walks back through stored `history_sync`
-     bodies, within its fetch depth (decision 10), to every generation of
-     the current period. Key use stops at the period start (a switch
-     record wraps no earlier key, owner round 2); the fetch never stops
-     early there, or its depth would show when the period began.
+     bodies (and a narrowing move's message, decision 11), within its
+     fetch depth (decision 10), to every generation of the current period.
+     Key use stops at the period start (a switch record wraps no earlier
+     key, owner round 2); the fetch never stops early there, or its depth
+     would show when the period began.
    - **Unsure.** A device marks every `full` channel of a group `unsure`
-     when, in that group, it meets any message it could not fully apply: a
+     when, in that group, it meets a message it could not fully apply (a
      P1 `invalid` body, a D54 undecryptable message, a message refused as
-     `SENDER_REMOVED`, or a message passed over as expired or beyond the
-     past-epoch window (I33). Any of them could have been a record. It
-     clears only by row 3 (a valid record chaining from the head) or row 5
-     (a live admin switch). A quiet channel may stay `unsure` until its
-     next record, usually the rekey after the next removal: that is a gap
-     (I3), never a leak. A newcomer whose slots disagree uses the table
-     too: a difference that is not a direct successor is row 7.
+     `SENDER_REMOVED`, or one passed over as expired or beyond the
+     past-epoch window, I33), and marks one channel `unsure` when a live
+     post in it carries a signed `g` above the device's current
+     generation (the sender applied a record this device did not). It
+     clears only by row 4 or row 6 with a record whose `epoch` is above
+     the triggering message's epoch, so a concurrent loser cannot clear
+     it (review finding 6). A quiet channel may stay `unsure` until its
+     next record, usually the rekey after the next removal: a gap (I3),
+     never a leak.
+   - **One local transaction.** Every C7 change one message causes (head,
+     known hashes, keys, status, floor, held edits, a row's generation)
+     commits in the same local transaction as that message's MLS state and
+     cursor (D22, D23). A crash can then never apply the MLS step and lose
+     the record.
 
    **`history_sync` body layout.** One sealed body, then `N` slots:
 
@@ -310,7 +377,7 @@ and private-channel groups) is sent in two parts:
                      lp(community_id) | lp(channel_id_i) | lp(sender_device_id) | lp(action_id))
    K_i  = HKDF(slot_key_i, "veritra-c7-enc-v1", "")
    kc_i = HKDF(slot_key_i, "veritra-c7-kc-v1", "")
-   slot_plain_i = record (512) | wrap (128) = 640 bytes
+   slot_plain_i = full-form record (512) | wrap (128) = 640 bytes
    wrap = u32 g_prev | CHK_prev[32] | lp(group_id_prev) | u64 E_open_prev,
           zero-padded to 128; all zeros when unused
    ```
@@ -319,9 +386,10 @@ and private-channel groups) is sent in two parts:
      follows. `sig` in body0 covers the padded VAP1 as for any message;
      each slot record carries its own signature.
    - Size: `P(N) + 124 + 700 × N`, a function of `N` only (the server
-     knows `N`). At C3's limit of 500 channels that is 372,652 bytes, about
-     497 KB in base64, inside the 1 MiB request read limit. VAP1's decoder accepts padding beyond the smallest
-     bucket; receivers refuse any other length.
+     knows `N`). At C3's limit of 500 channels that is 372,652 bytes,
+     about 497 KB in base64, inside the 1 MiB request read limit. VAP1's
+     decoder accepts padding beyond the smallest bucket; receivers refuse
+     any other length.
    - `kc_i` comes from the per-message `slot_key_i`, so a `full` channel's
      slot never repeats a value across messages.
    - A reader of a stored `history_sync` (newcomer, backward walk) has no
@@ -331,13 +399,13 @@ and private-channel groups) is sent in two parts:
 6. **Windows.** Generation `g` is valid in its group from its opening
    record's (or wrap's) `epoch` (`E_open`) to the closing record's
    `close_epoch` (`E_close`), exclusive. A newcomer accepts a body sealed
-   under `g` only if the signed `group_id` is `g`'s group, the signed
-   epoch equals the epoch the history route reports, and
-   `E_open <= epoch < E_close`. Bodies in the closing epoch are dropped (a
-   gap, I3). A rekey's `E_close` is `stale_since`, the first epoch the
-   removed device is not in; honest devices sealed nothing under `g` at or
-   after it (they stop at the removal), and the window drops anything
-   that was.
+   under `g` only if the signed `g` is the generation whose key opened it,
+   the signed `group_id` is `g`'s group, the signed epoch equals the epoch
+   the history route reports, and `E_open <= epoch < E_close`. Bodies in
+   the closing epoch are dropped (a gap, I3). A rekey's `E_close` is
+   `stale_since`, the first epoch the removed device is not in; honest
+   devices sealed nothing under `g` at or after it (they stop at the
+   removal), and the window drops anything that was.
 
 7. **Targeted actions follow their target.** Every local row stores the
    period and generation its body was sealed under (live members learn it
@@ -345,49 +413,55 @@ and private-channel groups) is sent in two parts:
    knows it). An action that names a target (`edit`, `delete`, `reaction`,
    `pin`, `poll_vote`, `poll_close`, `admin_delete`) is sealed under the
    current fresh generation only if its target was sealed in the current
-   period, and under a random key otherwise. So an edit's new text never
-   reaches a newcomer who could not read the post. A `reply` carries only
-   `reply_to_id` (the quote is resolved locally, `docs/crypto.md` W7 §4),
-   so it is a post.
-   - **Edits after a removal or while unsure.** From applying a removal
-     until applying that removal's `history_sync`, a device holds its
-     edits in **every** channel of the group (the D68 pattern; holding only
-     in `full` channels would show which are `full`). After that, an edit
-     whose channel is still stale or `unsure` stays held until it is fresh
-     and `ok`, for at most 24 hours; then it is sealed under a random key
-     (newcomers see the earlier text: a gap). The UI shows a held edit as
-     pending.
-   - **Deletes reach the history route.** In a community conversation an
-     author's delete is the W7 `delete` payload **plus** a server call that
-     marks the target `history_hidden` (target's author only). The history
-     route never serves a hidden body; sync keeps serving envelope and body
-     until retention removes them, so no member meets a missing body (which
-     would make its group `unsure`). The same in every mode, so newcomers
-     never fetch a deleted post, whatever key sealed it. Deletes are not
-     held. (The review called this optional; it is adopted because a
-     delete sealed under a random key during a stale or `unsure` spell
-     would otherwise leave the post readable to newcomers.)
+   period and the channel is `ok`, and under a random key otherwise. So an
+   edit's new text never reaches a newcomer who could not read the post.
+   A `reply` carries only `reply_to_id` (the quote is resolved locally,
+   `docs/crypto.md` W7 §4), so it is a post.
+   - **Edits after a removal.** From applying a removal until applying that
+     removal's `history_sync`, a device holds its edits in **every**
+     channel of the group (the D68 pattern; the same in every mode). That
+     is the only hold. An edit in a channel that is then still stale or not
+     `ok` is sealed under a random key at once: newcomers see the earlier
+     text (a gap), and no hold depends on a mode (review finding 13).
+   - **Deletes reach the history route.** In a community conversation a
+     delete is the W7 `delete` (author) or `admin_delete` (moderator, C5)
+     payload **plus** a server call that marks the target
+     `history_hidden`. The server allows it for the target's sender
+     account, or for a moderator role it holds for that conversation (the
+     server enforces built-in roles, D80). The history route never serves
+     a hidden body; sync keeps serving envelope and body until retention
+     removes them, so no member meets a missing body. The same in every
+     mode, so newcomers never fetch a deleted post, whatever key sealed it.
+     Deletes are not held. C5's planned server redaction
+     (`docs/designs/C5-moderation.md`, "Delete others' messages") becomes
+     this call in community conversations, where C7 refuses in-place
+     redaction (server section). Residual: a moderator hiding a post from
+     before its own join shows that channel was `full` (residuals table).
 
-8. **Who verifies a signature with which key.**
-   - **Live members** need the key OpenMLS authenticated the sender with.
-     Today `pm_crypto_group_decrypt` (`crypto/rust/src/ffi.rs:1521`)
-     returns only the plaintext, and `Device::decrypt` in `mls.rs` notes
-     that past-epoch signature keys are not exposed. C7 adds a new decrypt
-     call (ABI below) returning the plaintext, the message epoch and the
-     signature key of the current-tree leaf whose credential matches the
-     sender. A past-epoch message is accepted only while its sender is
-     still in the roster (D80 Q-003), so that leaf exists. This rests on
-     one invariant: a device's credential key never changes. `self_update`
-     reuses the device's signer with default leaf parameters, and a
-     device's own leaf is checked against `signing_public_key()`; the
-     build adds a receive-side check that an Update keeps the leaf's
-     signature key, or C7 cannot rely on it.
-   - Live members check `sig` with that key, and that the signed epoch and
-     `group_id` equal the message's. A mismatch is a P1 `invalid` row.
-   - **Newcomers**, for a sender still in the group: a new read of a
-     member's signature key from the current tree. For a sender no longer
-     in the group, the only source is the server's device directory:
-     owner question B.
+8. **Signatures.**
+   - **Live members** need no signature check: MLS authenticates the
+     reference, which fixes the body's hash. They read the signed `g` only
+     for the `unsure` trigger (decision 5). A body that fails to parse is a
+     P1 `invalid` row as above.
+   - **Newcomers** verify `sig` and that its `g` is the generation whose
+     key opened the body. For a sender still in the group, the key comes
+     from a new read of a member's signature key from the current tree
+     (ABI below). For a sender no longer in the group, the only source is
+     the server's device list: owner question B.
+   - **Credential keys never change** (review finding 9). The member-key
+     read returns today's key, so C7 requires that a device's leaf
+     signature key never changes. `self_update` reuses the device's signer
+     with default leaf parameters, but `inspect_commit`
+     (`crypto/rust/src/mls.rs:1114-1129`) checks only that an Update or
+     path keeps the **identity**. The C7 ABI step adds the signature-key
+     comparison there, with a test that an Update changing the key is
+     refused. Without it a member could rotate its key and make its own
+     earlier posts unverifiable to newcomers (a gap), and L1's binding
+     would have nothing stable to bind.
+   - Records are verified by every device (decision 4), because a record
+     is checked against the actor's authority and may arrive as a report.
+     The actor's key comes from the member-key read, or, for a live
+     compact proposal, the same read for the MLS-authenticated sender.
 
 9. **What each side reads.**
 
@@ -409,14 +483,20 @@ and private-channel groups) is sent in two parts:
     other; unread state and search stay local (C0). There is **no** server
     paging in community conversations (server section).
 
-11. **Moves** (C0/C3) are `move` records. A generation lives in one
-    group, so a move of a `full` channel starts a new generation in the
-    new group. The move record is proposed in the new group and names the
-    old group in `close_group_id`, with that group's epoch in
-    `close_epoch`. A move to a narrower audience (open to private)
-    continues the period and wraps the previous key; a wider one (private
-    to open) starts a new period with no wrap. Freshness of the new
-    generation is judged by the new group's floor.
+11. **Moves** (C0/C3) are `move` records, proposed in the **new** group. A
+    generation lives in one group, so a move of a `full` channel starts a
+    new generation there.
+    - The compact form adds `lp(close_group_id)` (the old group) and a
+      128-byte wrap field, **always** present: for a narrowing move (open
+      to private) of a `full` channel it wraps the previous generation like
+      a rekey slot, and the move message's body is sealed under the new
+      key, so a newcomer walking back opens it; otherwise the field is 128
+      random bytes. A widening move (private to open) starts a new period
+      with no wrap. The size is the same in every mode (decision 3).
+    - `close_epoch` is the old group's epoch when the actor sent the move,
+      or the old generation's `stale_since` if that is set and smaller
+      (review finding 12), so a move never stretches a stale window.
+    - Freshness of the new generation is judged by the new group's floor.
 
 ## Trace 1: removal, then an add
 
@@ -426,10 +506,10 @@ seq 5 at epoch 10. Members A, B, R and others hold `CHK_3`.
 | Step | What happens | Keys | R |
 |---|---|---|---|
 | 1 | A commits the removal of R, producing epoch 20 | Every device applying it: `floor = 20`, `stale_since(g3) = 20`. `C` is stale: posts sealed under random keys, no handover, edits held in every channel | Holds `CHK_3`; in no epoch `>= 20` |
-| 2 | B wants to add N | Barrier: B has not applied a `history_sync` with `for_epoch = 20`, so B waits. (Revision 3 let B commit epoch 21 and hand `CHK_3` to N: blocker 1) | |
+| 2 | B wants to add N | Barrier: B has not applied a `history_sync` with `for_epoch = 20`, so B waits | |
 | 3 | A sends `HS20` at epoch 20 | Slot `C`: rekey proposal seq 6, `g = 4`, epoch 20, `close_epoch = 20`, `key_c = CHK_4` (new); wrap of g3 (`CHK_3`, `G`, 10) | Cannot read epoch 20 |
-| 4 | Everyone applies `HS20` (row 3) | Head seq 6; g4 opened at 20 `>= floor`: fresh. Posts seal under `CHK_4`; held edits go out | |
-| 5 | B commits the add, producing 21, and sends `HS21` | Slot `C`: `key_c = CHK_4`, head seq 6 (report). N checks `chk_commit`, holds `CHK_4`, fetches `HS20`'s body (epoch 20 is before its join), opens slot `C` with `CHK_4`, learns g3 with window [10, 20) | |
+| 4 | Everyone applies `HS20` (row 4) | Head seq 6; g4 opened at 20 `>= floor`: fresh. Posts seal under `CHK_4`; held edits go out | |
+| 5 | B commits the add, producing 21, and sends `HS21` | Slot `C`: `key_c = CHK_4`, head seq 6 (report). N checks `chk_commit`, holds `CHK_4` (`ok`), fetches `HS20`'s body (epoch 20 is before its join), opens slot `C` with `CHK_4`, learns g3 with window [10, 20) | |
 
 Result: N reads g3 posts from epochs 10 to 19 and g4 posts from 20 on. R
 holds only `CHK_3`; nothing at epoch 20 or later is sealed under it.
@@ -437,8 +517,8 @@ holds only `CHK_3`; nothing at epoch 20 or later is sealed under it.
 Variants:
 
 - **A goes offline after step 1.** The coordinator K sends `HS20` with its
-  own rekey. If D's jitter also fires, D's slot is a proposal with the same
-  seq and `prev`: row 4, stale; D discards its key. Everyone holds K's key.
+  own rekey. If D's delay also runs out, D's slot is a rekey sibling of
+  K's: row 3, the lower hash wins on every device.
 - **A switch sent before the removal lands after it.** Say `C` was
   `members_from_join` at seq 5. Admin X, not yet having applied the
   removal, switches it on at epoch 19 (seq 6, g4, new key in the body); R
@@ -448,14 +528,8 @@ Variants:
   The barrier is satisfied (`HS20` was applied), B adds N at 21, and B's
   `HS21` slot is a **rekey proposal** (seq 7, g5, `close_epoch = 20`,
   wraps g4). N gets `CHK_5`; R holds `CHK_4` only. Posts between 20 and
-  21 were sealed under random keys (a gap). The same happens when a rekey
-  loses a race to any record that opened a key before the floor.
-- **The server withholds `HS20` from B only.** B cannot add; its delay runs
-  out and it sends `HS20'` with its own rekey (seq 6). Everyone else saw
-  A's first, so B's is row 4 for them, while B, never shown A's, applies
-  its own. B's next `history_sync` reports B's seq 6: row 7 on every other
-  device, `C` closes. N may hold B's key, which R never held. A forking
-  server gets a closed channel and a gap, not a leak.
+  21 were sealed under random keys (a gap).
+- **The server withholds `HS20` from B only:** Trace 3.
 
 ## Trace 2: record ordering
 
@@ -463,20 +537,41 @@ Channel `C`, admins P and Q, member M. Hashes: `h_k = hash(record seq k)`.
 
 | Step | Record received (sync order) | Row | Head after |
 |---|---|---|---|
-| 1 | seq 0 `create` mfj by P, prev zeros (proposal) | 1 | 0 |
-| 2 | seq 1 `switch` full g1 by P, prev `h0` | 3 | 1 (full, g1) |
-| 3 | seq 2 `switch` mfj g2 by P, prev `h1` | 3 | 2 (mfj) |
-| 4 | seq 2 `switch` full g2 by Q, prev `h1` (sent concurrently) | 4: Q's lost race; Q discards its key and re-decides | 2 |
+| 1 | seq 0 `create` mfj g1 by P, prev zeros (proposal) | 1 | 0 |
+| 2 | seq 1 `switch` full g2 by P, prev `h0` | 4 | 1 (full, g2) |
+| 3 | seq 2 `switch` mfj g3 by P, prev `h1` | 4 | 2 (mfj) |
+| 4 | seq 2 `switch` full g3 by Q, prev `h1` (sent concurrently) | 5: Q's lost race; Q's app tells Q | 2 |
 | 5 | `history_sync` slot from M reporting seq 2 (P's bytes) | 2 | 2 |
-| 6 | A rekey proposal seq 2 from M, prev `h1` | Invalid (no removal made g1 stale): ignored | 2 |
-| 7 | A slot from a device reporting seq 2 with Q's bytes | 7: fork (that device applied Q's), status `closed` | 2, closed |
-| 8 | seq 3 `switch` full g3 by Q, live, prev `h2(Q)` | 5: live admin switch on a closed channel, recovers | 3 (full, g3), ok |
-| 9 | seq 5 rekey proposal (seq 4 never arrived) | 7: missed record, `closed` | 3, closed |
+| 6 | A rekey proposal seq 2 from M, prev `h1` | Invalid (no removal made g2 stale): ignored | 2 |
+| 7 | A slot from a device reporting seq 2 with Q's bytes (g3, same as P's: valid, since `g` is compared only with `prev`'s g2) | 8: fork (that device applied Q's), status `closed` | 2, closed |
+| 8 | seq 3 `switch` full g4 by Q, live, prev `h2(Q)` | 6: live admin switch with seq 3 above the highest seen (2): recovers | 3 (full, g4), ok |
+| 9 | seq 5 rekey proposal (seq 4 never arrived) | 8: missed record, `closed` | 3, closed |
 
-A newcomer starts at row 1 with the first slot it sees. A second add-time
-slot is row 2 when it agrees, row 4 when it is a duplicate rekey
-proposal, row 6 when it is older than what the newcomer holds, and row 7
-otherwise.
+The vectors pin rows 2, 3, 5 and 8 with records of equal `g`. A newcomer
+starts at row 1 with the first slot it sees. A second add-time slot is row
+2 when it agrees, row 3 when it is a rekey sibling, row 7 when it is older
+than what the newcomer holds, and row 8 otherwise.
+
+## Trace 3: the server withholds one `history_sync` (review finding 1)
+
+As Trace 1, step 1 done: `C` is `full`, g3 stale since 20. The server
+hides A's `HS20` from B only.
+
+| Step | What happens | Others (A, K, M) | B, then N | R |
+|---|---|---|---|---|
+| 1 | A sends `HS20`: rekey `X_A` (seq 6, g4, prev `h5`, epoch 20, key `K_A`) | Apply `X_A` (row 4) | Never shown it | Out since 20 |
+| 2 | B's delay runs out; B sends `HS20'`: rekey `X_B` (seq 6, g4, prev `h5`, epoch 20, key `K_B`) | Row 3 sibling. Say `hash(X_A) < hash(X_B)`: keep `X_A`, remember `hash(X_B)` | B applies its own `X_B` (row 4) | |
+| 3 | B adds N (barrier cleared by `HS20'`), producing 21; `HS21` reports `X_B` with `key_c = K_B` | Row 2 (known sibling): no-op. **Nothing closes** | N: row 1, head `X_B`, `ok`, holds `K_B` | Holds neither key |
+| 4 | Next membership commit; its `HS` from M reports `X_A` with `key_c = K_A` | Row 2 | B and N: row 3, `X_A` lower: switch head to `X_A`, take `K_A` from the slot | |
+
+If instead `hash(X_B) < hash(X_A)`, the others switch to `X_B` at step 2
+(they read `K_B` in `HS20'`'s body0, sent at epoch 20), and B never needs
+to move. Either way every device ends on one rekey without any message a
+mode decides. Posts B and N sealed under `K_B` in between are a gap for
+later newcomers. R holds neither key (both opened at 20). A server that
+also hides every later `history_sync` from B keeps B on `K_B`: B hands a
+fresh key to its newcomers, a gap, never a leak. Revision 4 closed `C`
+at step 3 (its row 7), and only `full` channels have rekeys.
 
 ## Server: wire, storage, routes
 
@@ -508,25 +603,25 @@ otherwise.
   everywhere else", for C0 and C2 to take with C7.
 - **Storage.** Migration (next free number): `envelope_bodies(message_id PK
   REFERENCES message_envelopes, conversation_id, channel_id NULL,
-  created_at, expires_at, body BLOB)`, written in the send transaction.
-  Sync serves the body with its envelope, read from this table, not copied
-  into `sync_events`. Admission limits (D38) count body bytes. Revision 2's
-  columns, table, side field and 409 were never built and stay dropped.
+  created_at, expires_at, history_hidden INTEGER NOT NULL DEFAULT 0, body
+  BLOB)`, written in the send transaction. Sync serves the body with its
+  envelope, read from this table, not copied into `sync_events`.
+  Admission limits (D38) count body bytes. Revision 2's columns, table,
+  side field and 409 were never built and stay dropped.
 - **Pruning and deletes.** A body lives exactly as long as its envelope:
   the conversation's retention (and per-channel retention, D51) sets
-  `expires_at` alike, and the sweeper removes both. `envelope_bodies`
-  gains `history_hidden` (decision 7), set by
-  `POST /api/v1/messages/{id}/history-hide` from the envelope's sender
-  account only. C5's moderator delete redacts the envelope today
-  (`docs/designs/C5-moderation.md`); if it ever removes the body, members
-  who have not synced the target turn `unsure`, for C5 and C7 to settle.
-  Switching to `members_from_join` deletes nothing on the server. The
-  confirm dialog says: "People who join later won't see earlier posts.
-  Members who already have them keep them."
+  `expires_at` alike, and the sweeper removes both.
+  `POST /api/v1/messages/{id}/history-hide` sets `history_hidden` for the
+  envelope's sender account or a moderator role in that conversation
+  (decision 7), with an id-and-kind audit entry as C5 keeps. Switching to
+  `members_from_join` deletes nothing on the server. The confirm dialog
+  says: "People who join later won't see earlier posts. Members who
+  already have them keep them."
 - **Legacy edit and delete routes refused.** `UpdateMessageEnvelopeWithSyncEvent`
   and `DeleteMessageEnvelopeWithSyncEvent` (`message_store.go:309`, `:354`)
   rewrite an envelope in place; in community conversations they answer
-  409. Edits are new envelopes.
+  409, for authors and moderators alike. Edits are new envelopes; deletes
+  are payloads plus `history-hide`.
 - **No server paging in community conversations.** `ListMessages`
   (`message_store.go:529`, `GET /api/v1/conversations/{id}/messages`)
   serves every envelope with no join filter, and the chat screen pages
@@ -538,13 +633,13 @@ otherwise.
 - **History fetch.** `GET /api/v1/conversations/{id}/history?channel_id=&before=&limit=`,
   per calling device, the only route that serves pre-join bodies. It
   returns `{message_id, sender_device_id, action_id, channel_id,
-  created_at, epoch, body}` for unexpired, undeleted, not `history_hidden` envelopes from
-  unblocked senders that sync did not give this device: those before its
-  `joined_after_event_id`, and those after it but in an epoch before its
-  `joined_epoch` (the I51 withholding in `mls_group_store.go:779-783`).
-  `channel_id` empty means the group-level stream. Current member devices
-  only; the same for every channel and mode. References are never served
-  there.
+  created_at, epoch, body}` for unexpired, undeleted, not
+  `history_hidden` envelopes from unblocked senders that sync did not give
+  this device: those before its `joined_after_event_id`, and those after
+  it but in an epoch before its `joined_epoch` (the I51 withholding in
+  `mls_group_store.go:779-783`). `channel_id` empty means the group-level
+  stream. Current member devices only; the same for every channel and
+  mode. References are never served there.
 - **Authority.** The server cannot check records. Apps check them against
   C4's signed role state (built-in roles), never the server-reported role
   (D80). C7 switches cannot ship before that state exists.
@@ -556,21 +651,21 @@ otherwise.
 | A newcomer fetching deeper than the fixed prefetch, in some channels only | Those channels are `full` | No paging (above) and a fixed depth. Owner question 1 |
 | A newcomer downloading a pre-join attachment | That post's channel was `full` then | Owner question 2 |
 | A newcomer reporting a pre-join post (C6 `POST /api/v1/reports` carries `envelope_id` in clear) | That post's channel was `full` then | C6 moves the envelope id inside the sealed report for community reports, or apps do not offer reports on pre-join posts. For C6 to decide |
-| Message sizes | The W7 256-byte bucket, as today; records and `history_sync` have fixed shapes | Coarser padding (L2) |
+| A moderator hiding a post from before its own join | That post's channel was `full` then | Apps do not offer moderator delete on posts from before the moderator's join (they can still ask an earlier moderator), or accept. For C5 to decide; default: accept |
+| Message sizes | The W7 256-byte bucket, as today. Create and switch messages are in the 512-byte bucket like short posts (decision 3); moves are 768 bytes, but the server sees moves anyway; `history_sync` has a fixed shape | Coarser padding (L2) |
 | Per-channel retention (D51) | A long retention on one channel hints that it keeps history | The UI never couples the two settings |
-| Edits sent in a burst once a stale channel is rekeyed | Only after a lost rekey race: that some channel in the group is `full` | Rare; accepted |
-| Author deletes (`history-hide`) | Which post its author deleted, in every mode (as for other conversations today) | None needed |
-| Membership commits waiting for a `history_sync` | Nothing about modes (every commit gets one) | None needed |
-| A `history_sync` from a second sender | A committer went offline | None needed |
+| Author and moderator deletes (`history-hide`) | Which post was deleted, in every mode (as for other conversations today) | None needed |
+| Membership commits waiting for a `history_sync`; edits held after a removal | Nothing about modes (every commit gets one; holds are in every channel) | None needed |
+| A `history_sync` from a second sender | A committer went offline, or the server hid one from it | None needed |
 
 ## Interaction with MLS and C4
 
 - No extra commit for a switch; records are application messages. Removal
   commits lead to rekeys inside the next `history_sync`; adds never rekey
   unless a generation is stale.
-- The barrier slows a membership commit that follows another by the time
-  until the first one's `history_sync` lands (normally the committer's
-  own, sent right after). Revocation removals wait too.
+- The barrier slows a membership commit that follows another until the
+  first one's `history_sync` lands (normally the committer's own, sent
+  right after; a device with a queued commit sends a missing one at once).
 - Records and bodies from a past epoch are applied within OpenMLS's
   past-epoch window; outside it they are lost and the group turns
   `unsure`.
@@ -583,11 +678,23 @@ otherwise.
 
 - A newcomer verifies signatures, the chain from its first record, key
   commitments and windows, but cannot check C4 authority for records
-  older than its join; it trusts the member who sent its `history_sync`,
-  which could also withhold keys.
+  older than its join, nor removals before its join; it trusts the member
+  who sent its `history_sync`, which could also withhold keys.
+- **A device that never sees a record stays out of step** (review finding
+  6). If the server withholds a whole envelope (a switch off, say) from
+  one device, nothing triggers `unsure`: no message failed. That device
+  keeps sealing under the old key (I1 still holds: it believes the channel
+  is `full`) and, if it commits an add, hands the old period's key to its
+  newcomer, who may then read the old period although the channel was
+  switched off (I4 does not hold for that newcomer). Other devices'
+  later `history_sync` reports bring both back by row 4; a live post
+  with a higher signed `g` makes it `unsure`. Accepted until L2-style
+  sync transparency; the server must target one committing device.
 - A malicious member could stretch a window it describes; it can only
   expose posts real senders sealed under a `full` generation, which that
   member could already read and leak.
+- A server that strips bodies can make `full` channels `unsure` (history
+  gaps) without seeing any difference; it can already delete bodies.
 - Departed senders' keys: owner question B.
 - Until L1, a server that adds a hidden device can read new live posts and
   forge history from that device: the same limit as live groups today.
@@ -609,51 +716,62 @@ otherwise.
   §1 marks frozen (VAP1 stays frozen, one layer down, inside the body).
   No release exists, so no compatibility path (C0 recreates demo
   communities).
-- **W7 types** (hidden): `history_change`, `history_sync`,
-  `history_sync_request`. Belongs to the W7 section of `docs/crypto.md`.
+- **W7 types** (hidden): `history_change` (body `{"r": base64(compact
+  record)}`), `history_sync`, `history_sync_request`. Belongs to the W7
+  section of `docs/crypto.md`.
 - **Rust ABI 13 or later**, numbered when built and coordinated with C4's
   ABI work (whichever lands first takes 13; ABI 12 is C6's). Approved in
   principle (D80), needs independent review:
-  - a decrypt that also returns the epoch and the sender leaf's signature
-    key (a new export; `pm_crypto_group_decrypt` stays);
+  - a decrypt that also returns the message's epoch (a new export;
+    `pm_crypto_group_decrypt` at `crypto/rust/src/ffi.rs:1521` stays);
   - a read of a member's signature key from the current tree, by account
     and device id;
+  - `inspect_commit` refuses an Update or path that changes a leaf's
+    signature key (decision 8);
   - credential-key sign and Ed25519 verify over a fixed domain allowlist
     (`veritra-c7-post-sig-v1`, `veritra-c7-history-v1`);
   - `c7_derive` (HKDF as above) and `c7_seal`/`c7_open` (key commitment,
     AES-256-GCM, random nonce), on existing dependencies (owner question
     A).
-  The core exposes no MLS exporter today; C7 does not need one.
-- **Server:** `sealed_body`, `envelope_bodies`, the history route, the
-  group-level exception, the C2 change, the replay check, refusals of
-  legacy edit/delete and paging in community conversations, the
-  `history-hide` call.
-- **Local DB:** per channel the head, applied record hashes, status, and
-  the current period's keys with their windows; per group the floor; per
-  row its period and generation; held edits. In the sealed database; not
-  in backups or K2 bundles.
+  If the owner chooses exporter-derived rekeys (owner question C), an
+  epoch-bound exporter read is added too.
+- **Server:** `sealed_body`, `envelope_bodies` with `history_hidden`, the
+  history route, the group-level exception, the C2 change, the replay
+  check, refusals of legacy edit/delete and paging in community
+  conversations, the `history-hide` call.
+- **Local DB:** per channel the head, known record and sibling hashes,
+  highest seen `seq`, status, and the current period's keys with their
+  windows; per group the floor and removal epochs; per row its period and
+  generation; held edits. In the sealed database, written in the MLS
+  transaction; not in backups or K2 bundles.
 
 ## Build order
 
 1. Independent review of this revision.
-2. Rust ABI with vectors `testing/vectors/c7-*.json` (bodies, slots,
-   records, the ordering table rows, windows, the implicit genesis,
-   `P(N)`), checked by Rust, Go and Dart.
+2. Rust ABI with vectors `testing/vectors/c7-*.json` (bodies, slots, both
+   record forms, every ordering row including rows 2, 3, 5 and 8 with equal
+   `g`, windows, the implicit genesis, `P(N)`, the compact record's
+   512-byte VAP1), checked by Rust, Go and Dart; the Update-key refusal
+   test.
 3. Server: migration, `sealed_body`, replay check, history route,
-   group-level and C2 exceptions, legacy-route and paging refusals.
+   `history-hide`, group-level and C2 exceptions, legacy-route and paging
+   refusals.
 4. Dart: two-part send/receive, records and the ordering table, floor and
-   barrier, `history_sync`, unsure state, targeted-action sealing,
-   backward walk, two-pass import, prefetch.
-5. Flows and tests: two devices, leave, switch both ways, off/on, Trace 1
-   and its variants, Trace 2, lost committer, a stripped body (unsure),
-   and server-side tests that a `full` and a `members_from_join` channel
-   give identical rows, sizes and requests for posts, retries, record
-   messages (both directions), add-time `history_sync`, and the
-   removal-then-add sequence.
+   barrier, `history_sync`, `keyless`/`unsure` states, targeted-action
+   sealing, backward walk, two-pass import, prefetch, all in the MLS
+   transaction.
+5. Flows and tests: two devices, leave, switch both ways, off/on, Traces
+   1, 2 and 3, lost committer, a stripped body (unsure), a newcomer added
+   by an `unsure` committer (keyless), a test that withholding one
+   `history_sync` from one device closes no channel, and server-side tests
+   that a `full` and a `members_from_join` channel give identical rows,
+   sizes and requests for posts, retries, record messages (both
+   directions), add-time `history_sync`, and the removal-then-add
+   sequence.
 
 Depends on: C0 layout, C1 per-conversation sync halting, C3 channel state
-and moves, C4 role state (and its channel-creation rule), C5 deletes, C6
-for the report residual.
+and moves, C4 role state (and its channel-creation rule), C5 deletes
+(`history-hide` in place of redaction), C6 for the report residual.
 
 ## Open questions for the owner
 
@@ -691,11 +809,26 @@ round 2; 3 (ABI) is approved; 4 (server-checked admins) is moot.
    `signing_key` (`identity_store.go:649` only sets `revoked_at`) but
    nulls it when an account is deleted (`account_store.go:170`), so a
    deleted account's posts drop anyway, and (a) needs a route serving a
-   former member device's key to current members; (b) drop departed senders' posts for
-   newcomers; cost: announcements by former admins disappear for every
-   newcomer. **Recommended: (a) with the marker**, because (b) loses much
-   of what `full` channels are for and the forgery needs a removed member
-   plus the server; L1 removes the trust.
+   former member device's key to current members; (b) drop departed
+   senders' posts for newcomers; cost: announcements by former admins
+   disappear for every newcomer. **Recommended: (a) with the marker**,
+   because (b) loses much of what `full` channels are for and the forgery
+   needs a removed member plus the server; L1 removes the trust.
+6. **(C) Rekeys from the MLS exporter.** Instead of a random key in a
+   `history_sync` slot, every member derives the new key itself when it
+   merges a removal: `CHK_{g+1} = HKDF(MLS-Exporter("veritra-c7-rekey",
+   lp(channel_id) | u32(g+1), 32) at the removal's epoch, ...)`. A removed
+   member is not in that epoch and cannot derive it. Gains: no rekey race
+   at all (every member gets the same key, so the tie-break and Trace 3
+   disappear), and no window where a stale channel waits for a message.
+   Costs: a new ABI export of an exporter secret, which must be read at
+   merge time for every `full` channel (OpenMLS exports only the current
+   epoch), more crypto review, and newcomers still need the key from the
+   add-time `history_sync`. Options: (a) keep the random rekey with the
+   tie-break now (this revision); (b) switch to exporter rekeys now; (c)
+   (a) now, and revisit (b) with L1's ABI review. **Recommended: (c)**:
+   the tie-break already removes the leak and the closure, with no new
+   secret leaving the MLS core.
 
 ## Owner decisions (2026-11-01)
 
@@ -708,20 +841,20 @@ round 2; 3 (ABI) is approved; 4 (server-checked admins) is moot.
 - The server must **not** see the history flag: hide it (needs a design change; the sequence/flag handling above assumes server visibility).
 - Crypto ABI additions approved, with independent review.
 
-## Changes in revision 4
+## Changes in revision 5
 
-| Review item | Fix |
+| Review item (revision 4) | Fix |
 |---|---|
-| 1 Removed member reads new posts | Removal floor and fresh/stale generations (I6, decision 5); membership barrier; stale channels rekey in the next `history_sync`; random slots never count as a rekey; no mode-driven second `history_sync`. Trace 1 |
-| 2 Ordering rules contradict | Proposal vs report, one ordering table with exclusive rows, recovery by a live admin switch. Trace 2 |
-| 3 Lost record | `unsure` status with its triggers and what clears it; newcomers use the same table; admin told when its own proposal fails |
-| 4 Signature unverifiable | New decrypt returning epoch and sender key, member-key read, credential-key invariant; departed senders are owner question B |
-| 5 Edits reveal posts | Targeted actions follow the target's period; rows store their generation |
-| 6 Authority undefined | D80 roles via `roleOf`; create follows C4's creation right (C3/C4 to align); implicit genesis |
-| 7 ABI number, dependencies | ABI 13 or later with C4; AES-256-GCM and provider HKDF (owner question A); "C4 takes the same export" removed |
-| 8 `history_sync` unparseable | One layout, `P(N)`, exact size |
-| 9a-f Leaks | Per-message slot `kc`; byte-identical retries and body in the replay check; fixed-shape records; edits held in every channel; no server paging, history route defined; C6 report residual |
-| 10 Deleted post reaches newcomers | Two-pass import; author deletes also hide the body from the history route |
-| 11 Moves | `close_group_id` |
-| 12 C2 refusal | Applies only to envelopes with a `channel_id` |
-| 13 Smaller items | Legacy routes refused; history route serves I51-withheld envelopes and applies blocks; 512-byte record with a version byte; group-level depth; request rule; signature covers padded VAP1; `close_epoch` defined; no C4 governance messages; backup and snapshot exclusion |
+| 1 Server closes exactly the `full` channels | Rekey siblings settle by lowest hash in any order, proposals and reports alike (row 3); losing keys are a gap. Trace 3. Exporter rekeys are owner question C |
+| 2 `g` rule contradicts siblings | `g` compared only with the record `prev` names; siblings share `g`; vectors pin equal-`g` rows |
+| 3 Newcomer state undefined | Newcomer floor starts at its join; `keyless` status; pre-join rekeys accept `close_epoch` in `(E_open, join]` |
+| 4 Record messages visible by size | Compact proposal form, 497 bytes framed: the 512-byte bucket of short posts (computed exactly); moves 768 (already visible) |
+| 5 Old switch reopens a closed channel | Row 6 needs a `seq` above every `seq` seen |
+| 6 Device that misses a record | Trust-limits residual; signed `g` above the current one triggers `unsure`; `unsure` clears only on a later-epoch record |
+| 7 Moderator deletes | `history-hide` for moderators (server-checked role) replaces C5 redaction in communities; residual row |
+| 8 Own proposals | Chain only from the applied head, one pending per channel; actor told on a loss; lost rekeys need nothing |
+| 9 Signatures | Live members need no check; `inspect_commit` must refuse a changed signature key (with test); newcomers check signed `g`; the decrypt returns only the epoch |
+| 10 Crash between MLS and C7 state | One local transaction |
+| 11 Revocations wait behind an offline committer | A device with a queued commit sends a missing `history_sync` at once |
+| 12 Moves | Always-present wrap field in the move message; `close_epoch` capped at `stale_since` |
+| 13 Held edits in `full` channels only | Only the removal hold, in every channel; otherwise random-sealed at once |
