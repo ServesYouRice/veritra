@@ -41,6 +41,7 @@ const (
 	maxListedOwnRequests         = 50
 	maxMembershipInviteUses      = 1000
 	signingKeyLength             = 32
+	inviteSignatureLength        = 64
 )
 
 // MembershipTarget names a group (a conversation of kind group) or a community.
@@ -134,8 +135,8 @@ type inviteRow struct {
 // inviteBindingTx reads what the creating device bound invitation id to.
 func inviteBindingTx(ctx context.Context, q queryRower, invite inviteRow) (domain.InviteBinding, error) {
 	binding := domain.InviteBinding{TargetKind: invite.target.Kind, TargetID: invite.target.ID, InviterAccountID: invite.createdBy}
-	err := q.QueryRowContext(ctx, `SELECT created_by_device_id, creator_signing_key, binding_tag FROM membership_invites WHERE id = ?`, invite.id).
-		Scan(&binding.InviterDeviceID, &binding.InviterSigningKey, &binding.Tag)
+	err := q.QueryRowContext(ctx, `SELECT created_by_device_id, creator_signing_key, binding_tag, binding_signature FROM membership_invites WHERE id = ?`, invite.id).
+		Scan(&binding.InviterDeviceID, &binding.InviterSigningKey, &binding.Tag, &binding.Signature)
 	return binding, err
 }
 
@@ -211,14 +212,17 @@ func targetNameTx(ctx context.Context, q queryRower, target MembershipTarget) (s
 //
 // CreatedByDeviceID is the session's device. SigningKey is the key the app
 // bound into BindingTag; it must equal the device's registered signing key,
-// so a tag over any other key is refused here. The server cannot check the
-// tag itself: that needs the secret.
+// so a tag over any other key is refused here. BindingSignature is the
+// device's v2 signature (64 bytes). The server cannot check the tag (that
+// needs the secret) or the signature (that needs the origin the link names);
+// it keeps both for the joiner.
 type CreateMembershipInviteInput struct {
 	Target            MembershipTarget
 	CreatedBy         string
 	CreatedByDeviceID string
 	SigningKey        []byte
 	BindingTag        string
+	BindingSignature  []byte
 	Locator           string
 	MaxUses           int
 	ExpiresAt         time.Time
@@ -227,7 +231,7 @@ type CreateMembershipInviteInput struct {
 // CreateMembershipInvite stores an invitation for a group or community the
 // actor owns or administers.
 func (s *Store) CreateMembershipInvite(ctx context.Context, input CreateMembershipInviteInput) (domain.MembershipInvite, error) {
-	if !input.Target.valid() || !validLocator(input.Locator) || !validLocator(input.BindingTag) || input.CreatedByDeviceID == "" || len(input.SigningKey) != signingKeyLength || input.MaxUses < 1 || input.MaxUses > maxMembershipInviteUses {
+	if !input.Target.valid() || !validLocator(input.Locator) || !validLocator(input.BindingTag) || len(input.BindingSignature) != inviteSignatureLength || input.CreatedByDeviceID == "" || len(input.SigningKey) != signingKeyLength || input.MaxUses < 1 || input.MaxUses > maxMembershipInviteUses {
 		return domain.MembershipInvite{}, ErrInvalidInput
 	}
 	now := time.Now().UTC()
@@ -268,8 +272,8 @@ func (s *Store) CreateMembershipInvite(ctx context.Context, input CreateMembersh
 	if active >= maxActiveInvitesPerTarget {
 		return domain.MembershipInvite{}, ErrJoinRequestLimit
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO membership_invites(id, community_id, conversation_id, created_by, created_by_device_id, creator_signing_key, binding_tag, locator_hash, max_uses, expires_at, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, community, conversation, input.CreatedBy, input.CreatedByDeviceID, registered, input.BindingTag, hashLocator(input.Locator), input.MaxUses, formatTime(expires), formatTime(now)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO membership_invites(id, community_id, conversation_id, created_by, created_by_device_id, creator_signing_key, binding_tag, binding_signature, locator_hash, max_uses, expires_at, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, community, conversation, input.CreatedBy, input.CreatedByDeviceID, registered, input.BindingTag, input.BindingSignature, hashLocator(input.Locator), input.MaxUses, formatTime(expires), formatTime(now)); err != nil {
 		// A repeated locator: the secret is 256 bits, so this is a client bug or a replay.
 		return domain.MembershipInvite{}, ErrInvalidInput
 	}

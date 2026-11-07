@@ -21,8 +21,7 @@ void main() {
         (tester) async {
       final api = _Api();
       final state = _state(api);
-      final foreign =
-          MembershipInviteLink.generate(origin: 'https://evil.test');
+      final foreign = newInviteLink(origin: 'https://evil.test');
       await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
       await tester.pumpAndSettle();
 
@@ -43,7 +42,7 @@ void main() {
         (tester) async {
       final api = _Api();
       final state = _state(api);
-      final link = MembershipInviteLink.generate(origin: _origin);
+      final link = newInviteLink(origin: _origin);
       api.link = link;
       await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
       await tester.pumpAndSettle();
@@ -78,7 +77,7 @@ void main() {
         (tester) async {
       final api = _Api()..previewDead = true;
       final state = _state(api);
-      final link = MembershipInviteLink.generate(origin: _origin);
+      final link = newInviteLink(origin: _origin);
       api.link = link;
       await tester.pumpWidget(_app(JoinByLinkScreen(state: state)));
       await tester.pumpAndSettle();
@@ -137,7 +136,7 @@ void main() {
           .widgetList<SelectableText>(find.byType(SelectableText))
           .single
           .data!;
-      expect(shown, startsWith('$_origin/join#v1.'));
+      expect(shown, startsWith('$_origin/join#v2.'));
       final made =
           MembershipInviteLink.tryParse(shown, expectedOrigin: _origin)!;
       expect(made.locator, url);
@@ -154,6 +153,18 @@ void main() {
             inviterSigningKey: testDeviceSigningKey,
           ),
           sent.tag);
+      expect(
+          sent.signature,
+          fakeInviteSignature(
+            testDeviceSigningKey,
+            made.bindingMessage(
+              kind: InviteTargetKind.community,
+              targetId: 'comm_1',
+              inviterAccountId: 'acct_owner',
+              inviterDeviceId: 'dev_owner',
+              inviterSigningKey: testDeviceSigningKey,
+            ),
+          ));
 
       await tester.tap(find.byTooltip('Copy link'));
       await tester.pump();
@@ -285,8 +296,9 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: _origin);
 
   final List<String> createdLocators = <String>[];
-  final List<({List<int> signingKey, String tag})> createdBindings =
-      <({List<int> signingKey, String tag})>[];
+  final List<({List<int> signingKey, String tag, List<int> signature})>
+      createdBindings =
+      <({List<int> signingKey, String tag, List<int> signature})>[];
   MembershipInviteLink? link;
   final List<String> previewed = <String>[];
   final List<String> requested = <String>[];
@@ -308,11 +320,16 @@ class _Api extends ApiClient {
     required String locator,
     required List<int> signingKey,
     required String bindingTag,
+    required List<int> bindingSignature,
     int maxUses = 10,
     Duration lifetime = const Duration(days: 7),
   }) async {
     createdLocators.add(locator);
-    createdBindings.add((signingKey: signingKey, tag: bindingTag));
+    createdBindings.add((
+      signingKey: signingKey,
+      tag: bindingTag,
+      signature: bindingSignature,
+    ));
     final invite = MembershipInvite(
       id: 'minv_${invites.length + 1}',
       maxUses: maxUses,

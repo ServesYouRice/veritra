@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "description": "C1 invitation binding v2 (docs/designs/C1-invite-format.md). Inputs fix the link secret, the device signing seed and the bound fields; outputs are the locator, the key commitment, the signed message and the Ed25519 signature under the domain veritra-invite-binding-v2, and the link fragment. Regenerate the Rust-computed outputs: cargo test --lib c7::invite_binding_tests::print_vector -- --ignored --nocapture",
+  "inputs": {
+    "origin": "https://chat.example.org",
+    "secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "signing_seed_hex": "3333333333333333333333333333333333333333333333333333333333333333",
+    "target_kind": "group",
+    "target_id": "conv_1",
+    "inviter_account_id": "acct_alice",
+    "inviter_device_id": "dev_alice"
+  },
+  "outputs": {
+    "signing_public_key_hex": "17cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce",
+    "locator": "4437d01b5bc6825b22a3de68051fee45b5809368049546cf0a8169cdb2ddcc52",
+    "key_commitment_hex": "4f479b5811fb4b3d669a8e231db922dc",
+    "signed_message_hex": "001868747470733a2f2f636861742e6578616d706c652e6f7267000567726f75700006636f6e765f31000a616363745f616c69636500096465765f616c696365002017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce004034343337643031623562633638323562323261336465363830353166656534356235383039333638303439353436636630613831363963646232646463633532",
+    "signature_hex": "b62ff3d1638812c681dec3bf881d5f4020e45f83fa0de2124b4153a4fa55ef4c3f0b48a680828c491ee30ffa9e0ca96430f1225015866fef46368c1ce5574502",
+    "link_fragment": "v2.AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8.T0ebWBH7Sz1mmo4jHbki3A",
+    "link_fragment_note": "secret and key commitment, base64url without padding"
+  }
+}

@@ -3,9 +3,27 @@ import 'dart:typed_data';
 import 'package:private_messenger/core/membership_invite_link.dart';
 import 'package:private_messenger/core/membership_models.dart';
 
-/// What an honest creating device binds [link] to (D90): the tag a server
-/// that never saw the secret cannot make. Defaults name a group `conv_1` and
-/// the inviter `acct_alice` on `dev_alice`.
+import 'test_crypto_service.dart';
+
+/// The inviting device's key in the default fixtures (40 41 .. 5f).
+final Uint8List defaultInviterKey =
+    Uint8List.fromList(List<int>.generate(32, (i) => 0x40 + i));
+
+/// A new link whose key commitment names [signingKey] (default
+/// [defaultInviterKey]).
+MembershipInviteLink newInviteLink({
+  String origin = 'https://localhost:8080',
+  List<int>? signingKey,
+}) =>
+    MembershipInviteLink.generate(
+      origin: origin,
+      inviterSigningKey: signingKey ?? defaultInviterKey,
+    );
+
+/// What an honest creating device binds [link] to (D90, v2): the tag and the
+/// signature (the test engine's stand-in, see [fakeInviteSignature]) over the
+/// fields. Defaults name a group `conv_1` and the inviter `acct_alice` on
+/// `dev_alice`.
 InviteBinding honestBinding(
   MembershipInviteLink link, {
   InviteTargetKind kind = InviteTargetKind.group,
@@ -14,8 +32,7 @@ InviteBinding honestBinding(
   String deviceId = 'dev_alice',
   List<int>? signingKey,
 }) {
-  final key =
-      Uint8List.fromList(signingKey ?? List<int>.generate(32, (i) => 0x40 + i));
+  final key = Uint8List.fromList(signingKey ?? defaultInviterKey);
   return InviteBinding(
     kind: kind,
     targetId: targetId,
@@ -29,6 +46,16 @@ InviteBinding honestBinding(
       inviterDeviceId: deviceId,
       inviterSigningKey: key,
     ),
+    signature: fakeInviteSignature(
+      key,
+      link.bindingMessage(
+        kind: kind,
+        targetId: targetId,
+        inviterAccountId: accountId,
+        inviterDeviceId: deviceId,
+        inviterSigningKey: key,
+      ),
+    ),
   );
 }
 
@@ -41,6 +68,7 @@ InviteBinding tampered(
   String? deviceId,
   List<int>? signingKey,
   String? tag,
+  List<int>? signature,
 }) =>
     InviteBinding(
       kind: kind ?? binding.kind,
@@ -50,4 +78,5 @@ InviteBinding tampered(
       inviterSigningKey:
           Uint8List.fromList(signingKey ?? binding.inviterSigningKey),
       tag: tag ?? binding.tag,
+      signature: Uint8List.fromList(signature ?? binding.signature),
     );

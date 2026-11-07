@@ -402,7 +402,8 @@ int32_t pm_crypto_c7_seal(PmByteSlice key, PmByteSlice aad,
 int32_t pm_crypto_c7_open(PmByteSlice key, PmByteSlice aad, PmByteSlice sealed,
                           PmOwnedBuffer *out_plaintext);
 /* Sign and verify with the credential key (Ed25519) over domain | message.
- * domain is "veritra-c7-post-sig-v1" or "veritra-c7-history-v1" (any other
+ * domain is "veritra-c7-post-sig-v1", "veritra-c7-history-v1" or
+ * "veritra-invite-binding-v2" (C1 invitation binding; any other
  * is PM_CRYPTO_INVALID_ARGUMENT); Rust prepends it, so no C7 signature is an
  * MLS signature. message 1 to 4096 bytes. Verify is strict and stateless;
  * it writes 1 or 0 to out_valid and returns PM_CRYPTO_OK for either. */

@@ -45,6 +45,7 @@ class NativeCryptoService
         ConversationAuthorityConsumer,
         DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
+        InviteBindingCryptoService,
         K2TransferCryptoService,
         MlsDeviceHealthCryptoService,
         MlsSelfUpdateCryptoService,
@@ -157,6 +158,66 @@ class NativeCryptoService
           throw StateError('the active identity is not this device');
         }
         return Uint8List.fromList(device.signingPublicKey());
+      });
+
+  // C1 invitation binding v2 (ABI 13 sign, verify and member key read).
+
+  @override
+  Future<Uint8List> signInviteBinding({
+    required String accountId,
+    required String deviceId,
+    required List<int> message,
+  }) =>
+      _serial(() async {
+        final device = _requiredDevice();
+        if (_pendingEnrollment ||
+            _accountId != accountId ||
+            _deviceId != deviceId) {
+          throw StateError('the active identity is not this device');
+        }
+        return Uint8List.fromList(device.c7Sign(
+          domain: inviteBindingSigningDomain,
+          message: message,
+        ));
+      });
+
+  @override
+  Future<bool> verifyInviteBinding({
+    required List<int> signingKey,
+    required List<int> message,
+    required List<int> signature,
+  }) async {
+    try {
+      return bindings.c7Verify(
+        domain: inviteBindingSigningDomain,
+        publicKey: signingKey,
+        message: message,
+        signature: signature,
+      );
+    } on NativeCryptoException {
+      // An older library refuses the domain; any engine error is no proof.
+      return false;
+    } on ArgumentError {
+      return false;
+    }
+  }
+
+  @override
+  Future<Uint8List?> memberSigningKey({
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+  }) =>
+      _serial(() async {
+        final device = _requiredDevice();
+        try {
+          return Uint8List.fromList(
+            device.memberSignatureKey(conversationId, accountId, deviceId),
+          );
+        } on NativeCryptoException {
+          // No such group here, or no such member in it.
+          return null;
+        }
       });
 
   // C6 reports (ABI 12). Stateless: none touches the device or its state.
