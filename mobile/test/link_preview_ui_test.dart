@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/link_preview_service.dart';
+import 'package:private_messenger/core/link_preview_thumbnail.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/link_preview.dart';
@@ -66,7 +68,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a chat bubble draws a valid preview and ignores a mismatched one',
+  testWidgets('a bubble draws a valid preview, not a mismatched one',
       (tester) async {
     final store = MemoryLocalStore();
     final state = _state()..localStoreOverride = store;
@@ -100,6 +102,28 @@ void main() {
     expect(find.text('Bank'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     second.dispose();
+  });
+
+  testWidgets('the sender thumbnail passes the receiver check', (tester) async {
+    await tester.runAsync(() async {
+      final recorder = ui.PictureRecorder();
+      ui.Canvas(recorder).drawRect(
+        const ui.Rect.fromLTWH(0, 0, 400, 300),
+        ui.Paint()..color = const ui.Color(0xff3366cc),
+      );
+      final image = await recorder.endRecording().toImage(400, 300);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      image.dispose();
+      final thumbnail = await encodePngThumbnail(data!.buffer.asUint8List());
+      expect(thumbnail, isNotNull);
+      expect(thumbnail!.width, 128);
+      expect(thumbnail.height, 96);
+      expect(thumbnail.png.length, lessThanOrEqualTo(16 * 1024));
+      final back = LinkPreviewThumbnail.fromWire(thumbnail.toWire());
+      expect(back, isNotNull);
+      expect(back!.width, 128);
+      expect(await encodePngThumbnail(Uint8List(20)), isNull);
+    });
   });
 
   testWidgets('the setting offers all three modes', (tester) async {

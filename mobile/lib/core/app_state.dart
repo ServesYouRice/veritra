@@ -3210,7 +3210,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// refused, so a repeated tap cannot send the same text twice.
   Future<bool> _sendWithLinkPreview(String conversationId, AppPayloadType type,
       Map<String, Object?> body, String draftText) async {
-    if (!_previewPending.add(conversationId)) return false;
+    final owner = session;
+    final generation = _sessionGeneration;
+    if (owner == null || !_previewPending.add(conversationId)) return false;
     notifyListeners();
     var sendable = body;
     try {
@@ -3223,6 +3225,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _previewPending.remove(conversationId);
       notifyListeners();
     }
+    // A sign-out or account switch during the fetch ends this send.
+    if (_disposed || !_syncOwnerActive(owner, generation)) return false;
     return _sendPayload(conversationId, type, sendable, draftText: draftText);
   }
 
