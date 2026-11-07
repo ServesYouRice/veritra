@@ -2323,6 +2323,17 @@ inbox, and stores one row per copy with no column for the message. The
 retention sweeper deletes every copy 90 days after it was filed; a recipient
 dismissing its copy removes just that copy.
 
+`GET /api/v1/reports/{id}/envelope?envelope_id=` (step 4) answers the
+recipient of copy `{id}`, and nobody else (anyone else gets 404), with what
+the server recorded for that envelope: `{envelope_id, conversation_id,
+sender_account_id, sender_device_id, frank_commit?, created_at}`. The
+envelope must belong to the conversation the copy was filed about. It is the
+one place the server learns an envelope id: at review time, from the
+recipient, for one report they chose to check. It writes and logs nothing.
+The app recomputes the commitment from the revealed message and compares it
+with `frank_commit`, the recorded sender device and the conversation
+(condition G1).
+
 **Not wired.** (1) The community inbox key has no publish route: it needs
 C4's role state to be distributed (design item 8). (2) The report screens,
 the call that builds a report from a stored reveal and posts it (the pieces

@@ -137,3 +137,22 @@ func (a *API) deleteReport(w http.ResponseWriter, r *http.Request, principal dom
 	a.recordAuditEvent(r.Context(), &principal.AccountID, "report.dismissed", map[string]interface{}{"inbox_kind": report.InboxKind})
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// GET /api/v1/reports/{id}/envelope?envelope_id=: the sender, time and
+// franking commitment the server recorded for a message of the conversation
+// copy {id} was filed about, so its recipient can verify the report (G1). The
+// envelope id comes from the opened report; the server sees it only now, from
+// the recipient. Nothing is written or logged.
+func (a *API) getReportEnvelope(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	envelopeID := strings.TrimSpace(r.URL.Query().Get("envelope_id"))
+	if envelopeID == "" || len(envelopeID) > franking.MaxIDSize {
+		writeError(w, http.StatusBadRequest, "invalid_report")
+		return
+	}
+	record, err := a.Store.ReportEnvelopeRecord(r.Context(), principal.AccountID, strings.TrimSpace(r.PathValue("id")), envelopeID)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}

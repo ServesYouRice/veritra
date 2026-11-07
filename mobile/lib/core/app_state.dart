@@ -59,6 +59,8 @@ import '../storage/encrypted_database.dart'
         localStorageErrorCode;
 import 'models.dart';
 import 'receipts_state.dart';
+import 'report_seed_store.dart';
+import 'reports_service.dart';
 import 'typing_state.dart';
 import '../l10n/l10n.dart';
 import 'account_recovery.dart';
@@ -68,6 +70,7 @@ export 'membership_invite_link.dart';
 export 'membership_models.dart';
 
 part 'app_state_membership.dart';
+part 'app_state_reports.dart';
 part 'app_state_recovery.dart';
 part 'app_state_link_v3.dart';
 
@@ -235,7 +238,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     this.attachmentService,
     this.config = ClientConfig.production,
     ReceiptPreferences? receiptPreferences,
-  })  : pushService = pushService ?? DisabledMobilePushService(),
+    ReportSeedStore? reportSeedStore,
+  })  : reportSeedStore = reportSeedStore ?? MemoryReportSeedStore(),
+        pushService = pushService ?? DisabledMobilePushService(),
         receiptPreferences = receiptPreferences ??
             ReceiptPreferences(MemoryReceiptPreferenceStore()) {
     composerDrafts.onChanged = _draftChanged;
@@ -258,6 +263,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// Encrypted backup and restore (card I45). Null in builds without the
   /// MLS service, where there is nothing to back up.
   final BackupService? backupService;
+
+  /// Where an instance owner's report-key seed is kept (C6, D95). Memory only
+  /// unless the build passes protected storage.
+  final ReportSeedStore reportSeedStore;
 
   /// Encrypts and decrypts attachment files; only demo builds have it.
   final AttachmentCryptoService? attachmentService;

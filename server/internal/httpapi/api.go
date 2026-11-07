@@ -135,6 +135,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/reports/inbox", a.withAuth(a.getReportInbox))
 	mux.HandleFunc("POST /api/v1/reports", a.withAuth(a.withWriteBudget(a.createReport)))
 	mux.HandleFunc("GET /api/v1/reports", a.withAuth(a.listReports))
+	mux.HandleFunc("GET /api/v1/reports/{id}/envelope", a.withAuth(a.getReportEnvelope))
 	mux.HandleFunc("DELETE /api/v1/reports/{id}", a.withAuth(a.deleteReport))
 	mux.HandleFunc("POST /api/v1/attachments", a.withAuth(a.uploadAttachment))
 	mux.HandleFunc("GET /api/v1/attachments", a.withAuth(a.listAttachments))
