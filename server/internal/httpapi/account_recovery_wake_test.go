@@ -184,20 +184,30 @@ func TestRecoveryKeyChangeCancellingAClaimWakesOtherDevices(t *testing.T) {
 	rec.waitFor(t, 2)
 }
 
-// Legacy-mode subscriptions are skipped on every provider (their APNs wake
-// is a visible "New message" alert); local-decrypt ones are woken.
-func TestRecoveryWakeSkipsLegacyModeSubscriptions(t *testing.T) {
+// Only a wake that would show the legacy "New message" alert (legacy APNs)
+// is skipped; legacy FCM, web push and local-decrypt wakes are silent.
+func TestRecoveryWakeSkipsOnlyLegacyAPNs(t *testing.T) {
 	f, rec := newWakeFixture(t, nil)
 	f.addLegacyPush("push_legacy_apns", "apns", strings.Repeat("ab", 32))
 	f.addLegacyPush("push_legacy_fcm", "fcm", "fcm-legacy-0123456789-0123456789-0123")
+	f.addLegacyPush("push_legacy_web", "webpush", "https://push.example/legacy-web")
 	f.addPush("push_silent", "", "fcm-silent-0123456789-0123456789-0123")
 	f.claimOK(claimBody(t, f.reserve("owner"), "owner-password-123", f.ownerRK, recoveryTestOrigin))
-	sent := rec.waitFor(t, 1)
-	if sent[0].NotificationMode != "local_decrypt_v1" || !strings.HasPrefix(sent[0].Endpoint, "fcm-silent") {
-		t.Fatalf("wake = %+v", sent[0])
+	sent := rec.waitFor(t, 3)
+	got := map[string]bool{}
+	for _, n := range sent {
+		if n.Provider == "apns" {
+			t.Fatalf("legacy APNs target was woken: %+v", n)
+		}
+		got[n.Provider+"/"+n.NotificationMode] = true
 	}
-	// Skipped subscriptions stay registered for ordinary message pushes.
-	if n := f.activeSubscriptions(); n != 3 {
-		t.Fatalf("active subscriptions = %d, want 3", n)
+	for _, want := range []string{"fcm/legacy_generic", "webpush/legacy_generic", "fcm/local_decrypt_v1"} {
+		if !got[want] {
+			t.Fatalf("missing wake %s in %v", want, got)
+		}
+	}
+	// The skipped subscription stays registered for ordinary message pushes.
+	if n := f.activeSubscriptions(); n != 4 {
+		t.Fatalf("active subscriptions = %d, want 4", n)
 	}
 }

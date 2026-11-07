@@ -61,15 +61,16 @@ func (w *accountWakes) stop() {
 }
 
 // wakeAccountDevices sends the generic "encrypted event available" wake to
-// the account's local_decrypt_v1 (silent) devices (all but excludeDeviceID) after a recovery
+// the account's devices whose wake is silent (all but excludeDeviceID) after a recovery
 // claim or its cancellation commits, so they sync and show the notice
 // without waiting for the app to be opened (K0-R, D53). The payload is the
 // provider's fixed generic wake: no names, text or claim details. It runs
 // detached from the request, and a failure is only counted by class in the
-// log: it never fails the claim or cancel. Legacy-mode subscriptions are
-// skipped (owner decision 2026-11-07): their wake is a visible "New message"
-// alert on APNs (D53), which D69 reserves for new messages. Those devices
-// learn of the claim or cancel on their next sync. Targets and errors are never
+// log: it never fails the claim or cancel. Legacy-mode APNs
+// subscriptions are skipped (owner decision 2026-11-07): their wake is a
+// visible "New message" alert (D53), which D69 reserves for new messages.
+// Those devices learn of the claim or cancel on their next sync. Legacy FCM
+// and web push wakes are data-only, so they are still sent. Targets and errors are never
 // logged (they hold tokens and endpoints).
 func (a *API) wakeAccountDevices(accountID, excludeDeviceID string) {
 	if a.Push == nil || a.Store == nil {
@@ -95,7 +96,7 @@ func (a *API) wakeAccountDevices(accountID, excludeDeviceID string) {
 			if ctx.Err() != nil {
 				return
 			}
-			if target.NotificationMode != domain.PushNotificationLocalDecrypt {
+			if target.Provider == "apns" && target.NotificationMode != domain.PushNotificationLocalDecrypt {
 				continue
 			}
 			sendCtx, sendCancel := context.WithTimeout(ctx, recoveryWakeSendTimeout)
