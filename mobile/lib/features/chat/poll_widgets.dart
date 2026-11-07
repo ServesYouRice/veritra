@@ -240,8 +240,8 @@ class _PollComposerDialogState extends State<_PollComposerDialog> {
                           final removed = _options[index];
                           setState(() => _options.removeAt(index));
                           // Disposed after the field using it is gone.
-                          WidgetsBinding.instance.addPostFrameCallback(
-                              (_) => removed.dispose());
+                          WidgetsBinding.instance
+                              .addPostFrameCallback((_) => removed.dispose());
                         },
                       ),
                   ],
@@ -252,8 +252,8 @@ class _PollComposerDialogState extends State<_PollComposerDialog> {
                   child: TextButton.icon(
                     icon: const Icon(Icons.add),
                     label: Text(l10n.pollAddOption),
-                    onPressed: () => setState(
-                        () => _options.add(TextEditingController())),
+                    onPressed: () =>
+                        setState(() => _options.add(TextEditingController())),
                   ),
                 ),
               SwitchListTile(

@@ -1710,12 +1710,11 @@ class _MessageBubble extends StatelessWidget {
   }
 
   /// The poll of a live poll bubble, when its stored JSON reads.
-  PollView? get _poll =>
-      local?.kind == LocalMessageKind.poll &&
-              local?.deletedAt == null &&
-              message.deletedAt == null
-          ? parsePollBody(local?.body)
-          : null;
+  PollView? get _poll => local?.kind == LocalMessageKind.poll &&
+          local?.deletedAt == null &&
+          message.deletedAt == null
+      ? parsePollBody(local?.body)
+      : null;
 
   bool get _isPlaceholder =>
       local?.kind == LocalMessageKind.unsupported ||
@@ -1844,8 +1843,7 @@ class _MessageBubble extends StatelessWidget {
                               : poll != null
                                   ? l10n.chatMessageSemantics(
                                       sender, time, poll.question)
-                                  : l10n.chatEncryptedSemantics(
-                                      sender, time)) +
+                                  : l10n.chatEncryptedSemantics(sender, time)) +
           (tick == null ? '' : ', ${messageTickLabel(l10n, tick!)}'),
       child: LayoutBuilder(
         builder: (context, constraints) {
