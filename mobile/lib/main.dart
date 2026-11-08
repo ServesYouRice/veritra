@@ -7,6 +7,7 @@ import 'core/api_client.dart';
 import 'core/receipts_state.dart';
 import 'crypto/crypto_service.dart';
 import 'desktop/desktop_services.dart';
+import 'features/calls/call_host.dart';
 import 'l10n/app_localizations.dart';
 import 'push/push_service.dart';
 import 'push/wake_worker_bridge.dart';
@@ -131,6 +132,12 @@ class _VeritraAppState extends State<VeritraApp> with WidgetsBindingObserver {
                 localizationsDelegates: AppLocalizations.localizationsDelegates,
                 supportedLocales: AppLocalizations.supportedLocales,
                 home: AppShell(state: widget.state),
+                // Demo builds only: call UI above every route.
+                builder: widget.state.config.demo
+                    ? (context, child) => CallHost(
+                        state: widget.state,
+                        child: child ?? const SizedBox.shrink())
+                    : null,
               ),
             ));
       },

@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (18u)
+#define PM_CRYPTO_ABI_VERSION (19u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -527,6 +527,35 @@ int32_t pm_crypto_attachment_encrypt_chunk(
 int32_t pm_crypto_attachment_decrypt_chunk(
     PmByteSlice key, PmByteSlice nonce_prefix, uint32_t chunk_index,
     PmByteSlice context, PmByteSlice ciphertext, PmOwnedBuffer *out_plaintext);
+
+/* ABI 19 (K1): automatic backups, a VHC1 kind-1 container sealed to the
+ * recovery public key (docs/designs/K1-automatic-backups.md). Seal binds
+ * account_id, source_device_id (each at most 128 bytes), created_at_ms,
+ * counter and the rk_id derived from rk_pub (32), pads to the K1 bucket (at
+ * least 1 MiB, at most 64 MiB) and seals a fresh file key to rk_pub; payload
+ * is non-empty and at most 64 MiB - 8. Peek reads the header from the first
+ * 416 bytes without authenticating anything and returns account id, source
+ * device id and a 41-byte meta (u64 created_at_ms, u64 counter, 16-byte
+ * rk_id, u8 plaintext_version, u64 padded_size, big-endian). Open takes the
+ * 30-byte recovery-key entropy, derives the private key inside Rust, and
+ * refuses another account, another key, a changed byte, and (when
+ * source_device_id is non-empty) another source device; it returns the
+ * plaintext, the source device id and the meta. Vector:
+ * testing/vectors/k1-backup-v1.json. */
+int32_t pm_crypto_backup_seal(PmByteSlice account_id,
+                              PmByteSlice source_device_id,
+                              uint64_t created_at_ms, uint64_t counter,
+                              uint32_t plaintext_version, PmByteSlice rk_pub,
+                              PmByteSlice payload, PmOwnedBuffer *out_ciphertext);
+int32_t pm_crypto_backup_peek(PmByteSlice prefix, PmOwnedBuffer *out_account_id,
+                              PmOwnedBuffer *out_source_device_id,
+                              PmOwnedBuffer *out_meta);
+int32_t pm_crypto_backup_open(PmByteSlice ciphertext, PmByteSlice entropy,
+                              PmByteSlice account_id,
+                              PmByteSlice source_device_id,
+                              PmOwnedBuffer *out_payload,
+                              PmOwnedBuffer *out_source_device_id,
+                              PmOwnedBuffer *out_meta);
 
 /* These operations remain unavailable and do not read their arguments. */
 int32_t pm_crypto_create_device_key_package(PmDeviceCredentialInput input,

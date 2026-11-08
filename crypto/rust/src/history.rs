@@ -17,7 +17,14 @@ use sha2::{Digest, Sha256};
 use tls_codec::SecretVLBytes;
 
 const MAGIC: &[u8; 4] = b"VHC1";
+const BACKUP_KIND: u8 = 1;
 const BUNDLE_KIND: u8 = 2;
+const BACKUP_SEAL_INFO: &[u8] = b"veritra-k0-seal-v1";
+/// The smallest padded K1 backup (design K1: 1 MiB floor).
+const MIN_BACKUP_PADDED: usize = 1024 * 1024;
+const HPKE_ENC_BYTES: usize = 32;
+/// `FK (32) || nonce_prefix (8)` plus the 16-byte AES-GCM tag.
+const SEALED_FK_BYTES: usize = 32 + 8 + 16;
 const FRAME_BUCKET: usize = 64 * 1024;
 pub(crate) const MAX_PADDED_HISTORY: usize = 64 * 1024 * 1024;
 pub(crate) const MAX_HISTORY_CIPHERTEXT: usize = MAX_PADDED_HISTORY + 64 * 20 + 416;
@@ -38,7 +45,9 @@ pub(crate) fn transfer_id(transcript: &[u8; 32], ciphertext_hash: &[u8; 32]) -> 
 }
 const MAX_ID: usize = 128;
 const MAX_ORIGIN: usize = 2048;
-const MAX_HEADER: usize = 416;
+pub(crate) const MAX_HEADER: usize = 416;
+/// The most a header peek reads.
+pub(crate) const MAX_PEEK_BYTES: usize = MAX_HEADER;
 const MAX_HANDOFF: usize = 8 * 1024;
 const HANDOFF_MAGIC: &[u8; 4] = b"VHH1";
 const BUNDLE_CONTEXT: &[u8] = b"veritra-history-v1";
@@ -231,14 +240,14 @@ fn padded_size(payload_len: usize) -> Result<usize, HistoryError> {
     Ok(rounded)
 }
 
-fn encode_header(header: &BundleHeader, padded: usize) -> Result<Vec<u8>, HistoryError> {
+fn encode_h0(header: &BundleHeader, padded: usize, kind: u8) -> Result<Vec<u8>, HistoryError> {
     validate_header(header)?;
     if padded == 0 || padded > MAX_PADDED_HISTORY || !padded.is_multiple_of(FRAME_BUCKET) {
         return Err(HistoryError::InvalidInput);
     }
     let mut bytes = Vec::with_capacity(MAX_HEADER);
     bytes.extend_from_slice(MAGIC);
-    bytes.push(BUNDLE_KIND);
+    bytes.push(kind);
     append_lp(&mut bytes, &header.account_id)?;
     append_lp(&mut bytes, &header.source_device_id)?;
     bytes.extend_from_slice(&header.created_at_ms.to_be_bytes());
@@ -254,7 +263,12 @@ fn encode_header(header: &BundleHeader, padded: usize) -> Result<Vec<u8>, Histor
     bytes.extend_from_slice(&(chunks as u32).to_be_bytes());
     bytes.extend_from_slice(&(padded as u64).to_be_bytes());
     bytes.push(header.plaintext_version);
-    // K0: kind2 bundles have no recovery HPKE encapsulation/sealed file key.
+    Ok(bytes)
+}
+
+fn encode_header(header: &BundleHeader, padded: usize) -> Result<Vec<u8>, HistoryError> {
+    let mut bytes = encode_h0(header, padded, BUNDLE_KIND)?;
+    // K0: kind 2 bundles have no recovery HPKE encapsulation/sealed file key.
     append_lp(&mut bytes, &[])?;
     append_lp(&mut bytes, &[])?;
     Ok(bytes)
@@ -312,8 +326,23 @@ fn seal_with_secrets(
     Ok(ciphertext)
 }
 
-fn read_header(reader: &mut Reader<'_>) -> Result<(BundleHeader, usize, usize), HistoryError> {
-    if reader.take(4)? != MAGIC || reader.u8()? != BUNDLE_KIND {
+struct ParsedHeader<'a> {
+    kind: u8,
+    header: BundleHeader,
+    padded: usize,
+    chunks: usize,
+    /// Length of the canonical `H0` (the HPKE AAD).
+    h0_len: usize,
+    enc: &'a [u8],
+    sealed_fk: &'a [u8],
+}
+
+fn read_header_any<'a>(reader: &mut Reader<'a>) -> Result<ParsedHeader<'a>, HistoryError> {
+    if reader.take(4)? != MAGIC {
+        return Err(HistoryError::InvalidInput);
+    }
+    let kind = reader.u8()?;
+    if kind != BACKUP_KIND && kind != BUNDLE_KIND {
         return Err(HistoryError::InvalidInput);
     }
     let account_id = reader.lp(MAX_ID)?.to_vec();
@@ -330,9 +359,20 @@ fn read_header(reader: &mut Reader<'_>) -> Result<(BundleHeader, usize, usize), 
     let chunks = reader.u32()? as usize;
     let padded = usize::try_from(reader.u64()?).map_err(|_| HistoryError::InvalidInput)?;
     let plaintext_version = reader.u8()?;
-    if !reader.lp(0)?.is_empty() || !reader.lp(0)?.is_empty() {
-        return Err(HistoryError::InvalidInput);
-    }
+    let h0_len = reader.offset;
+    let (enc, sealed_fk) = if kind == BACKUP_KIND {
+        let enc = reader.lp(HPKE_ENC_BYTES)?;
+        let sealed = reader.lp(SEALED_FK_BYTES)?;
+        if enc.len() != HPKE_ENC_BYTES
+            || sealed.len() != SEALED_FK_BYTES
+            || recovery_key_id.is_none()
+        {
+            return Err(HistoryError::InvalidInput);
+        }
+        (enc, sealed)
+    } else {
+        (reader.lp(0)?, reader.lp(0)?)
+    };
     let header = BundleHeader {
         account_id,
         source_device_id,
@@ -350,38 +390,36 @@ fn read_header(reader: &mut Reader<'_>) -> Result<(BundleHeader, usize, usize), 
     {
         return Err(HistoryError::InvalidInput);
     }
-    Ok((header, padded, chunks))
+    Ok(ParsedHeader {
+        kind,
+        header,
+        padded,
+        chunks,
+        h0_len,
+        enc,
+        sealed_fk,
+    })
 }
 
-pub(crate) fn open_bundle(
-    ciphertext: &[u8],
-    secrets: &FileSecrets,
-    expected: &ExpectedBundle<'_>,
-) -> Result<OpenedBundle, HistoryError> {
-    // 64 chunks, each with u32 framing and a 16-byte GCM tag, plus header.
-    let max_ciphertext = MAX_PADDED_HISTORY + 64 * 20 + MAX_HEADER;
-    if ciphertext.len() > max_ciphertext
-        || !valid_id(expected.account_id)
-        || !valid_id(expected.source_device_id)
-    {
+/// The K2 bundle header: kind 2, no HPKE fields.
+fn read_header(reader: &mut Reader<'_>) -> Result<(BundleHeader, usize, usize), HistoryError> {
+    let parsed = read_header_any(reader)?;
+    if parsed.kind != BUNDLE_KIND {
         return Err(HistoryError::InvalidInput);
     }
-    if ciphertext.len() as u64 != expected.ciphertext_size
-        || <[u8; 32]>::from(Sha256::digest(ciphertext)) != *expected.ciphertext_sha256
-    {
-        return Err(HistoryError::Authentication);
-    }
-    let mut reader = Reader::new(ciphertext);
-    let (header, padded, chunks) = read_header(&mut reader)?;
-    let encoded_header = &ciphertext[..reader.offset];
-    if header.account_id != expected.account_id
-        || header.source_device_id != expected.source_device_id
-        || header.snapshot_counter != expected.snapshot_counter
-        || header.plaintext_version != expected.plaintext_version
-        || <[u8; 32]>::from(Sha256::digest(encoded_header)) != *expected.header_sha256
-    {
-        return Err(HistoryError::Authentication);
-    }
+    Ok((parsed.header, parsed.padded, parsed.chunks))
+}
+
+/// Decrypts the chunks after a verified header and returns the payload.
+/// `canonical` maps the payload length to the one padded size it may have.
+fn decode_frame(
+    reader: &mut Reader<'_>,
+    encoded_header: &[u8],
+    padded: usize,
+    chunks: usize,
+    secrets: &FileSecrets,
+    canonical: fn(usize) -> Result<usize, HistoryError>,
+) -> Result<SecretVLBytes, HistoryError> {
     let context = chunk_context(encoded_header);
     let mut frame = SecretVLBytes::new(Vec::with_capacity(padded));
     for index in 0..chunks {
@@ -417,14 +455,232 @@ pub(crate) fn open_bundle(
         .checked_add(8)
         .ok_or(HistoryError::InvalidInput)?;
     if end > padded
-        || padded_size(payload_len)? != padded
+        || canonical(payload_len)? != padded
         || frame.as_slice()[end..].iter().any(|b| *b != 0)
     {
         return Err(HistoryError::InvalidInput);
     }
+    Ok(frame.as_slice()[8..end].into())
+}
+
+pub(crate) fn open_bundle(
+    ciphertext: &[u8],
+    secrets: &FileSecrets,
+    expected: &ExpectedBundle<'_>,
+) -> Result<OpenedBundle, HistoryError> {
+    // 64 chunks, each with u32 framing and a 16-byte GCM tag, plus header.
+    let max_ciphertext = MAX_PADDED_HISTORY + 64 * 20 + MAX_HEADER;
+    if ciphertext.len() > max_ciphertext
+        || !valid_id(expected.account_id)
+        || !valid_id(expected.source_device_id)
+    {
+        return Err(HistoryError::InvalidInput);
+    }
+    if ciphertext.len() as u64 != expected.ciphertext_size
+        || <[u8; 32]>::from(Sha256::digest(ciphertext)) != *expected.ciphertext_sha256
+    {
+        return Err(HistoryError::Authentication);
+    }
+    let mut reader = Reader::new(ciphertext);
+    let (header, padded, chunks) = read_header(&mut reader)?;
+    let encoded_header = &ciphertext[..reader.offset];
+    if header.account_id != expected.account_id
+        || header.source_device_id != expected.source_device_id
+        || header.snapshot_counter != expected.snapshot_counter
+        || header.plaintext_version != expected.plaintext_version
+        || <[u8; 32]>::from(Sha256::digest(encoded_header)) != *expected.header_sha256
+    {
+        return Err(HistoryError::Authentication);
+    }
+    let payload = decode_frame(
+        &mut reader,
+        encoded_header,
+        padded,
+        chunks,
+        secrets,
+        padded_size,
+    )?;
+    Ok(OpenedBundle { header, payload })
+}
+
+/// Signal's attachment size bucket (the smallest `floor(1.05^k)` that holds
+/// `size`), built by repeated multiplication exactly as the Dart
+/// `paddedAttachmentSize`, so every client picks the same bucket.
+fn signal_bucket(size: usize) -> usize {
+    let mut power = 1.0f64;
+    while (power.floor() as usize) < size {
+        power *= 1.05;
+    }
+    power.floor() as usize
+}
+
+/// The one padded size a K1 backup payload may have: the attachment bucket
+/// of the framed payload, at least 1 MiB, rounded up to the 64 KiB frame.
+fn backup_padded_size(payload_len: usize) -> Result<usize, HistoryError> {
+    let framed = payload_len
+        .checked_add(8)
+        .ok_or(HistoryError::InvalidInput)?;
+    if framed > MAX_PADDED_HISTORY {
+        return Err(HistoryError::InvalidInput);
+    }
+    let bucket = signal_bucket(framed).max(MIN_BACKUP_PADDED);
+    let rounded = bucket.div_ceil(FRAME_BUCKET) * FRAME_BUCKET;
+    if rounded > MAX_PADDED_HISTORY {
+        // The bucket would pass the cap: clamp, as attachments do, so the
+        // top of the range is one size and not 64 KiB steps.
+        return Ok(MAX_PADDED_HISTORY);
+    }
+    Ok(rounded)
+}
+
+fn backup_seal_info(account_id: &[u8]) -> Result<Vec<u8>, HistoryError> {
+    let mut info = BACKUP_SEAL_INFO.to_vec();
+    append_lp(&mut info, account_id)?;
+    Ok(info)
+}
+
+/// K1: a kind-1 container sealed to `rk_pub`. The file key and nonce prefix
+/// are fresh and go only into the HPKE seal; nothing secret is returned.
+/// `header.recovery_key_id` must be the id of `rk_pub`.
+pub(crate) fn seal_backup(
+    provider: &impl OpenMlsProvider,
+    header: &BundleHeader,
+    rk_pub: &[u8; 32],
+    payload: &[u8],
+) -> Result<Vec<u8>, HistoryError> {
+    // The FFI refuses an empty slice, so an empty backup could not be opened.
+    if payload.is_empty() || header.recovery_key_id != Some(recovery_id(rk_pub)) {
+        return Err(HistoryError::InvalidInput);
+    }
+    let secrets = FileSecrets::fresh(provider)?;
+    seal_backup_with(provider, header, rk_pub, payload, &secrets)
+}
+
+/// `seal_backup` with caller-chosen file secrets, so tests can build a
+/// known-answer container. Production code goes through `seal_backup`.
+fn seal_backup_with(
+    provider: &impl OpenMlsProvider,
+    header: &BundleHeader,
+    rk_pub: &[u8; 32],
+    payload: &[u8],
+    secrets: &FileSecrets,
+) -> Result<Vec<u8>, HistoryError> {
+    let padded = backup_padded_size(payload.len())?;
+    let h0 = encode_h0(header, padded, BACKUP_KIND)?;
+    let plaintext: SecretVLBytes = [secrets.key.as_slice(), secrets.nonce_prefix.as_slice()]
+        .concat()
+        .into();
+    let sealed = provider
+        .crypto()
+        .hpke_seal(
+            suite(),
+            rk_pub,
+            &backup_seal_info(&header.account_id)?,
+            &h0,
+            plaintext.as_slice(),
+        )
+        .map_err(|_| HistoryError::Crypto)?;
+    if sealed.kem_output.as_slice().len() != HPKE_ENC_BYTES
+        || sealed.ciphertext.as_slice().len() != SEALED_FK_BYTES
+    {
+        return Err(HistoryError::Crypto);
+    }
+    let mut full_header = h0;
+    append_lp(&mut full_header, sealed.kem_output.as_slice())?;
+    append_lp(&mut full_header, sealed.ciphertext.as_slice())?;
+    seal_with_secrets(&full_header, payload, padded, secrets)
+}
+
+/// What the unauthenticated header of a kind-1 container says. It is only
+/// as trustworthy as the server that served it; `open_backup` is the check.
+pub(crate) struct BackupPeek {
+    pub header: BundleHeader,
+    pub padded: usize,
+}
+
+/// Reads the header from the first bytes of a container (at most
+/// `MAX_HEADER` are needed) so a wrong key, account or device is refused
+/// before the body is downloaded.
+pub(crate) fn peek_backup(prefix: &[u8]) -> Result<BackupPeek, HistoryError> {
+    let parsed = read_header_any(&mut Reader::new(prefix))?;
+    if parsed.kind != BACKUP_KIND {
+        return Err(HistoryError::InvalidInput);
+    }
+    Ok(BackupPeek {
+        header: parsed.header,
+        padded: parsed.padded,
+    })
+}
+
+/// K1: opens a kind-1 container with the typed RK entropy. `rk_sk` is
+/// derived and dropped inside this function. Refuses a container for
+/// another account, another source device (when `source_device_id` is
+/// given) or another recovery key.
+pub(crate) fn open_backup(
+    provider: &impl OpenMlsProvider,
+    ciphertext: &[u8],
+    entropy: &[u8],
+    account_id: &[u8],
+    source_device_id: Option<&[u8]>,
+) -> Result<OpenedBundle, HistoryError> {
+    if ciphertext.len() > MAX_HISTORY_CIPHERTEXT
+        || !valid_id(account_id)
+        || source_device_id.is_some_and(|id| !valid_id(id))
+    {
+        return Err(HistoryError::InvalidInput);
+    }
+    let mut reader = Reader::new(ciphertext);
+    let parsed = read_header_any(&mut reader)?;
+    if parsed.kind != BACKUP_KIND {
+        return Err(HistoryError::InvalidInput);
+    }
+    let encoded_header = &ciphertext[..reader.offset];
+    if parsed.header.account_id != account_id
+        || source_device_id.is_some_and(|id| parsed.header.source_device_id != id)
+    {
+        return Err(HistoryError::Authentication);
+    }
+    let pair = crate::recovery::derive_hpke_key_pair(entropy).map_err(|error| match error {
+        crate::recovery::RecoveryError::InvalidInput => HistoryError::InvalidInput,
+        crate::recovery::RecoveryError::Crypto => HistoryError::Crypto,
+    })?;
+    let rk_pub: [u8; 32] = pair
+        .public
+        .as_slice()
+        .try_into()
+        .map_err(|_| HistoryError::Crypto)?;
+    if parsed.header.recovery_key_id != Some(recovery_id(&rk_pub)) {
+        return Err(HistoryError::Authentication);
+    }
+    let opened: SecretVLBytes = provider
+        .crypto()
+        .hpke_open(
+            suite(),
+            &HpkeCiphertext {
+                kem_output: parsed.enc.into(),
+                ciphertext: parsed.sealed_fk.into(),
+            },
+            &pair.private,
+            &backup_seal_info(account_id)?,
+            &encoded_header[..parsed.h0_len],
+        )
+        .map_err(|_| HistoryError::Authentication)?
+        .into();
+    if opened.as_slice().len() != 40 {
+        return Err(HistoryError::Authentication);
+    }
+    let secrets = FileSecrets::from_bytes(&opened.as_slice()[..32], &opened.as_slice()[32..])?;
+    let payload = decode_frame(
+        &mut reader,
+        encoded_header,
+        parsed.padded,
+        parsed.chunks,
+        &secrets,
+        backup_padded_size,
+    )?;
     Ok(OpenedBundle {
-        header,
-        payload: frame.as_slice()[8..end].into(),
+        header: parsed.header,
+        payload,
     })
 }
 
@@ -488,7 +744,7 @@ pub(crate) struct HandoffPayload {
     pub recovery_identity: Option<RecoveryIdentity>,
 }
 
-fn recovery_id(public_key: &[u8; 32]) -> [u8; 16] {
+pub(crate) fn recovery_id(public_key: &[u8; 32]) -> [u8; 16] {
     let digest = Sha256::digest([b"veritra-k0-rk-id-v1".as_slice(), public_key].concat());
     let mut id = [0; 16];
     id.copy_from_slice(&digest[..16]);
@@ -741,6 +997,10 @@ impl<'a> Reader<'a> {
         self.offset == self.bytes.len()
     }
 }
+
+#[cfg(test)]
+#[path = "history_backup_tests.rs"]
+mod backup_tests;
 
 #[cfg(test)]
 mod tests {
