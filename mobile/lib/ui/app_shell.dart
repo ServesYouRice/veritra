@@ -7,6 +7,7 @@ import '../features/auth/recovery_follow_up_screen.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/chat/chat_screen.dart';
 import '../features/communities/community_screen.dart';
+import '../features/settings/accounts_screen.dart' show AccountsShortcut;
 import '../features/settings/settings_screen.dart';
 import 'tokens.dart';
 import 'widgets/account_recovery_banner.dart';
@@ -462,6 +463,8 @@ class _RecoveryState extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
+                      // B7: an unreadable account does not hide the others.
+                      const AccountsShortcut(),
                       const Icon(Icons.lock_reset_outlined, size: 48),
                       const SizedBox(height: BoneSpacing.lg),
                       Text(

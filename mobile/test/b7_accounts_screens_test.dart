@@ -129,6 +129,8 @@ void main() {
     expect(find.text('Connect'), findsNothing,
         reason: 'no account switcher chrome before a second account exists');
     expect(find.byKey(const ValueKey<String>('connect-back')), findsNothing);
+    expect(
+        find.byKey(const ValueKey<String>('accounts-shortcut')), findsNothing);
     expect(host.runtime!.namespace, '');
   });
 
@@ -276,6 +278,40 @@ void main() {
       await pumpAsync(tester);
       expect(host.runtime!.namespace, other);
     });
+  });
+
+  testWidgets(
+      'a signed-out account still reaches the others: the connect screen '
+      'opens the account list, and nothing is removed', (tester) async {
+    final host = await openApp(tester);
+    addTearDown(host.dispose);
+    await signIn(tester, host, 'one');
+    await tester.runAsync(() => host.beginAdd());
+    await pumpAsync(tester);
+    final second = host.runtime!.namespace;
+    await signIn(tester, host, 'two', origin: 'https://b.example');
+    await tester.runAsync(() => host.idle());
+    await tester.runAsync(() => host.switchTo(''));
+    await pumpAsync(tester);
+    // Back to B, whose session expired while it was paused: B's runtime
+    // restores nothing, so its sign-in screen shows. Settings is out of
+    // reach without a session.
+    await tester.runAsync(() => host.switchTo(second));
+    await pumpAsync(tester);
+    expect(host.runtime!.state.session, isNull);
+    expect(host.activeSlot!.state, SlotState.active);
+    expect(find.byType(ConnectScreen), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('connect-back')), findsNothing,
+        reason: 'B is a real account: going back must never remove it');
+
+    await tester.tap(find.byKey(const ValueKey<String>('accounts-shortcut')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AccountsScreen), findsOneWidget);
+    await tester.tap(tile(''));
+    await pumpAsync(tester);
+    expect(host.runtime!.namespace, '');
+    expect(host.registry.slot(second)!.state, SlotState.active);
+    expect(host.registry.liveCount, 2);
   });
 
   testWidgets('the connect screen of a new account goes back to the old one',

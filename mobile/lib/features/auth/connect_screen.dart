@@ -8,6 +8,7 @@ import '../../core/api_client.dart';
 import '../../core/account_host.dart';
 import '../../core/app_state.dart';
 import '../../storage/account_slots.dart';
+import '../settings/accounts_screen.dart' show AccountsShortcut;
 import '../settings/backup_screen.dart';
 import '../../ui/about.dart';
 import '../../ui/tokens.dart';
@@ -181,7 +182,11 @@ class _ConnectScreenState extends State<ConnectScreen> {
                         icon: const Icon(Icons.arrow_back),
                         label: Text(context.l10n.accountsBack),
                       ),
-                    ),
+                    )
+                  else
+                    // A signed-out account (an expired session, a sign-out)
+                    // still reaches the other accounts on this device.
+                    const AccountsShortcut(),
                   const _BrandHeader(),
                   const SizedBox(height: BoneSpacing.xl + BoneSpacing.sm),
                   // One path, chosen by the probe rather than asked for. The

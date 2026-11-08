@@ -154,6 +154,34 @@ void main() {
       expect(ok.hasServer('https://b.example'), isFalse);
     });
 
+    test('a registry the next start could not read is never written', () async {
+      // Deletes that keep failing leave `removing` slots, which do not count
+      // against the cap.
+      final slots = <AccountSlot>[
+        for (var i = 0; i < maxAccountSlots + 3; i++)
+          AccountSlot(
+              namespace: 'a-${'$i'.padLeft(12, '0')}',
+              state: i == 0 ? SlotState.active : SlotState.removing),
+      ];
+      await expectLater(
+          store.save(
+              AccountRegistry(active: slots.first.namespace, slots: slots)),
+          throwsA(isA<AccountRegistryException>()));
+      expect(kv.values[store.key], isNull);
+      expect(await store.load(), AccountRegistry.initial(''));
+    });
+
+    test('a slot being removed never becomes active again', () async {
+      var registry = await store.addPending();
+      final pending = store.newestPending(registry);
+      registry = registry.withRemoving(pending);
+      expect(
+          () => registry.withIdentity(
+              pending, 'https://a.example', 'acct_1', 'alice'),
+          throwsA(isA<SlotException>()));
+      expect(() => registry.withActive(pending), throwsA(isA<SlotException>()));
+    });
+
     test('every state survives a restart', () async {
       var registry = await store.addPending();
       final pending = store.newestPending(registry);
@@ -276,6 +304,10 @@ void main() {
           key: 'veritra.database_key.v1.quarantined.1', value: 'k');
       File('${support.path}/.veritra-recovery.partial').writeAsStringSync('p');
       await plain.write(key: 'veritra.read_receipts.v1', value: 'off');
+      // Desktop notifications read the primary's hide-preview choice for
+      // every slot: removing the primary must not turn previews back on.
+      await plain.write(
+          key: 'veritra.notifications.hide_preview.v1', value: 'true');
       final slotDir = Directory('${support.path}/profiles/a-aaaaaaaaaaaa');
       final before =
           slotDir.listSync(recursive: true).map((e) => e.path).toList()..sort();
@@ -292,6 +324,8 @@ void main() {
       expect(await plain.read(key: 'veritra.database_key.v1.quarantined.1'),
           isNull);
       expect(await plain.read(key: 'veritra.read_receipts.v1'), isNull);
+      expect(await plain.read(key: 'veritra.notifications.hide_preview.v1'),
+          'true');
       expect(support.existsSync(), isTrue);
       final after =
           slotDir.listSync(recursive: true).map((e) => e.path).toList()..sort();
@@ -312,6 +346,9 @@ void main() {
           value: 'k');
       await plain.write(
           key: 'veritra.a-aaaaaaaaaaaa.read_receipts.v1', value: 'off');
+      await plain.write(
+          key: 'veritra.a-aaaaaaaaaaaa.notifications.hide_preview.v1',
+          value: 'true');
 
       await eraser().erase('a-aaaaaaaaaaaa');
 
@@ -324,6 +361,10 @@ void main() {
               key: 'veritra.a-aaaaaaaaaaaa.database_key.v1.quarantined.9'),
           isNull);
       expect(await plain.read(key: 'veritra.a-aaaaaaaaaaaa.read_receipts.v1'),
+          isNull);
+      expect(
+          await plain.read(
+              key: 'veritra.a-aaaaaaaaaaaa.notifications.hide_preview.v1'),
           isNull);
       expect(await open('').loadSyncCursor(), 11);
       await closeAll();
@@ -350,6 +391,25 @@ void main() {
       expect(File('${slotDir.path}/veritra-local.db').existsSync(), isTrue);
       await closeAll();
       expect(await open('a-aaaaaaaaaaaa').loadSyncCursor(), 22);
+    });
+
+    test('a closed store never reopens or recreates its slot', () async {
+      final store = open('a-dddddddddddd');
+      await store.saveSyncCursor(5);
+      await store.close();
+      await eraser().erase('a-dddddddddddd');
+      final slotDir = Directory('${support.path}/profiles/a-dddddddddddd');
+      expect(slotDir.existsSync(), isFalse);
+      // Late work of the torn-down account fails instead of starting over.
+      await expectLater(store.saveSyncCursor(6),
+          throwsA(isA<LocalStoreUnavailableException>()));
+      await expectLater(
+          store.loadSession(), throwsA(isA<LocalStoreUnavailableException>()));
+      expect(slotDir.existsSync(), isFalse);
+      expect(await plain.read(key: 'veritra.a-dddddddddddd.database_key.v1'),
+          isNull);
+      // The same slot opened again gets a new store.
+      expect(await open('a-dddddddddddd').loadSyncCursor(), 0);
     });
 
     test('a pending slot with no session and no enrollment is empty', () async {
