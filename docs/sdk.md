@@ -4,7 +4,9 @@ Status: **outline, 2026-09-25.** Nothing here is built. Decision D19 fixed the
 direction: embedded conversations stay end-to-end encrypted, so phase 3 ships a
 client SDK from this repository, never a server-plaintext widget. Everything
 below marked **Proposal** is a design choice for the team to confirm; every
-other statement describes code as it is today.
+other statement describes code as it is today. The expanded design (current
+ABI, L1 duties, key storage, threats, owner questions) is in
+[`designs/phase3-client-sdk.md`](designs/phase3-client-sdk.md).
 
 Prerequisites, from [`STATE.md`](../STATE.md):
 
