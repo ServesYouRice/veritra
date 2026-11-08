@@ -3761,6 +3761,104 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get autoBackupPromptLater => 'Не сада';
+  String get connectSignInPasskey => 'Пријава приступним кључем';
+
+  @override
+  String get passkeySignInFailed =>
+      'Пријава приступним кључем није успела. Покушајте поново или користите лозинку.';
+
+  @override
+  String get passkeyUnavailable =>
+      'Приступни кључеви нису доступни на овом уређају или нису подешени за овај сервер.';
+
+  @override
+  String get passkeyPinRefused =>
+      'Сервер је затражио приступни кључ за другу адресу, па га апликација одбија.';
+
+  @override
+  String get apiErrorPasskeyLimit =>
+      'Достигли сте границу броја приступних кључева. Прво уклоните један.';
+
+  @override
+  String get apiErrorPasskeyExists => 'Овај приступни кључ је већ додат.';
+
+  @override
+  String get apiErrorInvalidPasskey =>
+      'Сервер није могао да провери тај приступни кључ.';
+
+  @override
+  String get apiErrorPasskeysOff => 'Овај сервер не нуди приступне кључеве.';
+
+  @override
+  String get settingsPasskeys => 'Приступни кључеви';
+
+  @override
+  String get settingsPasskeysDetail =>
+      'Пријава закључавањем екрана уместо лозинке';
+
+  @override
+  String get passkeysIntro =>
+      'Приступни кључ вас пријављује на овом уређају уместо лозинке. За промене подешавања и даље се тражи лозинка. Услуга која чува ваш приступни кључ, на пример Google или Apple, сазнаје адресу овог сервера.';
+
+  @override
+  String get passkeysNotOffered =>
+      'Приступни кључеви нису доступни за овај сервер на овом уређају.';
+
+  @override
+  String get passkeysEmpty => 'Још нема приступних кључева.';
+
+  @override
+  String get passkeysAdd => 'Додај приступни кључ';
+
+  @override
+  String get passkeysAdded => 'Приступни кључ је додат.';
+
+  @override
+  String passkeyCreated(String date) {
+    return 'Додат $date';
+  }
+
+  @override
+  String passkeyLastUsed(String date) {
+    return 'Последња употреба $date';
+  }
+
+  @override
+  String get passkeyBackedUp => 'Резервна копија постоји';
+
+  @override
+  String get passkeyRename => 'Преименуј';
+
+  @override
+  String get passkeyRemove => 'Уклони';
+
+  @override
+  String get passkeyNameLabel => 'Назив';
+
+  @override
+  String get passkeyRemoveTitle => 'Уклонити овај приступни кључ?';
+
+  @override
+  String passkeyRemoveBody(String name) {
+    return '„$name” се више неће пријављивати на овај налог. Можете га поново додати касније.';
+  }
+
+  @override
+  String get passkeyRemoved => 'Приступни кључ је уклоњен.';
+
+  @override
+  String get passkeyNoticeAdded =>
+      'Приступни кључ је додат вашем налогу. Нисте ви? Промените лозинку.';
+
+  @override
+  String get passkeyNoticeRemoved =>
+      'Приступни кључ је уклоњен са вашег налога.';
+
+  @override
+  String get passkeyNoticeDismiss => 'Одбаци';
+
+  @override
+  String get passkeyNamePrefix => 'Приступни кључ';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -7525,4 +7623,102 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupPromptLater => 'Ne sada';
+  String get connectSignInPasskey => 'Prijava pristupnim ključem';
+
+  @override
+  String get passkeySignInFailed =>
+      'Prijava pristupnim ključem nije uspela. Pokušajte ponovo ili koristite lozinku.';
+
+  @override
+  String get passkeyUnavailable =>
+      'Pristupni ključevi nisu dostupni na ovom uređaju ili nisu podešeni za ovaj server.';
+
+  @override
+  String get passkeyPinRefused =>
+      'Server je zatražio pristupni ključ za drugu adresu, pa ga aplikacija odbija.';
+
+  @override
+  String get apiErrorPasskeyLimit =>
+      'Dostigli ste granicu broja pristupnih ključeva. Prvo uklonite jedan.';
+
+  @override
+  String get apiErrorPasskeyExists => 'Ovaj pristupni ključ je već dodat.';
+
+  @override
+  String get apiErrorInvalidPasskey =>
+      'Server nije mogao da proveri taj pristupni ključ.';
+
+  @override
+  String get apiErrorPasskeysOff => 'Ovaj server ne nudi pristupne ključeve.';
+
+  @override
+  String get settingsPasskeys => 'Pristupni ključevi';
+
+  @override
+  String get settingsPasskeysDetail =>
+      'Prijava zaključavanjem ekrana umesto lozinke';
+
+  @override
+  String get passkeysIntro =>
+      'Pristupni ključ vas prijavljuje na ovom uređaju umesto lozinke. Za promene podešavanja i dalje se traži lozinka. Usluga koja čuva vaš pristupni ključ, na primer Google ili Apple, saznaje adresu ovog servera.';
+
+  @override
+  String get passkeysNotOffered =>
+      'Pristupni ključevi nisu dostupni za ovaj server na ovom uređaju.';
+
+  @override
+  String get passkeysEmpty => 'Još nema pristupnih ključeva.';
+
+  @override
+  String get passkeysAdd => 'Dodaj pristupni ključ';
+
+  @override
+  String get passkeysAdded => 'Pristupni ključ je dodat.';
+
+  @override
+  String passkeyCreated(String date) {
+    return 'Dodat $date';
+  }
+
+  @override
+  String passkeyLastUsed(String date) {
+    return 'Poslednja upotreba $date';
+  }
+
+  @override
+  String get passkeyBackedUp => 'Rezervna kopija postoji';
+
+  @override
+  String get passkeyRename => 'Preimenuj';
+
+  @override
+  String get passkeyRemove => 'Ukloni';
+
+  @override
+  String get passkeyNameLabel => 'Naziv';
+
+  @override
+  String get passkeyRemoveTitle => 'Ukloniti ovaj pristupni ključ?';
+
+  @override
+  String passkeyRemoveBody(String name) {
+    return '„$name” se više neće prijavljivati na ovaj nalog. Možete ga ponovo dodati kasnije.';
+  }
+
+  @override
+  String get passkeyRemoved => 'Pristupni ključ je uklonjen.';
+
+  @override
+  String get passkeyNoticeAdded =>
+      'Pristupni ključ je dodat vašem nalogu. Niste vi? Promenite lozinku.';
+
+  @override
+  String get passkeyNoticeRemoved =>
+      'Pristupni ključ je uklonjen sa vašeg naloga.';
+
+  @override
+  String get passkeyNoticeDismiss => 'Odbaci';
+
+  @override
+  String get passkeyNamePrefix => 'Pristupni ključ';
 }

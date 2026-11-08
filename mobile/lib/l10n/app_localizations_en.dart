@@ -3747,4 +3747,101 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get autoBackupPromptLater => 'Not now';
+  String get connectSignInPasskey => 'Sign in with a passkey';
+
+  @override
+  String get passkeySignInFailed =>
+      'Passkey sign-in failed. Try again, or use your password.';
+
+  @override
+  String get passkeyUnavailable =>
+      'Passkeys are not available on this device, or not set up for this server.';
+
+  @override
+  String get passkeyPinRefused =>
+      'This server asked for a passkey for a different address, so the app refused.';
+
+  @override
+  String get apiErrorPasskeyLimit =>
+      'You have reached the passkey limit. Remove one first.';
+
+  @override
+  String get apiErrorPasskeyExists => 'This passkey is already added.';
+
+  @override
+  String get apiErrorInvalidPasskey =>
+      'The server could not verify that passkey.';
+
+  @override
+  String get apiErrorPasskeysOff => 'This server does not offer passkeys.';
+
+  @override
+  String get settingsPasskeys => 'Passkeys';
+
+  @override
+  String get settingsPasskeysDetail =>
+      'Sign in with your phone\'s screen lock instead of the password';
+
+  @override
+  String get passkeysIntro =>
+      'A passkey signs you in on this device instead of the password. Changing settings still asks for your password. The service that keeps your passkey, such as Google or Apple, learns this server\'s address.';
+
+  @override
+  String get passkeysNotOffered =>
+      'Passkeys are not available for this server on this device.';
+
+  @override
+  String get passkeysEmpty => 'No passkeys yet.';
+
+  @override
+  String get passkeysAdd => 'Add a passkey';
+
+  @override
+  String get passkeysAdded => 'Passkey added.';
+
+  @override
+  String passkeyCreated(String date) {
+    return 'Added $date';
+  }
+
+  @override
+  String passkeyLastUsed(String date) {
+    return 'Last used $date';
+  }
+
+  @override
+  String get passkeyBackedUp => 'Backed up';
+
+  @override
+  String get passkeyRename => 'Rename';
+
+  @override
+  String get passkeyRemove => 'Remove';
+
+  @override
+  String get passkeyNameLabel => 'Name';
+
+  @override
+  String get passkeyRemoveTitle => 'Remove this passkey?';
+
+  @override
+  String passkeyRemoveBody(String name) {
+    return '“$name” will no longer sign in to this account. You can add it again later.';
+  }
+
+  @override
+  String get passkeyRemoved => 'Passkey removed.';
+
+  @override
+  String get passkeyNoticeAdded =>
+      'A passkey was added to your account. Not you? Change your password.';
+
+  @override
+  String get passkeyNoticeRemoved => 'A passkey was removed from your account.';
+
+  @override
+  String get passkeyNoticeDismiss => 'Dismiss';
+
+  @override
+  String get passkeyNamePrefix => 'Passkey';
 }

@@ -46,6 +46,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   SetupProbeResult _probeResult = const SetupProbeResult.idle();
   bool? setupRequired;
   bool _hasStoredDevice = false;
+  // B7: the server offers passkeys to this build on this platform.
+  bool _passkeysOffered = false;
   bool _modeManuallySelected = false;
   Timer? _setupProbeDebounce;
   int _setupProbeGeneration = 0;
@@ -82,6 +84,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void _scheduleSetupProbe() {
     if (url.text == _lastUrlText) return;
     _lastUrlText = url.text;
+    _passkeysOffered = false;
     _modeManuallySelected = false;
     _setupProbeDebounce?.cancel();
     _setupProbeGeneration++;
@@ -132,6 +135,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _probeResult = result;
       setupRequired = result.setupRequired;
       _hasStoredDevice = linked;
+      _passkeysOffered = widget.state.passkeysOfferedFor(result);
       if (_modeManuallySelected) return;
       if (result.setupRequired == true) {
         mode = AuthMode.owner;
@@ -240,6 +244,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             label: Text(_submitLabel),
                           ),
                   ),
+                  if (mode == AuthMode.signIn &&
+                      _hasStoredDevice &&
+                      _passkeysOffered) ...<Widget>[
+                    const SizedBox(height: BoneSpacing.md),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        key: const ValueKey<String>('connect-passkey'),
+                        onPressed: widget.state.busy || _submitting
+                            ? null
+                            : _signInWithPasskey,
+                        icon: const Icon(Icons.fingerprint),
+                        label: Text(context.l10n.connectSignInPasskey),
+                      ),
+                    ),
+                  ],
                   if (widget.state.error != null) ...<Widget>[
                     const SizedBox(height: BoneSpacing.lg),
                     _ErrorCard(
@@ -629,6 +649,19 @@ class _ConnectScreenState extends State<ConnectScreen> {
     setState(() => _submitting = true);
     try {
       await _submitForm();
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// Passkey sign-in: the same post-sign-in path as the password, with no
+  /// username or password typed. The URL is the only field read.
+  Future<void> _signInWithPasskey() async {
+    final raw = url.text.trim();
+    if (_validateUrl(raw) != null) return;
+    setState(() => _submitting = true);
+    try {
+      await widget.state.signInWithPasskey(raw);
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

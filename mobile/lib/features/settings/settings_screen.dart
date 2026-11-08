@@ -29,6 +29,7 @@ import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
+import 'passkeys_screen.dart';
 import 'profile_screen.dart';
 import 'recovery_key_screen.dart';
 
@@ -122,6 +123,18 @@ class SettingsScreen extends StatelessWidget {
                       onTap: () => Navigator.of(context).push(
                         sharedAxisRoute<void>(
                           (_) => AutoBackupScreen(state: state),
+                        ),
+                      ),
+                    ),
+                  if (state.passkeyClient.platformSupported)
+                    ListTile(
+                      key: const ValueKey<String>('settings-passkeys'),
+                      leading: const Icon(Icons.fingerprint),
+                      title: Text(l10n.settingsPasskeys),
+                      subtitle: Text(l10n.settingsPasskeysDetail),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => PasskeysScreen(state: state),
                         ),
                       ),
                     ),

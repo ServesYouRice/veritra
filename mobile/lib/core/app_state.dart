@@ -7,7 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart'
-    show mapEquals, setEquals, visibleForTesting;
+    show defaultTargetPlatform, mapEquals, setEquals, visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
@@ -74,6 +74,7 @@ import 'profile_models.dart';
 import 'profile_service.dart';
 import '../crypto/profile_record_codec.dart'
     show ProfileRecordException, ProfilePhoto;
+import 'passkeys.dart';
 import 'receipts_state.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
@@ -88,6 +89,7 @@ export 'membership_models.dart';
 
 part 'app_state_membership.dart';
 part 'app_state_reports.dart';
+part 'app_state_passkeys.dart';
 part 'app_state_recovery.dart';
 part 'app_state_k1_backup.dart';
 part 'app_state_link_v3.dart';
@@ -125,6 +127,8 @@ class SetupProbeResult {
     required this.state,
     this.setupRequired,
     this.instanceName,
+    this.passkeys,
+    this.origin,
   });
 
   const SetupProbeResult.idle() : this(state: SetupProbeState.idle);
@@ -134,6 +138,12 @@ class SetupProbeResult {
   final SetupProbeState state;
   final bool? setupRequired;
   final String? instanceName;
+
+  /// What the server says about passkeys; null when off or not said (B7).
+  final PasskeyServerInfo? passkeys;
+
+  /// The canonical origin that was probed.
+  final String? origin;
 
   bool get isReachable => state == SetupProbeState.reachable;
 
@@ -218,6 +228,9 @@ class Ops {
   static const recoveryKey = 'recovery_key';
   static const accountRecovery = 'account_recovery';
 
+  /// B7: the passkey list and its changes.
+  static const passkeys = 'passkeys';
+
   /// K2: the link screen of the existing device, and the claim form of the
   /// new one.
   static const deviceLink = 'device_link';
@@ -260,7 +273,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     this.config = ClientConfig.production,
     ReceiptPreferences? receiptPreferences,
     ReportSeedStore? reportSeedStore,
+    this.passkeyClient = const UnsupportedPasskeyClient(),
+    PasskeyPlatform? passkeyPlatform,
+    List<String>? passkeyAppleDomains,
   })  : reportSeedStore = reportSeedStore ?? MemoryReportSeedStore(),
+        passkeyPlatform =
+            passkeyPlatform ?? passkeyPlatformOf(defaultTargetPlatform),
+        passkeyAppleDomains = passkeyAppleDomains ??
+            parsePasskeyDomains(passkeyAppleDomainsDefine),
         pushService = pushService ?? DisabledMobilePushService(),
         receiptPreferences = receiptPreferences ??
             ReceiptPreferences(MemoryReceiptPreferenceStore()) {
@@ -284,6 +304,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// The "send read receipts" switch (W5).
   final ReceiptPreferences receiptPreferences;
+
+  /// The platform's passkey ceremonies (B7); Linux and tests use the
+  /// unsupported one.
+  final PasskeyClient passkeyClient;
+  final PasskeyPlatform passkeyPlatform;
+
+  /// Hostnames compiled into the build's associated domains (iOS, macOS).
+  final List<String> passkeyAppleDomains;
+
+  /// Passkeys of the signed-in account, as last read.
+  List<PasskeyRecord> passkeyList = const <PasskeyRecord>[];
+  bool passkeysLoaded = false;
+
+  /// A passkey was added to or removed from this account somewhere else.
+  PasskeyNotice? passkeyNotice;
+
+  /// Passkey row IDs this device changed itself, so its own sync events do
+  /// not raise a notice.
+  final Set<String> _ownPasskeyChanges = <String>{};
 
   /// The approved-device list pins (L1); null without an L1 engine.
   DeviceListPins? _deviceListPins;
@@ -1526,6 +1565,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         state: SetupProbeState.reachable,
         setupRequired: required,
         instanceName: name is String ? name : null,
+        passkeys: PasskeyServerInfo.fromStatus(status),
+        origin: origin,
       );
     } on HandshakeException {
       return const SetupProbeResult(state: SetupProbeState.tlsFailure);
@@ -1900,7 +1941,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         deviceId: deviceId,
         deviceSecret: deviceSecret,
       );
-      final sameIdentity = localSession!.accountId != null &&
+      await _finishDeviceSignIn(localSession!, hadMlsState);
+    });
+  }
+
+  /// The steps after a sign-in on an enrolled device, shared by the password
+  /// and the passkey paths: [session] is the server's answer, [localSession]
+  /// the device identity stored before it, [hadMlsState] whether MLS state
+  /// existed before the answer was saved.
+  Future<void> _finishDeviceSignIn(
+      Session localSession, bool hadMlsState) async {
+    {
+      final sameIdentity = localSession.accountId != null &&
           localSession.baseUrl == session!.baseUrl &&
           localSession.accountId == session!.accountId &&
           localSession.deviceId == session!.deviceId;
@@ -1919,7 +1971,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await _refreshDevices();
         await _ensureKeyPackageSupply();
       });
-    });
+    }
   }
 
   /// The network steps after a sign-in: [steps] runs once the session is
@@ -7036,6 +7088,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     devices = <Device>[];
     recoveryKeyStatus = null;
     recoveryFollowUp = null;
+    passkeyList = const <PasskeyRecord>[];
+    passkeysLoaded = false;
+    passkeyNotice = null;
+    _ownPasskeyChanges.clear();
     _passwordLeakDay = null;
     _recoveredDevice = false;
     _recoveredMarkGeneration = -1;

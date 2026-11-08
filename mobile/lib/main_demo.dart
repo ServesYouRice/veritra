@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
+import 'core/passkeys.dart';
 import 'core/receipts_state.dart';
 import 'core/report_seed_store.dart';
 import 'core/transport_policy.dart';
@@ -101,6 +102,7 @@ Future<void> main(List<String> args) async {
       receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
       syncServiceFactory: (baseUrl, token) =>
           WebSocketSyncService(baseUrl: baseUrl, token: token),
+      passkeyClient: PlatformPasskeyClient(),
       pushService: Platform.isAndroid || Platform.isIOS
           ? PlatformMobilePushService()
           : DisabledMobilePushService(),
