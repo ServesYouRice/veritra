@@ -916,5 +916,9 @@
   "c6ReportsDismiss": "Odbaci prijavu",
   "c6ReportsDismissTitle": "Odbaciti ovu prijavu?",
   "c6ReportsDismissBody": "Ovo zauvek uklanja tvoju kopiju. Ostali vlasnici zadržavaju svoje.",
-  "c6ReportsDismissed": "Prijava je odbačena."
+  "c6ReportsDismissed": "Prijava je odbačena.",
+  "c6ReportsKeyElsewhere": "Tvoj ključ za prijave je na drugom uređaju. Prijave za njega se otvaraju tamo, ne ovde.",
+  "c6ReportsKeyReplacedElsewhere": "Drugi uređaj je zamenio tvoj ključ za prijave. Nove prijave idu na ključ ispod; ovaj uređaj otvara samo prijave poslate na njegov stariji ključ.",
+  "c6ReportsKeyUnpublished": "Ovaj uređaj drži ključ za prijave koji još nije objavljen. Objavi ga da bi ti ljudi mogli slati prijave.",
+  "c6SignOutSeedWarning": "Ovaj uređaj drži tvoj ključ za prijave. Odjavom se on briše, a prijave već poslate na njega više se ne mogu otvoriti. Prvo obradi svoje prijave."
 }

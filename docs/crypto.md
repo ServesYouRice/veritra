@@ -2607,6 +2607,14 @@ The app recomputes the commitment from the revealed message and compares it
 with `frank_commit`, the recorded sender device and the conversation
 (condition G1).
 
+`GET /api/v1/reports/inbox-keys/instance` (step 4) returns the calling owner's
+own current report key `{inbox_id, public_key, key_rev, updated_at}` (404 when
+none is published, 403 for a non-owner), so a device that lost a race to
+another device shows the key reporters actually see. Local schema 27 (C6)
+adds `local_filed_reports (origin, account_id, message_key, filed_at)`, ids
+only, so a message is reported once per account and server; it is cleared
+with the pinned report keys on a full wipe. No ABI or payload change.
+
 **Not wired.** (1) The community inbox key has no publish route: it needs
 C4's role state to be distributed (design item 8). (2) The report screens,
 the call that builds a report from a stored reveal and posts it (the pieces

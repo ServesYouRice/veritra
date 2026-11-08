@@ -182,30 +182,45 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
 
   Widget _keyTile(BuildContext context, OwnerReportKeyStatus key) {
     final l10n = context.l10n;
-    final active = key.state == OwnerReportKeyState.active;
+    final state = key.state;
+    // The code to show is the one the server lists: it is what reporters see.
+    final code = key.listedKey ?? key.localKey;
+    final title = switch (state) {
+      OwnerReportKeyState.none => l10n.c6ReportsKeyNone,
+      OwnerReportKeyState.active => l10n.c6ReportsKeyActive,
+      OwnerReportKeyState.heldElsewhere => l10n.c6ReportsKeyElsewhere,
+      OwnerReportKeyState.replacedElsewhere =>
+        l10n.c6ReportsKeyReplacedElsewhere,
+      OwnerReportKeyState.unpublished => l10n.c6ReportsKeyUnpublished,
+    };
+    final hasKey = state != OwnerReportKeyState.none &&
+        state != OwnerReportKeyState.heldElsewhere;
     return TileGroup(children: <Widget>[
       ListTile(
-        leading: Icon(active ? Icons.key : Icons.key_off_outlined),
-        title: Text(active ? l10n.c6ReportsKeyActive : l10n.c6ReportsKeyNone),
-        subtitle: active && key.publicKey != null
-            ? SelectableText(
-                l10n.c6ReportsKeyCode(reportKeyFingerprint(key.publicKey!)))
+        leading: Icon(hasKey ? Icons.key : Icons.key_off_outlined),
+        title: Text(title),
+        subtitle: code != null
+            ? SelectableText(l10n.c6ReportsKeyCode(reportKeyFingerprint(code)))
             : null,
       ),
-      if (!active)
+      if (state == OwnerReportKeyState.none ||
+          state == OwnerReportKeyState.heldElsewhere)
         ListTile(
           leading: const Icon(Icons.add),
           title: Text(l10n.c6ReportsKeyCreate),
           enabled: !_busy,
-          onTap: () => _publish(create: true, replace: false),
+          onTap: () => _publish(
+              create: true,
+              replace: state == OwnerReportKeyState.heldElsewhere),
         )
       else ...<Widget>[
-        ListTile(
-          leading: const Icon(Icons.publish_outlined),
-          title: Text(l10n.c6ReportsKeyPublish),
-          enabled: !_busy,
-          onTap: () => _publish(create: false, replace: false),
-        ),
+        if (state == OwnerReportKeyState.unpublished)
+          ListTile(
+            leading: const Icon(Icons.publish_outlined),
+            title: Text(l10n.c6ReportsKeyPublish),
+            enabled: !_busy,
+            onTap: () => _publish(create: false, replace: false),
+          ),
         ListTile(
           leading: const Icon(Icons.autorenew),
           title: Text(l10n.c6ReportsKeyReplace),

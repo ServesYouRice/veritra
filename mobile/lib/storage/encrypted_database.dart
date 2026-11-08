@@ -27,6 +27,7 @@ part 'k2_transfer_sql.dart';
 part 'frank_reveals_sql.dart';
 part 'conversation_pause_sql.dart';
 part 'device_list_sql.dart';
+part 'filed_reports_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -602,7 +603,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 26;
+  static const currentSchemaVersion = 27;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -817,6 +818,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createFrankReveals();
             await _createConversationPauses();
             await _createDeviceLists();
+            await _createFiledReports();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -960,6 +962,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // New tables only. A group from before this upgrade has no leaf
             // rows and is judged (audited) before it is next used.
             if (from < 26) await _createDeviceLists();
+            // C6 (schema 27): which messages this account already reported.
+            // New table only.
+            if (from < 27) await _createFiledReports();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -2337,6 +2342,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearFrankReveals();
         await _clearDeviceLists();
         await _clearReportKeyPins();
+        await _clearFiledReports();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localDrafts).go();

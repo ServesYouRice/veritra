@@ -54,6 +54,10 @@ class _Server extends ApiClient {
       ReportInbox(kind: kind, recipients: keys.values.toList());
 
   @override
+  Future<ReportInboxRecipient?> getOwnReportKey(String token) async =>
+      keys[token];
+
+  @override
   Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
     final old = keys[token];
     final same = old != null && _eq(old.publicKey, publicKey);
@@ -147,7 +151,6 @@ void main() {
       );
 
   setUp(() async {
-    ReportsService.forgetFiledReports();
     // The tests that need the native seal fail on `crypto` when the library
     // is required and missing; the model and store tests run without it.
     if (nativeCryptoLibraryPath == null) return;
@@ -213,13 +216,15 @@ void main() {
     expect(rev, 1);
     final status = await owner.keyStatus();
     expect(status.state, OwnerReportKeyState.active);
-    expect(status.publicKey, key);
+    expect(status.localKey, key);
+    expect(status.listedKey, key);
     // Creating again would silently lose the seed: refused unless replacing.
     await expectLater(owner.createKey(), throwsStateError);
     final (again, sameRev) = await owner.publishKey();
     expect(again, key);
     expect(sameRev, 1);
-    // A second device holds no seed, so it is `none` and must opt in.
+    // A second device holds no seed: the key is held elsewhere, and making a
+    // new one is an explicit replace.
     final other = ReportsService(
       api: server,
       token: _ownerAccount,
@@ -228,10 +233,19 @@ void main() {
       store: store,
       seeds: MemoryReportSeedStore(),
     );
-    expect((await other.keyStatus()).state, OwnerReportKeyState.none);
+    expect((await other.keyStatus()).state, OwnerReportKeyState.heldElsewhere);
     final (replacement, newRev) = await other.createKey(replace: true);
     expect(replacement, isNot(key));
     expect(newRev, 2);
+    // The first device now sees the key reporters see, and that it is not its
+    // own.
+    final first = await owner.keyStatus();
+    expect(first.state, OwnerReportKeyState.replacedElsewhere);
+    expect(first.listedKey, replacement);
+    expect(first.localKey, key);
+    // A seed whose key was never published reads as unpublished.
+    server.keys.clear();
+    expect((await owner.keyStatus()).state, OwnerReportKeyState.unpublished);
   }, skip: nativeSkip);
 
   test('report round trip: pin, file, open, verify, dismiss', () async {
@@ -483,7 +497,7 @@ void main() {
       seeds: seeds,
     );
     await expectLater(broken.createKey(replace: true), throwsA(anything));
-    expect((await owner.keyStatus()).publicKey, key);
+    expect((await owner.keyStatus()).localKey, key);
   }, skip: nativeSkip);
 
   test('report models bound what the server sends', () {

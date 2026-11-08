@@ -951,6 +951,20 @@ class ApiClient {
     });
   }
 
+  /// The calling owner's own current report key as the server holds it, or
+  /// null when none was published.
+  Future<ReportInboxRecipient?> getOwnReportKey(String token) async {
+    final Map<String, Object?> json;
+    try {
+      json = await _jsonRequest('GET', '/api/v1/reports/inbox-keys/instance',
+          token: token);
+    } on ApiException catch (err) {
+      if (err.statusCode == 404) return null;
+      rethrow;
+    }
+    return _decode(() => ReportInboxRecipient.fromJson(json));
+  }
+
   /// Files one report: a copy sealed to each recipient of the inbox.
   Future<void> createReport(
     String token, {

@@ -10,7 +10,6 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/report_models.dart';
 import 'package:private_messenger/core/report_seed_store.dart';
-import 'package:private_messenger/core/reports_service.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/features/reports/owner_reports_screen.dart';
 import 'package:private_messenger/features/reports/report_message_screen.dart';
@@ -76,6 +75,13 @@ class _Api extends ApiClient {
   Future<ReportInbox> getReportInbox(
           String token, String conversationId) async =>
       ReportInbox(kind: kind, recipients: recipients);
+
+  @override
+  Future<ReportInboxRecipient?> getOwnReportKey(String token) async =>
+      published.isEmpty
+          ? null
+          : ReportInboxRecipient(
+              inboxId: 'acct_me', publicKey: published.last, keyRev: 1);
 
   @override
   Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
@@ -153,8 +159,6 @@ class _Store extends MemoryLocalStore {
 }
 
 void main() {
-  setUp(ReportsService.forgetFiledReports);
-
   testWidgets('owner screen: no key, create it, community inbox unavailable',
       (tester) async {
     final h = _harness(role: 'owner');
@@ -271,6 +275,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('cannot be reported'), findsOneWidget);
     expect(h.api.filed, 0);
+  });
+
+  test('signing out deletes the report seed, and the warning knows of it',
+      () async {
+    final h = _harness(role: 'owner');
+    expect(await h.state.holdsReportSeed(), isFalse);
+    await h.state.reportSeedStore.save('https://example.test', 'acct_me',
+        Uint8List.fromList(List<int>.filled(32, 3)));
+    expect(await h.state.holdsReportSeed(), isTrue);
+    await h.state.logout();
+    expect(
+        await h.state.reportSeedStore.load('https://example.test', 'acct_me'),
+        isNull);
+    expect(await h.state.holdsReportSeed(), isFalse);
   });
 
   test('a build without the reviewed engine offers no reporting', () {

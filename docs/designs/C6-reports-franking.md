@@ -330,9 +330,15 @@ Built on branch `agent/c6` (see the pull request and
 - **Community moderator inbox.** Shown as "not available yet" in the owner
   screen and in the report screen; it waits for C4.
 
-Left: a way to move the seed to a second owner device; the reporter's
-"already reported" memory is per run (a durable one needs a local table, a
-schema change); the moderator inbox (C4).
+Owner answers (coordinator, 2026-11-08), built: the seed is never moved
+between devices (one device holds it; a second device makes a new key); a
+deliberate sign-out deletes the seed after a warning on the sign-out dialog;
+"already reported" is durable (local schema 27); the owner screen shows the
+key the server currently lists (new route `GET /reports/inbox-keys/instance`)
+and says when another device replaced this one's key.
+
+Left: the moderator inbox (C4); the changed-key trust tap is the same as for a
+new key.
 
 ## Owner decisions (2026-11-01)
 

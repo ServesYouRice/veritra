@@ -1192,5 +1192,13 @@
   "c6ReportsDismissBody": "This removes your copy for good. Other owners keep theirs.",
   "@c6ReportsDismissBody": {"description": "C6 reports."},
   "c6ReportsDismissed": "Report dismissed.",
-  "@c6ReportsDismissed": {"description": "C6 reports."}
+  "@c6ReportsDismissed": {"description": "C6 reports."},
+  "c6ReportsKeyElsewhere": "Your report key is held on another device. Reports to it open there, not here.",
+  "@c6ReportsKeyElsewhere": {"description": "C6 reports."},
+  "c6ReportsKeyReplacedElsewhere": "Another device replaced your report key. New reports go to the key below; this device only opens reports sent to its older key.",
+  "@c6ReportsKeyReplacedElsewhere": {"description": "C6 reports."},
+  "c6ReportsKeyUnpublished": "This device holds a report key that is not published yet. Publish it so people can report to you.",
+  "@c6ReportsKeyUnpublished": {"description": "C6 reports."},
+  "c6SignOutSeedWarning": "This device holds your report key. Signing out deletes it, and reports already sent to it can no longer be opened. Deal with your reports first.",
+  "@c6SignOutSeedWarning": {"description": "C6 reports."}
 }

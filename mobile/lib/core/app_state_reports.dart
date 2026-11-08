@@ -37,4 +37,34 @@ extension ReportActions on AppState {
       seeds: reportSeedStore,
     );
   }
+
+  /// Whether this device holds the signed-in owner's report-key seed, so the
+  /// sign-out screen can warn that signing out deletes it.
+  Future<bool> holdsReportSeed() async {
+    final current = session;
+    final accountId = current?.accountId;
+    if (current == null || accountId == null || !reportsAvailable) {
+      return false;
+    }
+    try {
+      final seed = await reportSeedStore.load(current.baseUrl, accountId);
+      seed?.fillRange(0, seed.length, 0);
+      return seed != null;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Deletes the signed-in account's report-key seed from this device. Called
+  /// on a deliberate sign-out, after the screen warned; reports sealed to it
+  /// can no longer be opened here.
+  Future<void> _deleteReportSeed(Session? current) async {
+    final accountId = current?.accountId;
+    if (current == null || accountId == null) return;
+    try {
+      await reportSeedStore.delete(current.baseUrl, accountId);
+    } catch (_) {
+      // Sign-out must not fail on a keystore error.
+    }
+  }
 }

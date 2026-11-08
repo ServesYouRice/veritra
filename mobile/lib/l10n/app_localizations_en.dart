@@ -3375,4 +3375,20 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportsDismissed => 'Report dismissed.';
+
+  @override
+  String get c6ReportsKeyElsewhere =>
+      'Your report key is held on another device. Reports to it open there, not here.';
+
+  @override
+  String get c6ReportsKeyReplacedElsewhere =>
+      'Another device replaced your report key. New reports go to the key below; this device only opens reports sent to its older key.';
+
+  @override
+  String get c6ReportsKeyUnpublished =>
+      'This device holds a report key that is not published yet. Publish it so people can report to you.';
+
+  @override
+  String get c6SignOutSeedWarning =>
+      'This device holds your report key. Signing out deletes it, and reports already sent to it can no longer be opened. Deal with your reports first.';
 }

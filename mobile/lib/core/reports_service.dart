@@ -2,8 +2,6 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
-
 import '../crypto/crypto_service.dart';
 import '../crypto/franking.dart';
 import '../crypto/report_body.dart';
@@ -68,26 +66,41 @@ class ReportPlan {
   bool get canSend => !isCommunity && check.allPinned;
 }
 
-/// The state of an instance owner's own report key on this device. The
-/// server has no route that tells an owner their own key, so this knows only
-/// what this device holds: a seed makes the key, and publishing the same key
-/// again changes nothing on the server.
+/// The state of an instance owner's own report key as this device sees it:
+/// the seed it holds (if any) against the key the server lists for the owner.
 enum OwnerReportKeyState {
-  /// This device holds no seed. Either no key was ever made, or another
-  /// device holds it; making a key here replaces whatever the server lists
-  /// (reporters pin the new one, reports sealed to the old key open only
-  /// where its seed is).
+  /// No seed here and no key published: nobody can report yet.
   none,
 
-  /// This device holds the seed; [OwnerReportKeyStatus.publicKey] is its key.
+  /// This device holds the seed and the server lists its key.
   active,
+
+  /// The server lists a key but this device holds no seed for it: another
+  /// device holds it. Reports to it open there, not here. Making a key here
+  /// replaces it (after a warning).
+  heldElsewhere,
+
+  /// This device holds a seed but the server lists a different key: another
+  /// device replaced the key. This device's seed still opens the reports
+  /// sealed to its old key, but new reports are sealed to the listed one.
+  replacedElsewhere,
+
+  /// This device holds a seed but the server lists none (publishing failed):
+  /// publishing makes it current.
+  unpublished,
 }
 
 class OwnerReportKeyStatus {
-  const OwnerReportKeyStatus(this.state, {this.publicKey});
+  const OwnerReportKeyStatus(this.state, {this.localKey, this.listedKey});
 
   final OwnerReportKeyState state;
-  final List<int>? publicKey;
+
+  /// The key this device's seed makes, when it has one.
+  final List<int>? localKey;
+
+  /// The key the server lists for this owner now, when there is one. This is
+  /// the code reporters see, so it is the one to show.
+  final List<int>? listedKey;
 }
 
 enum ReportOpenFailure {
@@ -165,14 +178,6 @@ class ReportsService {
   final ReportKeyPins pins;
   final Random _random;
 
-  /// Report ids filed from this device in this run, so a double tap or a
-  /// retried screen cannot file one message twice. The server dedupes by
-  /// report id only; it cannot see messages (D95).
-  static final Set<String> _filedMessages = <String>{};
-
-  @visibleForTesting
-  static void forgetFiledReports() => _filedMessages.clear();
-
   // ---- Reporter ----------------------------------------------------------
 
   /// The text of exactly what a report of [messageKey] would reveal: the
@@ -226,8 +231,9 @@ class ReportsService {
     if (reveal == null || reveal.conversationId != conversationId) {
       throw const ReportFailureException(ReportFailure.notReportable);
     }
-    final filedKey = '${api.baseUrl}\u0000$accountId\u0000$messageKey';
-    if (_filedMessages.contains(filedKey)) {
+    // The server cannot dedupe by message (D95), so this device remembers
+    // (local schema 27) which messages this account already reported.
+    if (await store.isMessageReported(api.baseUrl, accountId, messageKey)) {
       throw const ReportFailureException(ReportFailure.alreadyReported);
     }
     final inbox = await api.getReportInbox(token, conversationId);
@@ -259,7 +265,11 @@ class ReportsService {
       reportId: reportId,
       copies: [for (final copy in copies) copy.toJson()],
     );
-    _filedMessages.add(filedKey);
+    try {
+      await store.markMessageReported(api.baseUrl, accountId, messageKey);
+    } catch (_) {
+      // The report is filed; failing to note it must not read as a failure.
+    }
   }
 
   String _newReportId() => base64Url
@@ -274,17 +284,28 @@ class ReportsService {
 
   // ---- Instance owner ----------------------------------------------------
 
-  /// What this device holds (see [OwnerReportKeyState]).
+  /// Compares this device's seed with the key the server lists for this
+  /// owner (see [OwnerReportKeyState]).
   Future<OwnerReportKeyStatus> keyStatus() async {
+    final listed = await api.getOwnReportKey(token);
     final seed = await seeds.load(api.baseUrl, accountId);
     if (seed == null) {
-      return const OwnerReportKeyStatus(OwnerReportKeyState.none);
+      return OwnerReportKeyStatus(
+        listed == null
+            ? OwnerReportKeyState.none
+            : OwnerReportKeyState.heldElsewhere,
+        listedKey: listed?.publicKey,
+      );
     }
     try {
-      return OwnerReportKeyStatus(
-        OwnerReportKeyState.active,
-        publicKey: await crypto.reportPublicKey(seed),
-      );
+      final own = await crypto.reportPublicKey(seed);
+      final state = listed == null
+          ? OwnerReportKeyState.unpublished
+          : _sameBytes(own, listed.publicKey)
+              ? OwnerReportKeyState.active
+              : OwnerReportKeyState.replacedElsewhere;
+      return OwnerReportKeyStatus(state,
+          localKey: own, listedKey: listed?.publicKey);
     } finally {
       seed.fillRange(0, seed.length, 0);
     }

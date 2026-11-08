@@ -39,8 +39,14 @@ checks context first, shows the sender only on a match, and refuses a report
 whose sender is the reporter; replies are readable; the envelope route honours
 `expires_at` and the 90-day window; attachment wording says the file key is sent.
 
-Left: after a second device replaces the key the first device still shows its
-old code (needs a route that returns an owner their own key); the seed is not
-deleted on sign-out; "Trust" for a changed key is the same tap as for a new one.
+Owner answers applied (2026-11-08): seed never moves between devices; seed is
+deleted on sign-out after a warning; "already reported" is durable (local
+schema 27, `test/c6_schema27_test.dart`); the owner's current key is read from
+`GET /api/v1/reports/inbox-keys/instance` (Go test
+`TestOwnerReadsOnlyTheirOwnCurrentReportKey`) so the first device shows the
+replaced key correctly (`replacedElsewhere`).
 
-Native tests need `VERITRA_CRYPTO_LIBRARY=<repo>/crypto/rust/target/release/libprivate_messenger_crypto.so`.
+Left: "Trust" for a changed key is the same tap as for a new one.
+
+Native tests need `VERITRA_CRYPTO_LIBRARY=<repo>/crypto/rust/target/release/libprivate_messenger_crypto.so`
+(rebuild it after main moves: `cd crypto/rust && cargo build --release`).

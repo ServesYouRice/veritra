@@ -5552,6 +5552,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Report dismissed.'**
   String get c6ReportsDismissed;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Your report key is held on another device. Reports to it open there, not here.'**
+  String get c6ReportsKeyElsewhere;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Another device replaced your report key. New reports go to the key below; this device only opens reports sent to its older key.'**
+  String get c6ReportsKeyReplacedElsewhere;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This device holds a report key that is not published yet. Publish it so people can report to you.'**
+  String get c6ReportsKeyUnpublished;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'This device holds your report key. Signing out deletes it, and reports already sent to it can no longer be opened. Deal with your reports first.'**
+  String get c6SignOutSeedWarning;
 }
 
 class _AppLocalizationsDelegate

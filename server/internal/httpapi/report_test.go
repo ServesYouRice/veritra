@@ -583,3 +583,37 @@ func TestReportEnvelopeRecordGoesToTheCopyHolderOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnerReadsOnlyTheirOwnCurrentReportKey(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+	memberToken := registerMember(t, handler, ownerToken, "member")
+	path := "/api/v1/reports/inbox-keys/instance"
+
+	if status, _ := doJSON(t, handler, http.MethodGet, path, ownerToken, nil); status != http.StatusNotFound {
+		t.Fatalf("before publish status=%d", status)
+	}
+	key1, key2 := bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 32)
+	if status, body := putReportKey(t, handler, ownerToken, key1); status != http.StatusOK {
+		t.Fatalf("publish status=%d body=%s", status, body)
+	}
+	status, response := doJSON(t, handler, http.MethodGet, path, ownerToken, nil)
+	if status != http.StatusOK || !strings.Contains(string(response), base64.StdEncoding.EncodeToString(key1)) || !strings.Contains(string(response), ownerID) || !strings.Contains(string(response), `"key_rev":1`) {
+		t.Fatalf("own key status=%d body=%s", status, response)
+	}
+	// A replaced key is what is returned next, at its new revision.
+	if status, body := putReportKey(t, handler, ownerToken, key2); status != http.StatusOK {
+		t.Fatalf("replace status=%d body=%s", status, body)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, path, ownerToken, nil)
+	if status != http.StatusOK || !strings.Contains(string(response), base64.StdEncoding.EncodeToString(key2)) || !strings.Contains(string(response), `"key_rev":2`) {
+		t.Fatalf("replaced key status=%d body=%s", status, response)
+	}
+	// Members get nothing, and no token gets nothing.
+	if status, _ := doJSON(t, handler, http.MethodGet, path, memberToken, nil); status != http.StatusForbidden {
+		t.Fatalf("member status=%d", status)
+	}
+	if status, _ := doJSON(t, handler, http.MethodGet, path, "", nil); status != http.StatusUnauthorized {
+		t.Fatalf("anonymous status=%d", status)
+	}
+}

@@ -4237,6 +4237,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final current = session;
       final client = api;
       await _stopPush(current, client);
+      // C6: the owner's report seed goes with a deliberate sign-out; the
+      // sign-out screen warned first.
+      await _deleteReportSeed(current);
       final detached = await _clearLocalSession(
           preserveDeviceIdentity: true, keepApiOpen: true);
       await _revokeAndClose(current, detached);

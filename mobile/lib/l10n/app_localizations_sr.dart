@@ -3387,6 +3387,22 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportsDismissed => 'Пријава је одбачена.';
+
+  @override
+  String get c6ReportsKeyElsewhere =>
+      'Твој кључ за пријаве је на другом уређају. Пријаве за њега се отварају тамо, не овде.';
+
+  @override
+  String get c6ReportsKeyReplacedElsewhere =>
+      'Други уређај је заменио твој кључ за пријаве. Нове пријаве иду на кључ испод; овај уређај отвара само пријаве послате на његов старији кључ.';
+
+  @override
+  String get c6ReportsKeyUnpublished =>
+      'Овај уређај држи кључ за пријаве који још није објављен. Објави га да би ти људи могли слати пријаве.';
+
+  @override
+  String get c6SignOutSeedWarning =>
+      'Овај уређај држи твој кључ за пријаве. Одјавом се он брише, а пријаве већ послате на њега више се не могу отворити. Прво обради своје пријаве.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6776,4 +6792,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportsDismissed => 'Prijava je odbačena.';
+
+  @override
+  String get c6ReportsKeyElsewhere =>
+      'Tvoj ključ za prijave je na drugom uređaju. Prijave za njega se otvaraju tamo, ne ovde.';
+
+  @override
+  String get c6ReportsKeyReplacedElsewhere =>
+      'Drugi uređaj je zamenio tvoj ključ za prijave. Nove prijave idu na ključ ispod; ovaj uređaj otvara samo prijave poslate na njegov stariji ključ.';
+
+  @override
+  String get c6ReportsKeyUnpublished =>
+      'Ovaj uređaj drži ključ za prijave koji još nije objavljen. Objavi ga da bi ti ljudi mogli slati prijave.';
+
+  @override
+  String get c6SignOutSeedWarning =>
+      'Ovaj uređaj drži tvoj ključ za prijave. Odjavom se on briše, a prijave već poslate na njega više se ne mogu otvoriti. Prvo obradi svoje prijave.';
 }

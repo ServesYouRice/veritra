@@ -468,10 +468,16 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _confirmLogout(BuildContext context) async {
+    // C6: signing out deletes this device's report key; say so first.
+    final holdsSeed = await state.holdsReportSeed();
+    if (!context.mounted) return;
     final confirmed = await _confirm(
       context,
       title: context.l10n.settingsSignOutTitle,
-      message: context.l10n.settingsSignOutMessage,
+      message: holdsSeed
+          ? '${context.l10n.settingsSignOutMessage}\n\n'
+              '${context.l10n.c6SignOutSeedWarning}'
+          : context.l10n.settingsSignOutMessage,
       confirmLabel: context.l10n.settingsSignOut,
     );
     if (confirmed) {

@@ -668,6 +668,13 @@ abstract class LocalStore {
   Future<void> saveReportKeyPin(ReportKeyPin pin);
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId);
 
+  /// C6 (schema 27): whether [accountId] already reported [messageKey] on
+  /// [origin] from this device, and the note that it did. Ids only.
+  Future<bool> isMessageReported(
+      String origin, String accountId, String messageKey);
+  Future<void> markMessageReported(
+      String origin, String accountId, String messageKey);
+
   // L1 approved-device lists (schema 26, D94). Never in a backup.
   Future<DeviceListPin?> loadDeviceListPin(String accountId);
 
@@ -956,6 +963,7 @@ class MemoryLocalStore implements LocalStore {
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
   final Map<String, FrankReveal> _frankReveals = <String, FrankReveal>{};
   final Map<String, ReportKeyPin> _reportKeyPins = <String, ReportKeyPin>{};
+  final Set<String> _filedReports = <String>{};
   _MemoryMessageHistory _history = _MemoryMessageHistory();
   final Map<String, LocalConversationPref> _conversationPrefs = {};
   String? _syncLeaseKey;
@@ -1502,6 +1510,20 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId) async {
     _reportKeyPins.remove('$origin\u0000$ownerAccountId');
+  }
+
+  @override
+  Future<bool> isMessageReported(
+          String origin, String accountId, String messageKey) async =>
+      _filedReports.contains('$origin\u0000$accountId\u0000$messageKey');
+
+  @override
+  Future<void> markMessageReported(
+      String origin, String accountId, String messageKey) async {
+    if (origin.isEmpty || accountId.isEmpty || messageKey.isEmpty) {
+      throw const FormatException('invalid filed report');
+    }
+    _filedReports.add('$origin\u0000$accountId\u0000$messageKey');
   }
 
   @override
@@ -2123,6 +2145,7 @@ class MemoryLocalStore implements LocalStore {
     _deviceListConflicts.clear();
     _approvalLeaves.clear();
     _reportKeyPins.clear();
+    _filedReports.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
     _lastBackupAt = null;
@@ -3060,6 +3083,17 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId) async =>
       (await _database()).deleteReportKeyPin(origin, ownerAccountId);
+
+  @override
+  Future<bool> isMessageReported(
+          String origin, String accountId, String messageKey) async =>
+      (await _database()).readReportFiled(origin, accountId, messageKey);
+
+  @override
+  Future<void> markMessageReported(
+          String origin, String accountId, String messageKey) async =>
+      (await _database()).writeReportFiled(origin, accountId, messageKey,
+          DateTime.now().toUtc().millisecondsSinceEpoch);
 
   @override
   Future<DeviceListPin?> loadDeviceListPin(String accountId) async =>

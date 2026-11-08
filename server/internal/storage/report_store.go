@@ -139,6 +139,31 @@ func (s *Store) SetInstanceReportKey(ctx context.Context, accountID string, publ
 	return ReportRecipient{InboxID: accountID, PublicKey: publicKey, KeyRev: rev, UpdatedAt: parseTime(now)}, nil
 }
 
+// InstanceReportKey returns the calling owner's own published report key, so
+// an owner's device can show the current key's code after another device
+// replaced it. ErrForbidden unless the caller is an active owner; ErrNotFound
+// when none was published.
+func (s *Store) InstanceReportKey(ctx context.Context, accountID string) (ReportRecipient, error) {
+	allowed, err := mayReadReportInbox(ctx, s.db, accountID, franking.InboxInstanceOwner, accountID)
+	if err != nil {
+		return ReportRecipient{}, err
+	}
+	if !allowed {
+		return ReportRecipient{}, ErrForbidden
+	}
+	var r ReportRecipient
+	var updated string
+	err = s.db.QueryRowContext(ctx, `SELECT inbox_id, public_key, key_rev, updated_at FROM report_inbox_keys WHERE inbox_kind = ? AND inbox_id = ?`, franking.InboxInstanceOwner, accountID).Scan(&r.InboxID, &r.PublicKey, &r.KeyRev, &updated)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReportRecipient{}, ErrNotFound
+		}
+		return ReportRecipient{}, err
+	}
+	r.UpdatedAt = parseTime(updated)
+	return r, nil
+}
+
 type reportQuerier interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)

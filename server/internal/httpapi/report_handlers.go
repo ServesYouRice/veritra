@@ -37,6 +37,18 @@ func (a *API) putInstanceReportKey(w http.ResponseWriter, r *http.Request, princ
 	writeJSON(w, http.StatusOK, recipient)
 }
 
+// GET /api/v1/reports/inbox-keys/instance: the calling owner's own current
+// report key (404 when none is published), so a device that lost the race to
+// another device can show the key reporters actually see.
+func (a *API) getInstanceReportKey(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	recipient, err := a.Store.InstanceReportKey(r.Context(), principal.AccountID)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, recipient)
+}
+
 // GET /api/v1/reports/inbox?conversation_id=: where a report about a message
 // of this conversation goes, and the keys to seal one copy to each recipient.
 // Members only.
