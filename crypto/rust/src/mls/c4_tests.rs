@@ -469,6 +469,45 @@ fn record_proposals_that_change_anything_else_are_refused() {
 }
 
 #[test]
+fn two_record_proposals_in_one_commit_never_reach_a_receiver() {
+    let (devices, mut groups) = record_group(GROUP);
+    let bob = &devices[1];
+    let first = Extensions::from_vec(vec![required(&[role()], &[]), record_ext(b"a")]).unwrap();
+    let second = Extensions::from_vec(vec![required(&[role()], &[]), record_ext(b"b")]).unwrap();
+    let built = in_scope(bob, &mut groups[1], |g| {
+        let bundle = g
+            .commit_builder()
+            .propose_group_context_extensions(first)
+            .ok()?
+            .propose_group_context_extensions(second)
+            .ok()?
+            .load_psks(bob.provider.storage())
+            .ok()?
+            .build(
+                bob.provider.rand(),
+                bob.provider.crypto(),
+                &bob.signer,
+                |_| true,
+            )
+            .ok()?
+            .stage_commit(&bob.provider)
+            .ok()?;
+        Some(bundle.into_messages().0.tls_serialize_detached().unwrap())
+    });
+    let _ = bob.clear_pending_commit(&mut groups[1]);
+    // OpenMLS 0.9.2 refuses two GroupContextExtensions proposals at the
+    // sender; should a later version build them, the receiver refuses.
+    if let Some(commit) = built {
+        let carol = &devices[2];
+        assert!(carol
+            .stage_incoming_commit(&mut groups[2], &commit)
+            .is_err());
+        assert!(!carol.held.holds(GROUP));
+        assert_eq!(carol.group_epoch(&groups[2]), 1);
+    }
+}
+
+#[test]
 fn a_record_proposal_in_a_group_without_a_record_is_refused() {
     let [alice, bob] = [device("alice"), device("bob")];
     let mut alice_group = alice.create_group(b"conv_plain").unwrap();

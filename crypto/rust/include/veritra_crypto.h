@@ -537,7 +537,8 @@ int32_t pm_crypto_group_l1_merge_pending_commit(
  *
  * stage_commit_with_roles: pm_crypto_group_stage_commit plus one
  * GroupContextExtensions proposal rewriting the record (every other context
- * extension unchanged). changes may hold no adds and no removes: then the
+ * extension unchanged). changes must be version 2 (keyed adds, L1; version 1
+ * is PM_CRYPTO_INVALID_ARGUMENT) and may hold no adds and no removes: then the
  * commit is the role change alone. The record must differ from the current
  * one and the group must already carry one (PM_CRYPTO_ERROR, nothing staged).
  *

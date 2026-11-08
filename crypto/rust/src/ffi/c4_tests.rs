@@ -54,17 +54,20 @@ fn signing_key(handle: *mut PmCryptoHandle) -> Vec<u8> {
     unsafe { take(out) }
 }
 
-/// A version 1 change list.
-fn changes(adds: &[(&[u8], &[u8], &[u8])], removes: &[(&[u8], &[u8])]) -> Vec<u8> {
-    let mut out = vec![MEMBERSHIP_CHANGES_VERSION];
+/// A version 2 change list: each add is `(key package, account, device,
+/// signing key)`.
+#[allow(clippy::type_complexity)]
+fn changes(adds: &[(&[u8], &[u8], &[u8], &[u8])], removes: &[(&[u8], &[u8])]) -> Vec<u8> {
+    let mut out = vec![MEMBERSHIP_CHANGES_VERSION_KEYED];
     out.extend_from_slice(&(adds.len() as u16).to_be_bytes());
-    for (key_package, account, device) in adds {
+    for (key_package, account, device, key) in adds {
         out.extend_from_slice(&(key_package.len() as u32).to_be_bytes());
         out.extend_from_slice(key_package);
         for id in [account, device] {
             out.extend_from_slice(&(id.len() as u16).to_be_bytes());
             out.extend_from_slice(id);
         }
+        out.extend_from_slice(key);
     }
     out.extend_from_slice(&(removes.len() as u16).to_be_bytes());
     for (account, device) in removes {
@@ -350,13 +353,14 @@ fn a_record_group_is_created_reviewed_merged_and_read_through_the_abi() {
 
     // The add carries the stamped record; the joiners read it.
     let (bob_kp, carol_kp) = (key_package(bob), key_package(carol));
+    let (bob_key, carol_key) = (signing_key(bob), signing_key(carol));
     let add = unsafe {
         stage_with_roles(
             alice,
             &changes(
                 &[
-                    (&bob_kp, b"acct_bob", b"dev_bob"),
-                    (&carol_kp, b"acct_carol", b"dev_carol"),
+                    (&bob_kp, b"acct_bob", b"dev_bob", &bob_key),
+                    (&carol_kp, b"acct_carol", b"dev_carol", &carol_key),
                 ],
                 &[],
             ),
@@ -439,11 +443,36 @@ fn a_refused_commit_is_discarded_and_the_one_shot_call_refuses_it() {
         unsafe { pm_crypto_group_create_with_roles(alice, slice(GROUP), slice(b"g0")) },
         PM_CRYPTO_OK
     );
-    let bob_kp = key_package(bob);
+    let (bob_kp, bob_key) = (key_package(bob), signing_key(bob));
+    // Version 1 (no expected signing key) is refused on this call.
+    let mut unkeyed = vec![MEMBERSHIP_CHANGES_VERSION, 0, 1];
+    unkeyed.extend_from_slice(&(bob_kp.len() as u32).to_be_bytes());
+    unkeyed.extend_from_slice(&bob_kp);
+    for id in [&b"acct_bob"[..], b"dev_bob"] {
+        unkeyed.extend_from_slice(&(id.len() as u16).to_be_bytes());
+        unkeyed.extend_from_slice(id);
+    }
+    unkeyed.extend_from_slice(&[0, 0]);
+    assert_eq!(
+        unsafe { stage_with_roles(alice, &unkeyed, b"r1") }.err(),
+        Some(PM_CRYPTO_INVALID_ARGUMENT)
+    );
+    // A key package whose leaf key is not the expected one is refused.
+    assert_eq!(
+        unsafe {
+            stage_with_roles(
+                alice,
+                &changes(&[(&bob_kp, b"acct_bob", b"dev_bob", &[0xEE; 32])], &[]),
+                b"r1",
+            )
+        }
+        .err(),
+        Some(PM_CRYPTO_ERROR)
+    );
     let add = unsafe {
         stage_with_roles(
             alice,
-            &changes(&[(&bob_kp, b"acct_bob", b"dev_bob")], &[]),
+            &changes(&[(&bob_kp, b"acct_bob", b"dev_bob", &bob_key)], &[]),
             b"r1",
         )
     }

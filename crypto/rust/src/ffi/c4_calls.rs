@@ -11,7 +11,7 @@
 use super::{
     borrowed, ffi_call, into_owned, output, parse_membership_changes, wipe, with_device,
     write_commit_outcome, PmCryptoHandle, PmOwnedBuffer, MAX_HANDSHAKE_BYTES, MAX_ID_BYTES,
-    PM_CRYPTO_ERROR, PM_CRYPTO_INVALID_ARGUMENT,
+    MEMBERSHIP_CHANGES_VERSION_KEYED, PM_CRYPTO_ERROR, PM_CRYPTO_INVALID_ARGUMENT,
 };
 use crate::{
     mls::{encode_role_state, MAX_ROLE_RECORD_BYTES},
@@ -48,7 +48,9 @@ pub unsafe extern "C" fn pm_crypto_group_create_with_roles(
 
 /// ABI 20 (C4 item 3): [`super::pm_crypto_group_stage_commit`] that also
 /// carries the group's new role record as one GroupContextExtensions
-/// proposal. `changes` is a change list (version 1 or 2) and may hold no
+/// proposal. `changes` is a change list of version 2 only (every add names
+/// the signing key its key package must hold, L1; version 1 is
+/// `PM_CRYPTO_INVALID_ARGUMENT`), and it may hold no
 /// adds and no removes: then the commit is the role change alone (never a
 /// self-update). `record` (1 to 256 KiB) must differ from the group's
 /// current record, and the group must already carry one; otherwise
@@ -74,6 +76,10 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit_with_roles(
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let changes = unsafe { borrowed(changes, MAX_HANDSHAKE_BYTES)? };
         let record = unsafe { borrowed(record, MAX_ROLE_RECORD_BYTES)? };
+        // Version 2 only: no new path that skips the L1 key check.
+        if changes.first() != Some(&MEMBERSHIP_CHANGES_VERSION_KEYED) {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
         let changes = parse_membership_changes(changes)?;
         let staged = unsafe {
             with_device(handle, |device| {

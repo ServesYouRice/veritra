@@ -2864,9 +2864,10 @@ length then the bytes.
   genesis (`encodeGovernance(GovernanceState.genesis(creator))`).
   `pm_crypto_group_create` stays for a private channel's group.
 - `pm_crypto_group_stage_commit_with_roles(handle, group_id, changes,
-  record, out_commit, out_welcome, out_epoch)`: a change list (version 1 or
-  2; it may hold no adds and no removes, then the commit is the role change
-  alone) plus the record proposal. Merged or cleared like any staged commit.
+  record, out_commit, out_welcome, out_epoch)`: a change list (version 2
+  only, so every add names its L1 signing key; it may hold no adds and no
+  removes, then the commit is the role change alone) plus the record
+  proposal. Merged or cleared like any staged commit.
 - `pm_crypto_group_stage_incoming_commit(handle, group_id, commit,
   out_review)`: phase one. The review is `u8 format = 1 | u8 flags (1
   removed, 2 added, 4 removed self, 8 record proposal, 16 record before
