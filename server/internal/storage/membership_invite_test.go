@@ -578,11 +578,12 @@ func TestRemoveCommunityMember(t *testing.T) {
 	if n := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM sync_events WHERE event_type = 'membership.left' AND account_id = ?`, f.member.Account.ID); n != 1 {
 		t.Fatalf("leave events = %d", n)
 	}
-	if _, err := f.store.db.ExecContext(ctx, `UPDATE memberships SET role = 'owner' WHERE community_id = ? AND account_id = ?`, f.comm.ID, f.admin.Account.ID); err != nil {
+	// One owner (D80): the owner transfers to an admin first, then may leave.
+	if _, err := f.store.ManageCommunityMember(ctx, f.comm.ID, f.owner.Account.ID, f.admin.Account.ID, domain.RoleOwner); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.RemoveCommunityMember(ctx, f.comm.ID, f.owner.Account.ID, f.owner.Account.ID); err != nil {
-		t.Fatalf("owner leaves with another owner present: %v", err)
+		t.Fatalf("former owner leaves after the transfer: %v", err)
 	}
 	// A community without channels still notifies the removed account.
 	empty, err := f.store.CreateCommunity(ctx, "Empty", f.owner.Account.ID)
