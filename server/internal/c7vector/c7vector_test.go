@@ -301,6 +301,11 @@ type step struct {
 	Expect   expect  `json:"expect"`
 }
 
+const (
+	seqCeiling = 1 << 31
+	maxSeqJump = 1024
+)
+
 type genesisStep struct {
 	Record   record `json:"record"`
 	Source   string `json:"source"`
@@ -342,6 +347,9 @@ func (c *chain) apply(x *record, source string, keyGiven bool) int {
 		return 0
 	}
 	highest := c.highest
+	if x.Seq > seqCeiling || (c.highest >= 0 && x.Seq > c.highest+maxSeqJump) {
+		return 0
+	}
 	if x.Seq > c.highest {
 		defer func(s int) { c.highest = s }(x.Seq)
 	}
@@ -567,6 +575,30 @@ func TestRecordMessageSlackVector(t *testing.T) {
 		vap1 := (framed + 255) / 256 * 256
 		if len(inner) != c.InnerJSON || framed != c.Framed || vap1 != c.VAP1 || vap1-framed != c.Slack {
 			t.Fatalf("%s: inner %d framed %d vap1 %d slack %d", c.Name, len(inner), framed, vap1, vap1-framed)
+		}
+	}
+}
+
+func TestSeqCapVector(t *testing.T) {
+	var v struct {
+		Cap struct {
+			MaxJump int `json:"max_jump"`
+			Ceiling int `json:"ceiling"`
+			Cases   []struct {
+				Highest int  `json:"highest"`
+				Seq     int  `json:"seq"`
+				Valid   bool `json:"valid"`
+			} `json:"cases"`
+		} `json:"seq_cap"`
+	}
+	load(t, "c7-ordering-v1.json", &v)
+	if v.Cap.MaxJump != maxSeqJump || v.Cap.Ceiling != seqCeiling || len(v.Cap.Cases) < 8 {
+		t.Fatal("seq cap constants or cases")
+	}
+	for _, c := range v.Cap.Cases {
+		ok := c.Seq <= seqCeiling && (c.Highest < 0 || c.Seq <= c.Highest+maxSeqJump)
+		if ok != c.Valid {
+			t.Fatalf("highest %d seq %d: valid %v, want %v", c.Highest, c.Seq, ok, c.Valid)
 		}
 	}
 }

@@ -1663,6 +1663,149 @@
       }
      }
     ]
+   },
+   {
+    "name": "a_record_may_jump_at_most_1024_seqs_above_the_highest_valid",
+    "steps": [
+     {
+      "record": {
+       "id": "r0",
+       "seq": 0,
+       "prev": null,
+       "mode": "members_from_join",
+       "reason": "create",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "j1025",
+       "seq": 1025,
+       "prev": "x",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": "invalid",
+       "head": "r0",
+       "status": "ok",
+       "highest_seq": 0
+      }
+     },
+     {
+      "record": {
+       "id": "j1024",
+       "seq": 1024,
+       "prev": "x",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 5,
+       "head": "j1024",
+       "status": "ok",
+       "highest_seq": 1024
+      }
+     },
+     {
+      "record": {
+       "id": "j2049",
+       "seq": 2049,
+       "prev": "j1024",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": "invalid",
+       "head": "j1024",
+       "status": "ok",
+       "highest_seq": 1024
+      }
+     },
+     {
+      "record": {
+       "id": "j2048",
+       "seq": 2048,
+       "prev": "j1024",
+       "mode": "members_from_join",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "proposal_live",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 5,
+       "head": "j2048",
+       "status": "ok",
+       "highest_seq": 2048
+      }
+     }
+    ]
+   },
+   {
+    "name": "the_first_record_a_device_meets_may_be_at_most_2_pow_31",
+    "steps": [
+     {
+      "record": {
+       "id": "big1",
+       "seq": 2147483649,
+       "prev": "x",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": "invalid",
+       "head": null,
+       "status": "ok",
+       "highest_seq": -1
+      }
+     },
+     {
+      "record": {
+       "id": "big0",
+       "seq": 2147483648,
+       "prev": "x",
+       "mode": "full",
+       "reason": "switch",
+       "epoch": 10
+      },
+      "source": "report",
+      "key_given": true,
+      "valid": true,
+      "expect": {
+       "row": 1,
+       "head": "big0",
+       "status": "ok",
+       "highest_seq": 2147483648
+      }
+     }
+    ]
    }
   ]
  },
@@ -1714,6 +1857,58 @@
     "seals_under_history_key": false
    }
   }
+ },
+ "seq_cap": {
+  "max_jump": 1024,
+  "ceiling": 2147483648,
+  "rule": "a valid record has seq <= ceiling, and when a highest valid seq exists, seq <= highest + max_jump; a record that breaks it is invalid before the table, so recovery room always remains (a live switch above the highest valid seq stays possible)",
+  "cases": [
+   {
+    "highest": -1,
+    "seq": 1,
+    "valid": true
+   },
+   {
+    "highest": -1,
+    "seq": 2147483648,
+    "valid": true
+   },
+   {
+    "highest": -1,
+    "seq": 2147483649,
+    "valid": false
+   },
+   {
+    "highest": 0,
+    "seq": 1024,
+    "valid": true
+   },
+   {
+    "highest": 0,
+    "seq": 1025,
+    "valid": false
+   },
+   {
+    "highest": 1000,
+    "seq": 2024,
+    "valid": true
+   },
+   {
+    "highest": 1000,
+    "seq": 2025,
+    "valid": false
+   },
+   {
+    "highest": 2147483648,
+    "seq": 2147483649,
+    "valid": false
+   },
+   {
+    "highest": 4294967294,
+    "seq": 4294967295,
+    "valid": false
+   }
+  ]
  },
  "windows": [
   {

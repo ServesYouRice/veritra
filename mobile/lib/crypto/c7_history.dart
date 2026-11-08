@@ -16,6 +16,18 @@ const int c7RecordBytes = 512;
 const int c7CompactBytes = 143;
 const int c7MoveWrapBytes = 128;
 const int c7SeqLimit = 0xffffffff;
+
+/// A valid record's `seq` is at most this, and at most [c7MaxSeqJump] above
+/// the highest valid `seq` seen, so a valid record can never use up the room
+/// a recovering switch needs above it. A record that breaks either bound is
+/// invalid before the table (design decision 4, "Sequence cap").
+const int c7SeqCeiling = 0x80000000;
+const int c7MaxSeqJump = 1024;
+
+/// Whether [seq] respects the cap given the highest valid `seq` seen (-1:
+/// none).
+bool c7SeqWithinCap(int seq, int highestSeq) =>
+    seq <= c7SeqCeiling && (highestSeq < 0 || seq <= highestSeq + c7MaxSeqJump);
 const int c7ModeMembersFromJoin = 0;
 const int c7ModeFull = 1;
 const int c7ReasonCreate = 0;
@@ -457,7 +469,9 @@ final class C7ChannelState {
     required C7Source source,
     required bool keyGiven,
   }) {
-    if (!x.shapeValid) return (state: this, row: C7Row.invalid);
+    if (!x.shapeValid || !c7SeqWithinCap(x.seq, highestSeq)) {
+      return (state: this, row: C7Row.invalid);
+    }
     final highest = x.seq > highestSeq ? x.seq : highestSeq;
     final h = head;
     // A record above the miss epoch clears `unsure`; one at or below it

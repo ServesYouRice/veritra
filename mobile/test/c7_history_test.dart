@@ -200,6 +200,21 @@ void main() {
     });
   });
 
+  group('sequence cap', () {
+    final cap = ordering['seq_cap'] as Map<String, dynamic>;
+    test('the constants are the vector\'s', () {
+      expect(c7MaxSeqJump, cap['max_jump']);
+      expect(c7SeqCeiling, cap['ceiling']);
+    });
+    for (final raw in cap['cases'] as List) {
+      final c = raw as Map<String, dynamic>;
+      test('highest ${c['highest']}, seq ${c['seq']}', () {
+        expect(
+            c7SeqWithinCap(c['seq'] as int, c['highest'] as int), c['valid']);
+      });
+    }
+  });
+
   group('windows', () {
     for (final raw in ordering['windows'] as List) {
       final w = raw as Map<String, dynamic>;

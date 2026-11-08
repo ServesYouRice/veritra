@@ -615,7 +615,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     channel keeps the highest miss epoch and only a record or slot above it
     returns `unsure` or `keyless` to `ok`; a record whose chain shape is wrong
     (create not at seq 0 with zero `prev`, or a non-create at seq 0) is
-    invalid before the table; row 5 and row 1 start a new period.
+    invalid before the table; a valid record has `seq <= 2^31` and at most
+    1024 above the highest valid `seq` seen (owner answer 2026-11-08), so
+    recovery room always remains; row 5 and row 1 start a new period.
   - **Not built:** persistence (local schema), `history_sync` assembly and
     handling, rekey at the three merge sites, targeted-action sealing, the
     backward walk, two-pass import, prefetch and the UI marking. They need a

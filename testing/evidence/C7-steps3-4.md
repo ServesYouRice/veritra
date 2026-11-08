@@ -54,10 +54,18 @@ seq for recovery; consider capping how far one record may jump.
 `scripts/test.sh` and `scripts/lint.sh` through `.claude/hooks/check.sh`
 (result in the PR body).
 
+## Owner answers (2026-11-08, via the coordinator) and the sequence cap
+
+1. A `closed` channel recovers only via a live switch or move above the
+   highest valid `seq`: confirmed, now in the design (decision 4).
+2. Cap one record's `seq` jump: done. `seq <= 2^31` and at most 1024 above the
+   highest valid `seq` seen; a record that breaks it is invalid before the
+   table. Vector section `seq_cap` plus two ordering cases; checked in Dart
+   (`c7_history_test.dart`), Go (`TestSeqCapVector`) and Rust
+   (`sequence_cap_cases_follow_decision_4`). The numbers (1024, 2^31) are my
+   choice: please confirm or change.
+
 ## Questions for the owner or reviewer
 
-1. A `closed` channel leaves `closed` only through a live switch or move
-   above the highest valid `seq` (row 5, or row 3 when it also chains from the
-   head). Confirm.
-2. The seq-jump residual above.
-3. Exporter use and the root crossing the ABI: unchanged from step 2.
+1. Exporter use and the root crossing the ABI: unchanged from step 2.
+2. The cap numbers above.

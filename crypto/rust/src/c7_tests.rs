@@ -882,3 +882,24 @@ fn record_message_fits_the_smallest_bucket_with_the_stated_slack() {
         COMPACT_BYTES
     );
 }
+
+#[test]
+fn sequence_cap_cases_follow_decision_4() {
+    let vector: Value = serde_json::from_str(ORDERING).expect("ordering vector parses");
+    let cap = &vector["seq_cap"];
+    let (max_jump, ceiling) = (
+        cap["max_jump"].as_i64().unwrap(),
+        cap["ceiling"].as_i64().unwrap(),
+    );
+    assert_eq!(max_jump, 1024);
+    // Room above any valid record always remains below the structural limit.
+    assert!(ceiling + max_jump < i64::from(SEQ_LIMIT));
+    for case in cap["cases"].as_array().unwrap() {
+        let (highest, seq) = (
+            case["highest"].as_i64().unwrap(),
+            case["seq"].as_i64().unwrap(),
+        );
+        let valid = seq <= ceiling && (highest < 0 || seq <= highest + max_jump);
+        assert_eq!(valid, case["valid"], "highest {highest} seq {seq}");
+    }
+}
