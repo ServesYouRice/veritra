@@ -556,7 +556,10 @@ extension AccountRecoveryActions on AppState {
       // L1: the version that replaces the lost devices with this one,
       // signed with the recovery key's list signer, before anything else.
       await _postRecoveryDeviceList(recovered);
-      await _publishInitialMlsKeyPackages();
+      // Best effort: until the recovery version lands, the server refuses
+      // this device's key packages (key_package_not_listed); they stay owed
+      // and are retried with backoff, as after login.
+      await _ensureKeyPackageSupply();
       await _refreshConversations(notify: true);
       await _refreshDevices();
     });

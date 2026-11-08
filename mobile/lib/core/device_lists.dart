@@ -373,19 +373,27 @@ class DeviceListPins {
   }
 
   /// The server showed another statement at the pinned version. It is a
-  /// conflict only if the whole chain it serves verifies (so the other
-  /// statement is validly signed, which needs a key the pinned list holds
-  /// or a fabricated genesis); otherwise it is just unavailable.
+  /// conflict only if the whole chain it serves verifies and grows from the
+  /// pinned list identity (the same version 1): the other statement is then
+  /// validly signed by a key the pinned chain listed, which the server alone
+  /// cannot make. A chain from another genesis is one the server could have
+  /// made up by itself; it is treated as unavailable, the pin stays and
+  /// nothing becomes sticky (owner decision 2026-11-08, L1-3 question 3),
+  /// so a server cannot hold a contact's chats in conflict for good.
   Future<DeviceListStatus> _maybeConflict(
       String accountId, DeviceListPin pin, List<int> other) async {
     final whole = await _fetchFrom(accountId, 0);
     if (whole == null || whole.length < pin.version) {
       return DeviceListStatus(DeviceListState.ok, pin);
     }
+    final DeviceListChainResult chain;
     try {
-      verifier
+      chain = verifier
           .checkChain(accountId, [for (final item in whole) item.statement]);
     } on NativeCryptoException {
+      return DeviceListStatus(DeviceListState.ok, pin);
+    }
+    if (!_same(chain.listId, pin.listId)) {
       return DeviceListStatus(DeviceListState.ok, pin);
     }
     if (!_same(whole[pin.version - 1].statement, other)) {

@@ -5,6 +5,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"private-messenger/server/internal/mlswire"
+	"private-messenger/server/internal/mlswire/mlswiretest"
 )
 
 // The honest-server gates of L1-2 (docs/designs/L1-approved-device-list.md,
@@ -19,8 +23,13 @@ func (f *pendingFixture) seedHead(accountID string, listed ...string) {
 	f.exec(`INSERT INTO device_list_versions(account_id, version, list_hash, statement, change, signer_device_id, created_at) VALUES(?, 1, ?, X'01', 6, ?, ?)`,
 		accountID, bytes.Repeat([]byte{1}, 32), listed[0], nowString())
 	for index, deviceID := range listed {
+		key := bytes.Repeat([]byte{byte(10 + index)}, 32)
 		f.exec(`INSERT INTO device_list_devices(account_id, device_id, signing_key, added_version) VALUES(?, ?, ?, 1)`,
-			accountID, deviceID, bytes.Repeat([]byte{byte(10 + index)}, 32))
+			accountID, deviceID, key)
+		// A key package carrying the listed key (the L1 key-package gate,
+		// Q-1); the fixtures' opaque packages fail that gate.
+		f.exec(`INSERT INTO device_key_packages(id, device_id, key_package, ciphersuite, created_at, expires_at) VALUES(?, ?, ?, ?, ?, '2999-01-01T00:00:00Z')`,
+			"kp_listed_"+deviceID, deviceID, mlswiretest.KeyPackageWithSignatureKey(key), openMLSCiphersuite, nowString())
 	}
 }
 
@@ -144,3 +153,60 @@ func (f *pendingFixture) guestRegisteredDevice() string {
 	}
 	return id
 }
+
+// The L1 key-package gate (bug-hunt Q-1, owner 2026-11-08): for an account
+// with a list, a published key package must carry the key the head names for
+// its device, and a stored package that does not is never handed out.
+func TestKeyPackagesMustCarryTheListedKey(t *testing.T) {
+	ctx := context.Background()
+	f := newPendingFixture(t, ctx)
+	group := f.group()
+	registered := f.guestRegisteredDevice()
+	listedKey := bytes.Repeat([]byte{10}, 32)
+	otherKey := bytes.Repeat([]byte{99}, 32)
+
+	// No list: any well-formed package is taken, as before L1.
+	if _, err := f.store.PublishDeviceKeyPackages(ctx, registered, []NewDeviceKeyPackage{{
+		KeyPackage: mlswiretest.KeyPackageWithSignatureKey(otherKey), Ciphersuite: openMLSCiphersuite, ExpiresAt: farFuture(),
+	}}); err != nil {
+		t.Fatalf("no list: %v", err)
+	}
+	f.seedHead(f.guest, registered)
+	if _, err := f.store.PublishDeviceKeyPackages(ctx, registered, []NewDeviceKeyPackage{{
+		KeyPackage: mlswiretest.KeyPackageWithSignatureKey(otherKey), Ciphersuite: openMLSCiphersuite, ExpiresAt: farFuture(),
+	}}); !errors.Is(err, ErrKeyPackageNotListed) {
+		t.Fatalf("another key with a list: err=%v, want ErrKeyPackageNotListed", err)
+	}
+	if _, err := f.store.PublishDeviceKeyPackages(ctx, registered, []NewDeviceKeyPackage{{
+		KeyPackage: mlswiretest.KeyPackageWithSignatureKey(listedKey), Ciphersuite: openMLSCiphersuite, ExpiresAt: farFuture(),
+	}}); err != nil {
+		t.Fatalf("the listed key: %v", err)
+	}
+	// The publish dropped the stored packages the gate would never hand out,
+	// so they do not take up the quota.
+	if n, _ := countRows(ctx, f.store.db, `SELECT COUNT(*) FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, registered); n != 2 {
+		t.Fatalf("%d unclaimed packages after a listed publish, want the 2 listed ones", n)
+	}
+
+	// Every claim hands out only packages with the listed key; the stored
+	// ones with another key (the fixture's and the pre-list one) are dropped.
+	for i := 0; i < 2; i++ {
+		claimed, err := f.store.ClaimDeviceKeyPackages(ctx, group.ID, f.owner.Account.ID, f.owner.Device.ID, []string{registered})
+		if err != nil || len(claimed) != 1 {
+			t.Fatalf("claim %d: %v %v", i, claimed, err)
+		}
+		leaf, err := mlswire.LeafSignatureKey(claimed[0].KeyPackage)
+		if err != nil || !bytes.Equal(leaf, listedKey) {
+			t.Fatalf("claim %d handed out a package with key %x", i, leaf)
+		}
+	}
+	claimed, err := f.store.ClaimDeviceKeyPackages(ctx, group.ID, f.owner.Account.ID, f.owner.Device.ID, []string{registered})
+	if err != nil || len(claimed) != 0 {
+		t.Fatalf("no listed package left: %v %v", claimed, err)
+	}
+	if n, _ := countRows(ctx, f.store.db, `SELECT COUNT(*) FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, registered); n != 0 {
+		t.Fatalf("%d unlisted packages kept", n)
+	}
+}
+
+func farFuture() time.Time { return time.Date(2999, 1, 1, 0, 0, 0, 0, time.UTC) }
