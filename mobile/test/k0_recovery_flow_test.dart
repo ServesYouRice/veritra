@@ -577,7 +577,7 @@ void main() {
         event(1, 'account.recovery.pending', <String, Object?>{
           'request_id': 'arr_2',
           'device_name': 'Phone',
-          'ready_at': '2026-11-08T10:00:00Z',
+          'ready_at': '2099-11-08T10:00:00Z',
         }),
         event(2, 'account.password_leak_suspected',
             <String, Object?>{'day': today}),

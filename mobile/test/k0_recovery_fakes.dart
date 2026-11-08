@@ -291,7 +291,7 @@ class K0Api extends ApiClient {
       claimToken: 'claim_tok',
       deviceSecret: 'secret_new',
       state: 'waiting',
-      readyAt: DateTime.utc(2026, 11, 8, 10),
+      readyAt: DateTime.utc(2099, 11, 8, 10),
     );
   }
 
@@ -304,7 +304,7 @@ class K0Api extends ApiClient {
     if (server.statusAnswers.isEmpty) {
       return AccountRecoveryStatus(
           phase: AccountRecoveryPhase.waiting,
-          readyAt: DateTime.utc(2026, 11, 8, 10));
+          readyAt: DateTime.utc(2099, 11, 8, 10));
     }
     final next = server.statusAnswers.removeAt(0);
     if (next is AccountRecoveryStatus) return next;
