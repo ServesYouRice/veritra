@@ -3248,6 +3248,84 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get callNoticeFailed =>
       'Позив није успео да се повеже. За позиве је потребна подешена релејна (TURN) услуга сервера.';
+
+  @override
+  String get autoBackupTitle => 'Аутоматске резервне копије';
+
+  @override
+  String get autoBackupIntro =>
+      'Сваког дана овај уређај прави резервну копију ваших разговора, закључану вашим кључем за опоравак. Само тај кључ је отвара; сервер не може. Нова копија замењује стару. Поруке које нестају се никада не копирају.';
+
+  @override
+  String autoBackupLast(String date) {
+    return 'Последња копија $date';
+  }
+
+  @override
+  String get autoBackupPending => 'Прва копија још није направљена';
+
+  @override
+  String get autoBackupServerOff => 'Овај сервер има искључене резервне копије';
+
+  @override
+  String get autoBackupNoKey =>
+      'Сачувајте кључ за опоравак да бисте укључили резервне копије';
+
+  @override
+  String get autoBackupNeedsKeyHere =>
+      'Унесите кључ за опоравак да бисте укључили резервне копије овде';
+
+  @override
+  String get autoBackupKeyChanged =>
+      'Ваш кључ за опоравак је промењен. Унесите нови кључ да би се копије наставиле овде.';
+
+  @override
+  String get autoBackupErrorNetwork =>
+      'Последња копија није стигла до сервера. Покушаће поново.';
+
+  @override
+  String get autoBackupErrorSpace =>
+      'Простор за копије је пун. Последња добра копија се чува.';
+
+  @override
+  String get autoBackupErrorTooLarge =>
+      'Ваша историја је превелика за копију. Последња добра копија се чува.';
+
+  @override
+  String get autoBackupErrorFailed =>
+      'Последња копија није успела. Покушаће поново.';
+
+  @override
+  String get autoBackupStale => 'Нема копије више од недељу дана.';
+
+  @override
+  String get autoBackupPhoneNote =>
+      'Овај телефон прави копију када отворите апликацију.';
+
+  @override
+  String get autoBackupNow => 'Направи копију сада';
+
+  @override
+  String get autoBackupRunning => 'Прави се копија…';
+
+  @override
+  String get autoBackupTypeKey => 'Унесите кључ за опоравак';
+
+  @override
+  String get autoBackupKeyWrong => 'То није кључ за опоравак овог налога.';
+
+  @override
+  String get autoBackupKeyOn => 'Резервне копије су укључене на овом уређају.';
+
+  @override
+  String get autoBackupPromptMessage =>
+      'Сачувајте кључ за опоравак. Укључује аутоматске резервне копије и враћа ваш налог ако изгубите све уређаје.';
+
+  @override
+  String get autoBackupPromptSave => 'Сачувај кључ';
+
+  @override
+  String get autoBackupPromptLater => 'Не сада';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6498,4 +6576,83 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get callNoticeFailed =>
       'Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.';
+
+  @override
+  String get autoBackupTitle => 'Automatske rezervne kopije';
+
+  @override
+  String get autoBackupIntro =>
+      'Svakog dana ovaj uređaj pravi rezervnu kopiju vaših razgovora, zaključanu vašim ključem za oporavak. Samo taj ključ je otvara; server ne može. Nova kopija zamenjuje staru. Poruke koje nestaju se nikada ne kopiraju.';
+
+  @override
+  String autoBackupLast(String date) {
+    return 'Poslednja kopija $date';
+  }
+
+  @override
+  String get autoBackupPending => 'Prva kopija još nije napravljena';
+
+  @override
+  String get autoBackupServerOff =>
+      'Ovaj server ima isključene rezervne kopije';
+
+  @override
+  String get autoBackupNoKey =>
+      'Sačuvajte ključ za oporavak da biste uključili rezervne kopije';
+
+  @override
+  String get autoBackupNeedsKeyHere =>
+      'Unesite ključ za oporavak da biste uključili rezervne kopije ovde';
+
+  @override
+  String get autoBackupKeyChanged =>
+      'Vaš ključ za oporavak je promenjen. Unesite novi ključ da bi se kopije nastavile ovde.';
+
+  @override
+  String get autoBackupErrorNetwork =>
+      'Poslednja kopija nije stigla do servera. Pokušaće ponovo.';
+
+  @override
+  String get autoBackupErrorSpace =>
+      'Prostor za kopije je pun. Poslednja dobra kopija se čuva.';
+
+  @override
+  String get autoBackupErrorTooLarge =>
+      'Vaša istorija je prevelika za kopiju. Poslednja dobra kopija se čuva.';
+
+  @override
+  String get autoBackupErrorFailed =>
+      'Poslednja kopija nije uspela. Pokušaće ponovo.';
+
+  @override
+  String get autoBackupStale => 'Nema kopije više od nedelju dana.';
+
+  @override
+  String get autoBackupPhoneNote =>
+      'Ovaj telefon pravi kopiju kada otvorite aplikaciju.';
+
+  @override
+  String get autoBackupNow => 'Napravi kopiju sada';
+
+  @override
+  String get autoBackupRunning => 'Pravi se kopija…';
+
+  @override
+  String get autoBackupTypeKey => 'Unesite ključ za oporavak';
+
+  @override
+  String get autoBackupKeyWrong => 'To nije ključ za oporavak ovog naloga.';
+
+  @override
+  String get autoBackupKeyOn => 'Rezervne kopije su uključene na ovom uređaju.';
+
+  @override
+  String get autoBackupPromptMessage =>
+      'Sačuvajte ključ za oporavak. Uključuje automatske rezervne kopije i vraća vaš nalog ako izgubite sve uređaje.';
+
+  @override
+  String get autoBackupPromptSave => 'Sačuvaj ključ';
+
+  @override
+  String get autoBackupPromptLater => 'Ne sada';
 }

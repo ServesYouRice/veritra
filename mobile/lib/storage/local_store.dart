@@ -855,7 +855,10 @@ abstract class LocalStore {
     required StoredCryptoState state,
     void Function()? checkCanCommit,
   });
-  Future<List<int>> exportHistorySnapshot();
+
+  /// The K2 history snapshot. [omitDisappearing] (K1 backups) leaves out
+  /// every message with an expiry, whether it has expired yet or not.
+  Future<List<int>> exportHistorySnapshot({bool omitDisappearing = false});
   Future<void> importHistorySnapshot(
       List<int> encoded, HistoryImportContext context);
   Future<HistoryNamespace> loadHistoryNamespace();
@@ -1960,7 +1963,8 @@ class MemoryLocalStore implements LocalStore {
       _historyNamespace.copy();
 
   @override
-  Future<List<int>> exportHistorySnapshot() async {
+  Future<List<int>> exportHistorySnapshot(
+      {bool omitDisappearing = false}) async {
     final session = _session;
     if (session == null) throw StateError('history export requires a session');
     final snapshot = captureHistory(
@@ -1972,7 +1976,8 @@ class MemoryLocalStore implements LocalStore {
         pins: _history.pins.values.toList(),
         starred: _history.starred,
         preferences: _conversationPrefs.values.toList(),
-        now: DateTime.now().millisecondsSinceEpoch);
+        now: DateTime.now().millisecondsSinceEpoch,
+        omitDisappearing: omitDisappearing);
     final bytes = snapshot.encode();
     _historyNamespace.counter = snapshot.counter;
     return bytes;
@@ -3451,9 +3456,11 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readHistoryNamespace();
 
   @override
-  Future<List<int>> exportHistorySnapshot() async =>
+  Future<List<int>> exportHistorySnapshot(
+          {bool omitDisappearing = false}) async =>
       (await _database()).exportHistorySnapshot(
-          (json) => json == null ? null : _sessionFrom(jsonDecode(json)));
+          (json) => json == null ? null : _sessionFrom(jsonDecode(json)),
+          omitDisappearing: omitDisappearing);
 
   @override
   Future<void> importHistorySnapshot(

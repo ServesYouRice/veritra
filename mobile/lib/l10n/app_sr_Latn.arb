@@ -907,5 +907,27 @@
       }
     }
   },
-  "callNoticeFailed": "Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera."
+  "callNoticeFailed": "Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.",
+  "autoBackupTitle": "Automatske rezervne kopije",
+  "autoBackupIntro": "Svakog dana ovaj uređaj pravi rezervnu kopiju vaših razgovora, zaključanu vašim ključem za oporavak. Samo taj ključ je otvara; server ne može. Nova kopija zamenjuje staru. Poruke koje nestaju se nikada ne kopiraju.",
+  "autoBackupLast": "Poslednja kopija {date}",
+  "autoBackupPending": "Prva kopija još nije napravljena",
+  "autoBackupServerOff": "Ovaj server ima isključene rezervne kopije",
+  "autoBackupNoKey": "Sačuvajte ključ za oporavak da biste uključili rezervne kopije",
+  "autoBackupNeedsKeyHere": "Unesite ključ za oporavak da biste uključili rezervne kopije ovde",
+  "autoBackupKeyChanged": "Vaš ključ za oporavak je promenjen. Unesite novi ključ da bi se kopije nastavile ovde.",
+  "autoBackupErrorNetwork": "Poslednja kopija nije stigla do servera. Pokušaće ponovo.",
+  "autoBackupErrorSpace": "Prostor za kopije je pun. Poslednja dobra kopija se čuva.",
+  "autoBackupErrorTooLarge": "Vaša istorija je prevelika za kopiju. Poslednja dobra kopija se čuva.",
+  "autoBackupErrorFailed": "Poslednja kopija nije uspela. Pokušaće ponovo.",
+  "autoBackupStale": "Nema kopije više od nedelju dana.",
+  "autoBackupPhoneNote": "Ovaj telefon pravi kopiju kada otvorite aplikaciju.",
+  "autoBackupNow": "Napravi kopiju sada",
+  "autoBackupRunning": "Pravi se kopija…",
+  "autoBackupTypeKey": "Unesite ključ za oporavak",
+  "autoBackupKeyWrong": "To nije ključ za oporavak ovog naloga.",
+  "autoBackupKeyOn": "Rezervne kopije su uključene na ovom uređaju.",
+  "autoBackupPromptMessage": "Sačuvajte ključ za oporavak. Uključuje automatske rezervne kopije i vraća vaš nalog ako izgubite sve uređaje.",
+  "autoBackupPromptSave": "Sačuvaj ključ",
+  "autoBackupPromptLater": "Ne sada"
 }

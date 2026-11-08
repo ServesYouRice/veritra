@@ -10,6 +10,7 @@ import '../features/communities/community_screen.dart';
 import '../features/settings/settings_screen.dart';
 import 'tokens.dart';
 import 'widgets/account_recovery_banner.dart';
+import 'widgets/recovery_key_prompt_banner.dart';
 import 'widgets/connection_banner.dart';
 import 'widgets/demo_banner.dart';
 import 'widgets/empty_state.dart';
@@ -166,6 +167,7 @@ class _AppShellState extends State<AppShell> {
             children: <Widget>[
               ConnectionBanner(state: widget.state),
               AccountRecoveryBanner(state: widget.state),
+              RecoveryKeyPromptBanner(state: widget.state),
               HistoryCopyBanner(state: widget.state),
               Expanded(
                 child: Row(
@@ -200,6 +202,7 @@ class _AppShellState extends State<AppShell> {
           children: <Widget>[
             ConnectionBanner(state: widget.state),
             AccountRecoveryBanner(state: widget.state),
+            RecoveryKeyPromptBanner(state: widget.state),
             HistoryCopyBanner(state: widget.state),
             Expanded(child: pages[index]),
           ],

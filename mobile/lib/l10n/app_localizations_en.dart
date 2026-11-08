@@ -3237,4 +3237,81 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get callNoticeFailed =>
       'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.';
+
+  @override
+  String get autoBackupTitle => 'Automatic backups';
+
+  @override
+  String get autoBackupIntro =>
+      'Every day this device backs up your chats, locked with your recovery key. Only that key opens them; the server cannot. The new backup replaces the old one. Disappearing messages are never backed up.';
+
+  @override
+  String autoBackupLast(String date) {
+    return 'Last backup $date';
+  }
+
+  @override
+  String get autoBackupPending => 'First backup not made yet';
+
+  @override
+  String get autoBackupServerOff => 'This server has backups turned off';
+
+  @override
+  String get autoBackupNoKey => 'Save a recovery key to turn on backups';
+
+  @override
+  String get autoBackupNeedsKeyHere =>
+      'Type your recovery key to turn on backups here';
+
+  @override
+  String get autoBackupKeyChanged =>
+      'Your recovery key changed. Type the new key to go on backing up here.';
+
+  @override
+  String get autoBackupErrorNetwork =>
+      'The last backup could not reach the server. It will try again.';
+
+  @override
+  String get autoBackupErrorSpace =>
+      'Backup space is full. The last good backup is kept.';
+
+  @override
+  String get autoBackupErrorTooLarge =>
+      'Your history is too large to back up. The last good backup is kept.';
+
+  @override
+  String get autoBackupErrorFailed =>
+      'The last backup failed. It will try again.';
+
+  @override
+  String get autoBackupStale => 'No backup for over a week.';
+
+  @override
+  String get autoBackupPhoneNote =>
+      'This phone backs up when you open the app.';
+
+  @override
+  String get autoBackupNow => 'Back up now';
+
+  @override
+  String get autoBackupRunning => 'Backing up…';
+
+  @override
+  String get autoBackupTypeKey => 'Type recovery key';
+
+  @override
+  String get autoBackupKeyWrong => 'That is not this account\'s recovery key.';
+
+  @override
+  String get autoBackupKeyOn => 'Backups are on for this device.';
+
+  @override
+  String get autoBackupPromptMessage =>
+      'Save a recovery key. It turns on automatic backups and gets your account back if you lose every device.';
+
+  @override
+  String get autoBackupPromptSave => 'Save key';
+
+  @override
+  String get autoBackupPromptLater => 'Not now';
 }

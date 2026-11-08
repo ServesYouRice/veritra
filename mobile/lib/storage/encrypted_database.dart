@@ -711,7 +711,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   }
 
   Future<List<int>> exportHistorySnapshot(
-          Session? Function(String?) decodeSession) =>
+          Session? Function(String?) decodeSession,
+          {bool omitDisappearing = false}) =>
       transaction(() async {
         final session = decodeSession(await readSessionJson());
         if (session == null)
@@ -733,7 +734,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                 s.messageKey: s.starredAt
             },
             preferences: await readConversationPrefs(),
-            now: DateTime.now().millisecondsSinceEpoch);
+            now: DateTime.now().millisecondsSinceEpoch,
+            omitDisappearing: omitDisappearing);
         final encoded = snapshot.encode();
         ns.counter = snapshot.counter;
         await writeHistoryNamespace(ns);

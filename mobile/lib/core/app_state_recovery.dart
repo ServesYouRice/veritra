@@ -137,6 +137,7 @@ extension AccountRecoveryActions on AppState {
   /// password again first.
   Future<RecoveryActionResult> saveRecoveryKey(RecoveryKeyDraft draft) async {
     var needsRecentAuth = false;
+    var stored = false;
     final ok = await _runScoped(Ops.recoveryKey, () async {
       final current = session;
       final client = api;
@@ -144,25 +145,32 @@ extension AccountRecoveryActions on AppState {
         throw UserFacingException(l10n.errorRelinkRequired);
       }
       final values = await _recoveryCrypto.deriveRecoveryKey(draft._entropy);
-      // rk_pub is K1's; nothing stores it yet.
-      values.rkPub.fillRange(0, values.rkPub.length, 0);
       try {
         final status =
             await _putRecoveryKeyWithDeviceList(client, current, values);
         if (!identical(session, current)) return;
         recoveryKeyStatus = status;
+        // K1: the key was typed on this device, so it keeps rk_pub and
+        // backs up from now on, starting at once.
+        if (k1BackupSupported && status.available) {
+          await _storeK1Key(values.rkPub, values.rkId);
+          stored = true;
+        }
       } on ApiException catch (err) {
         if (err.serverCode == 'recent_auth_required') {
           needsRecentAuth = true;
           return;
         }
         rethrow;
+      } finally {
+        values.rkPub.fillRange(0, values.rkPub.length, 0);
       }
       if (recoveryFollowUp == RecoveryFollowUpStep.recoveryKey) {
         await _saveRecoveryFollowUp(RecoveryFollowUpStep.password);
       }
     });
     if (needsRecentAuth) return RecoveryActionResult.needsRecentAuth;
+    if (ok && stored) unawaited(runK1BackupIfDue(force: true));
     return ok ? RecoveryActionResult.done : RecoveryActionResult.failed;
   }
 
@@ -700,6 +708,8 @@ extension AccountRecoveryActions on AppState {
     }
     notifyListeners();
     if (recoveryAvailable) await refreshRecoveryKeyStatus();
+    if (!identical(session, current)) return;
+    await _startK1Backups();
   }
 
   RecoveryFollowUpStep? _decodeFollowUp(String? raw, Session current) {
