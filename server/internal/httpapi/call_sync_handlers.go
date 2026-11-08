@@ -221,6 +221,17 @@ func (a *API) exportAccount(w http.ResponseWriter, r *http.Request, principal do
 		"categories":       export.Categories,
 		"limit":            limit,
 	}
+	// Passkeys: name and times only, never key material.
+	passkeys, err := a.Store.ListPasskeys(r.Context(), principal.AccountID)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	exported := make([]map[string]interface{}, 0, len(passkeys))
+	for _, c := range passkeys {
+		exported = append(exported, passkeyJSON(c))
+	}
+	response["passkeys"] = exported
 	// Surface truncation explicitly so the client knows there may be more.
 	if len(export.Messages) == limit && len(export.Messages) > 0 {
 		response["next_before"] = export.Messages[len(export.Messages)-1].ID

@@ -44,11 +44,13 @@ type API struct {
 	TURNSharedSecret    string
 	ClientIdentities    *ClientIdentityResolver
 	LoginBackoff        *LoginBackoff
-	Ready               func() bool
-	typing              typingLimiter
-	deliveries          deliveryQueue
-	passwordsOnce       sync.Once
-	passwords           *auth.Passwords
+	// Passkeys is nil while passkeys are off (B7).
+	Passkeys      *PasskeyService
+	Ready         func() bool
+	typing        typingLimiter
+	deliveries    deliveryQueue
+	passwordsOnce sync.Once
+	passwords     *auth.Passwords
 	// Budget meters fan-out writes per account and Admission counts refusals;
 	// LowDisk reports a nearly full data file system (admission.go). All
 	// three are optional.
@@ -100,6 +102,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/setup/owner/enrollment", a.reserveOwnerEnrollment)
 	mux.HandleFunc("POST /api/v1/setup/owner", a.createOwner)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
+	mux.HandleFunc("POST /api/v1/auth/passkey/options", a.passkeyLoginOptions)
+	mux.HandleFunc("POST /api/v1/auth/passkey", a.passkeyLogin)
+	mux.HandleFunc("GET /.well-known/assetlinks.json", a.assetLinks)
+	mux.HandleFunc("GET /.well-known/apple-app-site-association", a.appleAssociation)
+	mux.HandleFunc("GET /api/v1/account/passkeys", a.withAuth(a.listPasskeys))
+	mux.HandleFunc("POST /api/v1/account/passkeys/options", a.withRecentAuth(a.passkeyRegisterOptions))
+	mux.HandleFunc("POST /api/v1/account/passkeys", a.withRecentAuth(a.passkeyRegister))
+	mux.HandleFunc("PATCH /api/v1/account/passkeys/{id}", a.withAuth(a.renamePasskey))
+	mux.HandleFunc("DELETE /api/v1/account/passkeys/{id}", a.withRecentAuth(a.deletePasskey))
 	mux.HandleFunc("POST /api/v1/auth/reauth", a.withAuth(a.reauthenticate))
 	mux.HandleFunc("POST /api/v1/auth/logout", a.withAuth(a.logout))
 	mux.HandleFunc("POST /api/v1/auth/logout-all", a.withRecentAuth(a.logoutAll))
