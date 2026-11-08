@@ -128,38 +128,77 @@ class AccountHost extends ChangeNotifier {
 
   Future<void> _finishInterrupted() async {
     for (final slot in List<AccountSlot>.of(registry.slots)) {
-      if (slot.state == SlotState.removing) {
-        await _eraseAndForget(slot.namespace);
-      } else if (slot.state == SlotState.pending &&
-          slot.namespace != registry.active) {
-        // Wiped only when it holds neither a session nor a pending
-        // enrollment: a K0 claim must survive restarts.
-        final holds = inspect == null ? true : await inspect!(slot.namespace);
-        if (!holds) await _eraseAndForget(slot.namespace);
+      try {
+        if (slot.state == SlotState.removing) {
+          await _eraseAndForget(slot.namespace);
+        } else if (slot.state == SlotState.pending &&
+            slot.namespace != registry.active) {
+          // Wiped only when it holds neither a session nor a pending
+          // enrollment: a K0 claim must survive restarts.
+          final holds = inspect == null ? true : await inspect!(slot.namespace);
+          if (!holds) await _eraseAndForget(slot.namespace);
+        }
+      } catch (_) {
+        // A delete that fails (a locked file, an unreadable keystore entry)
+        // keeps its journal and is tried again at the next start. It never
+        // keeps the app from opening the other accounts.
       }
     }
-    if (registry.slot(registry.active) == null) {
-      final live =
-          registry.slots.where((s) => s.state != SlotState.removing).toList();
-      registry = AccountRegistry(
-        active: live.isEmpty ? primaryNamespace : live.first.namespace,
-        slots: live.isEmpty
-            ? <AccountSlot>[
-                AccountSlot(
-                    namespace: primaryNamespace, state: SlotState.active),
-              ]
-            : registry.slots,
-      );
+    await _ensureLiveActive();
+  }
+
+  /// Makes the active slot one that can be opened. A removal that could not
+  /// finish leaves its slot `removing`: that half-deleted slot is never
+  /// opened again, and its journal stays for the next start.
+  Future<void> _ensureLiveActive() async {
+    final next = _withLiveActive(registry);
+    if (identical(next, registry)) return;
+    registry = next;
+    try {
       await _registryStore.save(registry);
+    } catch (_) {
+      // The next start works it out again from what was saved.
+      error = AccountHostError.registry;
     }
+  }
+
+  /// [current] itself when its active slot can be opened; otherwise the same
+  /// registry with a live slot active: the first live one, else the primary
+  /// (added back when missing), else a fresh pending slot.
+  AccountRegistry _withLiveActive(AccountRegistry current) {
+    final active = current.slot(current.active);
+    if (active != null && active.state != SlotState.removing) return current;
+    final live =
+        current.slots.where((s) => s.state != SlotState.removing).toList();
+    var slots = current.slots;
+    final String next;
+    if (live.isNotEmpty) {
+      next = live.first.namespace;
+    } else if (current.slot(primaryNamespace) == null) {
+      next = primaryNamespace;
+      slots = <AccountSlot>[
+        ...slots,
+        AccountSlot(namespace: primaryNamespace, state: SlotState.active),
+      ];
+    } else {
+      next = _registryStore.newNamespace(current);
+      slots = <AccountSlot>[
+        ...slots,
+        AccountSlot(
+            namespace: next,
+            state: SlotState.pending,
+            addedAt: DateTime.now().toUtc()),
+      ];
+    }
+    return AccountRegistry(active: next, slots: slots);
   }
 
   Future<void> _eraseAndForget(String namespace) async {
     await _eraser.erase(namespace);
-    registry = registry.without(namespace, fallback: primaryNamespace);
-    if (registry.slots.isEmpty) {
-      registry = AccountRegistry.initial(primaryNamespace);
-    }
+    // Never saved with an active slot that is missing or being removed: the
+    // next start could not read it back.
+    registry = _withLiveActive(
+        registry.without(namespace, fallback: primaryNamespace));
     await _registryStore.save(registry);
   }
 
@@ -426,7 +465,10 @@ class AccountHost extends ChangeNotifier {
         error = AccountHostError.removeFailed;
         outcome = SwitchOutcome.failed;
         if (runtime == null) {
+          // Never reopen the slot being removed: it stays journaled and
+          // its removal finishes at the next start.
           try {
+            await _ensureLiveActive();
             await _openActive();
           } catch (_) {}
         }

@@ -90,7 +90,24 @@ class _World {
   final Set<String> failBuild = <String>{};
   final Set<String> hasContent = <String>{};
   final List<String> revoked = <String>[];
+  final Set<String> failErase = <String>{};
   late Directory support;
+}
+
+/// Fails for the namespaces in [_World.failErase], as a locked file or an
+/// unreadable keystore entry would.
+class _FlakyEraser implements SlotErasing {
+  _FlakyEraser(this.inner, this.world);
+  final SlotErasing inner;
+  final _World world;
+
+  @override
+  Future<void> erase(String namespace) async {
+    if (world.failErase.contains(namespace)) {
+      throw const FileSystemException('locked');
+    }
+    await inner.erase(namespace);
+  }
 }
 
 void main() {
@@ -115,10 +132,12 @@ void main() {
     final scope = const ProfileScope();
     return AccountHost(
       registryStore: AccountRegistryStore(storage: kv),
-      eraser: SlotEraser(
-          storage: kv,
-          scope: scope,
-          directoryProvider: () async => world.support),
+      eraser: _FlakyEraser(
+          SlotEraser(
+              storage: kv,
+              scope: scope,
+              directoryProvider: () async => world.support),
+          world),
       primaryNamespace: '',
       build: (ns) async {
         if (world.failBuild.contains(ns)) throw StateError('cannot open');
@@ -397,6 +416,70 @@ void main() {
         Directory('${world.support.path}/profiles/a-claim0000003').existsSync(),
         isTrue);
     expect(host.runtime!.namespace, '');
+  });
+
+  test(
+      'a removal that cannot finish at start keeps its journal and opens '
+      'another account', () async {
+    final store = AccountRegistryStore(storage: kv);
+    var registry = await store.load();
+    registry = registry.withPending('a-stuck0000001', DateTime.utc(2026));
+    registry = registry.withRemoving('a-stuck0000001');
+    // The crash came while the account being removed was the open one.
+    registry = AccountRegistry(active: 'a-stuck0000001', slots: registry.slots);
+    await store.save(registry);
+    Directory('${world.support.path}/profiles/a-stuck0000001')
+        .createSync(recursive: true);
+    world.failErase.add('a-stuck0000001');
+
+    var host = newHost();
+    await host.start();
+    expect(host.runtime!.namespace, '',
+        reason: 'the half-removed slot is never opened');
+    expect(host.registry.slot('a-stuck0000001')!.state, SlotState.removing);
+    expect(
+        (await store.load()).slot('a-stuck0000001')!.state, SlotState.removing);
+    host.dispose();
+
+    // The next start that can delete it finishes the removal.
+    world.failErase.clear();
+    host = newHost();
+    addTearDown(host.dispose);
+    await host.start();
+    expect(host.registry.slot('a-stuck0000001'), isNull);
+    expect(
+        Directory('${world.support.path}/profiles/a-stuck0000001').existsSync(),
+        isFalse);
+  });
+
+  test('a removal that fails never reopens the account being removed',
+      () async {
+    final host = newHost();
+    addTearDown(host.dispose);
+    await host.start();
+    stateOf(host).signInAs('acct_1');
+    await host.idle();
+    await host.beginAdd();
+    final second = host.runtime!.namespace;
+    stateOf(host).signInAs('acct_2');
+    await host.idle();
+    world.failErase.add(second);
+
+    expect(await host.remove(second), SwitchOutcome.failed);
+    expect(host.error, AccountHostError.removeFailed);
+    expect(host.runtime!.namespace, '');
+    expect(host.registry.active, '');
+    expect(host.registry.slot(second)!.state, SlotState.removing,
+        reason: 'the journal finishes the removal at the next start');
+    expect(world.maxLive, 1);
+
+    // Removing the last live account next to the stuck one still saves a
+    // registry the next start can read.
+    expect(await host.remove(''), SwitchOutcome.done);
+    final saved = await AccountRegistryStore(storage: kv).load();
+    expect(saved.slot(second)!.state, SlotState.removing);
+    expect(saved.slot(saved.active)!.state, isNot(SlotState.removing));
+    expect(host.runtime!.namespace, saved.active);
   });
 
   test('a registry that names a missing active slot fails closed', () async {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/account_host.dart';
 import '../../l10n/l10n.dart';
 import '../../storage/account_slots.dart';
+import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 
 /// B7: the accounts on this device. One account is open at a time; the others
@@ -108,6 +109,39 @@ class AccountsScreen extends StatelessWidget {
     if (host.activeSlot?.state == SlotState.pending) {
       navigator.popUntil((route) => route.isFirst);
     }
+  }
+}
+
+/// Opens the account list from a screen shown without a session: sign-in, a
+/// waiting recovery claim, an unreadable database. Settings, where the list
+/// otherwise lives, needs a session, so without this a paused account whose
+/// session expired would hide every other account on the device. It only
+/// opens the list: it never removes the open slot (a pending one may hold a
+/// K0 claim that must survive). Hidden when no other account exists.
+class AccountsShortcut extends StatelessWidget {
+  const AccountsShortcut({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final host = AccountHostScope.maybeOf(context);
+    if (host == null) return const SizedBox.shrink();
+    final active = host.registry.active;
+    final hasOthers = host.registry.slots
+        .any((s) => s.namespace != active && s.state != SlotState.removing);
+    if (!hasOthers) return const SizedBox.shrink();
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: TextButton.icon(
+        key: const ValueKey<String>('accounts-shortcut'),
+        onPressed: host.switching
+            ? null
+            : () => Navigator.of(context).push(
+                  sharedAxisRoute<void>((_) => AccountsScreen(host: host)),
+                ),
+        icon: const Icon(Icons.switch_account_outlined),
+        label: Text(context.l10n.settingsAccounts),
+      ),
+    );
   }
 }
 

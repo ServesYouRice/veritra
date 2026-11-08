@@ -201,7 +201,10 @@ class AccountRegistry {
   AccountRegistry withIdentity(
       String namespace, String origin, String accountId, String? username) {
     final current = slot(namespace);
-    if (current == null) throw const SlotException(SlotRefusal.unknown);
+    // A slot being removed never becomes active again.
+    if (current == null || current.state == SlotState.removing) {
+      throw const SlotException(SlotRefusal.unknown);
+    }
     if (duplicateOf(origin, accountId, except: namespace) != null) {
       throw const SlotException(SlotRefusal.duplicate);
     }
@@ -396,6 +399,12 @@ class AccountRegistryStore {
   /// caller must not proceed as if the change was saved.
   Future<void> save(AccountRegistry registry) async {
     final text = registry.encode();
+    // Never write what [load] would refuse: that would keep the app from
+    // opening at the next start (for example, too many slots left
+    // `removing` by deletes that keep failing).
+    if (AccountRegistry.tryDecode(text) == null) {
+      throw const AccountRegistryException('invalid');
+    }
     await _storage.write(key, text);
     if (await _storage.read(key) != text) {
       throw const AccountRegistryException('readback');
@@ -492,7 +501,10 @@ class SlotEraser implements SlotErasing {
       databaseKey,
       slot.legacyRecordKey,
       slot.secureKey('read_receipts.v1'),
-      slot.secureKey('notifications.hide_preview.v1'),
+      // Desktop notifications still read the primary's hide-preview choice
+      // for every slot (DesktopServices.startIfSupported), so removing the
+      // primary must not turn message previews back on for the others.
+      if (!slot.isPrimary) slot.secureKey('notifications.hide_preview.v1'),
       ...await _storage.keysWithPrefix('$databaseKey.quarantined.'),
     ]) {
       await _storage.delete(name);
