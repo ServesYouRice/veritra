@@ -143,10 +143,12 @@ gates below). No setting, no new dependency.
   recovery key (a key set before L1, not yet confirmed on a device) gets the
   same 401 as no key at all. The user's own correct key is not counted toward
   the D79 cap and takes no account backoff; a wrong key counts as before.
-- **Not here yet.** The key-package check that the leaf signature key equals
-  the device's `signing_key` (bug-hunt Q-1) is not enforced: it waits for L1-1
-  and the client work (L1-3) so test fixtures and the shipped app keep
-  working.
+- **Key-package gate (L1-3, bug-hunt Q-1, owner 2026-11-08).** For an account
+  with a list, `POST /api/v1/devices/me/key-packages` refuses a package whose
+  leaf signature key is not the key the head names for that device (400
+  `key_package_not_listed`), and claims hand out only packages that carry it;
+  a stored one that does not (published before the list) is deleted at claim.
+  Accounts without a list are unchanged. Clients do not rely on it.
 
 Native FCM and APNs use the matching `PRIVATE_MESSENGER_FCM_*` and
 `PRIVATE_MESSENGER_APNS_*` environment secrets. Push payloads are fixed generic

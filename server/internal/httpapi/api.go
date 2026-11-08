@@ -506,6 +506,8 @@ func handleStorageError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, storage.ErrUnauthorized):
 		writeError(w, http.StatusUnauthorized, "unauthorized")
+	case errors.Is(err, storage.ErrKeyPackageNotListed):
+		writeError(w, http.StatusBadRequest, "key_package_not_listed")
 	case errors.Is(err, storage.ErrInvalidDeviceList):
 		writeError(w, http.StatusBadRequest, "invalid_device_list")
 	case errors.Is(err, storage.ErrDeviceListRequired):

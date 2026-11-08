@@ -1088,3 +1088,26 @@ func TestDevicelessSessionCannotApproveALinkOrChangeRecoveryOrRevokeOnAList(t *t
 		t.Fatal("a refused revoke revoked the device")
 	}
 }
+
+// The L1 key-package gate (bug-hunt Q-1, owner 2026-11-08): once an account
+// has a list, a device may publish only key packages that carry the key the
+// list names for it.
+func TestPublishedKeyPackagesMustCarryTheListedKey(t *testing.T) {
+	w := newDLWorld(t, true)
+	publish := func(key []byte) (int, []byte) {
+		return w.do(http.MethodPost, "/api/v1/devices/me/key-packages", w.owner.token, map[string]interface{}{
+			"key_packages": []map[string]interface{}{{
+				"key_package": mlswiretest.KeyPackageWithSignatureKey(key),
+				"ciphersuite": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+				"expires_at":  time.Now().UTC().Add(24 * time.Hour),
+			}},
+		})
+	}
+	other := bytes.Repeat([]byte{7}, 32)
+	if status, body := publish(other); status != http.StatusBadRequest || !bytes.Contains(body, []byte("key_package_not_listed")) {
+		t.Fatalf("another key: status=%d body=%s", status, body)
+	}
+	if status, body := publish(w.owner.pub); status != http.StatusCreated {
+		t.Fatalf("the listed key: status=%d body=%s", status, body)
+	}
+}

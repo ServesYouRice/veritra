@@ -163,3 +163,20 @@ func vector(b, value []byte) []byte {
 	}
 	return append(append(b, byte(len(value))), value...)
 }
+
+func TestLeafSignatureKeyReadsTheLeafKey(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	got, err := mlswire.LeafSignatureKey(mlswiretest.KeyPackageWithSignatureKey(key))
+	if err != nil || string(got) != string(key) {
+		t.Fatalf("LeafSignatureKey = %x, %v; want %x", got, err, key)
+	}
+	if _, err := mlswire.LeafSignatureKey(mlswiretest.OpenMLSKeyPackage()); err != nil {
+		t.Fatalf("client key package: %v", err)
+	}
+	if _, err := mlswire.LeafSignatureKey([]byte("not a key package")); err == nil {
+		t.Fatal("garbage accepted")
+	}
+}

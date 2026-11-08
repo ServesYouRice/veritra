@@ -70,6 +70,27 @@ func ValidateKeyPackage(b []byte) error {
 	return nil
 }
 
+// LeafSignatureKey returns the leaf node's signature public key of a key
+// package that [ValidateKeyPackage] accepts (the Ed25519 key the credential
+// signs with). The L1 key-package gate (bug-hunt Q-1, owner 2026-11-08)
+// compares it with the key the account's signed device list names. It
+// verifies no signature.
+func LeafSignatureKey(b []byte) ([]byte, error) {
+	if err := ValidateKeyPackage(b); err != nil {
+		return nil, err
+	}
+	r := reader{data: b, ok: true}
+	r.uint16()
+	r.uint16()
+	r.vector() // init_key
+	r.vector() // leaf encryption_key
+	key := r.vector()
+	if !r.ok || len(key) != signaturePublicBytes {
+		return nil, ErrInvalidKeyPackage
+	}
+	return append([]byte(nil), key...), nil
+}
+
 // readLeafNode reads one RFC 9420 section 7.2 LeafNode whose source is
 // key_package.
 func readLeafNode(r *reader) bool {

@@ -49,9 +49,10 @@ suite 0x0001 with 32-byte keys and 64-byte signatures, a basic credential with
 a non-empty identity, a `key_package` leaf with its lifetime, well-formed
 extension lists, minimal vector lengths and nothing after the signature
 (`server/internal/mlswire`, TASK-172). It verifies no signature and does not
-bind the credential to the enrollment signing key (bug-hunt question
-section-255217d2d387fd53976689b2/Q-1, open); clients still validate every key
-package they use.
+bind the credential to the enrollment signing key. For an account with a
+signed device list, L1-3 adds the Q-1 gate: the leaf signature key must be the
+key the list names for the device (see the L1-3 change-log entry); clients
+still validate every key package they use.
 
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare
@@ -487,7 +488,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   can speak v2. Remove them after L1 lands. **Needs the independent crypto
   review before release.**
 - **L1-3, approved-device list, mobile (2026-11-07, D94, D100):** local
-  schema 26 (21 to 25 are reserved for other packages); no ABI, payload or
+  schema 26 (21 to 25 were reserved for other packages; owner, 2026-11-08:
+  once 26 lands the next free local schema is 27, because an upgrade step
+  gated below 26 never runs on a device already at 26); no ABI, payload or
   server change. Design: [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
   - **Pins.** `local_device_list_heads`, `_keys`, `_conflicts` and
     `local_approval_leaves` (never in a backup, cleared with the identity).
@@ -495,7 +498,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     first sight (whole chain verified in Rust), then moves only forward with
     `device_list_check_step`; it re-reads the pinned head on every refresh, so
     another statement at the pinned version is checked as a whole chain and,
-    if it verifies, becomes a sticky conflict with both statements kept. A
+    if it verifies and grows from the pinned version 1, becomes a sticky
+    conflict with both statements kept. A chain from another version 1 (one
+    the server alone could make up) leaves the pin as it is and is never
+    sticky (owner, 2026-11-08). A
     lower head, a gap or a bad step is "unavailable" and changes nothing.
     Refreshes are rate-limited to one a minute per account, and an own
     `device_list.updated` event clears the limit.
@@ -520,7 +526,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     rows lost after an own commit) is judged before it is next used.
   - **Message verdicts.** A message from a leaf that is not `approved` or
     `removed` is replaced by an `unapproved:` placeholder; its text is not
-    stored. A `removed` leaf's messages are shown (not yet marked).
+    stored. This includes a sender still "checking" after a fresh judgment
+    (owner left it to the implementer, 2026-11-08: fail closed rather than
+    keep text from a device no list approves). A `removed` leaf's messages are shown (not yet marked).
   - **Signing.** Genesis at setup and registration; change 2 at K2 link
     approval, built from the transcript the native K2 state verified (claim
     tag and typed code) and only after the approval request exists, so never
@@ -537,6 +545,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     per-conversation state lines ("Checking <name>'s devices"); the new
     device's anchor only logs a mismatch. Change list version 1 is still
     accepted by Rust; nothing in the app sends it any more.
+  - **Server key-package gate (bug-hunt Q-1; owner 2026-11-08, replacing
+    D100 check 02's "no server check").** For an account with a list, the
+    server refuses a published key package whose leaf signature key
+    (`mlswire.LeafSignatureKey`) is not the key the head names for the device
+    (400 `key_package_not_listed`) and claims only packages that carry it,
+    deleting stored ones that do not. No migration. An honest-server gate:
+    clients still stage every add with their own pinned key.
   - **TASK-010 and TASK-048 (commit-then-reveal and key commitment in device
     linking, D100 A):** built in their own change (see its entry); this step
     only signs change 2 after the link checks.
