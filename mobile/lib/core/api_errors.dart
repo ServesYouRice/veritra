@@ -150,6 +150,11 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'recovery_cancelled': ApiErrorKind.notFound,
   'recovery_status_failed': ApiErrorKind.server,
   'invalid_recovery_key': ApiErrorKind.invalidRequest,
+  // K1 automatic backups.
+  'recovery_key_changed': ApiErrorKind.conflict,
+  'backup_counter_stale': ApiErrorKind.conflict,
+  'recovery_token_not_allowed': ApiErrorKind.invalidRequest,
+  'device_required': ApiErrorKind.authentication,
 
   // L1 approved-device list.
   'invalid_device_list': ApiErrorKind.invalidRequest,
