@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../core/device_lists.dart' show DeviceListPins;
 import '../core/models.dart';
+import '../core/roles/posting_verdict.dart';
 import '../core/server_origin.dart';
 import '../storage/encrypted_database.dart'
     show
@@ -1926,6 +1927,36 @@ class NativeCryptoService
             case DecodedAppPayload(:final payload):
               if (!_messageTypes.contains(payload.type)) {
                 throw const FormatException('unexpected message type');
+              }
+              final authority = _authority;
+              final VerifiedRoleSource? roles = authority is VerifiedRoleSource
+                  ? authority as VerifiedRoleSource
+                  : null;
+              // C2: a restricted post from a sender below admin is dropped.
+              // A hidden action row stands in for it, so the timeline hides
+              // the server's copy of the envelope too; no notice, no text.
+              // The MLS state and cursor still commit.
+              if (roles != null &&
+                  restrictedPostTypes.contains(payload.type) &&
+                  shouldDropRestrictedPost(
+                    record: roles.governanceOf(envelope.conversationId),
+                    sender: envelope.senderAccountId,
+                    channelId: payload.channelId,
+                    serverRestricts: roles.serverRestrictsPosting(
+                        envelope.conversationId, payload.channelId),
+                  )) {
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.action,
+                    senderHidden: true,
+                    channelId: payload.channelId,
+                  ),
+                ];
+                reveal = null;
+                break;
               }
               effects = messageEffectsFor(
                 payload,
