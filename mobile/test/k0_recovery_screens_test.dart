@@ -298,7 +298,7 @@ void main() {
         pending: PendingRecoveryRequest(
             id: 'arr_9',
             deviceName: 'Unknown phone',
-            readyAt: DateTime.utc(2026, 11, 8, 10)),
+            readyAt: DateTime.utc(2030, 11, 8, 10)),
       );
     await tester
         .pumpWidget(app(Scaffold(body: AccountRecoveryBanner(state: state))));
