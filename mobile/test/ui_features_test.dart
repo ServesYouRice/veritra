@@ -272,6 +272,7 @@ class FakeFeatureApiClient extends ApiClient {
     required String deviceName,
     required EnrollmentReservation enrollment,
     required EnrollmentCredential credential,
+    List<int>? deviceList,
   }) async {
     return const Session(
       baseUrl: 'https://localhost:8080',

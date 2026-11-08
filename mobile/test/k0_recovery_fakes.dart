@@ -236,7 +236,9 @@ class K0Api extends ApiClient {
 
   @override
   Future<RecoveryKeyStatus> putRecoveryKey(String token,
-      {required List<int> rkAuthPub, required List<int> rkId}) async {
+      {required List<int> rkAuthPub,
+      required List<int> rkId,
+      List<int>? deviceList}) async {
     if (server.requireRecentAuth && !server.recentAuth) {
       throw k0Error(403, 'recent_auth_required');
     }

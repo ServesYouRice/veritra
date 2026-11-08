@@ -11,6 +11,7 @@ import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// K0 R3/R4 through [NativeCryptoService] and the real ABI 11 library: the
 /// recovery key round trip, and a recovery claim's identity sealed at claim
@@ -21,6 +22,9 @@ void main() {
   late NativeCryptoBindings bindings;
 
   setUp(() {
+    // The UnavailableCryptoService test below needs no library; the native
+    // tests are skipped (or required) by nativeCryptoSkip().
+    if (nativeCryptoSkip() != false) return;
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
   });
 
@@ -32,8 +36,8 @@ void main() {
       );
 
   test('recovery key: generate, show, type back, derive', () async {
-    final service =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final service = TestNativeCryptoService(
+        bindings: bindings, localStore: MemoryLocalStore());
     final entropy = await service.generateRecoveryKey();
     expect(entropy, hasLength(30));
     final display = await service.encodeRecoveryKey(entropy);
@@ -60,7 +64,7 @@ void main() {
     // The account's other member, enrolled the usual way.
     final aliceStore = MemoryLocalStore();
     final alice =
-        NativeCryptoService(bindings: bindings, localStore: aliceStore);
+        TestNativeCryptoService(bindings: bindings, localStore: aliceStore);
     await alice.createEnrollmentCredential(const EnrollmentReservation(
         id: 'res_alice',
         accountId: 'acct_alice',
@@ -69,8 +73,8 @@ void main() {
     await alice.activateSession(session('acct_alice', 'dev_alice'));
 
     // Claim time: a fresh identity, its proof, and the sealed state.
-    final first =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final first = TestNativeCryptoService(
+        bindings: bindings, localStore: MemoryLocalStore());
     const reservation = EnrollmentReservation(
         id: 'res_bob',
         accountId: 'acct_bob',
@@ -116,7 +120,8 @@ void main() {
 
     // Days later, after a restart: a new service over a new, empty store.
     final bobStore = MemoryLocalStore();
-    final bob = NativeCryptoService(bindings: bindings, localStore: bobStore);
+    final bob =
+        TestNativeCryptoService(bindings: bindings, localStore: bobStore);
     final pending = PendingAccountRecovery.fromEnrollment(persisted)!;
     await bob.resumePendingEnrollment(
         accountId: 'acct_bob', deviceId: 'dev_bob', state: pending.mlsState);
@@ -172,8 +177,8 @@ void main() {
   }, skip: nativeCryptoSkip());
 
   test('abandoning drops the pending identity', () async {
-    final service =
-        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final service = TestNativeCryptoService(
+        bindings: bindings, localStore: MemoryLocalStore());
     await service.createEnrollmentCredential(const EnrollmentReservation(
         id: 'res', accountId: 'acct', deviceId: 'dev', challenge: <int>[1]));
     await service.abandonPendingEnrollment();

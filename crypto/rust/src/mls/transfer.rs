@@ -14,6 +14,10 @@ pub(super) const MAX_TRANSFERS: usize = 16;
 pub(super) const MAX_TRANSFER_BYTES: usize = 12 * 1024;
 const MAX_LINK_MS: u64 = 30 * 60 * 1000;
 pub(crate) const TRANSFER_LIFETIME_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+/// Record encoding: 2 is protocol v4 (L1-3: commitment, recipient random,
+/// SAS key, revealed source random); 1 was protocol v3 and is dropped.
+const ITEM_VERSION: u8 = 2;
+const LEGACY_ITEM_VERSION: u8 = 1;
 
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct TransferId {
@@ -67,8 +71,18 @@ pub(crate) struct PendingTransfer {
     pub approval_intent_at_ms: u64,
     pub approved_at_ms: u64,
     pub expires_at_ms: u64,
+    /// Outgoing: the full verification, SAS included. Incoming: no SAS
+    /// (`sas` and `sas_bytes` empty); [`MlsDevice::reveal_history_sas`]
+    /// derives it read-only once the source reveals its random.
     pub verification: DeviceLinkVerification,
     link_key: SecretVLBytes,
+    /// Keys the SAS MAC (`veritra-link-sas-v4`); the new device wipes the
+    /// link secret after its claim, before the source reveals.
+    sas_key: SecretVLBytes,
+    /// The source's revealed random: always set on an outgoing record (the
+    /// source knows it), never on an incoming one (the pending state is
+    /// frozen before the reveal, so the reveal is never stored).
+    source_random: Option<[u8; 32]>,
     transfer_key: Option<TransferKeyPair>,
     source_material: Option<SourceMaterial>,
     verified_handoff_sha256: Option<[u8; 32]>,
@@ -112,19 +126,37 @@ impl PendingTransfer {
             || self.verification.transcript_hash != self.context.transcript_hash()?
             || self.verification.claim_tag.len() != 32
             || self.verification.approval_tag.len() != 32
-            || self.verification.sas_bytes.len() != 4
+            || self.sas_key.as_slice().len() != 32
         {
             return Err(MlsError::InvalidState);
         }
-        let sas = u32::from_be_bytes(
-            self.verification
-                .sas_bytes
-                .as_slice()
-                .try_into()
-                .map_err(invalid)?,
-        ) % 100_000_000;
-        if self.verification.sas != format!("{sas:08}") {
-            return Err(MlsError::InvalidState);
+        match (self.direction, &self.source_random) {
+            (Direction::Outgoing, Some(random)) => {
+                let bytes: [u8; 4] = self
+                    .verification
+                    .sas_bytes
+                    .as_slice()
+                    .try_into()
+                    .map_err(invalid)?;
+                let opened = link_v3::source_commitment(
+                    &self.context.origin,
+                    &self.context.account_id,
+                    &self.context.source_device_id,
+                    &self.context.source_signing_key,
+                    random,
+                )?;
+                if self.verification.sas != link_v3::sas_digits(&bytes)
+                    || !link_v3::equal_tag(&opened, &self.context.source_commitment)
+                {
+                    return Err(MlsError::InvalidState);
+                }
+            }
+            (Direction::Incoming, None) => {
+                if !self.verification.sas.is_empty() || !self.verification.sas_bytes.is_empty() {
+                    return Err(MlsError::InvalidState);
+                }
+            }
+            _ => return Err(MlsError::InvalidState),
         }
         if (self.stage == Stage::WaitingApproval) != (self.approved_at_ms == 0) {
             return Err(MlsError::InvalidState);
@@ -350,6 +382,8 @@ impl MlsDevice {
                 && existing.link_expires_at_ms == record.link_expires_at_ms
                 && existing.verification == record.verification
                 && link_v3::equal_tag(existing.link_key.as_slice(), record.link_key.as_slice())
+                && link_v3::equal_tag(existing.sas_key.as_slice(), record.sas_key.as_slice())
+                && existing.source_random == record.source_random
             {
                 Ok(existing.verification.clone())
             } else {
@@ -370,13 +404,17 @@ impl MlsDevice {
         Ok(public)
     }
 
+    /// The new device's side. The transfer key and the recipient random are
+    /// native outputs: pass zeros for both, and on a retry either zeros or
+    /// the values the first call returned. Returns the transfer public key,
+    /// the recipient random and the verification without a SAS.
     pub(crate) fn begin_history_receive(
         &mut self,
         mut context: LinkContext,
         secret: &[u8],
         link_expires_ms: u64,
         now_ms: u64,
-    ) -> Result<([u8; 32], DeviceLinkVerification), MlsError> {
+    ) -> Result<([u8; 32], [u8; 32], DeviceLinkVerification), MlsError> {
         if context.account_id != self.account_id
             || context.recipient_device_id != self.device_id
             || context.recipient_signing_key != self.signing_public_key()
@@ -394,23 +432,37 @@ impl MlsDevice {
                 return Err(MlsError::InvalidIdentity);
             }
             context.transfer_public_key = existing.context.transfer_public_key;
+            // The same rule for the recipient random: never a second one.
+            if context.recipient_random != [0; 32]
+                && context.recipient_random != existing.context.recipient_random
+            {
+                return Err(MlsError::InvalidIdentity);
+            }
+            context.recipient_random = existing.context.recipient_random;
             let verified = link_v3::derive(&self.provider, &context, secret)?;
             if existing.direction != Direction::Incoming
                 || existing.context != context
                 || existing.link_expires_at_ms != link_expires_ms
                 || existing.verification != verified.public
                 || !link_v3::equal_tag(existing.link_key.as_slice(), verified.link_key.as_slice())
+                || !link_v3::equal_tag(existing.sas_key.as_slice(), verified.sas_key.as_slice())
             {
                 return Err(MlsError::InvalidState);
             }
             return Ok((
                 existing.context.transfer_public_key,
+                existing.context.recipient_random,
                 existing.verification.clone(),
             ));
+        }
+        if context.transfer_public_key != [0; 32] || context.recipient_random != [0; 32] {
+            return Err(MlsError::InvalidIdentity);
         }
         let key = TransferKeyPair::fresh(&self.provider).map_err(invalid)?;
         let public: [u8; 32] = key.public_key().try_into().map_err(invalid)?;
         context.transfer_public_key = public;
+        let random = link_v3::fresh_random(&self.provider)?;
+        context.recipient_random = random;
         let verification = link_v3::derive(&self.provider, &context, secret)?;
         let output = self.insert_transfer(
             PendingTransfer {
@@ -423,15 +475,60 @@ impl MlsDevice {
                 expires_at_ms: link_expires_ms,
                 verification: verification.public,
                 link_key: verification.link_key,
+                sas_key: verification.sas_key,
+                source_random: None,
                 transfer_key: Some(key),
                 source_material: None,
                 verified_handoff_sha256: None,
             },
             now_ms,
         )?;
-        Ok((public, output))
+        Ok((public, random, output))
     }
 
+    /// This device's commitment to `source_random` for a link it is about to
+    /// create on `origin`: its own account, device ID and signing key.
+    pub(crate) fn link_source_commitment(
+        &self,
+        origin: &[u8],
+        source_random: &[u8; 32],
+    ) -> Result<[u8; 32], MlsError> {
+        let key: [u8; 32] = self
+            .signing_public_key()
+            .try_into()
+            .map_err(|_| MlsError::InvalidState)?;
+        link_v3::source_commitment(
+            origin,
+            &self.account_id,
+            &self.device_id,
+            &key,
+            source_random,
+        )
+    }
+
+    /// The new device's SAS, once the source revealed `source_random`. Read
+    /// only: it opens the commitment pinned at begin and derives the 8
+    /// digits, and refuses a random that does not open it. Nothing is
+    /// stored, so it runs on the frozen pending identity and may repeat.
+    pub(crate) fn reveal_history_sas(
+        &self,
+        id: &TransferId,
+        source_random: &[u8; 32],
+        now_ms: u64,
+    ) -> Result<String, MlsError> {
+        let record = self.history_record(id, now_ms)?;
+        if record.direction != Direction::Incoming || now_ms >= record.link_expires_at_ms {
+            return Err(MlsError::InvalidState);
+        }
+        let (sas, _) =
+            record
+                .context
+                .reveal(&self.provider, record.sas_key.as_slice(), source_random)?;
+        Ok(sas)
+    }
+
+    // The claim, its checks and the source random stay explicit at the call.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn accept_history_claim(
         &mut self,
         context: LinkContext,
@@ -440,12 +537,46 @@ impl MlsDevice {
         now_ms: u64,
         transcript_hash: &[u8],
         claim_tag: &[u8],
+        source_random: &[u8; 32],
     ) -> Result<DeviceLinkVerification, MlsError> {
-        let verification = link_v3::derive(&self.provider, &context, secret)?;
+        if context.source_device_id != self.device_id
+            || context.source_signing_key != self.signing_public_key()
+        {
+            return Err(MlsError::InvalidIdentity);
+        }
+        let mut verification = link_v3::derive(&self.provider, &context, secret)?;
         if !link_v3::equal_tag(&verification.public.transcript_hash, transcript_hash)
             || !link_v3::equal_tag(&verification.public.claim_tag, claim_tag)
         {
             return Err(MlsError::InvalidIdentity);
+        }
+        // The context's commitment must be this device's own: its random
+        // opens it. The caller reveals the random only after this record is
+        // committed, and a second claim for the link is refused below.
+        let (sas, sas_bytes) = context.reveal(
+            &self.provider,
+            verification.sas_key.as_slice(),
+            source_random,
+        )?;
+        verification.public.sas = sas;
+        verification.public.sas_bytes = sas_bytes.to_vec();
+        // One claim per source random, not only per link: the commitment
+        // does not bind the link ID, so a random reused for a second link
+        // would let a relay that saw the first reveal pick the second claim
+        // to match a SAS. Keyed on the random, not the commitment, so reuse
+        // under another origin (another commitment that still opens) is
+        // caught too. Refused here so the rule does not rest on the caller
+        // alone. An exact replay for the same link is left to
+        // `insert_transfer`.
+        let id = TransferId::new(&context.origin, &context.link_id);
+        if self.pending_transfers.iter().any(|(other, record)| {
+            other != &id
+                && record
+                    .source_random
+                    .as_ref()
+                    .is_some_and(|known| link_v3::equal_tag(known, source_random))
+        }) {
+            return Err(MlsError::InvalidState);
         }
         self.insert_transfer(
             PendingTransfer {
@@ -458,6 +589,8 @@ impl MlsDevice {
                 expires_at_ms: link_expires_ms,
                 verification: verification.public,
                 link_key: verification.link_key,
+                sas_key: verification.sas_key,
+                source_random: Some(*source_random),
                 transfer_key: None,
                 source_material: None,
                 verified_handoff_sha256: None,
@@ -774,7 +907,7 @@ pub(super) fn encode(
             return Err(MlsError::InvalidState);
         }
         let mut encoded = SecretWriter::new(MAX_TRANSFER_BYTES);
-        encoded.byte(1);
+        encoded.byte(ITEM_VERSION);
         encoded.byte(record.direction as u8);
         encoded.byte(record.stage as u8);
         for field in [
@@ -790,15 +923,25 @@ pub(super) fn encode(
         encoded.lp(&record.context.recipient_device_id)?;
         encoded.put(&record.context.recipient_signing_key);
         encoded.put(&record.context.transfer_public_key);
+        encoded.put(&record.context.source_commitment);
+        encoded.put(&record.context.recipient_random);
         encoded.put(&record.context.transcript_hash()?);
         encoded.put(&record.link_expires_at_ms.to_be_bytes());
         encoded.put(&record.approval_intent_at_ms.to_be_bytes());
         encoded.put(&record.approved_at_ms.to_be_bytes());
         encoded.put(&record.expires_at_ms.to_be_bytes());
-        encoded.put(&record.verification.sas_bytes);
         encoded.put(&record.verification.claim_tag);
         encoded.put(&record.verification.approval_tag);
         encoded.put(record.link_key.as_slice());
+        encoded.put(record.sas_key.as_slice());
+        match &record.source_random {
+            None => encoded.byte(0),
+            Some(random) => {
+                encoded.byte(1);
+                encoded.put(random);
+                encoded.put(&record.verification.sas_bytes);
+            }
+        }
         match &record.transfer_key {
             None => encoded.byte(0),
             Some(key) => {
@@ -835,6 +978,25 @@ pub(super) fn encode(
     Ok(output.0)
 }
 
+/// How many bytes the transfer section at the start of `bytes` takes: a
+/// `u16` count and that many `u32`-length-prefixed items. What follows is
+/// the L1 held-seed section, if any.
+pub(super) fn extent(bytes: &[u8]) -> Result<usize, MlsError> {
+    let mut reader = Reader { bytes, offset: 0 };
+    let count = reader.u16()? as usize;
+    if count > MAX_TRANSFERS {
+        return Err(MlsError::InvalidState);
+    }
+    for _ in 0..count {
+        let length = reader.u32()? as usize;
+        if length > MAX_TRANSFER_BYTES {
+            return Err(MlsError::InvalidState);
+        }
+        reader.take(length)?;
+    }
+    Ok(reader.offset)
+}
+
 pub(super) fn decode(
     bytes: &[u8],
     account: &[u8],
@@ -858,8 +1020,15 @@ pub(super) fn decode(
             bytes: reader.take(length)?,
             offset: 0,
         };
-        if item.byte()? != 1 {
-            return Err(MlsError::InvalidState);
+        match item.byte()? {
+            ITEM_VERSION => {}
+            // A protocol-v3 record (before L1-3) has no commitment, and its
+            // transcript no longer verifies. It is dropped, not refused: a
+            // refusal here would make the whole sealed state unreadable. Its
+            // link was revoked by server migration 0060; a history copy in
+            // flight ends and the device links again.
+            LEGACY_ITEM_VERSION => continue,
+            _ => return Err(MlsError::InvalidState),
         }
         let direction = match item.byte()? {
             1 => Direction::Outgoing,
@@ -882,15 +1051,26 @@ pub(super) fn decode(
         let recipient_device_id = item.lp(128)?.to_vec();
         let recipient_signing_key = item.array()?;
         let transfer_public_key = item.array()?;
+        let source_commitment = item.array()?;
+        let recipient_random = item.array()?;
         let transcript_hash: [u8; 32] = item.array()?;
         let link_expires_at_ms = item.u64()?;
         let approval_intent_at_ms = item.u64()?;
         let approved_at_ms = item.u64()?;
         let expires_at_ms = item.u64()?;
-        let sas_bytes: [u8; 4] = item.array()?;
         let claim_tag: [u8; 32] = item.array()?;
         let approval_tag: [u8; 32] = item.array()?;
         let link_key: SecretVLBytes = item.take(32)?.into();
+        let sas_key: SecretVLBytes = item.take(32)?.into();
+        let (source_random, sas_bytes) = match item.byte()? {
+            0 => (None, Vec::new()),
+            1 => (Some(item.array::<32>()?), item.take(4)?.to_vec()),
+            _ => return Err(MlsError::InvalidState),
+        };
+        let sas = match <[u8; 4]>::try_from(sas_bytes.as_slice()) {
+            Ok(bytes) => link_v3::sas_digits(&bytes),
+            Err(_) => String::new(),
+        };
         let transfer_key = match item.byte()? {
             0 => None,
             1 => Some(
@@ -929,6 +1109,8 @@ pub(super) fn decode(
                 recipient_device_id,
                 recipient_signing_key,
                 transfer_public_key,
+                source_commitment,
+                recipient_random,
             },
             direction,
             stage,
@@ -938,12 +1120,14 @@ pub(super) fn decode(
             expires_at_ms,
             verification: DeviceLinkVerification {
                 transcript_hash: transcript_hash.to_vec(),
-                sas: format!("{:08}", u32::from_be_bytes(sas_bytes) % 100_000_000),
+                sas,
                 claim_tag: claim_tag.to_vec(),
                 approval_tag: approval_tag.to_vec(),
-                sas_bytes: sas_bytes.to_vec(),
+                sas_bytes,
             },
             link_key,
+            sas_key,
+            source_random,
             transfer_key,
             source_material,
             verified_handoff_sha256,
@@ -1005,9 +1189,24 @@ mod tests {
     use super::*;
     use std::mem;
 
+    const SOURCE_RANDOM: [u8; 32] = [0x5a; 32];
+
+    /// The incoming record's view of a verification: no SAS until revealed.
+    fn incoming(verification: &DeviceLinkVerification) -> DeviceLinkVerification {
+        DeviceLinkVerification {
+            sas: String::new(),
+            sas_bytes: Vec::new(),
+            ..verification.clone()
+        }
+    }
+
+    /// Returns the source's verification (SAS included).
     fn pair() -> (MlsDevice, MlsDevice, LinkContext, DeviceLinkVerification) {
         let mut source = MlsDevice::new(b"acct_transfer", b"dev_old").unwrap();
         let mut recipient = MlsDevice::new(b"acct_transfer", b"dev_new").unwrap();
+        let commitment = source
+            .link_source_commitment(b"https://example.test", &SOURCE_RANDOM)
+            .unwrap();
         let mut context = LinkContext {
             origin: b"https://example.test".to_vec(),
             link_id: b"link_1".to_vec(),
@@ -1018,11 +1217,15 @@ mod tests {
             recipient_device_id: b"dev_new".to_vec(),
             recipient_signing_key: recipient.signing_public_key().try_into().unwrap(),
             transfer_public_key: [0; 32],
+            source_commitment: commitment,
+            recipient_random: [0; 32],
         };
-        let (public, verification) = recipient
+        let (public, random, verification) = recipient
             .begin_history_receive(context.clone(), &[7; 16], 2_000, 1_000)
             .unwrap();
+        assert_ne!(random, [0; 32]);
         context.transfer_public_key = public;
+        context.recipient_random = random;
         let old = source
             .accept_history_claim(
                 context.clone(),
@@ -1031,10 +1234,150 @@ mod tests {
                 1_000,
                 &verification.transcript_hash,
                 &verification.claim_tag,
+                &SOURCE_RANDOM,
             )
             .unwrap();
-        assert_eq!(old, verification);
-        (source, recipient, context, verification)
+        assert_eq!(incoming(&old), verification);
+        assert_eq!(old.sas.len(), 8);
+        // Honest run: the new device's read-only reveal shows the same SAS.
+        let id = TransferId::new(&context.origin, &context.link_id);
+        assert_eq!(
+            recipient
+                .reveal_history_sas(&id, &SOURCE_RANDOM, 1_000)
+                .unwrap(),
+            old.sas
+        );
+        (source, recipient, context, old)
+    }
+
+    #[test]
+    fn the_source_reveals_for_one_claim_and_the_new_device_checks_the_opening() {
+        let (mut source, recipient, context, verification) = pair();
+        let id = TransferId::new(&context.origin, &context.link_id);
+        // A random that does not open the pinned commitment shows no SAS.
+        let mut wrong = SOURCE_RANDOM;
+        wrong[31] ^= 1;
+        assert_eq!(
+            recipient.reveal_history_sas(&id, &wrong, 1_000),
+            Err(MlsError::InvalidIdentity)
+        );
+        // Read only: the record is unchanged and the reveal repeats.
+        assert_eq!(
+            recipient.history_verification(&id, 1_000).unwrap(),
+            incoming(&verification)
+        );
+        assert!(recipient
+            .reveal_history_sas(&id, &SOURCE_RANDOM, 1_001)
+            .is_ok());
+        // After the link window, and on the source's own record, no reveal.
+        assert!(recipient
+            .reveal_history_sas(&id, &SOURCE_RANDOM, 2_000)
+            .is_err());
+        assert!(source
+            .reveal_history_sas(&id, &SOURCE_RANDOM, 1_000)
+            .is_err());
+        // The source cannot accept a second claim (a relay that learned the
+        // revealed random and changed its key) for the same link.
+        let mut substituted = context.clone();
+        substituted.recipient_signing_key[0] ^= 1;
+        let relay = link_v3::derive(&source.provider, &substituted, &[7; 16]).unwrap();
+        assert_eq!(
+            source.accept_history_claim(
+                substituted,
+                &[7; 16],
+                2_000,
+                1_001,
+                &relay.public.transcript_hash,
+                &relay.public.claim_tag,
+                &SOURCE_RANDOM,
+            ),
+            Err(MlsError::InvalidState)
+        );
+        // Nor accept with a commitment its random does not open, or a
+        // context that names another device as the source.
+        let mut other = context.clone();
+        other.link_id = b"link_2".to_vec();
+        let derived = link_v3::derive(&source.provider, &other, &[7; 16]).unwrap();
+        assert_eq!(
+            source.accept_history_claim(
+                other.clone(),
+                &[7; 16],
+                2_000,
+                1_001,
+                &derived.public.transcript_hash,
+                &derived.public.claim_tag,
+                &wrong,
+            ),
+            Err(MlsError::InvalidIdentity)
+        );
+        other.source_device_id = b"dev_other".to_vec();
+        assert_eq!(
+            source.accept_history_claim(
+                other,
+                &[7; 16],
+                2_000,
+                1_001,
+                &derived.public.transcript_hash,
+                &derived.public.claim_tag,
+                &SOURCE_RANDOM,
+            ),
+            Err(MlsError::InvalidIdentity)
+        );
+    }
+
+    #[test]
+    fn a_revealed_source_random_never_accepts_a_claim_for_another_link() {
+        // The commitment does not bind the link ID. If the caller ever
+        // reused a random, a relay that saw it revealed for
+        // link_1 could choose a claim for another link whose SAS matches the
+        // new device's code. Native refuses, for another link and for the
+        // same random committed under another origin.
+        let (mut source, _, context, verification) = pair();
+        let accept = |source: &mut MlsDevice, context: LinkContext| {
+            let derived = link_v3::derive(&source.provider, &context, &[7; 16]).unwrap();
+            source.accept_history_claim(
+                context,
+                &[7; 16],
+                2_000,
+                1_001,
+                &derived.public.transcript_hash,
+                &derived.public.claim_tag,
+                &SOURCE_RANDOM,
+            )
+        };
+        let mut other_link = context.clone();
+        other_link.link_id = b"link_2".to_vec();
+        other_link.recipient_signing_key[0] ^= 1;
+        assert_eq!(accept(&mut source, other_link), Err(MlsError::InvalidState));
+        let mut other_origin = context.clone();
+        other_origin.origin = b"https://other.example.test".to_vec();
+        other_origin.source_commitment = source
+            .link_source_commitment(&other_origin.origin, &SOURCE_RANDOM)
+            .unwrap();
+        assert_eq!(
+            accept(&mut source, other_origin),
+            Err(MlsError::InvalidState)
+        );
+        // The exact replay for link_1 still returns the stored verification,
+        // and a fresh random accepts another link.
+        assert_eq!(accept(&mut source, context.clone()).unwrap(), verification);
+        let fresh = [0x5b; 32];
+        let mut next = context;
+        next.link_id = b"link_3".to_vec();
+        next.source_commitment = source.link_source_commitment(&next.origin, &fresh).unwrap();
+        let derived = link_v3::derive(&source.provider, &next, &[7; 16]).unwrap();
+        assert!(source
+            .accept_history_claim(
+                next,
+                &[7; 16],
+                2_000,
+                1_001,
+                &derived.public.transcript_hash,
+                &derived.public.claim_tag,
+                &fresh,
+            )
+            .is_ok());
+        assert_eq!(source.pending_transfers.len(), 2);
     }
 
     #[test]
@@ -1049,11 +1392,25 @@ mod tests {
             .to_vec();
         let mut request = context.clone();
         request.transfer_public_key = [0; 32];
-        let (public, repeated) = recipient
+        request.recipient_random = [0; 32];
+        let (public, random, repeated) = recipient
             .begin_history_receive(request.clone(), &[7; 16], 2_000, 1_001)
             .unwrap();
         assert_eq!(public, context.transfer_public_key);
-        assert_eq!(repeated, verification);
+        assert_eq!(random, context.recipient_random);
+        assert_eq!(repeated, incoming(&verification));
+        // The exact values are accepted too; a second random never.
+        assert!(recipient
+            .begin_history_receive(context.clone(), &[7; 16], 2_000, 1_001)
+            .is_ok());
+        let mut second = context.clone();
+        second.recipient_random[0] ^= 1;
+        assert_eq!(
+            recipient
+                .begin_history_receive(second, &[7; 16], 2_000, 1_001)
+                .err(),
+            Some(MlsError::InvalidIdentity)
+        );
         assert!(
             recipient.pending_transfers[&id]
                 .transfer_key
@@ -1070,11 +1427,11 @@ mod tests {
             MlsDevice::restore_state(b"acct_transfer", b"dev_new", &[8; 32], 8, &sealed).unwrap();
         // Original claim window elapsed; exact retry retrieves the same native
         // output while the fixed history-transfer deadline is still live.
-        let (public, repeated) = recipient
+        let (public, _, repeated) = recipient
             .begin_history_receive(request.clone(), &[7; 16], 2_000, 3_000)
             .unwrap();
         assert_eq!(public, context.transfer_public_key);
-        assert_eq!(repeated, verification);
+        assert_eq!(repeated, incoming(&verification));
         assert!(
             recipient.pending_transfers[&id]
                 .transfer_key
@@ -1171,7 +1528,7 @@ mod tests {
             assert_eq!(restored.signing_public_key(), device.signing_public_key());
             assert_eq!(
                 restored.history_verification(&id, 1_001).unwrap(),
-                verification
+                device.history_verification(&id, 1_001).unwrap()
             );
             assert!(restored.history_transfer_context(&id, 1_001).unwrap() == context);
             assert!(restored.pending_transfers.get(&id).unwrap().context == context);
@@ -1185,21 +1542,33 @@ mod tests {
                     2_000,
                     1_001,
                     &verification.transcript_hash,
-                    &verification.claim_tag
+                    &verification.claim_tag,
+                    &SOURCE_RANDOM
                 )
                 .unwrap(),
             verification
         );
         assert!(source
             .accept_history_claim(
-                context,
+                context.clone(),
                 &[7; 16],
                 2_001,
                 1_001,
                 &verification.transcript_hash,
-                &verification.claim_tag
+                &verification.claim_tag,
+                &SOURCE_RANDOM
             )
             .is_err());
+        // The restored new device still reveals the same SAS.
+        let sealed = recipient.seal_state(&[9; 32], 5).unwrap();
+        let (restored, _) =
+            MlsDevice::restore_state(b"acct_transfer", b"dev_new", &[9; 32], 5, &sealed).unwrap();
+        assert_eq!(
+            restored
+                .reveal_history_sas(&id, &SOURCE_RANDOM, 1_001)
+                .unwrap(),
+            verification.sas
+        );
     }
 
     #[test]
@@ -1425,7 +1794,13 @@ mod tests {
         for len in 0..encoded.as_slice().len() {
             assert!(read(&encoded.as_slice()[..len]).is_err());
         }
-        for (offset, value) in [(6, 2), (7, 0), (8, 5), (encoded.as_slice().len() - 1, 2)] {
+        for (offset, value) in [
+            (6, 3),
+            (6, 0),
+            (7, 0),
+            (8, 5),
+            (encoded.as_slice().len() - 1, 2),
+        ] {
             let mut changed = encoded.as_slice().to_vec();
             changed[offset] = value;
             assert!(read(&changed).is_err());
@@ -1478,5 +1853,49 @@ mod tests {
         changed[..2].copy_from_slice(&2u16.to_be_bytes());
         changed.extend_from_slice(&encoded.as_slice()[2..]);
         assert!(read(&changed).is_err());
+    }
+
+    #[test]
+    fn a_protocol_v3_record_is_dropped_and_the_rest_of_the_state_loads() {
+        // Item version 1 (before L1-3) has no commitment. It must not make
+        // the sealed state unreadable: it is skipped, later records load.
+        let (source, _, _, _) = pair();
+        let encoded = encode(
+            &source.pending_transfers,
+            &source.account_id,
+            &source.device_id,
+            source.signing_public_key(),
+            &source.provider,
+        )
+        .unwrap();
+        let item = &encoded.as_slice()[2..];
+        let mut legacy = item.to_vec();
+        legacy[4] = LEGACY_ITEM_VERSION;
+        let mut both = 2u16.to_be_bytes().to_vec();
+        both.extend_from_slice(&legacy);
+        both.extend_from_slice(item);
+        let map = decode(
+            &both,
+            &source.account_id,
+            &source.device_id,
+            source.signing_public_key(),
+            &source.provider,
+        )
+        .unwrap();
+        assert_eq!(map.len(), 1);
+        assert_eq!(extent(&both).unwrap(), both.len());
+        // Through the sealed state: a device whose state holds only a
+        // legacy record restores with no transfer at all.
+        let mut only_legacy = 1u16.to_be_bytes().to_vec();
+        only_legacy.extend_from_slice(&legacy);
+        assert!(decode(
+            &only_legacy,
+            &source.account_id,
+            &source.device_id,
+            source.signing_public_key(),
+            &source.provider,
+        )
+        .unwrap()
+        .is_empty());
     }
 }

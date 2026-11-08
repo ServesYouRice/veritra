@@ -162,7 +162,7 @@ func (a *API) ackHistoryTransfer(w http.ResponseWriter, r *http.Request, access 
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if input.ProtocolVersion != storage.DeviceLinkV3Protocol {
+	if input.ProtocolVersion != storage.HistoryTransferProtocol {
 		writeError(w, http.StatusBadRequest, "invalid_body")
 		return
 	}

@@ -18,7 +18,8 @@ pruning one conversation expires only that conversation's cursor.
 
 `GET /api/v1/sync/account-events` and `GET /api/v1/conversations/{id}/sync-events`
 (`httpapi/scoped_sync_handlers.go`). Served only with
-`PRIVATE_MESSENGER_SCOPED_SYNC=1`; off, they are not registered and answer 404.
+`PRIVATE_MESSENGER_SCOPED_SYNC` (on by default since 2026-11-07; `0` or
+`false` turns it off, then they are not registered and answer 404).
 Envelope: `scope`, `scope_id`, `events`, `sync_epoch`, `oldest_event_id`,
 `latest_event_id`. A scope behind its retention gets 409 with the same
 envelope minus `events`: `device_recovery_required` for the account scope
@@ -70,7 +71,7 @@ schema 20, a pause table, replay through the scoped conversation route). It
 is not the design's account stream and per-scope cursors; see
 [C1-sync-isolation](C1-sync-isolation.md), "Built slice (P1)", and
 `testing/evidence/C1-P1-conversation-pause.md`. It needs an Opus review and
-stays inert unless `PRIVATE_MESSENGER_SCOPED_SYNC` is on. The D92 answers
+is active against a default server (the switch is on by default). The D92 answers
 stand: the conservative prune pause stays and the C1 client steps own the
 shared client files.
 

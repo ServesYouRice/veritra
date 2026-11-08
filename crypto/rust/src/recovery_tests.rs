@@ -296,14 +296,17 @@ fn ffi_matches_the_vector() {
         );
         assert_eq!(take(out), v.entropy);
 
-        let (mut a, mut b, mut c) = Default::default();
+        let (mut a, mut b, mut c, mut d) = Default::default();
         assert_eq!(
-            pm_crypto_recovery_key_derive(slice(&v.entropy), &mut a, &mut b, &mut c),
+            pm_crypto_recovery_key_derive(slice(&v.entropy), &mut a, &mut b, &mut c, &mut d),
             PM_CRYPTO_OK
         );
         assert_eq!(take(a), v.rk_pub);
         assert_eq!(take(b), v.rk_id);
         assert_eq!(take(c), v.rk_auth_pub);
+        // ABI 14: the device-list recovery key; its answer is pinned in
+        // testing/vectors/l1-device-list-v1.json.
+        assert_eq!(take(d).len(), RK_LIST_PUB_BYTES);
 
         let mut out = PmOwnedBuffer::default();
         assert_eq!(
@@ -348,12 +351,12 @@ fn ffi_fails_closed() {
                 PM_CRYPTO_INVALID_ARGUMENT
             );
             assert!(out.data.is_null());
-            let (mut a, mut b, mut c) = Default::default();
+            let (mut a, mut b, mut c, mut d) = Default::default();
             assert_eq!(
-                pm_crypto_recovery_key_derive(entropy, &mut a, &mut b, &mut c),
+                pm_crypto_recovery_key_derive(entropy, &mut a, &mut b, &mut c, &mut d),
                 PM_CRYPTO_INVALID_ARGUMENT
             );
-            assert!(a.data.is_null() && b.data.is_null() && c.data.is_null());
+            assert!(a.data.is_null() && b.data.is_null() && c.data.is_null() && d.data.is_null());
         }
         let mut out = PmOwnedBuffer::default();
         assert_eq!(
@@ -365,12 +368,28 @@ fn ffi_fails_closed() {
             PM_CRYPTO_INVALID_ARGUMENT
         );
         assert!(out.data.is_null());
-        let (mut a, mut b) = Default::default();
-        assert_eq!(
-            pm_crypto_recovery_key_derive(slice(&v.entropy), &mut a, &mut b, core::ptr::null_mut()),
-            PM_CRYPTO_INVALID_ARGUMENT
-        );
-        assert!(a.data.is_null() && b.data.is_null());
+        let (mut a, mut b, mut c): (PmOwnedBuffer, PmOwnedBuffer, PmOwnedBuffer) =
+            Default::default();
+        for missing in 0..4 {
+            let mut outs = [
+                &mut a as *mut _,
+                &mut b as *mut _,
+                &mut c as *mut _,
+                &mut PmOwnedBuffer::default() as *mut _,
+            ];
+            outs[missing] = core::ptr::null_mut();
+            assert_eq!(
+                pm_crypto_recovery_key_derive(
+                    slice(&v.entropy),
+                    outs[0],
+                    outs[1],
+                    outs[2],
+                    outs[3]
+                ),
+                PM_CRYPTO_INVALID_ARGUMENT
+            );
+        }
+        assert!(a.data.is_null() && b.data.is_null() && c.data.is_null());
         assert_eq!(
             pm_crypto_recovery_proof_sign(
                 slice(&v.entropy),

@@ -32,6 +32,31 @@ func TestLoadOperationalSettings(t *testing.T) {
 	}
 }
 
+func TestLoadScopedSyncDefaultsOn(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{{"", true}, {"1", true}, {"true", true}, {"0", false}, {"false", false}, {"FALSE", false}} {
+		t.Setenv("PRIVATE_MESSENGER_SCOPED_SYNC", tc.value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.ScopedSync != tc.want {
+			t.Fatalf("SCOPED_SYNC=%q: ScopedSync=%v want %v", tc.value, cfg.ScopedSync, tc.want)
+		}
+	}
+}
+
+func TestLoadScopedSyncRefusesUnclearValues(t *testing.T) {
+	for _, raw := range []string{"off", "no", "disabled", "garbage"} {
+		t.Setenv("PRIVATE_MESSENGER_SCOPED_SYNC", raw)
+		if _, err := Load(); err == nil {
+			t.Fatalf("unclear SCOPED_SYNC value accepted: %q", raw)
+		}
+	}
+}
+
 func TestLoadPasswordCostRange(t *testing.T) {
 	t.Setenv("PRIVATE_MESSENGER_BCRYPT_COST", "13")
 	cfg, err := Load()

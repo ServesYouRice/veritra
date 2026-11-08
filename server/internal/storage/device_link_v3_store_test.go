@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -17,6 +18,13 @@ import (
 
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
+)
+
+// The source's L1-3 commitment and the random it reveals. The server never
+// opens the commitment, so any nonzero 32 bytes stand for it here.
+var (
+	testCommitment   = bytes.Repeat([]byte{0x21}, 32)
+	testSourceRandom = bytes.Repeat([]byte{0x23}, 32)
 )
 
 type v3Fixture struct {
@@ -39,7 +47,7 @@ func newV3Fixture(t *testing.T) *v3Fixture {
 	t.Cleanup(func() { _ = store.Close() })
 	f := &v3Fixture{store: store, owner: createTestOwner(t, ctx, store), approvalTag: bytes.Repeat([]byte{9}, 32)}
 	var err error
-	f.link, err = store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, testLinkLocator(t), "https://example.test", 0)
+	f.link, err = store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, testLinkLocator(t), "https://example.test", testCommitment, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +73,7 @@ func newV3Fixture(t *testing.T) *v3Fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.input = DeviceLinkV3ClaimInput{Code: f.link.Code, ProtocolVersion: DeviceLinkV3Protocol, ServerOrigin: f.link.ServerOrigin, ReservationRequestID: requestID, EnrollmentReservationID: f.link.ID, DeviceName: "Linked phone", DeviceKeyPackage: bytes.Repeat([]byte{3}, 64), SigningKey: public, TransferPublicKey: bytes.Repeat([]byte{4}, 32), TranscriptHash: bytes.Repeat([]byte{5}, 32), ClaimTag: bytes.Repeat([]byte{6}, 32), ClaimTokenHash: auth.HashToken(f.claimToken), DeviceSecretHash: auth.HashToken(f.deviceSecret), InitialSessionTokenHash: auth.HashToken(f.sessionToken)}
+	f.input = DeviceLinkV3ClaimInput{Code: f.link.Code, ProtocolVersion: DeviceLinkV3Protocol, ServerOrigin: f.link.ServerOrigin, ReservationRequestID: requestID, EnrollmentReservationID: f.link.ID, DeviceName: "Linked phone", DeviceKeyPackage: bytes.Repeat([]byte{3}, 64), SigningKey: public, TransferPublicKey: bytes.Repeat([]byte{4}, 32), RecipientRandom: bytes.Repeat([]byte{0x22}, 32), TranscriptHash: bytes.Repeat([]byte{5}, 32), ClaimTag: bytes.Repeat([]byte{6}, 32), ClaimTokenHash: auth.HashToken(f.claimToken), DeviceSecretHash: auth.HashToken(f.deviceSecret), InitialSessionTokenHash: auth.HashToken(f.sessionToken)}
 	f.sign(t)
 	return f
 }
@@ -79,7 +87,19 @@ func (f *v3Fixture) sign(t *testing.T) {
 	f.input.ChallengeSignature = ed25519.Sign(f.privateKey, proof)
 }
 
+// claim claims the link and then, as the source does once it accepted the
+// claim, reveals the source random (L1-3), so the link can be approved.
 func (f *v3Fixture) claim(t *testing.T) DeviceLinkV3 {
+	t.Helper()
+	claimed := f.claimOnly(t)
+	link, err := f.store.RevealDeviceLinkV3(context.Background(), f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, testSourceRandom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return link
+}
+
+func (f *v3Fixture) claimOnly(t *testing.T) DeviceLinkV3 {
 	t.Helper()
 	link, err := f.store.ClaimDeviceLinkV3(context.Background(), f.input)
 	if err != nil {
@@ -139,7 +159,7 @@ func TestDeviceLinkV3OriginsAreExactAndLoopbackHTTPOnly(t *testing.T) {
 func TestDeviceLinkV3CreateReserveAndClaimRetryAreImmutable(t *testing.T) {
 	f := newV3Fixture(t)
 	ctx := context.Background()
-	repeated, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, f.link.Code, f.link.ServerOrigin, 0)
+	repeated, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, f.link.Code, f.link.ServerOrigin, testCommitment, 0)
 	if err != nil || repeated.ID != f.link.ID || repeated.Code != f.link.Code || !repeated.CreatedAt.Equal(f.link.CreatedAt) || !repeated.ExpiresAt.Equal(f.link.ExpiresAt) || !bytes.Equal(repeated.LinkNonce, f.link.LinkNonce) || repeated.ServerOrigin != f.link.ServerOrigin {
 		t.Fatalf("create retry changed context: %v", err)
 	}
@@ -150,7 +170,7 @@ func TestDeviceLinkV3CreateReserveAndClaimRetryAreImmutable(t *testing.T) {
 	if _, err := f.store.ReserveDeviceLinkV3(ctx, f.link.Code, strings.Repeat("2", 64)); !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("reservation takeover: %v", err)
 	}
-	if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, f.link.Code, "https://other.test", 0); !errors.Is(err, ErrIdempotencyConflict) {
+	if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, f.link.Code, "https://other.test", testCommitment, 0); !errors.Is(err, ErrIdempotencyConflict) {
 		t.Fatalf("origin substitution: %v", err)
 	}
 	first := f.claim(t)
@@ -372,7 +392,7 @@ func TestDeviceLinkV3ExpiryCancelAndRevocation(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, f.link.Code, f.link.ServerOrigin, 0); !errors.Is(err, ErrDeviceLinkInvalid) {
+		if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, f.link.Code, f.link.ServerOrigin, testCommitment, 0); !errors.Is(err, ErrDeviceLinkInvalid) {
 			t.Fatalf("cancelled locator reused: %v", err)
 		}
 		if _, err := f.store.DeviceLinkV3ForClaim(ctx, f.link.ID, f.input.ClaimTokenHash); !errors.Is(err, ErrDeviceLinkInvalid) {
@@ -420,13 +440,13 @@ func TestDeviceLinkV3AndV2SharePendingAdmissionLimit(t *testing.T) {
 	if _, err := f.store.CreateDeviceLink(ctx, f.owner.Account.ID, f.owner.Device.ID, time.Minute, testLinkLocator(t)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, testLinkLocator(t), f.link.ServerOrigin, 0); err != nil {
+	if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, testLinkLocator(t), f.link.ServerOrigin, testCommitment, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.CreateDeviceLink(ctx, f.owner.Account.ID, f.owner.Device.ID, time.Minute, testLinkLocator(t)); !errors.Is(err, ErrDeviceLinkLimit) {
 		t.Fatalf("v2 bypassed mixed limit: %v", err)
 	}
-	if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, testLinkLocator(t), f.link.ServerOrigin, 0); !errors.Is(err, ErrDeviceLinkLimit) {
+	if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, testLinkLocator(t), f.link.ServerOrigin, testCommitment, 0); !errors.Is(err, ErrDeviceLinkLimit) {
 		t.Fatalf("v3 bypassed mixed limit: %v", err)
 	}
 }
@@ -479,4 +499,111 @@ func TestDeviceLinkV3AccountDeletionAndRetentionRemoveEnrollmentContext(t *testi
 			t.Fatalf("claim TTL destroyed transfer context: %v", err)
 		}
 	})
+}
+
+// L1-3: the commitment is fixed at create, the recipient random at claim and
+// the source random by one reveal after the claim; approval needs the reveal.
+func TestDeviceLinkV3CommitThenRevealOrdering(t *testing.T) {
+	f := newV3Fixture(t)
+	ctx := context.Background()
+	if !bytes.Equal(f.link.SourceCommitment, testCommitment) || !bytes.Equal(f.reservation.SourceCommitment, testCommitment) {
+		t.Fatal("the commitment is not stored and relayed")
+	}
+	for _, commitment := range [][]byte{nil, make([]byte, 32), bytes.Repeat([]byte{1}, 31)} {
+		if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, testLinkLocator(t), f.link.ServerOrigin, commitment, 0); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("bad commitment %x accepted: %v", commitment, err)
+		}
+	}
+	if _, err := f.store.CreateDeviceLinkV3(ctx, f.owner.Account.ID, f.owner.Device.ID, f.link.Code, f.link.ServerOrigin, bytes.Repeat([]byte{0x24}, 32), 0); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("create replay replaced the commitment: %v", err)
+	}
+	// No reveal before a claim, and no claim without a recipient random.
+	if _, err := f.store.RevealDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, strings.Repeat("a", 64), testSourceRandom); !errors.Is(err, ErrDeviceLinkNotReady) {
+		t.Fatalf("reveal before claim: %v", err)
+	}
+	for _, random := range [][]byte{nil, make([]byte, 32)} {
+		input := f.input
+		input.RecipientRandom = random
+		if _, err := f.store.ClaimDeviceLinkV3(ctx, input); !errors.Is(err, ErrEnrollmentInvalid) {
+			t.Fatalf("claim without a random accepted: %v", err)
+		}
+	}
+	claimed := f.claimOnly(t)
+	if !bytes.Equal(claimed.RecipientRandom, f.input.RecipientRandom) || claimed.SourceRandom != nil {
+		t.Fatal("claim did not store exactly the recipient random")
+	}
+	// A claim replay with another random is not the same claim.
+	replay := f.input
+	replay.RecipientRandom = bytes.Repeat([]byte{0x25}, 32)
+	if _, err := f.store.ClaimDeviceLinkV3(ctx, replay); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("claim replay replaced the recipient random: %v", err)
+	}
+	// Approval before the reveal is refused.
+	if _, _, _, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag); !errors.Is(err, ErrDeviceLinkNotRevealed) {
+		t.Fatalf("approved before the reveal: %v", err)
+	}
+	// Only the source, for this claim, with a real random.
+	for _, try := range []struct {
+		device, hash string
+		random       []byte
+		want         error
+	}{
+		{"other-device", claimed.ClaimRequestHash, testSourceRandom, ErrDeviceLinkInvalid},
+		{f.owner.Device.ID, strings.Repeat("b", 64), testSourceRandom, ErrDeviceLinkVerificationFailed},
+		{f.owner.Device.ID, claimed.ClaimRequestHash, make([]byte, 32), ErrDeviceLinkVerificationFailed},
+	} {
+		if _, err := f.store.RevealDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, try.device, try.hash, try.random); !errors.Is(err, try.want) {
+			t.Fatalf("reveal %v: got %v want %v", try, err, try.want)
+		}
+	}
+	revealed, err := f.store.RevealDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, testSourceRandom)
+	if err != nil || !bytes.Equal(revealed.SourceRandom, testSourceRandom) || revealed.RevealedAt == nil || revealed.State != domain.DeviceLinkClaimed {
+		t.Fatalf("reveal: %v", err)
+	}
+	// The new device reads it with its claim token.
+	status, err := f.store.DeviceLinkV3ForClaim(ctx, f.link.ID, f.input.ClaimTokenHash)
+	if err != nil || !bytes.Equal(status.SourceRandom, testSourceRandom) || !bytes.Equal(status.SourceCommitment, testCommitment) {
+		t.Fatalf("claim status lacks the reveal: %v", err)
+	}
+	again, err := f.store.RevealDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, testSourceRandom)
+	if err != nil || !reflect.DeepEqual(again, revealed) {
+		t.Fatalf("exact reveal replay: %v", err)
+	}
+	if _, err := f.store.RevealDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, bytes.Repeat([]byte{0x26}, 32)); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("a second random replaced the reveal: %v", err)
+	}
+	if _, _, _, _, err := f.store.ApproveDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, f.input.TranscriptHash, f.approvalTag); err != nil {
+		t.Fatalf("approval after the reveal: %v", err)
+	}
+	if _, err := f.store.RevealDeviceLinkV3(ctx, f.link.ID, f.owner.Account.ID, f.owner.Device.ID, claimed.ClaimRequestHash, testSourceRandom); err != nil {
+		t.Fatalf("exact reveal replay after approval: %v", err)
+	}
+}
+
+// Migration 0060 ends unfinished protocol-v3 links (no commitment); approved
+// ones keep their device and window.
+func TestDeviceLinkV3MigrationRevokesUncommittedLinks(t *testing.T) {
+	f := newV3Fixture(t)
+	ctx := context.Background()
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE device_links_v3 SET source_commitment=NULL WHERE id=?`, f.link.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.ReserveDeviceLinkV3(ctx, f.link.Code, f.input.ReservationRequestID); !errors.Is(err, ErrDeviceLinkInvalid) {
+		t.Fatalf("a link without a commitment was served: %v", err)
+	}
+	if _, err := f.store.ClaimDeviceLinkV3(ctx, f.input); !errors.Is(err, ErrEnrollmentInvalid) {
+		t.Fatalf("a link without a commitment was claimed: %v", err)
+	}
+	sqlBytes, err := os.ReadFile("../../migrations/0060_device_link_commitment.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement := string(sqlBytes[strings.Index(string(sqlBytes), "UPDATE device_links_v3"):])
+	if _, err := f.store.db.ExecContext(ctx, statement); err != nil {
+		t.Fatal(err)
+	}
+	var state string
+	if err := f.store.db.QueryRowContext(ctx, `SELECT state FROM device_links_v3 WHERE id=?`, f.link.ID).Scan(&state); err != nil || state != domain.DeviceLinkRevoked {
+		t.Fatalf("uncommitted pending link kept: %s %v", state, err)
+	}
 }

@@ -1139,8 +1139,9 @@ class FakeDeviceLinkApiClient extends ApiClient {
     String token,
     String linkId,
     List<int> transcriptHash,
-    List<int> approvalTag,
-  ) async {
+    List<int> approvalTag, {
+    List<int>? deviceList,
+  }) async {
     if (transcriptHash.length != 32 || transcriptHash.first != 7) {
       throw StateError('verification mismatch');
     }

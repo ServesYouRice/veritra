@@ -53,7 +53,7 @@ func historyInputDigest(input HistoryTransferInput) string {
 }
 
 func validateHistoryInput(input HistoryTransferInput) bool {
-	return input.ProtocolVersion == DeviceLinkV3Protocol && validV3Hash(input.TransferID) && validV3Hash(input.ClaimRequestHash) && validV3Hash(input.CiphertextSHA256) && len(input.TranscriptHash) == 32 && input.SizeBytes > 0 && input.SizeBytes <= MaxHistoryCiphertext && len(input.Handoff) > 0 && len(input.Handoff) <= 8192
+	return input.ProtocolVersion == HistoryTransferProtocol && validV3Hash(input.TransferID) && validV3Hash(input.ClaimRequestHash) && validV3Hash(input.CiphertextSHA256) && len(input.TranscriptHash) == 32 && input.SizeBytes > 0 && input.SizeBytes <= MaxHistoryCiphertext && len(input.Handoff) > 0 && len(input.Handoff) <= 8192
 }
 
 func historyLink(ctx context.Context, q queryRower, id string, access HistoryAccess, sourceOnly bool) (deviceLinkV3Record, bool, error) {
