@@ -767,20 +767,19 @@ fn the_record_survives_seal_and_restore_and_nothing_held_does() {
     carol
         .stage_incoming_commit(&mut carol_group, &staged.commit)
         .unwrap();
+    // A seal while a commit is held is refused (it would lose the commit).
+    assert!(carol.seal_changes(&KEY, 1).is_err());
+    carol
+        .merge_incoming_commit(&mut carol_group, &staged.commit)
+        .unwrap();
     let mut table = SealedTable::default();
     table.commit(&mut carol, &KEY);
     let restored = table.restore(b"acct_carol", b"dev_carol", &KEY).unwrap();
     assert!(!restored.held.holds(GROUP));
-    let mut group = restored.load_group(GROUP).unwrap();
+    let group = restored.load_group(GROUP).unwrap();
     assert_eq!(
         restored.role_state(&group).unwrap(),
-        (Some(b"r1".to_vec()), accounts(&["alice", "bob", "carol"]))
-    );
-    assert_eq!(
-        restored
-            .merge_incoming_commit(&mut group, &staged.commit)
-            .err(),
-        Some(MlsError::InvalidState)
+        (Some(b"r2".to_vec()), accounts(&["alice", "bob", "carol"]))
     );
 }
 
@@ -894,4 +893,28 @@ fn review_and_state_encodings_are_exact() {
         encode_role_state(None, &[]).unwrap(),
         [1, 0, 0, 0, 0, 0, 0, 0]
     );
+}
+
+#[test]
+fn sealing_between_stage_and_merge_is_refused() {
+    let ([_alice, bob, mut carol], [_alice_group, mut bob_group, mut carol_group]) =
+        record_group(GROUP);
+    let staged = bob
+        .stage_commit_with_record(&mut bob_group, &[], &[], &[], Some(b"r2"))
+        .unwrap();
+    bob.merge_pending_commit(&mut bob_group).unwrap();
+    carol
+        .stage_incoming_commit(&mut carol_group, &staged.commit)
+        .unwrap();
+    // A seal now would persist the used-up ratchet step and lose the commit.
+    let key = [9u8; 32];
+    assert!(carol.seal_changes(&key, 1).is_err());
+    assert!(carol.held.holds(GROUP));
+    // The commit is still mergeable.
+    carol
+        .merge_incoming_commit(&mut carol_group, &staged.commit)
+        .unwrap();
+    // With nothing held the same seal is allowed, so the refusal above was the
+    // held commit and not a bad generation or key.
+    assert!(carol.seal_changes(&key, 1).is_ok());
 }

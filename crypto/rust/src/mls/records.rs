@@ -483,6 +483,12 @@ impl MlsDevice {
         {
             return Err(MlsError::InvalidState.into());
         }
+        // A staged incoming commit has used up its ratchet step in storage;
+        // sealing now would make the loss permanent. Merge or discard first
+        // (a discard is followed by a restore, never a seal).
+        if self.held.any()? {
+            return Err(MlsError::InvalidState.into());
+        }
         let storage = self.provider.storage();
         // Only migration leaves standalone pairs unowned, and it files or
         // drops them first.

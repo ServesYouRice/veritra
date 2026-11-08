@@ -2877,7 +2877,16 @@ length then the bytes.
   after) | u32 len || record before | u32 len || record after` (length 0
   when absent). Rosters are accounts, distinct and sorted by bytes: an
   account stays while any of its devices stays. The committer comes from
-  the MLS tree, never a server label.
+  the MLS tree, never a server label. **This does not prove who it is**:
+  a member can add a leaf with another account's id under its own key
+  (L1 never refuses a commit for a list reason), so `validateCommit` may
+  trust the committer or the rosters only for devices the L1 list approves
+  (account, device and key from the review); an unapproved added leaf must
+  not count as a roster member or as a committer. Wiring prerequisite.
+  `pm_crypto_device_seal_changes` refuses (`InvalidState`) while any staged
+  incoming commit is held: a seal in that window would persist the used-up
+  ratchet step and lose the commit for good. Merge or discard first; after a
+  discard restore the committed state, never seal.
 - `pm_crypto_group_merge_incoming_commit(handle, group_id, commit, ...)`:
   phase two, with the outputs of `pm_crypto_group_l1_process_commit`
   (flags, epoch, C7 root, added pairs, committer pair). `commit` must be the

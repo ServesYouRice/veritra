@@ -358,6 +358,16 @@ impl HeldCommits {
             .is_some())
     }
 
+    /// Whether any group holds a staged commit. Sealing in that window would
+    /// persist the used-up ratchet step and lose the commit for good.
+    pub(super) fn any(&self) -> Result<bool, MlsError> {
+        Ok(!self
+            .0
+            .lock()
+            .map_err(|_| MlsError::InvalidState)?
+            .is_empty())
+    }
+
     fn put(&self, group_id: Vec<u8>, held: HeldCommit) -> Result<(), MlsError> {
         self.0
             .lock()
