@@ -2,7 +2,6 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:private_messenger/core/account_recovery.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/features/settings/auto_backup_screen.dart';
