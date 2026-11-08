@@ -37,6 +37,19 @@ func (s *Store) RemoveCommunityMember(ctx context.Context, communityID, actorAcc
 		return CommunityRemoval{}, err
 	}
 	defer tx.Rollback()
+	removal, err := s.removeCommunityMemberTx(ctx, tx, communityID, actorAccountID, targetAccountID)
+	if err != nil {
+		return CommunityRemoval{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CommunityRemoval{}, err
+	}
+	return removal, nil
+}
+
+// removeCommunityMemberTx is RemoveCommunityMember inside the caller's
+// transaction, which the caller commits (a ban removes first, then records).
+func (s *Store) removeCommunityMemberTx(ctx context.Context, tx *sql.Tx, communityID, actorAccountID, targetAccountID string) (CommunityRemoval, error) {
 	var actorRole string
 	if err := tx.QueryRowContext(ctx, `SELECT role FROM memberships WHERE community_id = ? AND account_id = ?`, communityID, actorAccountID).Scan(&actorRole); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -127,9 +140,6 @@ func (s *Store) RemoveCommunityMember(ctx context.Context, communityID, actorAcc
 		if _, err := insertSyncEvent(ctx, tx, eventType, &targetAccountID, "", payload, now); err != nil {
 			return CommunityRemoval{}, err
 		}
-	}
-	if err := tx.Commit(); err != nil {
-		return CommunityRemoval{}, err
 	}
 	return removal, nil
 }

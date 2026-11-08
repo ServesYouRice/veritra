@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/mail"
 	"strconv"
@@ -516,6 +517,14 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "forbidden")
 	case errors.Is(err, storage.ErrPostingRestricted):
 		writeError(w, http.StatusForbidden, "posting_restricted")
+	case errors.Is(err, storage.ErrTimedOut):
+		writeError(w, http.StatusForbidden, "timed_out")
+	case errors.Is(err, storage.ErrSlowMode):
+		var slow storage.SlowModeError
+		if errors.As(err, &slow) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(slow.Wait.Seconds()))))
+		}
+		writeError(w, http.StatusTooManyRequests, "slow_mode")
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, storage.ErrMessageExpired):
