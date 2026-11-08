@@ -36,6 +36,17 @@ public final class WakeRulesTest {
         check(!WakeRules.acknowledge(store, 9)); check(store.memory == 9 && store.disk == 9);
         try { WakeRules.nextGeneration(Long.MAX_VALUE, 0); throw new AssertionError(); }
         catch (IllegalArgumentException expected) { checks++; }
+        // Endpoint record: a newer rotation survives an older acknowledgement.
+        check(EndpointRules.nextGeneration(0) == 1 && EndpointRules.nextGeneration(4) == 5);
+        CommitStore endpoint = new CommitStore(); endpoint.memory = 3; endpoint.disk = 3;
+        endpoint.memory = endpoint.disk = EndpointRules.nextGeneration(3); // rotation while handling 3
+        check(!WakeRules.acknowledge(endpoint, 3)); check(endpoint.disk == 4);
+        check(WakeRules.acknowledge(endpoint, 4)); check(endpoint.disk == 0);
+        check(!WakeRules.acknowledge(endpoint, 4)); // already cleared
+        try { EndpointRules.nextGeneration(Long.MAX_VALUE); throw new AssertionError(); }
+        catch (IllegalArgumentException expected) { checks++; }
+        try { EndpointRules.nextGeneration(-1); throw new AssertionError(); }
+        catch (IllegalArgumentException expected) { checks++; }
         check(!WakeRules.profile("../demo")); check(!WakeRules.profile("demo\n"));
         Map<String, Object> uiBootstrap = WakeRules.bootstrap(false, true, "demo", false);
         check("ui".equals(uiBootstrap.get("launch"))); check(Boolean.TRUE.equals(uiBootstrap.get("ui_attached")));

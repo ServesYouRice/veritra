@@ -15,13 +15,6 @@ class VeritraFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
         val instance = getSharedPreferences("veritra_push_state", MODE_PRIVATE)
             .getString("fcm_instance", null) ?: return
-        PushEventBridge.emit(mapOf(
-            "type" to "endpoint",
-            "provider" to "fcm",
-            "instance" to instance,
-            "endpoint" to token,
-            "publicKey" to "",
-            "authSecret" to "",
-        ))
+        PushEventBridge.recordEndpoint(applicationContext, "fcm", instance, token, "", "")
     }
 }
