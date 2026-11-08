@@ -113,6 +113,51 @@ void main() {
 
   void later() => now = now.add(const Duration(minutes: 2));
 
+  /// One genesis by dev_alice of acct_fork and two validly signed version
+  /// 2s that each add another device: a real fork, which takes a key the
+  /// pinned list holds.
+  ({Uint8List genesis, Uint8List left, Uint8List right, Uint8List aliceKey})
+      forkOf() {
+    final alice = bindings.createDevice('acct_fork', 'dev_alice');
+    final bob = bindings.createDevice('acct_fork', 'dev_bob');
+    final carol = bindings.createDevice('acct_fork', 'dev_carol');
+    addTearDown(alice.close);
+    addTearDown(bob.close);
+    addTearDown(carol.close);
+    final aliceKey = Uint8List.fromList(alice.signingPublicKey());
+    final genesis = alice.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes('acct_fork'),
+          version: 1,
+          prevHash: DeviceListBody.zeroHash,
+          createdAtMs: 1,
+          change: DeviceListChange.genesis,
+          entries: [DeviceListPair(idBytes('dev_alice'), aliceKey)],
+        ),
+        idBytes('dev_alice'));
+    final head = bindings.checkDeviceListStep(
+        expectedAccountId: idBytes('acct_fork'), statement: genesis);
+    Uint8List add(String id, List<int> key) => alice.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes('acct_fork'),
+          version: 2,
+          prevHash: head.listHash,
+          createdAtMs: 2,
+          change: DeviceListChange.add,
+          entries: [
+            DeviceListPair(idBytes('dev_alice'), aliceKey),
+            DeviceListPair(idBytes(id), key),
+          ],
+        ),
+        idBytes('dev_alice'));
+    return (
+      genesis: genesis,
+      left: add('dev_bob', bob.signingPublicKey()),
+      right: add('dev_carol', carol.signingPublicKey()),
+      aliceKey: aliceKey,
+    );
+  }
+
   group('refresh', () {
     test('first sight pins the whole chain with every pair it listed',
         () async {
@@ -213,21 +258,40 @@ void main() {
           (await pins.refresh(account(0))).state, DeviceListState.unavailable);
     });
 
-    test('a validly signed other branch is a sticky conflict', () async {
+    test('a chain from another genesis is not adopted and not sticky',
+        () async {
       // Both vector chains belong to the same account with different
-      // genesis versions: a server showing the second after the first was
-      // pinned shows a fork (a made-up list identity).
+      // genesis versions: a server alone could make up the second. The pin
+      // stays, nothing is sticky, and the honest chain carries on.
       server.chain = statements(0).sublist(0, 3);
       await pins.refresh(account(0));
       later();
       server.chain = statements(1);
       final status = await pins.refresh(account(0));
-      expect(status.state, DeviceListState.conflict);
+      expect(status.state, DeviceListState.ok);
+      final pin = (await store.loadDeviceListPin(account(0)))!;
+      expect(pin.conflict, isFalse);
+      expect(pin.version, 3);
+      expect(pin.headStatement, statements(0)[2]);
       later();
-      // Sticky: the honest chain again does not clear it.
       server.chain = statements(0);
-      expect((await pins.refresh(account(0))).state, DeviceListState.conflict);
-      expect((await store.loadDeviceListPin(account(0)))!.version, 3);
+      expect((await pins.refresh(account(0))).state, DeviceListState.ok);
+      expect((await store.loadDeviceListPin(account(0)))!.version, 8);
+    });
+
+    test('a validly signed fork of the pinned chain is a sticky conflict',
+        () async {
+      final fork = forkOf();
+      server.chain = [fork.genesis, fork.left];
+      await pins.refresh('acct_fork');
+      later();
+      server.chain = [fork.genesis, fork.right];
+      expect((await pins.refresh('acct_fork')).state, DeviceListState.conflict);
+      later();
+      // Sticky: the pinned branch again does not clear it.
+      server.chain = [fork.genesis, fork.left];
+      expect((await pins.refresh('acct_fork')).state, DeviceListState.conflict);
+      expect((await store.loadDeviceListPin('acct_fork'))!.version, 2);
     });
 
     test('refreshes at most once a minute unless forced', () async {
@@ -316,16 +380,16 @@ void main() {
     });
 
     test('a conflicted account is unapproved', () async {
-      server.chain = statements(0).sublist(0, 3);
-      await pins.refresh(account(0));
+      final fork = forkOf();
+      server.chain = [fork.genesis, fork.left];
+      await pins.refresh('acct_fork');
       later();
-      server.chain = statements(1);
-      await pins.refresh(account(0));
-      final keys = keysOf(0);
+      server.chain = [fork.genesis, fork.right];
+      await pins.refresh('acct_fork');
       later();
       expect(
-          await pins.judge(idBytes(account(0)), idBytes('dev_a0a0a0a0a0a0a0a0'),
-              keys['dev_a0a0a0a0a0a0a0a0']!),
+          await pins.judge(
+              idBytes('acct_fork'), idBytes('dev_alice'), fork.aliceKey),
           LeafVerdict.unapproved);
     });
 

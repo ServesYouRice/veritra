@@ -487,7 +487,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   can speak v2. Remove them after L1 lands. **Needs the independent crypto
   review before release.**
 - **L1-3, approved-device list, mobile (2026-11-07, D94, D100):** local
-  schema 26 (21 to 25 are reserved for other packages); no ABI, payload or
+  schema 26 (21 to 25 were reserved for other packages; owner, 2026-11-08:
+  once 26 lands the next free local schema is 27, because an upgrade step
+  gated below 26 never runs on a device already at 26); no ABI, payload or
   server change. Design: [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
   - **Pins.** `local_device_list_heads`, `_keys`, `_conflicts` and
     `local_approval_leaves` (never in a backup, cleared with the identity).
@@ -495,7 +497,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     first sight (whole chain verified in Rust), then moves only forward with
     `device_list_check_step`; it re-reads the pinned head on every refresh, so
     another statement at the pinned version is checked as a whole chain and,
-    if it verifies, becomes a sticky conflict with both statements kept. A
+    if it verifies and grows from the pinned version 1, becomes a sticky
+    conflict with both statements kept. A chain from another version 1 (one
+    the server alone could make up) leaves the pin as it is and is never
+    sticky (owner, 2026-11-08). A
     lower head, a gap or a bad step is "unavailable" and changes nothing.
     Refreshes are rate-limited to one a minute per account, and an own
     `device_list.updated` event clears the limit.
@@ -520,7 +525,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     rows lost after an own commit) is judged before it is next used.
   - **Message verdicts.** A message from a leaf that is not `approved` or
     `removed` is replaced by an `unapproved:` placeholder; its text is not
-    stored. A `removed` leaf's messages are shown (not yet marked).
+    stored. This includes a sender still "checking" after a fresh judgment
+    (owner left it to the implementer, 2026-11-08: fail closed rather than
+    keep text from a device no list approves). A `removed` leaf's messages are shown (not yet marked).
   - **Signing.** Genesis at setup and registration; change 2 at K2 link
     approval, built from the transcript the native K2 state verified (claim
     tag and typed code) and only after the approval request exists, so never

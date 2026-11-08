@@ -249,7 +249,8 @@ Dart from `local_device_list_keys`, in one transaction.
 | Valid next versions | Pin moves forward |
 | Nothing newer | Pin stays; it may be stale (withholding is not detectable here) |
 | A malformed statement, a bad signature, a gap, a broken rule, a lower head | **Unavailable**: nothing changes, retry later. The server can always deny service, so this is not treated as proof of an attack |
-| A validly signed version n+1 that differs from the pinned n+1, or a version 1 that differs from the pinned list identity | **Conflict**: both statements are kept as proof, and the account's state becomes `conflict` |
+| A validly signed version n+1 that differs from the pinned n+1, in a chain from the pinned version 1 | **Conflict**: both statements are kept as proof, and the account's state becomes `conflict` |
+| A chain from a version 1 that differs from the pinned list identity | **Unavailable** (L1-3, owner 2026-11-08): the server alone can make one up, so it never becomes a sticky conflict; the pin stays |
 
 A fork needs a signature from a key on the pinned list, so the server alone
 cannot make one for a pinned account: it takes a stolen device or a stolen
