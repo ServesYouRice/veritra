@@ -51,6 +51,9 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 		a.removeCommunityMember(w, r, principal, parts[0], parts[2])
 		return
 	}
+	if a.moderationRoute(w, r, principal, parts) {
+		return
+	}
 	if len(parts) == 2 && parts[1] == "members" && r.Method == http.MethodGet {
 		members, err := a.Store.ListCommunityMembers(r.Context(), parts[0], principal.AccountID)
 		if err != nil {
