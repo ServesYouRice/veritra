@@ -600,6 +600,17 @@ Deviations and what is left:
 - **Legacy titles:** the migration of an existing server title into the
   encrypted record (and `DELETE /conversations/{id}/title`) is not wired. A
   group with a title and no encrypted record keeps showing the server title.
+- **Junk group keys:** a held key whose id is not the served `key_id` is
+  dropped on key arrival. A key whose id *is* the served id is never deleted,
+  even if the blob fails to open (ids are derived from the key, so a bad blob
+  is the server's or a writer's fault).
+- **Sidecar flag timing (S13):** the flag is set on a roster event, which can
+  come before the MLS add commit; a post in the old epoch may use it up.
+  Setting it when the commit is merged is left.
+- **Block on another device:** a block made on a second device does not yet
+  mark this device's rotation due.
+- **Shrinking audience:** rosters reload only on the 24-hour check (40 per
+  run), so a departure is noticed late; a debounced reload after sync is left.
 - **Role rule:** the editor is open to every member (D59). The admin
   restriction waits for C4's settings record.
 

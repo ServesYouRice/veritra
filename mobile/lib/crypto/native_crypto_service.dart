@@ -3159,6 +3159,13 @@ List<MessageEffect> profileKeyEffects(
       return const <MessageEffect>[];
   }
   final effects = <MessageEffect>[];
+  // A subject id outside the column's bounds would abort the whole commit.
+  if (senderAccountId.isEmpty ||
+      senderAccountId.length > 128 ||
+      conversationId.isEmpty ||
+      conversationId.length > 128) {
+    return effects;
+  }
   final accountKey = parseProfileKey(account);
   if (accountKey != null) {
     effects.add(ProfileKeyEffect(

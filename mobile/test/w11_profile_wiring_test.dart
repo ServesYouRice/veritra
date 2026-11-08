@@ -113,6 +113,9 @@ class _Api extends ApiClient {
       kind: kind,
       title: title,
       createdBy: 'acct_me',
+      peerAccountId: kind == 'dm' && memberAccountIds.isNotEmpty
+          ? memberAccountIds.first
+          : null,
     );
   }
 
@@ -382,6 +385,80 @@ void main() {
     });
   });
 
+  group('a key never goes to a blocked or unread chat (S8)', () {
+    final key = {'key': 'k', 'key_id': 'i', 'version': 1};
+
+    Future<(AppState, _Recording)> dm() async {
+      final (state, _, profiles) = await _start();
+      profiles!.sidecarMap = {'profile_key': key};
+      await state.startConversation(
+          kind: 'dm', memberAccountIds: <String>['acct_peer']);
+      return (state, profiles);
+    }
+
+    test('an accepted DM with blocks not yet loaded gets none', () async {
+      final (state, _) = await dm();
+      state.blocksLoaded = false;
+      final text = {'text': 'hi'};
+      expect(
+          await state.debugWithProfileSidecars(
+              'conv_new', AppPayloadType.text, text),
+          text);
+    });
+
+    test('an accepted DM with an unblocked peer gets the key', () async {
+      final (state, _) = await dm();
+      state.blocksLoaded = true;
+      expect(
+          await state.debugWithProfileSidecars(
+              'conv_new', AppPayloadType.text, {'text': 'hi'}),
+          {'text': 'hi', 'profile_key': key});
+    });
+
+    test('an accepted DM whose peer was blocked later gets none', () async {
+      final (state, _) = await dm();
+      state.blocksLoaded = true;
+      state.blockedAccounts = <BlockedAccount>[
+        BlockedAccount(accountId: 'acct_peer')
+      ];
+      final text = {'text': 'hi'};
+      expect(
+          await state.debugWithProfileSidecars(
+              'conv_new', AppPayloadType.text, text),
+          text);
+    });
+  });
+
+  test('a profile write does not wait on the session queue', () async {
+    // The write sends key messages through the send queue; if it ran inside
+    // the session queue it would wait on itself.
+    final (state, _, _) = await _start(profiles: false);
+    state.profiles = _WritesThroughQueue(state);
+    expect(
+        await state
+            .saveOwnProfile(name: 'x')
+            .timeout(const Duration(seconds: 5)),
+        isTrue);
+  });
+
+  test('co-members are unknown until the list came from the server', () async {
+    final api = _Api();
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: _Mls(),
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => _IdleSync(),
+    )
+      ..api = api
+      ..session = _session
+      ..conversations = <Conversation>[
+        Conversation(id: 'conv_1', kind: 'dm', peerAccountId: 'acct_peer')
+      ];
+    expect(state.debugCoMemberAccounts(), isNull);
+    await state.refreshConversations();
+    expect(state.debugCoMemberAccounts(), isEmpty);
+  });
+
   test('the editors are offered only when profiles exist', () async {
     final (enabled, _, _) = await _start();
     final (without, _, _) = await _start(profiles: false);
@@ -436,4 +513,15 @@ class _FailingBlock extends _Api {
   @override
   Future<BlockedAccount> blockAccount(String token, String accountId) async =>
       throw ApiException(503, 'unavailable');
+}
+
+/// A service whose write needs the session queue, as a key message does.
+class _WritesThroughQueue extends _Recording {
+  _WritesThroughQueue(this.state);
+  final AppState state;
+
+  @override
+  Future<void> saveOwnProfile({String? name, ProfilePhoto? photo}) async {
+    await state.blockAccount('acct_other');
+  }
 }

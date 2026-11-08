@@ -60,7 +60,9 @@ extension ProfileActions on AppState {
   /// effects: a message request would be accepted by a send, and a
   /// conversation outside the list is not ours to post into.
   bool _profileKeyTarget(Conversation conversation) =>
-      !isMessageRequest(conversation) &&
+      // An accepted chat, and for a DM a peer known not to be blocked: a
+      // blocked or declined peer must not get a new key (S8).
+      _selfUpdateAllowed(conversation.id) &&
       !conversation.isChannel &&
       !sendHeldForRemoval(conversation.id);
 
@@ -92,6 +94,9 @@ extension ProfileActions on AppState {
           if (_profileKeyTarget(conversation)) conversation.id,
       ],
       coMemberAccountIds: _coMemberAccounts,
+      knownConversationIds: () => _conversationsFromServer
+          ? {for (final c in conversations) c.id}
+          : null,
     );
     try {
       await service.load();
@@ -201,6 +206,9 @@ extension ProfileActions on AppState {
   /// picture).
   Set<String>? _coMemberAccounts() {
     final self = session?.accountId;
+    // An empty list that never came from the server is not "nobody shares a
+    // chat with me": acting on it would delete keys that cannot be re-sent.
+    if (!_conversationsFromServer || !requestStateLoaded) return null;
     final out = <String>{};
     for (final conversation in conversations) {
       if (conversation.isDm) {
@@ -223,7 +231,10 @@ extension ProfileActions on AppState {
     final service = profiles;
     final co = _coMemberAccounts();
     if (service == null || co == null) return;
-    unawaited(service.noteCoMembers(co).then((_) => service.pruneUnshared(co)));
+    unawaited(service
+        .noteCoMembers(co)
+        .then((_) => service.pruneUnshared(co))
+        .catchError((Object _) {}));
   }
 
   /// Sync events that concern profiles.
@@ -233,16 +244,21 @@ extension ProfileActions on AppState {
     final type = event.type;
     final conversationId = event.conversationId;
     if (type == 'profile.updated') {
-      unawaited(service.onProfileUpdated(event.payload));
+      unawaited(
+          service.onProfileUpdated(event.payload).catchError((Object _) {}));
     } else if ((type == 'membership.removed' || type == 'membership.left') &&
         conversationId != null) {
-      unawaited(service.markGroupRotationDue(conversationId));
+      unawaited(service
+          .markGroupRotationDue(conversationId)
+          .catchError((Object _) {}));
     } else if ((type.startsWith('conversation.') ||
             type.startsWith('membership.')) &&
         conversationId != null) {
       // A roster change: the next post here carries the group key, so a
       // member who just joined learns it with no burst of messages (S13).
-      unawaited(service.markGroupKeyForSidecar(conversationId));
+      unawaited(service
+          .markGroupKeyForSidecar(conversationId)
+          .catchError((Object _) {}));
     }
   }
 
@@ -262,6 +278,12 @@ extension ProfileActions on AppState {
         }.contains(type)) {
       return body;
     }
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation != null && conversation.isDm) {
+      final peer = conversation.peerAccountId;
+      if (!blocksLoaded || peer == null || isBlocked(peer)) return body;
+    }
     // A text near the payload limit has no room for a key.
     final text = body['text'];
     if (text is String && text.length > 8000) return body;
@@ -275,6 +297,9 @@ extension ProfileActions on AppState {
 
   @visibleForTesting
   void debugProfileSyncEvent(SyncEvent event) => _profileSyncEvent(event);
+
+  @visibleForTesting
+  Set<String>? debugCoMemberAccounts() => _coMemberAccounts();
 
   @visibleForTesting
   Future<Map<String, Object?>> debugWithProfileSidecars(String conversationId,
@@ -291,17 +316,34 @@ extension ProfileActions on AppState {
       _profileWrite(() =>
           profiles!.saveGroupProfile(conversationId, name: name, photo: photo));
 
+  /// Runs a profile write. Not under the session queue (`_runScoped`): the
+  /// write queues key messages through the send queue, which would wait on
+  /// the very transition that is running it.
   Future<bool> _profileWrite(Future<void> Function() write) async {
     if (profiles == null) return false;
-    return _runScoped(Ops.profile, () async {
-      try {
-        await write();
-      } on ProfileConflictException {
-        throw UserFacingException(l10n.profileSaveConflict);
-      } on ProfileRecordException {
-        throw UserFacingException(l10n.profileSaveInvalid);
+    _busyOps.add(Ops.profile);
+    _opErrors.remove(Ops.profile);
+    notifyListeners();
+    try {
+      await write();
+      return true;
+    } on ProfileConflictException {
+      _opErrors[Ops.profile] = l10n.profileSaveConflict;
+    } on ProfileRecordException {
+      _opErrors[Ops.profile] = l10n.profileSaveInvalid;
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) {
+        unawaited(_clearLocalSession(
+            preserveDeviceIdentity: true,
+            keepDrafts: true,
+            preserveOutbox: true));
       }
-    });
+      _opErrors[Ops.profile] = describeError(err, l10n);
+    } finally {
+      _busyOps.remove(Ops.profile);
+      notifyListeners();
+    }
+    return false;
   }
 
   /// Blocking drops the blocked account's cached profile and keys, and the
@@ -309,11 +351,12 @@ extension ProfileActions on AppState {
   void _profileAccountBlocked(String accountId) {
     final service = profiles;
     if (service == null) return;
-    unawaited(service.forgetAccount(accountId));
-    unawaited(service.markOwnRotationDue());
+    unawaited(service.forgetAccount(accountId).catchError((Object _) {}));
+    unawaited(service.markOwnRotationDue().catchError((Object _) {}));
   }
 
   void _profileConversationLeft(String conversationId) {
-    unawaited(profiles?.forgetConversation(conversationId));
+    unawaited(
+        profiles?.forgetConversation(conversationId).catchError((Object _) {}));
   }
 }

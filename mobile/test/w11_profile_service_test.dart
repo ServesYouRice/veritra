@@ -36,6 +36,7 @@ class _Server {
   int gets = 0;
   int puts = 0;
   int versionCalls = 0;
+  bool loseNextPutReply = false;
 }
 
 class _Api implements ProfileApi {
@@ -72,6 +73,10 @@ class _Api implements ProfileApi {
     }
     final next = (row?.version ?? 0) + 1;
     server.rows[key] = _Row(next, keyId, blob);
+    if (server.loseNextPutReply) {
+      server.loseNextPutReply = false;
+      throw ApiException(503, 'unavailable');
+    }
     return next;
   }
 
@@ -107,8 +112,7 @@ class _Sent {
 }
 
 class _Device {
-  _Device(this.account, this.server, this.codec,
-      {List<String> postable = const [grp, dm], this.coMembers}) {
+  _Device(this.account, this.server, this.codec, {this.coMembers, this.known}) {
     service = ProfileService(
       store: store,
       codec: codec,
@@ -120,6 +124,7 @@ class _Device {
         return true;
       },
       postableConversationIds: () => postable,
+      knownConversationIds: () => known,
       coMemberAccountIds: () => coMembers,
     );
   }
@@ -132,6 +137,8 @@ class _Device {
   final List<_Sent> sent = [];
   bool sendOk = true;
   Set<String>? coMembers;
+  Set<String>? known;
+  List<String> postable = const [grp, dm];
 
   /// What receiving a key message does: store the key beside the MLS state.
   Future<void> receive(_Sent message, {required String from}) async {
@@ -160,13 +167,15 @@ void main() {
     server = _Server();
   });
 
-  _Device device(String account, {Set<String>? coMembers}) =>
-      _Device(account, server, codec, coMembers: coMembers);
+  _Device device(String account,
+          {Set<String>? coMembers, Set<String>? known}) =>
+      _Device(account, server, codec, coMembers: coMembers, known: known);
 
   test('the first save makes a key, uploads, and queues the key to every chat',
       skip: skip, () async {
     final a = device(ana);
     await a.service.saveOwnProfile(name: '  Ana  ');
+    await a.service.deliveriesIdle;
     expect(a.service.own?.name, 'Ana');
     expect(server.rows['account/$ana']!.version, 1);
     expect(a.sent.map((s) => s.conversationId).toSet(), {grp, dm});
@@ -179,9 +188,11 @@ void main() {
   test('a later save keeps the key and sends nothing', skip: skip, () async {
     final a = device(ana);
     await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
     a.sent.clear();
     final keyId = server.rows['account/$ana']!.keyId;
     await a.service.saveOwnProfile(name: 'Ana B');
+    await a.service.deliveriesIdle;
     expect(server.rows['account/$ana']!.version, 2);
     expect(server.rows['account/$ana']!.keyId, keyId);
     expect(a.sent, isEmpty);
@@ -193,6 +204,7 @@ void main() {
     final a = device(ana);
     final b = device(bob);
     await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
     await b.service.refresh('account', ana);
     expect(b.service.account(ana), isNull);
     await b.receive(a.sent.first, from: ana);
@@ -205,6 +217,7 @@ void main() {
     final png = _png(64, 64);
     await a.service.saveOwnProfile(
         name: 'Ana', photo: ProfilePhoto(png: png, width: 64, height: 64));
+    await a.service.deliveriesIdle;
     expect(a.service.own?.photoPng, png);
     final b = device(bob);
     await b.receive(a.sent.first, from: ana);
@@ -223,6 +236,7 @@ void main() {
     final a = device(ana);
     final b = device(bob);
     await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
     await b.receive(a.sent.first, from: ana);
     await b.service.refresh('account', ana);
     server.hidden.add('account/$ana');
@@ -234,9 +248,11 @@ void main() {
     final a = device(ana);
     final b = device(bob);
     await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
     await b.receive(a.sent.first, from: ana);
     await b.service.refresh('account', ana);
     await a.service.saveOwnProfile();
+    await a.service.deliveriesIdle;
     await b.service.refresh('account', ana);
     expect(b.service.account(ana), isNull);
   });
@@ -245,9 +261,11 @@ void main() {
     final a = device(ana);
     final b = device(bob);
     await a.service.saveOwnProfile(name: 'One');
+    await a.service.deliveriesIdle;
     final first = server.rows['account/$ana']!.blob;
     await b.receive(a.sent.first, from: ana);
     await a.service.saveOwnProfile(name: 'Two');
+    await a.service.deliveriesIdle;
     await b.service.refresh('account', ana);
     expect(b.service.account(ana)?.name, 'Two');
     // The server serves record 1 again, claiming version 1.
@@ -262,10 +280,12 @@ void main() {
     final a = device(ana);
     final b = device(bob);
     await a.service.saveOwnProfile(name: 'One');
+    await a.service.deliveriesIdle;
     final first = server.rows['account/$ana']!;
     final oldBlob = first.blob;
     final keyId = first.keyId;
     await a.service.saveOwnProfile(name: 'Two');
+    await a.service.deliveriesIdle;
     // Bob learns the key with a hint of version 2 (sent after the edit).
     final body = Map<String, Object?>.of(a.sent.first.body)..['version'] = 2;
     await b.receive(_Sent(grp, AppPayloadType.profileKey, body), from: ana);
@@ -279,6 +299,7 @@ void main() {
     final one = device(ana);
     final two = device(ana);
     await one.service.saveOwnProfile(name: 'From one');
+    await one.service.deliveriesIdle;
     await two.service.refresh('account', ana);
     expect(two.service.own, isNull); // no key yet, nothing readable
     // Device two edits: it has no key, so it makes its own and the server
@@ -293,10 +314,12 @@ void main() {
     final one = device(ana);
     final two = device(ana);
     await one.service.saveOwnProfile(name: 'From one');
+    await one.service.deliveriesIdle;
     await two.receive(one.sent.first, from: ana);
     await two.service.refresh('account', ana);
     expect(two.service.own?.name, 'From one');
     await two.service.saveOwnProfile(name: 'From two');
+    await two.service.deliveriesIdle;
     expect(server.rows['account/$ana']!.version, 2);
     expect(two.sent.length, 0);
   });
@@ -306,11 +329,13 @@ void main() {
         skip: skip, () async {
       final a = device(ana);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       final oldId = server.rows['account/$ana']!.keyId;
       a.sent.clear();
       await a.service.markOwnRotationDue();
       expect(await a.service.ownRotationDue(), isTrue);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       final newId = server.rows['account/$ana']!.keyId;
       expect(newId, isNot(oldId));
       expect(a.sent.map((s) => s.conversationId).toSet(), {grp, dm});
@@ -319,6 +344,7 @@ void main() {
       // The old key stays only while it opens something cached.
       a.sent.clear();
       await a.service.saveOwnProfile(name: 'Ana 2');
+      await a.service.deliveriesIdle;
       expect(a.sent, isEmpty);
     });
 
@@ -331,6 +357,7 @@ void main() {
     test('a departure marks a rotation, a join does not', skip: skip, () async {
       final a = device(ana);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       await a.service.noteCoMembers({bob});
       expect(await a.service.ownRotationDue(), isFalse);
       await a.service
@@ -345,12 +372,14 @@ void main() {
       final a = device(ana);
       final b = device(bob);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       await b.receive(a.sent.first, from: ana);
       await b.service.refresh('account', ana);
       expect(b.service.account(ana)?.name, 'Ana');
       await a.service.markOwnRotationDue();
       a.sent.clear();
       await a.service.saveOwnProfile(name: 'Ana new');
+      await a.service.deliveriesIdle;
       // Bob never receives the new key.
       await b.service.refresh('account', ana);
       expect(b.service.account(ana)?.name, 'Ana');
@@ -362,6 +391,7 @@ void main() {
         skip: skip, () async {
       final a = device(ana);
       await a.service.saveGroupProfile(grp, name: 'Walkers');
+      await a.service.deliveriesIdle;
       expect(a.service.conversation(grp)?.name, 'Walkers');
       expect(a.sent, hasLength(1));
       expect(a.sent.single.type, AppPayloadType.groupProfileKey);
@@ -376,9 +406,11 @@ void main() {
       final a = device(ana);
       final b = device(bob);
       await a.service.saveGroupProfile(grp, name: 'Walkers');
+      await a.service.deliveriesIdle;
       await b.receive(a.sent.single, from: ana);
       await b.service.refresh('conversation', grp);
       await b.service.saveGroupProfile(grp, name: 'Hikers');
+      await b.service.deliveriesIdle;
       expect(b.sent, isEmpty);
       await a.service.refresh('conversation', grp);
       expect(a.service.conversation(grp)?.name, 'Hikers');
@@ -389,6 +421,7 @@ void main() {
       final a = device(ana);
       final b = device(bob);
       await a.service.saveGroupProfile(grp, name: 'Walkers');
+      await a.service.deliveriesIdle;
       await b.receive(a.sent.single, from: ana);
       for (var i = 0; i < 10; i++) {
         final junk = Uint8List(32)..[0] = i + 1;
@@ -412,10 +445,12 @@ void main() {
     test('a rotation after a removal uses a new key', skip: skip, () async {
       final a = device(ana);
       await a.service.saveGroupProfile(grp, name: 'Walkers');
+      await a.service.deliveriesIdle;
       final oldId = server.rows['conversation/$grp']!.keyId;
       a.sent.clear();
       await a.service.markGroupRotationDue(grp);
       await a.service.saveGroupProfile(grp, name: 'Walkers');
+      await a.service.deliveriesIdle;
       expect(server.rows['conversation/$grp']!.keyId, isNot(oldId));
       expect(a.sent.single.type, AppPayloadType.groupProfileKey);
     });
@@ -423,6 +458,7 @@ void main() {
     test('leaving a group deletes its profile and keys', skip: skip, () async {
       final a = device(ana);
       await a.service.saveGroupProfile(grp, name: 'Walkers');
+      await a.service.deliveriesIdle;
       await a.service.forgetConversation(grp);
       expect(a.service.conversation(grp), isNull);
       expect(await a.store.loadProfileKeys('conversation', grp), isEmpty);
@@ -434,6 +470,7 @@ void main() {
       final a = device(ana);
       a.sendOk = false;
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       expect(a.sent, isEmpty);
       a.sendOk = true;
       await a.service.retryDeliveries();
@@ -446,8 +483,10 @@ void main() {
     test('a new conversation gets the account key once', skip: skip, () async {
       final a = device(ana);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       a.sent.clear();
       await a.service.onConversationAvailable(grp);
+      await a.service.deliveriesIdle;
       expect(a.sent.single.conversationId, grp);
       a.sent.clear();
       await a.service.retryDeliveries();
@@ -458,6 +497,7 @@ void main() {
         () async {
       final a = device(ana);
       await a.service.onConversationAvailable(grp);
+      await a.service.deliveriesIdle;
       expect(a.sent, isEmpty);
     });
 
@@ -466,7 +506,9 @@ void main() {
       final a = device(ana);
       expect(await a.service.sidecars(grp), isEmpty);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       await a.service.saveGroupProfile(grp, name: 'Walkers');
+      await a.service.deliveriesIdle;
       var sidecars = await a.service.sidecars(grp);
       expect(sidecars.keys, [profileKeyBodyName]);
       expect(parseProfileKey(sidecars[profileKeyBodyName])!.version, 1);
@@ -487,18 +529,65 @@ void main() {
     });
   });
 
+  test('a garbage blob under the held key id never deletes the key', skip: skip,
+      () async {
+    final a = device(ana);
+    final b = device(bob);
+    await a.service.saveGroupProfile(grp, name: 'Walkers');
+    await a.service.deliveriesIdle;
+    await b.receive(a.sent.single, from: ana);
+    final row = server.rows['conversation/$grp']!;
+    final garbage = Uint8List.fromList(row.blob)..[40] ^= 1;
+    server.rows['conversation/$grp'] = _Row(row.version, row.keyId, garbage);
+    await b.service.refresh('conversation', grp, keyArrived: true);
+    expect(b.service.conversation(grp), isNull);
+    expect(await b.store.loadProfileKeys('conversation', grp), hasLength(1));
+  });
+
+  test('a key whose first upload reply was lost is still announced', skip: skip,
+      () async {
+    final a = device(ana);
+    server.loseNextPutReply = true;
+    await expectLater(
+        a.service.saveOwnProfile(name: 'Ana'), throwsA(isA<ApiException>()));
+    await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
+    expect(a.sent.map((s) => s.conversationId).toSet(), {grp, dm});
+    expect(parseProfileKey(a.sent.first.body)!.keyId,
+        server.rows['account/$ana']!.keyId);
+  });
+
+  test('a queued key for a chat not known to be gone is kept', skip: skip,
+      () async {
+    final a = device(ana, known: <String>{grp});
+    a.sendOk = false;
+    await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
+    a.postable = [grp];
+    a.sendOk = true;
+    await a.service.retryDeliveries();
+    // grp delivered; dm is gone from the known list and dropped.
+    expect(a.sent.map((s) => s.conversationId), [grp]);
+    a.postable = [grp, dm];
+    a.sent.clear();
+    await a.service.retryDeliveries();
+    expect(a.sent, isEmpty);
+  });
+
   group('a second device of the same account', () {
     test('uses the key it was sent for sidecars, delivery and rotation',
         skip: skip, () async {
       final one = device(ana);
       final two = device(ana);
       await one.service.saveOwnProfile(name: 'Ana');
+      await one.service.deliveriesIdle;
       await two.receive(one.sent.first, from: ana);
       await two.service.refresh('account', ana);
       final sidecars = await two.service.sidecars(grp);
       expect(parseProfileKey(sidecars[profileKeyBodyName])!.keyId,
           server.rows['account/$ana']!.keyId);
       await two.service.onConversationAvailable(grp);
+      await two.service.deliveriesIdle;
       expect(two.sent.single.conversationId, grp);
       await two.service.markOwnRotationDue();
       expect(await two.service.ownRotationDue(), isTrue);
@@ -510,6 +599,7 @@ void main() {
       final a = device(ana);
       final b = device(bob);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       await b.receive(a.sent.first, from: ana);
       await b.service.onProfileUpdated(
           {'subject_kind': 'account', 'subject_id': ana, 'version': 1});
@@ -519,6 +609,7 @@ void main() {
           {'subject_kind': 'account', 'subject_id': ana, 'version': 1});
       expect(server.gets, before);
       await a.service.saveOwnProfile(name: 'Ana 2');
+      await a.service.deliveriesIdle;
       await b.service.onProfileUpdated(
           {'subject_kind': 'account', 'subject_id': ana, 'version': 2});
       expect(b.service.account(ana)?.name, 'Ana 2');
@@ -542,6 +633,7 @@ void main() {
       final a = device(ana);
       final b = device(bob);
       await a.service.saveOwnProfile(name: 'Ana');
+      await a.service.deliveriesIdle;
       await b.receive(a.sent.first, from: ana);
       await b.service.checkVersions(
           accountIds: [ana, 'acct_unknown'], conversationIds: []);
@@ -558,6 +650,7 @@ void main() {
     final a = device(ana);
     final b = device(bob);
     await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
     await b.receive(a.sent.first, from: ana);
     await b.service.refresh('account', ana);
     await b.service.forgetAccount(ana);
@@ -569,6 +662,7 @@ void main() {
   test('load restores the cached profiles', skip: skip, () async {
     final a = device(ana);
     await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
     final again = ProfileService(
       store: a.store,
       codec: codec,

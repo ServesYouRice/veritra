@@ -58,6 +58,7 @@ class ProfileService extends ChangeNotifier {
     required this.sendKey,
     required this.postableConversationIds,
     required this.coMemberAccountIds,
+    this.knownConversationIds = _unknownConversations,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
@@ -77,6 +78,12 @@ class ProfileService extends ChangeNotifier {
   /// or null when the rosters are not all known yet (no rotation is judged
   /// from a partial picture).
   final Set<String>? Function() coMemberAccountIds;
+
+  /// Every conversation this account is in, once the list has come from the
+  /// server this session; null before. A queued key is dropped only when
+  /// this is known and the conversation is not in it.
+  final Set<String>? Function() knownConversationIds;
+  static Set<String>? _unknownConversations() => null;
   final DateTime Function() _clock;
 
   static const _ownKeyId = 'own.key_id';
@@ -215,14 +222,10 @@ class ProfileService extends ChangeNotifier {
         cachedRevision: haveRecord ? cached.revision : 0,
         versionFloor: cached?.versionFloor ?? 0,
       );
-    } on ProfileRecordException catch (error) {
-      // A group key that does not open the record the server serves is
-      // junk from a member: drop it at once.
-      if (kind == profileSubjectConversation &&
-          error.failure == ProfileRecordFailure.authFailed &&
-          key.keyId != cached?.keyId) {
-        await store.deleteProfileKey(kind, subjectId, key.keyId);
-      }
+    } on ProfileRecordException {
+      // A held key whose id is the served id is the real key (ids are
+      // derived), so a failure means the blob is bad. Never delete it: a
+      // member or the server could otherwise make everyone drop the key.
       return;
     }
     final saved = await store.saveProfile(StoredProfile(
@@ -418,6 +421,10 @@ class ProfileService extends ChangeNotifier {
             version: 0,
             receivedAt: key.receivedAt));
       }
+      // Written before the upload: if the answer is lost or the app stops, the
+      // key is still announced by the write that finds it in place.
+      final marker = 'pending.$kind.$subjectId.${key.keyId}';
+      if (rotated) await store.saveProfileState(marker, '1');
       final int stored;
       try {
         stored = await api.put(kind, subjectId, blob,
@@ -456,7 +463,9 @@ class ProfileService extends ChangeNotifier {
       _profiles[_id(kind, subjectId)] =
           (await store.loadProfile(kind, subjectId))!;
       await store.saveProfileState(_keyStateName(kind, subjectId), key.keyId);
-      if (rotated) {
+      final announce = rotated || await store.loadProfileState(marker) != null;
+      if (announce) {
+        await store.saveProfileState(marker, null);
         await store.saveProfileState(_dueName(kind, subjectId), null);
         if (kind == profileSubjectAccount) {
           await _resetAudience();
@@ -467,7 +476,7 @@ class ProfileService extends ChangeNotifier {
         }
       }
       _changed();
-      await _deliver();
+      unawaited(_deliver().catchError((Object _) {}));
       return;
     }
   }
@@ -488,7 +497,7 @@ class ProfileService extends ChangeNotifier {
         if (keyId == null) return;
         await store.saveProfileState(
             _deliverName(false, conversationId), keyId);
-        await _deliver();
+        unawaited(_deliver().catchError((Object _) {}));
       });
 
   /// Conversations this device has not handed the account key to yet get it
@@ -506,54 +515,86 @@ class ProfileService extends ChangeNotifier {
             queued = true;
           }
         }
-        if (queued) await _deliver();
+        if (queued) unawaited(_deliver().catchError((Object _) {}));
       });
 
   /// Sends every queued key message. A message that cannot be queued now
   /// stays for the next call.
-  Future<void> retryDeliveries() => _serial(_deliver);
+  Future<void> retryDeliveries() => _deliver();
 
-  Future<void> _deliver() async {
-    final queued = await store.loadProfileStatePrefix(_deliverPrefix);
-    final postable = postableConversationIds().toSet();
-    for (final entry in queued.entries) {
-      final rest = entry.key.substring(_deliverPrefix.length);
-      final dot = rest.indexOf('.');
-      if (dot < 0) continue;
-      final isGroup = rest.substring(0, dot) == 'group';
-      final conversationId = rest.substring(dot + 1);
-      if (!postable.contains(conversationId)) {
-        // Gone or announcement-only: nothing to retry.
-        await store.saveProfileState(entry.key, null);
-        continue;
+  bool _delivering = false;
+
+  Future<void>? _running;
+
+  /// Completes when queued key messages have been tried (tests await it).
+  Future<void> get deliveriesIdle => _running ?? Future<void>.value();
+
+  Future<void> _deliver() {
+    final run = _deliverOnce();
+    _running = run;
+    return run;
+  }
+
+  Future<void> _deliverOnce() async {
+    // Key messages go through the app's send queue, which can be waiting on
+    // a write that is waiting on this service: never hold [_serial] here.
+    if (_delivering) return;
+    _delivering = true;
+    try {
+      final queued = await store.loadProfileStatePrefix(_deliverPrefix);
+      final postable = postableConversationIds().toSet();
+      final known = knownConversationIds();
+      for (final entry in queued.entries) {
+        final rest = entry.key.substring(_deliverPrefix.length);
+        final dot = rest.indexOf('.');
+        if (dot < 0) continue;
+        final isGroup = rest.substring(0, dot) == 'group';
+        final conversationId = rest.substring(dot + 1);
+        if (!postable.contains(conversationId)) {
+          // Gone for sure: drop. Otherwise (blocks or the list not loaded,
+          // a removal hold, an announcement chat) keep it for later.
+          if (known != null && !known.contains(conversationId)) {
+            await _dropIfUnchanged(entry.key, entry.value);
+          }
+          continue;
+        }
+        final kind =
+            isGroup ? profileSubjectConversation : profileSubjectAccount;
+        final subject = isGroup ? conversationId : accountId;
+        final key = (await store.loadProfileKeys(kind, subject))
+            .where((k) => k.keyId == entry.value)
+            .firstOrNull;
+        if (key == null) {
+          await _dropIfUnchanged(entry.key, entry.value);
+          continue;
+        }
+        final body = profileKeyBody(
+            key: key.key,
+            keyId: key.keyId,
+            version: isGroup ? 0 : versionOf(profileSubjectAccount, accountId));
+        bool sent;
+        try {
+          sent = await sendKey(
+              conversationId,
+              isGroup
+                  ? AppPayloadType.groupProfileKey
+                  : AppPayloadType.profileKey,
+              body);
+        } on Object {
+          sent = false;
+        }
+        if (sent) await _dropIfUnchanged(entry.key, entry.value);
       }
-      final kind = isGroup ? profileSubjectConversation : profileSubjectAccount;
-      final subject = isGroup ? conversationId : accountId;
-      final key = (await store.loadProfileKeys(kind, subject))
-          .where((k) => k.keyId == entry.value)
-          .firstOrNull;
-      if (key == null) {
-        await store.saveProfileState(entry.key, null);
-        continue;
-      }
-      final body = profileKeyBody(
-          key: key.key,
-          keyId: key.keyId,
-          version: isGroup ? 0 : versionOf(profileSubjectAccount, accountId));
-      bool sent;
-      try {
-        sent = await sendKey(
-            conversationId,
-            isGroup
-                ? AppPayloadType.groupProfileKey
-                : AppPayloadType.profileKey,
-            body);
-      } on Object {
-        sent = false;
-      }
-      if (sent) await store.saveProfileState(entry.key, null);
+    } finally {
+      _delivering = false;
     }
   }
+
+  Future<void> _dropIfUnchanged(String name, String value) => _serial(() async {
+        if (await store.loadProfileState(name) == value) {
+          await store.saveProfileState(name, null);
+        }
+      });
 
   /// Members of a group that is not yet known to hold the key learn it from
   /// the next post: set when a commit added devices to [conversationId].
@@ -622,9 +663,9 @@ class ProfileService extends ChangeNotifier {
 
   Future<void> _resetAudience() async {
     final current = coMemberAccountIds();
-    if (current == null) return;
-    await store.saveProfileState(
-        _ownAudience, jsonEncode(current.toList()..sort()));
+    // Not known: start the audience again from the next full picture.
+    await store.saveProfileState(_ownAudience,
+        current == null ? null : jsonEncode(current.toList()..sort()));
   }
 
   /// The audience is every account that shared a conversation with this one

@@ -599,6 +599,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   ProfileService? profiles;
   Timer? _profileTimer;
 
+  /// Whether `conversations` came from the server this session. Before that
+  /// it may be empty only because nothing was read yet.
+  bool _conversationsFromServer = false;
+
   Map<String, List<ConversationMember>> membersByConversation =
       <String, List<ConversationMember>>{};
   List<BlockedAccount> blockedAccounts = <BlockedAccount>[];
@@ -2050,6 +2054,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     if (!_refreshOwned(current, generation)) return;
     conversations = list;
+    _conversationsFromServer = true;
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
     linkPreviewMode = linkPreviewModeFromName(previewMode);
@@ -4202,7 +4207,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       await localStore.enqueueEnvelope(encrypted, draftText: draftText);
       queued = true;
-      if (carriesKeys) unawaited(profiles?.sidecarsSent(conversation.id));
+      if (carriesKeys) {
+        unawaited(
+            profiles?.sidecarsSent(conversation.id).catchError((Object _) {}));
+      }
       if (mls != null) await refreshHistory(conversation.id);
       final record = (await localStore.pendingEnvelopeRecords())
           .where((item) =>
@@ -6728,7 +6736,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       notifyListeners();
       unawaited(_scheduleExpiryPurge());
       // A key may have come with these messages (W11).
-      unawaited(profiles?.onKeysMayHaveArrived());
+      unawaited(profiles?.onKeysMayHaveArrived().catchError((Object _) {}));
       onMessagesPublished?.call(List<ReceivedMessageEnvelope>.of(received));
     }
     received.clear();
@@ -6879,6 +6887,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// "accepted, unfinished" marks are not dropped here: they follow the
   /// stored MLS outbox, not the session.
   void _resetSessionMemory() {
+    _conversationsFromServer = false;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
     _keyPackageRetryAt = null;
