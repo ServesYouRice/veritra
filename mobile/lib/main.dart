@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'core/app_state.dart';
 import 'core/api_client.dart';
+import 'core/passkeys.dart';
 import 'core/receipts_state.dart';
 import 'crypto/crypto_service.dart';
 import 'desktop/desktop_services.dart';
@@ -33,6 +34,7 @@ Future<void> main() async {
         syncServiceFactory: (baseUrl, token) =>
             WebSocketSyncService(baseUrl: baseUrl, token: token),
         pushService: PlatformMobilePushService(),
+        passkeyClient: PlatformPasskeyClient(),
         receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
       );
       // Restore is represented by an explicit startup state while the app shell

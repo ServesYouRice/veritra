@@ -5330,6 +5330,174 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.'**
   String get callNoticeFailed;
+
+  /// No description provided for @connectSignInPasskey.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with a passkey'**
+  String get connectSignInPasskey;
+
+  /// No description provided for @passkeySignInFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey sign-in failed. Try again, or use your password.'**
+  String get passkeySignInFailed;
+
+  /// No description provided for @passkeyUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkeys are not available on this device, or not set up for this server.'**
+  String get passkeyUnavailable;
+
+  /// No description provided for @passkeyPinRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'This server asked for a passkey for a different address, so the app refused.'**
+  String get passkeyPinRefused;
+
+  /// No description provided for @apiErrorPasskeyLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'You have reached the passkey limit. Remove one first.'**
+  String get apiErrorPasskeyLimit;
+
+  /// No description provided for @apiErrorPasskeyExists.
+  ///
+  /// In en, this message translates to:
+  /// **'This passkey is already added.'**
+  String get apiErrorPasskeyExists;
+
+  /// No description provided for @apiErrorInvalidPasskey.
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not verify that passkey.'**
+  String get apiErrorInvalidPasskey;
+
+  /// No description provided for @apiErrorPasskeysOff.
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not offer passkeys.'**
+  String get apiErrorPasskeysOff;
+
+  /// No description provided for @settingsPasskeys.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkeys'**
+  String get settingsPasskeys;
+
+  /// No description provided for @settingsPasskeysDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with your phone\'s screen lock instead of the password'**
+  String get settingsPasskeysDetail;
+
+  /// No description provided for @passkeysIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'A passkey signs you in on this device instead of the password. Changing settings still asks for your password. The service that keeps your passkey, such as Google or Apple, learns this server\'s address.'**
+  String get passkeysIntro;
+
+  /// No description provided for @passkeysNotOffered.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkeys are not available for this server on this device.'**
+  String get passkeysNotOffered;
+
+  /// No description provided for @passkeysEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No passkeys yet.'**
+  String get passkeysEmpty;
+
+  /// No description provided for @passkeysAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a passkey'**
+  String get passkeysAdd;
+
+  /// No description provided for @passkeysAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey added.'**
+  String get passkeysAdded;
+
+  /// No description provided for @passkeyCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'Added {date}'**
+  String passkeyCreated(String date);
+
+  /// No description provided for @passkeyLastUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'Last used {date}'**
+  String passkeyLastUsed(String date);
+
+  /// No description provided for @passkeyBackedUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Backed up'**
+  String get passkeyBackedUp;
+
+  /// No description provided for @passkeyRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get passkeyRename;
+
+  /// No description provided for @passkeyRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get passkeyRemove;
+
+  /// No description provided for @passkeyNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get passkeyNameLabel;
+
+  /// No description provided for @passkeyRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this passkey?'**
+  String get passkeyRemoveTitle;
+
+  /// No description provided for @passkeyRemoveBody.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” will no longer sign in to this account. You can add it again later.'**
+  String passkeyRemoveBody(String name);
+
+  /// No description provided for @passkeyRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey removed.'**
+  String get passkeyRemoved;
+
+  /// No description provided for @passkeyNoticeAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'A passkey was added to your account. Not you? Change your password.'**
+  String get passkeyNoticeAdded;
+
+  /// No description provided for @passkeyNoticeRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'A passkey was removed from your account.'**
+  String get passkeyNoticeRemoved;
+
+  /// No description provided for @passkeyNoticeDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get passkeyNoticeDismiss;
+
+  /// No description provided for @passkeyNamePrefix.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey'**
+  String get passkeyNamePrefix;
 }
 
 class _AppLocalizationsDelegate

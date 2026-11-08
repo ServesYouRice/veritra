@@ -47,7 +47,7 @@ if grep -Eq '^[[:space:]]+mobile_scanner:' "$ROOT/mobile/pubspec.yaml"; then
   check_notice "mobile_scanner"
 fi
 
-for dependency in drift sqlite3 path_provider flutter_webrtc file_selector flutter_localizations intl html; do
+for dependency in drift sqlite3 path_provider flutter_webrtc file_selector flutter_localizations intl html passkeys; do
   if grep -Eq "^[[:space:]]+${dependency}:" "$ROOT/mobile/pubspec.yaml"; then
     check_notice "$dependency"
   fi
@@ -63,6 +63,10 @@ fi
 
 if grep -Fq 'com.google.firebase:firebase-messaging' "$ROOT/mobile/android/app/build.gradle.kts"; then
   check_notice 'com.google.firebase:firebase-messaging'
+fi
+
+if grep -Fq 'passkeys' "$ROOT/mobile/pubspec.yaml"; then
+  check_notice "androidx.credentials"
 fi
 
 if [ "$missing" -ne 0 ]; then
