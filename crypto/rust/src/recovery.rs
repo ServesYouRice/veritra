@@ -217,12 +217,15 @@ fn auth_key(crypto: &RustCrypto, prk: &[u8]) -> Result<SigningKey, RecoveryError
     Ok(SigningKey::from_bytes(seed))
 }
 
-/// Derives `rk_pub`, `rk_id` and `rk_auth_pub` from the RK entropy.
-pub fn derive(entropy: &[u8]) -> Result<RecoveryPublic, RecoveryError> {
-    let crypto = RustCrypto::default();
-    let prk = prk(&crypto, entropy)?;
-    let hpke_ikm = expand(&crypto, prk.as_slice(), HPKE_LABEL)?;
-    let pair = crypto
+/// The recovery HPKE key pair. K1 opens a backup with the private half
+/// inside Rust only; it never crosses the FFI and `HpkeKeyPair` wipes it
+/// on drop.
+pub(crate) fn hpke_key_pair(
+    crypto: &RustCrypto,
+    prk: &[u8],
+) -> Result<openmls_traits::types::HpkeKeyPair, RecoveryError> {
+    let hpke_ikm = expand(crypto, prk, HPKE_LABEL)?;
+    crypto
         .derive_hpke_keypair(
             HpkeConfig(
                 HpkeKemType::DhKem25519,
@@ -231,7 +234,23 @@ pub fn derive(entropy: &[u8]) -> Result<RecoveryPublic, RecoveryError> {
             ),
             hpke_ikm.as_slice(),
         )
-        .map_err(|_| RecoveryError::Crypto)?;
+        .map_err(|_| RecoveryError::Crypto)
+}
+
+/// The recovery HPKE key pair for the RK entropy (K1 open).
+pub(crate) fn derive_hpke_key_pair(
+    entropy: &[u8],
+) -> Result<openmls_traits::types::HpkeKeyPair, RecoveryError> {
+    let crypto = RustCrypto::default();
+    let prk = prk(&crypto, entropy)?;
+    hpke_key_pair(&crypto, prk.as_slice())
+}
+
+/// Derives `rk_pub`, `rk_id` and `rk_auth_pub` from the RK entropy.
+pub fn derive(entropy: &[u8]) -> Result<RecoveryPublic, RecoveryError> {
+    let crypto = RustCrypto::default();
+    let prk = prk(&crypto, entropy)?;
+    let pair = hpke_key_pair(&crypto, prk.as_slice())?;
     // The private half (pair.private) is a zeroizing wrapper and is dropped
     // here unused: K1 derives it again inside Rust only to open a backup.
     let rk_pub: [u8; RK_PUB_BYTES] = pair
