@@ -49,9 +49,10 @@ suite 0x0001 with 32-byte keys and 64-byte signatures, a basic credential with
 a non-empty identity, a `key_package` leaf with its lifetime, well-formed
 extension lists, minimal vector lengths and nothing after the signature
 (`server/internal/mlswire`, TASK-172). It verifies no signature and does not
-bind the credential to the enrollment signing key (bug-hunt question
-section-255217d2d387fd53976689b2/Q-1, open); clients still validate every key
-package they use.
+bind the credential to the enrollment signing key. For an account with a
+signed device list, L1-3 adds the Q-1 gate: the leaf signature key must be the
+key the list names for the device (see the L1-3 change-log entry); clients
+still validate every key package they use.
 
 OpenMLS 0.9.2, `openmls_rust_crypto` 0.6.0, and their supporting crates are
 exactly pinned (Rust 1.91 or newer). All 205 locked third-party packages declare

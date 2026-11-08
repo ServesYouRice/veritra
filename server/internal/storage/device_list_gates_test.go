@@ -182,6 +182,11 @@ func TestKeyPackagesMustCarryTheListedKey(t *testing.T) {
 	}}); err != nil {
 		t.Fatalf("the listed key: %v", err)
 	}
+	// The publish dropped the stored packages the gate would never hand out,
+	// so they do not take up the quota.
+	if n, _ := countRows(ctx, f.store.db, `SELECT COUNT(*) FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, registered); n != 2 {
+		t.Fatalf("%d unclaimed packages after a listed publish, want the 2 listed ones", n)
+	}
 
 	// Every claim hands out only packages with the listed key; the stored
 	// ones with another key (the fixture's and the pre-list one) are dropped.

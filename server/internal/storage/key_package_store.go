@@ -107,6 +107,43 @@ func claimListedKeyPackage(ctx context.Context, tx *sql.Tx, accountID, deviceID 
 	}
 }
 
+// dropUnlistedKeyPackages deletes deviceID's unclaimed key packages that
+// fail the L1 gate. Nothing for an account with no list.
+func dropUnlistedKeyPackages(ctx context.Context, tx *sql.Tx, accountID, deviceID string) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id, key_package FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, deviceID)
+	if err != nil {
+		return err
+	}
+	type stored struct {
+		id         string
+		keyPackage []byte
+	}
+	var all []stored
+	for rows.Next() {
+		var item stored
+		if err := rows.Scan(&item.id, &item.keyPackage); err != nil {
+			rows.Close()
+			return err
+		}
+		all = append(all, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range all {
+		ok, err := keyPackageMatchesList(ctx, tx, accountID, deviceID, item.keyPackage)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM device_key_packages WHERE id = ?`, item.id); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 type NewDeviceKeyPackage struct {
 	KeyPackage  []byte
 	Ciphersuite string
@@ -150,6 +187,11 @@ func (s *Store) PublishDeviceKeyPackages(ctx context.Context, deviceID string, p
 		if !ok {
 			return nil, ErrKeyPackageNotListed
 		}
+	}
+	// Stored packages the gate would never hand out (published before the
+	// list) do not take up the device's quota.
+	if err := dropUnlistedKeyPackages(ctx, tx, accountID, deviceID); err != nil {
+		return nil, err
 	}
 	var available int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL AND expires_at > ?`, deviceID, nowString()).Scan(&available); err != nil {
