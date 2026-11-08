@@ -23,9 +23,12 @@ recorded digest:
   and is not the Android debug certificate. While the pin is null, no Android
   signed-release record counts.
 
-These checks are structural only; signature and attestation cryptography is
-verified by codesign/apksigner in the G24 build and by ``gh attestation
-verify`` in release.yml.
+Naming the (public) pinned certificate is not enough: each Android signing
+block's public key must be the certificate's, and its signatures and signed
+content digests must verify over this APK (standard library only: RSA
+PKCS#1 v1.5 and PSS, ECDSA P-256/P-384). The iOS signature and the build
+attestation are verified by codesign in the G24 build and by ``gh attestation
+verify`` in release.yml; apksigner there stays a second check.
 
 Approvals cannot live in the candidate commit: a file cannot name the SHA of
 the commit that contains it. Each approval is instead read from git at a
@@ -429,10 +432,53 @@ def signing_pins(policy: dict[str, Any], errors: list[str] | None = None) -> dic
     return pins
 
 
+# Files whose working-tree bytes decide the gate, so they must be the
+# candidate's committed bytes: the policy (gate rules and signing pins) and
+# the canonical Go toolchain version.
+CANDIDATE_BOUND_FILES = ("release/release-policy.json", ".go-version")
+
+
+def candidate_binding_errors(root: Path, policy: dict[str, Any], candidate: str) -> list[str]:
+    """Why the checkout or the policy is not exactly the candidate commit's.
+
+    The caller's --root must be checked out at the candidate, each file in
+    ``CANDIDATE_BOUND_FILES`` must equal the candidate's committed blob, and
+    the policy the gate enforces (which --policy may take from elsewhere) must
+    parse to the candidate's committed policy. A drifted working tree, another
+    checkout or a substituted policy file all fail closed.
+    """
+    if git(root, "cat-file", "-e", f"{candidate}^{{commit}}") is None:
+        return ["candidate commit is not in the repository at --root"]
+    errors: list[str] = []
+    head = git_text(root, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+    if head != candidate:
+        errors.append("checkout at --root is not the candidate commit")
+    committed: dict[str, bytes] = {}
+    for name in CANDIDATE_BOUND_FILES:
+        blob = git(root, "cat-file", "blob", f"{candidate}:{name}")
+        if blob is None:
+            errors.append(f"candidate commit does not contain {name}")
+            continue
+        committed[name] = blob
+        try:
+            on_disk = (root / name).read_bytes()
+        except OSError:
+            on_disk = None
+        if on_disk != blob:
+            errors.append(f"working tree {name} differs from the candidate commit")
+    try:
+        committed_policy = json.loads(committed["release/release-policy.json"])
+    except (KeyError, ValueError):
+        committed_policy = None
+    if "release/release-policy.json" in committed and committed_policy != policy:
+        errors.append("release policy is not the candidate commit's release/release-policy.json")
+    return errors
+
+
 def preflight(
     root: Path, policy: dict[str, Any], candidate: str, approvals_commit: str | None
 ) -> tuple[list[str], dict[str, dict[str, Any]]]:
-    errors: list[str] = []
+    errors: list[str] = candidate_binding_errors(root, policy, candidate)
     if policy.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"release policy schema version is not protected version {SCHEMA_VERSION}")
     if policy.get("required_ci_jobs") != list(REQUIRED_CI_JOBS):
@@ -706,6 +752,320 @@ def signer_certificates(scheme: bytes) -> list[bytes]:
     return leaves
 
 
+# --- APK Signature Scheme v2/v3 verification (standard library only).
+#
+# Matching the pinned certificate proves nothing: the certificate is public,
+# so anyone can copy it into an unsigned APK's signing block. The checker
+# therefore also verifies, as Android does, that the signer's public key is
+# the certificate's, that every signature verifies over the signed data under
+# that key, and that the signed content digests cover this APK's bytes.
+
+APK_CHUNK = 1024 * 1024
+# signature algorithm ID -> (key kind, hash name)
+APK_SIGNATURE_ALGORITHMS = {
+    0x0101: ("rsa-pss", "sha256"),
+    0x0102: ("rsa-pss", "sha512"),
+    0x0103: ("rsa-pkcs1", "sha256"),
+    0x0104: ("rsa-pkcs1", "sha512"),
+    0x0201: ("ecdsa", "sha256"),
+    0x0202: ("ecdsa", "sha512"),
+}
+DIGEST_INFO = {
+    "sha256": bytes.fromhex("3031300d060960864801650304020105000420"),
+    "sha512": bytes.fromhex("3051300d060960864801650304020305000440"),
+}
+OID_RSA = "1.2.840.113549.1.1.1"
+OID_EC = "1.2.840.10045.2.1"
+EC_CURVES = {
+    "1.2.840.10045.3.1.7": (  # NIST P-256
+        0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFF,
+        0xFFFFFFFF00000001000000000000000000000000FFFFFFFFFFFFFFFFFFFFFFFC,
+        0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B,
+        0x6B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C296,
+        0x4FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5,
+        0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551,
+        32,
+    ),
+    "1.3.132.0.34": (  # NIST P-384
+        int("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", 16),
+        int("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000fffffffc", 16),
+        int("b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", 16),
+        int("aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7", 16),
+        int("3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f", 16),
+        int("ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", 16),
+        48,
+    ),
+}
+
+
+def der_items(buffer: bytes, start: int = 0, end: int | None = None) -> list[tuple[int, int, int, int]]:
+    """(tag, value start, value end, element start) of each DER element in a range."""
+    end = len(buffer) if end is None else end
+    items, offset = [], start
+    while offset < end:
+        element = offset
+        tag = buffer[offset]
+        offset += 1
+        if tag & 0x1F == 0x1F:
+            raise ValueError("high tag numbers are not supported")
+        first = buffer[offset]
+        offset += 1
+        if first < 0x80:
+            size = first
+        else:
+            count = first & 0x7F
+            if not 1 <= count <= 4 or offset + count > end:
+                raise ValueError("bad DER length")
+            size = int.from_bytes(buffer[offset : offset + count], "big")
+            offset += count
+        if offset + size > end:
+            raise ValueError("DER element out of range")
+        items.append((tag, offset, offset + size, element))
+        offset += size
+    return items
+
+
+def der_oid(buffer: bytes, start: int, end: int) -> str:
+    if start >= end:
+        raise ValueError("empty OID")
+    values, current = [], 0
+    for byte in buffer[start:end]:
+        current = (current << 7) | (byte & 0x7F)
+        if not byte & 0x80:
+            values.append(current)
+            current = 0
+    if buffer[end - 1] & 0x80:
+        raise ValueError("truncated OID")
+    first = values[0]
+    head = [first // 40, first % 40] if first < 80 else [2, first - 80]
+    return ".".join(str(part) for part in head + values[1:])
+
+
+def certificate_public_key_info(certificate: bytes) -> bytes:
+    """The DER SubjectPublicKeyInfo of an X.509 certificate."""
+    (cert,) = der_items(certificate)
+    if cert[0] != 0x30:
+        raise ValueError("certificate is not a DER sequence")
+    tbs = der_items(certificate, cert[1], cert[2])[0]
+    if tbs[0] != 0x30:
+        raise ValueError("certificate has no TBSCertificate")
+    fields = der_items(certificate, tbs[1], tbs[2])
+    base = 1 if fields and fields[0][0] == 0xA0 else 0  # explicit version
+    if len(fields) < base + 6 or fields[base + 5][0] != 0x30:
+        raise ValueError("certificate has no public key info")
+    _, _, end, start = fields[base + 5]
+    return certificate[start:end]
+
+
+def parse_public_key(spki: bytes) -> tuple:
+    """('rsa', n, e) or ('ec', curve parameters, (x, y)) from a SubjectPublicKeyInfo."""
+    (outer,) = der_items(spki)
+    algorithm, bits = der_items(spki, outer[1], outer[2])
+    if outer[0] != 0x30 or algorithm[0] != 0x30 or bits[0] != 0x03 or spki[bits[1]] != 0:
+        raise ValueError("malformed public key info")
+    parts = der_items(spki, algorithm[1], algorithm[2])
+    oid = der_oid(spki, parts[0][1], parts[0][2])
+    key = spki[bits[1] + 1 : bits[2]]
+    if oid == OID_RSA:
+        (sequence,) = der_items(key)
+        modulus, exponent = der_items(key, sequence[1], sequence[2])
+        if sequence[0] != 0x30 or modulus[0] != 0x02 or exponent[0] != 0x02:
+            raise ValueError("malformed RSA public key")
+        return "rsa", int.from_bytes(key[modulus[1] : modulus[2]], "big"), int.from_bytes(key[exponent[1] : exponent[2]], "big")
+    if oid == OID_EC:
+        curve = EC_CURVES.get(der_oid(spki, parts[1][1], parts[1][2])) if len(parts) > 1 else None
+        if curve is None or len(key) != 1 + 2 * curve[6] or key[0] != 4:
+            raise ValueError("unsupported or malformed EC public key")
+        size = curve[6]
+        return "ec", curve, (int.from_bytes(key[1 : 1 + size], "big"), int.from_bytes(key[1 + size :], "big"))
+    raise ValueError("unsupported public key algorithm")
+
+
+def ec_add(curve: tuple, left: tuple | None, right: tuple | None) -> tuple | None:
+    p, a = curve[0], curve[1]
+    if left is None:
+        return right
+    if right is None:
+        return left
+    (x1, y1), (x2, y2) = left, right
+    if x1 == x2 and (y1 + y2) % p == 0:
+        return None
+    if left == right:
+        slope = (3 * x1 * x1 + a) * pow(2 * y1, -1, p) % p
+    else:
+        slope = (y2 - y1) * pow(x2 - x1, -1, p) % p
+    x3 = (slope * slope - x1 - x2) % p
+    return x3, (slope * (x1 - x3) - y1) % p
+
+
+def ec_multiply(curve: tuple, scalar: int, point: tuple) -> tuple | None:
+    result, addend = None, point
+    while scalar:
+        if scalar & 1:
+            result = ec_add(curve, result, addend)
+        addend = ec_add(curve, addend, addend)
+        scalar >>= 1
+    return result
+
+
+def ecdsa_verify(curve: tuple, point: tuple, digest: bytes, signature: bytes) -> bool:
+    p, a, b, gx, gy, n, _ = curve
+    x, y = point
+    if not (0 <= x < p and 0 <= y < p) or (y * y - (x * x * x + a * x + b)) % p:
+        return False
+    try:
+        (sequence,) = der_items(signature)
+        parts = der_items(signature, sequence[1], sequence[2])
+    except (ValueError, IndexError):  # a malformed signature does not verify
+        return False
+    if sequence[0] != 0x30 or sequence[2] != len(signature) or len(parts) != 2 or any(part[0] != 0x02 for part in parts):
+        return False
+    r, s = (int.from_bytes(signature[part[1] : part[2]], "big") for part in parts)
+    if not (1 <= r < n and 1 <= s < n):
+        return False
+    e = int.from_bytes(digest, "big")
+    if len(digest) * 8 > n.bit_length():
+        e >>= len(digest) * 8 - n.bit_length()
+    w = pow(s, -1, n)
+    total = ec_add(curve, ec_multiply(curve, e * w % n, (gx, gy)), ec_multiply(curve, r * w % n, point))
+    return total is not None and total[0] % n == r
+
+
+def mgf1(seed: bytes, length: int, name: str) -> bytes:
+    out, counter = b"", 0
+    while len(out) < length:
+        out += hashlib.new(name, seed + struct.pack(">I", counter)).digest()
+        counter += 1
+    return out[:length]
+
+
+def rsa_verify(kind: str, name: str, modulus: int, exponent: int, message: bytes, signature: bytes) -> bool:
+    size = (modulus.bit_length() + 7) // 8
+    if len(signature) != size or int.from_bytes(signature, "big") >= modulus or exponent < 3:
+        return False
+    digest = hashlib.new(name, message).digest()
+    em = pow(int.from_bytes(signature, "big"), exponent, modulus)
+    if kind == "rsa-pkcs1":
+        suffix = DIGEST_INFO[name] + digest
+        return em.to_bytes(size, "big") == b"\x00\x01" + b"\xff" * (size - len(suffix) - 3) + b"\x00" + suffix
+    # RSASSA-PSS with MGF1 over the same hash and a salt as long as the hash (Android's parameters).
+    bits = modulus.bit_length() - 1
+    em_len = (bits + 7) // 8
+    block = em.to_bytes(em_len, "big") if em.bit_length() <= em_len * 8 else b""
+    hash_len = len(digest)
+    if not block or em_len < 2 * hash_len + 2 or block[-1] != 0xBC:
+        return False
+    masked, h = block[: em_len - hash_len - 1], block[em_len - hash_len - 1 : -1]
+    top = 0xFF >> (8 * em_len - bits)
+    if masked[0] & ~top & 0xFF:
+        return False
+    data = bytes(x ^ y for x, y in zip(masked, mgf1(h, len(masked), name)))
+    data = bytes([data[0] & top]) + data[1:]
+    padding = em_len - 2 * hash_len - 2
+    if data[:padding] != b"\x00" * padding or data[padding] != 1:
+        return False
+    salt = data[padding + 1 :]
+    return hashlib.new(name, b"\x00" * 8 + digest + salt).digest() == h
+
+
+def apk_signature_verifies(algorithm: int, spki: bytes, message: bytes, signature: bytes) -> bool:
+    kind, name = APK_SIGNATURE_ALGORITHMS[algorithm]
+    key = parse_public_key(spki)
+    if kind == "ecdsa":
+        return key[0] == "ec" and ecdsa_verify(key[1], key[2], hashlib.new(name, message).digest(), signature)
+    return key[0] == "rsa" and rsa_verify(kind, name, key[1], key[2], message, signature)
+
+
+def apk_signing_block_start(data: bytes) -> int:
+    """Offset of the APK Signing Block (``apk_signing_block`` found one)."""
+    cd_offset = struct.unpack_from("<I", data, len(data) - ZIP_EOCD_SIZE + 16)[0]
+    (size,) = struct.unpack_from("<Q", data, cd_offset - 24)
+    return cd_offset - 8 - size
+
+
+def apk_content_digests(data: bytes, block_start: int) -> dict[str, bytes]:
+    """The APK Signature Scheme v2 chunked content digest, per hash name.
+
+    Zip entries, the central directory and the end record (with its central
+    directory offset pointing at the signing block's start) are cut into
+    1 MiB chunks per section; the signing block itself is not covered.
+    """
+    eocd = len(data) - ZIP_EOCD_SIZE
+    cd_offset = struct.unpack_from("<I", data, eocd + 16)[0]
+    end_record = data[eocd:eocd + 16] + struct.pack("<I", block_start) + data[eocd + 20:]
+    sections = (data[:block_start], data[cd_offset:eocd], end_record)
+    digests = {}
+    for name in ("sha256", "sha512"):
+        chunks = []
+        for section in sections:
+            for start in range(0, len(section), APK_CHUNK):
+                chunk = section[start : start + APK_CHUNK]
+                chunks.append(hashlib.new(name, b"\xa5" + struct.pack("<I", len(chunk)) + chunk).digest())
+        digests[name] = hashlib.new(name, b"\x5a" + struct.pack("<I", len(chunks)) + b"".join(chunks)).digest()
+    return digests
+
+
+def apk_scheme_error(scheme: int, value: bytes, data: bytes, block_start: int) -> str | None:
+    """Why the signers of one scheme's block do not verify; None when they do.
+
+    For each signer: the public key is the certificate's, there is at least
+    one signature, every signature uses a known algorithm and verifies over
+    the signed data, the digest and signature algorithm sets agree, and every
+    signed content digest equals the one computed over this APK.
+    """
+    v3 = scheme != APK_SIGNATURE_V2
+    computed: dict[str, bytes] | None = None
+    signers, _ = length_prefixed(value, 0)
+    for signer in length_prefixed_items(signers):
+        signed_data, offset = length_prefixed(signer, 0)
+        sdks = None
+        if v3:
+            sdks, offset = signer[offset : offset + 8], offset + 8
+        signatures, offset = length_prefixed(signer, offset)
+        public_key, offset = length_prefixed(signer, offset)
+        if offset != len(signer):
+            return "trailing bytes after the signer"
+        digests, offset = length_prefixed(signed_data, 0)
+        certificates, offset = length_prefixed(signed_data, offset)
+        if v3 and signed_data[offset : offset + 8] != sdks:
+            return "signed SDK range does not match the signer's"
+        chain = length_prefixed_items(certificates)
+        if not chain or not chain[0]:
+            return "signer without a certificate"
+        if certificate_public_key_info(chain[0]) != public_key:
+            return "public key is not the certificate's"
+        listed = length_prefixed_items(signatures)
+        if not listed:
+            return "signer without a signature"
+        signed_digests = {}
+        for entry in length_prefixed_items(digests):
+            (algorithm,) = struct.unpack_from("<I", entry, 0)
+            if algorithm in signed_digests:
+                return "duplicate signed digest"
+            signed_digests[algorithm], end = length_prefixed(entry, 4)
+            if end != len(entry):
+                return "trailing bytes after a signed digest"
+        seen = set()
+        for entry in listed:
+            (algorithm,) = struct.unpack_from("<I", entry, 0)
+            signature, end = length_prefixed(entry, 4)
+            if end != len(entry) or algorithm in seen:
+                return "malformed signature list"
+            seen.add(algorithm)
+            if algorithm not in APK_SIGNATURE_ALGORITHMS:
+                return f"unsupported signature algorithm 0x{algorithm:04x}"
+            if not apk_signature_verifies(algorithm, public_key, signed_data, signature):
+                return f"signature 0x{algorithm:04x} does not verify under the signer's public key"
+        if seen != set(signed_digests):
+            return "signed digest and signature algorithms differ"
+        if computed is None:
+            computed = apk_content_digests(data, block_start)
+        for algorithm, digest in signed_digests.items():
+            if digest != computed[APK_SIGNATURE_ALGORITHMS[algorithm][1]]:
+                return f"signed content digest 0x{algorithm:04x} does not cover this APK's contents"
+    return None
+
+
 def axml_strings(chunk: bytes) -> list[str]:
     header_size = struct.unpack_from("<H", chunk, 2)[0]
     count, _, flags, strings_start, _ = struct.unpack_from("<IIIII", chunk, 8)
@@ -840,7 +1200,8 @@ def manifest_facts(data: bytes) -> tuple[str | None, bool, int]:
 
 
 def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
-    """Structural release-signing checks; apksigner verifies the signature in G24.
+    """Release-signing checks: structure, pinned signer, and the v2/v3 signatures
+    and content digests themselves (``apk_scheme_error``).
 
     The signer must be the pinned release certificate; with no pin, nothing passes.
     """
@@ -889,6 +1250,16 @@ def apk_errors(path: Path, pinned_certificate: str | None) -> list[str]:
     fingerprints = {hashlib.sha256(leaf).hexdigest() for leaf in leaves}
     if fingerprints != {pinned_certificate}:
         errors.append("signed android artifact signer certificate is not the pinned release certificate")
+    # Naming the (public) certificate is not signing with it: every scheme's
+    # signature and content digests must verify too.
+    names = {APK_SIGNATURE_V2: "v2", 0xF05368C0: "v3", 0x1B93AD61: "v3.1"}
+    for scheme in schemes:
+        try:
+            problem = apk_scheme_error(scheme, pairs[scheme], data, apk_signing_block_start(data))
+        except Exception:  # struct, index, DER and arithmetic errors all fail closed
+            problem = "malformed signer data"
+        if problem:
+            errors.append(f"signed android artifact APK Signature Scheme {names[scheme]} signature does not verify: {problem}")
     return errors
 
 
@@ -1095,8 +1466,11 @@ def validate_manifest(
             errors.append("container digest is not an immutable sha256 digest")
         if container.get("commit") != candidate:
             errors.append("container commit label does not match candidate")
-        canonical_version = (root / ".go-version").read_text(encoding="utf-8").strip()
-        if container.get("toolchain") != canonical_version:
+        # The candidate's committed .go-version; the binding check above fails
+        # when the working tree differs from it.
+        blob = git(root, "cat-file", "blob", f"{candidate}:.go-version")
+        go_version = None if blob is None else blob.decode("utf-8", "replace").strip()
+        if container.get("toolchain") != go_version:
             errors.append("container toolchain does not match .go-version")
 
     if artifacts_dir is None:

@@ -144,12 +144,12 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 127 `TASK-127` Refuse server releases of commits not on the protected default branch
 - [x] 128 `TASK-128` Read Android minSdkVersion as Android does: signed, by resource ID, only from manifest-level uses-sdk
 - [x] 129 `TASK-129` Require IPA central directory to sit exactly where the end record says
-- [ ] 130 `TASK-130` Reject APKs whose v2 signing block names the pinned certificate but does not verify
-  - Blocked on owner questions (release Q-1/Q-2/Q-4).
-- [ ] 131 `TASK-131` Bind the release policy and checkout to the candidate in the adversarial fixture
-  - Blocked on owner questions (release Q-1/Q-2/Q-4).
-- [ ] 132 `TASK-132` Enforce cargo-audit exception scope over the full audited lockfile graph instead of graph-wide ignores
-  - Blocked on owner questions (release Q-1/Q-2/Q-4).
+- [x] 130 `TASK-130` Reject APKs whose v2 signing block names the pinned certificate but does not verify
+  - Done (owner decision 2026-11-07, stdlib verification in check-release-evidence.py): v2/v3 signatures, key-vs-certificate and content digests verified; bad-signature, wrong-digest, foreign-key and edited-after-signing APKs with the pinned cert are blocked.
+- [x] 131 `TASK-131` Bind the release policy and checkout to the candidate in the adversarial fixture
+  - Done (owner decision 2026-11-07): checker blocks a checkout that is not the candidate and a policy or .go-version that differs from the candidate's committed blobs; fixture commits the policy in the candidate.
+- [x] 132 `TASK-132` Enforce cargo-audit exception scope over the full audited lockfile graph instead of graph-wide ignores
+  - Done (owner decision 2026-11-07): each exception's scope is {crate, versions, parents, built}, checked over the whole Cargo.lock before cargo audit --file; G27 exceptions kept under the new form.
 - [x] 133 `TASK-133` Fail the Go lint stage when gofmt itself fails
 - [x] 134 `TASK-134` Bound each readiness probe by the remaining readiness deadline
 - [x] 135 `TASK-135` Prevent verify.sh from leaving a stale pass summary
