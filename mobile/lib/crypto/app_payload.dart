@@ -26,7 +26,9 @@ enum AppPayloadType {
   poll,
   pollVote,
   pollClose,
-  callSignal
+  callSignal,
+  profileKey,
+  groupProfileKey
 }
 
 extension AppPayloadTypeWire on AppPayloadType {
@@ -36,6 +38,8 @@ extension AppPayloadTypeWire on AppPayloadType {
   String get wireName => switch (this) {
         AppPayloadType.pollVote => 'poll_vote',
         AppPayloadType.pollClose => 'poll_close',
+        AppPayloadType.profileKey => 'profile_key',
+        AppPayloadType.groupProfileKey => 'group_profile_key',
         _ => name,
       };
 
@@ -44,7 +48,9 @@ extension AppPayloadTypeWire on AppPayloadType {
   bool get sendsHidden =>
       this == AppPayloadType.pin ||
       this == AppPayloadType.pollVote ||
-      this == AppPayloadType.pollClose;
+      this == AppPayloadType.pollClose ||
+      this == AppPayloadType.profileKey ||
+      this == AppPayloadType.groupProfileKey;
 }
 
 class DecryptedAppPayload {
@@ -154,6 +160,8 @@ class AppPayloadCodec {
             type == AppPayloadType.poll ||
             type == AppPayloadType.pollVote ||
             type == AppPayloadType.pollClose ||
+            type == AppPayloadType.profileKey ||
+            type == AppPayloadType.groupProfileKey ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -428,6 +436,11 @@ class AppPayloadCodec {
       AppPayloadType.poll => version >= 2 && isValidPollBody(body),
       AppPayloadType.pollVote => version >= 2 && isValidPollVoteBody(body),
       AppPayloadType.pollClose => version >= 2 && isValidPollCloseBody(body),
+      // The key fields are checked where the key is used, so a malformed key
+      // is dropped alone and its message still counts as an action.
+      AppPayloadType.profileKey ||
+      AppPayloadType.groupProfileKey =>
+        version >= 2,
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,

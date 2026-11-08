@@ -2002,8 +2002,8 @@ input can differ.
 | `poll_vote` | 2 | `message_id`, `choices` (list of option indexes; empty = retract) | Any member | §5.5 |
 | `poll_close` | 2 | `message_id` | The poll's author account | §5.5 |
 | `admin_delete` | 2 | `message_id` | Moderator roles; target in the same conversation, any author | **Reserved for C5:** handled as `unsupported` until C5 turns it on. Effect then: as `delete`, shown as "Removed by an admin" |
-| `profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Only the subject account's own devices | **Reserved for W11** |
-| `group_profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Any member | **Reserved for W11** |
+| `profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Only the subject account's own devices | Hidden action row; the key is stored in the same transaction as the MLS state (**built**, W11) |
+| `group_profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Any member | Hidden action row; kept only for a conversation of kind `group`, and dropped when it does not open the served record (**built**, W11) |
 | `callSignal` | 1 | Unchanged | Unchanged | Unchanged |
 
 A "reserved" type has a fixed name and body now. Until its package turns

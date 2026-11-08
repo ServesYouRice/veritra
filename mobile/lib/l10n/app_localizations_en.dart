@@ -889,6 +889,71 @@ class AppLocalizationsEn extends AppLocalizations {
   String get profileYourAccount => 'Your account';
 
   @override
+  String get profileDisplaySection => 'Display name and photo';
+
+  @override
+  String get profileDisplayNameLabel => 'Display name';
+
+  @override
+  String get profileDisplayNameHint => 'How people you chat with see you';
+
+  @override
+  String get profileDisplayHelp =>
+      'Only people you share a chat with can see your name and photo. The server can\'t read them.';
+
+  @override
+  String get profileEditTile => 'Name and photo';
+
+  @override
+  String get profileEditTitle => 'Name and photo';
+
+  @override
+  String get profilePhotoChoose => 'Choose photo';
+
+  @override
+  String get profilePhotoRemove => 'Remove photo';
+
+  @override
+  String get profilePhotoUnusable =>
+      'That picture can\'t be used. Try another one.';
+
+  @override
+  String get profileSave => 'Save';
+
+  @override
+  String get profileSaved => 'Saved';
+
+  @override
+  String get profileSaveConflict =>
+      'This profile was changed on another device. Try again in a moment.';
+
+  @override
+  String get profileSaveInvalid => 'That name or photo can\'t be used.';
+
+  @override
+  String profileNameTooLong(int max) {
+    return 'At most $max characters.';
+  }
+
+  @override
+  String get profileNameInvalid =>
+      'Use letters and numbers; no control or direction characters.';
+
+  @override
+  String get groupProfileTitle => 'Group name and photo';
+
+  @override
+  String get groupProfileNameLabel => 'Group name';
+
+  @override
+  String get groupProfileHelp =>
+      'Members of this group can see its name and photo. The server can\'t read them.';
+
+  @override
+  String get profileBlockNote =>
+      'In groups you share, they may still see your profile.';
+
+  @override
   String get profileSectionIdentity => 'Identity';
 
   @override

@@ -365,6 +365,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           conversationAvatar(
                             context,
                             conversation,
+                            profiles: widget.state.profiles,
                             radius: 17,
                             // Only the pushed layout: see conversationAvatar.
                             hero: widget.showBackButton,
@@ -376,7 +377,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
                                 Text(
-                                  conversationTitle(context.l10n, conversation),
+                                  conversationTitle(context.l10n, conversation,
+                                      profiles: widget.state.profiles),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -891,8 +893,9 @@ class _ChatScreenState extends State<ChatScreen> {
                               for (final c in state.conversations)
                                 CheckboxListTile(
                                     value: selected.contains(c.id),
-                                    title: Text(
-                                        conversationTitle(context.l10n, c)),
+                                    title: Text(conversationTitle(
+                                        context.l10n, c,
+                                        profiles: state.profiles)),
                                     onChanged: (v) => setDialogState(() {
                                           if (v == true &&
                                               selected.length <
@@ -1210,7 +1213,10 @@ class _MessageList extends StatelessWidget {
         .membersFor(conversationId)
         .where((item) => item.accountId == accountId)
         .firstOrNull;
-    return accountLabel(accountId, member?.username);
+    // W11: the sender's shared display name first; the username stays what
+    // identifies them (member lists show both).
+    return state.profiles?.account(accountId)?.name ??
+        accountLabel(accountId, member?.username);
   }
 
   @override

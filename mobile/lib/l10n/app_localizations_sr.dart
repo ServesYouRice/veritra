@@ -896,6 +896,72 @@ class AppLocalizationsSr extends AppLocalizations {
   String get profileYourAccount => 'Ваш налог';
 
   @override
+  String get profileDisplaySection => 'Приказно име и слика';
+
+  @override
+  String get profileDisplayNameLabel => 'Приказно име';
+
+  @override
+  String get profileDisplayNameHint =>
+      'Како вас виде људи са којима разговарате';
+
+  @override
+  String get profileDisplayHelp =>
+      'Име и слику виде само људи са којима делите разговор. Сервер их не може прочитати.';
+
+  @override
+  String get profileEditTile => 'Име и слика';
+
+  @override
+  String get profileEditTitle => 'Име и слика';
+
+  @override
+  String get profilePhotoChoose => 'Изабери слику';
+
+  @override
+  String get profilePhotoRemove => 'Уклони слику';
+
+  @override
+  String get profilePhotoUnusable =>
+      'Ова слика се не може користити. Пробајте другу.';
+
+  @override
+  String get profileSave => 'Сачувај';
+
+  @override
+  String get profileSaved => 'Сачувано';
+
+  @override
+  String get profileSaveConflict =>
+      'Овај профил је промењен на другом уређају. Покушајте поново за тренутак.';
+
+  @override
+  String get profileSaveInvalid => 'То име или слика се не могу користити.';
+
+  @override
+  String profileNameTooLong(int max) {
+    return 'Највише $max знакова.';
+  }
+
+  @override
+  String get profileNameInvalid =>
+      'Користите слова и бројеве; без контролних знакова и знакова смера.';
+
+  @override
+  String get groupProfileTitle => 'Име и слика групе';
+
+  @override
+  String get groupProfileNameLabel => 'Име групе';
+
+  @override
+  String get groupProfileHelp =>
+      'Чланови ове групе виде њено име и слику. Сервер их не може прочитати.';
+
+  @override
+  String get profileBlockNote =>
+      'У групама које делите, можда и даље виде ваш профил.';
+
+  @override
   String get profileSectionIdentity => 'Идентитет';
 
   @override
@@ -4140,6 +4206,72 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get profileYourAccount => 'Vaš nalog';
+
+  @override
+  String get profileDisplaySection => 'Prikazno ime i slika';
+
+  @override
+  String get profileDisplayNameLabel => 'Prikazno ime';
+
+  @override
+  String get profileDisplayNameHint =>
+      'Kako vas vide ljudi sa kojima razgovarate';
+
+  @override
+  String get profileDisplayHelp =>
+      'Ime i sliku vide samo ljudi sa kojima delite razgovor. Server ih ne može pročitati.';
+
+  @override
+  String get profileEditTile => 'Ime i slika';
+
+  @override
+  String get profileEditTitle => 'Ime i slika';
+
+  @override
+  String get profilePhotoChoose => 'Izaberi sliku';
+
+  @override
+  String get profilePhotoRemove => 'Ukloni sliku';
+
+  @override
+  String get profilePhotoUnusable =>
+      'Ova slika se ne može koristiti. Probajte drugu.';
+
+  @override
+  String get profileSave => 'Sačuvaj';
+
+  @override
+  String get profileSaved => 'Sačuvano';
+
+  @override
+  String get profileSaveConflict =>
+      'Ovaj profil je promenjen na drugom uređaju. Pokušajte ponovo za trenutak.';
+
+  @override
+  String get profileSaveInvalid => 'To ime ili slika se ne mogu koristiti.';
+
+  @override
+  String profileNameTooLong(int max) {
+    return 'Najviše $max znakova.';
+  }
+
+  @override
+  String get profileNameInvalid =>
+      'Koristite slova i brojeve; bez kontrolnih znakova i znakova smera.';
+
+  @override
+  String get groupProfileTitle => 'Ime i slika grupe';
+
+  @override
+  String get groupProfileNameLabel => 'Ime grupe';
+
+  @override
+  String get groupProfileHelp =>
+      'Članovi ove grupe vide njeno ime i sliku. Server ih ne može pročitati.';
+
+  @override
+  String get profileBlockNote =>
+      'U grupama koje delite, možda i dalje vide vaš profil.';
 
   @override
   String get profileSectionIdentity => 'Identitet';

@@ -4,9 +4,11 @@ import 'package:flutter/material.dart';
 import '../../core/app_state.dart';
 import '../../core/errors.dart';
 import '../../core/models.dart';
+import '../../core/profile_service.dart';
 import '../../ui/avatar.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
+import '../../ui/photo_avatar.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/listenable_selector.dart';
@@ -196,6 +198,7 @@ class ChatListScreen extends StatelessWidget {
                   final conversation = chats[index - requestRows];
                   return _ConversationTile(
                     conversation: conversation,
+                    profiles: state.profiles,
                     muted: state.isMuted(conversation.id),
                     selected: embedded &&
                         state.selectedConversationId == conversation.id,
@@ -359,6 +362,7 @@ List<Object?> _chatListSelection(AppState state, {required bool embedded}) {
     state.showArchivedChats,
     for (final conversation in conversations) state.requestBucket(conversation),
     state.historyOnlyConversations.isNotEmpty,
+    state.profiles?.revision,
   ];
 }
 
@@ -367,12 +371,14 @@ class _ConversationTile extends StatelessWidget {
     required this.conversation,
     required this.onTap,
     required this.onActions,
+    this.profiles,
     this.muted = false,
     this.selected = false,
     this.hero = false,
   });
 
   final Conversation conversation;
+  final ProfileService? profiles;
   final VoidCallback onTap;
 
   /// Opens the row's mute/details menu.
@@ -390,7 +396,7 @@ class _ConversationTile extends StatelessWidget {
     final activityAt = conversation.lastActivityAt;
     final retention = conversation.retentionSeconds;
     final l10n = context.l10n;
-    final title = conversationTitle(l10n, conversation);
+    final title = conversationTitle(l10n, conversation, profiles: profiles);
     // MergeSemantics folds the title, activity time, and unread badge into a
     // single tappable node so a screen reader announces the row once.
     return MergeSemantics(
@@ -424,6 +430,7 @@ class _ConversationTile extends StatelessWidget {
                       conversation,
                       radius: 22,
                       hero: hero,
+                      profiles: profiles,
                     ),
                     const SizedBox(width: BoneSpacing.md),
                     Expanded(
@@ -563,7 +570,20 @@ IconData conversationIcon(Conversation conversation) {
   return Icons.group_outlined;
 }
 
-String conversationTitle(AppLocalizations l10n, Conversation conversation) {
+String conversationTitle(
+  AppLocalizations l10n,
+  Conversation conversation, {
+  ProfileService? profiles,
+}) {
+  // W11: a name shared by the person or the group comes first. It is never
+  // an identity: the account ID stays what a verification names.
+  final peer = conversation.peerAccountId;
+  final shared = conversation.isDm && peer != null
+      ? profiles?.account(peer)?.name
+      : conversation.isGroup
+          ? profiles?.conversation(conversation.id)?.name
+          : null;
+  if (shared != null) return shared;
   final title = conversation.title;
   if (title != null && title.isNotEmpty) {
     return title;
@@ -628,10 +648,16 @@ Widget conversationAvatar(
   Conversation conversation, {
   double radius = 24,
   bool hero = false,
+  ProfileService? profiles,
 }) {
   final peerId = conversation.peerAccountId;
   final colors = avatarColorsFor(context, peerId ?? conversation.id);
-  final avatar = ExcludeSemantics(
+  final photo = conversation.isDm && peerId != null
+      ? profiles?.account(peerId)?.photoPng
+      : conversation.isGroup
+          ? profiles?.conversation(conversation.id)?.photoPng
+          : null;
+  final initial = ExcludeSemantics(
     child: Container(
       width: radius * 2,
       height: radius * 2,
@@ -658,6 +684,9 @@ Widget conversationAvatar(
             ),
     ),
   );
+  final avatar = photo == null
+      ? initial
+      : PhotoAvatar(png: photo, radius: radius, fallback: initial);
   if (!hero) {
     return avatar;
   }

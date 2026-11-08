@@ -347,6 +347,32 @@
   "profileThisInstance": "this instance",
   "profileTitle": "Profile",
   "profileYourAccount": "Your account",
+  "profileDisplaySection": "Display name and photo",
+  "profileDisplayNameLabel": "Display name",
+  "profileDisplayNameHint": "How people you chat with see you",
+  "profileDisplayHelp": "Only people you share a chat with can see your name and photo. The server can't read them.",
+  "profileEditTile": "Name and photo",
+  "profileEditTitle": "Name and photo",
+  "profilePhotoChoose": "Choose photo",
+  "profilePhotoRemove": "Remove photo",
+  "profilePhotoUnusable": "That picture can't be used. Try another one.",
+  "profileSave": "Save",
+  "profileSaved": "Saved",
+  "profileSaveConflict": "This profile was changed on another device. Try again in a moment.",
+  "profileSaveInvalid": "That name or photo can't be used.",
+  "profileNameTooLong": "At most {max} characters.",
+  "@profileNameTooLong": {
+    "placeholders": {
+      "max": {
+        "type": "int"
+      }
+    }
+  },
+  "profileNameInvalid": "Use letters and numbers; no control or direction characters.",
+  "groupProfileTitle": "Group name and photo",
+  "groupProfileNameLabel": "Group name",
+  "groupProfileHelp": "Members of this group can see its name and photo. The server can't read them.",
+  "profileBlockNote": "In groups you share, they may still see your profile.",
   "profileSectionIdentity": "Identity",
   "profileNotAvailable": "Not available",
   "profileCurrentDevice": "Current device",

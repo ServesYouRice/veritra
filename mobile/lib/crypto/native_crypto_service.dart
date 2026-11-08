@@ -26,7 +26,15 @@ import '../storage/encrypted_database.dart'
         MessageEffect,
         ReactionEffect;
 import '../storage/encrypted_database.dart'
-    show PinMessageEffect, PollCloseEffect, PollVoteEffect;
+    show
+        PinMessageEffect,
+        PollCloseEffect,
+        PollVoteEffect,
+        ProfileKeyEffect,
+        profileSubjectAccount,
+        profileSubjectConversation;
+import 'profile_key_payload.dart';
+import 'profile_record_codec.dart' show ProfileRecordCodec;
 import '../storage/history_snapshot.dart'
     show HistoryImportContext, HistorySnapshot;
 import '../storage/local_store.dart';
@@ -53,6 +61,7 @@ class NativeCryptoService
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
         NoticeCaptureConsumer,
+        ProfileCodecSource,
         RecoveryCryptoService,
         ReportCryptoService {
   NativeCryptoService({
@@ -63,6 +72,9 @@ class NativeCryptoService
   }) : _clock = clock ?? DateTime.now;
 
   final NativeCryptoBindings bindings;
+
+  @override
+  ProfileRecordCodec get profileCodec => ProfileRecordCodec(bindings);
   final LocalStore localStore;
 
   /// What the receive path does with a payload that carries no franking key
@@ -3112,7 +3124,65 @@ const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
   AppPayloadType.poll,
   AppPayloadType.pollVote,
   AppPayloadType.pollClose,
+  AppPayloadType.profileKey,
+  AppPayloadType.groupProfileKey,
 };
+
+/// The profile keys a payload carries, as store effects (W11). The key body
+/// of `profile_key` and its sidecar belong to the sender's own account; the
+/// group variants belong to the conversation the message arrived in and only
+/// a group takes one. A key that breaks the field rules is dropped alone.
+List<MessageEffect> profileKeyEffects(
+  DecryptedAppPayload payload, {
+  required String conversationId,
+  required String senderAccountId,
+  required int receivedAt,
+  String? conversationKind,
+}) {
+  final body = payload.body;
+  final Object? account;
+  final Object? group;
+  switch (payload.type) {
+    case AppPayloadType.profileKey:
+      account = body;
+      group = null;
+    case AppPayloadType.groupProfileKey:
+      account = null;
+      group = body;
+    case AppPayloadType.text:
+    case AppPayloadType.reply:
+    case AppPayloadType.attachmentManifest:
+    case AppPayloadType.poll:
+      account = body[profileKeyBodyName];
+      group = body[groupProfileKeyBodyName];
+    default:
+      return const <MessageEffect>[];
+  }
+  final effects = <MessageEffect>[];
+  final accountKey = parseProfileKey(account);
+  if (accountKey != null) {
+    effects.add(ProfileKeyEffect(
+        kind: profileSubjectAccount,
+        subjectId: senderAccountId,
+        key: accountKey.key,
+        keyId: accountKey.keyId,
+        version: accountKey.version,
+        receivedAt: receivedAt));
+  }
+  final groupKey = parseProfileKey(group);
+  // Only a plain group has a group profile; a DM, a community or a channel
+  // takes none (C3 may reuse this later). An unknown kind is refused too.
+  if (groupKey != null && conversationKind == 'group') {
+    effects.add(ProfileKeyEffect(
+        kind: profileSubjectConversation,
+        subjectId: conversationId,
+        key: groupKey.key,
+        keyId: groupKey.keyId,
+        version: groupKey.version,
+        receivedAt: receivedAt));
+  }
+  return effects;
+}
 
 /// The local history key of a message: its authenticated sender device and
 /// action ID (D22). The server cannot choose or change either part.
@@ -3139,6 +3209,18 @@ List<MessageEffect> messageEffectsFor(
   final forwarded = body['forwarded'];
   final rawHops = forwarded is Map ? forwarded['hops'] : null;
   final hops = rawHops is int ? rawHops.clamp(1, 5) : null;
+  // W11: keys ride in key messages and as sidecars on posts. A key this
+  // device sent itself (a pending row) is already held, so only received ones
+  // become effects.
+  List<MessageEffect> keys() => state == LocalMessageState.pending
+      ? const <MessageEffect>[]
+      : profileKeyEffects(
+          payload,
+          conversationId: conversationId,
+          senderAccountId: senderAccountId,
+          receivedAt: createdAt,
+          conversationKind: authority?.conversationKind(conversationId),
+        );
   InsertMessageEffect row(String kind, {String? text, String? replyTo}) =>
       InsertMessageEffect(
         key: messageKey(senderDeviceId, payload.actionId),
@@ -3159,11 +3241,13 @@ List<MessageEffect> messageEffectsFor(
   return switch (payload.type) {
     AppPayloadType.text => <MessageEffect>[
         row(LocalMessageKind.text, text: body['text'] as String),
+        ...keys(),
       ],
     AppPayloadType.reply => <MessageEffect>[
         row(LocalMessageKind.text,
             text: body['text'] as String,
             replyTo: body['reply_to_id'] as String),
+        ...keys(),
       ],
     AppPayloadType.edit => <MessageEffect>[
         row(LocalMessageKind.action),
@@ -3200,6 +3284,7 @@ List<MessageEffect> messageEffectsFor(
       ],
     AppPayloadType.attachmentManifest => <MessageEffect>[
         row(LocalMessageKind.attachment, text: jsonEncode(body['attachments'])),
+        ...keys(),
       ],
     AppPayloadType.pin => <MessageEffect>[
         row(LocalMessageKind.action),
@@ -3222,6 +3307,13 @@ List<MessageEffect> messageEffectsFor(
       ],
     AppPayloadType.poll => <MessageEffect>[
         row(LocalMessageKind.poll, text: pollRowBody(body)),
+        ...keys(),
+      ],
+    AppPayloadType.profileKey ||
+    AppPayloadType.groupProfileKey =>
+      <MessageEffect>[
+        row(LocalMessageKind.action),
+        ...keys(),
       ],
     AppPayloadType.pollVote => <MessageEffect>[
         row(LocalMessageKind.action),

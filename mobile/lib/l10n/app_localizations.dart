@@ -1599,6 +1599,120 @@ abstract class AppLocalizations {
   /// **'Your account'**
   String get profileYourAccount;
 
+  /// No description provided for @profileDisplaySection.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name and photo'**
+  String get profileDisplaySection;
+
+  /// No description provided for @profileDisplayNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Display name'**
+  String get profileDisplayNameLabel;
+
+  /// No description provided for @profileDisplayNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'How people you chat with see you'**
+  String get profileDisplayNameHint;
+
+  /// No description provided for @profileDisplayHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Only people you share a chat with can see your name and photo. The server can\'t read them.'**
+  String get profileDisplayHelp;
+
+  /// No description provided for @profileEditTile.
+  ///
+  /// In en, this message translates to:
+  /// **'Name and photo'**
+  String get profileEditTile;
+
+  /// No description provided for @profileEditTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Name and photo'**
+  String get profileEditTitle;
+
+  /// No description provided for @profilePhotoChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose photo'**
+  String get profilePhotoChoose;
+
+  /// No description provided for @profilePhotoRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove photo'**
+  String get profilePhotoRemove;
+
+  /// No description provided for @profilePhotoUnusable.
+  ///
+  /// In en, this message translates to:
+  /// **'That picture can\'t be used. Try another one.'**
+  String get profilePhotoUnusable;
+
+  /// No description provided for @profileSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get profileSave;
+
+  /// No description provided for @profileSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved'**
+  String get profileSaved;
+
+  /// No description provided for @profileSaveConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'This profile was changed on another device. Try again in a moment.'**
+  String get profileSaveConflict;
+
+  /// No description provided for @profileSaveInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'That name or photo can\'t be used.'**
+  String get profileSaveInvalid;
+
+  /// No description provided for @profileNameTooLong.
+  ///
+  /// In en, this message translates to:
+  /// **'At most {max} characters.'**
+  String profileNameTooLong(int max);
+
+  /// No description provided for @profileNameInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Use letters and numbers; no control or direction characters.'**
+  String get profileNameInvalid;
+
+  /// No description provided for @groupProfileTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name and photo'**
+  String get groupProfileTitle;
+
+  /// No description provided for @groupProfileNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Group name'**
+  String get groupProfileNameLabel;
+
+  /// No description provided for @groupProfileHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Members of this group can see its name and photo. The server can\'t read them.'**
+  String get groupProfileHelp;
+
+  /// No description provided for @profileBlockNote.
+  ///
+  /// In en, this message translates to:
+  /// **'In groups you share, they may still see your profile.'**
+  String get profileBlockNote;
+
   /// No description provided for @profileSectionIdentity.
   ///
   /// In en, this message translates to:
