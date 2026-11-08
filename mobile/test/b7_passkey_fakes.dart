@@ -9,6 +9,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/passkeys.dart';
+import 'package:private_messenger/push/push_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -74,6 +75,10 @@ class PkApi extends ApiClient {
   Object? registerFailure;
   final List<String> trace = <String>[];
   final List<SyncEvent> events = <SyncEvent>[];
+
+  /// Holds the next sync page until completed (a late result).
+  Completer<void>? syncGate;
+  bool closedByHost = false;
   List<PasskeyRecord> records = <PasskeyRecord>[];
   Session signedIn = const Session(
     baseUrl: pkOrigin,
@@ -167,12 +172,34 @@ class PkApi extends ApiClient {
     String token, {
     int after = 0,
     int limit = 100,
-  }) async =>
-      events.where((e) => e.id > after).take(limit).toList(growable: false);
+  }) async {
+    final gate = syncGate;
+    if (gate != null) {
+      syncGate = null;
+      await gate.future;
+    }
+    return events
+        .where((e) => e.id > after)
+        .take(limit)
+        .toList(growable: false);
+  }
 
   @override
-  Future<Map<String, Object?>> pushConfig(String token) async =>
-      const <String, Object?>{'enabled': false};
+  void close() {
+    closedByHost = true;
+    super.close();
+  }
+
+  /// Offers push, so the app registers one.
+  bool pushEnabled = false;
+
+  @override
+  Future<Map<String, Object?>> pushConfig(String token) async => pushEnabled
+      ? <String, Object?>{
+          'enabled': true,
+          'providers': <String>['fcm'],
+        }
+      : const <String, Object?>{'enabled': false};
 
   @override
   Future<void> logout(String token) async {}
@@ -190,6 +217,7 @@ class PkApi extends ApiClient {
 
 class PkQuietSync implements SyncService {
   final _controller = StreamController<Map<String, Object?>>.broadcast();
+  bool disposed = false;
 
   @override
   Stream<Map<String, Object?>> get events => _controller.stream;
@@ -198,7 +226,10 @@ class PkQuietSync implements SyncService {
   Future<void> connect() async {}
 
   @override
-  Future<void> dispose() => _controller.close();
+  Future<void> dispose() {
+    disposed = true;
+    return _controller.close();
+  }
 }
 
 class PkHarness {
@@ -208,15 +239,22 @@ class PkHarness {
       apiClientFactory: (_) => api,
       cryptoService: TestOnlyCryptoService(),
       localStore: store,
-      syncServiceFactory: (_, __) => PkQuietSync(),
+      syncServiceFactory: (_, __) {
+        final sync = PkQuietSync();
+        syncs.add(sync);
+        return sync;
+      },
       passkeyClient: passkeys,
+      pushService: push,
       passkeyPlatform: platform ?? PasskeyPlatform.android,
       passkeyAppleDomains: const <String>['chat.example.com'],
     );
   }
 
   final MemoryLocalStore store = MemoryLocalStore();
+  final List<PkQuietSync> syncs = <PkQuietSync>[];
   final PkApi api = PkApi();
+  final FakePush push = FakePush();
   final FakePasskeys passkeys;
   late final AppState state;
 
@@ -243,4 +281,27 @@ class PkHarness {
   }
 
   void dispose() => state.dispose();
+}
+
+/// A push service that records registrations and can refuse to unregister.
+class FakePush extends DisabledMobilePushService {
+  bool failUnregister = false;
+  int unregisterAttempts = 0;
+  final List<String> registered = <String>[];
+
+  @override
+  Future<void> register({
+    required String instance,
+    String vapid = '',
+    List<String> providers = const <String>[],
+  }) async {
+    registered.add(instance);
+  }
+
+  @override
+  Future<void> unregister(String instance) async {
+    unregisterAttempts++;
+    if (failUnregister) throw StateError('native refused');
+    registered.remove(instance);
+  }
 }

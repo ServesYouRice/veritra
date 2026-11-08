@@ -239,4 +239,58 @@ void main() {
     expect(bootstrap.nativeSilent, false);
     expect(bootstrap.canOptIn, false);
   });
+
+  test('a new profile installs after the old one is uninstalled (B7 switch)',
+      () async {
+    Future<WakeOutcome> run(WakePermit _) async => WakeOutcome.committed;
+    Future<void> cancel(WakeCancellation _) async {}
+    expect(await bridge.install(profile: 'demo', onRun: run, onCancel: cancel),
+        isTrue);
+    // While one profile is bound, another is refused for the process.
+    expect(
+        await bridge.install(
+            profile: 'demo-a-abcdefghijkl', onRun: run, onCancel: cancel),
+        isFalse);
+
+    expect(await bridge.uninstall('demo'), isTrue);
+    expect(
+        await bridge.install(
+            profile: 'demo-a-abcdefghijkl', onRun: run, onCancel: cancel),
+        isTrue);
+    final installs = calls.where((c) => c.method == 'install').toList();
+    expect(installs.last.arguments['profile'], 'demo-a-abcdefghijkl');
+  });
+
+  test('a wake for the profile that was left is refused after the rebind',
+      () async {
+    var ran = 0;
+    Future<WakeOutcome> run(WakePermit _) async {
+      ran++;
+      return WakeOutcome.committed;
+    }
+
+    Future<void> cancel(WakeCancellation _) async {}
+    await bridge.install(profile: 'demo', onRun: run, onCancel: cancel);
+    await bridge.uninstall('demo');
+    await bridge.install(
+        profile: 'demo-a-abcdefghijkl', onRun: run, onCancel: cancel);
+
+    final stale = await nativeCall('run', runRequest()) as Map;
+    expect(stale['outcome'], 'unavailable');
+    expect(ran, 0);
+    final current = await nativeCall(
+        'run', {...runRequest(), 'profile': 'demo-a-abcdefghijkl'}) as Map;
+    expect(current['outcome'], 'committed');
+    expect(ran, 1);
+    // Permit checks and notices are bound to the open profile as well.
+    expect(
+        (await bridge.validatePermit(WakePermit(
+                permit: id,
+                profile: 'demo',
+                wakeGeneration: 7,
+                budgetMs: 1000,
+                deadlineEpochMs: 1790000000000)))
+            .active,
+        isFalse);
+  });
 }

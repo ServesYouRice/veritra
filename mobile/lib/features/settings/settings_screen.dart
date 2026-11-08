@@ -23,6 +23,8 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../../core/account_host.dart';
+import 'accounts_screen.dart';
 import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
@@ -108,6 +110,18 @@ class SettingsScreen extends StatelessWidget {
                     subtitle: Text(l10n.settingsChangePasswordDetail),
                     onTap: state.busy ? null : () => _changePassword(context),
                   ),
+                  if (AccountHostScope.maybeOf(context) case final host?)
+                    ListTile(
+                      key: const ValueKey<String>('settings-accounts'),
+                      leading: const Icon(Icons.switch_account_outlined),
+                      title: Text(l10n.settingsAccounts),
+                      subtitle: Text(l10n.settingsAccountsDetail),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => AccountsScreen(host: host),
+                        ),
+                      ),
+                    ),
                   if (state.passkeyClient.platformSupported)
                     ListTile(
                       key: const ValueKey<String>('settings-passkeys'),

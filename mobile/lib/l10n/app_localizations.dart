@@ -5498,6 +5498,150 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Passkey'**
   String get passkeyNamePrefix;
+
+  /// No description provided for @settingsAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get settingsAccounts;
+
+  /// No description provided for @settingsAccountsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch between the accounts on this device'**
+  String get settingsAccountsDetail;
+
+  /// No description provided for @accountsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get accountsTitle;
+
+  /// No description provided for @accountsIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'One account is open at a time. The others are paused: no messages or notifications arrive for them until you switch to them.'**
+  String get accountsIntro;
+
+  /// No description provided for @accountsOpenNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Open now'**
+  String get accountsOpenNow;
+
+  /// No description provided for @accountsPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Not signed in yet'**
+  String get accountsPending;
+
+  /// No description provided for @accountsRemoving.
+  ///
+  /// In en, this message translates to:
+  /// **'Removing…'**
+  String get accountsRemoving;
+
+  /// No description provided for @accountsNewAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'New account'**
+  String get accountsNewAccount;
+
+  /// No description provided for @accountsAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add an account'**
+  String get accountsAdd;
+
+  /// No description provided for @accountsFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This device holds {count} accounts, the most it can. Remove one to add another.'**
+  String accountsFull(String count);
+
+  /// No description provided for @accountsSameServer.
+  ///
+  /// In en, this message translates to:
+  /// **'This server can tell that these accounts are on the same device.'**
+  String get accountsSameServer;
+
+  /// No description provided for @accountsSwitching.
+  ///
+  /// In en, this message translates to:
+  /// **'Switching…'**
+  String get accountsSwitching;
+
+  /// No description provided for @accountsSwitchTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to {name}'**
+  String accountsSwitchTo(String name);
+
+  /// No description provided for @accountsRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from this device'**
+  String get accountsRemove;
+
+  /// No description provided for @accountsRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name} from this device?'**
+  String accountsRemoveTitle(String name);
+
+  /// No description provided for @accountsRemoveBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This signs the account out and deletes its messages and keys from this device. The account stays on its server. If you will not use this device again, remove it from the account\'s device list on another device.'**
+  String get accountsRemoveBody;
+
+  /// No description provided for @accountsPushFailTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch anyway?'**
+  String get accountsPushFailTitle;
+
+  /// No description provided for @accountsPushFailBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications for {name} could not be turned off. You may get notifications for this account until you open it again.'**
+  String accountsPushFailBody(String name);
+
+  /// No description provided for @accountsSwitchAnyway.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch anyway'**
+  String get accountsSwitchAnyway;
+
+  /// No description provided for @accountsErrorOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'That account could not be opened. The previous account is open again.'**
+  String get accountsErrorOpen;
+
+  /// No description provided for @accountsErrorRegistry.
+  ///
+  /// In en, this message translates to:
+  /// **'The account list could not be saved.'**
+  String get accountsErrorRegistry;
+
+  /// No description provided for @accountsErrorRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'The account could not be removed. Try again.'**
+  String get accountsErrorRemove;
+
+  /// No description provided for @accountsDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'This device already has that account, so the extra sign-in was removed. Remove this device\'s extra entry from the account\'s device list.'**
+  String get accountsDuplicate;
+
+  /// No description provided for @accountsBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back to my accounts'**
+  String get accountsBack;
 }
 
 class _AppLocalizationsDelegate

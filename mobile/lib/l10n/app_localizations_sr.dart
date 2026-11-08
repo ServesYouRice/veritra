@@ -3348,6 +3348,93 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get passkeyNamePrefix => 'Приступни кључ';
+
+  @override
+  String get settingsAccounts => 'Налози';
+
+  @override
+  String get settingsAccountsDetail =>
+      'Пребацивање између налога на овом уређају';
+
+  @override
+  String get accountsTitle => 'Налози';
+
+  @override
+  String get accountsIntro =>
+      'Један налог је отворен у исто време. Остали су паузирани: за њих не стижу поруке ни обавештења док се на њих не пребаците.';
+
+  @override
+  String get accountsOpenNow => 'Отворен';
+
+  @override
+  String get accountsPending => 'Још није пријављен';
+
+  @override
+  String get accountsRemoving => 'Уклањање…';
+
+  @override
+  String get accountsNewAccount => 'Нови налог';
+
+  @override
+  String get accountsAdd => 'Додај налог';
+
+  @override
+  String accountsFull(String count) {
+    return 'Овај уређај држи $count налога, највише што може. Уклоните један да бисте додали други.';
+  }
+
+  @override
+  String get accountsSameServer =>
+      'Овај сервер може да закључи да су ови налози на истом уређају.';
+
+  @override
+  String get accountsSwitching => 'Пребацивање…';
+
+  @override
+  String accountsSwitchTo(String name) {
+    return 'Пребаци на $name';
+  }
+
+  @override
+  String get accountsRemove => 'Уклони са овог уређаја';
+
+  @override
+  String accountsRemoveTitle(String name) {
+    return 'Уклонити $name са овог уређаја?';
+  }
+
+  @override
+  String get accountsRemoveBody =>
+      'Налог се одјављује, а његове поруке и кључеви бришу са овог уређаја. Налог остаје на свом серверу. Ако више нећете користити овај уређај, уклоните га са листе уређаја налога на другом уређају.';
+
+  @override
+  String get accountsPushFailTitle => 'Ипак пребацити?';
+
+  @override
+  String accountsPushFailBody(String name) {
+    return 'Обавештења за $name нису могла да се искључе. Можда ћете добијати обавештења за овај налог док га поново не отворите.';
+  }
+
+  @override
+  String get accountsSwitchAnyway => 'Ипак пребаци';
+
+  @override
+  String get accountsErrorOpen =>
+      'Тај налог није могао да се отвори. Претходни налог је поново отворен.';
+
+  @override
+  String get accountsErrorRegistry => 'Списак налога није могао да се сачува.';
+
+  @override
+  String get accountsErrorRemove =>
+      'Налог није могао да се уклони. Покушајте поново.';
+
+  @override
+  String get accountsDuplicate =>
+      'Овај уређај већ има тај налог, па је додатна пријава уклоњена. Уклоните вишак уређаја са листе уређаја налога.';
+
+  @override
+  String get accountsBack => 'Назад на моје налоге';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6698,4 +6785,91 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get passkeyNamePrefix => 'Pristupni ključ';
+
+  @override
+  String get settingsAccounts => 'Nalozi';
+
+  @override
+  String get settingsAccountsDetail =>
+      'Prebacivanje između naloga na ovom uređaju';
+
+  @override
+  String get accountsTitle => 'Nalozi';
+
+  @override
+  String get accountsIntro =>
+      'Jedan nalog je otvoren u isto vreme. Ostali su pauzirani: za njih ne stižu poruke ni obaveštenja dok se na njih ne prebacite.';
+
+  @override
+  String get accountsOpenNow => 'Otvoren';
+
+  @override
+  String get accountsPending => 'Još nije prijavljen';
+
+  @override
+  String get accountsRemoving => 'Uklanjanje…';
+
+  @override
+  String get accountsNewAccount => 'Novi nalog';
+
+  @override
+  String get accountsAdd => 'Dodaj nalog';
+
+  @override
+  String accountsFull(String count) {
+    return 'Ovaj uređaj drži $count naloga, najviše što može. Uklonite jedan da biste dodali drugi.';
+  }
+
+  @override
+  String get accountsSameServer =>
+      'Ovaj server može da zaključi da su ovi nalozi na istom uređaju.';
+
+  @override
+  String get accountsSwitching => 'Prebacivanje…';
+
+  @override
+  String accountsSwitchTo(String name) {
+    return 'Prebaci na $name';
+  }
+
+  @override
+  String get accountsRemove => 'Ukloni sa ovog uređaja';
+
+  @override
+  String accountsRemoveTitle(String name) {
+    return 'Ukloniti $name sa ovog uređaja?';
+  }
+
+  @override
+  String get accountsRemoveBody =>
+      'Nalog se odjavljuje, a njegove poruke i ključevi brišu sa ovog uređaja. Nalog ostaje na svom serveru. Ako više nećete koristiti ovaj uređaj, uklonite ga sa liste uređaja naloga na drugom uređaju.';
+
+  @override
+  String get accountsPushFailTitle => 'Ipak prebaciti?';
+
+  @override
+  String accountsPushFailBody(String name) {
+    return 'Obaveštenja za $name nisu mogla da se isključe. Možda ćete dobijati obaveštenja za ovaj nalog dok ga ponovo ne otvorite.';
+  }
+
+  @override
+  String get accountsSwitchAnyway => 'Ipak prebaci';
+
+  @override
+  String get accountsErrorOpen =>
+      'Taj nalog nije mogao da se otvori. Prethodni nalog je ponovo otvoren.';
+
+  @override
+  String get accountsErrorRegistry => 'Spisak naloga nije mogao da se sačuva.';
+
+  @override
+  String get accountsErrorRemove =>
+      'Nalog nije mogao da se ukloni. Pokušajte ponovo.';
+
+  @override
+  String get accountsDuplicate =>
+      'Ovaj uređaj već ima taj nalog, pa je dodatna prijava uklonjena. Uklonite višak uređaja sa liste uređaja naloga.';
+
+  @override
+  String get accountsBack => 'Nazad na moje naloge';
 }

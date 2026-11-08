@@ -428,11 +428,16 @@ class AccountRegistryStore {
       registry.slots.lastWhere((s) => s.state == SlotState.pending).namespace;
 }
 
+/// Deletes one slot's data; the host depends on this, tests fake it.
+abstract class SlotErasing {
+  Future<void> erase(String namespace);
+}
+
 /// Removes every file and key of one slot. A delete, not the quarantine
 /// reset. Never deletes the support directory recursively: the primary slot
 /// in release builds is the support directory itself, and the
 /// `profiles/<namespace>` folders inside it belong to other slots.
-class SlotEraser {
+class SlotEraser implements SlotErasing {
   SlotEraser({
     required SlotKeyValue storage,
     required this.scope,
@@ -455,6 +460,7 @@ class SlotEraser {
     'veritra-local.reset-intent.tmp',
   ];
 
+  @override
   Future<void> erase(String namespace) async {
     final slot = scope.forNamespace(namespace);
     final base = await _directoryProvider();

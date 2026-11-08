@@ -956,5 +956,57 @@
   "passkeyNoticeAdded": "Pristupni ključ je dodat vašem nalogu. Niste vi? Promenite lozinku.",
   "passkeyNoticeRemoved": "Pristupni ključ je uklonjen sa vašeg naloga.",
   "passkeyNoticeDismiss": "Odbaci",
-  "passkeyNamePrefix": "Pristupni ključ"
+  "passkeyNamePrefix": "Pristupni ključ",
+  "settingsAccounts": "Nalozi",
+  "settingsAccountsDetail": "Prebacivanje između naloga na ovom uređaju",
+  "accountsTitle": "Nalozi",
+  "accountsIntro": "Jedan nalog je otvoren u isto vreme. Ostali su pauzirani: za njih ne stižu poruke ni obaveštenja dok se na njih ne prebacite.",
+  "accountsOpenNow": "Otvoren",
+  "accountsPending": "Još nije prijavljen",
+  "accountsRemoving": "Uklanjanje…",
+  "accountsNewAccount": "Novi nalog",
+  "accountsAdd": "Dodaj nalog",
+  "accountsFull": "Ovaj uređaj drži {count} naloga, najviše što može. Uklonite jedan da biste dodali drugi.",
+  "@accountsFull": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsSameServer": "Ovaj server može da zaključi da su ovi nalozi na istom uređaju.",
+  "accountsSwitching": "Prebacivanje…",
+  "accountsSwitchTo": "Prebaci na {name}",
+  "@accountsSwitchTo": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsRemove": "Ukloni sa ovog uređaja",
+  "accountsRemoveTitle": "Ukloniti {name} sa ovog uređaja?",
+  "@accountsRemoveTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsRemoveBody": "Nalog se odjavljuje, a njegove poruke i ključevi brišu sa ovog uređaja. Nalog ostaje na svom serveru. Ako više nećete koristiti ovaj uređaj, uklonite ga sa liste uređaja naloga na drugom uređaju.",
+  "accountsPushFailTitle": "Ipak prebaciti?",
+  "accountsPushFailBody": "Obaveštenja za {name} nisu mogla da se isključe. Možda ćete dobijati obaveštenja za ovaj nalog dok ga ponovo ne otvorite.",
+  "@accountsPushFailBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsSwitchAnyway": "Ipak prebaci",
+  "accountsErrorOpen": "Taj nalog nije mogao da se otvori. Prethodni nalog je ponovo otvoren.",
+  "accountsErrorRegistry": "Spisak naloga nije mogao da se sačuva.",
+  "accountsErrorRemove": "Nalog nije mogao da se ukloni. Pokušajte ponovo.",
+  "accountsDuplicate": "Ovaj uređaj već ima taj nalog, pa je dodatna prijava uklonjena. Uklonite višak uređaja sa liste uređaja naloga.",
+  "accountsBack": "Nazad na moje naloge"
 }
