@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import posix_shell
 
+import contextlib
 import copy
 import hashlib
 import importlib.util
@@ -12,6 +13,7 @@ import io
 import json
 import os
 import plistlib
+import random
 import re
 import shutil
 import struct
@@ -215,14 +217,101 @@ def signed_record(file_name: str, digest: str) -> dict[str, object]:
     }
 
 
-# --- Synthetic Android artifacts. No signing material: the "certificates"
-# are placeholder bytes, laid out as APK Signature Scheme v2/v3 blocks.
+# --- Synthetic Android artifacts. No real signing material: the keys are
+# throwaway ones generated at run time from fixed seeds (never committed), the
+# certificates are hand-built DER around them, laid out as APK Signature
+# Scheme v2/v3 blocks that really verify.
 
 APK_V2, APK_V3 = 0x7109871A, 0xF05368C0
-RELEASE_CERT = b"0\x82synthetic-placeholder CN=Veritra Release"
-OTHER_CERT = b"0\x82synthetic-placeholder CN=Someone Else"
-DEBUG_CERT = b"0\x82synthetic-placeholder C=US, O=Android, CN=Android Debug"
 APP_ID = "org.veritra.private_messenger"
+
+
+def is_prime(n: int, rng: random.Random) -> bool:
+    if n < 2:
+        return False
+    for small in (2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37):
+        if n % small == 0:
+            return n == small
+    d, r = n - 1, 0
+    while d % 2 == 0:
+        d, r = d // 2, r + 1
+    for _ in range(16):
+        x = pow(rng.randrange(2, n - 1), d, n)
+        if x in (1, n - 1):
+            continue
+        for _ in range(r - 1):
+            x = pow(x, 2, n)
+            if x == n - 1:
+                break
+        else:
+            return False
+    return True
+
+
+def rsa_prime(rng: random.Random, bits: int) -> int:
+    while True:
+        candidate = rng.getrandbits(bits) | (1 << (bits - 1)) | 1
+        if is_prime(candidate, rng):
+            return candidate
+
+
+def rsa_key(seed: int, bits: int = 1024) -> tuple[int, int, int]:
+    """(n, e, d) for a throwaway key from a fixed seed."""
+    rng = random.Random(seed)
+    while True:
+        p, q = rsa_prime(rng, bits // 2), rsa_prime(rng, bits // 2)
+        phi = (p - 1) * (q - 1)
+        if p != q and phi % 65537:
+            return p * q, 65537, pow(65537, -1, phi)
+
+
+def der(tag: int, payload: bytes) -> bytes:
+    size = len(payload)
+    head = bytes([size]) if size < 0x80 else bytes([0x80 | (size.bit_length() + 7) // 8]) + size.to_bytes((size.bit_length() + 7) // 8, "big")
+    return bytes([tag]) + head + payload
+
+
+def der_int(value: int) -> bytes:
+    raw = value.to_bytes(value.bit_length() // 8 + 1, "big")
+    return der(0x02, raw)
+
+
+def spki_rsa(n: int, e: int) -> bytes:
+    algorithm = der(0x30, bytes.fromhex("06092a864886f70d0101010500"))
+    return der(0x30, algorithm + der(0x03, b"\0" + der(0x30, der_int(n) + der_int(e))))
+
+
+def rsa_sign(key: tuple[int, int, int], message: bytes, hash_name: str = "sha256") -> bytes:
+    n, _, d = key
+    size = (n.bit_length() + 7) // 8
+    info = {"sha256": "3031300d060960864801650304020105000420", "sha512": "3051300d060960864801650304020305000440"}[hash_name]
+    suffix = bytes.fromhex(info) + hashlib.new(hash_name, message).digest()
+    block = b"\x00\x01" + b"\xff" * (size - len(suffix) - 3) + b"\x00" + suffix
+    return pow(int.from_bytes(block, "big"), d, n).to_bytes(size, "big")
+
+
+def name_der(common_name: str, extra: tuple[tuple[str, str], ...] = ()) -> bytes:
+    oids = {"C": "0603550406", "O": "060355040a", "CN": "0603550403"}
+    parts = [(key, value) for key, value in extra] + [("CN", common_name)]
+    return der(0x30, b"".join(der(0x31, der(0x30, bytes.fromhex(oids[key]) + der(0x0C, value.encode()))) for key, value in parts))
+
+
+def make_certificate(common_name: str, spki: bytes, extra: tuple[tuple[str, str], ...] = ()) -> bytes:
+    """A DER X.509 certificate around ``spki``. Its own signature is a dummy:
+    Android does not verify it, and neither does the checker."""
+    sig_alg = der(0x30, bytes.fromhex("06092a864886f70d01010b0500"))
+    validity = der(0x30, der(0x17, b"260101000000Z") + der(0x17, b"360101000000Z"))
+    tbs = der(0x30, der(0xA0, der_int(2)) + der_int(1) + sig_alg + name_der(common_name, extra) + validity
+              + name_der(common_name, extra) + spki)
+    return der(0x30, tbs + sig_alg + der(0x03, b"\0" + b"\x01" * 64))
+
+
+RSA_KEYS = {name: rsa_key(seed) for name, seed in (("release", 1), ("other", 2), ("debug", 3), ("stranger", 4))}
+RELEASE_CERT = make_certificate("Veritra Release", spki_rsa(*RSA_KEYS["release"][:2]))
+OTHER_CERT = make_certificate("Someone Else", spki_rsa(*RSA_KEYS["other"][:2]))
+DEBUG_CERT = make_certificate("Android Debug", spki_rsa(*RSA_KEYS["debug"][:2]), (("C", "US"), ("O", "Android")))
+SIGNING_KEYS = {RELEASE_CERT: RSA_KEYS["release"], OTHER_CERT: RSA_KEYS["other"], DEBUG_CERT: RSA_KEYS["debug"]}
+STRANGER_SPKI = spki_rsa(*RSA_KEYS["stranger"][:2])  # a public key that is nobody's certificate
 
 
 def fingerprint(cert: bytes) -> str:
@@ -376,15 +465,67 @@ def axml(
     return struct.pack("<HHI", 0x0003, 8, 8 + len(body)) + body
 
 
-def apk_signer(cert: bytes, scheme: int) -> bytes:
-    digests = lp(lp(struct.pack("<I", 0x0103) + lp(b"\0" * 32)))
+def apk_digests(zip_bytes: bytes) -> dict[str, bytes]:
+    """The APK Signature Scheme v2 content digest of an unsigned zip, per hash.
+
+    Written from the scheme's description, separately from the checker: the
+    zip entries, central directory and end record are chunked per section
+    (1 MiB, 0xa5 prefix), then hashed together under a 0x5a prefix. The end
+    record's central directory offset is the signing block's start, which in
+    an unsigned zip is where the central directory starts.
+    """
+    eocd = zip_bytes.rfind(b"PK\x05\x06")
+    cd_offset = struct.unpack_from("<I", zip_bytes, eocd + 16)[0]
+    sections = [zip_bytes[:cd_offset], zip_bytes[cd_offset:eocd], zip_bytes[eocd:]]
+    result = {}
+    for name in ("sha256", "sha512"):
+        chunks = [
+            hashlib.new(name, b"\xa5" + struct.pack("<I", len(part)) + part).digest()
+            for section in sections
+            for part in (section[i:i + (1 << 20)] for i in range(0, len(section), 1 << 20))
+        ]
+        result[name] = hashlib.new(name, b"\x5a" + struct.pack("<I", len(chunks)) + b"".join(chunks)).digest()
+    return result
+
+
+PLACEHOLDER_DIGESTS = {"sha256": b"\0" * 32, "sha512": b"\0" * 64}
+
+
+def apk_signer(
+    cert: bytes,
+    scheme: int,
+    digests: dict[str, bytes] | None = None,
+    *,
+    algorithm: int = 0x0103,
+    tamper: str = "",
+    public_key: bytes | None = None,
+) -> bytes:
+    """One signer that genuinely verifies (RSA PKCS#1 v1.5, SHA-256 by default).
+
+    ``digests`` are the content digests of the zip being signed; without them
+    the signer carries placeholder digests, for blocks that are not meant to
+    verify. ``tamper`` breaks one thing on purpose: "signature" (a bit flipped
+    in the signature), "digest" (a wrong digest, correctly signed), "algorithm"
+    (an algorithm ID Android does not define, correctly signed) or
+    "other-key" (signed by a key that is not the certificate's).
+    """
+    hash_name = "sha256" if algorithm in (0x0101, 0x0103) else "sha512"
+    digest = (digests or PLACEHOLDER_DIGESTS)[hash_name]
+    if tamper == "digest":
+        digest = bytes([digest[0] ^ 1]) + digest[1:]
+    entry = struct.pack("<I", 0x0FFF if tamper == "algorithm" else algorithm)
+    digest_list = lp(lp(entry + lp(digest)))
     certificates = lp(lp(cert))
     sdks = struct.pack("<II", 24, 0x7FFFFFFF)
-    if scheme == APK_V2:
-        signed_data = digests + certificates + lp(b"")
-        return lp(signed_data) + lp(lp(struct.pack("<I", 0x0103) + lp(b"sig"))) + lp(b"public key")
-    signed_data = digests + certificates + sdks + lp(b"")
-    return lp(signed_data) + sdks + lp(lp(struct.pack("<I", 0x0103) + lp(b"sig"))) + lp(b"public key")
+    signed_data = digest_list + certificates + (lp(b"") if scheme == APK_V2 else sdks + lp(b""))
+    own = SIGNING_KEYS.get(cert, RSA_KEYS["stranger"])  # a malformed certificate has no key
+    key = RSA_KEYS["stranger"] if tamper == "other-key" else own
+    signature = rsa_sign(key, signed_data, hash_name)
+    if tamper == "signature":
+        signature = bytes([signature[0] ^ 1]) + signature[1:]
+    signatures = lp(lp(entry + lp(signature)))
+    spki = public_key if public_key is not None else spki_rsa(*own[:2])
+    return lp(signed_data) + (b"" if scheme == APK_V2 else sdks) + signatures + lp(spki)
 
 
 def apk_signing_block(pairs: list[tuple[int, bytes]]) -> bytes:
@@ -400,12 +541,18 @@ def build_apk(
     dex: bool = True,
     crypto: bool = True,
     signers: dict[int, list[bytes]] | None = None,
+    signer_options: dict[str, object] | None = None,
+    options_schemes: tuple[int, ...] | None = None,
+    after_signing: object = None,
     block: bytes | None = None,
     v1_only: bool = False,
     before: tuple[tuple[str, bytes], ...] = (),
     comment: bytes = b"",
 ) -> str:
     """Build an APK; by default signed (v2 and v3) with RELEASE_CERT.
+
+    ``signer_options`` go to ``apk_signer`` (only for ``options_schemes`` if given); ``after_signing`` changes the
+    finished file's bytes (an edit made after signing).
 
     ``before`` entries are written first (duplicate names allowed), and
     ``comment`` becomes the zip comment.
@@ -430,17 +577,118 @@ def build_apk(
         signers = {APK_V2: [RELEASE_CERT], APK_V3: [RELEASE_CERT]}
     if block is None and signers:
         pairs = [(0x42726577, b"\0" * 8)]  # verity padding, ignored by the checker
+        digests = apk_digests(data)
         for scheme, certs in signers.items():
-            pairs.append((scheme, lp(b"".join(lp(apk_signer(cert, scheme)) for cert in certs))))
+            pairs.append((scheme, lp(b"".join(lp(apk_signer(cert, scheme, digests, **((signer_options or {}) if options_schemes is None or scheme in options_schemes else {}))) for cert in certs))))
         block = apk_signing_block(pairs)
     if block:
         eocd = data.rfind(b"PK\x05\x06")
         cd_size, cd_offset = struct.unpack_from("<II", data, eocd + 12)
         data = (data[:cd_offset] + block + data[cd_offset:eocd + 16]
                 + struct.pack("<I", cd_offset + len(block)) + data[eocd + 20:])
+    if after_signing is not None:
+        data = after_signing(data)  # type: ignore[operator]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+# Known-answer vectors made once with OpenSSL-backed code over MESSAGE: the public keys
+# (SubjectPublicKeyInfo) and signatures only; no private key is kept.
+KAT_MESSAGE = b"veritra apk signature known answer"
+KAT_KEYS = {
+    "rsa": (
+        "30820122300d06092a864886f70d01010105000382010f003082010a0282010100b91b7e13c0be38d96b50bcfb1009d4"
+        "e393e44b3375c3650d43e8bdfda6a33884cde8c8042f94fe7f01ee35003812aa1121c28af0166be49cc689b954607988"
+        "bbd54df293e74bdb3216aa8eda5065536b63b59cf403c336637edb8b6ad070ff638a94b2426272fd5f768e1fc227f9d4"
+        "6befb566c640a95ba17f203bb708f40fb4f327da83c9b12e35d0bd9df10abda023d88185fcf6a0534e388670c74f4832"
+        "c006237b37cef6ebf39af77e1a21209deef0c36a2e69acb163e0cdd3837e33831bc4e91fd4b1f83e78aa191a2b445cfd"
+        "d5880d87cb91f050695cc0e05b7a058f4af5518ae0e4a27f9d774dffd9fa05688a80b5ee3ae7183ce263df0b76adba36"
+        "f50203010001"
+    ),
+    "p256": (
+        "3059301306072a8648ce3d020106082a8648ce3d03010703420004380a9439073aa125ba1cf9f1cde5624cf8d7c3145b"
+        "c9b4097764c61f73b182cadc2c8f1f5218aad865b39cc7d6ca2399350f2c9cf59aa978504dcdb8ab35fb06"
+    ),
+    "p384": (
+        "3076301006072a8648ce3d020106052b81040022036200043de733302020ebc7d0e78e02858ebef8f6c9915593bdd4ef"
+        "d4629a9afcda67690e8a7bde7f357049a254e9a6c5b05656583b40487cd28b2a57291e546ba0a75451af51397d8d297b"
+        "5d6338726ab80127ce0bb8d313a2bc056a7c24b5e5c3c1a3"
+    ),
+}
+KAT_SIGNATURES = [
+    (0x0103, "rsa", (
+        "223dccb7551da6d31fe8cfa4450008f878a9da4155752dfc08d63040b5540d92dc09a837440a43ab42a98d2103196b86"
+        "169764dab13a59c03f092c9091dee8ba11b14da0d55c95f436345ac1df560c632bd21b3488154fe1a68a6564861d88d2"
+        "1c70a35966c010f77af6897f92baf07f269a17feb44eb1ae3049ab8d2cff34379c191153eb95d3926100a2cec5c27551"
+        "1b1bf540bd01869354d13bacf8d3a84b2fc0b4bbff56a4ace4229cd4e82d7513c44f1f71e079fe05ab9dab3c317fc421"
+        "f8cc1a62628247afb02cbfc3122c73ec7e8b608039819af3b22eeb714a389729da387a7b67ccc70b477617db2b9ceb11"
+        "035d9ef4617fd75b9f8ac0c286700943"
+    )),
+    (0x0101, "rsa", (
+        "6c74ba3dce4a57b46be6d25ff5fcd2e886f40001c5ff9be998e2fe8f279111f1d2eb9b92b0b05e1164adf4b7082c9a29"
+        "03da27b6c327542df5a93f85602d1da9a17f313298fa379a8972d40ea85173ba05488dc482a597486487356bf21d37d5"
+        "8fd3696bd2617eb0182d67cd980d756e9782e74ed633ad69b023743159de855532b2ebdab36d0540a0fb4c3ec4dc2534"
+        "a0ed0daa9d7473830f9f2a182ae924890a6b963c01f71423aa24224f96952f352e05404a90234e6016c3c48f51737212"
+        "996793230fb01e7b3f7232030f07af5aa83835c428cc20f55ed266be1346a1beebe7c82c1e766d04563630df87003d16"
+        "b740bce8f420fa4deb3d0f07deb90eb0"
+    )),
+    (0x0201, "p256", (
+        "304502205e062396b2adb9e4b7b265e5b6c298754af453c1e4c45f5b2414ed7eb493b3f6022100a0b3a9fffc192c572a"
+        "89ed19405471d290e82579358574f9c762ba44168b32be"
+    )),
+    (0x0201, "p384", (
+        "306502310091ee64a7a83208b9ab4a305686805ddd8ebf91f504e7cd65aab3b5b0ea4b5493a484aed6184ba87819ea27"
+        "7192660df1023047d58c2fb5e46e4997356a0d6927e26d67166dc354cc67f7d1f53af3220aca6c649d96e23ea019b342"
+        "4917cad3bcdbc2"
+    )),
+    (0x0104, "rsa", (
+        "88968b2855a8822ba03467eca760d01d775118e9f153c669cb672390a73d6af4e6b4cb4092d4595b1068cea08f2c072b"
+        "f1e99fe7e6cb9e78b7e6fab78fb1581091e64820aca4910db3f5bc8344e7775721d22a747c23e75826d64ee5e31b2e80"
+        "f02ee5eff5f482e5fa54ca0547de02b99f2715405d5002a0023dbe889a32089d2f1690af3cb00494ad5612c442385d29"
+        "09595adc33b4bd842529fafc9a4dedb9e1efc0231383cd2e12c10f086ff5f3a605007903c20e732b84a0a89c1152e0c8"
+        "8ace04930a7103cc9d35e27729be2a180f30b236f0896875515df016d1ac260062bf1d2cf7993bb0e3f772df4cdf8143"
+        "11fcfd786aaf0b372dcc2f37533d6ee2"
+    )),
+    (0x0102, "rsa", (
+        "22dfd3ed362b0ed47e06f01b20ac3c1604de5cc14de8f5a5ca89dd7ff2fdadc16d2a675e8040f00894959e803e522e0f"
+        "b76cefa5e690db9fe4f2edf7ef813f74b65824f2a31b747d2633999b3af141922af1d9e58286a9e04c9ea7d6182c071f"
+        "5918e2a2bc9df858ea949b4454721c95f31d01673e326580463f86e086bfe641fd986d644bb4e60437f3669fb9a88ed3"
+        "86b50a6daedd560009dcac38451d51aa900aa3664c3f138c0df3864f9841574efa27d80e83a61bb12ab62465e5068b5e"
+        "8a8108d6e114b92b5f2a4cd6a7ab6ff69635dea0078ea8a4f575ceab5f61bd963b4eafabc80e732a8d3b9c29078d74a4"
+        "a8297bda785a347b85ce9afbf0b635db"
+    )),
+    (0x0202, "p256", (
+        "30450221009120ed92f641841a3d74262d5e7397ccb895f30de5687c10723ea54d1986927e0220335c62d8536110052b"
+        "26f680a413eebf3b59e54d93b2c29ea2f2787e23ac31a5"
+    )),
+    (0x0202, "p384", (
+        "3065023100c3f3aff01ceff591df00fce95be685d632ec5c07ee90d8e8f8032f68ed1708bc200167d7becdd2f375cdf9"
+        "73b1b4549e023045e78953c85efc398b1217008abdf4b56723aeb086ad8919d92438ab31a3b77ad6507ee0d399ea1b7b"
+        "540cb4cb1a810c"
+    )),
+]
+
+
+def signature_vector_cases() -> None:
+    """The checker's RSA and ECDSA verifiers against vectors made elsewhere (TASK-130)."""
+    for algorithm, key, signature in KAT_SIGNATURES:
+        spki, sig = bytes.fromhex("".join(KAT_KEYS[key])), bytes.fromhex("".join(signature))
+        name = f"0x{algorithm:04x} {key}"
+        assert checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE, sig), f"{name} vector does not verify"
+        assert not checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE + b"!", sig), f"{name}: other message verifies"
+        for position in (0, len(sig) // 2, len(sig) - 1):
+            broken = sig[:position] + bytes([sig[position] ^ 0x01]) + sig[position + 1:]
+            assert not checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE, broken), f"{name}: a broken signature verifies"
+        assert not checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE, sig + b"\0"), f"{name}: trailing byte verifies"
+    # A key of the wrong kind for the algorithm never verifies.
+    rsa_spki, ec_spki = bytes.fromhex("".join(KAT_KEYS["rsa"])), bytes.fromhex("".join(KAT_KEYS["p256"]))
+    rsa_vector = next(bytes.fromhex("".join(sig)) for alg, key, sig in KAT_SIGNATURES if alg == 0x0103)
+    ec_vector = next(bytes.fromhex("".join(sig)) for alg, key, sig in KAT_SIGNATURES if alg == 0x0201 and key == "p256")
+    assert not checker.apk_signature_verifies(0x0201, rsa_spki, KAT_MESSAGE, ec_vector)
+    assert not checker.apk_signature_verifies(0x0103, ec_spki, KAT_MESSAGE, rsa_vector)
+    # The certificate's public key info is found in a hand-built certificate.
+    assert checker.certificate_public_key_info(RELEASE_CERT) == spki_rsa(*RSA_KEYS["release"][:2])
 
 
 def comment_smuggled_apk(path: Path, trailing: bytes) -> str:
@@ -608,28 +856,37 @@ def manifest_approvals(root: Path, approvals_commit: str) -> dict[str, object]:
     return recorded
 
 
+FIXTURE_POLICY = {
+    "schema_version": 3,
+    "required_ci_jobs": list(JOBS),
+    "mobile_artifacts": MOBILE_POLICY,
+    "android": {"release_certificate_sha256": fingerprint(RELEASE_CERT)},
+    "ios": {"team_id": TEAM_ID, "bundle_id": BUNDLE_ID},
+    "approvals": APPROVALS_POLICY,
+}
+
+
+def policy_bytes(policy: object) -> bytes:
+    return (json.dumps(policy, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
 def fixture() -> tuple[Path, dict[str, object]]:
     global COMMIT, TREE, APPROVALS_COMMIT
     temp = Path(tempfile.mkdtemp(prefix="veritra-release-evidence-"))
     git(temp, "init", "-q", "-b", "main")
     base = commit_on(temp, "", {"README": b"base\n"}, "base")
-    COMMIT = commit_on(temp, base, {"src.txt": b"frozen candidate\n"}, "candidate")
+    # The policy and the toolchain version are part of the candidate commit:
+    # the checker binds both, and the checkout, to it.
+    COMMIT = commit_on(temp, base, {
+        "src.txt": b"frozen candidate\n",
+        ".go-version": b"1.25.12\n",
+        "release/release-policy.json": policy_bytes(FIXTURE_POLICY),
+    }, "candidate")
     TREE = git(temp, "rev-parse", f"{COMMIT}^{{tree}}")
     approved = commit_on(temp, COMMIT, approval_files(), "approve the candidate")
     # Later, unrelated work on the protected branch does not disturb them.
     APPROVALS_COMMIT = commit_on(temp, approved, {"README": b"later work\n"}, "later work")
     git(temp, "checkout", "-q", "--detach", COMMIT)
-    # Untracked, so checkouts in the cases below never touch them.
-    (temp / ".go-version").write_text("1.25.12\n", encoding="utf-8")
-    policy = {
-        "schema_version": 3,
-        "required_ci_jobs": list(JOBS),
-        "mobile_artifacts": MOBILE_POLICY,
-        "android": {"release_certificate_sha256": fingerprint(RELEASE_CERT)},
-        "ios": {"team_id": TEAM_ID, "bundle_id": BUNDLE_ID},
-        "approvals": APPROVALS_POLICY,
-    }
-    write_json(temp / "release/release-policy.json", policy)
     signed_digest = build_signed_ipa(temp / "dist" / SIGNED_IPA)
     manifest = {
         "schema_version": 3,
@@ -654,7 +911,45 @@ def fixture() -> tuple[Path, dict[str, object]]:
     return temp, manifest
 
 
-def run(root: Path, *extra: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+POLICY_PATH = "release/release-policy.json"
+
+
+@contextlib.contextmanager
+def candidate_policy(root: Path, policy: object):
+    """Run cases against a candidate whose committed policy is ``policy``.
+
+    The checker binds the policy to the candidate commit, so a case that needs
+    a different policy builds a new candidate commit that holds it (with its
+    own approvals and a later commit), points COMMIT, TREE and
+    APPROVALS_COMMIT at it, and restores them afterwards. It yields a function
+    that rebinds a manifest built for the fixture candidate to the new one.
+    """
+    global COMMIT, TREE, APPROVALS_COMMIT
+    old = (COMMIT, TREE, APPROVALS_COMMIT)
+    try:
+        new = commit_on(root, old[0], {POLICY_PATH: policy_bytes(policy)}, "candidate with a different policy")
+        COMMIT, TREE = new, git(root, "rev-parse", f"{new}^{{tree}}")
+        approved = commit_on(root, new, approval_files(), "approve the candidate with a different policy")
+        APPROVALS_COMMIT = commit_on(root, approved, {"README": b"later work\n"}, "later work")
+        git(root, "checkout", "-q", "--detach", new)
+
+        def rebind(manifest: dict[str, object]) -> dict[str, object]:
+            value = json.loads(json.dumps(manifest).replace(old[0], new))
+            value["approvals"] = manifest_approvals(root, APPROVALS_COMMIT)
+            return value
+
+        yield rebind
+    finally:
+        COMMIT, TREE, APPROVALS_COMMIT = old
+        git(root, "checkout", "-q", "--detach", COMMIT)
+
+
+def run(
+    root: Path, *extra: str, env: dict[str, str] | None = None, head: str | None = None
+) -> subprocess.CompletedProcess[str]:
+    # The checker needs the checkout at the candidate: approval cases move HEAD,
+    # so each run starts from COMMIT unless ``head`` says otherwise.
+    git(root, "checkout", "-q", "--detach", head or COMMIT)
     # A later --approvals-commit in ``extra`` overrides the default one.
     environment = {
         key: value for key, value in os.environ.items() if key != "MOBILE_ARTIFACTS_DIR" and not key.startswith("GIT_")
@@ -693,10 +988,11 @@ def expect_blocked(
     absent: tuple[str, ...] = (),
     extra: tuple[str, ...] = (),
     env: dict[str, str] | None = None,
+    head: str | None = None,
 ) -> None:
     # Each negative case must fail for its own reason, not a leftover one.
     write_json(root / "dist/release-evidence.json", manifest)
-    result = run(root, *extra, env=env)
+    result = run(root, *extra, env=env, head=head)
     missing = [reason for reason in reasons if reason not in result.stderr]
     leaked = [text for text in absent if text in result.stderr]
     if result.returncode == 0 or missing or leaked:
@@ -938,8 +1234,7 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, legacy, "release evidence schema version is not current", "release evidence has no approvals record")
 
     # The approval rules cannot be moved back into the candidate tree.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
     for tampered_approvals in (
         dict(APPROVALS_POLICY, production_crypto=dict(APPROVALS_POLICY["production_crypto"], path="release/production-crypto-approval.json")),
         {"independent_review": APPROVALS_POLICY["independent_review"]},
@@ -947,10 +1242,8 @@ def approval_cases(root: Path, valid: dict[str, object]) -> None:
     ):
         policy = json.loads(original_policy)
         policy["approvals"] = tampered_approvals
-        write_json(policy_path, policy)
-        expect_blocked(root, valid, "release policy approvals do not match the protected set")
-    policy_path.write_text(original_policy, encoding="utf-8")
-    git(root, "checkout", "-q", "--detach", COMMIT)
+        with candidate_policy(root, policy) as rebind:
+            expect_blocked(root, rebind(valid), "release policy approvals do not match the protected set")
     expect_valid(root, valid)
 
 
@@ -1180,16 +1473,15 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     # The pins live in the policy. Unpinned (null, the repository today): no
     # iOS signed-release record counts, while Android and the preflight are
     # unaffected. A malformed pin blocks both gates.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
     try:
         for ios_pins in ({"team_id": None, "bundle_id": BUNDLE_ID}, {"team_id": TEAM_ID, "bundle_id": None},
                          {"team_id": None, "bundle_id": None}):
-            write_json(policy_path, dict(json.loads(original_policy), ios=ios_pins))
-            expect_blocked(root, valid, f"{label} cannot count until the iOS team and bundle IDs are pinned (pin first",
-                           "signed ios artifact is not the pinned bundle ID", no_signed,
-                           absent=("android signed-release", "release policy ios"))
-            expect_valid(root, valid, "--preflight")
+            with candidate_policy(root, dict(json.loads(original_policy), ios=ios_pins)) as rebind:
+                expect_blocked(root, rebind(valid), f"{label} cannot count until the iOS team and bundle IDs are pinned (pin first",
+                               "signed ios artifact is not the pinned bundle ID", no_signed,
+                               absent=("android signed-release", "release policy ios"))
+                expect_valid(root, rebind(valid), "--preflight")
         for ios_pins, bad in (
             ({"team_id": TEAM_ID.lower(), "bundle_id": BUNDLE_ID}, "team_id"),
             ({"team_id": TEAM_ID[:9], "bundle_id": BUNDLE_ID}, "team_id"),
@@ -1207,15 +1499,16 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
                 policy.pop("ios")
             else:
                 policy["ios"] = ios_pins
-            write_json(policy_path, policy)
             malformed = f"release policy ios.{bad} is not null or"
-            expect_blocked(root, valid, malformed, "pin first")
-            expect_blocked(root, valid, malformed, extra=("--preflight",))
+            with candidate_policy(root, policy) as rebind:
+                expect_blocked(root, rebind(valid), malformed, "pin first")
+                expect_blocked(root, rebind(valid), malformed, extra=("--preflight",))
         # Pinned to another team: the fixture's IPA no longer counts.
-        write_json(policy_path, dict(json.loads(original_policy), ios={"team_id": "ZZZZZ99999", "bundle_id": BUNDLE_ID}))
-        expect_blocked(root, valid, "signed ios provisioning profile is not for the pinned team and bundle ID", no_signed)
+        other_team = dict(json.loads(original_policy), ios={"team_id": "ZZZZZ99999", "bundle_id": BUNDLE_ID})
+        with candidate_policy(root, other_team) as rebind:
+            expect_blocked(root, rebind(valid), "signed ios provisioning profile is not for the pinned team and bundle ID", no_signed)
     finally:
-        policy_path.write_text(original_policy, encoding="utf-8")
+        git(root, "checkout", "-q", "--detach", COMMIT)
     expect_valid(root, valid)
 
     # Provenance must be a separate GitHub Actions build, never the simulator CI.
@@ -1252,8 +1545,7 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, variant(lambda m: m.__setitem__("schema_version", 1)), "release evidence schema version is not current")
 
     # The requirement cannot be dropped from the policy.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
     for tampered in (
         dict(MOBILE_POLICY, required=[]),
         dict(MOBILE_POLICY, required=[{"platform": "ios", "artifact_type": "simulator-debug"}]),
@@ -1264,13 +1556,12 @@ def qa02_cases(root: Path, valid: dict[str, object]) -> None:
     ):
         policy = json.loads(original_policy)
         policy["mobile_artifacts"] = tampered
-        write_json(policy_path, policy)
-        expect_blocked(root, valid, "release policy mobile artifact rules do not match the protected set")
+        with candidate_policy(root, policy) as rebind:
+            expect_blocked(root, rebind(valid), "release policy mobile artifact rules do not match the protected set")
     policy = json.loads(original_policy)
     policy.pop("mobile_artifacts")
-    write_json(policy_path, policy)
-    expect_blocked(root, valid, "release policy mobile artifact rules do not match the protected set")
-    policy_path.write_text(original_policy, encoding="utf-8")
+    with candidate_policy(root, policy) as rebind:
+        expect_blocked(root, rebind(valid), "release policy mobile artifact rules do not match the protected set")
 
     # The writer's manifest shape passes, with the simulator record alongside.
     written = writer.build_manifest(
@@ -1420,6 +1711,52 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     expect_blocked(root, with_android(apk("two-signers.apk", signers={APK_V2: [RELEASE_CERT, OTHER_CERT]})),
                    "signed android artifact must have exactly one signer")
     expect_blocked(root, with_android(apk("no-signer.apk", signers={APK_V2: []})), "must have exactly one signer")
+    # The pinned certificate is public (it ships in every APK), so naming it
+    # proves nothing: the signature and the content digests must verify too.
+    # Each case carries RELEASE_CERT and is blocked for its own reason (TASK-130).
+    unverified = "signed android artifact APK Signature Scheme v2 signature does not verify: "
+    pinned_fixtures = (
+        ("bad-signature.apk", {"tamper": "signature"}, "signature 0x0103 does not verify under the signer's public key"),
+        ("wrong-digest.apk", {"tamper": "digest"}, "signed content digest 0x0103 does not cover this APK's contents"),
+        ("signed-by-stranger.apk", {"tamper": "other-key"}, "signature 0x0103 does not verify under the signer's public key"),
+        ("foreign-public-key.apk", {"public_key": STRANGER_SPKI}, "public key is not the certificate's"),
+        ("unknown-algorithm.apk", {"tamper": "algorithm"}, "unsupported signature algorithm 0x0fff"),
+    )
+    for name, options, why in pinned_fixtures:
+        expect_blocked(root, with_android(apk(name, signers={APK_V2: [RELEASE_CERT]}, signer_options=options)),
+                       unverified + why, no_signed, absent=("signer certificate is not the pinned",))
+    # A v3 block that does not verify blocks too, next to a good v2 one.
+    mixed_path = dist / "good-v2-bad-v3.apk"
+    build_apk(mixed_path, signers={APK_V2: [RELEASE_CERT], APK_V3: [RELEASE_CERT]}, signer_options={"tamper": "signature"},
+              options_schemes=(APK_V3,))
+    both = checker.apk_errors(mixed_path, fingerprint(RELEASE_CERT))
+    assert len(both) == 1 and "Scheme v3 signature does not verify: signature 0x0103" in both[0], both
+    # Edited after signing: the digests no longer cover the file. Flip a byte
+    # of an entry the checker never reads, so only the digest check can see it.
+    def edit_after_signing(data: bytes) -> bytes:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            info = archive.getinfo("resources.arsc")
+        at = info.header_offset + 30 + len(info.filename) + len(info.extra)
+        return data[:at] + bytes([data[at] ^ 0x01]) + data[at + 1:]
+    expect_blocked(root, with_android(apk("edited-after-signing.apk", after_signing=edit_after_signing)),
+                   "signed content digest 0x0103 does not cover this APK's contents", no_signed)
+    # The old placeholder form (the certificate copied into an unsigned
+    # block, with made-up digests and signature) is exactly what this stops.
+    copied = apk_signing_block([(0x42726577, b"\0" * 8)] + [(scheme, lp(lp(
+        lp(lp(lp(struct.pack("<I", 0x0103) + lp(b"\0" * 32))) + lp(lp(RELEASE_CERT)) + lp(b""))
+        + lp(lp(struct.pack("<I", 0x0103) + lp(b"sig"))) + lp(b"public key")))) for scheme in (APK_V2,)])
+    expect_blocked(root, with_android(apk("copied-certificate.apk", block=copied)),
+                   unverified + "public key is not the certificate's", no_signed)
+    # A signature over another APK's digests does not carry over to this one.
+    other_digests = apk_digests(b"PK\x05\x06" + b"\0" * 18)
+    expect_blocked(root, with_android(apk("replayed.apk", block=apk_signing_block([(APK_V2, lp(lp(apk_signer(RELEASE_CERT, APK_V2, other_digests))))]))),
+                   "does not cover this APK's contents", no_signed)
+    # Sections over 2 MiB are chunked: the digests of a large APK verify too.
+    big = dist / "big.apk"
+    build_apk(big, before=(("assets/big.bin", random.Random(7).randbytes(2_600_000)),))
+    assert checker.apk_errors(big, fingerprint(RELEASE_CERT)) == []
+    # Valid fixtures: SHA-512 PKCS#1 signatures verify as well.
+    expect_valid(root, with_android(apk("sha512.apk", signer_options={"algorithm": 0x0104})))
     for bad in (fingerprint(RELEASE_CERT).upper(), fingerprint(RELEASE_CERT)[:63], "sha256:" + fingerprint(RELEASE_CERT), "", None, 7):
         expect_blocked(root, with_android(record(signing={"certificate_sha256": bad})),
                        f"{label} has no valid signing certificate SHA-256 fingerprint", no_signed)
@@ -1604,24 +1941,23 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
     # The pin lives in the policy. Unpinned (null, the repository today): no
     # Android signed-release record counts, whatever key signed it, while the
     # iOS record and the preflight are unaffected.
-    policy_path = root / "release/release-policy.json"
-    original_policy = policy_path.read_text(encoding="utf-8")
+    original_policy = (root / POLICY_PATH).read_text(encoding="utf-8")
 
-    def set_android_policy(android: object) -> None:
+    def android_policy(android: object):
         policy = json.loads(original_policy)
         if android is REMOVE:
             policy.pop("android")
         else:
             policy["android"] = android
-        write_json(policy_path, policy)
+        return candidate_policy(root, policy)
 
     unpinned = "pin the release certificate first"
     try:
-        set_android_policy({"release_certificate_sha256": None})
-        expect_blocked(root, valid, unpinned, "signer certificate is not the pinned release certificate", no_signed,
-                       absent=("ios signed-release", "release policy android"))
-        expect_blocked(root, with_android(apk("unpinned-own-key.apk", OTHER_CERT, signers=own_key)), unpinned, no_signed)
-        expect_valid(root, valid, "--preflight")
+        with android_policy({"release_certificate_sha256": None}) as rebind:
+            expect_blocked(root, rebind(valid), unpinned, "signer certificate is not the pinned release certificate", no_signed,
+                           absent=("ios signed-release", "release policy android"))
+            expect_blocked(root, rebind(with_android(apk("unpinned-own-key.apk", OTHER_CERT, signers=own_key))), unpinned, no_signed)
+            expect_valid(root, rebind(valid), "--preflight")
         good = fingerprint(RELEASE_CERT)
         for android in (
             {"release_certificate_sha256": good.upper()},
@@ -1636,17 +1972,17 @@ def android_cases(root: Path, valid: dict[str, object]) -> None:
             good,
             REMOVE,
         ):
-            set_android_policy(android)
             malformed = "release policy android.release_certificate_sha256 is not null or 64 lowercase hex characters"
-            expect_blocked(root, valid, malformed, unpinned)
-            expect_blocked(root, valid, malformed, extra=("--preflight",))
+            with android_policy(android) as rebind:
+                expect_blocked(root, rebind(valid), malformed, unpinned)
+                expect_blocked(root, rebind(valid), malformed, extra=("--preflight",))
         # Pinned to another key: the fixture's release-signed APK no longer counts.
-        set_android_policy({"release_certificate_sha256": fingerprint(OTHER_CERT)})
-        expect_blocked(root, valid, f"{label} signing certificate is not the pinned release certificate",
-                       "signed android artifact signer certificate is not the pinned release certificate", no_signed)
-        expect_valid(root, with_android(apk("pinned-other.apk", OTHER_CERT, signers=own_key)))
+        with android_policy({"release_certificate_sha256": fingerprint(OTHER_CERT)}) as rebind:
+            expect_blocked(root, rebind(valid), f"{label} signing certificate is not the pinned release certificate",
+                           "signed android artifact signer certificate is not the pinned release certificate", no_signed)
+            expect_valid(root, rebind(with_android(apk("pinned-other.apk", OTHER_CERT, signers=own_key))))
     finally:
-        policy_path.write_text(original_policy, encoding="utf-8")
+        git(root, "checkout", "-q", "--detach", COMMIT)
     expect_valid(root, valid)
 
 
@@ -1663,6 +1999,57 @@ def with_record_list(records: list[object], valid: dict[str, object]) -> dict[st
     manifest = copy.deepcopy(valid)
     manifest["mobile_artifacts"] = copy.deepcopy(records)
     return manifest
+
+
+def binding_cases(root: Path, valid: dict[str, object]) -> None:
+    """The policy and the checkout are the candidate commit's, exactly (TASK-131)."""
+    drifted = "working tree release/release-policy.json differs from the candidate commit"
+    policy_file = root / POLICY_PATH
+    committed = policy_file.read_bytes()
+    expect_valid(root, valid)
+    expect_valid(root, valid, "--preflight")
+    try:
+        # A working-tree policy that differs from the committed one, even by a
+        # harmless-looking change, blocks both gates.
+        for edited in (
+            policy_bytes(dict(FIXTURE_POLICY, required_ci_jobs=list(JOBS) + ["extra"])),
+            committed + b" ",
+            committed.replace(b"\n", b"\r\n"),
+        ):
+            policy_file.write_bytes(edited)
+            expect_blocked(root, valid, drifted)
+            expect_blocked(root, valid, drifted, extra=("--preflight",))
+        policy_file.unlink()
+        expect_blocked(root, valid, "missing evidence file")
+        policy_file.write_bytes(committed)
+        expect_valid(root, valid)
+        # Same for the canonical Go toolchain version.
+        (root / ".go-version").write_bytes(b"1.99.0\n")
+        expect_blocked(root, valid, "working tree .go-version differs from the candidate commit")
+        (root / ".go-version").write_bytes(b"1.25.12\n")
+        expect_valid(root, valid)
+        # A --policy file from elsewhere is not the candidate's committed policy.
+        other = root.parent / (root.name + "-other-policy.json")
+        try:
+            write_json(other, dict(FIXTURE_POLICY, android={"release_certificate_sha256": None}))
+            expect_blocked(root, valid, "release policy is not the candidate commit's release/release-policy.json",
+                           extra=("--policy", str(other)))
+            write_json(other, FIXTURE_POLICY)
+            expect_valid(root, valid, "--policy", str(other))  # the same content is fine
+        finally:
+            other.unlink(missing_ok=True)
+    finally:
+        policy_file.write_bytes(committed)
+        (root / ".go-version").write_bytes(b"1.25.12\n")
+    # A --root checked out at another commit is not the candidate, even when
+    # its tree holds the same policy (the approvals commit descends from it).
+    wrong = "checkout at --root is not the candidate commit"
+    expect_blocked(root, valid, wrong, head=APPROVALS_COMMIT)
+    expect_blocked(root, valid, wrong, head=APPROVALS_COMMIT, extra=("--preflight",))
+    # A candidate that is not in the repository at all.
+    expect_blocked(root, valid, "candidate commit is not in the repository at --root",
+                   extra=("--expected-commit", "0" * 40))
+    expect_valid(root, valid)
 
 
 def codeowners_cases() -> None:
@@ -1772,12 +2159,14 @@ def release_readiness_cases() -> None:
 
 def main() -> int:
     codeowners_cases()
+    signature_vector_cases()
     release_readiness_cases()
     root, manifest = fixture()
     try:
         expect_valid(root, manifest)
         qa01_cases(root, manifest)
         approval_cases(root, manifest)
+        binding_cases(root, manifest)
         qa02_cases(root, manifest)
         android_cases(root, manifest)
         # The repository policy must equal the protected rules the fixtures use.

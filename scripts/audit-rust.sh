@@ -35,11 +35,19 @@ if ! grep -Fqx "$suite" "$CRATE/src/mls.rs"; then
   exit 1
 fi
 
+# The lockfile cargo audit reads. The scope check and the audit get this same
+# path, so the scope is checked over exactly the graph the ignores apply to.
+LOCKFILE="$CRATE/Cargo.lock"
+
 cd "$CRATE"
 # Re-check immediately before the audit so a long dependency-graph scan cannot
-# carry an exception across its UTC deadline.
-sh "$ROOT/scripts/check-rust-audit-expiry.sh"
+# carry an exception across its UTC deadline. The same call checks each
+# exception's scope (crate, versions, only allowed parents) over the whole
+# lockfile, whatever the dependency kind, target or feature, and, for
+# lockfile-only scopes, that cargo tree finds the crate outside the build
+# graph. It runs before cargo audit applies any ignore.
+sh "$ROOT/scripts/check-rust-audit-expiry.sh" --lockfile "$LOCKFILE" --cargo-tree-dir "$CRATE"
 # Policy IDs are validated before they reach this command. Split only the
 # checker-produced option list, then pass each option as a quoted argument.
 set -- $ignore_flags
-cargo audit "$@"
+cargo audit --file "$LOCKFILE" "$@"

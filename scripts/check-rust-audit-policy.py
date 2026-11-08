@@ -4,6 +4,7 @@
 import argparse
 import json
 import re
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,6 +28,13 @@ APPROVED_CARGO_AUDIT_VERSION = "0.22.2"
 APPROVED_EXCEPTION_IDS: frozenset = frozenset(
     {"RUSTSEC-2026-0330", "RUSTSEC-2026-0331", "RUSTSEC-2026-0387"}
 )
+# An exception's scope is machine-checked against the audited Cargo.lock:
+# the crate, the only locked versions it may have, the only crates allowed
+# to depend on it, and whether it may be built or is only locked.
+SCOPE_FIELDS = {"crate", "versions", "parents", "built"}
+CRATE_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
+VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+COMPARATOR = re.compile(r"^(>=|<=|=|>|<)?\s*([0-9]+\.[0-9]+\.[0-9]+)$")
 POLICY_FIELDS = {
     "version",
     "timezone",
@@ -62,6 +70,179 @@ def parse_timestamp(value: object) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
+def version_tuple(version: str) -> tuple:
+    if not VERSION.fullmatch(version):
+        raise PolicyError(f"unsupported version {version!r}: only plain MAJOR.MINOR.PATCH is accepted")
+    return tuple(int(part) for part in version.split("."))
+
+
+def parse_versions(advisory: str, versions: object) -> list:
+    """Comparators such as '=0.5.5' or '>=0.5.5, <0.6.0'; a bare version means '='."""
+    if not isinstance(versions, str) or not versions.strip():
+        raise PolicyError(f"exception {advisory} scope versions must be a non-empty string")
+    comparators = []
+    for part in versions.split(","):
+        match = COMPARATOR.fullmatch(part.strip())
+        if not match:
+            raise PolicyError(f"exception {advisory} scope versions {versions!r} is not a version range")
+        comparators.append((match.group(1) or "=", version_tuple(match.group(2))))
+    return comparators
+
+
+def version_in_range(version: str, comparators: list) -> bool:
+    try:
+        have = version_tuple(version)
+    except PolicyError:
+        return False  # a pre-release or odd version is never inside a declared range
+    checks = {
+        "=": lambda a, b: a == b,
+        ">=": lambda a, b: a >= b,
+        ">": lambda a, b: a > b,
+        "<=": lambda a, b: a <= b,
+        "<": lambda a, b: a < b,
+    }
+    return all(checks[op](have, bound) for op, bound in comparators)
+
+
+def validate_scope(advisory: str, scope: object) -> None:
+    if not isinstance(scope, dict) or set(scope) != SCOPE_FIELDS:
+        raise PolicyError(
+            f"exception {advisory} scope must be an object with exactly {sorted(SCOPE_FIELDS)}"
+        )
+    if not isinstance(scope["crate"], str) or not CRATE_NAME.fullmatch(scope["crate"]):
+        raise PolicyError(f"exception {advisory} scope crate is not a crate name")
+    parse_versions(advisory, scope["versions"])
+    parents = scope["parents"]
+    if (
+        not isinstance(parents, list)
+        or not parents
+        or len(set(map(str, parents))) != len(parents)
+        or not all(isinstance(name, str) and CRATE_NAME.fullmatch(name) for name in parents)
+    ):
+        raise PolicyError(f"exception {advisory} scope parents must be a non-empty list of unique crate names")
+    if not isinstance(scope["built"], bool):
+        raise PolicyError(f"exception {advisory} scope built must be true or false")
+
+
+def parse_lockfile(path: Path) -> list:
+    try:
+        import tomllib
+    except ImportError as error:  # Python < 3.11: no TOML parser, so fail closed
+        raise PolicyError("the scope check needs Python 3.11 or newer (tomllib)") from error
+    try:
+        with path.open("rb") as stream:
+            lock = tomllib.load(stream)
+    except (OSError, ValueError) as error:
+        raise PolicyError(f"cannot read lockfile {path}: {error}") from error
+    packages = lock.get("package")
+    if not isinstance(packages, list) or not packages:
+        raise PolicyError(f"lockfile {path} has no packages")
+    for package in packages:
+        if not isinstance(package, dict) or not isinstance(package.get("name"), str) \
+                or not isinstance(package.get("version"), str):
+            raise PolicyError(f"lockfile {path} has a malformed package entry")
+    return packages
+
+
+def resolve_dependency(packages: list, entry: object, owner: str) -> dict:
+    """The one locked package a dependency entry names ('name', 'name version' or
+    'name version (source)'); no match or several matches fail closed."""
+    if not isinstance(entry, str) or not entry.strip():
+        raise PolicyError(f"lockfile package {owner} has a malformed dependency entry")
+    parts = entry.split(" ", 2)
+    name = parts[0]
+    version = parts[1] if len(parts) > 1 else None
+    source = parts[2] if len(parts) > 2 else None
+    if source is not None and not (source.startswith("(") and source.endswith(")")):
+        raise PolicyError(f"lockfile package {owner} has a malformed dependency entry {entry!r}")
+    matches = [
+        package for package in packages
+        if package["name"] == name
+        and (version is None or package["version"] == version)
+        and (source is None or package.get("source") == source[1:-1])
+    ]
+    if len(matches) != 1:
+        raise PolicyError(
+            f"lockfile package {owner} dependency {entry!r} matches {len(matches)} locked packages"
+        )
+    return matches[0]
+
+
+def check_scopes(policy: dict, lockfile: Path) -> list:
+    """Check every exception's scope against the whole lockfile cargo audit reads.
+
+    Cargo.lock has an edge for every dependency of every kind, target and
+    feature (dev, build, cfg-gated, optional but never activated), and
+    ``cargo audit --ignore`` suppresses an advisory for all of them. So every
+    locked version of the crate must be in the declared range, and every
+    package that depends on it, whatever the kind, must be a declared parent.
+    Returns the (crate, version, built) of each scoped package.
+    """
+    packages = parse_lockfile(lockfile)
+    dependents: dict = {}
+    for package in packages:
+        for entry in package.get("dependencies", []):
+            target = resolve_dependency(packages, entry, f"{package['name']} {package['version']}")
+            dependents.setdefault((target["name"], target["version"], target.get("source")), []).append(
+                package["name"]
+            )
+    scoped = []
+    for exception in policy["exceptions"]:
+        advisory, scope = exception["id"], exception["scope"]
+        comparators = parse_versions(advisory, scope["versions"])
+        locked = [package for package in packages if package["name"] == scope["crate"]]
+        if not locked:
+            raise PolicyError(
+                f"exception {advisory} names {scope['crate']}, which is not in {lockfile}; remove the exception"
+            )
+        for package in locked:
+            where = f"{scope['crate']} {package['version']}"
+            if not version_in_range(package["version"], comparators):
+                raise PolicyError(
+                    f"{advisory}: locked {where} is outside the excepted versions {scope['versions']!r}"
+                )
+            parents = dependents.get((package["name"], package["version"], package.get("source")), [])
+            outside = sorted(set(parents) - set(scope["parents"]))
+            if outside:
+                raise PolicyError(
+                    f"{advisory}: {where} is reached through {', '.join(outside)}, "
+                    f"outside the allowed parents {', '.join(scope['parents'])}"
+                )
+            scoped.append((scope["crate"], package["version"], scope["built"]))
+    return scoped
+
+
+def cargo_tree_runner(crate_dir: Path, spec: str) -> tuple:
+    result = subprocess.run(
+        ["cargo", "tree", "--locked", "--target", "all", "-e", "all", "-i", spec],
+        cwd=crate_dir, capture_output=True, text=True, check=False,
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
+def check_unbuilt(scoped: list, crate_dir: Path, runner=cargo_tree_runner) -> None:
+    """Cross-check each lockfile-only scope: the crate must not be in the build graph.
+
+    A locked package outside the resolved graph prints nothing: cargo (1.9x)
+    exits 0 with the warning "nothing to print", older versions exit non-zero
+    with "did not match any packages". Printed tree lines mean it is built;
+    any other outcome is an error.
+    The lockfile check stays authoritative.
+    """
+    for crate, version, built in dict.fromkeys(scoped):
+        if built:
+            continue
+        spec = f"{crate}@{version}"
+        code, out, err = runner(crate_dir, spec)
+        if code == 0 and out.strip():
+            raise PolicyError(f"{spec} is excepted as lockfile-only but entered the build graph")
+        absent = (code == 0 and "nothing to print" in err) or (
+            code != 0 and "did not match any packages" in err
+        )
+        if not absent:
+            raise PolicyError(f"cargo tree could not check {spec}: {err.strip() or 'exit ' + str(code)}")
+
+
 def load_policy(path: Path) -> dict:
     try:
         with path.open(encoding="utf-8") as stream:
@@ -94,9 +275,9 @@ def load_policy(path: Path) -> dict:
         if advisory in seen:
             raise PolicyError(f"duplicate advisory id: {advisory}")
         seen.add(advisory)
-        for field in ("scope", "rationale"):
-            if not isinstance(exception.get(field), str) or not exception[field].strip():
-                raise PolicyError(f"exception {advisory} needs a non-empty {field}")
+        if not isinstance(exception.get("rationale"), str) or not exception["rationale"].strip():
+            raise PolicyError(f"exception {advisory} needs a non-empty rationale")
+        validate_scope(advisory, exception.get("scope"))
     if seen != APPROVED_EXCEPTION_IDS:
         raise PolicyError("policy advisory IDs do not match the approved exception set")
     return {
@@ -156,6 +337,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("policy", type=Path)
     parser.add_argument("--now", help="override the UTC evaluation time")
+    parser.add_argument(
+        "--lockfile", type=Path,
+        help="check every exception's scope against this Cargo.lock (the file cargo audit is given)",
+    )
+    parser.add_argument(
+        "--cargo-tree-dir", type=Path,
+        help="with --lockfile: also run cargo tree here for lockfile-only scopes",
+    )
     parser.add_argument("--print-ignores", action="store_true")
     parser.add_argument("--print-cargo-audit-version", action="store_true")
     parser.add_argument("--self-test", action="store_true")
@@ -165,6 +354,12 @@ def main() -> int:
         if args.self_test:
             self_test(policy)
         validate_deadline(policy, evaluation_time(args.now))
+        if args.cargo_tree_dir and not args.lockfile:
+            raise PolicyError("--cargo-tree-dir needs --lockfile")
+        if args.lockfile:
+            scoped = check_scopes(policy, args.lockfile)
+            if args.cargo_tree_dir:
+                check_unbuilt(scoped, args.cargo_tree_dir)
         if args.print_ignores:
             print(cargo_audit_flags(policy))
         elif args.print_cargo_audit_version:

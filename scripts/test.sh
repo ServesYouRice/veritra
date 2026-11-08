@@ -17,6 +17,7 @@ if command -v python3 >/dev/null 2>&1; then
   python3 "$ROOT/scripts/check-dart-licenses_test.py"
   python3 "$ROOT/scripts/check-demo-boundary_test.py"
   python3 "$ROOT/scripts/check-go-toolchain_test.py"
+  python3 "$ROOT/scripts/check-rust-audit-policy_test.py"
   python3 "$ROOT/scripts/check-gradle-inputs_test.py"
   python3 "$ROOT/scripts/release-image_test.py"
 elif command -v python >/dev/null 2>&1; then
@@ -30,6 +31,7 @@ elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-dart-licenses_test.py"
   python "$ROOT/scripts/check-demo-boundary_test.py"
   python "$ROOT/scripts/check-go-toolchain_test.py"
+  python "$ROOT/scripts/check-rust-audit-policy_test.py"
   python "$ROOT/scripts/check-gradle-inputs_test.py"
   python "$ROOT/scripts/release-image_test.py"
 else
