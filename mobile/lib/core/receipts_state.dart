@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../storage/profile_scope.dart';
 import 'models.dart';
 
 /// Largest conversation that shows ticks (W5); the server stops keeping
@@ -103,8 +104,11 @@ abstract class ReceiptPreferenceStore {
 /// errors are thrown to [ReceiptPreferences], which keeps read state private
 /// until the choice is known; a preference must never block startup.
 class SecureReceiptPreferenceStore implements ReceiptPreferenceStore {
-  SecureReceiptPreferenceStore({FlutterSecureStorage? storage})
-      : _storage = storage ??
+  SecureReceiptPreferenceStore(
+      {FlutterSecureStorage? storage,
+      ProfileScope scope = const ProfileScope()})
+      : _key = scope.secureKey('read_receipts.v1'),
+        _storage = storage ??
             const FlutterSecureStorage(
               aOptions: AndroidOptions(resetOnError: false),
               iOptions: IOSOptions(
@@ -113,12 +117,16 @@ class SecureReceiptPreferenceStore implements ReceiptPreferenceStore {
               mOptions: MacOsOptions(usesDataProtectionKeychain: false),
             );
 
+  /// The primary slot's name, kept byte for byte (B7). Other slots get
+  /// `veritra.<namespace>.read_receipts.v1`.
   static const key = 'veritra.read_receipts.v1';
+
+  final String _key;
 
   final FlutterSecureStorage _storage;
 
   @override
-  Future<bool?> load() async => switch (await _storage.read(key: key)) {
+  Future<bool?> load() async => switch (await _storage.read(key: _key)) {
         'on' => true,
         'off' => false,
         _ => null,
@@ -126,7 +134,7 @@ class SecureReceiptPreferenceStore implements ReceiptPreferenceStore {
 
   @override
   Future<void> save(bool sendReadReceipts) =>
-      _storage.write(key: key, value: sendReadReceipts ? 'on' : 'off');
+      _storage.write(key: _key, value: sendReadReceipts ? 'on' : 'off');
 }
 
 class MemoryReceiptPreferenceStore implements ReceiptPreferenceStore {
