@@ -99,6 +99,9 @@ class K1Api extends K0Api {
   }
 
   @override
+  Future<void> deleteAccount(String token) async {}
+
+  @override
   Future<void> uploadK1Backup(String token, Uint8List ciphertext,
       {required List<int> rkId, required int counter}) async {
     final wait = gate;
@@ -370,6 +373,32 @@ void main() {
     expect(state.k1BackupState, isNull);
   });
 
+  test('a full wipe while a run is exporting leaves no k1 state behind',
+      () async {
+    final gated = _GatedStore();
+    final wiping = app(gated);
+    addTearDown(wiping.dispose);
+    await gated.saveSession(k0SignedIn);
+    await wiping.tryRestoreSession();
+    final draft = await wiping.createRecoveryKeyDraft();
+    gated.gate = Completer<void>();
+    expect(await wiping.saveRecoveryKey(draft), RecoveryActionResult.done);
+    draft.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(wiping.k1BackupRunning, isTrue);
+    final name = k1BackupSettingName(k0Origin, 'acct_me', 'dev_old');
+    // The account is deleted (a full wipe) while the export waits.
+    final wipe = wiping.deleteAccount();
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    gated.gate!.complete();
+    await wipe;
+    for (var i = 0; i < 50 && wiping.k1BackupRunning; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    expect(await gated.loadSetting(name), isNull);
+    expect(uploads, isEmpty);
+  });
+
   test('uploads go out in 64 KiB slices', () async {
     final bytes = Uint8List(200 * 1024 + 5);
     final slices = await k1UploadSlices(bytes).toList();
@@ -584,4 +613,37 @@ void main() {
       expect(capture(omit: false).messages, hasLength(2));
     });
   });
+}
+
+/// A store whose history export waits for [gate] (a run mid-export).
+class _GatedStore extends MemoryLocalStore {
+  Completer<void>? gate;
+
+  /// Settings that a wipe clears, as SecureLocalStore's clearAll does.
+  final Map<String, String> _wipedSettings = <String, String>{};
+
+  @override
+  Future<String?> loadSetting(String name) async => _wipedSettings[name];
+
+  @override
+  Future<void> saveSetting(String name, String value) async =>
+      _wipedSettings[name] = value;
+
+  /// Like the database, the wipe queues behind an export in progress and
+  /// then runs before any write the export's caller makes next.
+  @override
+  Future<void> clear() async {
+    final wait = gate;
+    if (wait != null) await wait.future;
+    _wipedSettings.clear();
+    await super.clear();
+  }
+
+  @override
+  Future<List<int>> exportHistorySnapshot(
+      {bool omitDisappearing = false}) async {
+    final wait = gate;
+    if (wait != null) await wait.future;
+    return super.exportHistorySnapshot(omitDisappearing: omitDisappearing);
+  }
 }

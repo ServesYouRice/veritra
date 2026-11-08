@@ -6781,6 +6781,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     required bool keepApiOpen,
   }) async {
     _sessionGeneration++;
+    // K1: before any await, so a run under way can never write its state
+    // (with rk_pub) back into a store this is about to wipe.
+    _k1State = null;
+    _stopK1Backups();
     _syncStartFailed = null;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
