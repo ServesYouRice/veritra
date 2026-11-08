@@ -5,7 +5,9 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/account_host.dart';
 import '../../core/app_state.dart';
+import '../../storage/account_slots.dart';
 import '../settings/backup_screen.dart';
 import '../../ui/about.dart';
 import '../../ui/tokens.dart';
@@ -169,6 +171,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 shrinkWrap: true,
                 padding: const EdgeInsets.all(BoneSpacing.xl),
                 children: <Widget>[
+                  if (_pendingSlotHost case final host?)
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        key: const ValueKey<String>('connect-back'),
+                        onPressed:
+                            host.switching ? null : () => _backToAccounts(host),
+                        icon: const Icon(Icons.arrow_back),
+                        label: Text(context.l10n.accountsBack),
+                      ),
+                    ),
                   const _BrandHeader(),
                   const SizedBox(height: BoneSpacing.xl + BoneSpacing.sm),
                   // One path, chosen by the probe rather than asked for. The
@@ -211,6 +224,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   if (_probeResult.state != SetupProbeState.idle) ...<Widget>[
                     const SizedBox(height: BoneSpacing.sm),
                     _ProbeStatus(result: _probeResult),
+                  ],
+                  if (_sharesServerWithAnotherAccount) ...<Widget>[
+                    const SizedBox(height: BoneSpacing.sm),
+                    Text(context.l10n.accountsSameServer,
+                        key: const ValueKey<String>('connect-same-server'),
+                        style: theme.textTheme.bodySmall),
                   ],
                   const SizedBox(height: BoneSpacing.lg),
                   if (mode == AuthMode.linkDevice)
@@ -652,6 +671,36 @@ class _ConnectScreenState extends State<ConnectScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// The account switcher's host, when this screen belongs to an account
+  /// being added (a pending slot) and another account exists to go back to.
+  AccountHost? get _pendingSlotHost {
+    final host = AccountHostScope.maybeOf(context);
+    if (host == null) return null;
+    final active = host.activeSlot;
+    if (active == null || active.state != SlotState.pending) return null;
+    final others = host.registry.slots.where((s) =>
+        s.namespace != active.namespace && s.state != SlotState.removing);
+    return others.isEmpty ? null : host;
+  }
+
+  /// This server already holds one of the accounts on this device (O10).
+  bool get _sharesServerWithAnotherAccount {
+    final host = AccountHostScope.maybeOf(context);
+    final origin = _probeResult.origin;
+    if (host == null || origin == null) return false;
+    final active = host.registry.active;
+    return host.registry.slots.any((s) =>
+        s.namespace != active &&
+        s.state != SlotState.removing &&
+        s.origin == origin);
+  }
+
+  Future<void> _backToAccounts(AccountHost host) async {
+    final active = host.registry.active;
+    // The empty pending slot is removed; the first other account opens.
+    await host.remove(active);
   }
 
   /// Passkey sign-in: the same post-sign-in path as the password, with no

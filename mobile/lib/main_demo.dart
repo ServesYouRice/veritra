@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'core/account_host.dart';
 import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
@@ -15,7 +16,8 @@ import 'desktop/desktop_services.dart';
 import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
-import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
+import 'features/chat/attachment_views.dart'
+    show purgeOpenedAttachments, useOpenedFilesScope;
 import 'features/chat/composer_attachments.dart'
     show purgePastedImages, usePastedImageProfile;
 import 'main.dart' show VeritraApp, StartupFailureApp;
@@ -23,7 +25,9 @@ import 'push/background_wake_runner.dart';
 import 'push/push_service.dart';
 import 'push/wake_worker_bridge.dart';
 import 'push/wake_launch_coordinator.dart';
+import 'storage/account_slots.dart';
 import 'storage/local_store.dart';
+import 'storage/profile_scope.dart';
 import 'sync/sync_service.dart';
 
 /// Demo entry point (decision D11). Never used for release builds.
@@ -65,17 +69,36 @@ Future<void> main(List<String> args) async {
   final namespace = profile == null ? 'demo' : 'demo-$profile';
   usePastedImageProfile(namespace);
   final bridge = PlatformWakeWorkerBridge(allowOptIn: _phoneNotices);
-  // One store and one AppState per process (D52 contract): a background
-  // wake and the UI share them, so two owners never race on MLS state.
-  SecureLocalStore? localStore;
-  AppState? appState;
-  AppState build({required bool background}) {
-    final existing = appState;
-    if (existing != null) return existing;
+  // At most one live store and AppState per process (D52 contract): a
+  // background wake and the UI share the primary slot's, so two owners never
+  // race on MLS state. The account switcher (B7) tears a slot down fully
+  // before it builds the next.
+  SecureLocalStore? primaryStore;
+  AppState? primaryState;
+
+  Future<void> _closePrimary() async {
+    final store = primaryStore;
+    primaryStore = null;
+    primaryState = null;
+    await store?.close();
+  }
+
+  Future<AccountRuntime> buildRuntime(String slot,
+      {required bool background}) async {
+    final isPrimary = slot == namespace;
+    final existing = primaryState;
+    if (isPrimary && existing != null) {
+      if (!background) primaryStore?.allowForegroundInitialization();
+      return AccountRuntime(
+          namespace: slot, state: existing, closeStore: _closePrimary);
+    }
+    final scope = ProfileScope(namespace: slot, primaryNamespace: namespace);
+    usePastedImageProfile(scope.pasteScope);
+    useOpenedFilesScope(scope.openedFilesFolder);
     // A cold background start opens only existing protected state: no key,
     // database or profile is created for a push.
-    final store = localStore =
-        SecureLocalStore(namespace: namespace, existingOnly: background);
+    final store = SecureLocalStore(
+        namespace: slot, existingOnly: background && isPrimary);
     final bindings = NativeCryptoBindings.load();
     final state = AppState(
       apiClientFactory: (baseUrl) =>
@@ -88,6 +111,7 @@ Future<void> main(List<String> args) async {
       backupService: BackupService(
         bindings: bindings,
         localStore: store,
+        directoryProvider: () => slotWorkingDirectory(scope),
         clientFactory: (baseUrl) {
           // A recovery code names its server; demo builds still accept only
           // HTTPS or loopback (D12).
@@ -97,9 +121,11 @@ Future<void> main(List<String> args) async {
           return ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo);
         },
       ),
-      attachmentService: AttachmentCryptoService(bindings),
       reportSeedStore: SecureReportSeedStore(),
-      receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
+      attachmentService: AttachmentCryptoService(bindings,
+          directoryProvider: () => slotWorkingDirectory(scope)),
+      receiptPreferences:
+          ReceiptPreferences(SecureReceiptPreferenceStore(scope: scope)),
       syncServiceFactory: (baseUrl, token) =>
           WebSocketSyncService(baseUrl: baseUrl, token: token),
       passkeyClient: PlatformPasskeyClient(),
@@ -115,10 +141,18 @@ Future<void> main(List<String> args) async {
         syncWhileUnfocused:
             Platform.isWindows || Platform.isLinux || Platform.isMacOS,
       ),
-    );
+    )..historyTransferDirectory = slotHistoryTransferDirectory(scope);
     // A headless engine has no view: never treat it as resumed.
     if (background) state.handleAppLifecycleState(AppLifecycleState.detached);
-    return appState = state;
+    if (isPrimary) {
+      primaryStore = store;
+      primaryState = state;
+    }
+    return AccountRuntime(
+      namespace: slot,
+      state: state,
+      closeStore: isPrimary ? _closePrimary : store.close,
+    );
   }
 
   BackgroundWakeRunner? runner;
@@ -162,7 +196,7 @@ Future<void> main(List<String> args) async {
     // exists only in builds made with VERITRA_PHONE_NOTICES; otherwise native
     // never starts this and nothing registers for muted-mention wakes.
     onBackground: () async {
-      final state = build(background: true);
+      final state = (await buildRuntime(namespace, background: true)).state;
       if (await installWorker(state)) state.allowPhoneNotices();
     },
     // The UI takes over: cancel any wake first, then wait for its atomic
@@ -174,18 +208,45 @@ Future<void> main(List<String> args) async {
       await worker.drain();
     },
     onUi: () async {
-      final state = build(background: false);
-      if (_phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
-        state.phoneNoticeInstaller = () => installWorker(state);
-      }
-      localStore?.allowForegroundInitialization();
-      final desktop = await DesktopServices.startIfSupported(state);
-      runApp(VeritraApp(state: state, desktop: desktop));
+      final kv = SecureSlotKeyValue();
+      final host = AccountHost(
+        registryStore:
+            AccountRegistryStore(storage: kv, primaryNamespace: namespace),
+        eraser: SlotEraser(
+            storage: kv,
+            scope: ProfileScope(
+                namespace: namespace, primaryNamespace: namespace)),
+        build: (slot) async {
+          final runtime = await buildRuntime(slot, background: false);
+          if (slot == namespace && _phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
+            runtime.state.phoneNoticeInstaller = () => installWorker(runtime.state);
+          }
+          // At start and then hourly: a crash while running leaves files too.
+          runtime.state.startAttachmentOrphanSweep();
+          return runtime;
+        },
+        primaryNamespace: namespace,
+        desktopFactory: DesktopServices.startIfSupported,
+        inspect: slotInspectorFor(namespace),
+        revoke: slotRevokerFor((baseUrl) =>
+            ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo)),
+        // Step 3: the wake worker and the bridge leave with the primary slot;
+        // the permit is bound to the profile that is open. The bridge accepts
+        // a new profile after the uninstall; background wakes stay off.
+        beforeLeave: (runtime) async {
+          if (runtime.namespace != namespace) return;
+          runner?.cancelForForeground();
+          await bridge.uninstall(namespace);
+        },
+        afterClose: (_) async {
+          await purgeOpenedAttachments(thisSlotOnly: true);
+          await purgePastedImages();
+        },
+      );
+      await host.start();
+      runApp(VeritraApp(host: host));
       unawaited(purgeOpenedAttachments());
       unawaited(purgePastedImages());
-      // At start and then hourly: a crash while running leaves files too.
-      state.startAttachmentOrphanSweep();
-      unawaited(state.tryRestoreSession());
     },
     onUiError: () => runApp(const StartupFailureApp()),
   );

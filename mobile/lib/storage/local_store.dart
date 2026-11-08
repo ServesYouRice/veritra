@@ -4440,6 +4440,28 @@ class SecureLocalStore implements LocalStore {
     }
   }
 
+  /// Closes this store's database and gives up its profile's instance lock,
+  /// so the account switcher can open another slot (B7). The store can be
+  /// used again afterwards: the next call opens the database anew.
+  Future<void> close() async {
+    final opening = _openingDatabase;
+    _openingDatabase = null;
+    if (opening != null) {
+      try {
+        await (await opening).close();
+      } catch (_) {
+        // An open that failed holds nothing to close.
+      }
+    }
+    final path = _databasePath;
+    if (path != null) {
+      final directory = File(path).parent.path;
+      final handle = _instanceLocks
+          .remove('$directory${Platform.pathSeparator}veritra-instance.lock');
+      await handle?.close();
+    }
+  }
+
   static Future<void> _holdInstanceLock(Directory directory) async {
     final path =
         '${directory.path}${Platform.pathSeparator}veritra-instance.lock';

@@ -3844,4 +3844,91 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get passkeyNamePrefix => 'Passkey';
+
+  @override
+  String get settingsAccounts => 'Accounts';
+
+  @override
+  String get settingsAccountsDetail =>
+      'Switch between the accounts on this device';
+
+  @override
+  String get accountsTitle => 'Accounts';
+
+  @override
+  String get accountsIntro =>
+      'One account is open at a time. The others are paused: no messages or notifications arrive for them until you switch to them.';
+
+  @override
+  String get accountsOpenNow => 'Open now';
+
+  @override
+  String get accountsPending => 'Not signed in yet';
+
+  @override
+  String get accountsRemoving => 'Removing…';
+
+  @override
+  String get accountsNewAccount => 'New account';
+
+  @override
+  String get accountsAdd => 'Add an account';
+
+  @override
+  String accountsFull(String count) {
+    return 'This device holds $count accounts, the most it can. Remove one to add another.';
+  }
+
+  @override
+  String get accountsSameServer =>
+      'This server can tell that these accounts are on the same device.';
+
+  @override
+  String get accountsSwitching => 'Switching…';
+
+  @override
+  String accountsSwitchTo(String name) {
+    return 'Switch to $name';
+  }
+
+  @override
+  String get accountsRemove => 'Remove from this device';
+
+  @override
+  String accountsRemoveTitle(String name) {
+    return 'Remove $name from this device?';
+  }
+
+  @override
+  String get accountsRemoveBody =>
+      'This signs the account out and deletes its messages and keys from this device. The account stays on its server. If you will not use this device again, remove it from the account\'s device list on another device.';
+
+  @override
+  String get accountsPushFailTitle => 'Switch anyway?';
+
+  @override
+  String accountsPushFailBody(String name) {
+    return 'Notifications for $name could not be turned off. You may get notifications for this account until you open it again.';
+  }
+
+  @override
+  String get accountsSwitchAnyway => 'Switch anyway';
+
+  @override
+  String get accountsErrorOpen =>
+      'That account could not be opened. The previous account is open again.';
+
+  @override
+  String get accountsErrorRegistry => 'The account list could not be saved.';
+
+  @override
+  String get accountsErrorRemove =>
+      'The account could not be removed. Try again.';
+
+  @override
+  String get accountsDuplicate =>
+      'This device already has that account, so the extra sign-in was removed. Remove this device\'s extra entry from the account\'s device list.';
+
+  @override
+  String get accountsBack => 'Back to my accounts';
 }

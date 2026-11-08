@@ -5525,17 +5525,32 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   Future<void> _stopPush(Session? current, ApiClient? client) async {
+    await _stopPushStrict(current, client, attempts: 1);
+  }
+
+  /// Takes the server subscription and the native registration down, trying
+  /// each [attempts] times. Returns whether both are gone (true too when
+  /// nothing was registered). The local push state is cleared either way.
+  Future<bool> _stopPushStrict(Session? current, ApiClient? client,
+      {required int attempts}) async {
+    var gone = true;
+    Future<bool> attempt(Future<void> Function() action) async {
+      for (var i = 0; i < attempts; i++) {
+        try {
+          await action();
+          return true;
+        } catch (_) {}
+      }
+      return false;
+    }
+
     final id = _pushSubscriptionId;
     final instance = _pushInstance;
     if (id != null && current != null && client != null) {
-      try {
-        await client.disablePush(current.token, id);
-      } catch (_) {}
+      gone = await attempt(() => client.disablePush(current.token, id));
     }
     if (instance != null) {
-      try {
-        await pushService.unregister(instance);
-      } catch (_) {}
+      gone = await attempt(() => pushService.unregister(instance)) && gone;
     }
     await _pushSubscription?.cancel();
     _pushSubscription = null;
@@ -5546,6 +5561,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     pushProviders = const <String>[];
     pushState = PushState.unknown;
     pushTestResult = null;
+    return gone;
   }
 
   Future<void> _catchUpSyncEvents() async {
@@ -8919,6 +8935,39 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       onError: (Object _, StackTrace __) {},
     );
     return next;
+  }
+
+  // ---- B7 account switcher (docs/designs/B7-passkeys.md, S5) ----
+
+  /// Steps 2 and 5 of a switch: writes pending drafts and takes this
+  /// device's push registration down (the server subscription and the native
+  /// registration, each tried up to three times). Returns false when push
+  /// could not be taken down, so the caller can ask before leaving.
+  Future<bool> prepareToLeave() async {
+    var pushGone = true;
+    await _enqueueSessionTransition(() async {
+      await _flushDraftsBeforeSessionEnd();
+      pushGone = await _stopPushStrict(session, api, attempts: 3);
+    });
+    return pushGone;
+  }
+
+  /// The user kept this account open after push could not be taken down:
+  /// register again, as a resume would.
+  void resumeAfterCancelledSwitch() {
+    if (session != null && !_disposed) unawaited(_startPush());
+  }
+
+  /// Steps 4 and 6: stops sync, sockets and timers, advances the session
+  /// generation (the I30 fences then drop any late result), closes the
+  /// crypto handles, and waits for the work that cannot be cancelled.
+  /// The AppState is unusable afterwards.
+  Future<void> closeForSwitch() async {
+    dispose();
+    // A request that never answers must not hold the switch: the client was
+    // closed above, and the generation fence drops anything that arrives.
+    await backgroundWorkIdle.timeout(const Duration(seconds: 5),
+        onTimeout: () {});
   }
 
   @override
