@@ -4779,6 +4779,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         unawaited(_catchUpSyncEvents());
       }
       if (!_syncOwnerActive(current, ownerGeneration)) return;
+      await _consumePendingEndpoint(current, client, ownerGeneration);
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
       await pushService.register(
           instance: _pushInstance!, vapid: vapid, providers: providers);
       notifyListeners();
@@ -4864,23 +4866,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await _catchUpSyncEvents();
       }
     } else if (event is PushEndpointEvent && event.instance == _pushInstance) {
-      try {
-        final subscriptionId = event.provider == 'webpush'
-            ? await client.registerWebPush(current.token,
-                endpoint: event.endpoint,
-                publicKey: event.publicKey,
-                authSecret: event.authSecret)
-            : await client.registerNativePush(current.token,
-                provider: event.provider, deviceToken: event.endpoint);
-        if (!_syncOwnerActive(current, ownerGeneration)) return;
-        _pushSubscriptionId = subscriptionId;
-        pushProvider = event.provider;
-        _setPushState(PushState.registered);
-        notifyListeners();
-      } catch (_) {
-        // Re-registration on the next startup retries endpoint delivery.
-        _setPushState(PushState.registrationFailed);
-      }
+      await _registerEndpoint(current, client, ownerGeneration, event);
     } else if (event is PushRegistrationFailedEvent &&
         event.instance == _pushInstance) {
       // A UnifiedPush failure means no distributor answered; anything else
@@ -4902,6 +4888,58 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
+  /// Registers [event] with the server and, only after that succeeded,
+  /// acknowledges its native record. A failure leaves the record for the
+  /// next startup or resume. Registering twice (live and pending) is safe.
+  Future<bool> _registerEndpoint(Session current, ApiClient client,
+      int ownerGeneration, PushEndpointEvent event) async {
+    try {
+      final subscriptionId = event.provider == 'webpush'
+          ? await client.registerWebPush(current.token,
+              endpoint: event.endpoint,
+              publicKey: event.publicKey,
+              authSecret: event.authSecret)
+          : await client.registerNativePush(current.token,
+              provider: event.provider, deviceToken: event.endpoint);
+      if (!_syncOwnerActive(current, ownerGeneration)) return false;
+      _pushSubscriptionId = subscriptionId;
+      pushProvider = event.provider;
+      _setPushState(PushState.registered);
+      notifyListeners();
+    } catch (_) {
+      // Re-registration on the next startup retries endpoint delivery.
+      _setPushState(PushState.registrationFailed);
+      return false;
+    }
+    if (event.generation > 0) {
+      try {
+        await pushService.acknowledgeEndpoint(event.generation);
+      } catch (_) {
+        // The record stays; it is registered again, harmlessly, later.
+      }
+    }
+    return true;
+  }
+
+  /// Pulls the native pending endpoint record. A record for another
+  /// instance is stale and dropped without being uploaded.
+  Future<void> _consumePendingEndpoint(
+      Session current, ApiClient client, int ownerGeneration) async {
+    try {
+      final pending = await pushService.pendingEndpoint();
+      if (pending == null || !_syncOwnerActive(current, ownerGeneration)) {
+        return;
+      }
+      if (pending.instance != _pushInstance) {
+        await pushService.acknowledgeEndpoint(pending.generation);
+        return;
+      }
+      await _registerEndpoint(current, client, ownerGeneration, pending);
+    } catch (_) {
+      // Push is optional; a later startup or resume pulls the record again.
+    }
+  }
+
   Future<void> _resumeForegroundSync() async {
     if (session == null || api == null) return;
     // A background pass hands over to the foreground owner: it is cancelled
@@ -4911,8 +4949,16 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // Timers do not run while the app is suspended.
     await purgeExpiredMessages();
     await _observePendingWake();
+    await _retryPendingEndpoint();
     await _catchUpSyncEvents();
     await _flushMlsOutbox();
+  }
+
+  Future<void> _retryPendingEndpoint() async {
+    final current = session;
+    final client = api;
+    if (current == null || client == null || _pushInstance == null) return;
+    await _consumePendingEndpoint(current, client, _sessionGeneration);
   }
 
   /// Whether the UI is in front; a background wake never starts then.

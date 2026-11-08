@@ -124,6 +124,138 @@ void main() {
     expect(state.pushTestResult, isNot(contains('fcm-token')));
     state.dispose();
   });
+
+  const rotated = PushEndpointEvent(
+    instance: 'acct_1:dev_1',
+    provider: 'fcm',
+    endpoint: 'fcm-token-rotated-0123456789-0123456789',
+    publicKey: '',
+    authSecret: '',
+    generation: 7,
+  );
+
+  test(
+      'a rotation stored before the subscriber exists is registered, then '
+      'acknowledged only after the server accepted it', () async {
+    final store = MemoryLocalStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://localhost:8080',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    final api = _PushApi(<String, Object?>{
+      'enabled': true,
+      'providers': <String>['fcm'],
+    });
+    final push = _FakePush()..pending = rotated;
+    // The stream emits nothing: the record is the only carrier.
+    api.onRegister = () => expect(push.acknowledgedEndpoints, isEmpty);
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: store,
+      syncServiceFactory: (_, __) => _QuietSync(),
+      pushService: push,
+    );
+    await state.tryRestoreSession();
+    await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+    expect(api.registeredTokens, <String>[rotated.endpoint]);
+    expect(push.acknowledgedEndpoints, <int>[7]);
+    expect(push.pending, isNull);
+    expect(state.pushState, PushState.registered);
+    state.dispose();
+  });
+
+  test('a failed server registration leaves the record unacknowledged',
+      () async {
+    final store = MemoryLocalStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://localhost:8080',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    final api = _PushApi(<String, Object?>{
+      'enabled': true,
+      'providers': <String>['fcm'],
+    })
+      ..registerError = ApiException(503, '{"error":"unavailable"}');
+    final push = _FakePush()..pending = rotated;
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: store,
+      syncServiceFactory: (_, __) => _QuietSync(),
+      pushService: push,
+    );
+    await state.tryRestoreSession();
+    await _until(() => push.registrations.isNotEmpty);
+    expect(push.acknowledgedEndpoints, isEmpty);
+    expect(push.pending, same(rotated));
+    expect(state.pushState, PushState.registrationFailed);
+    state.dispose();
+  });
+
+  test('a record for another instance is dropped without being uploaded',
+      () async {
+    final store = MemoryLocalStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://localhost:8080',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    final api = _PushApi(<String, Object?>{
+      'enabled': true,
+      'providers': <String>['fcm'],
+    });
+    final push = _FakePush()
+      ..pending = const PushEndpointEvent(
+        instance: 'acct_old:dev_old',
+        provider: 'fcm',
+        endpoint: 'stale-token-0123456789-0123456789-01',
+        publicKey: '',
+        authSecret: '',
+        generation: 3,
+      );
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: store,
+      syncServiceFactory: (_, __) => _QuietSync(),
+      pushService: push,
+    );
+    await state.tryRestoreSession();
+    await _until(() => push.registrations.isNotEmpty);
+    expect(api.registeredTokens, isEmpty);
+    expect(push.acknowledgedEndpoints, <int>[3]);
+    state.dispose();
+  });
+
+  test(
+      'a live endpoint event is acknowledged with its generation, and an '
+      'older acknowledgement keeps a newer rotation', () async {
+    final (state, api, push) = await start(<String, Object?>{
+      'enabled': true,
+      'providers': <String>['fcm'],
+    });
+    // A newer rotation lands in the record while generation 7 is handled.
+    const newer = PushEndpointEvent(
+      instance: 'acct_1:dev_1',
+      provider: 'fcm',
+      endpoint: 'fcm-token-newer-0123456789-0123456789',
+      publicKey: '',
+      authSecret: '',
+      generation: 8,
+    );
+    push.pending = newer;
+    push.emit(rotated);
+    await _until(() => push.acknowledgedEndpoints.contains(7));
+    expect(api.registeredTokens, <String>[rotated.endpoint]);
+    expect(push.pending, same(newer));
+    state.dispose();
+  });
 }
 
 Future<void> _until(bool Function() condition) async {
@@ -139,8 +271,11 @@ class _PushApi extends ApiClient {
 
   final Map<String, Object?> config;
   final List<String> nativeRegistrations = <String>[];
+  void Function()? onRegister;
   List<String> testResults = const <String>[];
   ApiException? testError;
+  Object? registerError;
+  final List<String> registeredTokens = <String>[];
 
   @override
   Future<Map<String, Object?>> pushConfig(String token) async => config;
@@ -160,7 +295,11 @@ class _PushApi extends ApiClient {
   @override
   Future<String> registerNativePush(String token,
       {required String provider, required String deviceToken}) async {
+    onRegister?.call();
+    final error = registerError;
+    if (error != null) throw error;
     nativeRegistrations.add(provider);
+    registeredTokens.add(deviceToken);
     return 'push_1';
   }
 
@@ -211,6 +350,20 @@ class _FakePush implements MobilePushService {
 
   @override
   Future<bool> acknowledgeWake(int generation) async => false;
+
+  PushEndpointEvent? pending;
+  final List<int> acknowledgedEndpoints = <int>[];
+
+  @override
+  Future<PushEndpointEvent?> pendingEndpoint() async => pending;
+
+  @override
+  Future<bool> acknowledgeEndpoint(int generation) async {
+    acknowledgedEndpoints.add(generation);
+    if (pending?.generation != generation) return false;
+    pending = null;
+    return true;
+  }
 
   @override
   void dispose() => unawaited(_events.close());

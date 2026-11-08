@@ -9,15 +9,8 @@ import org.unifiedpush.android.connector.data.PushMessage
 class VeritraPushService : PushService() {
     override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
         val keys = endpoint.pubKeySet ?: return
-        PushEventBridge.emit(mapOf(
-            "type" to "endpoint",
-            "provider" to "webpush",
-            "instance" to instance,
-            "endpoint" to endpoint.url,
-            "publicKey" to keys.pubKey,
-            "authSecret" to keys.auth,
-            "temporary" to endpoint.temporary,
-        ))
+        PushEventBridge.recordEndpoint(applicationContext, "webpush", instance,
+            endpoint.url, keys.pubKey, keys.auth, temporary = endpoint.temporary)
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
@@ -32,6 +25,7 @@ class VeritraPushService : PushService() {
     }
 
     override fun onUnregistered(instance: String) {
+        PushEndpointStore.clearIfInstance(applicationContext, instance)
         PushEventBridge.emit(mapOf("type" to "unregistered", "instance" to instance))
     }
 
