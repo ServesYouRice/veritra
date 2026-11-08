@@ -26,6 +26,12 @@ class FakeTrack implements MediaStreamTrack {
   String? get id => name;
 
   @override
+  String? get kind => name == 'audio' || name == 'video' ? name : null;
+
+  @override
+  bool enabled = true;
+
+  @override
   Future<void> stop() async {
     stopCount++;
     log.add('track.stop:$name');
@@ -84,6 +90,8 @@ class FakePeer implements RTCPeerConnection {
   Function(RTCIceCandidate candidate)? onIceCandidate;
   @override
   Function(RTCTrackEvent event)? onTrack;
+  @override
+  Function(RTCPeerConnectionState state)? onConnectionState;
 
   void _maybeFail(String step) {
     final failure = failures[step];

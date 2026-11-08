@@ -44,6 +44,8 @@ import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
+import '../calls/call_controller.dart';
+import '../calls/call_service.dart' show isTerminalCallState;
 import 'api_client.dart';
 import 'attachments.dart';
 import 'client_config.dart';
@@ -705,6 +707,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   static const _selfUpdateSpacing = Duration(minutes: 1);
   Future<void> _sessionTransitionTail = Future<void>.value();
   Stream<IncomingCallSignal> get callSignals => _callSignals.stream;
+
+  /// The signed-in session's call controller, set by the call host in demo
+  /// builds (B5); null otherwise, so release builds show no call controls.
+  final ValueNotifier<CallController?> callController =
+      ValueNotifier<CallController?>(null);
 
   @override
   void notifyListeners() {
@@ -6584,7 +6591,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
-        if (signal != null) _callSignals.add(IncomingCallSignal(call, signal));
+        if (signal != null) {
+          _callSignals.add(IncomingCallSignal(call, signal));
+        } else if (isTerminalCallState(call.state)) {
+          // A hang-up, decline or miss carries no new signal (the server
+          // keeps the earlier metadata, which was already read), but the
+          // call service must still hear that the call is over.
+          _callSignals.add(IncomingCallSignal(call, const <String, Object?>{}));
+        }
         return null;
     }
     throw failure(SyncFailureKind.unsupportedEvent);
