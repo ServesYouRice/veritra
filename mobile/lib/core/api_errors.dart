@@ -184,6 +184,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_enrollment': ApiErrorKind.encryption,
   'invalid_key_derivation_metadata': ApiErrorKind.encryption,
   'invalid_key_packages': ApiErrorKind.encryption,
+  'key_package_not_listed': ApiErrorKind.encryption,
   'key_derivation_metadata_required': ApiErrorKind.encryption,
   'non_production_device_key_package': ApiErrorKind.encryption,
   'plaintext_message_fields_forbidden': ApiErrorKind.encryption,
@@ -322,6 +323,8 @@ class ApiException implements Exception {
         return l10n.apiErrorTranscriptMismatch;
       case 'reveal_required':
         return l10n.deviceLinkRefreshFirst;
+      case 'key_package_not_listed':
+        return l10n.errorDeviceListNotApproved;
       case 'invalid_device_name':
         return l10n.apiErrorInvalidDeviceName;
       case 'invalid_name':

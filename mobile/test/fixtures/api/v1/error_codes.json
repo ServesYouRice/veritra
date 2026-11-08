@@ -74,6 +74,7 @@
     "invalid_json": "invalidRequest",
     "invalid_key_derivation_metadata": "encryption",
     "invalid_key_packages": "encryption",
+    "key_package_not_listed": "encryption",
     "invalid_limit": "invalidRequest",
     "invalid_max_uses": "invalidRequest",
     "invalid_member": "invalidRequest",
