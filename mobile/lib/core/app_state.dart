@@ -519,6 +519,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// whether a run is under way, and the desktop hourly check.
   K1BackupState? _k1State;
   bool _k1Running = false;
+  bool _k1RerunRequested = false;
   Timer? _k1Timer;
 
   /// The clock K1 schedules read; tests move it.
@@ -6859,6 +6860,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// "accepted, unfinished" marks are not dropped here: they follow the
   /// stored MLS outbox, not the session.
   void _resetSessionMemory() {
+    // K1: a run under way keeps its own copies; nothing of this identity's
+    // backup state survives in memory or is written back after a wipe.
+    _k1State = null;
+    _stopK1Backups();
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
     _keyPackageRetryAt = null;

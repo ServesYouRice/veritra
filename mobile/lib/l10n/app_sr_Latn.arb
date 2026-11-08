@@ -910,6 +910,7 @@
   "callNoticeFailed": "Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.",
   "autoBackupTitle": "Automatske rezervne kopije",
   "autoBackupIntro": "Svakog dana ovaj uređaj pravi rezervnu kopiju vaših razgovora, zaključanu vašim ključem za oporavak. Samo taj ključ je otvara; server ne može. Nova kopija zamenjuje staru. Poruke koje nestaju se nikada ne kopiraju.",
+  "autoBackupIntroPhone": "Ovaj telefon pravi rezervnu kopiju vaših razgovora kada otvorite aplikaciju, najviše jednom dnevno, zaključanu vašim ključem za oporavak. Samo taj ključ je otvara; server ne može. Nova kopija zamenjuje staru. Poruke koje nestaju se nikada ne kopiraju.",
   "autoBackupLast": "Poslednja kopija {date}",
   "autoBackupPending": "Prva kopija još nije napravljena",
   "autoBackupServerOff": "Ovaj server ima isključene rezervne kopije",

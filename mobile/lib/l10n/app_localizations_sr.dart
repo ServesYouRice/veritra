@@ -3257,6 +3257,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Сваког дана овај уређај прави резервну копију ваших разговора, закључану вашим кључем за опоравак. Само тај кључ је отвара; сервер не може. Нова копија замењује стару. Поруке које нестају се никада не копирају.';
 
   @override
+  String get autoBackupIntroPhone =>
+      'Овај телефон прави резервну копију ваших разговора када отворите апликацију, највише једном дневно, закључану вашим кључем за опоравак. Само тај кључ је отвара; сервер не може. Нова копија замењује стару. Поруке које нестају се никада не копирају.';
+
+  @override
   String autoBackupLast(String date) {
     return 'Последња копија $date';
   }
@@ -6583,6 +6587,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get autoBackupIntro =>
       'Svakog dana ovaj uređaj pravi rezervnu kopiju vaših razgovora, zaključanu vašim ključem za oporavak. Samo taj ključ je otvara; server ne može. Nova kopija zamenjuje staru. Poruke koje nestaju se nikada ne kopiraju.';
+
+  @override
+  String get autoBackupIntroPhone =>
+      'Ovaj telefon pravi rezervnu kopiju vaših razgovora kada otvorite aplikaciju, najviše jednom dnevno, zaključanu vašim ključem za oporavak. Samo taj ključ je otvara; server ne može. Nova kopija zamenjuje staru. Poruke koje nestaju se nikada ne kopiraju.';
 
   @override
   String autoBackupLast(String date) {

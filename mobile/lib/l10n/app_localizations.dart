@@ -5343,6 +5343,12 @@ abstract class AppLocalizations {
   /// **'Every day this device backs up your chats, locked with your recovery key. Only that key opens them; the server cannot. The new backup replaces the old one. Disappearing messages are never backed up.'**
   String get autoBackupIntro;
 
+  /// No description provided for @autoBackupIntroPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone backs up your chats when you open the app, at most once a day, locked with your recovery key. Only that key opens them; the server cannot. The new backup replaces the old one. Disappearing messages are never backed up.'**
+  String get autoBackupIntroPhone;
+
   /// No description provided for @autoBackupLast.
   ///
   /// In en, this message translates to:

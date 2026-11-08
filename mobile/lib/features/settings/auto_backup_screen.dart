@@ -74,7 +74,7 @@ class AutoBackupScreen extends StatelessWidget {
           return ListView(
             padding: const EdgeInsets.all(BoneSpacing.gutter),
             children: <Widget>[
-              Text(l10n.autoBackupIntro),
+              Text(phone ? l10n.autoBackupIntroPhone : l10n.autoBackupIntro),
               const SizedBox(height: BoneSpacing.md),
               TileGroup(
                 children: <Widget>[
@@ -179,6 +179,12 @@ class _RecoveryKeyDialogState extends State<_RecoveryKeyDialog> {
         controller: _controller,
         autocorrect: false,
         enableSuggestions: false,
+        enableIMEPersonalizedLearning: false,
+        keyboardType: TextInputType.visiblePassword,
+        textCapitalization: TextCapitalization.characters,
+        minLines: 2,
+        maxLines: 4,
+        style: BoneType.mono,
         decoration: InputDecoration(labelText: l10n.recoveryKeyField),
       ),
       actions: <Widget>[

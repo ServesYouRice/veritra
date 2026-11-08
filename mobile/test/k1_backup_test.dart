@@ -1,9 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:private_messenger/core/account_recovery.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/k1_backup.dart';
@@ -27,6 +27,18 @@ class K1Crypto extends K0Crypto implements BackupSealCryptoService {
   final List<Uint8List> plaintexts = <Uint8List>[];
   final List<Uint8List> ciphertexts = <Uint8List>[];
   int maxPlaintext = 1 << 20;
+  bool throwOnSeal = false;
+  Uint8List? nextRkId;
+  Uint8List? nextRkPub;
+
+  @override
+  Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List value) async {
+    final base = await super.deriveRecoveryKey(value);
+    return RecoveryKeyValues(
+        rkPub: nextRkPub == null ? base.rkPub : Uint8List.fromList(nextRkPub!),
+        rkId: nextRkId ?? base.rkId,
+        rkAuthPub: base.rkAuthPub);
+  }
 
   @override
   int get k1BackupMaxPlaintextBytes => maxPlaintext;
@@ -40,6 +52,7 @@ class K1Crypto extends K0Crypto implements BackupSealCryptoService {
     required Uint8List rkPub,
     required Uint8List plaintext,
   }) async {
+    if (throwOnSeal) throw StateError('seal failed');
     k1Seals.add(<String, Object?>{
       'account': accountId,
       'device': sourceDeviceId,
@@ -67,6 +80,9 @@ class K1Api extends K0Api {
   final List<K1Upload> uploads;
   final List<Object> failures;
 
+  /// When set, an upload waits for it (an upload in flight).
+  static Completer<void>? gate;
+
   @override
   Future<RecoveryKeyStatus> putRecoveryKey(String token,
       {required List<int> rkAuthPub,
@@ -85,6 +101,8 @@ class K1Api extends K0Api {
   @override
   Future<void> uploadK1Backup(String token, Uint8List ciphertext,
       {required List<int> rkId, required int counter}) async {
+    final wait = gate;
+    if (wait != null) await wait.future;
     if (failures.isNotEmpty) throw failures.removeAt(0);
     uploads
         .add(K1Upload(List<int>.of(ciphertext), List<int>.of(rkId), counter));
@@ -122,7 +140,10 @@ void main() {
     state = app(store);
   });
 
-  tearDown(() => state.dispose());
+  tearDown(() {
+    K1Api.gate = null;
+    state.dispose();
+  });
 
   Future<void> signIn() async {
     await store.saveSession(k0SignedIn);
@@ -169,8 +190,8 @@ void main() {
     expect(state.k1BackupState!.lastSuccessAt, now);
 
     // Stored, scoped to this account and device; a reload reads it back.
-    final saved =
-        K1BackupState.decode(await store.loadSetting(k1BackupStateSetting))!;
+    final saved = K1BackupState.decode(await store
+        .loadSetting(k1BackupSettingName(k0Origin, 'acct_me', 'dev_old')))!;
     expect(saved.belongsTo(k0Origin, 'acct_me', 'dev_old'), isTrue);
     expect(saved.rkPub, List<int>.filled(32, 0xC3));
     expect(saved.counter, 1);
@@ -277,6 +298,84 @@ void main() {
     expect(state.k1BackupNeedsAttention, isTrue);
   });
 
+  test('a device that never succeeds warns a week after its key was set',
+      () async {
+    await signIn();
+    failures.add(ApiException(503, ''));
+    await saveKey();
+    for (var day = 1; day <= 7; day++) {
+      now = now.add(const Duration(days: 1));
+      failures.add(ApiException(503, ''));
+      await state.runK1BackupIfDue();
+    }
+    expect(state.k1BackupState!.lastSuccessAt, isNull);
+    expect(state.k1BackupStale, isTrue);
+  });
+
+  test('an export or seal failure is recorded with backoff', () async {
+    await signIn();
+    crypto.throwOnSeal = true;
+    await saveKey();
+    expect(state.k1BackupState!.lastError, K1BackupError.failed);
+    expect(state.k1BackupState!.nextAttemptAt, isNotNull);
+    expect(uploads, isEmpty);
+  });
+
+  test(
+      'a key replaced during an upload: the run keeps its own key and a '
+      'fresh run follows under the new one', () async {
+    await signIn();
+    await saveKey();
+    now = now.add(const Duration(days: 1));
+    K1Api.gate = Completer<void>();
+    final run = state.runK1BackupIfDue();
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(state.k1BackupRunning, isTrue);
+    // The user replaces the key on this device mid-upload (new rk_id 0x77).
+    crypto.nextRkId = _otherRkId;
+    crypto.nextRkPub = Uint8List.fromList(List<int>.filled(32, 0xD4));
+    server.status =
+        RecoveryKeyStatus(available: true, configured: true, rkId: _otherRkId);
+    expect(await state.enableK1BackupsWithKey(k0Display), isTrue);
+    K1Api.gate!.complete();
+    K1Api.gate = null;
+    await run;
+    await settle();
+    // The first upload was sealed and labelled with the old key only.
+    expect(crypto.k1Seals[1]['rk_pub'], List<int>.filled(32, 0xC3));
+    expect(uploads[1].rkId, _rkId);
+    // A fresh run followed with the new key, and its outcome stands.
+    expect(uploads.last.rkId, _otherRkId);
+    expect(crypto.k1Seals.last['rk_pub'], List<int>.filled(32, 0xD4));
+    expect(state.k1BackupState!.lastError, isNull);
+    expect(state.k1BackupState!.lastSuccessAt, isNotNull);
+    expect(uploads.last.counter, greaterThan(uploads[1].counter));
+  });
+
+  test('signing out during a run writes nothing back', () async {
+    await signIn();
+    await saveKey();
+    now = now.add(const Duration(days: 1));
+    K1Api.gate = Completer<void>();
+    final run = state.runK1BackupIfDue();
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    await state.logout();
+    final name = k1BackupSettingName(k0Origin, 'acct_me', 'dev_old');
+    await store.saveSetting(name, '');
+    K1Api.gate!.complete();
+    K1Api.gate = null;
+    await run;
+    await settle();
+    expect(await store.loadSetting(name), '');
+    expect(state.k1BackupState, isNull);
+  });
+
+  test('uploads go out in 64 KiB slices', () async {
+    final bytes = Uint8List(200 * 1024 + 5);
+    final slices = await k1UploadSlices(bytes).toList();
+    expect(slices.map((s) => s.length), <int>[65536, 65536, 65536, 8197]);
+  });
+
   test('a stale counter jumps past the server once and retries', () async {
     await signIn();
     failures.add(k0Error(409, 'backup_counter_stale'));
@@ -336,7 +435,7 @@ void main() {
 
   test('the state of another account or device is never used', () async {
     await store.saveSetting(
-        k1BackupStateSetting,
+        k1BackupSettingName(k0Origin, 'acct_other', 'dev_old'),
         (K1BackupState(
                 baseUrl: k0Origin, accountId: 'acct_other', deviceId: 'dev_old')
               ..setKey(Uint8List(32), _rkId))
@@ -360,6 +459,17 @@ void main() {
       expect(text, isNot(contains(k1SettingPrefix)));
       expect(text, isNot(contains(rkPub)));
     }
+    // Nor in the full export (format 6) the legacy backup uses.
+    await store.saveCryptoState(
+        StoredCryptoState(
+            counter: 1,
+            stateKey: List<int>.filled(32, 7),
+            sealedState: const <int>[1]),
+        0);
+    final export =
+        utf8.decode(await store.exportBackup(), allowMalformed: true);
+    expect(export, isNot(contains(k1SettingPrefix)));
+    expect(export, isNot(contains(rkPub)));
     // What was sealed is the same kind of snapshot.
     expect(crypto.k1Seals.single['plain'], isNot(contains(k1SettingPrefix)));
   });

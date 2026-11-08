@@ -292,6 +292,37 @@ opens with RK alone; it needs no password and no account.
   the device check cannot be done against the server when that row is gone,
   so the screen names the source device from the header.
 
+## Build notes (K1-2, K1-3)
+
+Where the build differs from the text above, and why:
+
+- **Server (K1-2, migration 0064).** A device holds at most two copies: an
+  upload deletes the device's earlier superseded copy even inside its
+  24-hour grace, so a loop of uploads cannot pile up copies the allowance
+  does not count. Each device's highest counter is kept in
+  `k1_backup_counters`, so a counter is never accepted twice, even after its
+  copies were deleted. The allowance is `2 × 64 MiB` plus framing, so two
+  full-size copies fit; it counts the current copies of the account's
+  active devices.
+- **One setting per identity.** The device state is one JSON setting,
+  `k1.state|<server>|<account>|<device>`, instead of separate `k1.*` keys, so
+  it is written at once and another account on the same device never
+  overwrites it.
+- **Snapshot version stays 1.** Only the contents change (no disappearing
+  messages, and with them their reactions, pins and stars), so the K2
+  importer needs no change. A reaction or edit that expires, on a message
+  that does not, is still kept (as in K2).
+- **A stale counter** (local state lost) jumps to
+  `max(counter + 1, now in ms)` and retries once.
+- **No sync lease.** The snapshot export is one database transaction, and
+  runs happen in the foreground only. K1-6's background runs must revisit
+  this.
+- **Phones** say "when you open the app, at most once a day", never
+  "daily" (D91).
+- **Still to do:** restore (K1-4), the confirmation schedule and the second
+  copy (K1-5), background runs and retiring VBK2 and the recovery-token
+  route (K1-6, after K1-4, so a restore path always exists).
+
 ## Threats
 
 | Adversary | Gets | Mitigation, or what is left |

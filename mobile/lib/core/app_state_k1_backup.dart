@@ -121,24 +121,45 @@ extension K1BackupActions on AppState {
     final now = k1Clock();
     if (!force && !state.isDue(now)) return false;
     _k1Running = true;
+    _k1RerunRequested = false;
     notifyListeners();
+    // The run works on copies of the key: a key typed or replaced while it
+    // is under way never mixes into this run's seal or metadata.
+    final key = _K1RunKey(
+        Uint8List.fromList(state.rkPub!), Uint8List.fromList(state.rkId!));
+    K1BackupError? error;
     try {
-      final error = await _k1BackupOnce(current, client, state);
-      if (!identical(session, current)) return false;
-      if (error == null) {
-        state.recordSuccess(k1Clock());
-      } else {
-        state.recordFailure(error, k1Clock());
-      }
-      await _saveK1State(state);
-      return error == null;
+      error = await _k1BackupOnce(current, client, state, key);
     } catch (_) {
-      // Unreadable local settings or a store failure: try again later.
-      return false;
+      // An export, seal or local store failure: recorded, with backoff.
+      error = K1BackupError.failed;
+    } finally {
+      key.wipe();
+    }
+    try {
+      // Record the outcome only for the key this run used, on the state of
+      // the signed-in identity. A key changed meanwhile starts over below.
+      if (identical(_k1StateForSession(), state) &&
+          state.hasKey &&
+          _constantTimeBytesEqual(state.rkId!, key.rkId)) {
+        if (error == null) {
+          state.recordSuccess(k1Clock());
+        } else {
+          state.recordFailure(error, k1Clock());
+        }
+        await _saveK1State(state);
+      }
+    } catch (_) {
+      // The session ended or the store went away: nothing to record.
     } finally {
       _k1Running = false;
       notifyListeners();
+      if (_k1RerunRequested) {
+        _k1RerunRequested = false;
+        unawaited(runK1BackupIfDue(force: true));
+      }
     }
+    return error == null;
   }
 
   /// True while a run is under way.
@@ -148,8 +169,8 @@ extension K1BackupActions on AppState {
 
   /// One run (design, "What one run does"). Returns the error kind, or null
   /// on success.
-  Future<K1BackupError?> _k1BackupOnce(
-      Session current, ApiClient client, K1BackupState state) async {
+  Future<K1BackupError?> _k1BackupOnce(Session current, ApiClient client,
+      K1BackupState state, _K1RunKey key) async {
     final seal = cryptoService as BackupSealCryptoService;
     // 1. Check the key: a changed key pauses until it is typed here.
     final RecoveryKeyStatus status;
@@ -168,11 +189,11 @@ extension K1BackupActions on AppState {
     final accountRkId = status.rkId;
     if (!status.configured ||
         accountRkId == null ||
-        !_constantTimeBytesEqual(accountRkId, state.rkId!)) {
+        !_constantTimeBytesEqual(accountRkId, key.rkId)) {
       return K1BackupError.keyChanged;
     }
     // 2. Build the snapshot, without disappearing messages.
-    final plaintext = Uint8List.fromList(
+    final plaintext = _k1Bytes(
         await localStore.exportHistorySnapshot(omitDisappearing: true));
     Uint8List? ciphertext;
     try {
@@ -188,7 +209,7 @@ extension K1BackupActions on AppState {
         sourceDeviceId: current.deviceId!,
         createdAtMs: k1Clock().millisecondsSinceEpoch,
         counter: state.counter,
-        rkPub: state.rkPub!,
+        rkPub: key.rkPub,
         plaintext: plaintext,
       );
     } finally {
@@ -198,7 +219,8 @@ extension K1BackupActions on AppState {
     // and tries once more.
     try {
       for (var attempt = 0;; attempt++) {
-        final error = await _k1Upload(client, current, state, ciphertext!);
+        final error =
+            await _k1Upload(client, current, key, state.counter, ciphertext!);
         if (error != _k1CounterStale) return error as K1BackupError?;
         if (attempt > 0) return K1BackupError.failed;
         // This device's counter fell behind the server's high-water mark
@@ -207,7 +229,7 @@ extension K1BackupActions on AppState {
         state.counter =
             max(state.counter + 1, k1Clock().millisecondsSinceEpoch);
         await _saveK1State(state);
-        final plain = Uint8List.fromList(
+        final plain = _k1Bytes(
             await localStore.exportHistorySnapshot(omitDisappearing: true));
         try {
           ciphertext = await seal.sealK1Backup(
@@ -215,7 +237,7 @@ extension K1BackupActions on AppState {
             sourceDeviceId: current.deviceId!,
             createdAtMs: k1Clock().millisecondsSinceEpoch,
             counter: state.counter,
-            rkPub: state.rkPub!,
+            rkPub: key.rkPub,
             plaintext: plain,
           );
         } finally {
@@ -231,11 +253,11 @@ extension K1BackupActions on AppState {
 
   /// Uploads [ciphertext]; returns null on success, [_k1CounterStale] for a
   /// stale counter, or the error kind.
-  Future<Object?> _k1Upload(ApiClient client, Session current,
-      K1BackupState state, Uint8List ciphertext) async {
+  Future<Object?> _k1Upload(ApiClient client, Session current, _K1RunKey key,
+      int counter, Uint8List ciphertext) async {
     try {
       await client.uploadK1Backup(current.token, ciphertext,
-          rkId: state.rkId!, counter: state.counter);
+          rkId: key.rkId, counter: counter);
       return null;
     } on ApiException catch (err) {
       switch (err.serverCode) {
@@ -247,6 +269,9 @@ extension K1BackupActions on AppState {
           return K1BackupError.unavailable;
         case 'storage_quota_exceeded':
           return K1BackupError.spaceFull;
+        case 'server_storage_low':
+          // The server's disk, not this account's allowance: retried.
+          return K1BackupError.network;
       }
       if (err.statusCode == 507) return K1BackupError.spaceFull;
       if (err.statusCode >= 500 || err.statusCode == 429) {
@@ -290,20 +315,42 @@ extension K1BackupActions on AppState {
   /// Reads the stored state. A state made or changed while the read was
   /// under way (a snooze, a key typed) wins over what was read.
   Future<void> _loadK1State() async {
+    final current = session;
     final before = _k1State;
+    if (current == null ||
+        current.accountId == null ||
+        current.deviceId == null) {
+      return;
+    }
     K1BackupState? read;
     try {
-      read = K1BackupState.decode(
-          await localStore.loadSetting(k1BackupStateSetting));
+      read = K1BackupState.decode(await localStore.loadSetting(
+          k1BackupSettingName(
+              current.baseUrl, current.accountId!, current.deviceId!)));
+      if (read != null &&
+          !read.belongsTo(
+              current.baseUrl, current.accountId!, current.deviceId!)) {
+        read = null;
+      }
     } catch (_) {
       read = null;
     }
-    if (identical(_k1State, before)) _k1State = read;
+    if (identical(_k1State, before) && identical(session, current)) {
+      _k1State = read;
+    }
   }
 
+  /// Writes [state] under its identity's setting. A state that is no
+  /// longer the signed-in identity's (signed out, wiped, switched) is never
+  /// written back: that throws, so a counter that cannot be committed stops
+  /// the run before its upload.
   Future<void> _saveK1State(K1BackupState state) async {
-    if (!identical(_k1State, state)) return;
-    await localStore.saveSetting(k1BackupStateSetting, state.encode());
+    if (!identical(_k1StateForSession(), state)) {
+      throw StateError('K1 state no longer belongs to the session');
+    }
+    await localStore.saveSetting(
+        k1BackupSettingName(state.baseUrl, state.accountId, state.deviceId),
+        state.encode());
   }
 
   /// Stores the key's public half after the user typed it on this device
@@ -311,8 +358,10 @@ extension K1BackupActions on AppState {
   Future<void> _storeK1Key(Uint8List rkPub, Uint8List rkId) async {
     final state = _k1StateOrNew();
     if (state == null) return;
-    state.setKey(rkPub, rkId);
+    state.setKey(rkPub, rkId, k1Clock());
     await _saveK1State(state);
+    // A run under way keeps its own key; a fresh run follows it.
+    if (_k1Running) _k1RerunRequested = true;
     notifyListeners();
   }
 
@@ -339,3 +388,17 @@ extension K1BackupActions on AppState {
 
 /// Marks a 409 `backup_counter_stale` inside a run.
 const Object _k1CounterStale = Object();
+
+/// The key one run seals to, copied from the state at its start.
+class _K1RunKey {
+  _K1RunKey(this.rkPub, this.rkId);
+  final Uint8List rkPub;
+  final Uint8List rkId;
+
+  void wipe() => rkPub.fillRange(0, rkPub.length, 0);
+}
+
+/// The exported snapshot as one buffer, without a second copy when it
+/// already is one.
+Uint8List _k1Bytes(List<int> bytes) =>
+    bytes is Uint8List ? bytes : Uint8List.fromList(bytes);

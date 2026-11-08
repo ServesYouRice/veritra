@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' show max;
+import 'dart:math' show max, min;
 import 'dart:typed_data';
 
 import '../crypto/mls_commit_bundle.dart';
@@ -22,6 +22,15 @@ export 'server_origin.dart';
 /// MAX_HISTORY_CIPHERTEXT): the 64 MiB padded snapshot, 20 bytes per 1 MiB
 /// chunk and the 416-byte header.
 const int k1MaxBackupCiphertextBytes = 64 * 1024 * 1024 + 64 * 20 + 416;
+
+/// [bytes] as 64 KiB views, without copying.
+Stream<List<int>> k1UploadSlices(Uint8List bytes) async* {
+  const slice = 64 * 1024;
+  for (var offset = 0; offset < bytes.length; offset += slice) {
+    yield Uint8List.sublistView(
+        bytes, offset, min(offset + slice, bytes.length));
+  }
+}
 
 class ApiClient {
   /// [transport] decides which origins the device-link checks accept. It
@@ -1263,8 +1272,9 @@ class ApiClient {
       }),
     );
     request.contentLength = ciphertext.length;
-    final response =
-        await _sendBody(request, Stream<List<int>>.value(ciphertext));
+    // 64 KiB slices, like the file streams of other uploads: _sendBody's
+    // idle watchdog re-arms per slice, so a slow link is not cut off.
+    final response = await _sendBody(request, k1UploadSlices(ciphertext));
     await _readJsonResponse(response);
   }
 

@@ -1102,6 +1102,7 @@
   "callNoticeFailed": "The call could not connect. Calls need the server's relay (TURN) service to be set up.",
   "autoBackupTitle": "Automatic backups",
   "autoBackupIntro": "Every day this device backs up your chats, locked with your recovery key. Only that key opens them; the server cannot. The new backup replaces the old one. Disappearing messages are never backed up.",
+  "autoBackupIntroPhone": "This phone backs up your chats when you open the app, at most once a day, locked with your recovery key. Only that key opens them; the server cannot. The new backup replaces the old one. Disappearing messages are never backed up.",
   "autoBackupLast": "Last backup {date}",
   "@autoBackupLast": {"placeholders": {"date": {"type": "String", "example": "1 Nov 2026"}}},
   "autoBackupPending": "First backup not made yet",

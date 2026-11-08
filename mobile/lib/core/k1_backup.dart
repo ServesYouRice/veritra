@@ -10,6 +10,11 @@ import 'dart:typed_data';
 /// history snapshot: `rk_pub` would let anyone forge a backup that restores.
 const String k1BackupStateSetting = 'k1.state';
 
+/// The setting of one identity (server, account, device), so signing in
+/// to another account on this device never overwrites its key or counter.
+String k1BackupSettingName(String baseUrl, String accountId, String deviceId) =>
+    '$k1BackupStateSetting|$baseUrl|$accountId|$deviceId';
+
 /// Every K1 local setting starts with this; the leak test scans for it.
 const String k1SettingPrefix = 'k1.';
 
@@ -90,6 +95,7 @@ class K1BackupState {
     this.failures = 0,
     this.nextAttemptAt,
     this.keyPromptSnoozedUntil,
+    this.keySetAt,
   });
 
   final String baseUrl;
@@ -113,6 +119,10 @@ class K1BackupState {
   DateTime? nextAttemptAt;
   DateTime? keyPromptSnoozedUntil;
 
+  /// When this device was given the current key: the anchor for the
+  /// week-without-a-backup warning before any copy succeeded.
+  DateTime? keySetAt;
+
   bool get hasKey => rkPub != null && rkId != null;
 
   bool belongsTo(String baseUrl, String accountId, String deviceId) =>
@@ -122,7 +132,7 @@ class K1BackupState {
 
   /// Whether a run should start now: a key is set, the last good copy is a
   /// day old (or there is none), and no backoff is pending. A changed key
-  /// or a too-large history waits for the user, not the clock.
+  /// waits for the user, not the clock; other errors retry with backoff.
   bool isDue(DateTime now) {
     if (!hasKey) return false;
     if (lastError == K1BackupError.keyChanged) return false;
@@ -135,14 +145,8 @@ class K1BackupState {
   /// No good copy for a week while backups are on.
   bool isStale(DateTime now) {
     if (!hasKey) return false;
-    final last = lastSuccessAt;
-    if (last == null) {
-      final attempt = lastAttemptAt;
-      return attempt != null &&
-          lastError != null &&
-          !now.isBefore(attempt.add(k1BackupStaleAfter));
-    }
-    return !now.isBefore(last.add(k1BackupStaleAfter));
+    final anchor = lastSuccessAt ?? keySetAt;
+    return anchor != null && !now.isBefore(anchor.add(k1BackupStaleAfter));
   }
 
   void recordSuccess(DateTime now) {
@@ -162,8 +166,9 @@ class K1BackupState {
 
   /// Stores a key typed on this device. A new key clears the error and the
   /// backoff, so the first copy under it runs at once.
-  void setKey(Uint8List rkPub, Uint8List rkId) {
+  void setKey(Uint8List rkPub, Uint8List rkId, [DateTime? at]) {
     wipeKey();
+    keySetAt = at;
     this.rkPub = Uint8List.fromList(rkPub);
     this.rkId = Uint8List.fromList(rkId);
     lastError = null;
@@ -194,6 +199,7 @@ class K1BackupState {
         'failures': failures,
         if (nextAttemptAt != null)
           'next_attempt_at': nextAttemptAt!.millisecondsSinceEpoch,
+        if (keySetAt != null) 'key_set_at': keySetAt!.millisecondsSinceEpoch,
         if (keyPromptSnoozedUntil != null)
           'key_prompt_snoozed_until':
               keyPromptSnoozedUntil!.millisecondsSinceEpoch,
@@ -229,6 +235,7 @@ class K1BackupState {
             : 0,
         nextAttemptAt: _time(json['next_attempt_at']),
         keyPromptSnoozedUntil: _time(json['key_prompt_snoozed_until']),
+        keySetAt: _time(json['key_set_at']),
       );
       final rkPub = _bytes(json['rk_pub'], 32),
           rkId = _bytes(json['rk_id'], 16);
