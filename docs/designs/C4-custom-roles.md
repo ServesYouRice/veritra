@@ -1,6 +1,6 @@
 # C4: built-in roles, verified by every app
 
-**Status: design plus a pure rules engine; no wiring, no ABI.** Rescoped
+**Status: design, a pure rules engine and the record codec; no wiring, no ABI.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
 `5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
@@ -349,24 +349,65 @@ flag electors (which closes the D82 path for good).
 
 ## Built and not built
 
-Built: the rules engine and 62 tests (posting, hierarchy as on the server,
+**Wiring check (2026-11-07, C4 wiring package).** The condition "C1 removal
+proofs exist" is **not met**, and the receiver wiring cannot start under ABI
+13 either:
+
+- No code or doc builds a removal proof; only this design names one. A leave
+  is still committed by another member on the server's word, and a kick is
+  judged by nobody.
+- ABI 13's commit processing (`CommitOutcome` in `crypto/rust/src/mls.rs`,
+  reached through `pm_crypto_group_c7_process_commit`; the plain
+  `pm_crypto_group_process_commit` Dart binds returns only a status) returns `removed_any`, `added_any`, `new_epoch`,
+  `root` and `removed_self`. It merges inside Rust and gives Dart neither the
+  committer, the removed accounts, nor a hook before the merge. The staged
+  commit's committer and removed leaves are inside `inspect_commit` only.
+- So pieces 1-5 above (capability, genesis, extensions proposal, two-phase
+  commit, read call) all need a crypto ABI number. ABI 14 is taken by L1
+  (#142). **Needs an ABI counter (15 or later) before receivers can be wired;
+  no counter was available to this package.**
+
+Built in this slice instead (no ABI): the record codec v2
+(`governance_codec.dart`, vector `testing/vectors/c4-governance-record-v2.json`,
+format in `docs/crypto.md`), and the server's half of "Server differences to
+close" (migration 0054: one owner per group and per community, ownership only by
+the owner's transfer to an admin, anyone may step down). Local schema 22 is **not used**:
+the design needs no local table, and the local owner-activity clock has
+nothing to read until the record can be read from MLS.
+
+**Sketch only, not reviewed protocol.** Removal proofs, once an ABI exists,
+may need no new crypto: a kick is the
+committer's own MLS-authenticated commit, judged by `mayActOn(committer,
+target)` against the record; a leave is proven by the leaver's own
+application message (MLS authenticates its sender) for that group, which
+must be a typed message bound to the epoch or it can be replayed (the leaver's
+own self-Remove proposal, sent by reference, is the more natural route:
+`inspect_commit` already reads `update.sender()` that way), which a
+receiver requires for each removed account it cannot attribute to a
+permitted committer. That also closes the "server forces out every elector"
+residual. It is not built; it needs the committer and removed accounts
+before the merge.
+
+Built (earlier): the rules engine and 62 tests (posting, hierarchy as on the server,
 step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
 open, cancel, close, vote, win, claim, electors, `joined`, `owner_rev`; the
 local waits as pure helpers; the commit-level check). Not built: the ABI
-above, the record codec (format in `docs/crypto.md`), wiring into commit processing, local storage (none is
+above, wiring into commit processing, local storage (none is
 needed beyond MLS state), UI, and the server half of the ownership rules
 (below).
 
 ## Server differences to close
 
-The server has no single owner: an owner may grant `owner` to anyone it
-outranks or equals, and a group may have several. D80 says ownership moves
-only to a current admin. Until the server refuses `role = owner` except as
-a transfer to an admin, the two can disagree. They disagree safely: apps
-act on this state only, so a server-made second owner is an admin or less
-to every app. The server also has no self step-down and no succession;
-each is a small follow-up in `ManageConversationMember` and in account
-deletion.
+**Closed by migration 0054 (2026-11-07):** a conversation has one owner (a
+unique index; extra owners of older groups became admins, the oldest
+membership stays owner), `ManageConversationMember` refuses `role = owner`
+except as the owner's transfer to a current admin (the old owner becomes an
+admin), and anyone may step down (the owner must transfer first). Community
+membership rows follow the same rules (a second unique index; the community's
+creator is kept when fixing up old data). Review finding: option (a) taken
+because the community's role copies into channel conversations. Still open: no succession on the server, and
+account deletion of an owner (a follow-up). Apps never read these rows for
+roles, so the server and the signed record may still disagree safely.
 
 ## Owner questions
 
