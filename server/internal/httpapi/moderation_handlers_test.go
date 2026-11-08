@@ -62,7 +62,29 @@ func TestModerationRoutesAPI(t *testing.T) {
 	expect("timeout", http.StatusOK, http.MethodPut, base+"/members/"+carolID+"/timeout", ownerToken, map[string]int{"seconds": 600})
 	expect("slow mode", http.StatusOK, http.MethodPut, base+"/channels/"+channel+"/slow-mode", ownerToken, map[string]int{"seconds": 30})
 	expect("pause", http.StatusOK, http.MethodPut, base+"/invites-pause", ownerToken, map[string]int{"seconds": 600})
-	expect("kick", http.StatusOK, http.MethodPost, base+"/members/"+bobID+"/kick", ownerToken, nil)
+	body = expect("state", http.StatusOK, http.MethodGet, base+"/moderation-state", ownerToken, nil)
+	var state struct {
+		InvitesPausedUntil *string `json:"invites_paused_until"`
+		Channels           []struct {
+			ChannelID string `json:"channel_id"`
+			Seconds   int64  `json:"slow_mode_seconds"`
+		} `json:"channels"`
+	}
+	decodeBody(t, body, &state)
+	if state.InvitesPausedUntil == nil || len(state.Channels) != 1 || state.Channels[0].Seconds != 30 {
+		t.Fatalf("moderation state = %s", body)
+	}
+	expect("member reads state", http.StatusForbidden, http.MethodGet, base+"/moderation-state", bobToken, nil)
+	body = expect("kick", http.StatusOK, http.MethodPost, base+"/members/"+bobID+"/kick", ownerToken, nil)
+	var kicked struct {
+		Channels []struct {
+			ConversationID string `json:"conversation_id"`
+		} `json:"channels"`
+	}
+	decodeBody(t, body, &kicked)
+	if len(kicked.Channels) != 1 || kicked.Channels[0].ConversationID == "" {
+		t.Fatalf("kick response lacks channels: %s", body)
+	}
 	expect("ban", http.StatusOK, http.MethodPost, base+"/bans", ownerToken, map[string]string{"account_id": carolID})
 	expect("a banned account cannot be re-added", http.StatusForbidden, http.MethodPost, base+"/members", ownerToken, map[string]string{"account_id": carolID, "role": "member"})
 	expect("banned account sees nothing", http.StatusForbidden, http.MethodGet, base+"/members", carolToken, nil)

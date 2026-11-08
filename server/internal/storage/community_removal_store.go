@@ -41,6 +41,12 @@ func (s *Store) RemoveCommunityMember(ctx context.Context, communityID, actorAcc
 	if err != nil {
 		return CommunityRemoval{}, err
 	}
+	// Removing someone else is a kick: audit it like C5's kick route.
+	if actorAccountID != targetAccountID {
+		if err := appendModerationEventTx(ctx, tx, communityID, actorAccountID, targetAccountID, "", ModerationKick); err != nil {
+			return CommunityRemoval{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return CommunityRemoval{}, err
 	}

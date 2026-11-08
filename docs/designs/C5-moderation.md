@@ -1,7 +1,9 @@
 # C5: moderation
 
-**Status: server half built (migration 0055, 2026-11-07); apps and
-delete-others not built.** Built: bans (`member_bans`; kick then record in
+**Status: server half built (migration 0055, 2026-11-07); app screens built
+(2026-11-08: member menu with kick, ban, timeout; a Moderation screen with
+paused invitations, slow mode per channel, bans and the activity log; reads
+`GET .../moderation-state`); app-side checks and delete-others not built.** Built: bans (`member_bans`; kick then record in
 one transaction; refuses add, channel add, join request), kick, timeout
 (`memberships.timeout_until`, send refused `timed_out`), slow mode
 (`channels.slow_mode_seconds`, send refused 429 `slow_mode` with

@@ -5330,6 +5330,204 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.'**
   String get callNoticeFailed;
+
+  /// No description provided for @moderationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderation'**
+  String get moderationTitle;
+
+  /// No description provided for @moderationDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Bans, timeouts, slow mode, paused invitations and the activity log'**
+  String get moderationDetail;
+
+  /// No description provided for @memberModerateTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderate {username}'**
+  String memberModerateTooltip(String username);
+
+  /// No description provided for @memberBanAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Ban…'**
+  String get memberBanAction;
+
+  /// No description provided for @memberTimeoutAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Time out…'**
+  String get memberTimeoutAction;
+
+  /// No description provided for @memberTimeoutLift.
+  ///
+  /// In en, this message translates to:
+  /// **'Lift timeout'**
+  String get memberTimeoutLift;
+
+  /// No description provided for @banTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Ban {username}?'**
+  String banTitle(String username);
+
+  /// No description provided for @banMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'They are removed from the community and cannot return until the ban is lifted.'**
+  String get banMessage;
+
+  /// No description provided for @banConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Ban'**
+  String get banConfirm;
+
+  /// No description provided for @timeoutTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Time out {username} for how long?'**
+  String timeoutTitle(String username);
+
+  /// No description provided for @timeoutDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Timeout set.'**
+  String get timeoutDone;
+
+  /// No description provided for @moderationSectionInvites.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitations'**
+  String get moderationSectionInvites;
+
+  /// No description provided for @moderationInvitesOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Invitation links work normally.'**
+  String get moderationInvitesOpen;
+
+  /// No description provided for @moderationInvitesPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused until {time}.'**
+  String moderationInvitesPaused(String time);
+
+  /// No description provided for @moderationPauseInvites.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause invitations'**
+  String get moderationPauseInvites;
+
+  /// No description provided for @moderationResumeInvites.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume invitations'**
+  String get moderationResumeInvites;
+
+  /// No description provided for @moderationSectionSlow.
+  ///
+  /// In en, this message translates to:
+  /// **'Slow mode'**
+  String get moderationSectionSlow;
+
+  /// No description provided for @moderationSlowOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Off'**
+  String get moderationSlowOff;
+
+  /// No description provided for @moderationSlowEvery.
+  ///
+  /// In en, this message translates to:
+  /// **'One message every {interval}'**
+  String moderationSlowEvery(String interval);
+
+  /// No description provided for @moderationSlowTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Slow mode in {channel}'**
+  String moderationSlowTitle(String channel);
+
+  /// No description provided for @moderationSectionBans.
+  ///
+  /// In en, this message translates to:
+  /// **'Banned accounts'**
+  String get moderationSectionBans;
+
+  /// No description provided for @moderationNoBans.
+  ///
+  /// In en, this message translates to:
+  /// **'Nobody is banned.'**
+  String get moderationNoBans;
+
+  /// No description provided for @moderationUnban.
+  ///
+  /// In en, this message translates to:
+  /// **'Lift ban for {username}'**
+  String moderationUnban(String username);
+
+  /// No description provided for @moderationSectionLog.
+  ///
+  /// In en, this message translates to:
+  /// **'Activity log'**
+  String get moderationSectionLog;
+
+  /// No description provided for @moderationNoEvents.
+  ///
+  /// In en, this message translates to:
+  /// **'Nothing yet.'**
+  String get moderationNoEvents;
+
+  /// No description provided for @moderationLogKick.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} removed {target}'**
+  String moderationLogKick(String actor, String target);
+
+  /// No description provided for @moderationLogBan.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} banned {target}'**
+  String moderationLogBan(String actor, String target);
+
+  /// No description provided for @moderationLogUnban.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} lifted the ban on {target}'**
+  String moderationLogUnban(String actor, String target);
+
+  /// No description provided for @moderationLogTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} timed out {target}'**
+  String moderationLogTimeout(String actor, String target);
+
+  /// No description provided for @moderationLogTimeoutCleared.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} lifted the timeout of {target}'**
+  String moderationLogTimeoutCleared(String actor, String target);
+
+  /// No description provided for @moderationLogSlowMode.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} changed slow mode'**
+  String moderationLogSlowMode(String actor);
+
+  /// No description provided for @moderationLogInvitesPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} paused invitations'**
+  String moderationLogInvitesPaused(String actor);
+
+  /// No description provided for @moderationLogInvitesResumed.
+  ///
+  /// In en, this message translates to:
+  /// **'{actor} resumed invitations'**
+  String moderationLogInvitesResumed(String actor);
 }
 
 class _AppLocalizationsDelegate

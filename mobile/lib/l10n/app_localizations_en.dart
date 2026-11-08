@@ -3237,4 +3237,135 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get callNoticeFailed =>
       'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.';
+
+  @override
+  String get moderationTitle => 'Moderation';
+
+  @override
+  String get moderationDetail =>
+      'Bans, timeouts, slow mode, paused invitations and the activity log';
+
+  @override
+  String memberModerateTooltip(String username) {
+    return 'Moderate $username';
+  }
+
+  @override
+  String get memberBanAction => 'Ban…';
+
+  @override
+  String get memberTimeoutAction => 'Time out…';
+
+  @override
+  String get memberTimeoutLift => 'Lift timeout';
+
+  @override
+  String banTitle(String username) {
+    return 'Ban $username?';
+  }
+
+  @override
+  String get banMessage =>
+      'They are removed from the community and cannot return until the ban is lifted.';
+
+  @override
+  String get banConfirm => 'Ban';
+
+  @override
+  String timeoutTitle(String username) {
+    return 'Time out $username for how long?';
+  }
+
+  @override
+  String get timeoutDone => 'Timeout set.';
+
+  @override
+  String get moderationSectionInvites => 'Invitations';
+
+  @override
+  String get moderationInvitesOpen => 'Invitation links work normally.';
+
+  @override
+  String moderationInvitesPaused(String time) {
+    return 'Paused until $time.';
+  }
+
+  @override
+  String get moderationPauseInvites => 'Pause invitations';
+
+  @override
+  String get moderationResumeInvites => 'Resume invitations';
+
+  @override
+  String get moderationSectionSlow => 'Slow mode';
+
+  @override
+  String get moderationSlowOff => 'Off';
+
+  @override
+  String moderationSlowEvery(String interval) {
+    return 'One message every $interval';
+  }
+
+  @override
+  String moderationSlowTitle(String channel) {
+    return 'Slow mode in $channel';
+  }
+
+  @override
+  String get moderationSectionBans => 'Banned accounts';
+
+  @override
+  String get moderationNoBans => 'Nobody is banned.';
+
+  @override
+  String moderationUnban(String username) {
+    return 'Lift ban for $username';
+  }
+
+  @override
+  String get moderationSectionLog => 'Activity log';
+
+  @override
+  String get moderationNoEvents => 'Nothing yet.';
+
+  @override
+  String moderationLogKick(String actor, String target) {
+    return '$actor removed $target';
+  }
+
+  @override
+  String moderationLogBan(String actor, String target) {
+    return '$actor banned $target';
+  }
+
+  @override
+  String moderationLogUnban(String actor, String target) {
+    return '$actor lifted the ban on $target';
+  }
+
+  @override
+  String moderationLogTimeout(String actor, String target) {
+    return '$actor timed out $target';
+  }
+
+  @override
+  String moderationLogTimeoutCleared(String actor, String target) {
+    return '$actor lifted the timeout of $target';
+  }
+
+  @override
+  String moderationLogSlowMode(String actor) {
+    return '$actor changed slow mode';
+  }
+
+  @override
+  String moderationLogInvitesPaused(String actor) {
+    return '$actor paused invitations';
+  }
+
+  @override
+  String moderationLogInvitesResumed(String actor) {
+    return '$actor resumed invitations';
+  }
 }

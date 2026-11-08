@@ -289,6 +289,126 @@ extension MembershipActions on AppState {
     return done ?? false;
   }
 
+  /// Drops the removed account from each channel's local roster and reconciles
+  /// its MLS group, as [removeCommunityMember] does.
+  Future<void> _afterCommunityRemoval(
+    CommunityRemoval removal,
+    String accountId,
+  ) async {
+    for (final channel in removal.channels) {
+      await _afterMemberRemoved(channel.conversationId, accountId);
+      final members = membersByConversation[channel.conversationId];
+      if (members != null) {
+        membersByConversation = <String, List<ConversationMember>>{
+          ...membersByConversation,
+          channel.conversationId: members
+              .where((member) => member.accountId != accountId)
+              .toList(growable: false),
+        };
+      }
+    }
+  }
+
+  /// Kicks a member (C5): removes them from the community and its channels;
+  /// they may be added or invited again.
+  Future<bool> kickCommunityMember(String communityId, String accountId) async {
+    final done = await _membershipCall<bool>((current, client) async {
+      final removal = await client.kickCommunityMember(
+        current.token,
+        communityId,
+        accountId,
+      );
+      await _afterCommunityRemoval(removal, accountId);
+      return true;
+    });
+    return done ?? false;
+  }
+
+  /// Bans an account (C5): removes it if it is a member, and refuses its
+  /// return until the ban is lifted.
+  Future<bool> banCommunityMember(String communityId, String accountId) async {
+    final done = await _membershipCall<bool>((current, client) async {
+      final removal = await client.banCommunityMember(
+        current.token,
+        communityId,
+        accountId,
+      );
+      await _afterCommunityRemoval(removal, accountId);
+      return true;
+    });
+    return done ?? false;
+  }
+
+  Future<bool> unbanCommunityMember(
+    String communityId,
+    String accountId,
+  ) async {
+    final done = await _membershipCall<bool>((current, client) async {
+      await client.unbanCommunityMember(current.token, communityId, accountId);
+      return true;
+    });
+    return done ?? false;
+  }
+
+  /// Mutes a member for [seconds] (0 lifts it).
+  Future<bool> timeoutCommunityMember(
+    String communityId,
+    String accountId,
+    int seconds,
+  ) async {
+    final done = await _membershipCall<bool>((current, client) async {
+      await client.setMemberTimeout(
+        current.token,
+        communityId,
+        accountId,
+        seconds,
+      );
+      return true;
+    });
+    return done ?? false;
+  }
+
+  Future<bool> setChannelSlowMode(
+    String communityId,
+    String channelId,
+    int seconds,
+  ) async {
+    final done = await _membershipCall<bool>((current, client) async {
+      await client.setChannelSlowMode(
+        current.token,
+        communityId,
+        channelId,
+        seconds,
+      );
+      return true;
+    });
+    return done ?? false;
+  }
+
+  Future<bool> setInvitesPaused(String communityId, int seconds) async {
+    final done = await _membershipCall<bool>((current, client) async {
+      await client.setInvitesPaused(current.token, communityId, seconds);
+      return true;
+    });
+    return done ?? false;
+  }
+
+  Future<List<CommunityBan>?> loadCommunityBans(String communityId) =>
+      _membershipCall<List<CommunityBan>>(
+        (current, client) => client.communityBans(current.token, communityId),
+      );
+
+  Future<ModerationState?> loadModerationState(String communityId) =>
+      _membershipCall<ModerationState>(
+        (current, client) => client.moderationState(current.token, communityId),
+      );
+
+  Future<List<ModerationEvent>?> loadModerationEvents(String communityId) =>
+      _membershipCall<List<ModerationEvent>>(
+        (current, client) =>
+            client.moderationEvents(current.token, communityId),
+      );
+
   /// Leaves a community and every channel in it, and drops their local
   /// state the way leaving a group does. The last owner cannot leave.
   Future<bool> leaveCommunity(String communityId) async {
