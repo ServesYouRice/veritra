@@ -1,13 +1,13 @@
 # W8 phones (D52): native capture switch - 2026-11-07
 
-Phone mention notices can now be switched on in **demo builds only**, and are
-**off unless the build asks**. Nothing is on in release builds. No phone or
+Phone mention notices are **on by default in demo builds** (owner decision,
+2026-11-08) and **cannot be turned on in release/profile builds**. Nothing is on in release builds. No phone or
 Xcode was available: Kotlin and Swift are compiled by GitHub CI only, and no
 warm/cold phone lifecycle run exists.
 
 ## What decides "on"
 
-Both `--dart-define=VERITRA_DEMO=true` and `--dart-define=VERITRA_PHONE_NOTICES=true`.
+`--dart-define=VERITRA_DEMO=true`; `--dart-define=VERITRA_PHONE_NOTICES=false` opts a demo build out.
 
 - Android: `build.gradle.kts` reads Flutter's `dart-defines` Gradle property and
   sets `BuildConfig.VERITRA_PHONE_NOTICES`; the `release` and `profile` build
@@ -45,8 +45,7 @@ registration generic.
 ## Not checked
 
 Android/iOS builds and lifecycle (Doze, quota, kill, iOS expiration, notification
-permission denied, logout during a job) - see the W8 evidence list. The Swift
-define parser has no test. The owner decides when a demo build turns the switch on.
+permission denied, logout during a job) - see the W8 evidence list.  The Swift parser test lives in `RunnerTests.swift`; CI does not run the Xcode test target.
 
 A demo UI that gets `can_opt_in:false` from native uninstalls its worker, so a
 build without the native flag cannot run warm background catch-up.

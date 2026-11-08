@@ -337,7 +337,7 @@ final class IOSWakeJournal {
 }
 
 /// Phone notices (D52) exist only in a Debug-configuration build made with both
-/// `--dart-define=VERITRA_DEMO=true` and `--dart-define=VERITRA_PHONE_NOTICES=true`.
+/// `--dart-define=VERITRA_DEMO=true` (and not `VERITRA_PHONE_NOTICES=false`).
 /// Only Debug.xcconfig copies DART_DEFINES into Info.plist at build time; nothing Dart sends at runtime can change this, and Release is always off.
 enum PhoneNoticeBuild {
   static let enabled: Bool = {
@@ -354,7 +354,7 @@ enum PhoneNoticeBuild {
     func value(_ name: String) -> String? {
       entries.last { $0.hasPrefix(name + "=") }.map { String($0.dropFirst(name.count + 1)) }
     }
-    return value("VERITRA_DEMO") == "true" && value("VERITRA_PHONE_NOTICES") == "true"
+    return value("VERITRA_DEMO") == "true" && value("VERITRA_PHONE_NOTICES") != "false"
   }
 }
 

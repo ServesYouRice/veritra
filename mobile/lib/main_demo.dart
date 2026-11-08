@@ -39,10 +39,12 @@ import 'sync/sync_service.dart';
 /// by side on one machine, each with its own data and keys.
 const bool _demoBuild = bool.fromEnvironment('VERITRA_DEMO');
 
-/// D52 demo switch, off unless the build says so. Native reads the same
-/// define at build time and decides on its own; this only lets the bridge
+/// D52 demo switch: on by default in demo builds (owner decision, 2026-11-08);
+/// `--dart-define=VERITRA_PHONE_NOTICES=false` turns it off. Native reads the
+/// same define at build time and decides on its own; this only lets the bridge
 /// accept native's answer. Release (`main.dart`) has no such path.
-const bool _phoneNotices = bool.fromEnvironment('VERITRA_PHONE_NOTICES');
+const bool _phoneNotices =
+    bool.fromEnvironment('VERITRA_PHONE_NOTICES', defaultValue: true);
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();

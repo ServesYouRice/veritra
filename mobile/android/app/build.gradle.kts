@@ -12,7 +12,7 @@ fun quotedBuildValue(name: String): String {
 
 // Flutter passes every --dart-define to Gradle as "dart-defines": base64
 // "NAME=value" entries joined by commas. Native phone notices (D52) exist only
-// in a demo build that also asks for them; this is decided here at build time,
+// in a demo build (VERITRA_PHONE_NOTICES=false opts out); this is decided here at build time,
 // never from a value Dart sends at runtime, and never in a release build type.
 fun dartDefine(name: String): String? {
     val raw = providers.gradleProperty("dart-defines").orNull ?: return null
@@ -20,7 +20,7 @@ fun dartDefine(name: String): String? {
         runCatching { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull()
     }.lastOrNull { it.startsWith("$name=") }?.substringAfter('=')
 }
-val phoneNoticesBuild = dartDefine("VERITRA_DEMO") == "true" && dartDefine("VERITRA_PHONE_NOTICES") == "true"
+val phoneNoticesBuild = dartDefine("VERITRA_DEMO") == "true" && dartDefine("VERITRA_PHONE_NOTICES") != "false"
 
 android {
     namespace = "org.veritra.private_messenger"

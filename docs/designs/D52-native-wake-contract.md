@@ -125,15 +125,14 @@ Native to Dart:
   informs bootstrap/UI coordination without constructing another owner.
 
 `bootstrap` always says `can_opt_in:false`. `install` says `can_opt_in:true`
-only in a build made with both `--dart-define=VERITRA_DEMO=true` and
-`--dart-define=VERITRA_PHONE_NOTICES=true` (Android: a Gradle BuildConfig flag,
+only in a demo build (`--dart-define=VERITRA_DEMO=true`, unless
+`VERITRA_PHONE_NOTICES=false`) (Android: a Gradle BuildConfig flag,
 forced false in the release and profile build types; iOS: only Debug.xcconfig
 copies the build's `DART_DEFINES` into Info.plist). Native decides this at build
 time; nothing Dart sends changes it, and the Dart bridge accepts a true reply
 only when constructed with `allowOptIn` (demo entry point). Release builds
 (`main.dart`, release build types) therefore stay at `can_opt_in:false` with
-cold execution off. Whether a demo build turns the define on is the owner's
-call, pending actual Android/iOS lifecycle evidence. An unsupported method,
+cold execution off. The owner decided demo builds turn it on by default, pending actual Android/iOS lifecycle evidence. An unsupported method,
 worker missing, locked/missing key, profile mismatch or unavailable release
 crypto stays quiet and leaves the wake pending. No legacy fallback alert for
 v2 is permitted.
