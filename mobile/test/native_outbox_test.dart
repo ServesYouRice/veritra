@@ -20,6 +20,8 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart';
+import 'package:private_messenger/core/roles/posting_verdict.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/app_payload.dart' show AppPayloadType;
 import 'package:private_messenger/crypto/crypto_service.dart'
@@ -134,6 +136,61 @@ void main() {
           isNot(contains('👍')),
         );
       }
+    },
+    skip: skip,
+  );
+
+  test(
+    'C2 a restricted post from a non-admin is dropped; an admin and an '
+    'unrestricted group are not',
+    () async {
+      final harness = await _Harness.start(library());
+      addTearDown(harness.dispose);
+      final alice = harness.alice;
+      await alice.loadConversationMembers(_conversation);
+      final source = _RoleSource();
+      harness.bob.service.conversationAuthority = source;
+
+      // No record: nothing is dropped, even where the server restricts.
+      source.serverRestricts = true;
+      expect(await alice.sendMessageTo(_conversation, 'no record'), isTrue);
+      await harness.deliverToBob(await harness.nextEnvelope());
+      expect((await harness.bobHistory()).single.body, 'no record');
+
+      // A record that restricts posting, alice a plain member: dropped. The
+      // timeline shows nothing for it, and bob's cursor still moved.
+      source.serverRestricts = false;
+      source.record = GovernanceState(
+        rev: 1,
+        owner: 'acct_bob',
+        ownerRev: 0,
+        adminsOnlyPosting: true,
+        joined: {'acct_bob': 0, 'acct_alice': 1},
+      );
+      expect(await alice.sendMessageTo(_conversation, 'dropped'), isTrue);
+      await harness.deliverToBob(await harness.nextEnvelope());
+      final visible = await harness.bobHistory();
+      // The drop leaves only a hidden action row (no body) in bob's store.
+      expect(visible.where((m) => m.body != null).map((m) => m.body),
+          ['no record']);
+      expect(visible.length, 2);
+
+      // The same sender once the record makes it an admin: kept.
+      source.record = GovernanceState(
+        rev: 2,
+        owner: 'acct_bob',
+        ownerRev: 0,
+        admins: {'acct_alice': 2},
+        adminsOnlyPosting: true,
+        joined: {'acct_bob': 0, 'acct_alice': 1},
+      );
+      expect(await alice.sendMessageTo(_conversation, 'kept'), isTrue);
+      await harness.deliverToBob(await harness.nextEnvelope());
+      expect(
+          (await harness.bobHistory())
+              .where((m) => m.body != null)
+              .map((m) => m.body),
+          ['no record', 'kept']);
     },
     skip: skip,
   );
@@ -684,6 +741,25 @@ class _QuietSync implements SyncService {
 
   @override
   Future<void> dispose() => _controller.close();
+}
+
+class _RoleSource implements ConversationAuthority, VerifiedRoleSource {
+  GovernanceState? record;
+  bool serverRestricts = false;
+  @override
+  GovernanceState? governanceOf(String conversationId) => record;
+  @override
+  bool serverRestrictsPosting(String conversationId, String? channelId) =>
+      serverRestricts;
+  @override
+  String? conversationKind(String conversationId) => 'group';
+  @override
+  String? conversationChannel(String conversationId) => null;
+  @override
+  Set<String> memberAccounts(String conversationId) =>
+      {'acct_alice', 'acct_bob'};
+  @override
+  String? roleOf(String conversationId, String accountId) => 'member';
 }
 
 class _ChangingAuthority implements ConversationAuthority {
