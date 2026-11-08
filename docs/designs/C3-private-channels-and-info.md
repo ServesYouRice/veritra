@@ -236,8 +236,16 @@ big community", not "an icon"; a tiny icon may stay in the small one.
 on a removal for both keys per D80, `info_update` after each upload,
 answering `info_key_request`), the fetch and cache loop on `info.updated`,
 screens, and step 4 (`400 plaintext_name_refused`, dropping the plaintext
-columns). In the shared group every payload must name an open channel
-(C0), so senders must pick one for these hidden payloads.
+columns). Rules for the senders, from the review:
+
+- In the shared group every payload must name an open channel (C0), so
+  senders pick one for these hidden payloads.
+- Reuse a tombstoned category ID before minting a new one: the server's
+  200-binding bound is for the community's whole life.
+- A rotation (immediate on every kick or ban, D80) re-seals every
+  community-keyed record, or keeps delivering every key a record still
+  uses; receivers keep 4 keys per sender, plus any key an accepted record
+  uses.
 
 **Seams and residuals.**
 
@@ -245,9 +253,24 @@ columns). In the shared group every payload must name an open channel
   `GovernanceInfoEditPolicy.channelInfoRestricted` is the seam; until C4's
   client wiring adds the flag, channel info follows D80's default (any
   member). Without a verified role record nothing is shown.
-- Which conversation carries which channel comes from the server's channel
-  list. A server that swaps a private channel's conversation could, with a
-  member's help, show that channel's members a forged name. Binding the
-  channel ID inside the private group's own state closes this later.
+- Which conversation is a community's shared group (`shared_conversation_id`)
+  and which carries which channel come from the server. A hostile server
+  with any account's help could pass off a group the attacker owns as a
+  community's shared group (then both the key home and the C4 role state are
+  the attacker's), or swap a private channel's conversation, and show forged
+  names. Binding the community and channel IDs inside the group's own state
+  (C4 record or group context), or pinning them at join, closes this later.
+- Keys are never dropped because a record fails to open (a change from
+  W11's anti-flood rule): the key id is a hash of the key, checked on
+  receipt, so a failure means a bad blob, and any member could otherwise
+  wipe everyone's community key by announcing garbage.
+- Rows of received keys and announcements are per sender and per group, so
+  a replayed copy cannot hide an editor's own one and a flood cannot push
+  out another sender's key. Info payloads are kept only from community
+  conversations.
+- The server accepts a channel write from any reader, even when admins have
+  restricted channel info, and from a timed-out member (C5). Apps will not
+  show such a record, but a device with nothing cached (a joiner, a restore)
+  shows placeholders until an admin writes again.
 - Backups and new-device transfers carry no info keys; a restored device
   asks again.

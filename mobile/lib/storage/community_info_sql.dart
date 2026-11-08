@@ -11,7 +11,12 @@ part of 'encrypted_database.dart';
 // restored or new device asks the group for keys again (`info_key_request`).
 // The keys are secrets: [CommunityInfoEvent.toString] never prints one.
 
-/// Keys kept per subject (design: "Receivers keep up to 4 keys").
+// Rows are per sender and per group: one member (or another group) can
+// neither pin a row first so an editor's identical copy is ignored, nor push
+// out another sender's rows by flooding. A key that an accepted record uses
+// is never evicted (W11's rule).
+
+/// Keys kept per subject, group and sender (design: "up to 4 keys").
 const int infoKeysPerSubject = 4;
 
 /// Announcements kept per subject: enough to match the record the server
@@ -59,9 +64,10 @@ class CommunityInfoEvent {
   /// The row's identity: a repeat of the same key, announcement or request
   /// is one row.
   String get ident => switch (kind) {
-        CommunityInfoEventKind.key => 'k|$subjectKind|$subjectId|$keyId',
+        CommunityInfoEventKind.key =>
+          'k|$subjectKind|$subjectId|$conversationId|$senderAccountId|$keyId',
         CommunityInfoEventKind.update =>
-          'u|$subjectKind|$subjectId|$revision|$recordSha256',
+          'u|$subjectKind|$subjectId|$conversationId|$senderAccountId|$revision|$recordSha256',
         CommunityInfoEventKind.keyRequest =>
           'r|$subjectKind|$subjectId|$conversationId|$senderAccountId',
       };
@@ -121,7 +127,8 @@ class AcceptedCommunityInfo {
 /// The bounded per-subject rule both stores apply: a repeat is ignored, and
 /// past the limit the oldest rows of that kind and subject go.
 List<CommunityInfoEvent> addCommunityInfoEvent(
-    List<CommunityInfoEvent> rows, CommunityInfoEvent event) {
+    List<CommunityInfoEvent> rows, CommunityInfoEvent event,
+    {Set<String> protectedKeyIds = const <String>{}}) {
   if (!event.isStorable || rows.any((r) => r.ident == event.ident)) {
     return rows;
   }
@@ -130,13 +137,21 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
       .where((r) =>
           r.kind == event.kind &&
           r.subjectKind == event.subjectKind &&
-          r.subjectId == event.subjectId)
+          r.subjectId == event.subjectId &&
+          r.conversationId == event.conversationId &&
+          r.senderAccountId == event.senderAccountId &&
+          !(r.kind == CommunityInfoEventKind.key &&
+              protectedKeyIds.contains(r.keyId)))
       .toList();
   final drop = same.length - event._limit;
   if (drop <= 0) return next;
   final gone = same.take(drop).map((r) => r.ident).toSet();
   return next.where((r) => !gone.contains(r.ident)).toList();
 }
+
+/// Rows eviction may take: never a key an accepted record uses.
+const String _unprotected = "NOT (kind = 'key' AND key_id IN "
+    '(SELECT key_id FROM local_info_records))';
 
 extension CommunityInfoSql on EncryptedLocalDatabase {
   /// The tables schema 31 adds (for fixtures that build older databases).
@@ -189,17 +204,19 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
             event.recordSha256,
           ]);
       await customStatement(
-          'DELETE FROM local_info_events WHERE kind = ? AND subject_kind = ? '
-          'AND subject_id = ? AND seq NOT IN (SELECT seq FROM local_info_events '
-          'WHERE kind = ? AND subject_kind = ? AND subject_id = ? '
-          'ORDER BY seq DESC LIMIT ?)',
+          'DELETE FROM local_info_events WHERE kind = ?1 AND subject_kind = ?2 '
+          'AND subject_id = ?3 AND conversation_id = ?4 '
+          'AND sender_account_id = ?5 AND $_unprotected '
+          'AND seq NOT IN (SELECT seq FROM local_info_events '
+          'WHERE kind = ?1 AND subject_kind = ?2 AND subject_id = ?3 '
+          'AND conversation_id = ?4 AND sender_account_id = ?5 '
+          'AND $_unprotected ORDER BY seq DESC LIMIT ?6)',
           <Object?>[
             event.kind.name,
             event.subjectKind,
             event.subjectId,
-            event.kind.name,
-            event.subjectKind,
-            event.subjectId,
+            event.conversationId,
+            event.senderAccountId,
             event._limit,
           ]);
     }
@@ -232,12 +249,6 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
         ),
     ];
   }
-
-  /// Drops one key (anti-flood: a key that does not open the served record).
-  Future<void> deleteCommunityInfoKey(
-          String subjectKind, String subjectId, String keyId) =>
-      customStatement('DELETE FROM local_info_events WHERE ident = ?',
-          <Object?>['k|$subjectKind|$subjectId|$keyId']);
 
   Future<AcceptedCommunityInfo?> readAcceptedCommunityInfo(
       String subjectKind, String subjectId) async {

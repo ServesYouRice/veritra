@@ -136,8 +136,15 @@ void main() {
 
     test('keeps the C7 hidden types exempt when it is off', () {
       expect(refusing.acceptsUnfranked(hiddenUnknown), isTrue);
-      expect(FrankingPolicy.unfrankedPayloadTypes,
-          {'history_change', 'history_sync', 'history_sync_request'});
+      expect(FrankingPolicy.unfrankedPayloadTypes, {
+        'history_change',
+        'history_sync',
+        'history_sync_request',
+        // C3: info payloads are never reportable.
+        'infoKey',
+        'infoKeyRequest',
+        'infoUpdate',
+      });
     });
   });
 

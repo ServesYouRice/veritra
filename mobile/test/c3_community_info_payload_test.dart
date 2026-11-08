@@ -38,14 +38,17 @@ Uint8List _frame(Map<String, Object?> json) {
 }
 
 CommunityInfoEvent _event(CommunityInfoEventKind kind,
-        {int n = 0, String? subject, String conversation = 'conv_shared'}) =>
+        {int n = 0,
+        String? subject,
+        String conversation = 'conv_shared',
+        String sender = 'acct_alice'}) =>
     CommunityInfoEvent(
       kind: kind,
       subjectKind: 'community',
       subjectId: subject ?? _community,
       conversationId: conversation,
-      senderAccountId: 'acct_alice',
-      senderDeviceId: 'dev_alice',
+      senderAccountId: sender,
+      senderDeviceId: 'dev_$sender',
       keyId: kind == CommunityInfoEventKind.keyRequest
           ? null
           : n.toRadixString(16).padLeft(32, '0'),
@@ -256,14 +259,64 @@ void main() {
             isEmpty);
       });
 
-      test('at most four keys per subject: the oldest go', () async {
+      test('at most four keys per sender and group: the oldest go', () async {
         for (var n = 1; n <= 6; n++) {
           await commit([_event(CommunityInfoEventKind.key, n: n)]);
         }
         expect((await keys()).map((k) => k.key!.first), [3, 4, 5, 6]);
-        await store.dropCommunityInfoKey(
-            'community', _community, 4.toRadixString(16).padLeft(32, '0'));
-        expect((await keys()).map((k) => k.key!.first), [3, 5, 6]);
+      });
+
+      test('another sender flooding keys never pushes out the real key',
+          () async {
+        await commit([_event(CommunityInfoEventKind.key, n: 1)]);
+        for (var n = 10; n < 20; n++) {
+          await commit([
+            _event(CommunityInfoEventKind.key, n: n, sender: 'acct_mallory')
+          ]);
+        }
+        final held = await keys();
+        expect(
+            held.where((k) => k.senderAccountId == 'acct_alice'), hasLength(1));
+        expect(held.where((k) => k.senderAccountId == 'acct_mallory'),
+            hasLength(infoKeysPerSubject));
+      });
+
+      test('a key an accepted record uses is never evicted', () async {
+        final first = 1.toRadixString(16).padLeft(32, '0');
+        await commit([_event(CommunityInfoEventKind.key, n: 1)]);
+        await store.saveAcceptedCommunityInfo(AcceptedCommunityInfo(
+            subjectKind: 'channel',
+            subjectId: _channel,
+            revision: 1,
+            keyId: first,
+            blob: const [1]));
+        for (var n = 2; n <= 8; n++) {
+          await commit([_event(CommunityInfoEventKind.key, n: n)]);
+        }
+        final ids = (await keys()).map((k) => k.keyId).toList();
+        expect(ids, contains(first));
+        expect(ids, hasLength(infoKeysPerSubject + 1));
+      });
+
+      test('a copy sent first by someone else does not hide the editor\'s',
+          () async {
+        // A member (or another group) replays an editor's announcement or
+        // key first; the editor's own copy still becomes its own row.
+        await commit([
+          _event(CommunityInfoEventKind.update, n: 1, sender: 'acct_mallory'),
+          _event(CommunityInfoEventKind.key,
+              n: 1, conversation: 'conv_dm', sender: 'acct_mallory'),
+        ]);
+        await commit([
+          _event(CommunityInfoEventKind.update, n: 1),
+          _event(CommunityInfoEventKind.key, n: 1),
+        ]);
+        final updates = await store.loadCommunityInfoEvents(
+            CommunityInfoEventKind.update, 'community', _community);
+        expect(updates.map((u) => u.senderAccountId),
+            ['acct_mallory', 'acct_alice']);
+        expect((await keys()).map((k) => k.conversationId),
+            ['conv_dm', 'conv_shared']);
       });
 
       test('an unstorable event is skipped, never thrown on', () async {

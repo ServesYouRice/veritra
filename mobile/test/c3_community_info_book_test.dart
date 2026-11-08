@@ -247,15 +247,17 @@ void main() {
     expect((verdict as InfoKept).reason, InfoKeptReason.notNewer);
   });
 
-  test('a key that fails on an announced record is dropped as forged', () {
+  test('garbage announced by an allowed editor never costs the key', () {
+    // Any member may edit an open channel (D80): one who uploads random bytes
+    // under the community key's id and announces them gets a refusal, and
+    // nothing tells the caller to drop the key.
     final verdict = judge(
-        served: _served(infoKindCommunity, _community),
-        updates: [_update(infoKindCommunity, _community)],
+        served: _served(infoKindChannel, _open),
+        updates: [_update(infoKindChannel, _open, sender: 'acct_member')],
         policy: policy,
         open: _opener(fails: ProfileRecordFailure.authFailed));
-    expect(verdict, isA<InfoBadKey>());
-    expect((verdict as InfoBadKey).keyId, _keyId);
-    // A record that opens but breaks the content rules keeps the key.
+    expect((verdict as InfoKept).reason, InfoKeptReason.refused);
+    // The same for a record that opens but breaks the content rules.
     expect(
         judge(
             served: _served(infoKindCommunity, _community),

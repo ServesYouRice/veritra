@@ -474,7 +474,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   asks again. Receive rule (`community_info_book.dart`): a record is shown
   only when an `info_update` from an allowed editor under the community's C4
   role state, sent in the group that owns the key, names its exact SHA-256,
-  revision and key id, and the key came from that same group. Server
+  revision and key id, and the key came from that same group. Rows are kept
+  per sender and group, only from community conversations; a key an
+  accepted record uses is never evicted, and no key is dropped because a
+  record fails to open (its id is a hash of the key). Server
   migration 0063 binds app-chosen category IDs to communities. Senders,
   fetches and screens are not wired yet.
 - **L1-3, device-link commit-then-reveal, ABI 18 (2026-11-07, D100 A;

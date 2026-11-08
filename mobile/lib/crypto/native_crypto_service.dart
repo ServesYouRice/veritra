@@ -1942,14 +1942,21 @@ class NativeCryptoService
                     channelId: payload.channelId,
                   ),
                 ];
-                info = <CommunityInfoEvent>[
-                  communityInfoEventFor(
-                    payload,
-                    conversationId: envelope.conversationId,
-                    senderAccountId: envelope.senderAccountId,
-                    senderDeviceId: envelope.senderDeviceId,
-                  ),
-                ];
+                // Kept only from a community conversation (its shared group
+                // or a private channel's group): a DM or plain group never
+                // seeds community keys or announcements.
+                final kind =
+                    _authority?.conversationKind(envelope.conversationId);
+                info = kind != 'community_shared' && kind != 'community_channel'
+                    ? const <CommunityInfoEvent>[]
+                    : <CommunityInfoEvent>[
+                        communityInfoEventFor(
+                          payload,
+                          conversationId: envelope.conversationId,
+                          senderAccountId: envelope.senderAccountId,
+                          senderDeviceId: envelope.senderDeviceId,
+                        ),
+                      ];
                 reveal = null;
                 break;
               }

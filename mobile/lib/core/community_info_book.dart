@@ -20,8 +20,12 @@ import 'roles/governance.dart';
 /// 3. its revision is above the one already accepted; and
 /// 4. it opens with that key.
 ///
-/// Anything else keeps the last accepted record. A key that fails on an
-/// announced (so authentic) record is a forged key and is dropped at once.
+/// Anything else keeps the last accepted record. A held key is never dropped
+/// because a record fails to open: its id is a hash of the key, checked when
+/// the key arrived, so the key is genuine and the blob is bad (a member can
+/// upload and announce garbage; that must not wipe everyone's key).
+/// This replaces W11's "drop a key that does not open the served record",
+/// which assumed the key id was not bound to the key.
 
 /// Who may edit a subject. The C4 seam: [GovernanceInfoEditPolicy] reads the
 /// community shared group's role record.
@@ -112,13 +116,6 @@ final class InfoNeedsKey extends InfoVerdict {
   final InfoKeyHome home;
 }
 
-/// The key that failed on an announced record: drop it, keep the last record.
-final class InfoBadKey extends InfoVerdict {
-  const InfoBadKey(this.home, this.keyId);
-  final InfoKeyHome home;
-  final String keyId;
-}
-
 /// Keep the last accepted record (not announced by an allowed editor, not
 /// newer, or not openable).
 final class InfoKept extends InfoVerdict {
@@ -170,14 +167,8 @@ InfoVerdict judgeCommunityInfo({
   final CommunityInfoRecord record;
   try {
     record = open(key.key!, served, cached);
-  } on ProfileRecordException catch (e) {
-    // The blob is the one an allowed editor announced, so a key that will
-    // not open it (wrong bytes under the right id cannot happen; a failed
-    // AEAD can) was forged by whoever sent it.
-    if (e.failure == ProfileRecordFailure.authFailed ||
-        e.failure == ProfileRecordFailure.keyMismatch) {
-      return InfoBadKey(home, served.keyId);
-    }
+  } on ProfileRecordException {
+    // The key matches its id (checked on receipt), so the blob is bad.
     return const InfoKept(InfoKeptReason.refused);
   }
   return InfoAccepted(

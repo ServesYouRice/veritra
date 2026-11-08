@@ -674,10 +674,6 @@ abstract class LocalStore {
   Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
       CommunityInfoEventKind kind, String subjectKind, String subjectId);
 
-  /// Drops a key that did not open the record the server serves.
-  Future<void> dropCommunityInfoKey(
-      String subjectKind, String subjectId, String keyId);
-
   /// The record this device last accepted for a subject, or null.
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
       String subjectKind, String subjectId);
@@ -1387,8 +1383,12 @@ class MemoryLocalStore implements LocalStore {
         _frankReveals.putIfAbsent(reveal.messageKey, () => reveal);
       }
     }
+    final protectedKeyIds = {
+      for (final record in _acceptedCommunityInfo.values) record.keyId
+    };
     for (final event in transition.communityInfo) {
-      _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event);
+      _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
+          protectedKeyIds: protectedKeyIds);
     }
     _applyApprovalLeaves(transition.approvalLeaves);
     _setCryptoState(transition.state);
@@ -1434,14 +1434,6 @@ class MemoryLocalStore implements LocalStore {
               e.subjectKind == subjectKind &&
               e.subjectId == subjectId)
           .toList();
-
-  @override
-  Future<void> dropCommunityInfoKey(
-      String subjectKind, String subjectId, String keyId) async {
-    _communityInfoEvents = _communityInfoEvents
-        .where((e) => e.ident != 'k|$subjectKind|$subjectId|$keyId')
-        .toList();
-  }
 
   @override
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
@@ -3126,11 +3118,6 @@ class SecureLocalStore implements LocalStore {
           String subjectKind,
           String subjectId) async =>
       (await _database()).readCommunityInfoEvents(kind, subjectKind, subjectId);
-
-  @override
-  Future<void> dropCommunityInfoKey(
-          String subjectKind, String subjectId, String keyId) async =>
-      (await _database()).deleteCommunityInfoKey(subjectKind, subjectId, keyId);
 
   @override
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
