@@ -19,6 +19,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'l1_test_lists.dart';
 
 const _conversation = 'conv_11111111111111111111111111111111';
 const _otherConversation = 'conv_99999999999999999999999999999999';
@@ -133,7 +134,7 @@ void main() {
       test('bounded existing activation cannot create pending enrollment state',
           () async {
         final empty = MemoryLocalStore();
-        final service = NativeCryptoService(
+        final service = TestNativeCryptoService(
             bindings: NativeCryptoBindings.open(
                 configured ?? fail('set VERITRA_CRYPTO_LIBRARY')),
             localStore: empty);
@@ -765,7 +766,7 @@ class _Pair {
 
   static Future<_Pair> start(NativeCryptoBindings bindings, LocalStore store,
       {FrankingPolicy policy = const FrankingPolicy()}) async {
-    final bob = NativeCryptoService(
+    final bob = TestNativeCryptoService(
         bindings: bindings, localStore: store, frankingPolicy: policy);
     await bob.createEnrollmentCredential(const EnrollmentReservation(
       id: 'res_bob',
@@ -781,6 +782,8 @@ class _Pair {
     ));
     final alice = bindings.createDevice('acct_alice', _senderDevice);
     alice.createEnrollmentCredential(const <int>[1, 2, 3]);
+    sharedTestDeviceLists.approve(
+        'acct_alice', _senderDevice, alice.signingPublicKey());
     alice.createGroup(_conversation);
     final staged = alice.stageCommit(_conversation, adds: [
       (

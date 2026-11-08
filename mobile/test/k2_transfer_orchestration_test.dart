@@ -16,6 +16,7 @@ import 'package:private_messenger/storage/history_snapshot.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// K2 orchestration on the native engine and the schema-18 tables: a source
 /// and a recipient, each a real `NativeCryptoService` on its own store,
@@ -299,9 +300,9 @@ class _Pair {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     clock = DateTime.now().toUtc();
     final now = clock.millisecondsSinceEpoch;
-    source = NativeCryptoService(
+    source = TestNativeCryptoService(
         bindings: bindings, localStore: sourceStore, clock: () => clock);
-    recipient = NativeCryptoService(
+    recipient = TestNativeCryptoService(
         bindings: bindings, localStore: recipientStore, clock: () => clock);
     cacheDir = '${dir.path}/cache';
     downloadDir = '${dir.path}/download';
@@ -322,7 +323,9 @@ class _Pair {
             accountId: _account,
             deviceId: _newDevice,
             challenge: <int>[1, 2, 3]));
-    K2LinkContext context(List<int> key) => K2LinkContext(
+    final sourceRandom = List<int>.filled(32, 6);
+    final commitment = await source.k2SourceCommitment(_origin, sourceRandom);
+    K2LinkContext context(List<int> key, List<int> random) => K2LinkContext(
         id: id,
         accountId: _account,
         nonce: List<int>.filled(32, 9),
@@ -330,11 +333,13 @@ class _Pair {
         sourceSigningKey: sourceCredential.signingKey,
         recipientDeviceId: _newDevice,
         recipientSigningKey: newCredential.signingKey,
-        transferPublicKey: key);
+        transferPublicKey: key,
+        sourceCommitment: commitment,
+        recipientRandom: random);
     final secret = List<int>.filled(16, 8);
     final originalExpiresAt = now + const Duration(minutes: 30).inMilliseconds;
     final received = await recipient.k2ReceiveBegin(
-        context(List<int>.filled(32, 0)), secret,
+        context(List<int>.filled(32, 0), List<int>.filled(32, 0)), secret,
         originalExpiresAt: originalExpiresAt);
     final sealed = await recipient.sealPendingEnrollment();
     await recipientStore.savePendingEnrollment(PendingEnrollment(
@@ -346,10 +351,13 @@ class _Pair {
       state: sealed,
     ));
     final verification = await source.k2SourceAccept(
-        context(received.transferPublicKey), secret,
+        context(received.transferPublicKey, received.recipientRandom), secret,
         originalExpiresAt: originalExpiresAt,
-        transcriptHash: received.verification.transcriptHash,
-        claimTag: received.verification.claimTag);
+        transcriptHash: received.transcriptHash,
+        claimTag: received.claimTag,
+        sourceRandom: sourceRandom);
+    // The pending (frozen) identity shows the same code from the reveal.
+    expect(await recipient.k2RevealSas(id, sourceRandom), verification.sas);
     if (loseConfirmOutcome) {
       // The confirm committed, then the app crashed before the approval POST.
       sourceStore.loseOutcomeStage = HistoryTransferStage.approving;
@@ -481,7 +489,7 @@ void main() {
       pair.bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
       final store = _FaultStore();
       final service =
-          NativeCryptoService(bindings: pair.bindings, localStore: store);
+          TestNativeCryptoService(bindings: pair.bindings, localStore: store);
       await service.createEnrollmentCredential(const EnrollmentReservation(
           id: 'r',
           accountId: _account,
@@ -523,8 +531,8 @@ void main() {
     final dir = Directory.systemTemp.createTempSync('k2-orchestration');
     try {
       final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-      final service =
-          NativeCryptoService(bindings: bindings, localStore: _FaultStore());
+      final service = TestNativeCryptoService(
+          bindings: bindings, localStore: _FaultStore());
       final credential = await service.createEnrollmentCredential(
           const EnrollmentReservation(
               id: 'r',
@@ -542,7 +550,9 @@ void main() {
                   sourceSigningKey: credential.signingKey,
                   recipientDeviceId: _newDevice,
                   recipientSigningKey: credential.signingKey,
-                  transferPublicKey: List<int>.filled(32, 0)),
+                  transferPublicKey: List<int>.filled(32, 0),
+                  sourceCommitment: List<int>.filled(32, 3),
+                  recipientRandom: List<int>.filled(32, 0)),
               List<int>.filled(16, 8),
               originalExpiresAt: DateTime.now().millisecondsSinceEpoch + 1000),
           throwsA(isA<K2TransferException>()));

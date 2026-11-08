@@ -9,6 +9,7 @@ import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'l1_test_lists.dart';
 
 /// D70 S4: a seal the native library refuses with `PM_CRYPTO_RECORD_LIMIT`
 /// (-8) fails closed through [NativeCryptoService]. The app sees
@@ -142,6 +143,23 @@ class _LimitBindings implements NativeCryptoBindings {
 }
 
 class _LimitDevice implements NativeCryptoDevice {
+  @override
+  List<LeafPair> groupMembers(String groupId) => real.groupMembers(groupId);
+
+  @override
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommitKeyed(
+    String groupId, {
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) =>
+      real.stageCommitKeyed(groupId, adds: adds, removes: removes);
   _LimitDevice(this.limits, this.real);
 
   final _LimitBindings limits;
@@ -230,7 +248,8 @@ class _Client {
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
     final store = MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,

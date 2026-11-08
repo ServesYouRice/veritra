@@ -6,9 +6,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/calls/call_service.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
+import 'package:private_messenger/core/device_link_v3_models.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+import 'package:private_messenger/crypto/sha256.dart';
 
 import 'api_bounded_decoding.dart';
 
@@ -379,91 +382,10 @@ void main() {
     // server/internal/httpapi/export_push_secret_test.go, which seeds one.
     expect(jsonEncode(accountExport), isNot(contains('auth_secret')));
 
-    final linkSecret = List<int>.filled(16, 0x55);
-    final link = await client.createDeviceLink(
-        owner.token, bindings.deviceLinkLocator(linkSecret));
-    final fetchedLink = await client.deviceLink(owner.token, link.id);
-    expect(fetchedLink.id, link.id);
-    expect(fetchedLink.verificationCode, link.verificationCode);
-    expect(fetchedLink.state, link.state);
-    final linkReservation =
-        await client.reserveDeviceLinkEnrollment(link.code!);
-    final linkedNative = bindings.createDevice(
-      linkReservation.accountId,
-      linkReservation.deviceId,
-    );
-    addTearDown(linkedNative.close);
-    final linkedVerification = linkedNative.deriveDeviceLinkVerification(
-      protocolVersion: linkReservation.protocolVersion!,
-      serverOrigin: client.baseUrl,
-      linkId: link.id,
-      linkSecret: linkSecret,
-      peerDeviceId: linkReservation.existingDeviceId!,
-      peerSigningKey: linkReservation.existingSigningKey!,
-      linkNonce: linkReservation.linkNonce!,
-      localIsExistingDevice: false,
-    );
-    final claim = await client.claimDeviceLink(
-      code: link.code!,
-      deviceName: 'contract linked device',
-      enrollment: linkReservation,
-      credential: linkedNative.createEnrollmentCredential(
-        linkReservation.challenge,
-      ),
-      verification: linkedVerification,
-    );
-    expect(
-        await client.completeDeviceLinkClaim(link.id, claim.claimToken,
-            linkedVerification.transcriptHash, linkedVerification.approvalTag),
-        isNull);
-    // The existing device learns the claimant's device ID, signing key and
-    // transcript only through the server, as refreshActiveDeviceLink does,
-    // so the SAS below would expose a relayed key the server substituted.
-    final claimedLink = await client.deviceLink(owner.token, link.id);
-    expect(claimedLink.state, 'claimed');
-    expect(claimedLink.protocolVersion, linkReservation.protocolVersion);
-    expect(claimedLink.claimedDeviceId, linkReservation.deviceId);
-    expect(claimedLink.claimedSigningKey, linkedNative.signingPublicKey());
-    expect(claimedLink.linkNonce, linkReservation.linkNonce);
-    final ownerVerification = ownerNative.deriveDeviceLinkVerification(
-      protocolVersion: claimedLink.protocolVersion!,
-      serverOrigin: client.baseUrl,
-      linkId: link.id,
-      linkSecret: linkSecret,
-      peerDeviceId: claimedLink.claimedDeviceId!,
-      peerSigningKey: claimedLink.claimedSigningKey!,
-      linkNonce: claimedLink.linkNonce!,
-      localIsExistingDevice: true,
-    );
-    expect(ownerVerification.transcriptHash, claimedLink.transcriptHash);
-    expect(ownerVerification.claimTag, claimedLink.claimTag);
-    expect(ownerVerification.sas, linkedVerification.sas);
-    await client.approveDeviceLink(
-      owner.token,
-      link.id,
-      ownerVerification.transcriptHash,
-      ownerVerification.approvalTag,
-    );
-    final linkedSession = await client.completeDeviceLinkClaim(
-        link.id,
-        claim.claimToken,
-        linkedVerification.transcriptHash,
-        linkedVerification.approvalTag);
-    expect(linkedSession?.deviceId, linkReservation.deviceId);
-
-    final devicePage1 = await _getJson(
-      '$baseUrl/api/v1/devices/me?limit=1',
-      owner.token,
-    );
-    final firstDevice = Device.fromJson(
-      Map<String, Object?>.from((devicePage1['devices'] as List).single as Map),
-    );
-    final devicePage2 = await _getJson(
-      '$baseUrl/api/v1/devices/me?limit=1&after=${firstDevice.id}',
-      owner.token,
-    );
-    expect((devicePage2['devices'] as List), isNotEmpty);
-    expect(await client.devices(owner.token), hasLength(2));
+    // The device link (L1-3) has its own live test on a second server:
+    // it needs six credential-budget requests, and this test already
+    // spends the ten an address gets per minute.
+    expect(await client.devices(owner.token), hasLength(1));
 
     final conversationPage1 = await _getJson(
       '$baseUrl/api/v1/conversations?limit=1',
@@ -538,7 +460,6 @@ void main() {
     );
     expect(rotatedAgain, isNotNull);
     ownerToken = rotatedAgain!;
-    await client.revokeDevice(ownerToken, linkReservation.deviceId);
     await expectLater(
       client.message(ownerToken, 'msg_missing'),
       throwsA(isA<ApiException>()
@@ -666,6 +587,176 @@ void main() {
   },
       skip: baseUrl == null || libraryPath == null
           ? 'live contract server or native library not configured'
+          : false,
+      timeout: const Timeout(Duration(minutes: 2)));
+
+  final linkBaseUrl = Platform.environment['VERITRA_CONTRACT_LINK_BASE_URL'];
+
+  test('live server links a device with commit-then-reveal (L1-3)', () async {
+    final client = ApiClient(baseUrl: linkBaseUrl!);
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    addTearDown(client.close);
+    final ownerReservation = await client.reserveOwnerEnrollment(
+      setupToken: 'contract-setup-token',
+    );
+    final ownerNative = bindings.createDevice(
+      ownerReservation.accountId,
+      ownerReservation.deviceId,
+    );
+    addTearDown(ownerNative.close);
+    final owner = await client.createOwner(
+      username: 'contract-link-owner',
+      password: 'owner-password-123',
+      deviceName: 'contract owner device',
+      enrollment: ownerReservation,
+      credential: ownerNative.createEnrollmentCredential(
+        ownerReservation.challenge,
+      ),
+      setupToken: 'contract-setup-token',
+      instanceName: 'Contract Link Instance',
+    );
+    final baseUrl = linkBaseUrl;
+
+    // Device link (protocol v4, L1-3) end to end against the real server:
+    // the existing device commits, the new device claims with its random,
+    // the existing device accepts natively and only then reveals, and the
+    // new device's code from the reveal is the one the existing device
+    // confirms. The contract server is loopback HTTP, which only the demo
+    // transport policy allows for these routes.
+    final linkClient =
+        ApiClient(baseUrl: client.baseUrl, transport: TransportPolicy.demo);
+    addTearDown(linkClient.close);
+    final linkOrigin = linkClient.baseUrl;
+    final linkSecret = List<int>.filled(16, 0x55);
+    final sourceRandom = List<int>.filled(32, 0x66);
+    final locator = bindings.deviceLinkLocator(linkSecret);
+    final link = await linkClient.createDeviceLinkV3(owner, locator,
+        ownerNative.k2SourceCommitment(linkOrigin, sourceRandom));
+    expect(link.state, 'pending');
+    final requestId = List.filled(64, '1').join();
+    final linkReservation =
+        await linkClient.reserveDeviceLinkV3(locator, requestId);
+    final reserved = linkReservation.fields;
+    final linkedDeviceId = reserved['device_id'] as String;
+    final linkedNative =
+        bindings.createDevice(reserved['account_id'] as String, linkedDeviceId);
+    addTearDown(linkedNative.close);
+    final challenge = base64Decode(reserved['challenge'] as String);
+    final linkedCredential = linkedNative.createEnrollmentCredential(challenge);
+    final linkId = K2TransferId(linkOrigin, link.id);
+    final linkExpiry =
+        DateTime.parse(reserved['expires_at'] as String).millisecondsSinceEpoch;
+    int nowMs() => DateTime.now().millisecondsSinceEpoch;
+    K2LinkContext linkContext(
+            List<int> transferKey, List<int> recipientRandom) =>
+        K2LinkContext(
+          id: linkId,
+          accountId: reserved['account_id'] as String,
+          nonce: base64Decode(reserved['link_nonce'] as String),
+          sourceDeviceId: reserved['existing_device_id'] as String,
+          sourceSigningKey:
+              base64Decode(reserved['existing_signing_key'] as String),
+          recipientDeviceId: linkedDeviceId,
+          recipientSigningKey: linkedCredential.signingKey,
+          transferPublicKey: transferKey,
+          sourceCommitment:
+              base64Decode(reserved['source_commitment'] as String),
+          recipientRandom: recipientRandom,
+        );
+    final received = linkedNative.k2ReceiveBegin(
+        linkContext(List<int>.filled(32, 0), List<int>.filled(32, 0)),
+        linkSecret,
+        originalExpiresAt: linkExpiry,
+        now: nowMs());
+    String token(int fill) =>
+        base64Url.encode(List<int>.filled(32, fill)).replaceAll('=', '');
+    final claimToken = token(21);
+    final linkedDeviceSecret = token(22);
+    final initialSessionToken = token(23);
+    List<int> tokenHash(String value) => sha256(utf8.encode(value));
+    final proof = linkedNative.k2EnrollmentProof(linkId,
+        now: nowMs(),
+        locator: locator,
+        reservationRequestId: List<int>.filled(32, 0x11),
+        deviceName: 'contract linked device',
+        challenge: challenge,
+        keyPackage: linkedCredential.deviceKeyPackage,
+        claimTokenHash: tokenHash(claimToken),
+        deviceSecretHash: tokenHash(linkedDeviceSecret),
+        initialSessionHash: tokenHash(initialSessionToken));
+    final claimed = await linkClient.submitDeviceLinkV3Claim(
+        FrozenDeviceLinkV3Claim.fromJson(<String, Object?>{
+          'code': locator,
+          'protocol_version': deviceLinkV3Protocol,
+          'server_origin': linkOrigin,
+          'reservation_request_id': requestId,
+          'enrollment_reservation_id': link.id,
+          'device_name': 'contract linked device',
+          'device_key_package': base64Encode(linkedCredential.deviceKeyPackage),
+          'signing_key': base64Encode(linkedCredential.signingKey),
+          'transfer_public_key': base64Encode(received.transferPublicKey),
+          'recipient_random': base64Encode(received.recipientRandom),
+          'transcript_hash': base64Encode(received.transcriptHash),
+          'claim_tag': base64Encode(received.claimTag),
+          'claim_token_hash': hexOf(tokenHash(claimToken)),
+          'device_secret_hash': hexOf(tokenHash(linkedDeviceSecret)),
+          'initial_session_token_hash': hexOf(tokenHash(initialSessionToken)),
+          'challenge_signature': base64Encode(proof.signature),
+        },
+            requestHash: hexOf(proof.requestHash),
+            transport: TransportPolicy.demo),
+        linkReservation);
+    // Before the reveal the server refuses an approval.
+    await expectLater(
+        linkClient.approveDeviceLinkV3(owner, claimed, List<int>.filled(32, 9)),
+        throwsA(isA<ApiException>().having(
+            (error) => error.serverCode, 'serverCode', 'reveal_required')));
+    // The existing device reads the claim only through the server.
+    final seen = await linkClient.deviceLinkV3(owner, link.id);
+    expect(seen.state, 'claimed');
+    final accepted = ownerNative.k2SourceAccept(
+        linkContext(
+            seen.bytes('transfer_public_key'), seen.bytes('recipient_random')),
+        linkSecret,
+        originalExpiresAt: linkExpiry,
+        now: nowMs(),
+        transcriptHash: seen.bytes('transcript_hash'),
+        claimTag: seen.bytes('claim_tag'),
+        sourceRandom: sourceRandom);
+    final revealed =
+        await linkClient.revealDeviceLinkV3(owner, seen, sourceRandom);
+    final waiting =
+        await linkClient.deviceLinkV3ClaimStatus(claimed, claimToken);
+    expect(
+        linkedNative.k2RevealSas(linkId, waiting.bytes('source_random'),
+            now: nowMs()),
+        accepted.sas);
+    ownerNative.k2SourceConfirm(linkId, accepted.sas, now: nowMs());
+    final approval = ownerNative.k2SourceApprovalRequest(linkId, now: nowMs());
+    final approved = await linkClient.approveDeviceLinkV3(
+        owner, revealed, approval.approvalTag);
+    final completion = await linkClient.completeDeviceLinkV3(
+        approved, claimToken, hexOf(tokenHash(initialSessionToken)));
+    expect(completion.fields['device_id'], linkedDeviceId);
+
+    final devicePage1 = await _getJson(
+      '$baseUrl/api/v1/devices/me?limit=1',
+      owner.token,
+    );
+    final firstDevice = Device.fromJson(
+      Map<String, Object?>.from((devicePage1['devices'] as List).single as Map),
+    );
+    final devicePage2 = await _getJson(
+      '$baseUrl/api/v1/devices/me?limit=1&after=${firstDevice.id}',
+      owner.token,
+    );
+    expect((devicePage2['devices'] as List), isNotEmpty);
+    expect(await client.devices(owner.token), hasLength(2));
+    // The owner's session is recent, so it may revoke the new device.
+    await client.revokeDevice(owner.token, linkedDeviceId);
+  },
+      skip: linkBaseUrl == null || libraryPath == null
+          ? 'live link contract server or native library not configured'
           : false,
       timeout: const Timeout(Duration(minutes: 2)));
 }

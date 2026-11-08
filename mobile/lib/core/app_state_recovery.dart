@@ -147,8 +147,8 @@ extension AccountRecoveryActions on AppState {
       // rk_pub is K1's; nothing stores it yet.
       values.rkPub.fillRange(0, values.rkPub.length, 0);
       try {
-        final status = await client.putRecoveryKey(current.token,
-            rkAuthPub: values.rkAuthPub, rkId: values.rkId);
+        final status =
+            await _putRecoveryKeyWithDeviceList(client, current, values);
         if (!identical(session, current)) return;
         recoveryKeyStatus = status;
       } on ApiException catch (err) {
@@ -302,6 +302,9 @@ extension AccountRecoveryActions on AppState {
             keyPackage: credential.deviceKeyPackage,
             origin: origin,
           );
+          // L1 (D94 question 1): the seed that signs the recovery version
+          // stays sealed in the waiting identity; it never leaves Rust.
+          await _listCrypto?.holdRecoveryListSeed(entropy);
           final sealed = await crypto.sealPendingEnrollment();
           final AccountRecoveryClaim claim;
           try {
@@ -550,6 +553,9 @@ extension AccountRecoveryActions on AppState {
         kind: PendingEnrollment.kindAccountRecovery,
         deviceId: pending.deviceId);
     await _finishSignIn(() async {
+      // L1: the version that replaces the lost devices with this one,
+      // signed with the recovery key's list signer, before anything else.
+      await _postRecoveryDeviceList(recovered);
       await _publishInitialMlsKeyPackages();
       await _refreshConversations(notify: true);
       await _refreshDevices();

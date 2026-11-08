@@ -1,7 +1,9 @@
 # L1: approved-device list
 
-**Status: proposed (2026-11-07), not built.** A design only, against `main`
-at `0073fe4`. It changes the crypto ABI, the server schema, the local schema
+**Status: steps L1-1 (crypto, ABI 14), L1-2 (server) and L1-3 (mobile, local
+schema 26) are built and listed in the `docs/crypto.md` change log, with the
+L1-3 follow-ups named there; L1-4 is left to L2 (D94) and L1-5 is open.** A
+design only, against `main` at `0073fe4`. It changes the crypto ABI, the server schema, the local schema
 and the recovery flow, so it needs an independent review (AGENTS.md:
 security, MLS ordering, recovery and credential decisions) and the owner's
 answers to the questions at the end before any step is built.
@@ -364,8 +366,10 @@ It differs from D68 in what releases it. D68 releases on the server's
 pending-changes list and roster, which a malicious server controls (the D68
 residual in crypto.md). The approval hold releases only on local evidence:
 after a commit, `group_members` shows no held leaf left, or a refreshed pin
-now approves it. That also closes D68's residual for devices that were
-removed from the list.
+now approves it. Closing D68's residual for devices removed from the list
+also needs approved leaves to be judged again when a list removes them; as
+built in L1-3 an approved leaf is not re-judged until its MLS removal lands
+(a follow-up, see the L1-3 entry in `docs/crypto.md`).
 
 That is how L1 stays fail-closed without stalling:
 
@@ -641,7 +645,8 @@ Each step adds its `docs/crypto.md` change-log entry. With L1-3, the
   senders' keys. With L1 they can accept a key that some verified version of
   that account's chain listed. That retires D85's trust in the server.
 - **D68.** The approval hold and `group_members` close its stated residual
-  for devices removed from a list.
+  for devices removed from a list once approved leaves are re-judged on a
+  list change (an L1-3 follow-up).
 - **MLS self-update.** Its trust-model note ("L1 is the real check") is met
   by the entry check plus the signing-key prerequisite.
 - **Bug hunt.** TASK-006 closes with L1-3. Q-1 (credential bound to the

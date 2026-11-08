@@ -38,8 +38,8 @@ func getScopedSyncPage(t *testing.T, handler http.Handler, path, token string, w
 	return page
 }
 
-func TestScopedSyncRoutesAreOffByDefault(t *testing.T) {
-	handler, token, _ := newTestHandlerWithOwner(t)
+func TestScopedSyncRoutesAre404WhenSwitchedOff(t *testing.T) {
+	_, handler, token, _ := newTestAppWithOwnerConfig(t, func(c *config.Config) { c.ScopedSync = false })
 	conversationID := createConversation(t, handler, token)
 	for _, path := range []string{
 		"/api/v1/sync/account-events?after=0",

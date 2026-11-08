@@ -340,22 +340,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
       ],
       if (pendingLink != null) ...<Widget>[
         const SizedBox(height: BoneSpacing.lg),
-        _Callout(
-          icon: Icons.verified_outlined,
-          title: context.l10n.connectVerificationTitle,
-          message: context.l10n.connectVerificationMessage,
-          child: SelectableText(
-            pendingLink.verificationCode,
-            style: BoneType.mono.copyWith(
-              fontSize: 22,
-              letterSpacing: 3,
-              color: theme.colorScheme.onSurface,
+        // The code exists only once the other device revealed its random
+        // and it opened the commitment (L1-3); until then, a waiting line.
+        if (pendingLink.verificationCode.isNotEmpty)
+          _Callout(
+            icon: Icons.verified_outlined,
+            title: context.l10n.connectVerificationTitle,
+            message: context.l10n.connectVerificationMessage,
+            child: SelectableText(
+              pendingLink.verificationCode,
+              style: BoneType.mono.copyWith(
+                fontSize: 22,
+                letterSpacing: 3,
+                color: theme.colorScheme.onSurface,
+              ),
             ),
           ),
-        ),
         const SizedBox(height: BoneSpacing.sm),
         Text(
-          context.l10n.deviceLinkWaitingApproval,
+          pendingLink.verificationCode.isEmpty
+              ? context.l10n.deviceLinkWaitingCode
+              : context.l10n.deviceLinkWaitingApproval,
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),

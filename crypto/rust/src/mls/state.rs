@@ -33,6 +33,10 @@ impl MlsDevice {
         if state_key.len() != KEY_BYTES || counter == 0 {
             return Err(MlsError::InvalidState);
         }
+        // Format 3 has no place for the L1 recovery seed: refuse rather than drop it.
+        if self.held_list_seed.is_some() {
+            return Err(MlsError::InvalidState);
+        }
         // The union of every owner's store: format 3 is the flat map.
         let records: SecretVLBytes = self.provider.storage().with_records(encode_records)?.into();
         let transfers = transfer::encode(
@@ -191,6 +195,7 @@ impl MlsDevice {
                 device_id: device_id.to_vec(),
                 pending_transfers,
                 sealed: Default::default(),
+                held_list_seed: None,
             },
             counter,
         ))
@@ -421,7 +426,8 @@ mod tests {
     /// splits by owner, re-seals to the same plaintext byte for byte, and
     /// every part of it still works: the staged commit merges, the peer
     /// interoperates, the inactive group stays inactive, the unclaimed key
-    /// packages open a Welcome and the K2 transfers survive.
+    /// packages open a Welcome. Its two K2 transfers are protocol v3 and
+    /// are dropped on load (L1-3); the rest of the state is unaffected.
     #[test]
     fn genuine_v3_fixture_splits_by_owner_and_reseals_byte_identically() {
         use super::super::storage::hex;
@@ -439,7 +445,7 @@ mod tests {
             source.signing_public_key(),
             include_bytes!("../../tests/fixtures/state-v3/source-public.bin")
         );
-        assert_eq!(source.pending_transfers.len(), 2);
+        assert_eq!(source.pending_transfers.len(), 0);
 
         let unclaimed = [
             &include_bytes!("../../tests/fixtures/state-v3/unclaimed-1.bin")[..],
@@ -468,10 +474,15 @@ mod tests {
         assert_eq!(snapshot["device"].len(), 1);
         assert_eq!(source.provider.storage().unowned_count(), 0);
 
-        // Restore -> classify -> re-seal reproduces the exact plaintext.
+        // Restore -> classify -> re-seal reproduces the exact plaintext,
+        // except the transfer section: the dropped v3 records leave none.
         let resealed = source.seal_state(&SOURCE_KEY, 51).unwrap();
         assert_ne!(&resealed[..], &sealed[..]);
-        assert_eq!(open_plaintext(&resealed, &SOURCE_KEY), original);
+        let records_end = 12 + u32::from_be_bytes(original[8..12].try_into().unwrap()) as usize;
+        assert_eq!(&original[records_end..records_end + 2], &2u16.to_be_bytes());
+        let mut expected_plaintext = original[..records_end].to_vec();
+        expected_plaintext.extend_from_slice(&0u16.to_be_bytes());
+        assert_eq!(open_plaintext(&resealed, &SOURCE_KEY), expected_plaintext);
         let (again, _) =
             MlsDevice::restore_state(b"acct_fixture3", b"dev_src", &SOURCE_KEY, 51, &resealed)
                 .unwrap();

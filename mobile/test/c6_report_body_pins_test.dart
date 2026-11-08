@@ -11,6 +11,7 @@ import 'package:private_messenger/crypto/report_key_pins.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// C6 (D95): the report body sealed once per owner with the envelope id
 /// inside, and the pinned owner report keys.
@@ -241,7 +242,7 @@ void main() {
     late NativeCryptoService crypto;
     setUp(() {
       bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-      crypto = NativeCryptoService(
+      crypto = TestNativeCryptoService(
           bindings: bindings, localStore: MemoryLocalStore());
     });
 

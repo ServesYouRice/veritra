@@ -186,6 +186,23 @@ class AppLocalizationsSr extends AppLocalizations {
       'Генеришите код за упаривање за други уређај';
 
   @override
+  String get settingsDeviceListSetup => 'Одобрите своје уређаје';
+
+  @override
+  String get settingsDeviceListSetupDetail =>
+      'Ваши контакти не могу да додају ваше уређаје у ћаскања док не потврдите који су ваши.';
+
+  @override
+  String get deviceListReviewTitle => 'Који уређаји су ваши?';
+
+  @override
+  String get deviceListReviewBody =>
+      'Уклоните ознаку са сваког уређаја који не препознајете. Означени постају ваши одобрени уређаји, а остали се одјављују.';
+
+  @override
+  String get deviceListReviewConfirm => 'Одобри';
+
+  @override
   String get settingsLoadingDevices => 'Учитавање уређаја…';
 
   @override
@@ -1142,6 +1159,14 @@ class AppLocalizationsSr extends AppLocalizations {
       'Чека се да ваш други уређај одобри. Оставите овај екран отворен.';
 
   @override
+  String get deviceLinkWaitingCode =>
+      'Чека се ваш други уређај. Код за потврду ће се ускоро појавити овде.';
+
+  @override
+  String get deviceLinkCommitmentMismatch =>
+      'Провера везе са вашег другог уређаја се није поклопила, па уређај није повезан. Направите нову везу на свом другом уређају и покушајте поново.';
+
+  @override
   String get historyCopySendWorking => 'Шаљем вашу историју на нови уређај…';
 
   @override
@@ -1822,6 +1847,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatMessageUndecryptable => 'Ова порука није могла да се откључа';
 
   @override
+  String get chatMessageUnapprovedDevice =>
+      'Сакривена је порука са уређаја који није одобрен.';
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Придруживање овом ћаскању није успело. Замолите члана да вас поново дода.';
 
@@ -2191,6 +2220,18 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get errorConversationPaused => 'Слање је паузирано у овом разговору.';
+
+  @override
+  String get errorConversationApprovalHeld =>
+      'Слање је паузирано: уређај у овом ћаскању није на одобреној листи свог власника или листа још није могла да се провери.';
+
+  @override
+  String get errorDeviceListNotApproved =>
+      'Тај уређај још није на одобреној листи свог власника. Биће додат када буде.';
+
+  @override
+  String get errorDeviceListConflict =>
+      'Одобрена листа уређаја вашег налога промењена је на начин који не може да се провери. Упоредите сигурносне бројеве са контактом пре него што промените уређаје.';
 
   @override
   String get errorOutboxFull =>
@@ -3312,6 +3353,23 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Generišite kod za uparivanje za drugi uređaj';
 
   @override
+  String get settingsDeviceListSetup => 'Odobrite svoje uređaje';
+
+  @override
+  String get settingsDeviceListSetupDetail =>
+      'Vaši kontakti ne mogu da dodaju vaše uređaje u ćaskanja dok ne potvrdite koji su vaši.';
+
+  @override
+  String get deviceListReviewTitle => 'Koji uređaji su vaši?';
+
+  @override
+  String get deviceListReviewBody =>
+      'Uklonite oznaku sa svakog uređaja koji ne prepoznajete. Označeni postaju vaši odobreni uređaji, a ostali se odjavljuju.';
+
+  @override
+  String get deviceListReviewConfirm => 'Odobri';
+
+  @override
   String get settingsLoadingDevices => 'Učitavanje uređaja…';
 
   @override
@@ -4268,6 +4326,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Čeka se da vaš drugi uređaj odobri. Ostavite ovaj ekran otvoren.';
 
   @override
+  String get deviceLinkWaitingCode =>
+      'Čeka se vaš drugi uređaj. Kod za potvrdu će se uskoro pojaviti ovde.';
+
+  @override
+  String get deviceLinkCommitmentMismatch =>
+      'Provera veze sa vašeg drugog uređaja se nije poklopila, pa uređaj nije povezan. Napravite novu vezu na svom drugom uređaju i pokušajte ponovo.';
+
+  @override
   String get historyCopySendWorking => 'Šaljem vašu istoriju na novi uređaj…';
 
   @override
@@ -4948,6 +5014,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get chatMessageUndecryptable => 'Ova poruka nije mogla da se otključa';
 
   @override
+  String get chatMessageUnapprovedDevice =>
+      'Sakrivena je poruka sa uređaja koji nije odobren.';
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Pridruživanje ovom ćaskanju nije uspelo. Zamolite člana da vas ponovo doda.';
 
@@ -5320,6 +5390,18 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get errorConversationPaused => 'Slanje je pauzirano u ovom razgovoru.';
+
+  @override
+  String get errorConversationApprovalHeld =>
+      'Slanje je pauzirano: uređaj u ovom ćaskanju nije na odobrenoj listi svog vlasnika ili lista još nije mogla da se proveri.';
+
+  @override
+  String get errorDeviceListNotApproved =>
+      'Taj uređaj još nije na odobrenoj listi svog vlasnika. Biće dodat kada bude.';
+
+  @override
+  String get errorDeviceListConflict =>
+      'Odobrena lista uređaja vašeg naloga promenjena je na način koji ne može da se proveri. Uporedite sigurnosne brojeve sa kontaktom pre nego što promenite uređaje.';
 
   @override
   String get errorOutboxFull =>

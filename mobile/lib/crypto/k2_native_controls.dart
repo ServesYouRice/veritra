@@ -12,6 +12,11 @@ class K2TransferId {
   }
 }
 
+/// The link context (protocol `veritra-device-link-v4`, ABI 18, L1-3).
+/// [sourceCommitment] is the existing device's commitment to its random,
+/// made when it created the link; [recipientRandom] is the new device's
+/// random, a native output of [K2NativeControls.k2ReceiveBegin] (pass zeros
+/// there, the returned value afterwards).
 class K2LinkContext {
   const K2LinkContext(
       {required this.id,
@@ -21,13 +26,17 @@ class K2LinkContext {
       required this.sourceSigningKey,
       required this.recipientDeviceId,
       required this.recipientSigningKey,
-      required this.transferPublicKey});
+      required this.transferPublicKey,
+      required this.sourceCommitment,
+      required this.recipientRandom});
   final K2TransferId id;
   final String accountId, sourceDeviceId, recipientDeviceId;
   final List<int> nonce,
       sourceSigningKey,
       recipientSigningKey,
-      transferPublicKey;
+      transferPublicKey,
+      sourceCommitment,
+      recipientRandom;
   void _write(_K2Writer w) {
     id._write(w);
     w.text(accountId, 128);
@@ -37,9 +46,14 @@ class K2LinkContext {
     w.text(recipientDeviceId, 128);
     w.fixed(recipientSigningKey, 32);
     w.fixed(transferPublicKey, 32);
+    w.fixed(sourceCommitment, 32);
+    w.fixed(recipientRandom, 32);
   }
 }
 
+/// [sas] is the 8-digit code. It is empty only in a [K2Status] of the new
+/// device: its SAS needs the source's revealed random, see
+/// [K2NativeControls.k2RevealSas].
 class K2Verification {
   K2Verification._(_K2Reader r)
       : transcriptHash = r.fixed(32),
@@ -47,16 +61,35 @@ class K2Verification {
         sas = ascii.decode(r.fixed(8)) {
     if (!RegExp(r'^\d{8}$').hasMatch(sas)) _K2Reader.invalid();
   }
+  K2Verification._status(_K2Reader r)
+      : transcriptHash = r.fixed(32),
+        claimTag = r.fixed(32),
+        sas = _optionalSas(r);
   final Uint8List transcriptHash, claimTag;
   final String sas;
+
+  static String _optionalSas(_K2Reader r) {
+    final present = r.boolean();
+    final bytes = r.fixed(8);
+    if (!present) {
+      if (bytes.any((b) => b != 0)) _K2Reader.invalid();
+      return '';
+    }
+    final sas = ascii.decode(bytes, allowInvalid: true);
+    if (!RegExp(r'^\d{8}$').hasMatch(sas)) _K2Reader.invalid();
+    return sas;
+  }
 }
 
+/// The new device's begin: its transfer key, its fresh random (sent in the
+/// claim) and the claim transcript hash and tag. No SAS yet.
 class K2ReceiveResult {
   K2ReceiveResult._(_K2Reader r)
       : transferPublicKey = r.fixed(32),
-        verification = K2Verification._(r);
-  final Uint8List transferPublicKey;
-  final K2Verification verification;
+        recipientRandom = r.fixed(32),
+        transcriptHash = r.fixed(32),
+        claimTag = r.fixed(32);
+  final Uint8List transferPublicKey, recipientRandom, transcriptHash, claimTag;
 }
 
 enum K2Direction { outgoing, incoming }
@@ -84,7 +117,10 @@ class K2Status {
     originalExpiresAt = r.u64();
     approvedAt = r.u64();
     transferExpiresAt = r.u64();
-    verification = K2Verification._(r);
+    verification = K2Verification._status(r);
+    if ((verification.sas.isEmpty) != (direction == K2Direction.incoming)) {
+      _K2Reader.invalid();
+    }
   }
   late final K2Direction direction;
   late final K2Stage stage;
@@ -121,11 +157,15 @@ extension K2NativeControls on NativeCryptoDevice {
     return result;
   }
 
+  /// The source accepts the claim. [sourceRandom] must open
+  /// [K2LinkContext.sourceCommitment]; reveal it to the server only after
+  /// this record is committed (L1-3).
   K2Verification k2SourceAccept(K2LinkContext context, List<int> secret,
       {required int originalExpiresAt,
       required int now,
       required List<int> transcriptHash,
-      required List<int> claimTag}) {
+      required List<int> claimTag,
+      required List<int> sourceRandom}) {
     final w = _K2Writer(2);
     context._write(w);
     w.fixed(secret, 16);
@@ -133,10 +173,38 @@ extension K2NativeControls on NativeCryptoDevice {
     w.u64(now);
     w.fixed(transcriptHash, 32);
     w.fixed(claimTag, 32);
+    w.fixed(sourceRandom, 32);
     final r = _k2Control(w);
     final result = K2Verification._(r);
     r.finish();
     return result;
+  }
+
+  /// The new device's SAS from the source's revealed random (ABI 18). Read
+  /// only; refused when the random does not open the pinned commitment.
+  String k2RevealSas(K2TransferId id, List<int> sourceRandom,
+      {required int now}) {
+    final w = _K2Writer(12);
+    id._write(w);
+    w.fixed(sourceRandom, 32);
+    w.u64(now);
+    final r = _k2Control(w);
+    final sas = ascii.decode(r.fixed(8), allowInvalid: true);
+    r.finish();
+    if (!RegExp(r'^\d{8}$').hasMatch(sas)) _K2Reader.invalid();
+    return sas;
+  }
+
+  /// This device's commitment to [sourceRandom] for a link it is about to
+  /// create on [serverOrigin] (ABI 18). Pure; changes no state.
+  Uint8List k2SourceCommitment(String serverOrigin, List<int> sourceRandom) {
+    final w = _K2Writer(13);
+    w.text(serverOrigin, 2048);
+    w.fixed(sourceRandom, 32);
+    final r = _k2Control(w);
+    final commitment = r.fixed(32);
+    r.finish();
+    return commitment;
   }
 
   K2Status k2Inspect(K2TransferId id, {required int now}) {

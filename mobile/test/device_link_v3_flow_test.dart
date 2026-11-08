@@ -19,6 +19,7 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// K2 v3 link and history copy through two real [AppState]s on the real
 /// native engine: the existing device creates a link, the new device claims
@@ -59,6 +60,11 @@ class _LinkServer {
   /// A failure the claim-status endpoint answers with, when set.
   ApiException? statusFailure;
 
+  /// When set, claim-status relays this random instead of the source's
+  /// revealed one (a relay that substitutes the reveal, L1-3).
+  List<int>? substitutedReveal;
+  int reveals = 0;
+
   Map<String, Object?> get record => Map<String, Object?>.from(link!);
 
   DeviceLinkV3Record view() => DeviceLinkV3Record.fromJson(
@@ -72,7 +78,8 @@ class _LinkApi extends ApiClient {
   final _LinkServer server;
 
   @override
-  Future<DeviceLinkV3Record> createDeviceLinkV3(Session owner, String locator,
+  Future<DeviceLinkV3Record> createDeviceLinkV3(
+      Session owner, String locator, List<int> sourceCommitment,
       {int expiresInSeconds = 600}) async {
     final now = DateTime.now().toUtc();
     server
@@ -89,6 +96,7 @@ class _LinkApi extends ApiClient {
         'server_origin': _origin,
         'link_nonce': base64Encode(List<int>.generate(32, (i) => i + 1)),
         'existing_signing_key': base64Encode(server.sourceSigningKey),
+        'source_commitment': base64Encode(sourceCommitment),
         'created_at': _iso(now),
         'expires_at': _iso(now.add(Duration(seconds: expiresInSeconds))),
       };
@@ -117,6 +125,7 @@ class _LinkApi extends ApiClient {
       'link_nonce': link['link_nonce'],
       'existing_device_id': link['created_by_device_id'],
       'existing_signing_key': link['existing_signing_key'],
+      'source_commitment': link['source_commitment'],
     });
   }
 
@@ -139,6 +148,7 @@ class _LinkApi extends ApiClient {
         'claimed_device_name': fields['device_name'],
         'claimed_signing_key': fields['signing_key'],
         'transfer_public_key': fields['transfer_public_key'],
+        'recipient_random': fields['recipient_random'],
         'transcript_hash': fields['transcript_hash'],
         'claim_tag': fields['claim_tag'],
         'claim_request_hash': claim.requestHash,
@@ -176,15 +186,46 @@ class _LinkApi extends ApiClient {
     final failure = server.statusFailure;
     if (failure != null) throw failure;
     _checkClaimToken(claimToken);
+    final substituted = server.substitutedReveal;
+    if (substituted != null && link.containsKey('source_random')) {
+      return DeviceLinkV3Record.fromJson(
+          {...server.record, 'source_random': base64Encode(substituted)},
+          transport: TransportPolicy.production);
+    }
+    return server.view();
+  }
+
+  @override
+  Future<DeviceLinkV3Record> revealDeviceLinkV3(Session owner,
+      DeviceLinkV3Record expected, List<int> sourceRandom) async {
+    final link = server.link!;
+    expect(expected.fields['claim_request_hash'], link['claim_request_hash']);
+    expect(link['state'], 'claimed', reason: 'a reveal comes after the claim');
+    server.reveals++;
+    if (link.containsKey('source_random')) {
+      expect(link['source_random'], base64Encode(sourceRandom),
+          reason: 'a repeat must reveal the same random');
+    } else {
+      server.link = <String, Object?>{
+        ...link,
+        'source_random': base64Encode(sourceRandom),
+        'revealed_at': _iso(DateTime.now().toUtc()),
+      };
+    }
     return server.view();
   }
 
   @override
   Future<DeviceLinkV3Record> approveDeviceLinkV3(
-      Session owner, DeviceLinkV3Record expected, List<int> approvalTag) async {
+      Session owner, DeviceLinkV3Record expected, List<int> approvalTag,
+      {List<int>? deviceList}) async {
     final link = server.link!;
     expect(expected.fields['claim_request_hash'], link['claim_request_hash']);
     if (link['state'] == 'claimed') {
+      // The real server refuses an approval before the reveal (L1-3).
+      if (!link.containsKey('source_random')) {
+        throw ApiException(409, '{"error":"reveal_required"}');
+      }
       final approved = DateTime.now().toUtc();
       server.link = <String, Object?>{
         ...link,
@@ -447,7 +488,7 @@ class _World {
   Duration newClockLag = Duration.zero;
 
   AppState newDevice() {
-    final crypto = newCrypto = NativeCryptoService(
+    final crypto = newCrypto = TestNativeCryptoService(
         bindings: bindings,
         localStore: newStore,
         clock: () => DateTime.now().subtract(newClockLag));
@@ -465,7 +506,7 @@ class _World {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     sourceStore =
         _Store(_snapshot(DateTime.now().millisecondsSinceEpoch, bodies));
-    sourceCrypto = NativeCryptoService(
+    sourceCrypto = TestNativeCryptoService(
         bindings: bindings, localStore: sourceStore, clock: DateTime.now);
     final credential = await sourceCrypto.createEnrollmentCredential(
         const EnrollmentReservation(
@@ -498,10 +539,17 @@ class _World {
     expect(code, isNotNull);
     await fresh.claimDeviceLink(_origin, code!);
     expect(fresh.errorFor(Ops.deviceLinkClaim), isNull);
-    final sas = fresh.pendingDeviceLinkClaim!.verificationCode;
-    expect(sas, matches(RegExp(r'^\d{8}$')));
+    // L1-3: no code before the source reveals the random it committed to.
+    expect(fresh.pendingDeviceLinkClaim!.verificationCode, isEmpty);
     await source.refreshActiveDeviceLink();
     expect(source.errorFor(Ops.deviceLink), isNull);
+    expect(server.link!['source_random'], isNotNull,
+        reason: 'the source reveals once it accepted the claim');
+    await fresh.completeDeviceLinkClaim();
+    expect(fresh.errorFor(Ops.deviceLinkClaim), isNull,
+        reason: fresh.errorFor(Ops.deviceLinkClaim));
+    final sas = fresh.pendingDeviceLinkClaim!.verificationCode;
+    expect(sas, matches(RegExp(r'^\d{8}$')));
     expect(source.activeDeviceLink?.verificationCode, sas);
     return sas;
   }
@@ -590,6 +638,50 @@ void main() {
   final skip = nativeCryptoSkip();
 
   test(
+      'a reveal that does not open the commitment shows no code and ends the '
+      'claim with its own message (L1-3)',
+      () => _withWorld((w) async {
+            await w.source.createDeviceLink();
+            await w.fresh
+                .claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
+            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
+            // The relay saw the commitment and the new device's random, and
+            // after the source's reveal hands the new device another one.
+            w.server.substitutedReveal = List<int>.filled(32, 0x42);
+            await w.source.refreshActiveDeviceLink();
+            expect(w.source.errorFor(Ops.deviceLink), isNull);
+            expect(w.server.reveals, 1);
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.errorFor(Ops.deviceLinkClaim),
+                contains("link check did not match"));
+            expect(w.fresh.pendingDeviceLinkClaim, isNull);
+            expect(await w.newStore.loadPendingEnrollment(), isNull);
+            expect(w.fresh.session, isNull);
+          }),
+      skip: skip);
+
+  test(
+      'the source reveals only after it accepted the claim, and only once',
+      () => _withWorld((w) async {
+            await w.source.createDeviceLink();
+            // Nothing to reveal before a claim.
+            await w.source.refreshActiveDeviceLink();
+            expect(w.server.reveals, 0);
+            expect(w.server.link!['source_commitment'], isNotNull);
+            await w.fresh
+                .claimDeviceLink(_origin, w.source.activeDeviceLinkCode!);
+            await w.source.refreshActiveDeviceLink();
+            expect(w.server.reveals, 1);
+            final revealed = w.server.link!['source_random'];
+            // A second refresh finds its own reveal and sends nothing new.
+            await w.source.refreshActiveDeviceLink();
+            expect(w.source.errorFor(Ops.deviceLink), isNull);
+            expect(w.server.reveals, 1);
+            expect(w.server.link!['source_random'], revealed);
+          }),
+      skip: skip);
+
+  test(
       'a new device is linked and receives the history, and both clean up',
       () => _withWorld((w) async {
             final sas = await w.claimAndRefresh();
@@ -644,6 +736,24 @@ void main() {
       skip: skip);
 
   test(
+      'L1: a server that swaps the claimed signing key after the code was '
+      'checked gets no approval and no change-2 version',
+      () => _withWorld((w) async {
+            final sas = await w.claimAndRefresh();
+            // The record the source fetches again at approval names another
+            // key; its transcript_hash field is left as the real one.
+            w.server.link = <String, Object?>{
+              ...w.server.link!,
+              'claimed_signing_key': base64Encode(List<int>.filled(32, 7)),
+            };
+            await w.source.approveActiveDeviceLink(sas);
+            expect(w.source.errorFor(Ops.deviceLink), isNotNull);
+            expect(w.server.link!['state'], 'claimed',
+                reason: 'nothing may be approved for a swapped key');
+          }),
+      skip: skip);
+
+  test(
       'a restart while the claim waits resumes it, and the claim is replayed '
       'byte for byte',
       () => _withWorld((w) async {
@@ -658,12 +768,14 @@ void main() {
             w.fresh = w.newDevice();
             await w.fresh.tryRestoreSession();
             expect(w.fresh.session, isNull);
-            expect(w.fresh.pendingDeviceLinkClaim?.verificationCode, sas);
 
-            // A lost claim answer: the same signed claim goes again.
+            // A lost claim answer: the same signed claim goes again. The
+            // code is never stored; the read-only reveal derives it again.
             await w.fresh.completeDeviceLinkClaim();
             expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
             expect(w.fresh.session, isNull);
+            expect(w.fresh.pendingDeviceLinkClaim?.verificationCode, sas);
+            expect(stored.payloadJson, isNot(contains(sas)));
 
             await w.source.approveActiveDeviceLink(sas);
             expect(w.source.errorFor(Ops.deviceLink), isNull);
@@ -691,7 +803,7 @@ void main() {
             await w.newCrypto?.dispose();
             // The source comes back first and uploads; the new device then
             // comes back and receives, each from its stored row.
-            w.sourceCrypto = NativeCryptoService(
+            w.sourceCrypto = TestNativeCryptoService(
                 bindings: w.bindings,
                 localStore: w.sourceStore,
                 clock: DateTime.now);
@@ -777,6 +889,25 @@ void main() {
             expect(w.fresh.pendingDeviceLinkClaim, isNull);
             expect(await w.newStore.loadPendingEnrollment(), isNull);
             expect(w.fresh.session, isNull);
+          }),
+      skip: skip);
+
+  test(
+      'an approval read after the link window still finishes (L1-3: the '
+      'reveal is checked only while the code is shown)',
+      () => _withWorld((w) async {
+            final sas = await w.claimAndRefresh();
+            await w.source.approveActiveDeviceLink(sas);
+            expect(w.source.errorFor(Ops.deviceLink), isNull);
+            // The new device looks again only after its 10-minute link window
+            // (it was in the background): native would refuse any reveal now.
+            w.newClockLag = const Duration(minutes: -11);
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull,
+                reason: w.fresh.errorFor(Ops.deviceLinkClaim));
+            expect(w.fresh.session?.deviceId, _newDevice);
+            expect(w.server.completes, 1);
+            w.newClockLag = Duration.zero;
           }),
       skip: skip);
 

@@ -6,6 +6,7 @@ import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'l1_test_lists.dart';
 
 /// D70 S4 through [NativeCryptoService] and the real library: replenishment
 /// cannot get stuck at the 1,000 key-package cap, deleting a conversation
@@ -116,7 +117,8 @@ void main() {
       () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final store = _LoseFirstSaveOutcome();
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_dev_a',
       accountId: 'acct_a',
@@ -196,7 +198,7 @@ class _Client {
       NativeCryptoBindings bindings, String accountId, String deviceId,
       {DateTime Function()? clock, MemoryLocalStore? store}) async {
     final local = store ?? MemoryLocalStore();
-    final service = NativeCryptoService(
+    final service = TestNativeCryptoService(
         bindings: bindings, localStore: local, clock: clock);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
@@ -211,7 +213,7 @@ class _Client {
   /// A new service over the same store, as after an app restart.
   Future<_Client> restart(NativeCryptoBindings bindings) async {
     await service.dispose();
-    final next = NativeCryptoService(
+    final next = TestNativeCryptoService(
         bindings: bindings, localStore: store, clock: clock);
     await next.activateSession(_session(accountId, deviceId));
     return _Client(next, store, accountId, deviceId, events)..clock = clock;

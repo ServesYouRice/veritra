@@ -188,3 +188,7 @@ Map<String, Object?> decodeDecoration(String? value) {
     return const {};
   }
 }
+
+/// The key prefix of the placeholder that replaces a message from a device
+/// that is not on its account's approved-device list (L1, D94).
+const String unapprovedSenderKeyPrefix = 'unapproved:';

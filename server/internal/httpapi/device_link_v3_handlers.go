@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/auth"
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -21,6 +22,7 @@ func (a *API) registerDeviceLinkV3Routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+deviceLinkV3Prefix+"/claim", a.claimDeviceLinkV3)
 	mux.HandleFunc("GET "+deviceLinkV3Prefix+"/{id}", a.withAuth(a.getDeviceLinkV3))
 	mux.HandleFunc("DELETE "+deviceLinkV3Prefix+"/{id}", a.withRecentAuth(a.cancelDeviceLinkV3))
+	mux.HandleFunc("POST "+deviceLinkV3Prefix+"/{id}/reveal", a.withAuth(a.revealDeviceLinkV3))
 	mux.HandleFunc("POST "+deviceLinkV3Prefix+"/{id}/approve", a.withRecentAuth(a.approveDeviceLinkV3))
 	mux.HandleFunc("GET "+deviceLinkV3Prefix+"/{id}/claim-status", a.deviceLinkV3ClaimStatus)
 	mux.HandleFunc("POST "+deviceLinkV3Prefix+"/{id}/complete", a.completeDeviceLinkV3)
@@ -31,6 +33,7 @@ func (a *API) createDeviceLinkV3(w http.ResponseWriter, r *http.Request, princip
 		Code             string `json:"code"`
 		ServerOrigin     string `json:"server_origin"`
 		ProtocolVersion  string `json:"protocol_version"`
+		SourceCommitment []byte `json:"source_commitment"`
 		ExpiresInSeconds int64  `json:"expires_in_seconds,omitempty"`
 	}
 	if !decodeJSON(w, r, &req) {
@@ -40,7 +43,7 @@ func (a *API) createDeviceLinkV3(w http.ResponseWriter, r *http.Request, princip
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 		return
 	}
-	link, err := a.Store.CreateDeviceLinkV3(r.Context(), principal.AccountID, principal.DeviceID, req.Code, req.ServerOrigin, time.Duration(req.ExpiresInSeconds)*time.Second)
+	link, err := a.Store.CreateDeviceLinkV3(r.Context(), principal.AccountID, principal.DeviceID, req.Code, req.ServerOrigin, req.SourceCommitment, time.Duration(req.ExpiresInSeconds)*time.Second)
 	if err != nil {
 		a.deviceLinkV3Error(w, err)
 		return
@@ -101,12 +104,18 @@ func (a *API) getDeviceLinkV3(w http.ResponseWriter, r *http.Request, principal 
 	writeJSON(w, http.StatusOK, map[string]interface{}{"device_link": link})
 }
 
-func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+// revealDeviceLinkV3 stores the source's committed random after the source
+// accepted the claim (L1-3). The new device reads it from claim-status and
+// opens the commitment before it shows the SAS.
+func (a *API) revealDeviceLinkV3(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
+		return
+	}
 	var req struct {
 		ProtocolVersion  string `json:"protocol_version"`
 		ClaimRequestHash string `json:"claim_request_hash"`
-		TranscriptHash   []byte `json:"transcript_hash"`
-		ApprovalTag      []byte `json:"approval_tag"`
+		SourceRandom     []byte `json:"source_random"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -115,7 +124,37 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 		writeError(w, http.StatusBadRequest, "invalid_device_link")
 		return
 	}
-	link, device, eventID, notices, err := a.Store.ApproveDeviceLinkV3(r.Context(), r.PathValue("id"), principal.AccountID, principal.DeviceID, req.ClaimRequestHash, req.TranscriptHash, req.ApprovalTag)
+	link, err := a.Store.RevealDeviceLinkV3(r.Context(), r.PathValue("id"), principal.AccountID, principal.DeviceID, req.ClaimRequestHash, req.SourceRandom)
+	if err != nil {
+		a.deviceLinkV3Error(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"device_link": link})
+}
+
+func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
+		return
+	}
+	var req struct {
+		ProtocolVersion  string `json:"protocol_version"`
+		ClaimRequestHash string `json:"claim_request_hash"`
+		TranscriptHash   []byte `json:"transcript_hash"`
+		ApprovalTag      []byte `json:"approval_tag"`
+		DeviceList       []byte `json:"device_list,omitempty"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.ProtocolVersion != storage.DeviceLinkV3Protocol {
+		writeError(w, http.StatusBadRequest, "invalid_device_link")
+		return
+	}
+	if !checkDeviceListField(w, req.DeviceList) {
+		return
+	}
+	link, device, eventID, notices, listResult, err := a.Store.ApproveDeviceLinkV3WithDeviceList(r.Context(), r.PathValue("id"), principal.AccountID, principal.DeviceID, req.ClaimRequestHash, req.TranscriptHash, req.ApprovalTag, req.DeviceList)
 	if err != nil {
 		a.deviceLinkV3Error(w, err)
 		return
@@ -123,6 +162,7 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 	if eventID != 0 {
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
 		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
+		a.publishDeviceListEvent(r, principal.AccountID, listResult, devicelist.ChangeAdd)
 		for _, notice := range notices {
 			a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.MemberLinkEventType, ID: notice.EventID,
 				Payload: map[string]string{"account_id": notice.LinkedAccountID, "device_id": notice.DeviceID}, CreatedAt: time.Now().UTC()})
@@ -199,6 +239,8 @@ func (a *API) deviceLinkV3Error(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "transcript_mismatch")
 	case errors.Is(err, storage.ErrDeviceLinkNotReady):
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "idempotency_conflict", "state": "pending_approval"})
+	case errors.Is(err, storage.ErrDeviceLinkNotRevealed):
+		writeError(w, http.StatusConflict, "reveal_required")
 	case errors.Is(err, storage.ErrDeviceLinkSessionUnavailable):
 		writeJSON(w, http.StatusGone, map[string]string{"error": "invalid_device_link", "state": "session_unavailable"})
 	default:

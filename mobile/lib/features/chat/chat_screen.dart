@@ -17,7 +17,8 @@ import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../crypto/poll.dart' show PollView, parsePollBody;
 import '../../crypto/link_preview.dart';
-import '../../crypto/message_format.dart' show decodeDecoration;
+import '../../crypto/message_format.dart'
+    show decodeDecoration, unapprovedSenderKeyPrefix;
 import '../../storage/encrypted_database.dart'
     show LocalMessage, LocalMessageKind, LocalMessageState;
 import '../../l10n/l10n.dart';
@@ -1738,13 +1739,21 @@ class _MessageBubble extends StatelessWidget {
 
   static const _welcomeUnavailableKeyPrefix = 'welcome-unavailable:';
 
+  /// A message from a device that is not on its account's approved-device
+  /// list (L1, D94): hidden, keyed `unapproved:<sync event>:<server id>`.
+  bool get _isUnapprovedSender =>
+      local?.kind == LocalMessageKind.invalid &&
+      local!.key.startsWith(unapprovedSenderKeyPrefix);
+
   String _placeholderLabel(AppLocalizations l10n) => _isUndecryptable
       ? l10n.chatMessageUndecryptable
-      : _isWelcomeUnavailable
-          ? l10n.chatMessageWelcomeUnavailable
-          : local?.kind == LocalMessageKind.invalid
-              ? l10n.chatMessageInvalid
-              : l10n.chatMessageUnsupported;
+      : _isUnapprovedSender
+          ? l10n.chatMessageUnapprovedDevice
+          : _isWelcomeUnavailable
+              ? l10n.chatMessageWelcomeUnavailable
+              : local?.kind == LocalMessageKind.invalid
+                  ? l10n.chatMessageInvalid
+                  : l10n.chatMessageUnsupported;
 
   /// The sender's link preview (B2), re-validated against the text each time
   /// it is drawn. Nothing is fetched here.

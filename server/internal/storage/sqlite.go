@@ -529,6 +529,9 @@ type CreateOwnerInput struct {
 	DeviceAuthHash          string
 	SessionHash             string
 	SessionExpiry           time.Time
+	// DeviceList is the optional change-1 genesis the new device signed
+	// (L1, docs/designs/L1-approved-device-list.md).
+	DeviceList []byte
 }
 
 type AccountDevice struct {

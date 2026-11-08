@@ -32,6 +32,7 @@ import 'package:private_messenger/storage/encrypted_database.dart'
     show LocalMessage;
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
+import 'l1_test_lists.dart';
 
 void main() {
   final configured = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
@@ -479,7 +480,7 @@ class _Harness {
 }
 
 /// The real native service; it only counts calls into MLS encryption.
-class _CountingNativeCrypto extends NativeCryptoService {
+class _CountingNativeCrypto extends TestNativeCryptoService {
   _CountingNativeCrypto(NativeCryptoBindings bindings, LocalStore store)
       : super(bindings: bindings, localStore: store);
 
@@ -519,7 +520,8 @@ class _Member {
     String deviceId,
   ) async {
     final store = MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(
       EnrollmentReservation(
         id: 'res_$deviceId',

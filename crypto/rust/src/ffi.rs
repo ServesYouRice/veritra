@@ -17,6 +17,7 @@ use std::{
 };
 
 mod k2;
+mod l1_calls;
 
 pub const PM_CRYPTO_OK: i32 = 0;
 pub const PM_CRYPTO_INVALID_ARGUMENT: i32 = -2;
@@ -43,6 +44,20 @@ pub const PM_CRYPTO_RECORD_LIMIT: i32 = -8;
 /// the group and has to be added again.
 pub const PM_CRYPTO_WELCOME_KEY_PACKAGE_UNAVAILABLE: i32 = -9;
 
+/// ABI 14 (L1): a device-list statement or input is not a canonical
+/// statement (also: a body the device refuses to sign for a malformed shape).
+pub const PM_CRYPTO_L1_MALFORMED: i32 = -11;
+/// ABI 14 (L1): the statement's signature does not verify under the key the
+/// rules name.
+pub const PM_CRYPTO_L1_SIGNATURE: i32 = -12;
+/// ABI 14 (L1): wrong account, version or `prev_hash`, or no genesis.
+pub const PM_CRYPTO_L1_CHAIN: i32 = -13;
+/// ABI 14 (L1): the signer may not make this change, or the entries are not
+/// what the change allows (also: a body this device may not sign).
+pub const PM_CRYPTO_L1_RULE: i32 = -14;
+/// ABI 14 (L1): recovery signing from the held seed, and none is held.
+pub const PM_CRYPTO_L1_NO_SEED: i32 = -15;
+
 const MAX_ID_BYTES: usize = 128;
 const STATE_KEY_BYTES: usize = 32;
 /// Largest format 2/3 blob the migration reads (the ABI-9 restore bound).
@@ -64,6 +79,9 @@ const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 const MAX_CIPHERTEXT_BYTES: usize = MAX_MESSAGE_BYTES + 4096;
 const ATTACHMENT_KEY_BYTES: usize = 32;
 const MEMBERSHIP_CHANGES_VERSION: u8 = 1;
+/// ABI 14 (L1): every add also carries the signature key its key package
+/// must hold.
+const MEMBERSHIP_CHANGES_VERSION_KEYED: u8 = 2;
 const MAX_MEMBERSHIP_CHANGES: usize = 256;
 const ATTACHMENT_NONCE_PREFIX_BYTES: usize = 8;
 
@@ -475,61 +493,9 @@ pub unsafe extern "C" fn pm_crypto_device_signing_public_key(
     })
 }
 
-/// ABI v7: hash32 || claim_tag32 || approval_tag32 || sas_mac_prefix4.
-///
-/// The SAS shown to the user is the prefix as a big-endian integer modulo
-/// 10^8: 8 digits, about 26.6 bits. The prefix and both tags are MACs keyed
-/// from the 128-bit link secret, so a relay without the secret cannot grind
-/// keys to match them; if the secret leaks, the 8 digits alone fall to about
-/// 10^4 key generations per side. See
-/// [`crate::mls::derive_device_link_verification`].
-#[no_mangle]
-pub unsafe extern "C" fn pm_crypto_device_link_transcript_hash(
-    handle: *mut PmCryptoHandle,
-    protocol_version: PmByteSlice,
-    server_origin: PmByteSlice,
-    link_id: PmByteSlice,
-    link_secret: PmByteSlice,
-    peer_device_id: PmByteSlice,
-    peer_signing_public_key: PmByteSlice,
-    link_nonce: PmByteSlice,
-    local_is_existing_device: u8,
-    out: *mut PmOwnedBuffer,
-) -> i32 {
-    ffi_call(|| {
-        if local_is_existing_device > 1 {
-            return Err(PM_CRYPTO_INVALID_ARGUMENT);
-        }
-        let protocol_version = unsafe { borrowed(protocol_version, 64)? };
-        let server_origin = unsafe { borrowed(server_origin, 2048)? };
-        let link_id = unsafe { borrowed(link_id, MAX_ID_BYTES)? };
-        let link_secret = unsafe { borrowed(link_secret, 16)? };
-        let peer_device_id = unsafe { borrowed(peer_device_id, MAX_ID_BYTES)? };
-        let peer_signing_public_key = unsafe { borrowed(peer_signing_public_key, 32)? };
-        let link_nonce = unsafe { borrowed(link_nonce, 32)? };
-        if peer_signing_public_key.len() != 32 || link_nonce.len() != 32 {
-            return Err(PM_CRYPTO_INVALID_ARGUMENT);
-        }
-        let transcript_hash = unsafe {
-            with_device(handle, |device| {
-                device
-                    .derive_device_link_verification(
-                        protocol_version,
-                        server_origin,
-                        link_id,
-                        link_secret,
-                        peer_device_id,
-                        peer_signing_public_key,
-                        link_nonce,
-                        local_is_existing_device == 1,
-                    )
-                    .map(|v| [v.transcript_hash, v.claim_tag, v.approval_tag, v.sas_bytes].concat())
-                    .map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)
-            })?
-        };
-        unsafe { output(out, transcript_hash) }
-    })
-}
+// ABI 18 (L1-3) retired `pm_crypto_device_link_transcript_hash`, the v2
+// link derivation: device links use the K2 controls (`ffi/k2.rs`), whose
+// SAS needs the existing device's committed random.
 
 /// ABI v7 locator. `secret` must be readable and `out` writable.
 #[no_mangle]
@@ -595,7 +561,8 @@ pub unsafe extern "C" fn pm_crypto_recovery_key_decode(
 }
 
 /// ABI 11: derives `rk_pub` (32), `rk_id` (16) and `rk_auth_pub` (32) from
-/// the entropy. No private key or seed is returned.
+/// the entropy, and (ABI 14, L1) `rk_list_pub` (32), the public key of the
+/// device-list recovery signer. No private key or seed is returned.
 ///
 /// # Safety
 /// `entropy` must be readable and every output writable.
@@ -605,9 +572,14 @@ pub unsafe extern "C" fn pm_crypto_recovery_key_derive(
     out_rk_pub: *mut PmOwnedBuffer,
     out_rk_id: *mut PmOwnedBuffer,
     out_rk_auth_pub: *mut PmOwnedBuffer,
+    out_rk_list_pub: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
-        if out_rk_pub.is_null() || out_rk_id.is_null() || out_rk_auth_pub.is_null() {
+        if out_rk_pub.is_null()
+            || out_rk_id.is_null()
+            || out_rk_auth_pub.is_null()
+            || out_rk_list_pub.is_null()
+        {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
         let entropy = unsafe { borrowed(entropy, recovery::ENTROPY_BYTES)? };
@@ -615,16 +587,21 @@ pub unsafe extern "C" fn pm_crypto_recovery_key_derive(
             recovery::RecoveryError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
             recovery::RecoveryError::Crypto => PM_CRYPTO_ERROR,
         })?;
+        // All four targets were checked above, so nothing fails after a
+        // buffer has been handed over.
+        let buffers = [
+            into_owned(derived.rk_pub.to_vec()),
+            into_owned(derived.rk_id.to_vec()),
+            into_owned(derived.rk_auth_pub.to_vec()),
+            into_owned(derived.rk_list_pub.to_vec()),
+        ];
         unsafe {
-            three_outputs(
-                [out_rk_pub, out_rk_id, out_rk_auth_pub],
-                [
-                    derived.rk_pub.to_vec(),
-                    derived.rk_id.to_vec(),
-                    derived.rk_auth_pub.to_vec(),
-                ],
-            )
+            out_rk_pub.write(buffers[0]);
+            out_rk_id.write(buffers[1]);
+            out_rk_auth_pub.write(buffers[2]);
+            out_rk_list_pub.write(buffers[3]);
         }
+        Ok(())
     })
 }
 
@@ -1111,14 +1088,18 @@ pub unsafe extern "C" fn pm_crypto_group_add_member(
 /// [`pm_crypto_group_stage_commit`]:
 ///
 /// ```text
-/// version:u8 (=1) add_count:u16 { kp_len:u32 kp account_len:u16 account
-///   device_len:u16 device }* remove_count:u16 { account_len:u16 account
-///   device_len:u16 device }*
+/// version:u8 (=1 or 2) add_count:u16 { kp_len:u32 kp account_len:u16 account
+///   device_len:u16 device [signing_key:32, version 2 only] }*
+///   remove_count:u16 { account_len:u16 account device_len:u16 device }*
 /// ```
 ///
-/// All integers are big-endian. Trailing bytes are rejected.
+/// All integers are big-endian. Trailing bytes are rejected. Version 2 (ABI
+/// 14, L1) adds the signature key each key package must hold: a key package
+/// with another leaf signature key is refused. Version 1 stays readable
+/// until L1-3 moves every sender to version 2.
 struct MembershipChanges<'a> {
     adds: Vec<MemberAdd<'a>>,
+    expected_keys: Vec<Option<&'a [u8]>>,
     removes: Vec<MemberIdentity<'a>>,
 }
 
@@ -1157,14 +1138,17 @@ fn parse_membership_changes(input: &[u8]) -> Result<MembershipChanges<'_>, i32> 
         }
     }
     let mut reader = Reader { input, offset: 0 };
-    if reader.take(1)?[0] != MEMBERSHIP_CHANGES_VERSION {
-        return Err(PM_CRYPTO_INVALID_ARGUMENT);
-    }
+    let keyed = match reader.take(1)?[0] {
+        MEMBERSHIP_CHANGES_VERSION => false,
+        MEMBERSHIP_CHANGES_VERSION_KEYED => true,
+        _ => return Err(PM_CRYPTO_INVALID_ARGUMENT),
+    };
     let add_count = reader.u16()?;
     if add_count > MAX_MEMBERSHIP_CHANGES {
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
     let mut adds = Vec::with_capacity(add_count);
+    let mut expected_keys = Vec::with_capacity(add_count);
     for _ in 0..add_count {
         let kp_len = reader.u32()?;
         if kp_len == 0 || kp_len > MAX_KEY_PACKAGE_BYTES {
@@ -1173,6 +1157,7 @@ fn parse_membership_changes(input: &[u8]) -> Result<MembershipChanges<'_>, i32> 
         let key_package = reader.take(kp_len)?;
         let account_id = reader.id()?;
         let device_id = reader.id()?;
+        expected_keys.push(if keyed { Some(reader.take(32)?) } else { None });
         adds.push(MemberAdd {
             key_package,
             account_id,
@@ -1196,7 +1181,11 @@ fn parse_membership_changes(input: &[u8]) -> Result<MembershipChanges<'_>, i32> 
     if reader.offset != input.len() {
         return Err(PM_CRYPTO_INVALID_ARGUMENT);
     }
-    Ok(MembershipChanges { adds, removes })
+    Ok(MembershipChanges {
+        adds,
+        expected_keys,
+        removes,
+    })
 }
 
 /// Stages one commit adding and removing devices, without merging it (ABI
@@ -1237,7 +1226,12 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit(
                         .map_err(|_| PM_CRYPTO_ERROR);
                 }
                 device
-                    .stage_membership_commit(&mut group, &changes.adds, &changes.removes)
+                    .stage_membership_commit_checked(
+                        &mut group,
+                        &changes.adds,
+                        &changes.expected_keys,
+                        &changes.removes,
+                    )
                     .map_err(|_| PM_CRYPTO_ERROR)
             })?
         };
@@ -1706,6 +1700,15 @@ pub unsafe extern "C" fn pm_crypto_c7_open(
 /// `veritra-c7-history-v1`, which Rust prepends itself (any other is
 /// `PM_CRYPTO_INVALID_ARGUMENT`); `message` is 1 to 4096 bytes.
 ///
+/// ABI 14 (L1): `domain` may also be `veritra-l1-device-list-sig-v1`. Then
+/// `message` is a device-list body, not signed bytes: Rust parses it strictly,
+/// requires this device's own account (and, for a genesis, this device's own
+/// pair), and signs `label | SHA-256(body) | 0x01 | lp(own device id)`
+/// itself. A malformed body is `PM_CRYPTO_L1_MALFORMED`, one this device may
+/// not sign `PM_CRYPTO_L1_RULE`. The L1 label is never accepted by
+/// [`pm_crypto_c7_verify`] and is not in the C7 domain list, so raw bytes can
+/// never be signed under it.
+///
 /// # Safety
 /// `handle` must be live, slices readable and `out_signature` writable.
 #[no_mangle]
@@ -1721,12 +1724,23 @@ pub unsafe extern "C" fn pm_crypto_c7_sign(
         }
         let domain = unsafe { borrowed(domain, 64)? };
         let message = unsafe { borrowed(message, C7_MAX_MESSAGE_BYTES)? };
-        if !crate::c7::SIGN_DOMAINS.contains(&domain) {
+        let list_body = domain == crate::l1::LABEL_SIG;
+        if !list_body && !crate::c7::SIGN_DOMAINS.contains(&domain) {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
         let signature = unsafe {
             with_device(handle, |device| {
-                device.c7_sign(domain, message).map_err(|_| PM_CRYPTO_ERROR)
+                if list_body {
+                    device
+                        .l1_sign_device_list(message)
+                        .map_err(|error| match error {
+                            MlsError::InvalidMessage => PM_CRYPTO_L1_MALFORMED,
+                            MlsError::InvalidIdentity => PM_CRYPTO_L1_RULE,
+                            _ => PM_CRYPTO_ERROR,
+                        })
+                } else {
+                    device.c7_sign(domain, message).map_err(|_| PM_CRYPTO_ERROR)
+                }
             })?
         };
         if signature.len() != crate::c7::SIGNATURE_BYTES {
@@ -2004,6 +2018,10 @@ mod records_tests;
 mod c7_tests;
 
 #[cfg(test)]
+#[path = "ffi/l1_tests.rs"]
+mod l1_tests;
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn membership_change_lists_are_bounded_and_exact() {
@@ -2022,7 +2040,27 @@ mod tests {
         trailing.push(0);
         assert!(super::parse_membership_changes(&trailing).is_err());
         assert!(super::parse_membership_changes(&valid[..valid.len() - 1]).is_err());
-        assert!(super::parse_membership_changes(&[2, 0, 0, 0, 0]).is_err());
+        assert!(super::parse_membership_changes(&[0, 0, 0, 0, 0]).is_err());
+        assert!(super::parse_membership_changes(&[3, 0, 0, 0, 0]).is_err());
+        // Version 2 (ABI 14) carries the expected signing key of each add.
+        let mut keyed = vec![2u8, 0, 1];
+        keyed.extend_from_slice(&3u32.to_be_bytes());
+        keyed.extend_from_slice(b"kp!");
+        keyed.extend_from_slice(&[0, 1, b'a', 0, 1, b'd']);
+        keyed.extend_from_slice(&[7u8; 32]);
+        keyed.extend_from_slice(&[0, 0]);
+        let parsed = super::parse_membership_changes(&keyed).unwrap();
+        assert_eq!(parsed.expected_keys, vec![Some(&[7u8; 32][..])]);
+        assert!(super::parse_membership_changes(&keyed[..keyed.len() - 3]).is_err());
+        let mut short_key = keyed.clone();
+        short_key.drain(short_key.len() - 2 - 5..short_key.len() - 2);
+        assert!(super::parse_membership_changes(&short_key).is_err());
+        // A version 1 list has none, and an empty version 2 list is a self-update.
+        assert_eq!(parsed_v1_keys(&valid), vec![None]);
+        assert!(super::parse_membership_changes(&[2, 0, 0, 0, 0])
+            .unwrap()
+            .adds
+            .is_empty());
         // Nothing to change is a self-update request.
         let empty = super::parse_membership_changes(&[1, 0, 0, 0, 0]).unwrap();
         assert!(empty.adds.is_empty() && empty.removes.is_empty());
@@ -2035,6 +2073,12 @@ mod tests {
         let mut huge = vec![1u8, 0, 1];
         huge.extend_from_slice(&u32::MAX.to_be_bytes());
         assert!(super::parse_membership_changes(&huge).is_err());
+    }
+
+    fn parsed_v1_keys(bytes: &[u8]) -> Vec<Option<&[u8]>> {
+        super::parse_membership_changes(bytes)
+            .unwrap()
+            .expected_keys
     }
 
     use super::*;

@@ -116,6 +116,7 @@ func (s *Store) ClaimConversationKeyPackages(ctx context.Context, conversationID
 		FROM devices d
 		JOIN memberships cm ON cm.account_id = d.account_id
 		WHERE cm.conversation_id = ? AND d.revoked_at IS NULL AND d.id <> ?
+		  AND `+deviceOnHeadSQL("d.account_id", "d.id")+`
 		ORDER BY d.account_id, d.id`, conversationID, requesterDeviceID)
 	if err != nil {
 		return nil, err

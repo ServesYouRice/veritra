@@ -1,18 +1,16 @@
 package httpapi
 
 import (
-	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
-	"math/big"
 	"net/http"
 	"strings"
 	"time"
 
 	"private-messenger/server/internal/auth"
+	"private-messenger/server/internal/devicelist"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
@@ -213,6 +211,17 @@ func (a *API) claimAccountRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	exists := lookupErr == nil
+	// L1: an account whose device list names no recovery key (a recovery key
+	// set before L1 and not yet confirmed on a device) cannot be recovered:
+	// no device could sign the version that replaces the lost ones. The
+	// lookup runs on every path, decoys included, so work and timing stay
+	// equal. See "Setting or replacing the recovery key" in
+	// docs/designs/L1-approved-device-list.md.
+	listBlocksRecovery, blockErr := a.Store.DeviceListBlocksRecovery(r.Context(), reservation.AccountID)
+	if blockErr != nil {
+		writeError(w, http.StatusInternalServerError, "recovery_claim_failed")
+		return
+	}
 	storedHash := ""
 	authKey := recoveryDecoyAuthKey
 	hasKey := exists && len(record.AuthPublicKey) == ed25519.PublicKeySize
@@ -233,7 +242,14 @@ func (a *API) claimAccountRecovery(w http.ResponseWriter, r *http.Request) {
 	signatureOK := ed25519.Verify(authKey, recoveryProofMessage(reservation.Challenge, req.SigningKey, req.DeviceKeyPackage, a.PublicOrigin), req.RecoverySignature)
 	passwordOK := exists && check.OK
 	rkOK := hasKey && signatureOK
-	if rkOK {
+	// usable is a right recovery key on an account whose list can take it.
+	// On a list with no recovery key the right key is refused with the same
+	// 401 as no key at all, but it is not a failure: the user's own correct
+	// key must not use up the daily cap (D79) or warn their devices that the
+	// password leaked, and it takes no account backoff. A wrong key still
+	// counts as D79 says.
+	usable := rkOK && !listBlocksRecovery
+	if usable {
 		if retryAfter := a.LoginBackoff.RetryAfterAny(loginBackoffNow(), accountKey); retryAfter > 0 {
 			writeRetryError(w, "recovery_backoff", retryAfter)
 			return
@@ -251,9 +267,9 @@ func (a *API) claimAccountRecovery(w http.ResponseWriter, r *http.Request) {
 		a.publishCommittedEvent(r.Context(), []string{reservation.AccountID}, realtime.Event{Version: "v1", Type: "account.password_leak_suspected", ID: attempt.LeakEventID, Payload: map[string]string{"day": time.Now().UTC().Format("2006-01-02")}, CreatedAt: time.Now().UTC()})
 	}
 	capped := attempt.Failures > a.recoveryFailureCap()
-	if !passwordOK || !rkOK || capped {
+	if !passwordOK || !usable || capped {
 		failedKeys := []string{sourceKey}
-		if rkOK {
+		if usable {
 			failedKeys = append(failedKeys, accountKey)
 		}
 		if retryAfter := a.LoginBackoff.FailedAny(loginBackoffNow(), failedKeys...); retryAfter > 0 {
@@ -416,9 +432,17 @@ func recoveryKeyPayload(available bool, status storage.RecoveryKeyStatus) map[st
 }
 
 func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	// The change-5 version is signed by the calling device.
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "device_session_required")
+		return
+	}
 	var req struct {
 		RKAuthPub []byte `json:"rk_auth_pub"`
 		RKID      []byte `json:"rk_id"`
+		// DeviceList is the change-5 version naming the matching recovery
+		// key (rk_list_pub). With a list on the account it is required.
+		DeviceList []byte `json:"device_list,omitempty"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
@@ -427,10 +451,16 @@ func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 		writeError(w, http.StatusBadRequest, "invalid_recovery_key")
 		return
 	}
-	result, err := a.Store.SetRecoveryKey(r.Context(), principal.AccountID, req.RKAuthPub, req.RKID)
+	if !checkDeviceListField(w, req.DeviceList) {
+		return
+	}
+	result, err := a.Store.SetRecoveryKeyWithDeviceList(r.Context(), principal.AccountID, principal.DeviceID, req.RKAuthPub, req.RKID, req.DeviceList)
 	if err != nil {
 		handleStorageError(w, err)
 		return
+	}
+	if result.DeviceListVersion != 0 {
+		a.publishDeviceListEvent(r, principal.AccountID, &storage.DeviceListResult{Version: result.DeviceListVersion, EventID: result.DeviceListEventID}, devicelist.ChangeRecoveryKey)
 	}
 	now := time.Now().UTC()
 	if result.CancelledEventID != 0 {
@@ -451,82 +481,10 @@ func (a *API) putRecoveryKey(w http.ResponseWriter, r *http.Request, principal d
 }
 
 // recoverySmallOrderKeys are the canonical encodings of the eight Ed25519
-// points of small order. A signature for any message can be forged under
-// them without a secret key, so none may be a recovery auth key.
-var recoverySmallOrderKeys = func() [][]byte {
-	hexKeys := []string{
-		"0100000000000000000000000000000000000000000000000000000000000000",
-		"ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
-		"0000000000000000000000000000000000000000000000000000000000000000",
-		"0000000000000000000000000000000000000000000000000000000000000080",
-		"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
-		"26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85",
-		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
-		"c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa",
-	}
-	keys := make([][]byte, len(hexKeys))
-	for i, value := range hexKeys {
-		key, err := hex.DecodeString(value)
-		if err != nil || len(key) != ed25519.PublicKeySize {
-			panic("bad small-order key")
-		}
-		keys[i] = key
-	}
-	return keys
-}()
-
-var (
-	ed25519FieldPrime = new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 255), big.NewInt(19))
-	// ed25519CurveD is -121665/121666 mod p.
-	ed25519CurveD = func() *big.Int {
-		d := new(big.Int).ModInverse(big.NewInt(121666), ed25519FieldPrime)
-		d.Mul(d, big.NewInt(-121665))
-		return d.Mod(d, ed25519FieldPrime)
-	}()
-)
+// points of small order (the check lives in devicelist, shared with the
+// approved-device list).
+var recoverySmallOrderKeys = devicelist.SmallOrderKeys
 
 // validRecoveryAuthKey reports whether key is a canonical encoding of an
-// Ed25519 point on the curve that is not of small order. It runs only when
-// an account sets its recovery key, so the big-integer check costs nothing
-// that matters.
-func validRecoveryAuthKey(key []byte) bool {
-	if len(key) != ed25519.PublicKeySize {
-		return false
-	}
-	for _, small := range recoverySmallOrderKeys {
-		if bytes.Equal(key, small) {
-			return false
-		}
-	}
-	littleEndian := bytes.Clone(key)
-	sign := littleEndian[31] >> 7
-	littleEndian[31] &= 0x7f
-	bigEndian := make([]byte, len(littleEndian))
-	for i, b := range littleEndian {
-		bigEndian[len(littleEndian)-1-i] = b
-	}
-	y := new(big.Int).SetBytes(bigEndian)
-	if y.Cmp(ed25519FieldPrime) >= 0 {
-		return false
-	}
-	// x^2 = (y^2 - 1) / (d*y^2 + 1) must have a square root.
-	y2 := new(big.Int).Mul(y, y)
-	y2.Mod(y2, ed25519FieldPrime)
-	u := new(big.Int).Sub(y2, big.NewInt(1))
-	u.Mod(u, ed25519FieldPrime)
-	v := new(big.Int).Mul(ed25519CurveD, y2)
-	v.Add(v, big.NewInt(1))
-	v.Mod(v, ed25519FieldPrime)
-	vInverse := new(big.Int).ModInverse(v, ed25519FieldPrime)
-	if vInverse == nil {
-		return false
-	}
-	x2 := u.Mul(u, vInverse)
-	x2.Mod(x2, ed25519FieldPrime)
-	x := new(big.Int).ModSqrt(x2, ed25519FieldPrime)
-	if x == nil {
-		return false
-	}
-	// x = 0 has only the positive encoding.
-	return x.Sign() != 0 || sign == 0
-}
+// Ed25519 point on the curve that is not of small order.
+func validRecoveryAuthKey(key []byte) bool { return devicelist.ValidPublicKey(key) }

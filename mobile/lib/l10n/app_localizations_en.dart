@@ -184,6 +184,23 @@ class AppLocalizationsEn extends AppLocalizations {
       'Generate a pairing code for another device';
 
   @override
+  String get settingsDeviceListSetup => 'Approve your devices';
+
+  @override
+  String get settingsDeviceListSetupDetail =>
+      'Your contacts can\'t add your devices to chats until you confirm which ones are yours.';
+
+  @override
+  String get deviceListReviewTitle => 'Which devices are yours?';
+
+  @override
+  String get deviceListReviewBody =>
+      'Untick any device you don\'t recognise. The ticked ones become your approved devices; the others are signed out.';
+
+  @override
+  String get deviceListReviewConfirm => 'Approve';
+
+  @override
   String get settingsLoadingDevices => 'Loading devices…';
 
   @override
@@ -1133,6 +1150,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Waiting for your other device to approve. Keep this screen open.';
 
   @override
+  String get deviceLinkWaitingCode =>
+      'Waiting for your other device. The code to confirm appears here in a moment.';
+
+  @override
+  String get deviceLinkCommitmentMismatch =>
+      'Your other device\'s link check did not match, so this device was not linked. Create a new link on your other device and try again.';
+
+  @override
   String get historyCopySendWorking =>
       'Sending your history to the new device…';
 
@@ -1809,6 +1834,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatMessageUndecryptable => 'Couldn\'t unlock this message';
 
   @override
+  String get chatMessageUnapprovedDevice =>
+      'A message from a device that isn\'t approved was hidden.';
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Couldn\'t join this chat. Ask a member to add you again.';
 
@@ -2176,6 +2205,18 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get errorConversationPaused =>
       'Sending is paused in this conversation.';
+
+  @override
+  String get errorConversationApprovalHeld =>
+      'Sending is paused: a device in this chat isn\'t on its owner\'s approved list, or the list couldn\'t be checked yet.';
+
+  @override
+  String get errorDeviceListNotApproved =>
+      'That device isn\'t on its owner\'s approved list yet. It will be added once it is.';
+
+  @override
+  String get errorDeviceListConflict =>
+      'Your account\'s approved-device list changed in a way that can\'t be verified. Compare safety numbers with a contact before changing devices.';
 
   @override
   String get errorOutboxFull =>

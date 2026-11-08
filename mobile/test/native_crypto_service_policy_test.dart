@@ -9,6 +9,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'l1_test_lists.dart';
 
 /// Real OpenMLS devices driven through [NativeCryptoService]: how a commit
 /// bundle settles when sync got there first (TASK-057), and what happens to
@@ -464,7 +465,8 @@ class _Client {
       NativeCryptoBindings bindings, String accountId, String deviceId,
       {MemoryLocalStore? store}) async {
     final local = store ?? MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: local);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: local);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,

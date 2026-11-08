@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (13u)
+#define PM_CRYPTO_ABI_VERSION (18u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -41,6 +41,19 @@
 #define PM_CRYPTO_C7_COMMIT_REMOVED (1u)      /* at least one Remove */
 #define PM_CRYPTO_C7_COMMIT_ADDED (2u)        /* at least one Add */
 #define PM_CRYPTO_C7_COMMIT_REMOVED_SELF (4u) /* this device was removed */
+/* ABI 14 (L1, the approved-device list). A device-list statement or input is
+ * not a canonical statement. Checks run in the order malformed, chain, rule,
+ * signature, so a statement with one fault reports it. */
+#define PM_CRYPTO_L1_MALFORMED (-11)
+/* The signature does not verify under the key the rules name. */
+#define PM_CRYPTO_L1_SIGNATURE (-12)
+/* Wrong account, version or prev_hash, or no genesis. */
+#define PM_CRYPTO_L1_CHAIN (-13)
+/* The signer may not make this change, or the entries are not what the change
+ * allows (also: a body this device may not sign). */
+#define PM_CRYPTO_L1_RULE (-14)
+/* pm_crypto_l1_sign_recovery with no entropy given and no seed held. */
+#define PM_CRYPTO_L1_NO_SEED (-15)
 
 typedef struct {
   const uint8_t *data;
@@ -127,8 +140,10 @@ int32_t pm_crypto_device_link_locator(PmByteSlice secret, PmOwnedBuffer *out);
  * entropy || 2-byte check. Decode is case-insensitive, reads O as 0 and I/L
  * as 1, ignores '-' and ' ', and refuses anything else, a wrong check or
  * non-zero padding bits with PM_CRYPTO_INVALID_ARGUMENT. Derive returns
- * rk_pub (32), rk_id (16) and rk_auth_pub (32); no private key or seed ever
- * crosses the ABI. The proof is an Ed25519 signature (64) by the RK auth key
+ * rk_pub (32), rk_id (16), rk_auth_pub (32) and, since ABI 14 (L1),
+ * rk_list_pub (32, the public key of the device-list recovery signer,
+ * HKDF-Expand(PRK, "veritra-k0 device-list", 32) as an Ed25519 seed); no
+ * private key or seed ever crosses the ABI. The proof is an Ed25519 signature (64) by the RK auth key
  * over "veritra-k0-recovery-proof-v1" | lp(challenge) | signing_key (32) |
  * SHA-256(key_package) | lp(origin), lp a u16 big-endian length; the label is
  * fixed, so this key signs nothing else. Vector:
@@ -141,7 +156,8 @@ int32_t pm_crypto_recovery_key_decode(PmByteSlice display,
 int32_t pm_crypto_recovery_key_derive(PmByteSlice entropy,
                                       PmOwnedBuffer *out_rk_pub,
                                       PmOwnedBuffer *out_rk_id,
-                                      PmOwnedBuffer *out_rk_auth_pub);
+                                      PmOwnedBuffer *out_rk_auth_pub,
+                                      PmOwnedBuffer *out_rk_list_pub);
 int32_t pm_crypto_recovery_proof_sign(PmByteSlice entropy,
                                       PmByteSlice challenge,
                                       PmByteSlice signing_key,
@@ -193,6 +209,15 @@ int32_t pm_crypto_k2_source_posted(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer 
 int32_t pm_crypto_k2_importing(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
 int32_t pm_crypto_k2_forget(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
 int32_t pm_crypto_k2_expire(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+/* ABI 18 (L1-3, docs/designs/L1-3-link-commitment.md): protocol
+ * veritra-device-link-v4. The context carries the existing device's
+ * commitment and the new device's random. reveal_sas is read-only: it
+ * opens the commitment with the revealed random and returns the 8-digit
+ * SAS (about 26.6 bits; with commit-then-reveal a relay gets one 10^-8
+ * guess per run). source_commitment hashes this device's own id and key.
+ * The v2 derivation pm_crypto_device_link_transcript_hash was removed. */
+int32_t pm_crypto_k2_reveal_sas(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
+int32_t pm_crypto_k2_source_commitment(PmCryptoHandle *, PmByteSlice, PmOwnedBuffer *);
 /* ABI8 bounded bundle streams. One large stream process-wide. All results
  * use PK2R framing; write/read chunks max1MiB, total padded frame max64MiB.
  * Incoming read fails until receive_finish authenticates the complete bundle.
@@ -211,17 +236,6 @@ int32_t pm_crypto_k2_source_finish(PmCryptoHandle *, PmHistoryStream *,
 int32_t pm_crypto_k2_receive_finish(PmCryptoHandle *, PmHistoryStream *,
     PmByteSlice, PmOwnedBuffer *);
 void pm_crypto_k2_stream_destroy(PmHistoryStream *);
-/* ABI 7: returns hash32, claim MAC32, approval MAC32, SAS prefix4. The SAS
- * is prefix4 (big-endian) mod 10^8: 8 digits, about 26.6 bits. The prefix
- * and both tags are MACs keyed from the 128-bit out-of-band link secret, so
- * a relay without it cannot grind keys to match; if the secret leaks, the 8
- * digits alone fall to about 10^4 key generations per side. */
-int32_t pm_crypto_device_link_transcript_hash(
-    PmCryptoHandle *handle, PmByteSlice protocol_version,
-    PmByteSlice server_origin, PmByteSlice link_id, PmByteSlice link_secret,
-    PmByteSlice peer_device_id,
-    PmByteSlice peer_signing_public_key, PmByteSlice link_nonce,
-    uint8_t local_is_existing_device, PmOwnedBuffer *out);
 int32_t pm_crypto_device_create_key_package(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
 /* ABI 9: the only enrollment signature. It covers
@@ -287,6 +301,11 @@ int32_t pm_crypto_group_add_member(PmCryptoHandle *handle,
  * An empty list (add_count 0, remove_count 0) stages a self-update: a commit
  * with an update path and no proposals that refreshes this device's leaf key
  * (2026-10-31; earlier ABI 9 builds refuse an empty list).
+ * ABI 14 (L1): version 2 of the list (version:u8 = 2) puts the 32-byte
+ * signature key each key package must hold after each add's device id; a key
+ * package with another leaf signature key is refused (PM_CRYPTO_ERROR) and
+ * nothing is staged. Version 1 stays accepted until the app sends only
+ * version 2.
  */
 int32_t pm_crypto_group_stage_commit(PmCryptoHandle *handle,
                                      PmByteSlice group_id, PmByteSlice changes,
@@ -411,6 +430,97 @@ int32_t pm_crypto_c7_sign(PmCryptoHandle *handle, PmByteSlice domain,
 int32_t pm_crypto_c7_verify(PmByteSlice domain, PmByteSlice public_key,
                             PmByteSlice message, PmByteSlice signature,
                             uint8_t *out_valid);
+/* ABI 14 (L1): the label "veritra-l1-device-list-sig-v1" is also accepted as
+ * pm_crypto_c7_sign's domain, with a different meaning: message is then a
+ * device-list body (VDL1, not bytes to sign). Rust parses it strictly,
+ * requires this device's own account (a genesis, change 1, must list exactly
+ * this device and its own key; a migration genesis, change 6, must list this
+ * device with its own key; a recovery version, change 4, is refused), and
+ * signs label | SHA-256(body) | 0x01 | lp(own device id) itself. Malformed is
+ * PM_CRYPTO_L1_MALFORMED, a body this device may not sign
+ * PM_CRYPTO_L1_RULE. The L1 label is not a pm_crypto_c7_verify domain.
+ *
+ * L1 approved-device list (docs/designs/L1-approved-device-list.md, step
+ * L1-1; vector testing/vectors/l1-device-list-v1.json). Every integer is big
+ * endian and lp(x) a u16 length then x.
+ *   body      = "VDL1" | u8 1 | lp(account_id) | u64 version | [32] prev_hash
+ *               | u64 created_at_ms | u8 change | u8 count (1..16) | count x
+ *               (lp(device_id) | [32] signing_key) sorted by id | u8
+ *               has_recovery | [32] recovery_key (when 1)
+ *   statement = body | u8 signer_kind (1 device, 2 recovery key) | lp(signer
+ *               device id, empty for kind 2) | [64] signature
+ *   change    = 1 genesis, 2 add, 3 remove, 4 recovery, 5 recovery key,
+ *               6 migration genesis
+ * Both check calls take a required expected_account_id (1 to 128 bytes, the
+ * account the caller asked about) and refuse a statement or chain of any other
+ * account with PM_CRYPTO_L1_CHAIN, a genesis included: a valid chain of
+ * another account never passes, so the caller needs no account comparison of
+ * its own (and cannot forget one).
+ * pm_crypto_l1_check_step checks a statement as the version after prev (prev
+ * empty for a genesis); history is every pair listed before (u16 n | n x
+ * (lp(device_id) | [32] key), may be empty) and carries the no-return and
+ * one-key-one-device rules; pass it from the app's keys table, since prev
+ * alone cannot know a device removed earlier. out_summary: u8 1 | u8 change
+ * | u8 signer_kind | lp(signer id) | u64 version | [32] list_hash | [32]
+ * prev_hash | u64 created_at_ms | lp(account_id) | u8 count | count x
+ * (lp(device_id) | [32] key) | u8 has_recovery | [32] recovery_key (when 1).
+ * pm_crypto_l1_check_chain checks a whole chain from its genesis (u16 count
+ * | count x (u16 len | statement), at most 256): out_result is the head's
+ * summary, [32] list_id (list_hash of version 1), u16 n and n x (lp(device_id)
+ * | [32] key | u64 added_version | u64 removed_version, 0 while listed).
+ * Both return PM_CRYPTO_OK or one of the PM_CRYPTO_L1_* kinds
+ * (PM_CRYPTO_INVALID_ARGUMENT for a null output or a bad length). */
+int32_t pm_crypto_l1_check_step(PmByteSlice expected_account_id,
+                                PmByteSlice prev, PmByteSlice statement,
+                                PmByteSlice history,
+                                PmOwnedBuffer *out_summary);
+int32_t pm_crypto_l1_check_chain(PmByteSlice expected_account_id,
+                                 PmByteSlice chain, PmOwnedBuffer *out_result);
+/* The recovery-derived signer (D94: the seed stays sealed on the waiting
+ * phone). hold derives the device-list seed from typed 30-byte RK entropy and
+ * keeps only the seed in the sealed device record (seal afterwards; an older
+ * library refuses a record that holds one). hold_public writes the held
+ * seed's 32-byte public key, or an empty buffer when none is held. hold_drop
+ * forgets it and writes 1 or 0 (was held). sign_recovery signs change 4 and
+ * returns the whole statement: entropy empty uses the held seed (dropped once
+ * the statement is made), else the seed derived from the typed entropy
+ * (nothing kept). body must be a change-4 body for this device's account
+ * listing exactly this device with its own key, and the finished statement
+ * must pass the pm_crypto_l1_check_step check against prev (the head at
+ * completion, required) and history, so nothing is signed for a version the
+ * chain would refuse; PM_CRYPTO_L1_NO_SEED when none is held. */
+int32_t pm_crypto_l1_recovery_hold(PmCryptoHandle *handle, PmByteSlice entropy);
+int32_t pm_crypto_l1_recovery_hold_public(PmCryptoHandle *handle,
+                                          PmOwnedBuffer *out_public);
+int32_t pm_crypto_l1_recovery_hold_drop(PmCryptoHandle *handle,
+                                        uint8_t *out_was_held);
+int32_t pm_crypto_l1_sign_recovery(PmCryptoHandle *handle, PmByteSlice prev,
+                                   PmByteSlice history, PmByteSlice body,
+                                   PmByteSlice entropy,
+                                   PmOwnedBuffer *out_statement);
+/* Every leaf of the group as u16 n | n x (lp(account_id) | lp(device_id) |
+ * [32] signature key), in leaf order, from the current tree. */
+int32_t pm_crypto_group_members(PmCryptoHandle *handle, PmByteSlice group_id,
+                                PmOwnedBuffer *out_members);
+/* The pm_crypto_group_c7_* commit calls with two more outputs: out_added
+ * (u16 n | n x (lp(account_id) | lp(device_id) | [32] signature key), n may
+ * be 0) for the leaves of the commit's Add proposals, and out_committer (the
+ * same shape, one entry) for the committer, both read from the staged commit
+ * and tree, never from a server label. A commit is never refused for an L1
+ * reason: the app judges the pairs afterwards and holds the conversation. All
+ * five outputs are checked first and are zero/null on failure. Ids are raw
+ * bytes, not necessarily UTF-8 (a member can commit an Add whose credential
+ * holds any 1 to 128 bytes): carry them as bytes, and never fail once
+ * PM_CRYPTO_OK has come back, because the commit is already merged. Both pair
+ * buffers are encoded before the merge, so OK always comes with both. */
+int32_t pm_crypto_group_l1_process_commit(
+    PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice commit,
+    uint8_t *out_flags, uint64_t *out_epoch, PmOwnedBuffer *out_root,
+    PmOwnedBuffer *out_added, PmOwnedBuffer *out_committer);
+int32_t pm_crypto_group_l1_merge_pending_commit(
+    PmCryptoHandle *handle, PmByteSlice group_id, uint8_t *out_flags,
+    uint64_t *out_epoch, PmOwnedBuffer *out_root, PmOwnedBuffer *out_added,
+    PmOwnedBuffer *out_committer);
 int32_t pm_crypto_attachment_encrypt_chunk(
     PmByteSlice key, PmByteSlice nonce_prefix, uint32_t chunk_index,
     PmByteSlice context, PmByteSlice plaintext, PmOwnedBuffer *out_ciphertext);
