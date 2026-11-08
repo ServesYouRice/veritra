@@ -17,6 +17,7 @@ check_notice() {
 check_notice "modernc.org/sqlite"
 check_notice "golang.org/x/crypto"
 check_notice "github.com/SherClockHolmes/webpush-go"
+check_notice "github.com/go-webauthn/webauthn"
 
 if grep -Eq '^openmls[[:space:]]*=' "$ROOT/crypto/rust/Cargo.toml"; then
   check_notice "aes-gcm"

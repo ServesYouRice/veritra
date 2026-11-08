@@ -31,6 +31,8 @@ var (
 		"/api/v1/setup/owner":           true,
 		"/api/v1/auth/login":            true,
 		"/api/v1/auth/reauth":           true,
+		"/api/v1/auth/passkey/options":  true,
+		"/api/v1/auth/passkey":          true,
 		"/api/v1/register":              true,
 		"/api/v1/recovery":              true,
 		"/api/v1/device-links/claim":    true,

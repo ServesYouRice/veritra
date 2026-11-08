@@ -174,6 +174,9 @@ func (s *Store) DeleteAccountData(ctx context.Context, accountID string) ([]stri
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE account_id = ?`, accountID); err != nil {
 		return nil, err
 	}
+	if err := deleteAccountPasskeysTx(ctx, tx, accountID); err != nil {
+		return nil, err
+	}
 	deviceIDs, err := accountDeviceIDs(ctx, tx, accountID)
 	if err != nil {
 		return nil, err
