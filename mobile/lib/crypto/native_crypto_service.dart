@@ -32,6 +32,7 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'community_info_payload.dart' show infoKeyBytes;
 import 'message_format.dart';
 import 'poll.dart' show pollRowBody;
 import 'crypto_service.dart';
@@ -1904,6 +1905,7 @@ class NativeCryptoService
         List<int>? text;
         var noticePayload = false;
         FrankReveal? reveal;
+        var info = const <CommunityInfoEvent>[];
         try {
           final checked = _checkFranking(
             envelope,
@@ -1925,6 +1927,32 @@ class NativeCryptoService
           reveal = checked.reveal;
           switch (outcome) {
             case DecodedAppPayload(:final payload):
+              // C3: info keys, key requests and announcements change state
+              // and show nothing. A hidden action row stands in for the
+              // envelope; no reveal is ever kept, so a report cannot hand an
+              // info key to its reader.
+              if (infoPayloadTypes.contains(payload.type)) {
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.action,
+                    senderHidden: true,
+                    channelId: payload.channelId,
+                  ),
+                ];
+                info = <CommunityInfoEvent>[
+                  communityInfoEventFor(
+                    payload,
+                    conversationId: envelope.conversationId,
+                    senderAccountId: envelope.senderAccountId,
+                    senderDeviceId: envelope.senderDeviceId,
+                  ),
+                ];
+                reveal = null;
+                break;
+              }
               if (!_messageTypes.contains(payload.type)) {
                 throw const FormatException('unexpected message type');
               }
@@ -1999,6 +2027,7 @@ class NativeCryptoService
           text = null;
           noticePayload = false;
           reveal = null;
+          info = const <CommunityInfoEvent>[];
         }
         operationFence();
         await localStore.commitMlsTransition(MlsStateTransition(
@@ -2017,6 +2046,7 @@ class NativeCryptoService
           // A reveal for a row this transition does not leave live (an edit,
           // an invalid placeholder) is dropped by the store, not an error.
           frankReveals: reveal == null ? const <FrankReveal>[] : [reveal],
+          communityInfo: info,
         ));
         return text;
       } catch (_) {
@@ -3244,7 +3274,46 @@ List<MessageEffect> messageEffectsFor(
       ],
     AppPayloadType.callSignal =>
       throw const FormatException('call signals are not messages'),
+    AppPayloadType.infoKey ||
+    AppPayloadType.infoKeyRequest ||
+    AppPayloadType.infoUpdate =>
+      throw const FormatException('community info payloads are not messages'),
   };
+}
+
+/// The stored form of a received C3 payload ([infoPayloadTypes]), tied to
+/// the MLS-authenticated sender and the conversation it arrived in. The body
+/// was validated by [AppPayloadCodec].
+CommunityInfoEvent communityInfoEventFor(
+  DecryptedAppPayload payload, {
+  required String conversationId,
+  required String senderAccountId,
+  required String senderDeviceId,
+}) {
+  final body = payload.body;
+  final kind = switch (payload.type) {
+    AppPayloadType.infoKey => CommunityInfoEventKind.key,
+    AppPayloadType.infoKeyRequest => CommunityInfoEventKind.keyRequest,
+    AppPayloadType.infoUpdate => CommunityInfoEventKind.update,
+    _ => throw ArgumentError.value(payload.type, 'type', 'not an info type'),
+  };
+  return CommunityInfoEvent(
+    kind: kind,
+    subjectKind: body['subject_kind'] as String,
+    subjectId: body['subject_id'] as String,
+    conversationId: conversationId,
+    senderAccountId: senderAccountId,
+    senderDeviceId: senderDeviceId,
+    keyId: kind == CommunityInfoEventKind.keyRequest
+        ? null
+        : body['key_id'] as String,
+    key: kind == CommunityInfoEventKind.key ? infoKeyBytes(body) : null,
+    revision:
+        kind == CommunityInfoEventKind.update ? body['revision'] as int : null,
+    recordSha256: kind == CommunityInfoEventKind.update
+        ? body['record_sha256'] as String
+        : null,
+  );
 }
 
 String _randomIdempotencyKey() => _randomBytes(24)

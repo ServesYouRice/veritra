@@ -9,9 +9,6 @@ import 'package:private_messenger/crypto/profile_record_codec.dart';
 
 import 'native_test_env.dart';
 
-String _hex(List<int> b) =>
-    b.map((e) => e.toRadixString(16).padLeft(2, '0')).join();
-
 Uint8List _png(int w, int h) {
   final out = BytesBuilder();
   out.add([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);

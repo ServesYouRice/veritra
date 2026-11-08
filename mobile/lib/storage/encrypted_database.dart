@@ -27,6 +27,7 @@ part 'k2_transfer_sql.dart';
 part 'frank_reveals_sql.dart';
 part 'conversation_pause_sql.dart';
 part 'device_list_sql.dart';
+part 'community_info_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -602,7 +603,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 26;
+  static const currentSchemaVersion = 31;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -817,6 +818,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createFrankReveals();
             await _createConversationPauses();
             await _createDeviceLists();
+            await _createCommunityInfo();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -960,6 +962,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // New tables only. A group from before this upgrade has no leaf
             // rows and is judged (audited) before it is next used.
             if (from < 26) await _createDeviceLists();
+            // C3 (schema 31; 27-30 are reserved for other packages): received
+            // community info keys, announcements and key requests, and the
+            // accepted records. New tables only, self-contained, so the step
+            // can be renumbered without touching another.
+            if (from < 31) await _createCommunityInfo();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1007,6 +1014,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await _clearHistoryNamespace();
     await _clearFrankReveals();
     await _clearDeviceLists();
+    await _clearCommunityInfo();
     await delete(localMessages).go();
     await delete(localPins).go();
     await delete(localPendingPins).go();
@@ -1196,6 +1204,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearHistoryNamespace();
         await _clearFrankReveals();
         await _clearDeviceLists();
+        await _clearCommunityInfo();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localPins).go();
@@ -1604,6 +1613,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     List<LocalNoticeReference> noticeReferences = const [],
     List<FrankReveal> frankReveals = const <FrankReveal>[],
+    List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     ApprovalLeafChange? approvalLeaves,
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
@@ -1710,6 +1720,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         await _applyMessageEffects(messageEffects);
         await _writeFrankRevealsInTransaction(frankReveals);
+        await _writeCommunityInfoInTransaction(communityInfo);
         // L1 (D94): the leaf verdicts of a commit or Welcome commit with the
         // group state, so a crash can never leave a merged group unjudged.
         await _writeApprovalLeavesInTransaction(approvalLeaves);
@@ -2336,6 +2347,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearHistoryNamespace();
         await _clearFrankReveals();
         await _clearDeviceLists();
+        await _clearCommunityInfo();
         await _clearReportKeyPins();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();

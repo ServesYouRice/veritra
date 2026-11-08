@@ -22,7 +22,13 @@ import 'history_snapshot.dart';
 import 'notice_outbox.dart';
 
 export 'notice_outbox.dart';
-export 'encrypted_database.dart' show FrankReveal, ReportKeyPin;
+export 'encrypted_database.dart'
+    show
+        AcceptedCommunityInfo,
+        CommunityInfoEvent,
+        CommunityInfoEventKind,
+        FrankReveal,
+        ReportKeyPin;
 export 'device_list_records.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
@@ -365,6 +371,7 @@ class MlsStateTransition {
     this.messageEffects = const <MessageEffect>[],
     this.noticeReferences = const <LocalNoticeReference>[],
     this.frankReveals = const <FrankReveal>[],
+    this.communityInfo = const <CommunityInfoEvent>[],
     this.approvalLeaves,
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
@@ -395,6 +402,10 @@ class MlsStateTransition {
   /// schema 19). A reveal is stored only for a message row that this
   /// transition leaves live; any other is dropped without failing the commit.
   final List<FrankReveal> frankReveals;
+
+  /// C3 (schema 31): community info keys, announcements and key requests
+  /// that arrived in this MLS message, kept with the state that consumed it.
+  final List<CommunityInfoEvent> communityInfo;
   final void Function()? checkCanCommit;
 }
 
@@ -657,6 +668,22 @@ abstract class LocalStore {
   /// message, one received before schema 19, or one that was deleted, hidden
   /// or expired since). Only a reporting flow reads this.
   Future<FrankReveal?> loadFrankReveal(String messageKey);
+
+  /// C3 (schema 31): what arrived over MLS for one community info subject,
+  /// oldest first, bounded per subject.
+  Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
+      CommunityInfoEventKind kind, String subjectKind, String subjectId);
+
+  /// Drops a key that did not open the record the server serves.
+  Future<void> dropCommunityInfoKey(
+      String subjectKind, String subjectId, String keyId);
+
+  /// The record this device last accepted for a subject, or null.
+  Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
+      String subjectKind, String subjectId);
+
+  /// Keeps an accepted record; a lower revision never replaces a higher one.
+  Future<void> saveAcceptedCommunityInfo(AcceptedCommunityInfo info);
 
   /// The report keys of [origin]'s instance owners that this app pinned (D95).
   Future<List<ReportKeyPin>> loadReportKeyPins(String origin);
@@ -955,6 +982,9 @@ class MemoryLocalStore implements LocalStore {
       <String, PendingMlsMessage>{};
   final Map<String, List<int>> _peerVerifications = <String, List<int>>{};
   final Map<String, FrankReveal> _frankReveals = <String, FrankReveal>{};
+  List<CommunityInfoEvent> _communityInfoEvents = const <CommunityInfoEvent>[];
+  final Map<String, AcceptedCommunityInfo> _acceptedCommunityInfo =
+      <String, AcceptedCommunityInfo>{};
   final Map<String, ReportKeyPin> _reportKeyPins = <String, ReportKeyPin>{};
   _MemoryMessageHistory _history = _MemoryMessageHistory();
   final Map<String, LocalConversationPref> _conversationPrefs = {};
@@ -1122,6 +1152,8 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _communityInfoEvents = const <CommunityInfoEvent>[];
+    _acceptedCommunityInfo.clear();
     _deviceListPins.clear();
     _deviceListConflicts.clear();
     _approvalLeaves.clear();
@@ -1355,6 +1387,9 @@ class MemoryLocalStore implements LocalStore {
         _frankReveals.putIfAbsent(reveal.messageKey, () => reveal);
       }
     }
+    for (final event in transition.communityInfo) {
+      _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event);
+    }
     _applyApprovalLeaves(transition.approvalLeaves);
     _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
@@ -1386,6 +1421,40 @@ class MemoryLocalStore implements LocalStore {
       return null;
     }
     return row;
+  }
+
+  @override
+  Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
+          CommunityInfoEventKind kind,
+          String subjectKind,
+          String subjectId) async =>
+      _communityInfoEvents
+          .where((e) =>
+              e.kind == kind &&
+              e.subjectKind == subjectKind &&
+              e.subjectId == subjectId)
+          .toList();
+
+  @override
+  Future<void> dropCommunityInfoKey(
+      String subjectKind, String subjectId, String keyId) async {
+    _communityInfoEvents = _communityInfoEvents
+        .where((e) => e.ident != 'k|$subjectKind|$subjectId|$keyId')
+        .toList();
+  }
+
+  @override
+  Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
+          String subjectKind, String subjectId) async =>
+      _acceptedCommunityInfo['$subjectKind|$subjectId'];
+
+  @override
+  Future<void> saveAcceptedCommunityInfo(AcceptedCommunityInfo info) async {
+    final key = '${info.subjectKind}|${info.subjectId}';
+    final held = _acceptedCommunityInfo[key];
+    if (held == null || info.revision >= held.revision) {
+      _acceptedCommunityInfo[key] = info;
+    }
   }
 
   @override
@@ -2056,6 +2125,10 @@ class MemoryLocalStore implements LocalStore {
     _historyTransfers.clear();
     _processedMlsMessages.clear();
     _peerVerifications.clear();
+    // C3: info keys and records are never in a backup; the restored device
+    // asks the groups for keys again.
+    _communityInfoEvents = const <CommunityInfoEvent>[];
+    _acceptedCommunityInfo.clear();
     final kept = withoutPendingHistory(
         history: backup.history,
         reactions: backup.reactions,
@@ -2119,6 +2192,8 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _communityInfoEvents = const <CommunityInfoEvent>[];
+    _acceptedCommunityInfo.clear();
     _deviceListPins.clear();
     _deviceListConflicts.clear();
     _approvalLeaves.clear();
@@ -3036,6 +3111,7 @@ class SecureLocalStore implements LocalStore {
       checkCanCommit: transition.checkCanCommit,
       noticeReferences: transition.noticeReferences,
       frankReveals: transition.frankReveals,
+      communityInfo: transition.communityInfo,
       approvalLeaves: transition.approvalLeaves,
     );
   }
@@ -3043,6 +3119,27 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<FrankReveal?> loadFrankReveal(String messageKey) async =>
       (await _database()).readFrankReveal(messageKey);
+
+  @override
+  Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
+          CommunityInfoEventKind kind,
+          String subjectKind,
+          String subjectId) async =>
+      (await _database()).readCommunityInfoEvents(kind, subjectKind, subjectId);
+
+  @override
+  Future<void> dropCommunityInfoKey(
+          String subjectKind, String subjectId, String keyId) async =>
+      (await _database()).deleteCommunityInfoKey(subjectKind, subjectId, keyId);
+
+  @override
+  Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
+          String subjectKind, String subjectId) async =>
+      (await _database()).readAcceptedCommunityInfo(subjectKind, subjectId);
+
+  @override
+  Future<void> saveAcceptedCommunityInfo(AcceptedCommunityInfo info) async =>
+      (await _database()).writeAcceptedCommunityInfo(info);
 
   @override
   Future<List<ReportKeyPin>> loadReportKeyPins(String origin) async =>
