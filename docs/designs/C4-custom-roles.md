@@ -349,6 +349,14 @@ flag electors (which closes the D82 path for good).
 
 ## Built and not built
 
+**ABI 20 (2026-11-08): items 1 to 5 above are built, not wired.** The
+coordinator assigned ABI 20. Rust: `crypto/rust/src/mls/c4.rs`,
+`ffi/c4_calls.rs`; Dart binding: `mobile/lib/crypto/c4_roles.dart`; rules
+and formats: `docs/crypto.md`, "Group role state (C4)". The one-shot commit
+calls refuse a record proposal, so producers and the two-phase receive path
+must be wired together. The wiring check below still holds for C1's removal
+proofs.
+
 **Wiring check (2026-11-07, C4 wiring package).** The condition "C1 removal
 proofs exist" is **not met**, and the receiver wiring cannot start under ABI
 13 either:

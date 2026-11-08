@@ -23,7 +23,10 @@ verify_symbols() {
     pm_crypto_l1_recovery_hold_public pm_crypto_l1_recovery_hold_drop \
     pm_crypto_l1_sign_recovery pm_crypto_group_members \
     pm_crypto_group_l1_process_commit pm_crypto_group_l1_merge_pending_commit pm_crypto_backup_seal \
-    pm_crypto_backup_peek pm_crypto_backup_open; do
+    pm_crypto_backup_peek pm_crypto_backup_open pm_crypto_group_create_with_roles \
+    pm_crypto_group_stage_commit_with_roles pm_crypto_group_stage_incoming_commit \
+    pm_crypto_group_merge_incoming_commit pm_crypto_group_discard_incoming_commit \
+    pm_crypto_group_role_state; do
     case "$symbols" in
       *"$symbol"*) ;;
       *) echo "missing exported symbol: $symbol" >&2; return 1 ;;

@@ -12,12 +12,18 @@ use openmls_traits::{signatures::Signer, storage::StorageProvider as _, OpenMlsP
 use sha2::{Digest, Sha256, Sha512};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
+mod c4;
 #[allow(dead_code)]
 pub(crate) mod link_v3;
 mod list;
 mod records;
 mod state;
 mod storage;
+pub use c4::{
+    encode_role_state, CommitReview, MAX_ROLE_RECORD_BYTES, REVIEW_ADDED, REVIEW_RECORD_AFTER,
+    REVIEW_RECORD_BEFORE, REVIEW_RECORD_PROPOSAL, REVIEW_REMOVED, REVIEW_REMOVED_SELF,
+    ROLE_EXTENSION_TYPE,
+};
 pub use list::{LeafPair, RecoverySignError};
 pub use records::{ChangeSet, RecordChange, RestoreLoader, SealError};
 pub(crate) use records::{MAX_SEALED_RECORD_BYTES, MAX_SEALED_ROOT_BYTES};
@@ -102,6 +108,9 @@ pub struct MlsDevice {
     /// L1: the device-list recovery seed a waiting recovered phone holds
     /// (D94). Sealed in the device record; never leaves Rust.
     held_list_seed: Option<tls_codec::SecretVLBytes>,
+    /// C4 (ABI 20): remote commits staged for Dart's review, by group. In
+    /// memory only: never sealed, gone after a restore.
+    held: c4::HeldCommits,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -149,6 +158,7 @@ impl MlsDevice {
             pending_transfers: Default::default(),
             sealed: Default::default(),
             held_list_seed: None,
+            held: Default::default(),
         })
     }
 
@@ -158,7 +168,9 @@ impl MlsDevice {
         if self.provider.storage().key_package_count()? >= records::MAX_KEY_PACKAGES {
             return Err(MlsError::InvalidState);
         }
+        // C4 (ABI 20): every leaf advertises the role extension.
         let bundle = KeyPackage::builder()
+            .leaf_node_capabilities(c4::leaf_capabilities())
             .build(
                 CIPHERSUITE,
                 &self.provider,
@@ -306,15 +318,36 @@ impl MlsDevice {
         expected_keys: &[Option<&[u8]>],
         removes: &[MemberIdentity<'_>],
     ) -> Result<StagedCommitMessages, MlsError> {
+        self.stage_commit_with_record(group, adds, expected_keys, removes, None)
+    }
+
+    /// [`Self::stage_membership_commit_checked`] that may also carry the
+    /// group's new role record (C4, ABI 20) as one GroupContextExtensions
+    /// proposal. With a record, `adds` and `removes` may both be empty (a
+    /// role change alone). The record must differ from the current one, and
+    /// the group must already carry one (a group without a record never
+    /// gains one). The staged commit is checked with the receivers' rule
+    /// before it is returned; a commit they would refuse is cleared.
+    pub fn stage_commit_with_record(
+        &self,
+        group: &mut MlsGroup,
+        adds: &[MemberAdd<'_>],
+        expected_keys: &[Option<&[u8]>],
+        removes: &[MemberIdentity<'_>],
+        record: Option<&[u8]>,
+    ) -> Result<StagedCommitMessages, MlsError> {
         if expected_keys.len() != adds.len() {
             return Err(MlsError::InvalidKeyPackage);
         }
-        if adds.is_empty() && removes.is_empty() {
+        if adds.is_empty() && removes.is_empty() && record.is_none() {
             return Err(MlsError::InvalidState);
         }
         if group.pending_commit().is_some() {
             return Err(MlsError::InvalidState);
         }
+        let record_extensions = record
+            .map(|record| c4::replaced_extensions(group.extensions(), record))
+            .transpose()?;
         let mut key_packages = Vec::with_capacity(adds.len());
         let mut added = Vec::with_capacity(adds.len());
         for (add, expected_key) in adds.iter().zip(expected_keys) {
@@ -349,10 +382,17 @@ impl MlsDevice {
         let epoch = group.epoch().as_u64();
         let id = group.group_id().as_slice().to_vec();
         let bundle = self.in_group(&id, || {
-            group
+            let builder = group
                 .commit_builder()
                 .propose_adds(key_packages)
-                .propose_removals(removed)
+                .propose_removals(removed);
+            let builder = match record_extensions {
+                Some(extensions) => builder
+                    .propose_group_context_extensions(extensions)
+                    .map_err(|_| MlsError::GroupOperation)?,
+                None => builder,
+            };
+            builder
                 .load_psks(self.provider.storage())
                 .map_err(|_| MlsError::GroupOperation)?
                 .build(
@@ -365,6 +405,16 @@ impl MlsDevice {
                 .stage_commit(&self.provider)
                 .map_err(|_| MlsError::GroupOperation)
         })?;
+        // The sender runs the receivers' check on its own commit, so it never
+        // sends what every receiver refuses (and never merges it).
+        let checked = match group.pending_commit() {
+            Some(staged) => inspect_commit(group, group.own_leaf_index(), staged, true),
+            None => Err(MlsError::GroupOperation),
+        };
+        if let Err(error) = checked {
+            let _ = self.clear_pending_commit(group);
+            return Err(error);
+        }
         let (commit, welcome, _) = bundle.into_messages();
         let commit = commit
             .tls_serialize_detached()
@@ -464,6 +514,7 @@ impl MlsDevice {
 
     pub fn merge_pending_commit(&self, group: &mut MlsGroup) -> Result<(), MlsError> {
         let id = group.group_id().as_slice().to_vec();
+        self.held.forget(&id)?;
         self.in_group(&id, || {
             group
                 .merge_pending_commit(&self.provider)
@@ -482,6 +533,10 @@ impl MlsDevice {
         group: &mut MlsGroup,
     ) -> Result<CommitOutcome, MlsError> {
         let id = group.group_id().as_slice().to_vec();
+        if group.pending_commit().is_none() {
+            return Err(MlsError::InvalidState);
+        }
+        self.held.forget(&id)?;
         self.in_group(&id, || {
             let staged = group.pending_commit().ok_or(MlsError::InvalidState)?;
             let own = LeafPair {
@@ -553,6 +608,7 @@ impl MlsDevice {
             .try_into_protocol_message()
             .map_err(|_| MlsError::InvalidMessage)?;
         let id = group.group_id().as_slice().to_vec();
+        self.held.forget(&id)?;
         let outcome = self.in_group(&id, || {
             self.process_commit_in_scope(group, protocol_message)
         })?;
@@ -632,6 +688,7 @@ impl MlsDevice {
         if group_id.is_empty() || group_id.len() > MAX_ID_BYTES {
             return Err(MlsError::InvalidIdentity);
         }
+        self.held.forget(group_id)?;
         self.provider.storage().drop_group(group_id)
     }
 
@@ -673,8 +730,10 @@ impl MlsDevice {
             return Err(MlsError::UnexpectedMessage);
         };
         // Inspect before merging: once merged, the leaves it brings in are
-        // what decrypt() attributes messages to.
-        inspect_commit(group, committer, &staged_commit)?;
+        // what decrypt() attributes messages to. The one-shot path refuses a
+        // role-record proposal (C4): only the two-phase calls let Dart judge
+        // one before it merges.
+        inspect_commit(group, committer, &staged_commit, false)?;
         // The committer's pair, from the tree before the merge (an update
         // path cannot change it: `inspect_commit` keeps identity and key).
         let committer_member = group
@@ -782,6 +841,7 @@ impl MlsDevice {
         // A device removed and later re-added still holds the old group
         // under this id. Only an inactive one (its own removal applied) may
         // go; an active one is refused here, before the key package is used.
+        self.held.forget(expected_group_id)?;
         self.in_group(expected_group_id, || {
             self.join_group_in_scope(expected_group_id, welcome)
         })
@@ -888,7 +948,8 @@ impl MlsDevice {
         {
             return Err(refused);
         }
-        Ok(())
+        // C4: a record, when present, is well-formed in size and required.
+        c4::check_joined_context(staged.group_context().extensions())
     }
 
     pub fn encrypt(&self, group: &mut MlsGroup, plaintext: &[u8]) -> Result<Vec<u8>, MlsError> {
@@ -1087,15 +1148,27 @@ pub struct EnrollmentCredential {
 }
 
 fn group_create_config() -> MlsGroupCreateConfig {
-    MlsGroupCreateConfig::builder()
+    group_create_config_with(None)
+}
+
+/// The group configuration, with `extensions` as the initial context
+/// extensions of a record group (C4). The creator's leaf always advertises
+/// the role extension, as every key package does.
+fn group_create_config_with(extensions: Option<Extensions<GroupContext>>) -> MlsGroupCreateConfig {
+    let builder = MlsGroupCreateConfig::builder()
+        .capabilities(c4::leaf_capabilities())
         .padding_size(PADDING_BYTES)
         .use_ratchet_tree_extension(true)
         .ciphersuite(CIPHERSUITE)
         // After a membership change, a message sent in the previous epoch
         // can still arrive after the commit (card I51). Two past epochs are
         // kept for decryption only.
-        .max_past_epochs(2)
-        .build()
+        .max_past_epochs(2);
+    match extensions {
+        Some(extensions) => builder.with_group_context_extensions(extensions),
+        None => builder,
+    }
+    .build()
 }
 
 /// Drops plaintext that is not handed out through a non-elidable wipe.
@@ -1150,6 +1223,9 @@ fn decode_device_identity(identity: &[u8]) -> Result<(&[u8], &[u8]), MlsError> {
 /// key, needs a trust anchor (L1) and is not decided here.
 ///
 /// - Only Add, Remove and Update proposals: Veritra sends nothing else.
+///   With `allow_record` (C4, ABI 20: the two-phase calls only) also at
+///   most one GroupContextExtensions proposal, by value, that rewrites the
+///   role record and nothing else (`c4::check_record_proposal`).
 /// - Every credential it brings in is a Basic credential holding a
 ///   well-formed device identity.
 /// - An added identity appears once in the roster the commit produces.
@@ -1158,15 +1234,25 @@ fn inspect_commit(
     group: &MlsGroup,
     committer: LeafNodeIndex,
     staged: &StagedCommit,
+    allow_record: bool,
 ) -> Result<(), MlsError> {
     let refused = MlsError::InvalidIdentity;
-    if staged.queued_proposals().any(|proposal| {
-        !matches!(
-            proposal.proposal(),
-            Proposal::Add(_) | Proposal::Remove(_) | Proposal::Update(_)
-        )
-    }) {
-        return Err(MlsError::UnexpectedMessage);
+    let mut records = 0usize;
+    for proposal in staged.queued_proposals() {
+        match proposal.proposal() {
+            Proposal::Add(_) | Proposal::Remove(_) | Proposal::Update(_) => {}
+            Proposal::GroupContextExtensions(extensions) if allow_record => {
+                records += 1;
+                if records > 1
+                    || proposal.proposal_or_ref_type() != ProposalOrRefType::Proposal
+                    || *proposal.sender() != Sender::Member(committer)
+                {
+                    return Err(MlsError::UnexpectedMessage);
+                }
+                c4::check_record_proposal(group.extensions(), extensions.extensions())?;
+            }
+            _ => return Err(MlsError::UnexpectedMessage),
+        }
     }
     let removed: Vec<_> = staged
         .remove_proposals()

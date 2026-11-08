@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (19u)
+#define PM_CRYPTO_ABI_VERSION (20u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -318,6 +318,10 @@ int32_t pm_crypto_group_clear_pending_commit(PmCryptoHandle *handle,
                                              PmByteSlice group_id);
 int32_t pm_crypto_group_epoch(PmCryptoHandle *handle, PmByteSlice group_id,
                               uint64_t *out_epoch, uint8_t *out_pending);
+/* Applies a remote commit at once. Since ABI 20 it refuses (PM_CRYPTO_ERROR)
+ * any commit carrying a GroupContextExtensions proposal, as do the c7 and l1
+ * process calls: a role-record change is only ever merged through
+ * pm_crypto_group_stage_incoming_commit and _merge_incoming_commit. */
 int32_t pm_crypto_group_process_commit(PmCryptoHandle *handle,
                                        PmByteSlice group_id,
                                        PmByteSlice commit);
@@ -521,6 +525,66 @@ int32_t pm_crypto_group_l1_merge_pending_commit(
     PmCryptoHandle *handle, PmByteSlice group_id, uint8_t *out_flags,
     uint64_t *out_epoch, PmOwnedBuffer *out_root, PmOwnedBuffer *out_added,
     PmOwnedBuffer *out_committer);
+
+/* ABI 20 (C4): the group role record (docs/designs/C4-custom-roles.md;
+ * formats and rules in docs/crypto.md, "Group role state (C4)"). The record
+ * is 1 to 256 KiB of opaque bytes in GroupContext extension 0xF0C4, which
+ * every key package and creator leaf advertises and a record group requires.
+ * Rust never decodes it; Dart judges every change before it is merged.
+ *
+ * create_with_roles: a group whose context requires 0xF0C4 and carries
+ * record (the genesis). pm_crypto_group_create stays for groups with none.
+ *
+ * stage_commit_with_roles: pm_crypto_group_stage_commit plus one
+ * GroupContextExtensions proposal rewriting the record (every other context
+ * extension unchanged). changes may hold no adds and no removes: then the
+ * commit is the role change alone. The record must differ from the current
+ * one and the group must already carry one (PM_CRYPTO_ERROR, nothing staged).
+ *
+ * stage_incoming_commit: processes a remote commit to its staged form,
+ * checks it (one record proposal allowed), holds it in memory without
+ * merging, and writes the review: u8 format=1 | u8 flags (1 removed, 2 added,
+ * 4 removed self, 8 record proposal, 16 record before present, 32 record
+ * after present) | u64 new_epoch | committer lp(account) lp(device) [32] key
+ * | u16 n_added {lp(account) lp(device) [32] key}* | u16 n {lp(account)}*
+ * roster before | u16 n {lp(account)}* roster after (both sorted by bytes,
+ * distinct) | u32 len record_before | u32 len record_after (len 0 when
+ * absent). lp = u16 length prefix, big-endian. Staging uses up the commit's
+ * handshake ratchet step: after a discard the app restores its committed
+ * state instead of sealing.
+ *
+ * merge_incoming_commit: merges the held commit; commit must be the staged
+ * bytes and the group still on the epoch they were staged on, else
+ * PM_CRYPTO_ERROR with nothing changed and the commit still held. Outputs as
+ * pm_crypto_group_l1_process_commit; the C7 root is derived only here.
+ *
+ * discard_incoming_commit: drops the held commit; *out_was_held 1 if one was.
+ *
+ * role_state: u8 format=1 | u8 flags (1 record present) | u16 n
+ * {lp(account)}* | u32 len record (0 when absent), for after a join or a
+ * restore. */
+int32_t pm_crypto_group_create_with_roles(PmCryptoHandle *handle,
+                                          PmByteSlice group_id,
+                                          PmByteSlice record);
+int32_t pm_crypto_group_stage_commit_with_roles(
+    PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice changes,
+    PmByteSlice record, PmOwnedBuffer *out_commit, PmOwnedBuffer *out_welcome,
+    uint64_t *out_epoch);
+int32_t pm_crypto_group_stage_incoming_commit(PmCryptoHandle *handle,
+                                              PmByteSlice group_id,
+                                              PmByteSlice commit,
+                                              PmOwnedBuffer *out_review);
+int32_t pm_crypto_group_merge_incoming_commit(
+    PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice commit,
+    uint8_t *out_flags, uint64_t *out_epoch, PmOwnedBuffer *out_root,
+    PmOwnedBuffer *out_added, PmOwnedBuffer *out_committer);
+int32_t pm_crypto_group_discard_incoming_commit(PmCryptoHandle *handle,
+                                                PmByteSlice group_id,
+                                                uint8_t *out_was_held);
+int32_t pm_crypto_group_role_state(PmCryptoHandle *handle,
+                                   PmByteSlice group_id,
+                                   PmOwnedBuffer *out_state);
+
 int32_t pm_crypto_attachment_encrypt_chunk(
     PmByteSlice key, PmByteSlice nonce_prefix, uint32_t chunk_index,
     PmByteSlice context, PmByteSlice plaintext, PmOwnedBuffer *out_ciphertext);

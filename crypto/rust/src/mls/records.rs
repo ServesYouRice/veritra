@@ -819,6 +819,7 @@ impl RestoreLoader {
                 device_id: std::mem::take(&mut self.device_id),
                 pending_transfers,
                 held_list_seed,
+                held: Default::default(),
                 sealed: SealedState {
                     last_generation: self.generation,
                     manifest: std::mem::take(&mut self.manifest),

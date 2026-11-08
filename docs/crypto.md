@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 14 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 20 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 14. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 20. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -455,6 +455,55 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
+
+- **C4, group role record carrier, ABI 20 (2026-11-08, D80, D81, D86):**
+  design [`C4-custom-roles.md`](designs/C4-custom-roles.md), items 1 to 5;
+  rules and formats in "Group role state (C4)" below. The header, the Rust
+  constant, the Dart binding and `scripts/verify-mobile-crypto.sh` pin ABI
+  20. **Nothing is wired into the app yet**: no group is created with a
+  record, no producer carries one and the receive path still uses the
+  one-shot call. **Needs the independent crypto review before release.**
+  Code: `crypto/rust/src/mls/c4.rs` (tests `c4_tests.rs`),
+  `crypto/rust/src/ffi/c4_calls.rs` (tests `ffi/c4_tests.rs`),
+  `mobile/lib/crypto/c4_roles.dart` (test
+  `mobile/test/c4_roles_native_test.dart`, which runs the real rules engine
+  against the real library).
+  - **Capability (item 1).** Every key package and every creator leaf lists
+    GroupContext extension `0xF0C4` in its capabilities (OpenMLS's defaults
+    otherwise). A record group lists it in its required capabilities, so an
+    ABI 19 key package cannot be added to one (refused at staging). The
+    server's structural check already accepted unknown capability values;
+    `server/internal/mlswire` gains a real ABI 20 fixture and tests, and the
+    publish route takes it. Groups made before ABI 20 have no record and are
+    recreated, not migrated (C0).
+  - **New symbols.** `pm_crypto_group_create_with_roles` (item 2),
+    `pm_crypto_group_stage_commit_with_roles` (item 3),
+    `pm_crypto_group_stage_incoming_commit`,
+    `pm_crypto_group_merge_incoming_commit`,
+    `pm_crypto_group_discard_incoming_commit` (item 4) and
+    `pm_crypto_group_role_state` (item 5).
+  - **Behaviour change (fail closed).** `inspect_commit` still refuses every
+    proposal type but Add, Remove and Update on the one-shot calls
+    (`pm_crypto_group_process_commit` and its C7 and L1 forms): a commit
+    carrying a GroupContextExtensions proposal is `PM_CRYPTO_ERROR` there and
+    is only ever merged through the two-phase calls, after Dart judged it.
+    Consequence for wiring: producers that carry records must land **with**
+    the two-phase receive path, not before it, or every receiver still on
+    the one-shot call stops syncing at the first record commit.
+  - **Held commits.** The staged remote commit is held in memory per group
+    (never sealed, gone after a restore), bound to the epoch authenticator
+    it was staged on and to the SHA-256 of its bytes. Deleting the group,
+    a join, a one-shot process and merging an own commit forget it; staging
+    again replaces it. OpenMLS persists the commit's handshake ratchet step
+    when it stages a PrivateMessage, so the same bytes stage only once per
+    sealed state: after a discard the app restores its committed state and
+    never seals (as after any refused commit today).
+  - **Not covered by Rust.** Whether a record change is allowed (that is
+    `validateCommit`), whether a removal was allowed (C1/C5), and the record
+    codec. Device ids in the review are raw bytes, as in L1: a member can add
+    an identity that is not UTF-8, and a record can only name UTF-8
+    accounts, so such a commit cannot pass `validateCommit` (the Dart review
+    getters answer null; the caller refuses).
 
 - **L1-3, device-link commit-then-reveal, ABI 18 (2026-11-07, D100 A;
   TASK-010, TASK-048):** design
@@ -2742,8 +2791,8 @@ once no old sender is left.
 
 ## Group role state (C4)
 
-Proposed: the record codec exists (Dart, no ABI); the ABI, the extension and
-the wiring do not. Design:
+Built: the record codec (Dart) and the crypto carrier (ABI 20, change log);
+not wired into the app. Design:
 `docs/designs/C4-custom-roles.md` (built-in roles only, D80). Rules engine:
 `mobile/lib/core/roles/governance.dart`.
 
@@ -2797,6 +2846,51 @@ not know, makes the commit invalid (sync stops under I33); it is never
 guessed at. The codec checks shape only: whether a change is allowed is
 `validateCommit`.
 
+**Carrier rules (Rust, ABI 20).** A record is 1 to 256 KiB of bytes Rust
+never decodes. A commit carries at most one GroupContextExtensions proposal,
+by value, from the committer. Its extension list must be the group's current
+list in the same order, every extension byte for byte the same except the
+`0xF0C4` data, which must change and stay 1 to 256 KiB. A group without a
+record never gains one by proposal, and no proposal can drop it or change
+the required capabilities. A Welcome whose context carries a record without
+requiring `0xF0C4`, or a record of the wrong size, is refused. The producer
+(`stage_commit_with_record`) runs the same check on its own staged commit
+and clears it on failure. Anything else is refused before Dart sees it.
+
+**ABI 20 calls and formats.** All integers big-endian; `lp` is a `u16`
+length then the bytes.
+
+- `pm_crypto_group_create_with_roles(handle, group_id, record)`: the
+  genesis (`encodeGovernance(GovernanceState.genesis(creator))`).
+  `pm_crypto_group_create` stays for a private channel's group.
+- `pm_crypto_group_stage_commit_with_roles(handle, group_id, changes,
+  record, out_commit, out_welcome, out_epoch)`: a change list (version 1 or
+  2; it may hold no adds and no removes, then the commit is the role change
+  alone) plus the record proposal. Merged or cleared like any staged commit.
+- `pm_crypto_group_stage_incoming_commit(handle, group_id, commit,
+  out_review)`: phase one. The review is `u8 format = 1 | u8 flags (1
+  removed, 2 added, 4 removed self, 8 record proposal, 16 record before
+  present, 32 record after present) | u64 new_epoch | committer lp(account)
+  lp(device) [32] key | u16 n_added { lp(account) lp(device) [32] key }* |
+  u16 n { lp(account) }* (roster before) | u16 n { lp(account) }* (roster
+  after) | u32 len || record before | u32 len || record after` (length 0
+  when absent). Rosters are accounts, distinct and sorted by bytes: an
+  account stays while any of its devices stays. The committer comes from
+  the MLS tree, never a server label.
+- `pm_crypto_group_merge_incoming_commit(handle, group_id, commit, ...)`:
+  phase two, with the outputs of `pm_crypto_group_l1_process_commit`
+  (flags, epoch, C7 root, added pairs, committer pair). `commit` must be the
+  staged bytes and the group still on the epoch they were staged on, or
+  nothing changes and the commit stays held. The C7 root is derived only
+  here. A commit removing this device drops its group store.
+- `pm_crypto_group_discard_incoming_commit(handle, group_id,
+  out_was_held)`: Dart refused it; the group is untouched. The app then
+  restores its committed state (the ratchet step is used up) and sync stops
+  on that commit under I33.
+- `pm_crypto_group_role_state(handle, group_id, out_state)`: `u8 format = 1
+  | u8 flags (1 record present) | u16 n { lp(account) }* | u32 len ||
+  record`, after a join or a restore.
+
 **Receiving a commit.** Rust stages it and hands Dart the committer
 account, the account roster before and after, and the record before and
 after (the record before, when the commit carries no proposal). Dart merges
@@ -2843,7 +2937,19 @@ receiver check on the commit.
 **Sending a commit.** Every path that stages a commit (D68 reconcile,
 revocation removals, device replacement, role changes) computes the pruned
 record for its own commit, carries it as the proposal when it differs, and
-runs `validateCommit` on the result before staging. Producers are wired
+runs `validateCommit` on the result before staging. In the app (ABI 20,
+not wired yet) these are, in `mobile/lib/crypto/native_crypto_service.dart`:
+`initializeConversation` (`createGroup` becomes `createGroupWithRoles` for
+groups and a community's shared group; its first add stamps `joined`, so it
+carries a record too), `stageMembershipChange` (D68 reconcile, re-adds and
+device replacement) and `createRevocationCommit` (revocation removals), all
+through the one `_stage` helper, which then calls `stageCommitWithRoles`
+whenever `requiredRecord` (or a role change) differs from the current
+record; role changes and the owner's election cancel are new producers of
+the same call. `stageSelfUpdate` stays bare. On the receive side,
+`processMlsMessageBounded`'s `commit` case moves from `processCommit` to
+`stageIncomingCommit`, `validateCommit`, then `mergeIncomingCommit` or
+`discardIncomingCommit`. Whether a DM's group carries a record is open. Producers are wired
 before or with the receiver check, or the first kick of an admin stops
 every receiver's sync. The owner's self-update stays path-only
 (`stage_self_update` in `mls.rs` refuses any proposal): it carries no
