@@ -23,6 +23,7 @@ import 'notice_outbox.dart';
 
 export 'notice_outbox.dart';
 export 'encrypted_database.dart' show FrankReveal, ReportKeyPin;
+export 'device_list_records.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
 final Map<String, Future<void>> _databaseWriteTails = <String, Future<void>>{};
@@ -364,9 +365,14 @@ class MlsStateTransition {
     this.messageEffects = const <MessageEffect>[],
     this.noticeReferences = const <LocalNoticeReference>[],
     this.frankReveals = const <FrankReveal>[],
+    this.approvalLeaves,
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
   });
+
+  /// The leaf verdicts of the commit or Welcome this transition applies
+  /// (L1, D94), written in the same transaction.
+  final ApprovalLeafChange? approvalLeaves;
 
   /// An MLS outbox item that this transition settles, removed with it
   /// (card I51: this device's commit, merged when its echo arrives).
@@ -661,6 +667,25 @@ abstract class LocalStore {
   /// pinned silently.
   Future<void> saveReportKeyPin(ReportKeyPin pin);
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId);
+
+  // L1 approved-device lists (schema 26, D94). Never in a backup.
+  Future<DeviceListPin?> loadDeviceListPin(String accountId);
+
+  /// Writes [pin] only while the stored pin is at [expectedVersion] (null:
+  /// none) and not in conflict. Returns whether it was written.
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+      {required int? expectedVersion});
+  Future<void> touchDeviceListPin(String accountId, int checkedAt);
+  Future<void> saveDeviceListConflict({
+    required String accountId,
+    required int version,
+    required List<int> pinnedStatement,
+    required List<int> otherStatement,
+    required int recordedAt,
+  });
+  Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId);
+  Future<void> saveApprovalLeaves(ApprovalLeafChange change);
+  Future<List<String>> loadHeldConversations();
 
   /// The durable recovery record (card I33), or null when sync may run.
   /// Pass null to clear it. It survives restarts so a failing event is not
@@ -1097,6 +1122,9 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _deviceListPins.clear();
+    _deviceListConflicts.clear();
+    _approvalLeaves.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
     _lastBackupAt = null;
@@ -1327,6 +1355,7 @@ class MemoryLocalStore implements LocalStore {
         _frankReveals.putIfAbsent(reveal.messageKey, () => reveal);
       }
     }
+    _applyApprovalLeaves(transition.approvalLeaves);
     _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     final resolved = transition.resolvedMlsOutboxKey;
@@ -1391,6 +1420,84 @@ class MemoryLocalStore implements LocalStore {
     }
     _reportKeyPins['${pin.origin}\u0000${pin.ownerAccountId}'] = pin;
   }
+
+  final Map<String, DeviceListPin> _deviceListPins = <String, DeviceListPin>{};
+  final Map<String, List<int>> _deviceListConflicts = <String, List<int>>{};
+  final Map<String, List<ApprovalLeaf>> _approvalLeaves =
+      <String, List<ApprovalLeaf>>{};
+
+  @override
+  Future<DeviceListPin?> loadDeviceListPin(String accountId) async =>
+      _deviceListPins[accountId];
+
+  @override
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+      {required int? expectedVersion}) async {
+    final current = _deviceListPins[pin.accountId];
+    if (current?.version != expectedVersion) return false;
+    if (current != null &&
+        (current.conflict || pin.version < current.version)) {
+      return false;
+    }
+    _deviceListPins[pin.accountId] = pin;
+    return true;
+  }
+
+  @override
+  Future<void> touchDeviceListPin(String accountId, int checkedAt) async {
+    final pin = _deviceListPins[accountId];
+    if (pin == null) return;
+    _deviceListPins[accountId] = pin.copyWith(checkedAt: checkedAt);
+  }
+
+  @override
+  Future<void> saveDeviceListConflict({
+    required String accountId,
+    required int version,
+    required List<int> pinnedStatement,
+    required List<int> otherStatement,
+    required int recordedAt,
+  }) async {
+    final pin = _deviceListPins[accountId];
+    if (pin != null) {
+      _deviceListPins[accountId] = pin.copyWith(conflict: true);
+    }
+    _deviceListConflicts.putIfAbsent('$accountId\u0000$version',
+        () => [...pinnedStatement, ...otherStatement]);
+  }
+
+  @override
+  Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId) async =>
+      List<ApprovalLeaf>.unmodifiable(
+          _approvalLeaves[conversationId] ?? const <ApprovalLeaf>[]);
+
+  @override
+  Future<void> saveApprovalLeaves(ApprovalLeafChange change) async =>
+      _applyApprovalLeaves(change);
+
+  void _applyApprovalLeaves(ApprovalLeafChange? change) {
+    if (change == null) return;
+    final rows = change.replaceAll
+        ? <ApprovalLeaf>[]
+        : [...?_approvalLeaves[change.conversationId]];
+    for (final leaf in change.leaves) {
+      if (!leaf.isStorable) continue;
+      rows.removeWhere((row) => row.sameLeaf(leaf.accountId, leaf.deviceId));
+      rows.add(leaf);
+    }
+    if (rows.isEmpty) {
+      _approvalLeaves.remove(change.conversationId);
+    } else {
+      _approvalLeaves[change.conversationId] = rows;
+    }
+  }
+
+  @override
+  Future<List<String>> loadHeldConversations() async => [
+        for (final entry in _approvalLeaves.entries)
+          if (entry.value.any((leaf) => leaf.verdict != LeafVerdict.approved))
+            entry.key,
+      ]..sort();
 
   @override
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId) async {
@@ -2012,6 +2119,9 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _deviceListPins.clear();
+    _deviceListConflicts.clear();
+    _approvalLeaves.clear();
     _reportKeyPins.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
@@ -2926,6 +3036,7 @@ class SecureLocalStore implements LocalStore {
       checkCanCommit: transition.checkCanCommit,
       noticeReferences: transition.noticeReferences,
       frankReveals: transition.frankReveals,
+      approvalLeaves: transition.approvalLeaves,
     );
   }
 
@@ -2949,6 +3060,47 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId) async =>
       (await _database()).deleteReportKeyPin(origin, ownerAccountId);
+
+  @override
+  Future<DeviceListPin?> loadDeviceListPin(String accountId) async =>
+      (await _database()).readDeviceListPin(accountId);
+
+  @override
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+          {required int? expectedVersion}) async =>
+      (await _database())
+          .writeDeviceListPin(pin, expectedVersion: expectedVersion);
+
+  @override
+  Future<void> touchDeviceListPin(String accountId, int checkedAt) async =>
+      (await _database()).touchDeviceListPin(accountId, checkedAt);
+
+  @override
+  Future<void> saveDeviceListConflict({
+    required String accountId,
+    required int version,
+    required List<int> pinnedStatement,
+    required List<int> otherStatement,
+    required int recordedAt,
+  }) async =>
+      (await _database()).writeDeviceListConflict(
+          accountId: accountId,
+          version: version,
+          pinnedStatement: pinnedStatement,
+          otherStatement: otherStatement,
+          recordedAt: recordedAt);
+
+  @override
+  Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId) async =>
+      (await _database()).readApprovalLeaves(conversationId);
+
+  @override
+  Future<void> saveApprovalLeaves(ApprovalLeafChange change) async =>
+      (await _database()).writeApprovalLeaves(change);
+
+  @override
+  Future<List<String>> loadHeldConversations() async =>
+      (await _database()).readHeldConversations();
 
   @override
   Future<void> commitSyncEvent(SyncEventCommit commit) async {

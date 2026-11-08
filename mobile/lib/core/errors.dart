@@ -6,7 +6,11 @@ import 'package:flutter/foundation.dart' show kDebugMode;
 import 'api_client.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/crypto_service.dart'
-    show CryptoRecordLimitExceeded, CryptoStateFormatUnsupported;
+    show
+        ConversationApprovalHeldException,
+        CryptoRecordLimitExceeded,
+        CryptoStateFormatUnsupported,
+        DeviceListNotApprovedException;
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart' show ConversationSyncPausedException;
 import '../l10n/l10n.dart';
@@ -99,6 +103,12 @@ String describeError(
   }
   if (error is ConversationSyncPausedException) {
     return strings.errorConversationPaused;
+  }
+  if (error is ConversationApprovalHeldException) {
+    return strings.errorConversationApprovalHeld;
+  }
+  if (error is DeviceListNotApprovedException) {
+    return strings.errorDeviceListNotApproved;
   }
   if (error is CryptoStateFormatUnsupported) {
     return strings.errorCryptoStateFormatUnsupported;

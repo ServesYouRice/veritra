@@ -16,6 +16,9 @@ import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart' show SyncFailureKind;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
+import 'device_list_records.dart';
+
+export 'device_list_records.dart';
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
@@ -23,6 +26,7 @@ part 'pending_enrollment_sql.dart';
 part 'k2_transfer_sql.dart';
 part 'frank_reveals_sql.dart';
 part 'conversation_pause_sql.dart';
+part 'device_list_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -598,7 +602,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 20;
+  static const currentSchemaVersion = 26;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -812,6 +816,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createK2Transfer();
             await _createFrankReveals();
             await _createConversationPauses();
+            await _createDeviceLists();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -950,6 +955,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // per-conversation pause table. New table only, so code for
             // schema 18 never names it.
             if (from < 20) await _createConversationPauses();
+            // L1-3 (schema 26; 21-25 are reserved for other packages): the
+            // approved-device list pins, keys, conflicts and leaf verdicts.
+            // New tables only. A group from before this upgrade has no leaf
+            // rows and is judged (audited) before it is next used.
+            if (from < 26) await _createDeviceLists();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -996,6 +1006,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await delete(localPeerVerifications).go();
     await _clearHistoryNamespace();
     await _clearFrankReveals();
+    await _clearDeviceLists();
     await delete(localMessages).go();
     await delete(localPins).go();
     await delete(localPendingPins).go();
@@ -1184,6 +1195,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         // like a freshly linked one, with no group state and cursor 0.
         await _clearHistoryNamespace();
         await _clearFrankReveals();
+        await _clearDeviceLists();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localPins).go();
@@ -1592,6 +1604,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     List<LocalNoticeReference> noticeReferences = const [],
     List<FrankReveal> frankReveals = const <FrankReveal>[],
+    ApprovalLeafChange? approvalLeaves,
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
@@ -1697,6 +1710,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         await _applyMessageEffects(messageEffects);
         await _writeFrankRevealsInTransaction(frankReveals);
+        // L1 (D94): the leaf verdicts of a commit or Welcome commit with the
+        // group state, so a crash can never leave a merged group unjudged.
+        await _writeApprovalLeavesInTransaction(approvalLeaves);
         await captureLocalNoticeReferences(
             noticeReferences, previousNoticeKeys, cursor, nowMs);
         await failureInjector?.call(MlsCommitStage.afterMessageEffects);
@@ -2319,6 +2335,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localPeerVerifications).go();
         await _clearHistoryNamespace();
         await _clearFrankReveals();
+        await _clearDeviceLists();
         await _clearReportKeyPins();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();

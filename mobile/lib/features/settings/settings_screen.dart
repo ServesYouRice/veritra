@@ -157,6 +157,13 @@ class SettingsScreen extends StatelessWidget {
               SectionHeader(l10n.settingsSectionDevices),
               TileGroup(
                 children: <Widget>[
+                  if (state.ownDeviceListMissing)
+                    ListTile(
+                      leading: const Icon(Icons.verified_user_outlined),
+                      title: Text(l10n.settingsDeviceListSetup),
+                      subtitle: Text(l10n.settingsDeviceListSetupDetail),
+                      onTap: () => _reviewDeviceList(context),
+                    ),
                   if (state.membershipChangesAvailable)
                     ListTile(
                       leading: const Icon(Icons.qr_code_2),
@@ -482,6 +489,75 @@ class SettingsScreen extends StatelessWidget {
     if (confirmed) {
       if (await _reauthenticate(context)) {
         await state.deleteAccount();
+      }
+    }
+  }
+
+  /// L1 migration genesis: the user ticks the devices they recognise; they
+  /// become the account's approved-device list and the rest are removed.
+  Future<void> _reviewDeviceList(BuildContext context) async {
+    final own = state.session?.deviceId;
+    if (own == null) return;
+    final candidates = [
+      for (final device in state.devices)
+        if (device.revokedAt == null) device,
+    ];
+    final keep = <String>{for (final device in candidates) device.id};
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(dialogContext.l10n.deviceListReviewTitle),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(dialogContext.l10n.deviceListReviewBody),
+                for (final device in candidates)
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    value: keep.contains(device.id),
+                    title: Text(device.name),
+                    subtitle: Text(dialogContext.l10n.settingsDeviceAdded(
+                        formatDate(dialogContext, device.createdAt))),
+                    onChanged: device.id == own
+                        ? null
+                        : (value) => setDialogState(() {
+                              if (value ?? false) {
+                                keep.add(device.id);
+                              } else {
+                                keep.remove(device.id);
+                              }
+                            }),
+                  ),
+              ],
+            ),
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(dialogContext.l10n.commonCancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(dialogContext.l10n.deviceListReviewConfirm),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+    var result = await state.createApprovedDeviceList(keep);
+    if (result == RecoveryActionResult.needsRecentAuth && context.mounted) {
+      if (!await _reauthenticate(context) || !context.mounted) return;
+      result = await state.createApprovedDeviceList(keep);
+    }
+    if (result == RecoveryActionResult.failed && context.mounted) {
+      final message = state.errorFor(Ops.devices);
+      if (message != null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
       }
     }
   }

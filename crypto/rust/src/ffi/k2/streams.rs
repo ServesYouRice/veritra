@@ -564,17 +564,22 @@ mod tests {
                 recipient_device_id: b"recipient".to_vec(),
                 recipient_signing_key: recipient.signing_public_key().try_into().unwrap(),
                 transfer_public_key: [0; 32],
+                source_commitment: source
+                    .link_source_commitment(b"https://example.test", &[6; 32])
+                    .unwrap(),
+                recipient_random: [0; 32],
             };
             let id = TransferId::new(&context.origin, &context.link_id);
-            let (key, v) = recipient
+            let (key, random, v) = recipient
                 .begin_history_receive(context.clone(), &[8; 16], 1000, 100)
                 .unwrap();
             let context = LinkContext {
                 transfer_public_key: key,
+                recipient_random: random,
                 ..context
             };
             let mut source = source;
-            source
+            let accepted = source
                 .accept_history_claim(
                     context,
                     &[8; 16],
@@ -582,10 +587,11 @@ mod tests {
                     100,
                     &v.transcript_hash,
                     &v.claim_tag,
+                    &[6; 32],
                 )
                 .unwrap();
             source
-                .prepare_history_approval(&id, v.sas.as_bytes(), 100)
+                .prepare_history_approval(&id, accepted.sas.as_bytes(), 100)
                 .unwrap();
             source
                 .approve_history_transfer(&id, &v.approval_tag, 100, 100)

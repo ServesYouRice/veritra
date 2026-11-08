@@ -417,6 +417,36 @@ abstract class AppLocalizations {
   /// **'Generate a pairing code for another device'**
   String get settingsLinkDeviceDetail;
 
+  /// No description provided for @settingsDeviceListSetup.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve your devices'**
+  String get settingsDeviceListSetup;
+
+  /// No description provided for @settingsDeviceListSetupDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your contacts can\'t add your devices to chats until you confirm which ones are yours.'**
+  String get settingsDeviceListSetupDetail;
+
+  /// No description provided for @deviceListReviewTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Which devices are yours?'**
+  String get deviceListReviewTitle;
+
+  /// No description provided for @deviceListReviewBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Untick any device you don\'t recognise. The ticked ones become your approved devices; the others are signed out.'**
+  String get deviceListReviewBody;
+
+  /// No description provided for @deviceListReviewConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve'**
+  String get deviceListReviewConfirm;
+
   /// No description provided for @settingsLoadingDevices.
   ///
   /// In en, this message translates to:
@@ -1989,6 +2019,18 @@ abstract class AppLocalizations {
   /// **'Waiting for your other device to approve. Keep this screen open.'**
   String get deviceLinkWaitingApproval;
 
+  /// No description provided for @deviceLinkWaitingCode.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for your other device. The code to confirm appears here in a moment.'**
+  String get deviceLinkWaitingCode;
+
+  /// No description provided for @deviceLinkCommitmentMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Your other device\'s link check did not match, so this device was not linked. Create a new link on your other device and try again.'**
+  String get deviceLinkCommitmentMismatch;
+
   /// No description provided for @historyCopySendWorking.
   ///
   /// In en, this message translates to:
@@ -3003,6 +3045,12 @@ abstract class AppLocalizations {
   /// **'Couldn\'t unlock this message'**
   String get chatMessageUndecryptable;
 
+  /// No description provided for @chatMessageUnapprovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'A message from a device that isn\'t approved was hidden.'**
+  String get chatMessageUnapprovedDevice;
+
   /// No description provided for @chatMessageWelcomeUnavailable.
   ///
   /// In en, this message translates to:
@@ -3554,6 +3602,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Sending is paused in this conversation.'**
   String get errorConversationPaused;
+
+  /// No description provided for @errorConversationApprovalHeld.
+  ///
+  /// In en, this message translates to:
+  /// **'Sending is paused: a device in this chat isn\'t on its owner\'s approved list, or the list couldn\'t be checked yet.'**
+  String get errorConversationApprovalHeld;
+
+  /// No description provided for @errorDeviceListNotApproved.
+  ///
+  /// In en, this message translates to:
+  /// **'That device isn\'t on its owner\'s approved list yet. It will be added once it is.'**
+  String get errorDeviceListNotApproved;
+
+  /// No description provided for @errorDeviceListConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'Your account\'s approved-device list changed in a way that can\'t be verified. Compare safety numbers with a contact before changing devices.'**
+  String get errorDeviceListConflict;
 
   /// No description provided for @errorOutboxFull.
   ///

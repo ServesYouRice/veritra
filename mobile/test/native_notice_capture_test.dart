@@ -11,6 +11,7 @@ import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'l1_test_lists.dart';
 
 const _conversation = 'conv_notice';
 const _session = Session(
@@ -67,7 +68,7 @@ class _Pair {
     final bindings = NativeCryptoBindings.open(library);
     final store = _Store();
     await store.saveSession(_session);
-    final bob = NativeCryptoService(bindings: bindings, localStore: store);
+    final bob = TestNativeCryptoService(bindings: bindings, localStore: store);
     await bob.createEnrollmentCredential(const EnrollmentReservation(
         id: 'res_bob',
         accountId: 'acct_bob',
@@ -75,6 +76,8 @@ class _Pair {
         challenge: [1, 2, 3]));
     await bob.activateSession(_session);
     final alice = bindings.createDevice(senderAccount, 'dev_alice');
+    sharedTestDeviceLists.approve(
+        senderAccount, 'dev_alice', alice.signingPublicKey());
     alice.createGroup(_conversation);
     final staged = alice.stageCommit(_conversation, adds: [
       (

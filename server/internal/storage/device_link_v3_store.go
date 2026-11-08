@@ -24,37 +24,55 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
-const DeviceLinkV3Protocol = "veritra-device-link-v3"
+// DeviceLinkV3Protocol is the link protocol the K2 routes (/device-links/v3)
+// speak: v4 since L1-3 (commit-then-reveal, docs/designs/L1-3-link-commitment.md).
+// The route keeps its v3 path; only this string moved.
+const DeviceLinkV3Protocol = "veritra-device-link-v4"
+
+// HistoryTransferProtocol labels the K2 history transfer resource. It did not
+// change with L1-3: the transfer binds the link through its transcript hash.
+const HistoryTransferProtocol = "veritra-device-link-v3"
 const deviceLinkV3TransferLifetime = 7 * 24 * time.Hour
 
 var ErrDeviceLinkSessionUnavailable = errors.New("initial linked-device session is unavailable")
 
+// ErrDeviceLinkNotRevealed: the source has not revealed its committed random,
+// so the new device has shown no SAS and nothing can be approved yet.
+var ErrDeviceLinkNotRevealed = errors.New("device link source random not revealed")
+
 // DeviceLinkV3 contains only public, immutable enrollment context. Credential
 // hashes and key-package bytes stay in the private storage record below.
 type DeviceLinkV3 struct {
-	ID                 string     `json:"id"`
-	Code               string     `json:"code,omitempty"`
-	ProtocolVersion    string     `json:"protocol_version"`
-	State              string     `json:"state"`
-	AccountID          string     `json:"account_id"`
-	SourceDeviceID     string     `json:"created_by_device_id"`
-	ServerOrigin       string     `json:"server_origin"`
-	LinkNonce          []byte     `json:"link_nonce"`
-	ExistingSigningKey []byte     `json:"existing_signing_key"`
-	RecipientDeviceID  string     `json:"claimed_device_id,omitempty"`
-	DeviceName         string     `json:"claimed_device_name,omitempty"`
-	SigningKey         []byte     `json:"claimed_signing_key,omitempty"`
-	TransferPublicKey  []byte     `json:"transfer_public_key,omitempty"`
-	TranscriptHash     []byte     `json:"transcript_hash,omitempty"`
-	ClaimTag           []byte     `json:"claim_tag,omitempty"`
-	ApprovalTag        []byte     `json:"approval_tag,omitempty"`
-	ClaimRequestHash   string     `json:"claim_request_hash,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	ExpiresAt          time.Time  `json:"expires_at"`
-	ClaimedAt          *time.Time `json:"claimed_at,omitempty"`
-	ApprovedAt         *time.Time `json:"approved_at,omitempty"`
-	TransferExpiresAt  *time.Time `json:"transfer_expires_at,omitempty"`
-	CompletedAt        *time.Time `json:"completed_at,omitempty"`
+	ID                 string `json:"id"`
+	Code               string `json:"code,omitempty"`
+	ProtocolVersion    string `json:"protocol_version"`
+	State              string `json:"state"`
+	AccountID          string `json:"account_id"`
+	SourceDeviceID     string `json:"created_by_device_id"`
+	ServerOrigin       string `json:"server_origin"`
+	LinkNonce          []byte `json:"link_nonce"`
+	ExistingSigningKey []byte `json:"existing_signing_key"`
+	// L1-3: the source's commitment (set at create), the new device's random
+	// (set at claim) and the source's revealed random (set by reveal, after
+	// the claim). Opaque 32-byte values, each written once.
+	SourceCommitment  []byte     `json:"source_commitment"`
+	RecipientRandom   []byte     `json:"recipient_random,omitempty"`
+	SourceRandom      []byte     `json:"source_random,omitempty"`
+	RevealedAt        *time.Time `json:"revealed_at,omitempty"`
+	RecipientDeviceID string     `json:"claimed_device_id,omitempty"`
+	DeviceName        string     `json:"claimed_device_name,omitempty"`
+	SigningKey        []byte     `json:"claimed_signing_key,omitempty"`
+	TransferPublicKey []byte     `json:"transfer_public_key,omitempty"`
+	TranscriptHash    []byte     `json:"transcript_hash,omitempty"`
+	ClaimTag          []byte     `json:"claim_tag,omitempty"`
+	ApprovalTag       []byte     `json:"approval_tag,omitempty"`
+	ClaimRequestHash  string     `json:"claim_request_hash,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	ExpiresAt         time.Time  `json:"expires_at"`
+	ClaimedAt         *time.Time `json:"claimed_at,omitempty"`
+	ApprovedAt        *time.Time `json:"approved_at,omitempty"`
+	TransferExpiresAt *time.Time `json:"transfer_expires_at,omitempty"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 }
 
 type deviceLinkV3Record struct {
@@ -78,6 +96,7 @@ type DeviceLinkV3ClaimInput struct {
 	DeviceKeyPackage        []byte `json:"device_key_package"`
 	SigningKey              []byte `json:"signing_key"`
 	TransferPublicKey       []byte `json:"transfer_public_key"`
+	RecipientRandom         []byte `json:"recipient_random"`
 	TranscriptHash          []byte `json:"transcript_hash"`
 	ClaimTag                []byte `json:"claim_tag"`
 	ClaimTokenHash          string `json:"claim_token_hash"`
@@ -179,7 +198,8 @@ const deviceLinkV3Select = `SELECT v.id, v.code, v.account_id, v.source_device_i
  v.transcript_hash, v.claim_tag, v.approval_tag, COALESCE(v.claim_token_hash,''),
  COALESCE(v.device_secret_hash,''), COALESCE(v.initial_session_token_hash,''),
  COALESCE(v.claim_request_hash,''), v.created_at, v.expires_at, v.claimed_at,
- v.approved_at, v.transfer_expires_at, v.completed_at, source.signing_key
+ v.approved_at, v.transfer_expires_at, v.completed_at, source.signing_key,
+ v.source_commitment, v.recipient_random, v.source_random, v.revealed_at
  FROM device_links_v3 v
  JOIN accounts a ON a.id=v.account_id AND a.status='active' AND a.deleted_at IS NULL
  JOIN devices source ON source.id=v.source_device_id AND source.account_id=v.account_id AND source.revoked_at IS NULL
@@ -191,14 +211,15 @@ const deviceLinkV3Select = `SELECT v.id, v.code, v.account_id, v.source_device_i
 func loadDeviceLinkV3(ctx context.Context, q queryRower, predicate string, args ...interface{}) (deviceLinkV3Record, error) {
 	var link deviceLinkV3Record
 	var created, expires string
-	var claimed, approved, deadline, completed sql.NullString
+	var claimed, approved, deadline, completed, revealed sql.NullString
 	err := q.QueryRowContext(ctx, deviceLinkV3Select+predicate, args...).Scan(
 		&link.ID, &link.Code, &link.AccountID, &link.SourceDeviceID, &link.ServerOrigin,
 		&link.ttlSeconds, &link.State, &link.LinkNonce, &link.reservationRequestID,
 		&link.RecipientDeviceID, &link.challenge, &link.DeviceName, &link.keyPackage,
 		&link.SigningKey, &link.TransferPublicKey, &link.TranscriptHash, &link.ClaimTag,
 		&link.ApprovalTag, &link.claimTokenHash, &link.deviceSecretHash, &link.initialSessionHash,
-		&link.ClaimRequestHash, &created, &expires, &claimed, &approved, &deadline, &completed, &link.ExistingSigningKey)
+		&link.ClaimRequestHash, &created, &expires, &claimed, &approved, &deadline, &completed, &link.ExistingSigningKey,
+		&link.SourceCommitment, &link.RecipientRandom, &link.SourceRandom, &revealed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return link, ErrDeviceLinkInvalid
 	}
@@ -209,6 +230,7 @@ func loadDeviceLinkV3(ctx context.Context, q queryRower, predicate string, args 
 	link.CreatedAt, link.ExpiresAt = parseTime(created), parseTime(expires)
 	link.ClaimedAt, link.ApprovedAt = parseOptionalTime(claimed), parseOptionalTime(approved)
 	link.TransferExpiresAt, link.CompletedAt = parseOptionalTime(deadline), parseOptionalTime(completed)
+	link.RevealedAt = parseOptionalTime(revealed)
 	return link, nil
 }
 
@@ -225,8 +247,15 @@ func (v deviceLinkV3Record) public() DeviceLinkV3 {
 	return result
 }
 
-func (s *Store) CreateDeviceLinkV3(ctx context.Context, accountID, deviceID, code, origin string, ttl time.Duration) (DeviceLinkV3, error) {
-	if !validV3Hash(code) || !ValidDeviceLinkV3Origin(origin) || ttl < 0 || ttl > 30*time.Minute || ttl%time.Second != 0 {
+// validLinkRandom is a 32-byte value that is not the all-zero placeholder.
+func validLinkRandom(value []byte) bool {
+	return len(value) == 32 && !bytes.Equal(value, make([]byte, 32))
+}
+
+// CreateDeviceLinkV3 stores a link with the source's commitment to its random
+// (L1-3). The server cannot check the commitment; the devices do.
+func (s *Store) CreateDeviceLinkV3(ctx context.Context, accountID, deviceID, code, origin string, commitment []byte, ttl time.Duration) (DeviceLinkV3, error) {
+	if !validV3Hash(code) || !ValidDeviceLinkV3Origin(origin) || !validLinkRandom(commitment) || ttl < 0 || ttl > 30*time.Minute || ttl%time.Second != 0 {
 		return DeviceLinkV3{}, ErrInvalidInput
 	}
 	if ttl == 0 {
@@ -247,7 +276,7 @@ func (s *Store) CreateDeviceLinkV3(ctx context.Context, accountID, deviceID, cod
 	}
 	existing, err := loadDeviceLinkV3(ctx, tx, ` AND v.code=?`, code)
 	if err == nil {
-		if existing.AccountID != accountID || existing.SourceDeviceID != deviceID || existing.ServerOrigin != origin || existing.ttlSeconds != int64(ttl/time.Second) {
+		if existing.AccountID != accountID || existing.SourceDeviceID != deviceID || existing.ServerOrigin != origin || existing.ttlSeconds != int64(ttl/time.Second) || !v3Equal(existing.SourceCommitment, commitment) {
 			return DeviceLinkV3{}, ErrIdempotencyConflict
 		}
 		if !existing.validWindow(time.Now().UTC()) {
@@ -289,14 +318,14 @@ func (s *Store) CreateDeviceLinkV3(ctx context.Context, accountID, deviceID, cod
 	}
 	now := time.Now().UTC()
 	expires := now.Add(ttl)
-	_, err = tx.ExecContext(ctx, `INSERT INTO device_links_v3(id,code,account_id,source_device_id,server_origin,create_ttl_seconds,state,link_nonce,created_at,expires_at) VALUES(?,?,?,?,?,?,'pending',?,?,?)`, id, code, accountID, deviceID, origin, int64(ttl/time.Second), nonce, formatTime(now), formatTime(expires))
+	_, err = tx.ExecContext(ctx, `INSERT INTO device_links_v3(id,code,account_id,source_device_id,server_origin,create_ttl_seconds,state,link_nonce,source_commitment,created_at,expires_at) VALUES(?,?,?,?,?,?,'pending',?,?,?,?)`, id, code, accountID, deviceID, origin, int64(ttl/time.Second), nonce, commitment, formatTime(now), formatTime(expires))
 	if err != nil {
 		return DeviceLinkV3{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return DeviceLinkV3{}, err
 	}
-	return DeviceLinkV3{ID: id, Code: code, ProtocolVersion: DeviceLinkV3Protocol, State: domain.DeviceLinkPending, AccountID: accountID, SourceDeviceID: deviceID, ServerOrigin: origin, LinkNonce: nonce, ExistingSigningKey: key, CreatedAt: now, ExpiresAt: expires}, nil
+	return DeviceLinkV3{ID: id, Code: code, ProtocolVersion: DeviceLinkV3Protocol, State: domain.DeviceLinkPending, AccountID: accountID, SourceDeviceID: deviceID, ServerOrigin: origin, LinkNonce: nonce, ExistingSigningKey: key, SourceCommitment: bytes.Clone(commitment), CreatedAt: now, ExpiresAt: expires}, nil
 }
 
 func (s *Store) ReserveDeviceLinkV3(ctx context.Context, code, requestID string) (EnrollmentReservation, error) {
@@ -312,7 +341,7 @@ func (s *Store) ReserveDeviceLinkV3(ctx context.Context, code, requestID string)
 	if err != nil {
 		return EnrollmentReservation{}, err
 	}
-	if !link.ExpiresAt.After(time.Now().UTC()) || (link.State != domain.DeviceLinkPending && link.State != domain.DeviceLinkClaimed) {
+	if !link.ExpiresAt.After(time.Now().UTC()) || (link.State != domain.DeviceLinkPending && link.State != domain.DeviceLinkClaimed) || len(link.SourceCommitment) != 32 {
 		return EnrollmentReservation{}, ErrDeviceLinkInvalid
 	}
 	if link.reservationRequestID != "" && link.reservationRequestID != requestID {
@@ -336,7 +365,7 @@ func (s *Store) ReserveDeviceLinkV3(ctx context.Context, code, requestID string)
 	if err := tx.Commit(); err != nil {
 		return EnrollmentReservation{}, err
 	}
-	return EnrollmentReservation{ID: link.ID, Kind: "device_link", AccountID: link.AccountID, DeviceID: link.RecipientDeviceID, Challenge: link.challenge, ExpiresAt: link.ExpiresAt, ProtocolVersion: DeviceLinkV3Protocol, LinkNonce: link.LinkNonce, ExistingDeviceID: link.SourceDeviceID, ExistingSigningKey: link.ExistingSigningKey}, nil
+	return EnrollmentReservation{ID: link.ID, Kind: "device_link", AccountID: link.AccountID, DeviceID: link.RecipientDeviceID, Challenge: link.challenge, ExpiresAt: link.ExpiresAt, ProtocolVersion: DeviceLinkV3Protocol, LinkNonce: link.LinkNonce, ExistingDeviceID: link.SourceDeviceID, ExistingSigningKey: link.ExistingSigningKey, SourceCommitment: link.SourceCommitment}, nil
 }
 
 func (s *Store) ClaimDeviceLinkV3(ctx context.Context, input DeviceLinkV3ClaimInput) (DeviceLinkV3, error) {
@@ -349,7 +378,7 @@ func (s *Store) ClaimDeviceLinkV3(ctx context.Context, input DeviceLinkV3ClaimIn
 	if err != nil {
 		return DeviceLinkV3{}, err
 	}
-	if !link.validWindow(time.Now().UTC()) || link.reservationRequestID == "" || input.ReservationRequestID != link.reservationRequestID || input.ServerOrigin != link.ServerOrigin {
+	if !link.validWindow(time.Now().UTC()) || link.reservationRequestID == "" || input.ReservationRequestID != link.reservationRequestID || input.ServerOrigin != link.ServerOrigin || len(link.SourceCommitment) != 32 || !validLinkRandom(input.RecipientRandom) {
 		return DeviceLinkV3{}, ErrEnrollmentInvalid
 	}
 	reservation := EnrollmentReservation{ID: link.ID, AccountID: link.AccountID, DeviceID: link.RecipientDeviceID, Challenge: link.challenge}
@@ -360,7 +389,10 @@ func (s *Store) ClaimDeviceLinkV3(ctx context.Context, input DeviceLinkV3ClaimIn
 	digest := sha256.Sum256(proof)
 	hash := hex.EncodeToString(digest[:])
 	if link.State != domain.DeviceLinkPending {
-		if link.ClaimRequestHash != hash {
+		// The signed proof does not cover the recipient random (the
+		// transcript hash does, which only the devices can check), so a
+		// replay must repeat it too.
+		if link.ClaimRequestHash != hash || !v3Equal(link.RecipientRandom, input.RecipientRandom) {
 			return DeviceLinkV3{}, ErrIdempotencyConflict
 		}
 		return link.public(), nil
@@ -369,7 +401,7 @@ func (s *Store) ClaimDeviceLinkV3(ctx context.Context, input DeviceLinkV3ClaimIn
 		return DeviceLinkV3{}, ErrEnrollmentInvalid
 	}
 	now := nowString()
-	_, err = tx.ExecContext(ctx, `UPDATE device_links_v3 SET state='claimed', device_name=?, key_package=?, signing_key=?, transfer_public_key=?, transcript_hash=?, claim_tag=?, claim_token_hash=?, device_secret_hash=?, initial_session_token_hash=?, claim_request_hash=?, claimed_at=? WHERE id=? AND state='pending'`, input.DeviceName, input.DeviceKeyPackage, input.SigningKey, input.TransferPublicKey, input.TranscriptHash, input.ClaimTag, input.ClaimTokenHash, input.DeviceSecretHash, input.InitialSessionTokenHash, hash, now, link.ID)
+	_, err = tx.ExecContext(ctx, `UPDATE device_links_v3 SET state='claimed', device_name=?, key_package=?, signing_key=?, transfer_public_key=?, recipient_random=?, transcript_hash=?, claim_tag=?, claim_token_hash=?, device_secret_hash=?, initial_session_token_hash=?, claim_request_hash=?, claimed_at=? WHERE id=? AND state='pending'`, input.DeviceName, input.DeviceKeyPackage, input.SigningKey, input.TransferPublicKey, input.RecipientRandom, input.TranscriptHash, input.ClaimTag, input.ClaimTokenHash, input.DeviceSecretHash, input.InitialSessionTokenHash, hash, now, link.ID)
 	if err != nil {
 		return DeviceLinkV3{}, err
 	}
@@ -404,6 +436,59 @@ func (s *Store) DeviceLinkV3ForClaim(ctx context.Context, id, claimTokenHash str
 	}
 	if !link.validWindow(time.Now().UTC()) {
 		return DeviceLinkV3{}, ErrDeviceLinkInvalid
+	}
+	return link.public(), nil
+}
+
+// RevealDeviceLinkV3 stores the source's random once the source accepted the
+// claim named by requestHash (L1-3). Only the source device may reveal, only
+// for a claimed link, and only once: an exact repeat returns the link, any
+// other random is a conflict. The server does not open the commitment; the
+// new device does, before it shows a SAS.
+func (s *Store) RevealDeviceLinkV3(ctx context.Context, id, accountID, sourceDeviceID, requestHash string, sourceRandom []byte) (DeviceLinkV3, error) {
+	if !validV3Hash(requestHash) || !validLinkRandom(sourceRandom) {
+		return DeviceLinkV3{}, ErrDeviceLinkVerificationFailed
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return DeviceLinkV3{}, err
+	}
+	defer tx.Rollback()
+	link, err := loadDeviceLinkV3(ctx, tx, ` AND v.id=? AND v.account_id=? AND v.source_device_id=?`, id, accountID, sourceDeviceID)
+	if err != nil {
+		return DeviceLinkV3{}, err
+	}
+	if !link.validWindow(time.Now().UTC()) || len(link.SourceCommitment) != 32 {
+		return DeviceLinkV3{}, ErrDeviceLinkInvalid
+	}
+	if link.State == domain.DeviceLinkPending {
+		return DeviceLinkV3{}, ErrDeviceLinkNotReady
+	}
+	if link.ClaimRequestHash != requestHash {
+		return DeviceLinkV3{}, ErrDeviceLinkVerificationFailed
+	}
+	if len(link.SourceRandom) != 0 {
+		if !v3Equal(link.SourceRandom, sourceRandom) {
+			return DeviceLinkV3{}, ErrIdempotencyConflict
+		}
+		return link.public(), nil
+	}
+	if link.State != domain.DeviceLinkClaimed {
+		return DeviceLinkV3{}, ErrDeviceLinkInvalid
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE device_links_v3 SET source_random=?, revealed_at=? WHERE id=? AND state='claimed' AND source_random IS NULL`, sourceRandom, nowString(), id)
+	if err != nil {
+		return DeviceLinkV3{}, err
+	}
+	if rows, err := result.RowsAffected(); err != nil || rows != 1 {
+		return DeviceLinkV3{}, ErrDeviceLinkInvalid
+	}
+	link, err = loadDeviceLinkV3(ctx, tx, ` AND v.id=?`, id)
+	if err != nil {
+		return DeviceLinkV3{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return DeviceLinkV3{}, err
 	}
 	return link.public(), nil
 }
@@ -446,6 +531,10 @@ func (s *Store) ApproveDeviceLinkV3WithDeviceList(ctx context.Context, id, accou
 	}
 	if link.State != domain.DeviceLinkClaimed || !link.ExpiresAt.After(time.Now().UTC()) {
 		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkInvalid
+	}
+	// L1-3: no approval before the reveal (the new device had no SAS to show).
+	if len(link.SourceRandom) != 32 {
+		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, ErrDeviceLinkNotRevealed
 	}
 	if err := s.checkDevices(ctx, tx, accountID); err != nil {
 		return DeviceLinkV3{}, domain.Device{}, 0, nil, nil, err

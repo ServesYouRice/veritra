@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'server_origin.dart' show canonicalizeServerOrigin;
 import 'transport_policy.dart' show TransportPolicy;
 
-const deviceLinkV3Protocol = 'veritra-device-link-v3';
+/// The link protocol the v3 (K2) routes speak: v4 since L1-3, which added
+/// commit-then-reveal (docs/designs/L1-3-link-commitment.md). There is no
+/// fallback: a record or reservation with any other version is refused.
+const deviceLinkV3Protocol = 'veritra-device-link-v4';
 
 Never _invalid() => throw const FormatException('invalid device link v3 data');
 
@@ -56,6 +59,13 @@ List<int> _binary(Map<String, Object?> json, String key,
   }
 }
 
+/// A commitment or random: 32 bytes, never the all-zero placeholder.
+List<int> _random(Map<String, Object?> json, String key) {
+  final bytes = _binary(json, key);
+  if (bytes.every((b) => b == 0)) _invalid();
+  return bytes;
+}
+
 DateTime _time(Map<String, Object?> json, String key) {
   final parsed = DateTime.tryParse(_string(json, key, 64));
   if (parsed == null || !parsed.isUtc || parsed.millisecondsSinceEpoch <= 0) {
@@ -99,6 +109,10 @@ class DeviceLinkV3Record {
       'server_origin',
       'link_nonce',
       'existing_signing_key',
+      'source_commitment',
+      'recipient_random',
+      'source_random',
+      'revealed_at',
       'claimed_device_id',
       'claimed_device_name',
       'claimed_signing_key',
@@ -123,6 +137,7 @@ class DeviceLinkV3Record {
     _origin(fields, transport);
     _binary(fields, 'link_nonce');
     _binary(fields, 'existing_signing_key');
+    _random(fields, 'source_commitment');
     final created = _time(fields, 'created_at');
     final expires = _time(fields, 'expires_at');
     if (!expires.isAfter(created) ||
@@ -151,6 +166,14 @@ class DeviceLinkV3Record {
     ]) {
       if (fields.containsKey(key)) _time(fields, key);
     }
+    for (final key in ['recipient_random', 'source_random']) {
+      if (fields.containsKey(key)) _random(fields, key);
+    }
+    // The reveal comes after the claim, and both its fields come together.
+    if (fields.containsKey('source_random') !=
+        fields.containsKey('revealed_at')) {
+      _invalid();
+    }
     if (fields.containsKey('claim_request_hash')) {
       deviceLinkV3Hash(fields['claim_request_hash']);
     }
@@ -171,10 +194,17 @@ class DeviceLinkV3Record {
         _binary(fields, key);
       }
       deviceLinkV3Hash(fields['claim_request_hash']);
+      _random(fields, 'recipient_random');
       final claimed = _time(fields, 'claimed_at');
       if (claimed.isBefore(created) || claimed.isAfter(expires)) _invalid();
+      if (fields.containsKey('revealed_at') &&
+          _time(fields, 'revealed_at').isBefore(claimed)) {
+        _invalid();
+      }
     }
     if (state == 'approved' || state == 'consumed') {
+      // L1-3: nothing is approved before the source revealed its random.
+      _random(fields, 'source_random');
       _binary(fields, 'approval_tag');
       final approved = _time(fields, 'approved_at');
       if (approved.isBefore(_time(fields, 'claimed_at')) ||
@@ -190,6 +220,10 @@ class DeviceLinkV3Record {
     if (state == 'pending' || state == 'claimed') {
       if (['approval_tag', 'approved_at', 'transfer_expires_at', 'completed_at']
           .any(fields.containsKey)) _invalid();
+    }
+    if (state == 'pending' &&
+        ['recipient_random', 'source_random'].any(fields.containsKey)) {
+      _invalid();
     }
   }
 
@@ -222,6 +256,7 @@ class FrozenDeviceLinkV3Claim {
       'device_key_package',
       'signing_key',
       'transfer_public_key',
+      'recipient_random',
       'transcript_hash',
       'claim_tag',
       'claim_token_hash',
@@ -261,6 +296,7 @@ class FrozenDeviceLinkV3Claim {
       _binary(fields, key);
     }
     _binary(fields, 'challenge_signature', min: 64, max: 64);
+    _random(fields, 'recipient_random');
   }
 
   final Map<String, Object?> fields;
@@ -279,9 +315,12 @@ class DeviceLinkV3Reservation {
       'protocol_version',
       'link_nonce',
       'existing_device_id',
-      'existing_signing_key'
+      'existing_signing_key',
+      'source_commitment'
     });
     if (fields['protocol_version'] != deviceLinkV3Protocol) _invalid();
+    // The commitment must arrive before this device chooses its random.
+    _random(fields, 'source_commitment');
     for (final key in ['id', 'account_id', 'device_id', 'existing_device_id']) {
       deviceLinkV3Id(fields[key]);
     }

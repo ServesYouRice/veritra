@@ -11,6 +11,7 @@ import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// Real OpenMLS devices driven through [NativeCryptoService], for the review
 /// of D54: which native errors count as "can never decrypt", and what stays
@@ -187,7 +188,7 @@ void main() {
       // A second service on Alice's store holds a handle from before conv_1,
       // so the store moves on without it: the state a backup restore leaves.
       final stale =
-          NativeCryptoService(bindings: faults, localStore: alice.store);
+          TestNativeCryptoService(bindings: faults, localStore: alice.store);
       await stale.activateSession(Session(
         baseUrl: 'https://localhost:8443',
         token: 'token',
@@ -428,6 +429,23 @@ class _FaultyBindings implements NativeCryptoBindings {
 }
 
 class _FaultyDevice implements NativeCryptoDevice {
+  @override
+  List<LeafPair> groupMembers(String groupId) => real.groupMembers(groupId);
+
+  @override
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommitKeyed(
+    String groupId, {
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) =>
+      real.stageCommitKeyed(groupId, adds: adds, removes: removes);
   _FaultyDevice(this.faults, this.real);
 
   final _FaultyBindings faults;
@@ -608,7 +626,8 @@ class _Client {
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
     final local = MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: local);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: local);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,

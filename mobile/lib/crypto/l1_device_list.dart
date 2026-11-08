@@ -697,7 +697,7 @@ extension DeviceListDevice on NativeCryptoDevice {
   /// Every leaf of the group as `(account, device, signature key)`, in leaf
   /// order, from the current tree. After a Welcome the app judges each pair
   /// against its account's list.
-  List<LeafPair> groupMembers(String groupId) {
+  List<LeafPair> _groupMembersImpl(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     final bytes = _bindings._withSlice(
         Uint8List.fromList(groupId.codeUnits),
@@ -792,7 +792,7 @@ extension DeviceListDevice on NativeCryptoDevice {
   /// [stageCommit] with change-list version 2 (ABI 14): each add names the
   /// signature key its key package must hold, and a key package with another
   /// leaf key is refused (nothing is staged).
-  ({List<int> commit, List<int> welcome, int epoch}) stageCommitKeyed(
+  ({List<int> commit, List<int> welcome, int epoch}) _stageCommitKeyedImpl(
     String groupId, {
     List<
             ({

@@ -58,8 +58,11 @@ Common fields:
   this field without exact configured-origin comparison.
 * Context = ID, B16(account ID), F32(link nonce), B16(source device ID),
   F32(source signing key), B16(recipient device ID), F32(recipient signing key),
-  F32(transfer public key). Incoming begin requires zero transfer key, or the
-  previously returned exact key on retry. Native checks local role/identity.
+  F32(transfer public key), F32(source commitment), F32(recipient random)
+  (the last two since ABI 18, L1-3, protocol `veritra-device-link-v4`; see
+  [L1-3 link commitment](L1-3-link-commitment.md)). Incoming begin requires a
+  zero transfer key and a zero recipient random, or the previously returned
+  exact values on retry. Native checks local role/identity.
 * Verification = F32(transcript hash), F32(claim tag), fixed8 ASCII SAS digits.
   Never includes approval tag, handoff tag or K_link.
 * Times are u64 Unix milliseconds. Client supplies its current time, not an
@@ -83,9 +86,9 @@ Names below have prefix `pm_crypto_k2_`. All fields are in listed order.
 
 | Op/name | Request fields | Result fields and persistence |
 |---|---|---|
-|1 receive_begin|Context, fixed16 link secret, u64 original expiry, u64 now|F32 transfer public key, Verification. Commit before claim proof/POST; exact retry reuses key.|
-|2 source_accept|Context, fixed16 link secret, u64 original expiry, u64 now, F32 claimed transcript hash, F32 claim tag|Verification; never approval tag. Commit before displaying confirmed claim.|
-|3 inspect|ID, u64 now|u8 direction, u8 stage, u8 durable-intent-present, u64 original expiry, u64 approved_at, u64 transfer expiry, Verification. No private material. Expired waiting record cannot return verification; late recovery uses op7 directly.|
+|1 receive_begin|Context, fixed16 link secret, u64 original expiry, u64 now|F32 transfer public key, F32 recipient random, F32 transcript hash, F32 claim tag (ABI 18: no SAS before the reveal). Commit before claim proof/POST; exact retry reuses key and random.|
+|2 source_accept|Context, fixed16 link secret, u64 original expiry, u64 now, F32 claimed transcript hash, F32 claim tag, F32 source random (ABI 18)|Verification; never approval tag. The source random must open the context's commitment. Commit before revealing the random to the server or displaying the confirmed claim; a second claim for the link, or a claim whose source random another record already holds (any link or origin), is refused.|
+|3 inspect|ID, u64 now|u8 direction, u8 stage, u8 durable-intent-present, u64 original expiry, u64 approved_at, u64 transfer expiry, F32 transcript hash, F32 claim tag, u8 has_sas, fixed8 SAS digits (eight zero bytes when has_sas is 0: an incoming record never holds a SAS; ABI 18). No private material. Expired waiting record cannot return verification; late recovery uses op7 directly.|
 |4 enrollment_proof|ID, u64 now, B16 locator lowercasehex text64, F32 decoded reservation request ID, B16 device name, B16 challenge, B32 frozen key package, F32 claim credential hash, F32 device-secret hash, F32 initial-session hash|fixed64 signature, F32 claim_request_hash. Uses native stored context/claim MAC/transfer key; verifies own signing identity and exact key-package credential. Name bound64 UTF-8 bytes with no outer whitespace. Persist frozen key package/signature/HTTP body before POST.|
 |5 source_confirm|ID, fixed8 typed SAS digits, u64 now|u8 intent_present=1, u64 first intent time. No approval tag. Mutates native intent once; commit state before op6.|
 |6 source_approval_request|ID, u64 now|F32 transcript hash, F32 approval tag. Requires source durable-intent state, original live deadline and correct role. Service separately binds persisted claim_request_hash from the exact accepted claim into HTTP. Does not mutate native state.|
@@ -94,6 +97,8 @@ Names below have prefix `pm_crypto_k2_`. All fields are in listed order.
 |9 importing|ID, u64 now|u8 stage=Importing(4). Commit may precede DB import; reopening the same handoff/bundle after crash is allowed and preserves stage. Internal native enum4 remains Delivered; direction-aware public decoding calls incoming4 Importing and outgoing4 Posted.|
 |10 forget|ID|u8 removed(0/1). Commit deletion only after ledger+ACK obligations, explicit local abandonment or expiry policy. Local forgetting does not revoke device identity or cancel server enrollment.|
 |11 expire|u64 now|u16 removed count. Explicit mutation+commit; no hidden read-side expiration.|
+|12 reveal_sas (ABI 18)|ID, F32 source random, u64 now|fixed8 SAS digits. Incoming record only, before the original link expiry. Read only: opens the commitment pinned at op1 and refuses a random that does not open it; nothing is stored, so it runs on the frozen pending identity and repeats.|
+|13 source_commitment (ABI 18)|B16 canonical origin, F32 source random (nonzero)|F32 commitment over this device's own account, device ID and signing key. Pure; no record exists yet.|
 
 Op4 validates KeyPackageIn with the existing provider/MLS1.0 API, then checks
 the leaf credential equals this account/device identity and its signature key

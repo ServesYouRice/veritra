@@ -42,7 +42,7 @@ func newHistoryFixture(t *testing.T) *historyFixture {
 	}
 	data := []byte("opaque history ciphertext")
 	d := sha256.Sum256(data)
-	return &historyFixture{v3Fixture: f, blobs: blobs, root: root, source: HistoryAccess{AccountID: link.AccountID, DeviceID: link.SourceDeviceID}, recipient: HistoryAccess{AccountID: link.AccountID, DeviceID: link.RecipientDeviceID}, claim: HistoryAccess{ClaimTokenHash: auth.HashToken(f.claimToken)}, data: data, input: HistoryTransferInput{ProtocolVersion: DeviceLinkV3Protocol, TransferID: strings.Repeat("b", 64), ClaimRequestHash: link.ClaimRequestHash, TranscriptHash: link.TranscriptHash, CiphertextSHA256: hex.EncodeToString(d[:]), SizeBytes: int64(len(data)), Handoff: []byte("opaque handoff")}}
+	return &historyFixture{v3Fixture: f, blobs: blobs, root: root, source: HistoryAccess{AccountID: link.AccountID, DeviceID: link.SourceDeviceID}, recipient: HistoryAccess{AccountID: link.AccountID, DeviceID: link.RecipientDeviceID}, claim: HistoryAccess{ClaimTokenHash: auth.HashToken(f.claimToken)}, data: data, input: HistoryTransferInput{ProtocolVersion: HistoryTransferProtocol, TransferID: strings.Repeat("b", 64), ClaimRequestHash: link.ClaimRequestHash, TranscriptHash: link.TranscriptHash, CiphertextSHA256: hex.EncodeToString(d[:]), SizeBytes: int64(len(data)), Handoff: []byte("opaque handoff")}}
 }
 
 func (f *historyFixture) prepare(t *testing.T) uploads.PreparedWrite {

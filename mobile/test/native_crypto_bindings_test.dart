@@ -24,51 +24,58 @@ void main() {
     expect(alice.signingPublicKey(), hasLength(32));
     final enrollment = alice.createEnrollmentCredential([7, 8, 9]);
     expect(enrollment.signingKey, hasLength(32));
-    final linked = bindings.createDevice('acct_alice', 'dev_linked');
-    final nonce = List<int>.filled(32, 0x42);
-    final existingVerification = alice.deriveDeviceLinkVerification(
-      protocolVersion: 'veritra-device-link-v2',
-      serverOrigin: 'https://example.test',
-      linkId: 'link_01',
-      linkSecret: List<int>.filled(16, 0x55),
-      peerDeviceId: 'dev_linked',
-      peerSigningKey: linked.signingPublicKey(),
-      linkNonce: nonce,
-      localIsExistingDevice: true,
-    );
-    final linkedVerification = linked.deriveDeviceLinkVerification(
-      protocolVersion: 'veritra-device-link-v2',
-      serverOrigin: 'https://example.test',
-      linkId: 'link_01',
-      linkSecret: List<int>.filled(16, 0x55),
-      peerDeviceId: 'dev_alice',
-      peerSigningKey: alice.signingPublicKey(),
-      linkNonce: nonce,
-      localIsExistingDevice: false,
-    );
+    // ABI 18 (L1-3): the v2 link derivation is gone; links run on the K2
+    // controls, whose SAS needs the source's committed random.
     expect(
-        linkedVerification.transcriptHash, existingVerification.transcriptHash);
-    expect(linkedVerification.sas, existingVerification.sas);
-    expect(linkedVerification.claimTag, existingVerification.claimTag);
-    expect(linkedVerification.approvalTag, existingVerification.approvalTag);
-    expect(linkedVerification.claimTag, isNot(linkedVerification.approvalTag));
+        DynamicLibrary.open(libraryPath)
+            .providesSymbol('pm_crypto_device_link_transcript_hash'),
+        isFalse);
+    final linked = bindings.createDevice('acct_alice', 'dev_linked');
+    const id = K2TransferId('https://example.test', 'link_01');
+    final sourceRandom = List<int>.filled(32, 0x66);
+    final commitment =
+        alice.k2SourceCommitment('https://example.test', sourceRandom);
+    K2LinkContext context(List<int> key, List<int> random,
+            {List<int>? recipientKey}) =>
+        K2LinkContext(
+          id: id,
+          accountId: 'acct_alice',
+          nonce: List<int>.filled(32, 0x42),
+          sourceDeviceId: 'dev_alice',
+          sourceSigningKey: alice.signingPublicKey(),
+          recipientDeviceId: 'dev_linked',
+          recipientSigningKey: recipientKey ?? linked.signingPublicKey(),
+          transferPublicKey: key,
+          sourceCommitment: commitment,
+          recipientRandom: random,
+        );
+    final secret = List<int>.filled(16, 0x55);
+    final received = linked.k2ReceiveBegin(
+        context(List<int>.filled(32, 0), List<int>.filled(32, 0)), secret,
+        originalExpiresAt: 1000, now: 100);
+    // A substituted new-device key fails the claim tag at the source.
     final substitutedKey = linked.signingPublicKey();
     substitutedKey[0] ^= 1;
     expect(
-      alice
-          .deriveDeviceLinkVerification(
-            protocolVersion: 'veritra-device-link-v2',
-            serverOrigin: 'https://example.test',
-            linkId: 'link_01',
-            linkSecret: List<int>.filled(16, 0x55),
-            peerDeviceId: 'dev_linked',
-            peerSigningKey: substitutedKey,
-            linkNonce: nonce,
-            localIsExistingDevice: true,
-          )
-          .sas,
-      isNot(existingVerification.sas),
-    );
+        () => alice.k2SourceAccept(
+            context(received.transferPublicKey, received.recipientRandom,
+                recipientKey: substitutedKey),
+            secret,
+            originalExpiresAt: 1000,
+            now: 100,
+            transcriptHash: received.transcriptHash,
+            claimTag: received.claimTag,
+            sourceRandom: sourceRandom),
+        throwsA(isA<NativeCryptoException>()));
+    final accepted = alice.k2SourceAccept(
+        context(received.transferPublicKey, received.recipientRandom), secret,
+        originalExpiresAt: 1000,
+        now: 100,
+        transcriptHash: received.transcriptHash,
+        claimTag: received.claimTag,
+        sourceRandom: sourceRandom);
+    expect(accepted.transcriptHash, received.transcriptHash);
+    expect(linked.k2RevealSas(id, sourceRandom, now: 100), accepted.sas);
     linked.close();
     final bobPackage = bob.createKeyPackage();
     alice.createGroup('conv_test');

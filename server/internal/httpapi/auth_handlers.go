@@ -497,6 +497,9 @@ func enrollmentReservationResponse(reservation storage.EnrollmentReservation) ma
 		response["existing_device_id"] = reservation.ExistingDeviceID
 		response["existing_signing_key"] = reservation.ExistingSigningKey
 	}
+	if len(reservation.SourceCommitment) != 0 {
+		response["source_commitment"] = reservation.SourceCommitment
+	}
 	return response
 }
 

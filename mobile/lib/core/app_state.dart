@@ -18,8 +18,18 @@ import '../crypto/device_link_code.dart';
 import '../crypto/history_transfer_service.dart';
 import '../crypto/k2_transfer_crypto.dart';
 import '../crypto/native_crypto_bindings.dart'
-    show K2LinkContext, K2TransferId, K2Verification, NativeCryptoException;
+    show
+        DeviceListBody,
+        DeviceListChange,
+        DeviceListPair,
+        K2LinkContext,
+        K2TransferId,
+        K2Verification,
+        NativeCryptoException,
+        idBytes;
+import 'device_lists.dart';
 import '../crypto/sha256.dart';
+import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
 import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';
@@ -70,6 +80,7 @@ export 'membership_models.dart';
 part 'app_state_membership.dart';
 part 'app_state_recovery.dart';
 part 'app_state_link_v3.dart';
+part 'app_state_device_list.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -242,12 +253,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (cryptoService case final ConversationAuthorityConsumer consumer) {
       consumer.conversationAuthority = this;
     }
+    // L1 (D94): the pins the native add gate and leaf judge use.
+    if (cryptoService case final DeviceListCryptoService lists) {
+      final pins = DeviceListPins(
+        store: localStore,
+        source: _AppDeviceListSource(this),
+        verifier: lists,
+      );
+      _deviceListPins = pins;
+      lists.deviceListPins = pins;
+    }
     // Read the saved switch now so the settings screen shows it at once.
     unawaited(this.receiptPreferences.loaded);
   }
 
   /// The "send read receipts" switch (W5).
   final ReceiptPreferences receiptPreferences;
+
+  /// The approved-device list pins (L1); null without an L1 engine.
+  DeviceListPins? _deviceListPins;
+
+  /// This account has no approved-device list yet (from before L1): its
+  /// devices are added to no chat until the user reviews them once.
+  bool ownDeviceListMissing = false;
 
   /// Delivery and read cursors of the other members (W5).
   final ReceiptsState receipts = ReceiptsState();
@@ -446,9 +474,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   List<int>? _activeLinkSecret;
+  // L1-3: the random this device committed to when it made the link; it is
+  // revealed only after the native accept of the claim.
+  List<int>? _activeLinkSourceRandom;
   void _clearLinkSecret() {
     _activeLinkSecret?.fillRange(0, _activeLinkSecret!.length, 0);
     _activeLinkSecret = null;
+    _activeLinkSourceRandom?.fillRange(0, _activeLinkSourceRandom!.length, 0);
+    _activeLinkSourceRandom = null;
   }
 
   DeviceLinkClaimView? pendingDeviceLinkClaim;
@@ -1744,6 +1777,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
+      Uint8List? genesis;
       session = await api!.createOwner(
         username: username,
         password: password,
@@ -1751,12 +1785,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         enrollment: enrollment,
         credential: credential,
         setupToken: setupToken,
+        deviceList: genesis = await _signGenesis(enrollment),
       );
       await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
+        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();
@@ -1893,6 +1929,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!_refreshOwned(current, generation)) return;
       devices = list;
       _opErrors.remove(Ops.devices);
+      // L1 repair: take revoked siblings off the list. Never blocks.
+      unawaited(_repairDeviceList(list).catchError((Object _) {}));
+      unawaited(_retryRecoveryDeviceList().catchError((Object _) {}));
+      unawaited(_refreshOwnListState().catchError((Object _) {}));
     } finally {
       if (_refreshOwned(current, generation)) devicesLoaded = true;
     }
@@ -2238,6 +2278,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final enrollment = await api!.reserveRegistrationEnrollment(inviteCode);
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
+      Uint8List? genesis;
       session = await api!.register(
         inviteCode: inviteCode,
         username: username,
@@ -2245,12 +2286,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         deviceName: config.deviceName,
         enrollment: enrollment,
         credential: credential,
+        deviceList: genesis = await _signGenesis(enrollment),
       );
       await _oweInitialKeyPackages(session!);
       await localStore.saveSession(session!);
       await _mlsCrypto?.activateSession(session!);
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
+        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();
@@ -4280,7 +4323,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null) {
         return;
       }
-      await client.revokeDevice(current.token, deviceId);
+      await _revokeWithDeviceList(client, current, deviceId);
       if (deviceId == current.deviceId) {
         await _clearLocalSession();
       } else {
@@ -5110,6 +5153,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (_isMemberLinkedNotice(type)) {
       // Only a membership pass is asked for; nothing local changed.
       _mlsReconcileRequested = true;
+      return;
+    }
+    if (type == 'device_list.updated') {
+      _noteDeviceListUpdated();
       return;
     }
     if (type.startsWith('device.') ||
@@ -6206,7 +6253,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       type.startsWith('reaction.') ||
       type == 'read_receipt.updated' ||
       type == 'mls.revocation.pending' ||
-      type == 'mls.revocation.completed';
+      type == 'mls.revocation.completed' ||
+      type == 'device_list.updated';
 
   /// Refreshes what a run of projection events asks for, once per kind: a
   /// burst of device or membership events costs one device-list and one
@@ -6254,6 +6302,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             receipts.add(event.conversationId!);
           }
         }
+      } else if (type == 'device_list.updated') {
+        _noteDeviceListUpdated();
       } else if (type.startsWith('account.')) {
         if (_noteAccountSyncEvent(event)) recoveryStatus = true;
       } else if (type != 'mls.revocation.pending' &&
@@ -7459,12 +7509,21 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (local == null || local.pending || local.epoch != change.epoch) {
           continue;
         }
-        final adds = change.add.isEmpty
+        // L1 (D94): only devices on their account's approved list are
+        // claimed and added; the rest wait, and no key package is spent.
+        final approvedAdds = await _approvedForAdd(change.add);
+        if (approvedAdds.isEmpty &&
+            change.add.isNotEmpty &&
+            change.remove.isEmpty) {
+          throw DeviceListNotApprovedException(
+              [for (final item in change.add) item.deviceId]);
+        }
+        final adds = approvedAdds.isEmpty
             ? const <DeviceKeyPackage>[]
             : await client.claimDeviceKeyPackages(
                 current.token,
                 change.conversationId,
-                change.add.map((item) => item.deviceId).toList(growable: false),
+                approvedAdds,
               );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (adds.isEmpty && change.remove.isEmpty) continue;
@@ -7508,6 +7567,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     if (staged) await _flushMlsOutbox();
+  }
+
+  /// The device ids of [adds] that the approved-device lists approve now.
+  /// Without an L1 engine every id passes here: such an engine does no MLS
+  /// (the native one gates each add again with the pinned key).
+  Future<List<String>> _approvedForAdd(List<MlsDeviceRef> adds) async {
+    final pins = _deviceListPins;
+    if (pins == null) return [for (final item in adds) item.deviceId];
+    final out = <String>[];
+    for (final item in adds) {
+      try {
+        if (await pins.approvedKey(item.accountId, item.deviceId) != null) {
+          out.add(item.deviceId);
+        }
+      } on Object {
+        // Unavailable: not added now.
+      }
+    }
+    return out;
   }
 
   /// How long a device that is not the change's coordinator waits before it

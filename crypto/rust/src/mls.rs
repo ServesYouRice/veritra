@@ -28,7 +28,6 @@ const CIPHERSUITE: Ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA2
 const MAX_ID_BYTES: usize = 128;
 const PADDING_BYTES: usize = 256;
 const CREDENTIAL_FORMAT_VERSION: u8 = 1;
-const DEVICE_LINK_PROTOCOL_VERSION: &[u8] = b"veritra-device-link-v2";
 const DEVICE_LINK_TRANSCRIPT_DOMAIN: &[u8] = b"veritra-device-link-transcript";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,51 +174,6 @@ impl MlsDevice {
 
     pub fn signing_public_key(&self) -> &[u8] {
         self.signer.public()
-    }
-
-    /// This device's side of [`derive_device_link_verification`]; see there
-    /// for what the 8-digit SAS (about 26.6 bits) protects and when.
-    // Explicit transcript fields mirror the ABI and make their order reviewable.
-    #[allow(clippy::too_many_arguments)]
-    pub fn derive_device_link_verification(
-        &self,
-        protocol_version: &[u8],
-        server_origin: &[u8],
-        link_id: &[u8],
-        link_secret: &[u8],
-        peer_device_id: &[u8],
-        peer_signing_public_key: &[u8],
-        link_nonce: &[u8],
-        local_is_existing_device: bool,
-    ) -> Result<DeviceLinkVerification, MlsError> {
-        let (existing_device_id, existing_key, new_device_id, new_key) = if local_is_existing_device
-        {
-            (
-                self.device_id.as_slice(),
-                self.signing_public_key(),
-                peer_device_id,
-                peer_signing_public_key,
-            )
-        } else {
-            (
-                peer_device_id,
-                peer_signing_public_key,
-                self.device_id.as_slice(),
-                self.signing_public_key(),
-            )
-        };
-        derive_device_link_verification(
-            protocol_version,
-            server_origin,
-            link_id,
-            link_secret,
-            &self.account_id,
-            link_nonce,
-            existing_device_id,
-            existing_key,
-            new_device_id,
-            new_key,
-        )
     }
 
     /// Creates a key package and signs the server's enrollment proof with
@@ -1023,82 +977,9 @@ impl MlsDevice {
     }
 }
 
-/// L0 device-link verification (`veritra-device-link-v2`).
-///
-/// The SAS is 8 decimal digits: the first four MAC bytes modulo 10^8, about
-/// 26.6 bits (the modulo bias is negligible). It is not a hash of public
-/// data. The SAS, the claim tag and the approval tag are HMAC-SHA256 over the
-/// transcript under keys derived from the 128-bit link secret, which reaches
-/// the new device only out of band (QR or typed code). A relay that does not
-/// know the secret cannot evaluate them, so it cannot grind substitute keys
-/// towards a matching SAS. A substituted new-device key fails the claim tag,
-/// so the old device never asks for or accepts the typed SAS; a substituted
-/// old-device key fails the approval tag, so the new device saves no
-/// session. This replaces a commit-then-reveal
-/// step (TASK-010/TASK-048). The 8 digits stand alone only if the secret
-/// leaks: an active relay that knows it chooses both keys and needs about
-/// 10^4 key generations per side for the two SAS values to collide. Any
-/// transcript change needs a new protocol string and a new stable vector.
-// Keep the complete ordered transcript visible at each derivation call.
-#[allow(clippy::too_many_arguments)]
-pub fn derive_device_link_verification(
-    protocol_version: &[u8],
-    server_origin: &[u8],
-    link_id: &[u8],
-    link_secret: &[u8],
-    account_id: &[u8],
-    link_nonce: &[u8],
-    existing_device_id: &[u8],
-    existing_signing_public_key: &[u8],
-    new_device_id: &[u8],
-    new_signing_public_key: &[u8],
-) -> Result<DeviceLinkVerification, MlsError> {
-    if server_origin.is_empty()
-        || server_origin.len() > 2048
-        || link_id.is_empty()
-        || link_id.len() > MAX_ID_BYTES
-        || link_secret.len() != 16
-        || protocol_version != DEVICE_LINK_PROTOCOL_VERSION
-        || account_id.is_empty()
-        || account_id.len() > MAX_ID_BYTES
-        || existing_device_id.is_empty()
-        || existing_device_id.len() > MAX_ID_BYTES
-        || new_device_id.is_empty()
-        || new_device_id.len() > MAX_ID_BYTES
-        || link_nonce.len() != 32
-        || existing_signing_public_key.len() != 32
-        || new_signing_public_key.len() != 32
-    {
-        return Err(MlsError::InvalidIdentity);
-    }
-    let mut transcript = Vec::with_capacity(256);
-    append_transcript_field(&mut transcript, DEVICE_LINK_TRANSCRIPT_DOMAIN)?;
-    append_transcript_field(&mut transcript, protocol_version)?;
-    append_transcript_field(&mut transcript, server_origin)?;
-    append_transcript_field(&mut transcript, link_id)?;
-    append_transcript_field(&mut transcript, account_id)?;
-    append_transcript_field(&mut transcript, link_nonce)?;
-    append_transcript_field(&mut transcript, existing_device_id)?;
-    append_transcript_field(&mut transcript, existing_signing_public_key)?;
-    append_transcript_field(&mut transcript, new_device_id)?;
-    append_transcript_field(&mut transcript, new_signing_public_key)?;
-    let transcript_hash = Sha256::digest(&transcript).to_vec();
-    let sas_mac = link_mac(link_secret, b"veritra-link-sas-v2", &transcript);
-    let claim_tag = link_mac(link_secret, b"veritra-link-claim-v2", &transcript).to_vec();
-    let approval_tag = link_mac(link_secret, b"veritra-link-approval-v2", &transcript).to_vec();
-    let sas_value = u32::from_be_bytes(
-        sas_mac[..4]
-            .try_into()
-            .map_err(|_| MlsError::InvalidState)?,
-    ) % 100_000_000;
-    Ok(DeviceLinkVerification {
-        transcript_hash,
-        sas: format!("{sas_value:08}"),
-        claim_tag,
-        approval_tag,
-        sas_bytes: sas_mac[..4].to_vec(),
-    })
-}
+// The v2 link derivation (`veritra-device-link-v2`) was retired in ABI 18
+// (L1-3): device links use `mls::link_v3` with a commitment to the
+// existing device's random before the new device's values are known.
 
 /// Fixed 128-bit input; only the one-way locator is sent to the server.
 pub fn device_link_locator(secret: &[u8]) -> Result<Vec<u8>, MlsError> {
@@ -1106,32 +987,6 @@ pub fn device_link_locator(secret: &[u8]) -> Result<Vec<u8>, MlsError> {
         return Err(MlsError::InvalidIdentity);
     }
     Ok(Sha256::digest([b"veritra-link-locator-v2".as_slice(), secret].concat()).to_vec())
-}
-
-// HMAC (RFC 2104), followed by HKDF Extract/one-block Expand (RFC 5869).
-// Keys here are at most 32 bytes; accept general keys for standard vectors.
-fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut block = [0u8; 64];
-    if key.len() > 64 {
-        block[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        block[..key.len()].copy_from_slice(key);
-    }
-    let mut inner = Sha256::new();
-    inner.update(block.map(|b| b ^ 0x36));
-    inner.update(message);
-    let mut outer = Sha256::new();
-    outer.update(block.map(|b| b ^ 0x5c));
-    outer.update(inner.finalize());
-    outer.finalize().into()
-}
-
-fn link_mac(secret: &[u8], label: &[u8], transcript: &[u8]) -> [u8; 32] {
-    let prk = hmac_sha256(&[0u8; 32], secret);
-    let mut info = label.to_vec();
-    info.push(1);
-    let key = hmac_sha256(&prk, &info);
-    hmac_sha256(&key, transcript)
 }
 
 /// Number of digits in a conversation safety number: twelve groups of five,
@@ -2485,81 +2340,6 @@ mod tests {
         assert_ne!(&proof[2..10], b"MLS 1.0 ");
     }
 
-    #[test]
-    fn device_link_sas_is_credential_bound_and_symmetric() {
-        let existing = MlsDevice::new(b"account-vector", b"device-existing").unwrap();
-        let new = MlsDevice::new(b"account-vector", b"device-new").unwrap();
-        let nonce = [0x42; 32];
-        let from_existing = existing
-            .derive_device_link_verification(
-                DEVICE_LINK_PROTOCOL_VERSION,
-                b"https://example.test",
-                b"link_01",
-                &[0x55; 16],
-                b"device-new",
-                new.signing_public_key(),
-                &nonce,
-                true,
-            )
-            .unwrap();
-        let from_new = new
-            .derive_device_link_verification(
-                DEVICE_LINK_PROTOCOL_VERSION,
-                b"https://example.test",
-                b"link_01",
-                &[0x55; 16],
-                b"device-existing",
-                existing.signing_public_key(),
-                &nonce,
-                false,
-            )
-            .unwrap();
-        assert_eq!(from_existing, from_new);
-
-        let mut substituted_key = new.signing_public_key().to_vec();
-        substituted_key[0] ^= 1;
-        let substituted = existing
-            .derive_device_link_verification(
-                DEVICE_LINK_PROTOCOL_VERSION,
-                b"https://example.test",
-                b"link_01",
-                &[0x55; 16],
-                b"device-new",
-                &substituted_key,
-                &nonce,
-                true,
-            )
-            .unwrap();
-        assert_ne!(from_existing, substituted);
-
-        let mismatched_nonce = existing
-            .derive_device_link_verification(
-                DEVICE_LINK_PROTOCOL_VERSION,
-                b"https://example.test",
-                b"link_01",
-                &[0x55; 16],
-                b"device-new",
-                new.signing_public_key(),
-                &[0x43; 32],
-                true,
-            )
-            .unwrap();
-        assert_ne!(from_existing, mismatched_nonce);
-        assert_eq!(
-            existing.derive_device_link_verification(
-                b"veritra-device-link-v1",
-                b"https://example.test",
-                b"link_01",
-                &[0x55; 16],
-                b"device-new",
-                new.signing_public_key(),
-                &nonce,
-                true,
-            ),
-            Err(MlsError::InvalidIdentity)
-        );
-    }
-
     const SAFETY_V2_VECTOR_HASH: [u8; 32] = [
         199, 97, 106, 126, 125, 100, 152, 75, 31, 62, 200, 8, 86, 156, 164, 244, 18, 235, 179, 91,
         174, 229, 24, 52, 183, 179, 180, 38, 66, 118, 82, 204,
@@ -2637,159 +2417,7 @@ mod tests {
     }
 
     #[test]
-    fn link_hmac_and_hkdf_match_rfc_vectors() {
-        assert_eq!(
-            hmac_sha256(&[0x0b; 20], b"Hi There").to_vec(),
-            vec![
-                0xb0, 0x34, 0x4c, 0x61, 0xd8, 0xdb, 0x38, 0x53, 0x5c, 0xa8, 0xaf, 0xce, 0xaf, 0x0b,
-                0xf1, 0x2b, 0x88, 0x1d, 0xc2, 0x00, 0xc9, 0x83, 0x3d, 0xa7, 0x26, 0xe9, 0x37, 0x6c,
-                0x2e, 0x32, 0xcf, 0xf7
-            ]
-        );
-        assert_eq!(
-            hmac_sha256(
-                &[0xaa; 131],
-                b"Test Using Larger Than Block-Size Key - Hash Key First"
-            )
-            .to_vec(),
-            vec![
-                0x60, 0xe4, 0x31, 0x59, 0x1e, 0xe0, 0xb6, 0x7f, 0x0d, 0x8a, 0x26, 0xaa, 0xcb, 0xf5,
-                0xb7, 0x7f, 0x8e, 0x0b, 0xc6, 0x21, 0x37, 0x28, 0xc5, 0x14, 0x05, 0x46, 0x04, 0x0f,
-                0x0e, 0xe3, 0x7f, 0x54
-            ]
-        );
-        let prk = hmac_sha256(&[0; 32], &[0x0b; 22]);
-        assert_eq!(
-            prk.to_vec(),
-            vec![
-                0x19, 0xef, 0x24, 0xa3, 0x2c, 0x71, 0x7b, 0x16, 0x7f, 0x33, 0xa9, 0x1d, 0x6f, 0x64,
-                0x8b, 0xdf, 0x96, 0x59, 0x67, 0x76, 0xaf, 0xdb, 0x63, 0x77, 0xac, 0x43, 0x4c, 0x1c,
-                0x29, 0x3c, 0xcb, 0x04
-            ]
-        );
-        assert_eq!(
-            hmac_sha256(&prk, &[1]).to_vec(),
-            vec![
-                0x8d, 0xa4, 0xe7, 0x75, 0xa5, 0x63, 0xc1, 0x8f, 0x71, 0x5f, 0x80, 0x2a, 0x06, 0x3c,
-                0x5a, 0x31, 0xb8, 0xa1, 0x1f, 0x5c, 0x5e, 0xe1, 0x87, 0x9e, 0xc3, 0x45, 0x4e, 0x5f,
-                0x3c, 0x73, 0x8d, 0x2d
-            ]
-        );
-    }
-
-    #[test]
-    fn link_v2_binds_every_context_field_and_separates_directions() {
-        let fields: Vec<Vec<u8>> = vec![
-            DEVICE_LINK_PROTOCOL_VERSION.to_vec(),
-            b"https://example.test".to_vec(),
-            b"link_01".to_vec(),
-            vec![0x55; 16],
-            b"acct_01".to_vec(),
-            vec![0x11; 32],
-            b"dev_old".to_vec(),
-            vec![0x22; 32],
-            b"dev_new".to_vec(),
-            vec![0x33; 32],
-        ];
-        let derive = |f: &[Vec<u8>]| {
-            derive_device_link_verification(
-                &f[0], &f[1], &f[2], &f[3], &f[4], &f[5], &f[6], &f[7], &f[8], &f[9],
-            )
-        };
-        let expected = derive(&fields).unwrap();
-        assert_ne!(expected.claim_tag, expected.approval_tag);
-        for i in 0..fields.len() {
-            let mut changed = fields.clone();
-            changed[i][0] ^= 1;
-            match derive(&changed) {
-                Ok(actual) => {
-                    assert_ne!(expected.claim_tag, actual.claim_tag);
-                    assert_ne!(expected.approval_tag, actual.approval_tag);
-                }
-                Err(e) => assert_eq!(e, MlsError::InvalidIdentity),
-            }
-        }
-        for length in [0, 15, 17] {
-            let mut changed = fields.clone();
-            changed[3] = vec![1; length];
-            assert_eq!(derive(&changed), Err(MlsError::InvalidIdentity));
-        }
-    }
-
-    #[test]
-    fn a_relay_cannot_compute_the_sas_from_public_link_data() {
-        // TASK-010/TASK-048: grinding needs the SAS as a function of values
-        // the relay sees. Two secrets give the same public transcript hash
-        // but unrelated SAS values and tags, so a relay without the secret
-        // has nothing to grind against.
-        let derive = |secret: &[u8], new_key: &[u8]| {
-            derive_device_link_verification(
-                DEVICE_LINK_PROTOCOL_VERSION,
-                b"https://example.test",
-                b"link_01",
-                secret,
-                b"acct_01",
-                &[0x11; 32],
-                b"dev_old",
-                &[0x22; 32],
-                b"dev_new",
-                new_key,
-            )
-            .unwrap()
-        };
-        let real = derive(&[0x55; 16], &[0x33; 32]);
-        let guessed = derive(&[0x56; 16], &[0x33; 32]);
-        assert_eq!(real.transcript_hash, guessed.transcript_hash);
-        assert_ne!(real.sas_bytes, guessed.sas_bytes);
-        assert_ne!(real.claim_tag, guessed.claim_tag);
-        assert_ne!(real.approval_tag, guessed.approval_tag);
-        // A substituted new-device key needs a fresh claim tag under the
-        // secret; the old device rejects the honest one for it.
-        let substituted = derive(&[0x55; 16], &[0x34; 32]);
-        assert_ne!(real.claim_tag, substituted.claim_tag);
-        assert_eq!(real.sas.len(), 8);
-    }
-
-    #[test]
-    fn device_link_transcript_has_a_stable_vector() {
-        let verification = derive_device_link_verification(
-            DEVICE_LINK_PROTOCOL_VERSION,
-            b"https://example.test",
-            b"link_01",
-            &[0x55; 16],
-            b"acct_01",
-            &[0x11; 32],
-            b"dev_old",
-            &[0x22; 32],
-            b"dev_new",
-            &[0x33; 32],
-        )
-        .unwrap();
-        assert_eq!(
-            verification.transcript_hash,
-            vec![
-                0x9b, 0xba, 0xf8, 0xd8, 0xf6, 0x05, 0x79, 0x2d, 0xae, 0xa6, 0xc0, 0x2d, 0x88, 0x4a,
-                0x4e, 0x12, 0x4d, 0x26, 0x34, 0x61, 0xb9, 0x4c, 0xca, 0xd6, 0xf8, 0x04, 0xb6, 0x74,
-                0xc0, 0x10, 0x96, 0xd8
-            ]
-        );
-        assert_eq!(
-            verification.claim_tag,
-            vec![
-                0x44, 0x6c, 0xdb, 0xea, 0x4d, 0x4b, 0xfa, 0x24, 0xd7, 0x0c, 0xda, 0xc8, 0x39, 0xde,
-                0x69, 0xc6, 0x49, 0x04, 0x91, 0x4f, 0x32, 0x32, 0x77, 0xdc, 0xb1, 0xcb, 0xc2, 0x1e,
-                0xe3, 0xed, 0x6e, 0x9f
-            ]
-        );
-        assert_eq!(
-            verification.approval_tag,
-            vec![
-                0xfc, 0x82, 0xfe, 0x05, 0x43, 0xa9, 0x2b, 0x13, 0xb4, 0x54, 0xe3, 0x88, 0xa6, 0x86,
-                0x71, 0xe0, 0xe3, 0x58, 0x72, 0x05, 0x34, 0x28, 0x1e, 0x88, 0xd8, 0x89, 0x5b, 0xf5,
-                0x4b, 0x97, 0x88, 0x11
-            ]
-        );
-        assert_eq!(verification.sas, "94112245");
+    fn device_link_locator_has_a_stable_vector() {
         assert_eq!(
             device_link_locator(&[0x55; 16]).unwrap(),
             vec![
@@ -2798,6 +2426,9 @@ mod tests {
                 0x6a, 0x48, 0xe2, 0x5a
             ]
         );
+        for size in [0, 15, 17] {
+            assert!(device_link_locator(&vec![1; size]).is_err());
+        }
     }
 
     // ---- C7 (ABI 13): commit outcome, exporter root, epoch, keys ----

@@ -177,8 +177,9 @@ until the package that builds it lands and adds its change-log entry.
 
 ## Device linking
 
-[L0 device link v2](designs/L0-device-link-v2.md) specifies the current
-transcript and tag derivation. Both devices use their configured canonical
+[L0 device link v2](designs/L0-device-link-v2.md) specifies the secret-keyed
+tags; [L1-3](designs/L1-3-link-commitment.md) specifies the current protocol,
+`veritra-device-link-v4` on the K2 route, which adds commit-then-reveal. Both devices use their configured canonical
 server origin. The old device generates a 128-bit secret; QR and manual
 input carry its 26-character base32 encoding. HTTP carries only a one-way
 locator. The old device verifies the claim tag before asking for the typed
@@ -186,22 +187,24 @@ safety code; the new device verifies the separate approval tag and its
 reserved identity before saving a session. JSON API redirects are refused.
 Legacy links must be recreated. Existing account/device sessions remain valid.
 
-SAS strength (TASK-010, TASK-048). The SAS is 8 digits, about 26.6 bits.
-The audit's grinding attack assumes the SAS is a hash of values the relay
-sees, so a relay that substitutes both keys can search for a collision
-(about 10^4 key generations per side). Under L0 that does not hold: the
-SAS, the claim tag and the approval tag are MACs keyed from the 128-bit
-secret, which travels only out of band. A relay without the secret cannot
-evaluate any of them. A substituted new-device key fails the claim tag, so
-the old device never asks for or accepts the typed SAS; a substituted
-old-device key fails the approval tag, so the new device saves no session. The
-secret plays the role a commit-then-reveal step would, so none is added.
-The residual case is a leaked secret (a QR seen by someone who also
-controls the relay): the attacker can then forge both tags and grind the
-SAS, which becomes the only check. Closing that needs a key commitment
-before the nonce is revealed, or a longer SAS. That is an owner decision
-(Q-001), not a defect in v2. Protocol v3 (`mls/link_v3.rs`) uses the same
-construction. Any transcript change needs a new protocol string and vector.
+SAS strength (TASK-010, TASK-048, D100). The SAS is 8 digits, about 26.6
+bits. The SAS, the claim tag and the approval tag are MACs keyed from the
+128-bit QR secret, so a relay without the secret can evaluate none of them.
+The case L0 left open is a leaked secret: someone who saw the QR code and
+also controls the relay. That attacker can forge both tags, so the SAS is
+the only check left. Before L1-3 it could also be ground, and more cheaply
+than the audit assumed: the old device built its transcript from the nonce
+returned on refresh, so the relay could grind that nonce with HMACs alone
+(4 of 8 digits after 3,645 tries in a test; all 8 in minutes). Protocol v4
+(L1-3, ABI 18) adds commit-then-reveal. The old device commits to a fresh
+random before the new device exists. The new device sends its own fresh
+random in the claim. The old device reveals its random only after its native
+accept has fixed that claim, and the new device shows the code only once the
+random opens the commitment. Both codes depend on a random the relay had to
+fix before it saw it, so it gets one guess of about 10^-8 per run. The 8
+digits are kept (D100). The v2 derivation was removed from the ABI. Any
+transcript change still needs a new protocol string and vector
+(`testing/vectors/device-link-v4.json`).
 
 ### What L1 must provide (TASK-006)
 
@@ -227,7 +230,10 @@ a real account. L1, the signed approved-device list, must give the core:
 With L1 the identity-only check on past-epoch senders (TASK-008) can also
 compare signing keys.
 
-**Built so far: L1-1, the crypto layer (ABI 14).** The signed list format
+**Built: L1-1 (crypto, ABI 14), L1-2 (server, migration 0051) and L1-3
+(mobile, local schema 26); see the change log.** The design is
+[`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
+**L1-1, the crypto layer (ABI 14).** The signed list format
 and its verifier, the signing calls, the recovery signer, the expected-key
 add and the per-leaf pair outputs are in; see the change log entry "L1-1"
 below. The trust anchor still has no caller: pins, the add gate, the holds
@@ -449,6 +455,112 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1-3, device-link commit-then-reveal, ABI 18 (2026-11-07, D100 A;
+  TASK-010, TASK-048):** design
+  [`L1-3-link-commitment.md`](designs/L1-3-link-commitment.md). Protocol
+  `veritra-device-link-v4` on the K2 route. The existing device commits to a
+  fresh 32-byte random at create (`source_commitment`). The new device adds
+  its own random to the claim (`recipient_random`, a native output). The
+  existing device reveals its random only after its native accept of the
+  claim is committed, and the new device opens the commitment, read only,
+  before it shows the 8-digit SAS. A relay holding the QR secret therefore
+  gets one 10^-8 guess per run. The approval tag still covers only the claim
+  transcript, which carries the commitment, so the frozen pending state never
+  needs the reveal. **ABI 18 is not backward compatible:** the K2 control
+  context gains two fields; `receive_begin` returns no SAS; `source_accept`
+  takes the source random; `inspect` reports `has_sas`; there are new ops
+  12 `reveal_sas` and 13 `source_commitment`; and
+  `pm_crypto_device_link_transcript_hash` (v2) is removed. Native transfer
+  records move to item version 2. Version-1 (v3) records are dropped on load,
+  never refused. A history copy in flight across the upgrade cannot finish: its
+  progress row keeps retrying until it expires (at most 7 days) and the device
+  links again (demo data only; mapping the missing record to an abandoned
+  copy is a follow-up). Server migration 0060 adds four write-once columns,
+  revokes pending and claimed links that have no commitment, adds `POST
+  .../v3/{id}/reveal` (source only) and refuses approval before the reveal
+  (`409 reveal_required`). The source's session-only reveal and approve
+  routes move from the credential budget to the signed-in budget, exact clean
+  spelling only. The history transfer keeps its
+  `veritra-device-link-v3` label. Vector `testing/vectors/device-link-v4.json`
+  (independent Python, checked by Rust). No MLS group, payload or local schema
+  change. Open: the server's legacy v2 link routes still exist but no client
+  can speak v2. Remove them after L1 lands. **Needs the independent crypto
+  review before release.**
+- **L1-3, approved-device list, mobile (2026-11-07, D94, D100):** local
+  schema 26 (21 to 25 are reserved for other packages); no ABI, payload or
+  server change. Design: [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
+  - **Pins.** `local_device_list_heads`, `_keys`, `_conflicts` and
+    `local_approval_leaves` (never in a backup, cleared with the identity).
+    `DeviceListPins` (`mobile/lib/core/device_lists.dart`) pins a chain on
+    first sight (whole chain verified in Rust), then moves only forward with
+    `device_list_check_step`; it re-reads the pinned head on every refresh, so
+    another statement at the pinned version is checked as a whole chain and,
+    if it verifies, becomes a sticky conflict with both statements kept. A
+    lower head, a gap or a bad step is "unavailable" and changes nothing.
+    Refreshes are rate-limited to one a minute per account, and an own
+    `device_list.updated` event clears the limit.
+  - **The add gate (TASK-006).** Every staged add (conversation creation,
+    reconcile, re-adds) uses change list version 2 with the signing key the
+    pin lists for that device, never one the server sent; Rust refuses a key
+    package with another key. A device not approved now is neither claimed nor
+    staged (`DeviceListNotApprovedException`, the change stays pending with
+    the TASK-029 backoff). Without pins nothing is added (fail closed).
+  - **Receiving.** A commit or Welcome is applied as before, never refused for
+    an L1 reason. Every leaf of the group (`pm_crypto_group_members`) is then
+    judged (`approved`, `removed`, `unapproved`, `checking`) and the verdicts
+    commit in the same transaction as the group state. A Welcome's roster is
+    also checked against the conversation's participants. Judging waits at
+    most 10 s per leaf and 15 s per group for the server, then reads only the
+    stored pins.
+  - **The approval hold.** While any leaf is not `approved`, the conversation
+    encrypts nothing (messages, call signals, self-updates:
+    `ConversationApprovalHeldException`); a removal commit is still allowed.
+    The hold lifts only on local evidence: a commit that removes the leaf, or
+    a refreshed pin that approves it. A group with no rows (from before L1, or
+    rows lost after an own commit) is judged before it is next used.
+  - **Message verdicts.** A message from a leaf that is not `approved` or
+    `removed` is replaced by an `unapproved:` placeholder; its text is not
+    stored. A `removed` leaf's messages are shown (not yet marked).
+  - **Signing.** Genesis at setup and registration; change 2 at K2 link
+    approval, built from the transcript the native K2 state verified (claim
+    tag and typed code) and only after the approval request exists, so never
+    before both checks (TASK-010/048 condition); change 3 at revoke and as a
+    repair for siblings the server shows revoked; change 5 at recovery-key
+    set and replace (`rk_list_pub`); the recovery seed is held at a K0-R claim
+    and change 4 is posted at completion, before key packages; change 6 (the
+    migration genesis) from Settings after the user ticks their devices. Every
+    signed version is re-signed on a 409 `device_list_conflict`, up to 3 times.
+  - **Not built yet (follow-ups):** the retype fallback when no recovery seed
+    is held and the confirmation of a pre-L1 recovery key (both need a
+    screen); complete adds (staging every approved device that is not a leaf,
+    not only the ones the server lists); the "removed" mark on messages; the
+    per-conversation state lines ("Checking <name>'s devices"); the new
+    device's anchor only logs a mismatch. Change list version 1 is still
+    accepted by Rust; nothing in the app sends it any more.
+  - **TASK-010 and TASK-048 (commit-then-reveal and key commitment in device
+    linking, D100 A):** built in their own change (see its entry); this step
+    only signs change 2 after the link checks.
+  - **Independent review fixes:** change 2 names the pair whose v3
+    transcript hash, recomputed in Dart (`k2_transcript.dart`, the
+    `link_v3.rs` vector), equals the one native verified; before, the
+    re-fetched record's key was signed, and a server could swap it. Every
+    judgment knows the participants, so a re-judge by list alone no longer
+    undoes the Welcome's roster check. A pin that does not approve a pair a
+    decision needs is fetched again past the one-minute limit (at most every
+    5 s per account), and a sender with no row or an unapproved row is judged
+    again before its text is dropped, so a device linked within a minute of
+    the last fetch is not hidden for good. The signed change 4 is stored and
+    posted again until the server takes it. Setup and registration pin their
+    own genesis. Call signals from a leaf that is not approved are dropped.
+  - **Known gaps after review:** a leaf approved once is not judged again
+    (a device removed by change 3 stays approved until its MLS removal
+    lands, so D68's residual is not closed yet); a conflict is sticky with
+    no clear path, and a made-up genesis from the server alone triggers it;
+    text from a `checking` sender is dropped, not kept hidden (owner
+    question); judging a commit can wait about 25 s for the server inside
+    the crypto queue, more than a 20 s background wake; first sight refuses
+    chains over 256 versions.
+
 - **L1-1, approved-device list, crypto layer, ABI 14 (2026-11-07, D94):**
   design [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
   Additive except for one call (`pm_crypto_recovery_key_derive` gains the
@@ -559,13 +671,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     expected key on adds and the changed-key refusal; it deliberately does
     not refuse in `process_commit` or `join_group` for an L1 reason (D94), so
     the task closes with L1-3, which judges the pairs against the pins and
-    holds. TASK-010 and TASK-048 (SAS commit-then-reveal): L1 needs nothing
-    more from the crypto layer. L0 and K2 already authenticate the new
-    device's key to the old device under a MAC keyed by the QR-only secret,
-    and L1 only has the old device sign change 2 after that check; the
-    residual (a leaked QR secret held by whoever also controls the relay) is
-    unchanged by L1 and stays the owner decision Q-001. L1-3 must sign
-    change 2 only after the claim tag and typed code verify.
+    holds. TASK-010 and TASK-048 (SAS commit-then-reveal): built with L1-3
+    (D100, ABI 18, [design](designs/L1-3-link-commitment.md)); see the L1-3
+    change-log entry. L1-3 must sign change 2 only after the claim tag and
+    the typed code verify, which under v4 also means after the reveal.
   - **Remains for L1-3 (mobile)** and the other steps: pins and the keys
     table (local schema), fetch and verify, the add gate and complete adds,
     judging commits and Welcomes against the pins (and a Welcome roster
@@ -1356,10 +1465,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     the server or app must refuse mixed ABI versions (for example a minimum
     client version on enrollment and sync). This belongs with the release
     gates in STATE.md.
-  - TASK-010, TASK-048: no protocol change. L0's secret-keyed SAS and tags
-    already stop a relay from grinding keys; the doc comments now state the
-    8-digit SAS (about 26.6 bits) and the leaked-secret residual. See
-    "Device linking".
+  - TASK-010, TASK-048: no protocol change here. L0's secret-keyed SAS and
+    tags already stop a relay without the secret from grinding keys; the doc
+    comments now state the 8-digit SAS (about 26.6 bits) and the
+    leaked-secret residual. Superseded by L1-3 (ABI 18), which adds
+    commit-then-reveal. See "Device linking".
   - Not closed here: which identities may hold which keys, and who may
     commit or invite (TASK-006), needs the L1 approved-device list. See
     "What L1 must provide".

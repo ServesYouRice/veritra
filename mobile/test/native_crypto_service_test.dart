@@ -11,6 +11,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'l1_test_lists.dart';
 
 /// Two real OpenMLS devices exchanging every message payload type through
 /// [NativeCryptoService], with the server's role played by the test.
@@ -126,7 +127,7 @@ void main() {
     // A second service on the same store advances the committed state, as a
     // backup restore or a second app instance would.
     final other =
-        NativeCryptoService(bindings: bindings, localStore: alice.store);
+        TestNativeCryptoService(bindings: bindings, localStore: alice.store);
     await other.activateSession(const Session(
       baseUrl: 'https://localhost:8443',
       token: 'token',
@@ -164,7 +165,7 @@ void main() {
             sealedState: oldFormat),
         0);
     final restarted =
-        NativeCryptoService(bindings: bindings, localStore: store);
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     const session = Session(
       baseUrl: 'https://localhost:8443',
       token: 'token',
@@ -503,7 +504,8 @@ class _Client {
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
     final store = MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,

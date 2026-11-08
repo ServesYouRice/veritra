@@ -46,24 +46,4 @@ class TestOnlyCryptoService
 
   @override
   Future<String> deviceLinkLocator(List<int> secret) async => "a" * 64;
-
-  @override
-  Future<DeviceLinkVerification> deriveDeviceLinkVerification({
-    required String accountId,
-    required String protocolVersion,
-    required String serverOrigin,
-    required String linkId,
-    required List<int> linkSecret,
-    required List<int> linkNonce,
-    required String peerDeviceId,
-    required List<int> peerSigningKey,
-    required bool localIsExistingDevice,
-  }) async {
-    return DeviceLinkVerification(
-      transcriptHash: List<int>.filled(32, 7),
-      sas: '65432101',
-      claimTag: List<int>.filled(32, 8),
-      approvalTag: List<int>.filled(32, 9),
-    );
-  }
 }
