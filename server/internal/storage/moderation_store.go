@@ -460,7 +460,16 @@ func (s *Store) GetModerationState(ctx context.Context, communityID, actorAccoun
 			state.InvitesPausedUntil = &end
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, slow_mode_seconds FROM channels WHERE community_id = ? ORDER BY created_at, id`, communityID)
+	// Same visibility as the channel list: a private channel is shown only to
+	// members of its conversation, so its id and setting do not leak.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ch.id, ch.slow_mode_seconds
+		FROM channels ch
+		LEFT JOIN community_channel_routes r ON r.channel_id = ch.id
+		WHERE ch.community_id = ?1
+		  AND (r.channel_id IS NULL OR r.access_mode <> 'private'
+		       OR EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = r.conversation_id AND m.account_id = ?2))
+		ORDER BY ch.created_at, ch.id`, communityID, actorAccountID)
 	if err != nil {
 		return ModerationState{}, err
 	}

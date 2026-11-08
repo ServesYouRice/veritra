@@ -3254,7 +3254,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get moderationDetail =>
-      'Забране, пауза за чланове, спори режим, паузиране позивница и дневник активности';
+      'Забране, утишавање чланова, спори режим, паузирање позивница и дневник активности';
 
   @override
   String memberModerateTooltip(String username) {
@@ -6635,7 +6635,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get moderationDetail =>
-      'Zabrane, pauza za članove, spori režim, pauzirane pozivnica i dnevnik aktivnosti';
+      'Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti';
 
   @override
   String memberModerateTooltip(String username) {

@@ -246,6 +246,25 @@ void main() {
       await tester.pumpAndSettle();
       expect(api.moderation.last, 'ban:comm_1:acct_alice');
       expect(find.byTooltip('Moderate @alice'), findsNothing);
+      // The banned account leaves the channel's local roster, as for a removal.
+      state.membersByConversation['conv_chan']
+          ?.forEach((m) => expect(m.accountId, isNot('acct_alice')));
+    });
+
+    testWidgets('a moderator can ban but not lift bans or pause invitations',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      state.channelsByCommunity = <String, List<Channel>>{};
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Lift ban for @bob'), findsNothing);
+      expect(find.text('Pause invitations'), findsNothing);
+      expect(find.text('ACTIVITY LOG'), findsNothing);
+      expect(find.text('BANNED ACCOUNTS'), findsOneWidget);
     });
 
     testWidgets('a plain member sees no moderation entry', (tester) async {
@@ -323,21 +342,23 @@ void main() {
 
       expect(find.text('@owner'), findsOneWidget);
       expect(find.text('@alice'), findsOneWidget);
-      expect(find.byTooltip('Remove @alice'), findsOneWidget);
-      expect(find.byTooltip('Remove @owner'), findsNothing);
+      expect(find.byTooltip('Moderate @alice'), findsOneWidget);
+      expect(find.byTooltip('Moderate @owner'), findsNothing);
       expect(find.text('INVITATION LINKS'), findsOneWidget);
       expect(find.text('JOIN REQUESTS'), findsOneWidget);
       await tester.scrollUntilVisible(find.text('Leave community'), 200);
       expect(find.text('Leave community'), findsOneWidget);
-      await tester.scrollUntilVisible(find.byTooltip('Remove @alice'), -200);
+      await tester.scrollUntilVisible(find.byTooltip('Moderate @alice'), -200);
 
-      await tester.tap(find.byTooltip('Remove @alice'));
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
       await tester.pumpAndSettle();
       expect(find.text('Remove @alice from the community?'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
       await tester.pumpAndSettle();
       expect(api.removed, <String>['comm_1:acct_alice']);
-      expect(find.byTooltip('Remove @alice'), findsNothing);
+      expect(find.byTooltip('Moderate @alice'), findsNothing);
     });
 
     testWidgets('a plain member can only leave', (tester) async {
@@ -356,7 +377,7 @@ void main() {
       )));
       await tester.pumpAndSettle();
 
-      expect(find.byTooltip('Remove @owner'), findsNothing);
+      expect(find.byTooltip('Moderate @owner'), findsNothing);
       expect(find.text('INVITATION LINKS'), findsNothing);
       expect(find.text('JOIN REQUESTS'), findsNothing);
       expect(find.text('Leave community'), findsOneWidget);
@@ -510,7 +531,9 @@ class _Api extends ApiClient {
       String token, String communityId, String accountId) async {
     moderation.add('ban:$communityId:$accountId');
     gone.add(accountId);
-    return const CommunityRemoval(<({String conversationId, int? eventId})>[]);
+    return const CommunityRemoval(<({String conversationId, int? eventId})>[
+      (conversationId: 'conv_chan', eventId: 9),
+    ]);
   }
 
   @override

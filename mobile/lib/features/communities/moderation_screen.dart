@@ -102,7 +102,9 @@ class _ModerationScreenState extends State<ModerationScreen> {
     final results = await Future.wait<Object?>(<Future<Object?>>[
       state.loadModerationState(_communityId),
       state.loadCommunityBans(_communityId),
-      state.loadModerationEvents(_communityId),
+      widget.canManageInvites
+          ? state.loadModerationEvents(_communityId)
+          : Future<Object?>.value(null),
       state.loadCommunityMembers(_communityId),
     ]);
     if (!mounted) return;
@@ -218,21 +220,31 @@ class _ModerationScreenState extends State<ModerationScreen> {
                 TileGroup(
                   children: <Widget>[
                     ListTile(
-                      leading: Icon(paused == null
-                          ? Icons.link
-                          : Icons.pause_circle_outline),
-                      title: Text(paused == null
-                          ? l10n.moderationInvitesOpen
-                          : l10n.moderationInvitesPaused(
-                              formatDateTime(context, paused.toLocal()))),
-                      trailing: TextButton(
-                        onPressed: busy
-                            ? null
-                            : (paused == null ? _pauseInvites : _resumeInvites),
-                        child: Text(paused == null
-                            ? l10n.moderationPauseInvites
-                            : l10n.moderationResumeInvites),
+                      leading: Icon(
+                        paused == null
+                            ? Icons.link
+                            : Icons.pause_circle_outline,
                       ),
+                      title: Text(
+                        paused == null
+                            ? l10n.moderationInvitesOpen
+                            : l10n.moderationInvitesPaused(
+                                formatDateTime(context, paused.toLocal()),
+                              ),
+                      ),
+                    ),
+                    ListTile(
+                      leading: Icon(
+                        paused == null ? Icons.pause : Icons.play_arrow,
+                      ),
+                      title: Text(
+                        paused == null
+                            ? l10n.moderationPauseInvites
+                            : l10n.moderationResumeInvites,
+                      ),
+                      onTap: busy
+                          ? null
+                          : (paused == null ? _pauseInvites : _resumeInvites),
                     ),
                   ],
                 ),
@@ -264,11 +276,15 @@ class _ModerationScreenState extends State<ModerationScreen> {
                       ListTile(
                         leading: const Icon(Icons.block),
                         title: Text(_name(ban.accountId)),
-                        trailing: IconButton(
-                          tooltip: l10n.moderationUnban(_name(ban.accountId)),
-                          onPressed: busy ? null : () => _unban(ban),
-                          icon: const Icon(Icons.undo),
-                        ),
+                        // The server lets admins and above lift bans.
+                        trailing: widget.canManageInvites
+                            ? IconButton(
+                                tooltip:
+                                    l10n.moderationUnban(_name(ban.accountId)),
+                                onPressed: busy ? null : () => _unban(ban),
+                                icon: const Icon(Icons.undo),
+                              )
+                            : null,
                       ),
                 ],
               ),

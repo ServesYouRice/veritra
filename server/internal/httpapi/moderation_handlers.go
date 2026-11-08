@@ -21,6 +21,7 @@ import (
 //	PUT    {id}/members/{account}/timeout {seconds}   (0 clears)
 //	PUT    {id}/channels/{channel}/slow-mode {seconds} (0 turns off)
 //	PUT    {id}/invites-pause             {seconds}   (0 resumes)
+//	GET    {id}/moderation-state              (pause and slow modes, visible channels only)
 //	GET    {id}/moderation-events
 func (a *API) moderationRoute(w http.ResponseWriter, r *http.Request, principal domain.Principal, parts []string) bool {
 	community := parts[0]

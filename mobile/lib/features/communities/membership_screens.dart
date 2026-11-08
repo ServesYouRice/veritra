@@ -845,32 +845,26 @@ class _MemberRow extends StatelessWidget {
         ),
         subtitle: details.isEmpty ? null : Text(details.join(' · ')),
         trailing: canRemove
-            ? Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  IconButton(
-                    tooltip: l10n.detailsRemoveMember(label),
-                    onPressed: busy ? null : onRemove,
-                    icon: const Icon(Icons.person_remove_outlined),
+            ? PopupMenuButton<VoidCallback>(
+                tooltip: l10n.memberModerateTooltip(label),
+                enabled: !busy,
+                onSelected: (action) => action(),
+                itemBuilder: (_) => <PopupMenuEntry<VoidCallback>>[
+                  PopupMenuItem<VoidCallback>(
+                    value: onRemove,
+                    child: Text(l10n.communityRemoveConfirm),
                   ),
-                  PopupMenuButton<VoidCallback>(
-                    tooltip: l10n.memberModerateTooltip(label),
-                    enabled: !busy,
-                    onSelected: (action) => action(),
-                    itemBuilder: (_) => <PopupMenuEntry<VoidCallback>>[
-                      PopupMenuItem<VoidCallback>(
-                        value: onBan,
-                        child: Text(l10n.memberBanAction),
-                      ),
-                      PopupMenuItem<VoidCallback>(
-                        value: onTimeout,
-                        child: Text(l10n.memberTimeoutAction),
-                      ),
-                      PopupMenuItem<VoidCallback>(
-                        value: onLiftTimeout,
-                        child: Text(l10n.memberTimeoutLift),
-                      ),
-                    ],
+                  PopupMenuItem<VoidCallback>(
+                    value: onBan,
+                    child: Text(l10n.memberBanAction),
+                  ),
+                  PopupMenuItem<VoidCallback>(
+                    value: onTimeout,
+                    child: Text(l10n.memberTimeoutAction),
+                  ),
+                  PopupMenuItem<VoidCallback>(
+                    value: onLiftTimeout,
+                    child: Text(l10n.memberTimeoutLift),
                   ),
                 ],
               )

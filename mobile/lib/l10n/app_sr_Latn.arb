@@ -909,7 +909,7 @@
   },
   "callNoticeFailed": "Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.",
   "moderationTitle": "Moderacija",
-  "moderationDetail": "Zabrane, pauza za članove, spori režim, pauzirane pozivnica i dnevnik aktivnosti",
+  "moderationDetail": "Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti",
   "memberModerateTooltip": "Moderiraj {username}",
   "memberBanAction": "Zabrani…",
   "memberTimeoutAction": "Privremeno utišaj…",

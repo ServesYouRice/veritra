@@ -929,7 +929,7 @@
   "@callNoticeBusy": {"placeholders": {"name": {"type": "String"}}},
   "callNoticeFailed": "Позив није успео да се повеже. За позиве је потребна подешена релејна (TURN) услуга сервера.",
   "moderationTitle": "Модерација",
-  "moderationDetail": "Забране, пауза за чланове, спори режим, паузиране позивница и дневник активности",
+  "moderationDetail": "Забране, утишавање чланова, спори режим, паузирање позивница и дневник активности",
   "memberModerateTooltip": "Модерирај {username}",
   "memberBanAction": "Забрани…",
   "memberTimeoutAction": "Привремено утишај…",
