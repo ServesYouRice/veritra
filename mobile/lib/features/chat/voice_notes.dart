@@ -3,14 +3,13 @@ import 'dart:io';
 
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
-import 'attachment_views.dart' show newOpenedCopy;
+import 'attachment_views.dart' show newOpenedCopy, openedFilesDirectory;
 import 'voice_recorder.dart';
 
 /// "1:05" for a voice note position or length.
@@ -140,8 +139,7 @@ Future<File> decryptVoiceNote(
   AttachmentEntry entry, {
   required String conversationId,
 }) async {
-  final cache = await getTemporaryDirectory();
-  final root = Directory('${cache.path}${Platform.pathSeparator}veritra-open');
+  final root = await openedFilesDirectory();
   final copy = await newOpenedCopy(root, entry.fileName);
   try {
     await state.saveAttachment(

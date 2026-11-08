@@ -9,6 +9,7 @@ import '../push/message_notice_policy.dart';
 import '../features/chat/chat_list_screen.dart' show conversationTitle;
 import '../l10n/app_localizations.dart';
 import '../ui/about.dart';
+import '../storage/profile_scope.dart';
 import 'desktop_shell.dart';
 
 /// Where the notification choice is kept. A device preference like the
@@ -22,26 +23,32 @@ abstract class NotificationSettingsStore {
 }
 
 class SecureNotificationSettingsStore implements NotificationSettingsStore {
-  SecureNotificationSettingsStore({FlutterSecureStorage? storage})
-      : _storage = storage ??
+  SecureNotificationSettingsStore(
+      {FlutterSecureStorage? storage,
+      ProfileScope scope = const ProfileScope()})
+      : _key = scope.secureKey('notifications.hide_preview.v1'),
+        _storage = storage ??
             const FlutterSecureStorage(
               mOptions: MacOsOptions(usesDataProtectionKeychain: false),
             );
 
+  /// The primary slot's name, kept byte for byte (B7).
   static const key = 'veritra.notifications.hide_preview.v1';
+
+  final String _key;
 
   final FlutterSecureStorage _storage;
 
   @override
   Future<bool?> loadHidePreview() async {
-    final value = await _storage.read(key: key);
+    final value = await _storage.read(key: _key);
     return value == null ? null : value == 'true';
   }
 
   @override
   Future<void> saveHidePreview(bool value) async {
     try {
-      await _storage.write(key: key, value: value.toString());
+      await _storage.write(key: _key, value: value.toString());
     } catch (_) {
       // The choice still applies for this run.
     }
