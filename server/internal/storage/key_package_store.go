@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -8,6 +9,7 @@ import (
 
 	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
+	"private-messenger/server/internal/mlswire"
 )
 
 var ErrKeyPackageUnavailable = errors.New("an active conversation device has no available key package")
@@ -42,6 +44,69 @@ func (s *Store) keyPackageClaimAllowed(ctx context.Context, q queryRower, target
 	return claimed < s.limits.KeyPackageClaimsPerTarget, nil
 }
 
+// ErrKeyPackageNotListed means a key package's leaf signature key is not the
+// key the device's account's signed device list names for that device (the
+// L1 key-package gate, bug-hunt Q-1, owner 2026-11-08).
+var ErrKeyPackageNotListed = errors.New("key package signing key is not on the account's device list")
+
+// keyPackageMatchesList is the L1 key-package gate: for an account with a
+// signed device list, a key package of deviceID must carry, as its leaf
+// signature key, the key the list's head names for that device. An account
+// with no list (from before L1) is unchanged. Like the other honest-server
+// gates, clients do not rely on it: they stage every add with the key their
+// own pin lists, and Rust refuses another.
+func keyPackageMatchesList(ctx context.Context, q queryRower, accountID, deviceID string, keyPackage []byte) (bool, error) {
+	var hasList bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM device_list_versions WHERE account_id = ?)`, accountID).Scan(&hasList); err != nil {
+		return false, err
+	}
+	if !hasList {
+		return true, nil
+	}
+	var listed []byte
+	err := q.QueryRowContext(ctx, `SELECT signing_key FROM device_list_devices WHERE account_id = ? AND device_id = ? AND removed_version IS NULL`, accountID, deviceID).Scan(&listed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	leaf, err := mlswire.LeafSignatureKey(keyPackage)
+	if err != nil {
+		return false, nil
+	}
+	return bytes.Equal(leaf, listed), nil
+}
+
+// claimListedKeyPackage takes the oldest unclaimed, unexpired key package
+// of deviceID that passes the L1 gate. A package that fails it can never be
+// handed out and is deleted. sql.ErrNoRows when none is left.
+func claimListedKeyPackage(ctx context.Context, tx *sql.Tx, accountID, deviceID string, claimedAt time.Time) (domain.DeviceKeyPackage, string, string, error) {
+	for {
+		var item domain.DeviceKeyPackage
+		var createdAt, expiresAt string
+		err := tx.QueryRowContext(ctx, `
+			SELECT id, key_package, ciphersuite, created_at, expires_at
+			FROM device_key_packages
+			WHERE device_id = ? AND claimed_at IS NULL AND expires_at > ?
+			ORDER BY created_at, id
+			LIMIT 1`, deviceID, formatTime(claimedAt)).Scan(&item.ID, &item.KeyPackage, &item.Ciphersuite, &createdAt, &expiresAt)
+		if err != nil {
+			return item, "", "", err
+		}
+		ok, err := keyPackageMatchesList(ctx, tx, accountID, deviceID, item.KeyPackage)
+		if err != nil {
+			return item, "", "", err
+		}
+		if ok {
+			return item, createdAt, expiresAt, nil
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM device_key_packages WHERE id = ?`, item.ID); err != nil {
+			return item, "", "", err
+		}
+	}
+}
+
 type NewDeviceKeyPackage struct {
 	KeyPackage  []byte
 	Ciphersuite string
@@ -72,6 +137,19 @@ func (s *Store) PublishDeviceKeyPackages(ctx context.Context, deviceID string, p
 	}
 	if !active {
 		return nil, ErrForbidden
+	}
+	var accountID string
+	if err := tx.QueryRowContext(ctx, `SELECT account_id FROM devices WHERE id = ?`, deviceID).Scan(&accountID); err != nil {
+		return nil, err
+	}
+	for _, input := range packages {
+		ok, err := keyPackageMatchesList(ctx, tx, accountID, deviceID, input.KeyPackage)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, ErrKeyPackageNotListed
+		}
 	}
 	var available int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL AND expires_at > ?`, deviceID, nowString()).Scan(&available); err != nil {
@@ -151,14 +229,7 @@ func (s *Store) ClaimConversationKeyPackages(ctx context.Context, conversationID
 		if !allowed {
 			return nil, s.refuse(admission.KeyPackages, ErrKeyPackageClaimLimit)
 		}
-		var item domain.DeviceKeyPackage
-		var createdAt, expiresAt string
-		err = tx.QueryRowContext(ctx, `
-			SELECT id, key_package, ciphersuite, created_at, expires_at
-			FROM device_key_packages
-			WHERE device_id = ? AND claimed_at IS NULL AND expires_at > ?
-			ORDER BY created_at, id
-			LIMIT 1`, target.deviceID, formatTime(claimedAt)).Scan(&item.ID, &item.KeyPackage, &item.Ciphersuite, &createdAt, &expiresAt)
+		item, createdAt, expiresAt, err := claimListedKeyPackage(ctx, tx, target.accountID, target.deviceID, claimedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrKeyPackageUnavailable
 		}

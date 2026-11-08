@@ -735,14 +735,7 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 			_ = s.refuse(admission.KeyPackages, ErrKeyPackageClaimLimit)
 			continue
 		}
-		var item domain.DeviceKeyPackage
-		var createdAt, expiresAt string
-		err = tx.QueryRowContext(ctx, `
-			SELECT id, key_package, ciphersuite, created_at, expires_at
-			FROM device_key_packages
-			WHERE device_id = ? AND claimed_at IS NULL AND expires_at > ?
-			ORDER BY created_at, id
-			LIMIT 1`, deviceID, formatTime(claimedAt)).Scan(&item.ID, &item.KeyPackage, &item.Ciphersuite, &createdAt, &expiresAt)
+		item, createdAt, expiresAt, err := claimListedKeyPackage(ctx, tx, accountID, deviceID, claimedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}

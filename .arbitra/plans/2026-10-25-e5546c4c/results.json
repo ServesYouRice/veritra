@@ -2834,11 +2834,11 @@
       "title": "Key-package admission checks only self-asserted BasicCredential bytes, never an expected signing key",
       "severity": "high",
       "task": "check 02",
-      "result": null,
+      "result": "fixed",
       "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "test": "server/internal/storage/device_list_gates_test.go TestKeyPackagesMustCarryTheListedKey; server/internal/httpapi/device_list_test.go TestPublishedKeyPackagesMustCarryTheListedKey; server/internal/mlswire TestLeafSignatureKeyReadsTheLeafKey",
+      "proof": "Owner 2026-11-08 (via coordinator), replacing D100 check 02 A: L1-3 builds the server gate. For an account with a signed device list, a published key package must carry the leaf signature key the list head names for the device (400 key_package_not_listed); claims hand out only such packages and delete stored ones that do not. Accounts without a list unchanged. Phones still check with their own pins (Rust refuses another key).",
+      "checkedEndToEnd": true
     },
     {
       "issue": "C-a03d6368fdc7",

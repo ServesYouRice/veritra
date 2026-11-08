@@ -259,8 +259,8 @@ The audit could not settle these, and most such reports do not hold. Check one o
 
 - [x] check 01 `C-17a32b51cecf` Wall-clock ordering can reorder dependent MLS transitions
   - Checked: not a bug.
-- [ ] check 02 `C-875dbe0d9a3f` Key-package admission checks only self-asserted BasicCredential bytes, never an expected signing key
-  - Blocked: needs an owner decision.
+- [x] check 02 `C-875dbe0d9a3f` Key-package admission checks only self-asserted BasicCredential bytes, never an expected signing key
+  - Done with L1-3 (owner 2026-11-08): for an account with a signed list, published and claimed key packages must carry the listed key.
 - [x] check 03 `C-a03d6368fdc7` Clearing identity state does not reset the sync cursor (upsert leaves cursor untouched)
   - Checked: already fixed before this pass.
 - [x] check 04 `C-f540ea390b9c` Generic channel-conversation creation grants owner rights to ordinary community members

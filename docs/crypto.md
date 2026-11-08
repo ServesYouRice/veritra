@@ -544,6 +544,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     per-conversation state lines ("Checking <name>'s devices"); the new
     device's anchor only logs a mismatch. Change list version 1 is still
     accepted by Rust; nothing in the app sends it any more.
+  - **Server key-package gate (bug-hunt Q-1; owner 2026-11-08, replacing
+    D100 check 02's "no server check").** For an account with a list, the
+    server refuses a published key package whose leaf signature key
+    (`mlswire.LeafSignatureKey`) is not the key the head names for the device
+    (400 `key_package_not_listed`) and claims only packages that carry it,
+    deleting stored ones that do not. No migration. An honest-server gate:
+    clients still stage every add with their own pinned key.
   - **TASK-010 and TASK-048 (commit-then-reveal and key commitment in device
     linking, D100 A):** built in their own change (see its entry); this step
     only signs change 2 after the link checks.

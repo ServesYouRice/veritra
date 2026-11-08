@@ -46,6 +46,12 @@ func OpenMLSKeyPackage() []byte {
 // client's capabilities) and parses as a key package, but no MLS client
 // would accept it: nothing in it is signed.
 func KeyPackage() []byte {
+	return KeyPackageWithSignatureKey(randomBytes(32))
+}
+
+// KeyPackageWithSignatureKey is [KeyPackage] whose leaf signature key is
+// signatureKey (32 bytes), for tests of the L1 key-package gate.
+func KeyPackageWithSignatureKey(signatureKey []byte) []byte {
 	identity := []byte{0x01}
 	for _, part := range [][]byte{randomBytes(16), randomBytes(16)} {
 		identity = binary.BigEndian.AppendUint16(identity, uint16(len(part)))
@@ -57,7 +63,7 @@ func KeyPackage() []byte {
 	b = appendVector(b, randomBytes(32))         // init_key
 	// LeafNode
 	b = appendVector(b, randomBytes(32))         // encryption_key
-	b = appendVector(b, randomBytes(32))         // signature_key
+	b = appendVector(b, signatureKey)            // signature_key
 	b = binary.BigEndian.AppendUint16(b, 0x0001) // credential type basic
 	b = appendVector(b, identity)
 	b = appendVector(b, []byte{0x00, 0x01})                         // versions
