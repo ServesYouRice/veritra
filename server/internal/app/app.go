@@ -407,6 +407,11 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 		a.drainRetention(ctx, "operational_rows", func() (int64, error) {
 			return a.Store.PruneOperationalRows(ctx, time.Now().UTC())
 		})
+		// K1 (D91): superseded backup copies after a day, revoked devices'
+		// copies after 90 days or beyond the account's newest three.
+		a.drainRetention(ctx, "k1_backups", func() (int64, error) {
+			return a.Store.PruneK1Backups(ctx, time.Now().UTC())
+		})
 		// C6 (D95): sealed reports go 90 days after filing if nobody dismissed
 		// them first.
 		a.drainRetention(ctx, "reports", func() (int64, error) {

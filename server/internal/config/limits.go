@@ -40,6 +40,10 @@ type Limits struct {
 	// IPv6 /64 (an office or home network); one address always gets at most
 	// 20.
 	SocketsPerIPv6Prefix int
+	// BackupAllowanceBytes is the room each account has for its current K1
+	// backup copies (D91), apart from the attachment quota. The default
+	// holds two full-size copies (MaxBackupCiphertext each).
+	BackupAllowanceBytes int64
 }
 
 const mib = 1 << 20
@@ -69,6 +73,13 @@ const (
 	MaxAttachmentMiB             = 48
 	DefaultSocketsPerIPv6Prefix  = 200
 	PendingDeviceLinksPerAccount = 3
+	// MaxBackupCiphertext is the largest K1 backup the app can seal: the
+	// 64 MiB padded snapshot, 20 bytes of framing per 1 MiB chunk and the
+	// 416-byte header (crypto/rust/src/history.rs MAX_HISTORY_CIPHERTEXT).
+	MaxBackupCiphertext = 64*mib + 64*20 + 416
+	// DefaultBackupAllowanceBytes is D91's 2 x 64 MiB, sized so two
+	// full-size copies fit.
+	DefaultBackupAllowanceBytes = 2 * MaxBackupCiphertext
 )
 
 type limitSetting struct {
@@ -90,6 +101,7 @@ var limitSettings = []limitSetting{
 	{"PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE", 60, 1_000_000, 1, func(l *Limits, v int64) { l.DeliveriesPerMinute = int(v) }},
 	{"PRIVATE_MESSENGER_LIMIT_WRITE_MIB_PER_HOUR", 16, 65_536, mib, func(l *Limits, v int64) { l.WriteBytesPerHour = v }},
 	{"PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB", 1, MaxAttachmentMiB, mib, func(l *Limits, v int64) { l.AttachmentBytes = v }},
+	{"PRIVATE_MESSENGER_LIMIT_BACKUP_ALLOWANCE_MIB", 65, 1 << 20, mib, func(l *Limits, v int64) { l.BackupAllowanceBytes = v }},
 	{"PRIVATE_MESSENGER_LIMIT_SOCKETS_PER_IPV6_PREFIX", 20, 10_000, 1, func(l *Limits, v int64) { l.SocketsPerIPv6Prefix = int(v) }},
 }
 
@@ -147,6 +159,9 @@ func (l Limits) WithDefaults() Limits {
 	}
 	if l.SocketsPerIPv6Prefix == 0 {
 		l.SocketsPerIPv6Prefix = DefaultSocketsPerIPv6Prefix
+	}
+	if l.BackupAllowanceBytes == 0 {
+		l.BackupAllowanceBytes = DefaultBackupAllowanceBytes
 	}
 	return l
 }
