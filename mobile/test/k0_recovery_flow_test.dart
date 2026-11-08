@@ -553,7 +553,7 @@ void main() {
         pending: PendingRecoveryRequest(
             id: 'arr_9',
             deviceName: 'Unknown phone',
-            readyAt: DateTime.utc(2026, 11, 8)),
+            readyAt: DateTime.utc(2099, 11, 8)),
       );
       await signIn();
       expect(state.recoveryKeyStatus?.pending?.id, 'arr_9');
@@ -577,7 +577,7 @@ void main() {
         event(1, 'account.recovery.pending', <String, Object?>{
           'request_id': 'arr_2',
           'device_name': 'Phone',
-          'ready_at': '2026-11-08T10:00:00Z',
+          'ready_at': '2099-11-08T10:00:00Z',
         }),
         event(2, 'account.password_leak_suspected',
             <String, Object?>{'day': today}),

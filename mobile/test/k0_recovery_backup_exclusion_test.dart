@@ -74,7 +74,7 @@ void main() {
       requestId: 'arr_1',
       claimToken: claimToken,
       deviceSecret: deviceSecret,
-      readyAt: DateTime.utc(2026, 11, 8),
+      readyAt: DateTime.utc(2099, 11, 8),
       mlsState: StoredCryptoState(
           counter: 1, stateKey: stateKey, sealedState: sealed),
     );
