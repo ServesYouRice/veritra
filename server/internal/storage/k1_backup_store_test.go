@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -297,5 +298,64 @@ func TestK1KeySwapAfterRecoveryKeepsTheLostPhonesCopy(t *testing.T) {
 	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestNewRK)
 	if got := k1Rows(t, ctx, store, owner.Account.ID); len(got) != 2 {
 		t.Fatalf("rows after re-setting the same key = %v", got)
+	}
+}
+
+// Review blocker: a loop of uploads from one device keeps at most two copies
+// (current and one superseded), whatever the grace says, and returns the
+// replaced blobs so the route deletes them at once.
+func TestK1UploadLoopKeepsTwoCopiesPerDevice(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestRK)
+	full := int64(config.MaxBackupCiphertext)
+	var pruned []string
+	for i := int64(1); i <= 8; i++ {
+		backup, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_loop_"+strconv.FormatInt(i, 10), full, i, k1TestRK))
+		if err != nil {
+			t.Fatalf("upload %d: %v", i, err)
+		}
+		pruned = append(pruned, backup.PrunedStorageKeys...)
+	}
+	if got := k1Rows(t, ctx, store, owner.Account.ID); len(got) != 2 || !got["k1_loop_7"] || got["k1_loop_8"] {
+		t.Fatalf("rows = %v, want loop_7 superseded and loop_8 current", got)
+	}
+	if n := testRowCount(t, ctx, store, `SELECT size_bytes FROM blob_usage_instance WHERE id = 1`); int64(n) != 2*full {
+		t.Fatalf("instance usage = %d, want %d", n, 2*full)
+	}
+	if len(pruned) != 6 || pruned[0] != "k1_loop_1" || pruned[5] != "k1_loop_6" {
+		t.Fatalf("pruned keys = %v", pruned)
+	}
+}
+
+// The counter's high-water mark outlives the rows: after a swap deleted a
+// device's copies, an old counter is still refused.
+func TestK1CounterHighWaterSurvivesDeletes(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestRK)
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_hw_5", 10, 5, k1TestRK)); err != nil {
+		t.Fatal(err)
+	}
+	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestNewRK)
+	if got := k1Rows(t, ctx, store, owner.Account.ID); len(got) != 0 {
+		t.Fatalf("rows after the swap = %v", got)
+	}
+	for _, counter := range []int64{1, 5} {
+		if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_hw_old", 10, counter, k1TestNewRK)); !errors.Is(err, ErrBackupCounterStale) {
+			t.Fatalf("counter %d after the swap: err = %v, want %v", counter, err, ErrBackupCounterStale)
+		}
+	}
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_hw_6", 10, 6, k1TestNewRK)); err != nil {
+		t.Fatalf("counter 6: %v", err)
+	}
+	// A K1 row without its key id cannot be written at all.
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, size_bytes, key_derivation_metadata_json, created_at, kind, counter)
+		VALUES('backup_nokey', ?, ?, 'k1_nokey_row', 1, '{}', ?, 1, 9)`, owner.Account.ID, owner.Device.ID, nowString()); err == nil {
+		t.Fatal("a kind-1 row without rk_id was stored")
 	}
 }

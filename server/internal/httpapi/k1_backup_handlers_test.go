@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -180,5 +183,68 @@ func TestK1KeySwapRouteDeletesOldKeyCopies(t *testing.T) {
 	}
 	if status, body := f.postK1(f.ownerToken, k1Metadata(f.accountRKID(), 2), []byte("new key"), nil); status != http.StatusCreated {
 		t.Fatalf("new key upload: %d %s", status, body)
+	}
+}
+
+// blobFiles counts the stored blob files (temporary uploads excluded).
+func (f *recoveryFixture) blobFiles() int {
+	f.t.Helper()
+	entries, err := os.ReadDir(filepath.Join(f.dir, "blobs"))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	n := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && !strings.HasSuffix(entry.Name(), ".tmp") {
+			n++
+		}
+	}
+	return n
+}
+
+// Refused uploads leave no file, and replaced copies leave the disk at
+// once: a loop of uploads keeps two files (review blocker).
+func TestK1UploadLoopKeepsTwoFilesAndRefusalsNone(t *testing.T) {
+	f := newRecoveryFixture(t, recoveryTestOrigin)
+	f.setRK(f.ownerToken)
+	rkID := f.accountRKID()
+	before := f.blobFiles()
+	if status, body := f.postK1(f.ownerToken, k1Metadata(bytes.Repeat([]byte{3}, 16), 1), []byte("x"), nil); status != http.StatusConflict {
+		t.Fatalf("other key: %d %s", status, body)
+	}
+	if n := f.blobFiles(); n != before {
+		t.Fatalf("a refused upload left %d files", n-before)
+	}
+	for counter := int64(1); counter <= 5; counter++ {
+		if status, body := f.postK1(f.ownerToken, k1Metadata(rkID, counter), []byte(fmt.Sprintf("copy %d", counter)), nil); status != http.StatusCreated {
+			t.Fatalf("copy %d: %d %s", counter, status, body)
+		}
+	}
+	if n := f.blobFiles(); n != before+2 {
+		t.Fatalf("files after five uploads = %d, want %d", n, before+2)
+	}
+	if n := f.count(`SELECT COUNT(*) FROM blob_deletion_queue`); n != 0 {
+		t.Fatalf("deletion queue = %d", n)
+	}
+}
+
+// Above the allowance the upload answers the storage-quota error and its
+// file is removed.
+func TestK1UploadOverTheAllowanceIsRefusedAndCleanedUp(t *testing.T) {
+	f := newRecoveryFixture(t, recoveryTestOrigin)
+	f.setRK(f.ownerToken)
+	rkID := f.accountRKID()
+	now := recoveryTestTime(time.Now())
+	// Another device of the account already holds the whole allowance.
+	f.exec(`INSERT INTO devices(id, account_id, name, key_package, auth_secret_hash, created_at) VALUES('dev_k1_full', ?, 'desktop', X'01', 'hash', ?)`, f.ownerAccountID, now)
+	f.exec(`INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, kind, rk_id, counter)
+		VALUES('backup_k1_full', ?, 'dev_k1_full', 'blob_k1_full', '', ?, '{}', ?, 1, ?, 1)`, f.ownerAccountID, 2*(64<<20+64*20+416), now, rkID)
+	before := f.blobFiles()
+	status, body := f.postK1(f.ownerToken, k1Metadata(rkID, 1), []byte("one byte too many"), nil)
+	if status != http.StatusInsufficientStorage || !bytes.Contains(body, []byte("storage_quota_exceeded")) {
+		t.Fatalf("over the allowance: %d %s", status, body)
+	}
+	if n := f.blobFiles(); n != before {
+		t.Fatalf("the refused upload left %d files", n-before)
 	}
 }

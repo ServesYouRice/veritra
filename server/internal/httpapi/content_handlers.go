@@ -278,6 +278,11 @@ func (a *API) uploadK1Backup(w http.ResponseWriter, r *http.Request, principal d
 		}
 		return
 	}
+	// Copies the upload replaced or pruned leave the disk now, not at the
+	// next sweep (a loop of uploads must not fill it).
+	for _, key := range backup.PrunedStorageKeys {
+		a.completeQueuedBlobDeletion(r.Context(), key)
+	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"id": backup.ID, "storage_key": blob.StorageKey, "ciphertext_sha256": blob.SHA256,
 		"size_bytes": blob.Size, "kind": backup.Kind, "counter": counter,

@@ -59,7 +59,9 @@ func K1BackupMetadata(rkID []byte, counter int64) json.RawMessage {
 }
 
 // CreateK1Backup stores a device's new kind-1 copy and, in the same
-// transaction, marks its previous copy superseded. It refuses a copy sealed
+// transaction, marks its previous copy superseded (deleting any copy
+// superseded before that) and returns, in PrunedStorageKeys, the blobs it
+// queued for deletion so the caller removes them at once. It refuses a copy sealed
 // to another recovery key, a counter not above the device's last, and a copy
 // beyond the account's backup allowance. Expired superseded and revoked
 // copies of the account are pruned first, and their blobs queued.
@@ -102,22 +104,35 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 		return domain.BackupBlob{}, ErrRecoveryKeyChanged
 	}
 	var lastCounter sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT MAX(counter) FROM backup_blobs WHERE account_id = ? AND device_id = ? AND kind = 1`,
-		in.AccountID, in.DeviceID).Scan(&lastCounter); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT counter FROM k1_backup_counters WHERE device_id = ?`, in.DeviceID).Scan(&lastCounter); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return domain.BackupBlob{}, err
 	}
 	if lastCounter.Valid && in.Counter <= lastCounter.Int64 {
 		return domain.BackupBlob{}, ErrBackupCounterStale
 	}
-	if _, err := pruneK1BackupsTx(ctx, tx, in.AccountID, now, -1); err != nil {
+	removed, err := pruneK1BackupsTx(ctx, tx, in.AccountID, now, -1)
+	if err != nil {
 		return domain.BackupBlob{}, err
 	}
+	// At most two copies per device (design change 3): the copy superseded
+	// before goes now, even inside its grace, so a loop of uploads cannot
+	// pile up copies the allowance does not count.
+	older, err := deleteBackupRowsTx(ctx, tx, `SELECT id, storage_key FROM backup_blobs
+		WHERE account_id = ? AND device_id = ? AND kind = 1 AND superseded_at IS NOT NULL`, in.AccountID, in.DeviceID)
+	if err != nil {
+		return domain.BackupBlob{}, err
+	}
+	removed = append(removed, older...)
 	if err := s.enforceK1BackupAllowance(ctx, tx, in.AccountID, in.DeviceID, in.SizeBytes); err != nil {
 		return domain.BackupBlob{}, err
 	}
 	stamp := formatTime(now)
 	if _, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET superseded_at = ?
 		WHERE account_id = ? AND device_id = ? AND kind = 1 AND superseded_at IS NULL`, stamp, in.AccountID, in.DeviceID); err != nil {
+		return domain.BackupBlob{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO k1_backup_counters(device_id, counter) VALUES(?, ?)
+		ON CONFLICT(device_id) DO UPDATE SET counter = excluded.counter`, in.DeviceID, in.Counter); err != nil {
 		return domain.BackupBlob{}, err
 	}
 	metadata := K1BackupMetadata(in.RKID, in.Counter)
@@ -132,7 +147,11 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 	if err != nil {
 		return domain.BackupBlob{}, err
 	}
-	return backup, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return domain.BackupBlob{}, err
+	}
+	backup.PrunedStorageKeys = removed
+	return backup, nil
 }
 
 // enforceK1BackupAllowance checks the account's backup allowance (D91): the
@@ -169,7 +188,7 @@ const k1PruneCondition = `b.kind = 1 AND (
 // pruneK1BackupsTx deletes the kind-1 rows k1PruneCondition selects, for one
 // account (accountID set) or the whole instance, at most limit rows (limit
 // < 0: all), and queues their blobs for deletion in the same transaction.
-func pruneK1BackupsTx(ctx context.Context, tx *sql.Tx, accountID string, now time.Time, limit int) (int64, error) {
+func pruneK1BackupsTx(ctx context.Context, tx *sql.Tx, accountID string, now time.Time, limit int) ([]string, error) {
 	query := `SELECT b.id, b.storage_key FROM backup_blobs b WHERE ` + k1PruneCondition
 	args := []interface{}{formatTime(now.Add(-K1SupersededGrace)), formatTime(now.Add(-K1RevokedRetention)), K1RevokedCopiesPerAccount}
 	if accountID != "" {
@@ -185,10 +204,10 @@ func pruneK1BackupsTx(ctx context.Context, tx *sql.Tx, accountID string, now tim
 
 // deleteBackupRowsTx deletes the backup rows query returns (id, storage_key)
 // and queues each blob through the deletion queue (reconcileBlobDeletions).
-func deleteBackupRowsTx(ctx context.Context, tx *sql.Tx, query string, args ...interface{}) (int64, error) {
+func deleteBackupRowsTx(ctx context.Context, tx *sql.Tx, query string, args ...interface{}) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	type victim struct{ id, storageKey string }
 	var victims []victim
@@ -196,25 +215,27 @@ func deleteBackupRowsTx(ctx context.Context, tx *sql.Tx, query string, args ...i
 		var v victim
 		if err := rows.Scan(&v.id, &v.storageKey); err != nil {
 			rows.Close()
-			return 0, err
+			return nil, err
 		}
 		victims = append(victims, v)
 	}
 	if err := rows.Close(); err != nil {
-		return 0, err
+		return nil, err
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return nil, err
 	}
+	keys := make([]string, 0, len(victims))
 	for _, v := range victims {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM backup_blobs WHERE id = ?`, v.id); err != nil {
-			return 0, err
+			return nil, err
 		}
 		if err := enqueueBlobDeletion(ctx, tx, v.storageKey); err != nil {
-			return 0, err
+			return nil, err
 		}
+		keys = append(keys, v.storageKey)
 	}
-	return int64(len(victims)), nil
+	return keys, nil
 }
 
 // PruneK1Backups runs the K1 prune for the whole instance, 500 rows at a
@@ -229,7 +250,7 @@ func (s *Store) PruneK1Backups(ctx context.Context, now time.Time) (int64, error
 	if err != nil {
 		return 0, err
 	}
-	return removed, tx.Commit()
+	return int64(len(removed)), tx.Commit()
 }
 
 // deleteK1BackupsForKeySwapTx runs inside a recovery-key change: every

@@ -282,6 +282,8 @@ type BackupBlob struct {
 	Superseded    bool   `json:"superseded"`
 	DeviceName    string `json:"device_name,omitempty"`
 	DeviceRevoked bool   `json:"device_revoked"`
+	// PrunedStorageKeys: blobs an upload queued for deletion (not stored).
+	PrunedStorageKeys []string `json:"-"`
 }
 
 type Reaction struct {

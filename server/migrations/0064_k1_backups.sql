@@ -12,6 +12,22 @@ ALTER TABLE backup_blobs ADD COLUMN superseded_at TEXT;
 CREATE INDEX idx_backup_blobs_device_current
 ON backup_blobs(account_id, device_id, superseded_at);
 
+-- Each device's highest K1 counter, kept when its copies are deleted (a
+-- recovery-key swap, a delete, the prune), so a counter is never accepted
+-- twice.
+CREATE TABLE k1_backup_counters (
+  device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+  counter INTEGER NOT NULL CHECK(counter > 0)
+);
+
+-- A K1 row always names its device, key and counter: the swap and the
+-- prune compare rk_id, which a NULL would slip past.
+CREATE TRIGGER backup_blobs_k1_fields BEFORE INSERT ON backup_blobs
+WHEN NEW.kind = 1 AND (NEW.rk_id IS NULL OR NEW.counter IS NULL OR NEW.device_id IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'k1 backup needs device_id, rk_id and counter');
+END;
+
 -- K1 copies have their own allowance (D91: 2 x 64 MiB), so they leave the
 -- account's attachment quota. The instance total still counts every row.
 -- Existing rows are all kind 0, so the T49B backfill stays exact.
