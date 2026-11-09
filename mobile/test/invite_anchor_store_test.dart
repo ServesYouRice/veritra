@@ -43,6 +43,27 @@ void main() {
       await dir.delete(recursive: true);
     }
   });
+  test('upgrade tolerates a table retained by older-schema test fixtures',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('invite-upgrade-');
+    final file = File('${dir.path}/local.db');
+    var db = EncryptedLocalDatabase(NativeDatabase(file));
+    try {
+      await db.writeInviteAnchor(InviteAnchor(
+          conversationId: 'g',
+          accountId: 'a',
+          deviceId: 'd',
+          signingKey: List.filled(32, 1)));
+      await db.customStatement('PRAGMA user_version = 31');
+      await db.close();
+      db = EncryptedLocalDatabase(NativeDatabase(file));
+      expect((await db.readInviteAnchor('g'))!.accountId, 'a');
+    } finally {
+      await db.close();
+      await dir.delete(recursive: true);
+    }
+  });
+
   test('memory anchors clear on identity replacement', () async {
     final store = MemoryLocalStore();
     await store.saveSession(Session(

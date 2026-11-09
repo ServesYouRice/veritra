@@ -2,7 +2,7 @@ part of 'encrypted_database.dart';
 
 extension InviteAnchorSql on EncryptedLocalDatabase {
   Future<void> _createInviteAnchors() =>
-      customStatement('''CREATE TABLE local_invite_anchors (
+      customStatement('''CREATE TABLE IF NOT EXISTS local_invite_anchors (
     conversation_id TEXT PRIMARY KEY NOT NULL,
     account_id TEXT NOT NULL,
     device_id TEXT NOT NULL,
