@@ -35,7 +35,9 @@ class TypingLine extends StatelessWidget {
             .where((id) => id != own && !state.isBlocked(id))
             .toList(growable: false);
         if (typers.isEmpty) return const SizedBox.shrink();
-        String name(String id) => accountLabel(
+        String name(String id) =>
+            state.profileNameOf(id) ??
+            accountLabel(
               id,
               roster.where((m) => m.accountId == id).firstOrNull?.username,
             );

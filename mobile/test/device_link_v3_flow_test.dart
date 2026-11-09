@@ -635,14 +635,21 @@ Future<void> _withWorld(
     await body(world);
   } finally {
     await world.dispose();
-    try {
-      dir.deleteSync(recursive: true);
-    } on FileSystemException catch (error) {
-      // Windows may briefly retain a handle after the native device closes.
-      // Retry sharing violations only, and let a persistent failure fail.
-      if (error.osError?.errorCode != 32) rethrow;
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      dir.deleteSync(recursive: true);
+    // dispose stops new transfer work, but an asynchronous file operation
+    // already in progress can still hold a Windows handle until it settles.
+    // Retry only sharing violations, bounded so a leaked handle still fails.
+    for (var attempt = 0;; attempt++) {
+      try {
+        await dir.delete(recursive: true);
+        break;
+      } on FileSystemException catch (error) {
+        if (!Platform.isWindows ||
+            error.osError?.errorCode != 32 ||
+            attempt >= 100) {
+          rethrow;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
     }
   }
 }

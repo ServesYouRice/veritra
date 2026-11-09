@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
+import '../settings/profile_edit_screen.dart';
 import '../../core/models.dart';
 import '../../ui/avatar.dart';
 import '../../ui/format.dart';
@@ -99,11 +100,26 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
               TileGroup(
                 children: <Widget>[
                   ListTile(
-                    leading:
-                        conversationAvatar(context, conversation, radius: 20),
-                    title: Text(conversationTitle(l10n, conversation)),
+                    leading: conversationAvatar(context, conversation,
+                        radius: 20, profiles: state.profiles),
+                    title: Text(conversationTitle(l10n, conversation,
+                        profiles: state.profiles)),
                     subtitle: Text(conversationSubtitle(l10n, conversation)),
                   ),
+                  if (conversation.isGroup && state.profilesAvailable)
+                    ListTile(
+                      key: const Key('group-profile-tile'),
+                      leading: const Icon(Icons.edit_outlined),
+                      title: Text(l10n.groupProfileTitle),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ProfileEditScreen.group(
+                            state: state,
+                            conversationId: conversation.id,
+                          ),
+                        ),
+                      ),
+                    ),
                   ListTile(
                     leading: const Icon(Icons.tag_outlined),
                     title: Text(
@@ -187,6 +203,7 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                     for (final member in members)
                       _MemberTile(
                         member: member,
+                        profileName: state.profileNameOf(member.accountId),
                         isSelf: member.accountId == state.session?.accountId,
                         // Only a manager can remove someone, never
                         // themselves through this control, and never anyone
@@ -611,6 +628,7 @@ String roleLabel(AppLocalizations l10n, String role) {
 class _MemberTile extends StatelessWidget {
   const _MemberTile({
     required this.member,
+    this.profileName,
     required this.isSelf,
     required this.canRemove,
     required this.busy,
@@ -618,6 +636,10 @@ class _MemberTile extends StatelessWidget {
   });
 
   final ConversationMember member;
+
+  /// The display name this person shared (W11). A member list shows it with
+  /// the username, so a chosen name never stands in for who someone is.
+  final String? profileName;
   final bool isSelf;
   final bool canRemove;
   final bool busy;
@@ -627,7 +649,8 @@ class _MemberTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final l10n = context.l10n;
-    final label = accountLabel(member.accountId, member.username);
+    final account = accountLabel(member.accountId, member.username);
+    final label = profileName == null ? account : '$profileName ($account)';
     final colors = avatarColorsFor(context, member.accountId);
     // Role moved onto a pill; what is left in the subtitle is the one thing
     // that is genuinely a detail.
@@ -712,7 +735,13 @@ class _BlockTile extends StatelessWidget {
             : l10n.searchBlockAccount(label),
       ),
       subtitle: Text(
-        blocked ? l10n.detailsBlockedDetail : l10n.detailsBlockDetail,
+        blocked
+            ? l10n.detailsBlockedDetail
+            // A block hides a profile only in a chat of two (S8); in a group
+            // you share, everyone still gets the key.
+            : state.profilesAvailable
+                ? '${l10n.detailsBlockDetail} ${l10n.profileBlockNote}'
+                : l10n.detailsBlockDetail,
       ),
       onTap: state.isBusy(Ops.blocks)
           ? null

@@ -862,6 +862,7 @@ extension AccountRecoveryActions on AppState {
     } else {
       _lastKnownNoPeer.add(conversationId);
     }
+    _profileRosterChanged();
   }
 
   /// Reads the recovered-device mark for this session, once. An unreadable

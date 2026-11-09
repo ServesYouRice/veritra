@@ -3,12 +3,14 @@ import 'package:flutter/services.dart';
 
 import '../../core/app_state.dart';
 import '../../ui/avatar.dart';
+import '../../ui/photo_avatar.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../../l10n/l10n.dart';
+import 'profile_edit_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({required this.state, super.key});
@@ -51,33 +53,40 @@ class ProfileScreen extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: BoneSpacing.md),
             child: Column(
               children: <Widget>[
-                ExcludeSemantics(
-                  child: Container(
-                    width: 72,
-                    height: 72,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: colors.fill,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: colors.ring),
-                    ),
-                    child: Text(
-                      accountInitials(accountId ?? '', session?.username),
-                      style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w600,
-                        color: colors.glyph,
+                () {
+                  final initials = ExcludeSemantics(
+                    child: Container(
+                      width: 72,
+                      height: 72,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: colors.fill,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: colors.ring),
+                      ),
+                      child: Text(
+                        accountInitials(accountId ?? '', session?.username),
+                        style: TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w600,
+                          color: colors.glyph,
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                  final photo = state.profiles?.own?.photoPng;
+                  return photo == null
+                      ? initials
+                      : PhotoAvatar(png: photo, radius: 36, fallback: initials);
+                }(),
                 const SizedBox(height: BoneSpacing.lg),
                 Semantics(
                   header: true,
                   child: Text(
-                    session?.username == null
-                        ? l10n.profileYourAccount
-                        : '@${session!.username}',
+                    state.profiles?.own?.name ??
+                        (session?.username == null
+                            ? l10n.profileYourAccount
+                            : '@${session!.username}'),
                     style: theme.textTheme.displaySmall,
                     textAlign: TextAlign.center,
                   ),
@@ -93,6 +102,25 @@ class ProfileScreen extends StatelessWidget {
               ],
             ),
           ),
+          if (state.profilesAvailable) ...<Widget>[
+            SectionHeader(l10n.profileDisplaySection),
+            TileGroup(
+              children: <Widget>[
+                ListTile(
+                  key: const Key('profile-edit-tile'),
+                  leading: const Icon(Icons.badge_outlined),
+                  title: Text(l10n.profileEditTile),
+                  subtitle: Text(
+                      state.profiles?.own?.name ?? l10n.profileDisplayNameHint),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => ProfileEditScreen.account(state: state),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           SectionHeader(l10n.profileSectionIdentity),
           TileGroup(
             children: <Widget>[

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -31,7 +32,9 @@ export 'encrypted_database.dart'
         CommunityInfoEvent,
         CommunityInfoEventKind,
         FrankReveal,
-        ReportKeyPin;
+        ReportKeyPin,
+        ProfileKeyEffect;
+export 'profile_records.dart';
 export 'device_list_records.dart';
 
 final Map<String, Future<void>> _databaseOpenTails = <String, Future<void>>{};
@@ -720,6 +723,31 @@ abstract class LocalStore {
   Future<void> saveApprovalLeaves(ApprovalLeafChange change);
   Future<List<String>> loadHeldConversations();
 
+  // W11 profiles (schema 34). Keys and names never go into a log, a history
+  // snapshot or a K2 transfer.
+  Future<List<StoredProfileKey>> loadProfileKeys(String kind, String subjectId);
+
+  /// Keeps [key] like a received one: at most [profileKeysPerSubject] per
+  /// subject, the key that opens the cached record never evicted.
+  Future<void> saveProfileKey(ProfileKeyEffect key);
+
+  /// Every key held for subjects of [kind], at most four per subject.
+  Future<List<StoredProfileKey>> loadAllProfileKeys(String kind);
+  Future<void> deleteProfileKey(String kind, String subjectId, String keyId);
+  Future<StoredProfile?> loadProfile(String kind, String subjectId);
+  Future<List<StoredProfile>> loadProfiles(String kind);
+
+  /// Writes an accepted record unless it is below the stored revision.
+  Future<bool> saveProfile(StoredProfile profile);
+
+  /// Deletes a subject's cached profile and all its keys.
+  Future<void> deleteProfileSubject(String kind, String subjectId);
+  Future<String?> loadProfileState(String name);
+
+  /// Null deletes [name].
+  Future<void> saveProfileState(String name, String? value);
+  Future<Map<String, String>> loadProfileStatePrefix(String prefix);
+
   /// The durable recovery record (card I33), or null when sync may run.
   /// Pass null to clear it. It survives restarts so a failing event is not
   /// retried in a loop, and it is removed with the device identity.
@@ -1180,6 +1208,9 @@ class MemoryLocalStore implements LocalStore {
     _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
     _deviceListPins.clear();
+    _profileKeys.clear();
+    _profiles.clear();
+    _profileState.clear();
     _deviceListConflicts.clear();
     _approvalLeaves.clear();
     _syncLeaseKey = null;
@@ -1407,6 +1438,10 @@ class MemoryLocalStore implements LocalStore {
     _noticeState = nextNotices;
     _history = nextHistory;
     _historyNamespace = nextNamespace;
+    for (final effect
+        in transition.messageEffects.whereType<ProfileKeyEffect>()) {
+      _storeProfileKey(effect);
+    }
     for (final reveal in transition.frankReveals) {
       if (reveal.isStorable && _liveMessage(reveal.messageKey) != null) {
         _frankReveals.putIfAbsent(reveal.messageKey, () => reveal);
@@ -1510,6 +1545,116 @@ class MemoryLocalStore implements LocalStore {
     }
     _reportKeyPins['${pin.origin}\u0000${pin.ownerAccountId}'] = pin;
   }
+
+  final Map<String, List<StoredProfileKey>> _profileKeys =
+      <String, List<StoredProfileKey>>{};
+  final Map<String, StoredProfile> _profiles = <String, StoredProfile>{};
+  final Map<String, String> _profileState = <String, String>{};
+
+  static String _profileId(String kind, String subjectId) =>
+      '$kind\u0000$subjectId';
+
+  void _storeProfileKey(ProfileKeyEffect effect) {
+    final id = _profileId(effect.kind, effect.subjectId);
+    final held = _profileKeys.putIfAbsent(id, () => <StoredProfileKey>[]);
+    if (!held.any((k) => k.keyId == effect.keyId)) {
+      held.add(StoredProfileKey(
+          kind: effect.kind,
+          subjectId: effect.subjectId,
+          keyId: effect.keyId,
+          key: Uint8List.fromList(effect.key),
+          receivedAt: effect.receivedAt));
+      final drop = profileKeysToEvict(held,
+          protectedKeyId: _profiles[id]?.keyId, newestKeyId: effect.keyId);
+      held.removeWhere((k) => drop.contains(k.keyId));
+    }
+    if (effect.raisesFloor) {
+      final current = _profiles[id];
+      if (current == null) {
+        _profiles[id] = StoredProfile(
+            kind: effect.kind,
+            subjectId: effect.subjectId,
+            serverVersion: 0,
+            keyId: '',
+            revision: 0,
+            fetchedAt: 0,
+            versionFloor: effect.version);
+      } else if (effect.version > current.versionFloor) {
+        _profiles[id] = current.copyWith(versionFloor: effect.version);
+      }
+    }
+  }
+
+  @override
+  Future<List<StoredProfileKey>> loadProfileKeys(
+          String kind, String subjectId) async =>
+      List<StoredProfileKey>.of(
+          _profileKeys[_profileId(kind, subjectId)] ?? const []);
+
+  @override
+  Future<void> saveProfileKey(ProfileKeyEffect key) async =>
+      _storeProfileKey(key);
+
+  @override
+  Future<List<StoredProfileKey>> loadAllProfileKeys(String kind) async => [
+        for (final keys in _profileKeys.values)
+          for (final key in keys)
+            if (key.kind == kind) key,
+      ];
+
+  @override
+  Future<void> deleteProfileKey(
+      String kind, String subjectId, String keyId) async {
+    _profileKeys[_profileId(kind, subjectId)]
+        ?.removeWhere((k) => k.keyId == keyId);
+  }
+
+  @override
+  Future<StoredProfile?> loadProfile(String kind, String subjectId) async =>
+      _profiles[_profileId(kind, subjectId)];
+
+  @override
+  Future<List<StoredProfile>> loadProfiles(String kind) async => [
+        for (final p in _profiles.values)
+          if (p.kind == kind && !p.isPlaceholder) p,
+      ];
+
+  @override
+  Future<bool> saveProfile(StoredProfile profile) async {
+    final id = _profileId(profile.kind, profile.subjectId);
+    final current = _profiles[id];
+    if (current != null && profile.revision < current.revision) return false;
+    final floor = profile.versionFloor > (current?.versionFloor ?? 0)
+        ? profile.versionFloor
+        : (current?.versionFloor ?? 0);
+    _profiles[id] = profile.copyWith(versionFloor: floor);
+    return true;
+  }
+
+  @override
+  Future<void> deleteProfileSubject(String kind, String subjectId) async {
+    final id = _profileId(kind, subjectId);
+    _profileKeys.remove(id);
+    _profiles.remove(id);
+  }
+
+  @override
+  Future<String?> loadProfileState(String name) async => _profileState[name];
+
+  @override
+  Future<void> saveProfileState(String name, String? value) async {
+    if (value == null) {
+      _profileState.remove(name);
+    } else {
+      _profileState[name] = value;
+    }
+  }
+
+  @override
+  Future<Map<String, String>> loadProfileStatePrefix(String prefix) async => {
+        for (final e in _profileState.entries)
+          if (e.key.startsWith(prefix)) e.key: e.value,
+      };
 
   final Map<String, DeviceListPin> _deviceListPins = <String, DeviceListPin>{};
   final Map<String, List<int>> _deviceListConflicts = <String, List<int>>{};
@@ -2000,6 +2145,9 @@ class MemoryLocalStore implements LocalStore {
     next.apply(effects, namespace: namespace, accountId: _session?.accountId);
     _history = next;
     _historyNamespace = namespace;
+    for (final effect in effects.whereType<ProfileKeyEffect>()) {
+      _storeProfileKey(effect);
+    }
   }
 
   Future<T> _noticeChange<T>(
@@ -2576,6 +2724,10 @@ class _MemoryMessageHistory {
               applyPollVote(poll.body, effect.voterAccountId, effect.choices);
           if (updated == null) continue;
           _messages[effect.targetKey] = poll.copyWith(body: Value(updated));
+        case ProfileKeyEffect():
+          // Profile keys are not message history; the store applies them
+          // beside it (see MemoryLocalStore._applyHistoryEffects).
+          break;
         case PollCloseEffect():
           final poll = _messages[effect.targetKey];
           if (poll == null ||
@@ -3212,6 +3364,52 @@ class SecureLocalStore implements LocalStore {
           String origin, String accountId, String messageKey) async =>
       (await _database()).writeReportFiled(origin, accountId, messageKey,
           DateTime.now().toUtc().millisecondsSinceEpoch);
+  Future<List<StoredProfileKey>> loadProfileKeys(
+          String kind, String subjectId) async =>
+      (await _database()).readProfileKeys(kind, subjectId);
+
+  @override
+  Future<List<StoredProfileKey>> loadAllProfileKeys(String kind) async =>
+      (await _database()).readAllProfileKeys(kind);
+
+  @override
+  Future<void> saveProfileKey(ProfileKeyEffect key) async {
+    final database = await _database();
+    await database.transaction(() => database.storeProfileKey(key));
+  }
+
+  @override
+  Future<void> deleteProfileKey(
+          String kind, String subjectId, String keyId) async =>
+      (await _database()).deleteProfileKey(kind, subjectId, keyId);
+
+  @override
+  Future<StoredProfile?> loadProfile(String kind, String subjectId) async =>
+      (await _database()).readProfile(kind, subjectId);
+
+  @override
+  Future<List<StoredProfile>> loadProfiles(String kind) async =>
+      (await _database()).readProfiles(kind);
+
+  @override
+  Future<bool> saveProfile(StoredProfile profile) async =>
+      (await _database()).writeProfile(profile);
+
+  @override
+  Future<void> deleteProfileSubject(String kind, String subjectId) async =>
+      (await _database()).deleteProfileSubject(kind, subjectId);
+
+  @override
+  Future<String?> loadProfileState(String name) async =>
+      (await _database()).readProfileState(name);
+
+  @override
+  Future<void> saveProfileState(String name, String? value) async =>
+      (await _database()).writeProfileState(name, value);
+
+  @override
+  Future<Map<String, String>> loadProfileStatePrefix(String prefix) async =>
+      (await _database()).readProfileStatePrefix(prefix);
 
   @override
   Future<DeviceListPin?> loadDeviceListPin(String accountId) async =>
