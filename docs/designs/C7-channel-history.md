@@ -259,6 +259,17 @@ and private-channel groups) is sent in two parts:
    | 6 | `X.seq <` the first seq this device holds (a newcomer meeting an older record) | Ignore; take no key from it |
    | 7 | Anything else | Fork or missed record: status `closed` |
 
+   - **Sequence cap** (owner answer 2026-11-08): a valid record has
+     `seq <= 2^31` and, when the device has seen a valid record, at most 1024
+     above the highest valid `seq` seen. A record that breaks either bound is
+     invalid before the table (ignored, leaves an `action` row, never counts
+     toward the highest `seq`), so no valid record can use up the `seq` room
+     that a recovering switch (row 5) needs above it. A newcomer's first
+     record may be at any `seq` up to the ceiling. Vector `seq_cap` and the
+     ordering cases pin it in Dart, Go and Rust.
+   - Recovery of a `closed` channel (owner answer 2026-11-08): only a live
+     `switch` or `move` above the highest valid `seq` recovers it, whether
+     it chains from the device's head (row 3) or not (row 5).
    - Under an honest server the stale-record refusal is exact. A server
      that shows one device a different order of a record and a commit can
      make that device alone refuse or accept it: the "server targets one
