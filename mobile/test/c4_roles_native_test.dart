@@ -16,6 +16,9 @@ void main() {
   final devices = <NativeCryptoDevice>[];
 
   setUp(() {
+    // The codec-only test below needs no library; the native tests are
+    // skipped (or required) by nativeCryptoSkip().
+    if (nativeCryptoSkip() != false) return;
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
   });
 
