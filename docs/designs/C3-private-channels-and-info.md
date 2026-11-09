@@ -232,20 +232,54 @@ channels (about 80 bytes each), so it cannot fit 4 KiB. A record now takes
 the smallest bucket it fits. The large bucket therefore shows "an icon or a
 big community", not "an icon"; a tiny icon may stay in the small one.
 
-**Not built yet (left):** senders (`info_key` after an add commit, rotation
-on a removal for both keys per D80, `info_update` after each upload,
-answering `info_key_request`), the fetch and cache loop on `info.updated`,
-screens, and step 4 (`400 plaintext_name_refused`, dropping the plaintext
-columns). Rules for the senders, from the review:
+**Built 2026-11-09 (branch `agent/c3-2`):**
 
-- In the shared group every payload must name an open channel (C0), so
-  senders pick one for these hidden payloads.
+- Only owners and admins create channels (owner decision 2026-11-09; the
+  server refused moderators from then on).
+- Senders (`community_info_service.dart`, wired in
+  `app_state_community_info.dart`):
+  - Info payloads go through the app's ordinary send path, so removal holds
+    (D68) and per-conversation order apply. They are never franked, never
+    expire, and leave a hidden action row. In a shared group they ride on an
+    open channel (C0).
+  - The sender keeps its own copy of what it sends (MLS never decrypts a
+    device's own message), and its own new keys locally.
+  - Publish: seal under the current key, `PUT` with `If-Match` (a stale
+    version is retried), keep the record as accepted, then send
+    `info_update` in the group that owns the key.
+  - Keys: a community key is made when its first record is written (at
+    creation), a private channel's key when its record is. The current key
+    is the newest one in the owning group from this account or from an
+    owner or admin under the verified role state.
+  - Delivery is request and answer: a device missing a key asks at once,
+    then at most once an hour; an owner or admin (server role, only to pick
+    who speaks) holding the key answers after a short random wait, only in
+    the owning group, and not when another answer already came after the
+    request. A push right after an add commit is not built (the request
+    covers it).
+  - Rotation (D80): every removal, kick or ban marks the key the
+    conversation carries as due, kept across restarts (a setting, no
+    schema). A pass makes a new key, sends it into the owning group (the
+    send waits for the removal commit), and seals every record under it
+    again. A rotation that fails stays due.
+- Fetch loop: on `info.updated`, after the communities load, and after a
+  catch-up at most once a minute. Each record is fetched and judged; a 404
+  never clears what is shown.
+- Screens: names shown as the accepted record, else the legacy server
+  name, else a placeholder; a channel's topic under its name; an edit
+  button for channel name and topic only where the verified role state
+  allows it.
+
+**Still left:** icons and the category screens; hiding "New channel" from
+moderators (the community card does not know the viewer's role; the
+server refuses them); a push of the key right after an add commit; and step
+4 (`400 plaintext_name_refused`, dropping the plaintext columns). Step 4
+waits for C4's client role wiring: until the app holds a verified role
+record, nothing another account wrote is shown, so new names come only from
+the legacy server name. Rules from the first review that still bind:
+
 - Reuse a tombstoned category ID before minting a new one: the server's
   200-binding bound is for the community's whole life.
-- A rotation (immediate on every kick or ban, D80) re-seals every
-  community-keyed record, or keeps delivering every key a record still
-  uses; receivers keep 4 keys per sender, plus any key an accepted record
-  uses.
 
 **Seams and residuals.**
 

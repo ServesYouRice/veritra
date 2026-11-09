@@ -457,6 +457,13 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C3 senders and fetch loop (2026-11-09):** no ABI, payload or schema
+  change. The `info_key`, `info_key_request` and `info_update` types are now
+  sent: through the ordinary send path (removal holds apply), unfranked, no
+  expiry, a hidden action row, and the sender's own copy kept in the same
+  transaction (the outgoing transition gained `communityInfo`). A device's
+  own new keys are written locally outside any MLS commit. Rotation marks
+  are a setting. Design: C3, "Built 2026-11-09".
 - **C3, encrypted community info: records, payloads, local schema 31
   (2026-11-08):** no ABI change. Design
   [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),

@@ -1797,6 +1797,48 @@ abstract class AppLocalizations {
   /// **'Use + to create the first one.'**
   String get communityNoChannelsHint;
 
+  /// No description provided for @communityPlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Community'**
+  String get communityPlaceholderName;
+
+  /// No description provided for @channelPlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel'**
+  String get channelPlaceholderName;
+
+  /// No description provided for @channelPrivatePlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Private channel'**
+  String get channelPrivatePlaceholderName;
+
+  /// No description provided for @channelEditInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit channel'**
+  String get channelEditInfo;
+
+  /// No description provided for @channelTopic.
+  ///
+  /// In en, this message translates to:
+  /// **'Topic'**
+  String get channelTopic;
+
+  /// No description provided for @channelEditFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save the channel. Try again.'**
+  String get channelEditFailed;
+
+  /// No description provided for @channelSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get channelSave;
+
   /// No description provided for @communityNotMember.
   ///
   /// In en, this message translates to:
