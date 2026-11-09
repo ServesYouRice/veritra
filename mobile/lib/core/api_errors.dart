@@ -79,6 +79,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'call_version_conflict': ApiErrorKind.conflict,
   'mls_epoch_conflict': ApiErrorKind.conflict,
   'version_conflict': ApiErrorKind.conflict,
+  'category_limit_reached': ApiErrorKind.conflict,
   'mls_group_legacy': ApiErrorKind.conflict,
   'mls_commit_bundle_required': ApiErrorKind.conflict,
   'mls_change_pending': ApiErrorKind.conflict,

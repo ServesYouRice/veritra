@@ -160,8 +160,9 @@ until the package that builds it lands and adds its change-log entry.
 - [C3: private channels and community info](designs/C3-private-channels-and-info.md):
   names, topics and icons of communities, categories and channels as
   encrypted W11-style records; a private channel's key travels only in its
-  own group. It proposes W7 payload types `info_key`, `info_key_request` and
-  `info_update` (W7 owns that section; not yet registered).
+  own group. Its W7 payload types `info_key`, `info_key_request` and
+  `info_update` are registered (§4; change log "C3", 2026-11-08); senders are
+  not wired yet.
 - [C7: history for new members](designs/C7-channel-history.md) (revision 7, reviewed; build step 2,
   the primitives, is in as ABI 13 and wired nowhere; the rest is planned, not built): every community message becomes a 68-byte `C7R1`
   MLS reference plus a sealed body (an amendment of the W7 §1 framing, VAP1
@@ -456,6 +457,29 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C3, encrypted community info: records, payloads, local schema 31
+  (2026-11-08):** no ABI change. Design
+  [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),
+  "Build status". Records for `community`, `category` and `channel` reuse
+  W11's `VPR1`/`VPE1` framing, chunk AEAD and context literal
+  (`community_info_codec.dart`); a record takes the smallest bucket it fits
+  (deviation, see the design). Three hidden v2 payload types `info_key`,
+  `info_key_request` and `info_update` (§4) are registered and stored on
+  receive in the MLS commit's transaction; they are never franked, and a
+  receiver keeps no reveal for them even when one is, so a report can never
+  hand an info key to its reader. Local schema 31 adds `local_info_events`
+  (keys, announcements, key requests; bounded 4/8/16 per subject) and
+  `local_info_records` (accepted records). Neither goes into a backup, a
+  history snapshot or a K2 transfer; a restore clears them and the device
+  asks again. Receive rule (`community_info_book.dart`): a record is shown
+  only when an `info_update` from an allowed editor under the community's C4
+  role state, sent in the group that owns the key, names its exact SHA-256,
+  revision and key id, and the key came from that same group. Rows are kept
+  per sender and group, only from community conversations; a key an
+  accepted record uses is never evicted, and no key is dropped because a
+  record fails to open (its id is a hash of the key). Server
+  migration 0063 binds app-chosen category IDs to communities. Senders,
+  fetches and screens are not wired yet.
 - **L1-3, device-link commit-then-reveal, ABI 18 (2026-11-07, D100 A;
   TASK-010, TASK-048):** design
   [`L1-3-link-commitment.md`](designs/L1-3-link-commitment.md). Protocol
@@ -2054,6 +2078,9 @@ input can differ.
 | `profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Only the subject account's own devices | **Reserved for W11** |
 | `group_profile_key` | 2 | See [W11](designs/W11-profiles.md#mls-payloads) | Any member | **Reserved for W11** |
 | `callSignal` | 1 | Unchanged | Unchanged | Unchanged |
+| `info_key` | 2, hidden | `subject_kind` (`community` or `channel`), `subject_id`, `key_id` (32 hex = W11 key id of `key`), `key` (canonical base64 of 32 bytes) | Any member holding the key, **only in the group that owns it**: the community shared group for the community key, the private channel's group for its key | C3: kept with the MLS state (schema 31); used only when it arrived in the owning group. Never franked, never reportable |
+| `info_key_request` | 2, hidden | `subject_kind` (`community` or `channel`), `subject_id` | Any member | C3: kept so a key holder can answer; one per subject per hour |
+| `info_update` | 2, hidden | `subject_kind` (`community`, `category` or `channel`), `subject_id`, `revision` (≥ 1), `key_id` (32 hex), `record_sha256` (64 lowercase hex of the blob as served) | Community and category: owner and admins; channel: any member unless admins restrict channel info (D80), all under the community shared group's C4 role state | C3: a fetched record is shown only when an announcement from an allowed editor, in the group that owns its key, matches it |
 
 A "reserved" type has a fixed name and body now. Until its package turns
 it on, a receiver treats it as `unsupported`, and a sender never sends it.

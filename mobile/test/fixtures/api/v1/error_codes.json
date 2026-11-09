@@ -14,6 +14,7 @@
     "blob_not_found": "notFound",
     "blob_storage_unavailable": "unavailable",
     "call_version_conflict": "conflict",
+    "category_limit_reached": "conflict",
     "claim_token_create_failed": "server",
     "claim_token_required": "authentication",
     "communities_list_failed": "server",

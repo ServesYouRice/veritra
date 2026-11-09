@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'community_info_payload.dart';
 import 'franking.dart';
 import 'poll.dart';
 
@@ -26,8 +27,27 @@ enum AppPayloadType {
   poll,
   pollVote,
   pollClose,
-  callSignal
+  callSignal,
+
+  /// C3: a community or private-channel info key, sent only in the group
+  /// that owns it.
+  infoKey,
+
+  /// C3: asks the group for an info key this device lacks.
+  infoKeyRequest,
+
+  /// C3: announces an accepted info record by its SHA-256, so receivers can
+  /// tell an allowed editor's record from a server-substituted one.
+  infoUpdate,
 }
+
+/// C3 types (docs/designs/C3-private-channels-and-info.md). They change state
+/// and never show a bubble.
+const Set<AppPayloadType> infoPayloadTypes = <AppPayloadType>{
+  AppPayloadType.infoKey,
+  AppPayloadType.infoKeyRequest,
+  AppPayloadType.infoUpdate,
+};
 
 extension AppPayloadTypeWire on AppPayloadType {
   /// The string in the payload's `type`. Existing types keep their Dart enum
@@ -36,6 +56,9 @@ extension AppPayloadTypeWire on AppPayloadType {
   String get wireName => switch (this) {
         AppPayloadType.pollVote => 'poll_vote',
         AppPayloadType.pollClose => 'poll_close',
+        AppPayloadType.infoKey => 'info_key',
+        AppPayloadType.infoKeyRequest => 'info_key_request',
+        AppPayloadType.infoUpdate => 'info_update',
         _ => name,
       };
 
@@ -44,7 +67,8 @@ extension AppPayloadTypeWire on AppPayloadType {
   bool get sendsHidden =>
       this == AppPayloadType.pin ||
       this == AppPayloadType.pollVote ||
-      this == AppPayloadType.pollClose;
+      this == AppPayloadType.pollClose ||
+      infoPayloadTypes.contains(this);
 }
 
 class DecryptedAppPayload {
@@ -146,6 +170,12 @@ class FrankingPolicy {
     'history_change',
     'history_sync',
     'history_sync_request',
+    // C3: an info key must never be reportable, since a report hands the
+    // payload to its reader. Receivers keep no reveal for these types even
+    // when one is franked.
+    'infoKey',
+    'infoKeyRequest',
+    'infoUpdate',
   };
 
   /// Whether a payload without `frank` is accepted (as unreportable).
@@ -185,6 +215,7 @@ class AppPayloadCodec {
             type == AppPayloadType.poll ||
             type == AppPayloadType.pollVote ||
             type == AppPayloadType.pollClose ||
+            infoPayloadTypes.contains(type) ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -472,6 +503,10 @@ class AppPayloadCodec {
       AppPayloadType.poll => version >= 2 && isValidPollBody(body),
       AppPayloadType.pollVote => version >= 2 && isValidPollVoteBody(body),
       AppPayloadType.pollClose => version >= 2 && isValidPollCloseBody(body),
+      AppPayloadType.infoKey => version >= 2 && isValidInfoKeyBody(body),
+      AppPayloadType.infoKeyRequest =>
+        version >= 2 && isValidInfoKeyRequestBody(body),
+      AppPayloadType.infoUpdate => version >= 2 && isValidInfoUpdateBody(body),
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,

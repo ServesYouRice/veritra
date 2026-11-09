@@ -48,9 +48,11 @@ type ProfileVersion struct {
 	KeyID   string `json:"key_id"`
 }
 
-// ProfileNotice is one durable profile.updated event for one account.
+// ProfileNotice is one durable profile.updated (or C3 info.updated) event
+// for one account.
 type ProfileNotice struct {
 	AccountID string
+	EventType string
 	EventID   int64
 	Payload   map[string]interface{}
 }
@@ -64,6 +66,9 @@ type ProfileWrite struct {
 	KeyID           string
 	Ciphertext      []byte
 	ExpectedVersion int64
+	// CommunityID is the community a category record is written under (C3);
+	// empty for every other kind.
+	CommunityID string
 }
 
 type profileQuerier interface {
@@ -97,7 +102,7 @@ func profileReadable(ctx context.Context, q profileQuerier, readerID, kind, subj
 		err = q.QueryRowContext(ctx, `SELECT 1 FROM conversations c JOIN memberships m ON m.conversation_id = c.id
 			WHERE c.id = ? AND c.kind = 'group' AND m.account_id = ?`, subjectID, readerID).Scan(&one)
 	default:
-		return false, nil
+		return infoReadable(ctx, q, readerID, kind, subjectID)
 	}
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -129,6 +134,10 @@ func (s *Store) PutProfile(ctx context.Context, w ProfileWrite) (int64, []Profil
 		}
 		if !ok {
 			return 0, nil, ErrNotFound
+		}
+	case ProfileKindCommunity, ProfileKindCategory, ProfileKindChannel:
+		if err := authorizeInfoWrite(ctx, tx, w); err != nil {
+			return 0, nil, err
 		}
 	default:
 		return 0, nil, ErrInvalidInput
@@ -169,11 +178,11 @@ func (s *Store) PutProfile(ctx context.Context, w ProfileWrite) (int64, []Profil
 	for _, id := range audience {
 		payload := map[string]interface{}{"subject_kind": w.Kind, "subject_id": w.SubjectID, "version": next, "key_id": w.KeyID}
 		account := id
-		eventID, err := insertSyncEvent(ctx, tx, ProfileUpdatedEventType, &account, "", payload, now)
+		eventID, err := insertSyncEvent(ctx, tx, profileEventType(w.Kind), &account, "", payload, now)
 		if err != nil {
 			return 0, nil, err
 		}
-		notices = append(notices, ProfileNotice{AccountID: id, EventID: eventID, Payload: payload})
+		notices = append(notices, ProfileNotice{AccountID: id, EventType: profileEventType(w.Kind), EventID: eventID, Payload: payload})
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, nil, err
@@ -197,8 +206,10 @@ func profileAudience(ctx context.Context, q profileQuerier, kind, subjectID stri
 			    WHERE (b.blocker_account_id = ?1 AND b.blocked_account_id = m2.account_id)
 			       OR (b.blocker_account_id = m2.account_id AND b.blocked_account_id = ?1))
 		) ORDER BY ord, id LIMIT ?2`, subjectID, maxProfileNotices)
-	} else {
+	} else if kind == ProfileKindConversation {
 		rows, err = q.QueryContext(ctx, `SELECT DISTINCT m.account_id FROM memberships m WHERE m.conversation_id = ? ORDER BY m.account_id LIMIT ?`, subjectID, maxProfileNotices)
+	} else {
+		rows, err = infoAudience(ctx, q, kind, subjectID)
 	}
 	if err != nil {
 		return nil, err
@@ -240,11 +251,38 @@ func (s *Store) GetProfile(ctx context.Context, readerID, kind, subjectID string
 	return p, nil
 }
 
+// ProfileVersionQuery lists the subjects of a versions request, per kind.
+type ProfileVersionQuery struct {
+	AccountIDs      []string
+	ConversationIDs []string
+	CommunityIDs    []string
+	CategoryIDs     []string
+	ChannelIDs      []string
+}
+
 // ProfileVersions returns version and key id for each listed subject the
 // reader may read. Unreadable or missing subjects are left out silently.
 func (s *Store) ProfileVersions(ctx context.Context, readerID string, accountIDs, conversationIDs []string) ([]ProfileVersion, error) {
-	if len(accountIDs) > MaxProfileVersionQuery || len(conversationIDs) > MaxProfileVersionQuery {
-		return nil, ErrInvalidInput
+	return s.SubjectVersions(ctx, readerID, ProfileVersionQuery{AccountIDs: accountIDs, ConversationIDs: conversationIDs})
+}
+
+// SubjectVersions is ProfileVersions over every kind, W11's and C3's. Each
+// list is bounded by MaxProfileVersionQuery.
+func (s *Store) SubjectVersions(ctx context.Context, readerID string, query ProfileVersionQuery) ([]ProfileVersion, error) {
+	lists := []struct {
+		kind string
+		ids  []string
+	}{
+		{ProfileKindAccount, query.AccountIDs},
+		{ProfileKindConversation, query.ConversationIDs},
+		{ProfileKindCommunity, query.CommunityIDs},
+		{ProfileKindCategory, query.CategoryIDs},
+		{ProfileKindChannel, query.ChannelIDs},
+	}
+	for _, list := range lists {
+		if len(list.ids) > MaxProfileVersionQuery {
+			return nil, ErrInvalidInput
+		}
 	}
 	out := make([]ProfileVersion, 0)
 	collect := func(kind string, ids []string) error {
@@ -274,11 +312,10 @@ func (s *Store) ProfileVersions(ctx context.Context, readerID string, accountIDs
 		}
 		return nil
 	}
-	if err := collect(ProfileKindAccount, accountIDs); err != nil {
-		return nil, err
-	}
-	if err := collect(ProfileKindConversation, conversationIDs); err != nil {
-		return nil, err
+	for _, list := range lists {
+		if err := collect(list.kind, list.ids); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

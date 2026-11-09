@@ -1,10 +1,9 @@
 # C3: private channels and encrypted community info (design)
 
-**Status: proposed, not built.** Written 2026-11-01 against `main` at
-`f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
-[W11](W11-profiles.md) (encrypted record mechanism). Neither is
-implemented yet, so no C3 code is written; see [Build steps](#build-steps).
-Security-sensitive: needs the second-opinion review before building.
+**Status: steps 1-2 and the receive side of step 3 built (2026-11-08); see
+[Build status](#build-status-2026-11-08).** Written 2026-11-01 against `main`
+at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
+[W11](W11-profiles.md) (encrypted record mechanism).
 
 ## Summary
 
@@ -87,7 +86,7 @@ by adding the three kinds: no second table, no second mechanism.
 |---|---|---|
 | `PUT/GET /api/v1/communities/{id}/info` | built-in role `owner` or `admin` | every community member |
 | `PUT/GET /api/v1/communities/{id}/categories/{cid}` | same | every community member |
-| `PUT/GET /api/v1/channels/{id}/info` | open channel: `owner`/`admin`; private: `owner`/`admin` who is also in the channel's group | open: every member; **private: current members of that channel's conversation only** |
+| `PUT/GET /api/v1/channels/{id}/info` | any member who can read it (D80; built 2026-11-08, replacing "owner/admin") | open: every member; **private: current members of that channel's conversation only** |
 
 - Unreadable or missing gives 404, never 403 (no existence oracle).
 - The channel list returns open channels to all members and a private
@@ -193,3 +192,85 @@ invent those foundations a second time.
 
 - Community key rotates immediately on a kick or ban.
 - Any member may edit channel names and topics unless admins restrict it.
+
+## Build status (2026-11-08)
+
+Built (branch `agent/c3`):
+
+- **Server (step 1).** Kinds `community`, `category`, `channel` in W11's
+  `encrypted_profiles` (`community_info_store.go`), routes above, `info.updated`
+  sync event (IDs, version, key id) to the read audience, and three more
+  bounded lists (`community_ids`, `category_ids`, `channel_ids`) on
+  `POST /api/v1/profiles/versions`. Read rule: community and category, the
+  community's members; channel, the members of the conversation that carries
+  it (route in the shared-group layout, else the legacy channel conversation).
+  Write rule: community and category, owner or admin (not moderators);
+  channel, anyone who can read it (D80). The server cannot see the admins'
+  "restrict channel info" switch; apps enforce it. Non-readers get 404, a
+  reader who may not write gets 403.
+- **Category IDs** are chosen by the app (`cat_` + 32 hex). Migration 0063's
+  `community_categories` binds one to its community at the first
+  `If-None-Match: *` write by an owner or admin; through another community's
+  route it is 404. At most 200 IDs per community (an abuse bound; the 50
+  live categories are the apps' to keep, since the server cannot tell a
+  tombstone). Triggers delete a record with its community, category or
+  channel.
+- **Record codec** (`community_info_codec.dart`): W11 framing, AEAD and
+  context. JSON per kind: community `name`, `icon`, `categories`,
+  `channels` (`{channel_id, category_id}`); category `name`; channel `name`,
+  `topic`, `icon`, and for a private channel `private: {category_id,
+  position}`. Unknown keys are ignored (as W11); another kind's keys are
+  refused. Icons 256x256 at most.
+- **Payloads and storage** (step 2 and the receive half of step 3): see
+  `docs/crypto.md`, change log "C3" and §4. Local schema 31.
+- **Receive rule** (`community_info_book.dart`, pure Dart): the
+  [Authorship](#authorship) and [Keys](#keys) rules, with the C4 role check
+  behind `InfoEditPolicy`.
+
+**Deviation: bucket by fit.** A community record lists up to 500 open
+channels (about 80 bytes each), so it cannot fit 4 KiB. A record now takes
+the smallest bucket it fits. The large bucket therefore shows "an icon or a
+big community", not "an icon"; a tiny icon may stay in the small one.
+
+**Not built yet (left):** senders (`info_key` after an add commit, rotation
+on a removal for both keys per D80, `info_update` after each upload,
+answering `info_key_request`), the fetch and cache loop on `info.updated`,
+screens, and step 4 (`400 plaintext_name_refused`, dropping the plaintext
+columns). Rules for the senders, from the review:
+
+- In the shared group every payload must name an open channel (C0), so
+  senders pick one for these hidden payloads.
+- Reuse a tombstoned category ID before minting a new one: the server's
+  200-binding bound is for the community's whole life.
+- A rotation (immediate on every kick or ban, D80) re-seals every
+  community-keyed record, or keeps delivering every key a record still
+  uses; receivers keep 4 keys per sender, plus any key an accepted record
+  uses.
+
+**Seams and residuals.**
+
+- The C4 role record (format 2) has no "admins restrict channel info" flag.
+  `GovernanceInfoEditPolicy.channelInfoRestricted` is the seam; until C4's
+  client wiring adds the flag, channel info follows D80's default (any
+  member). Without a verified role record nothing is shown.
+- Which conversation is a community's shared group (`shared_conversation_id`)
+  and which carries which channel come from the server. A hostile server
+  with any account's help could pass off a group the attacker owns as a
+  community's shared group (then both the key home and the C4 role state are
+  the attacker's), or swap a private channel's conversation, and show forged
+  names. Binding the community and channel IDs inside the group's own state
+  (C4 record or group context), or pinning them at join, closes this later.
+- Keys are never dropped because a record fails to open (a change from
+  W11's anti-flood rule): the key id is a hash of the key, checked on
+  receipt, so a failure means a bad blob, and any member could otherwise
+  wipe everyone's community key by announcing garbage.
+- Rows of received keys and announcements are per sender and per group, so
+  a replayed copy cannot hide an editor's own one and a flood cannot push
+  out another sender's key. Info payloads are kept only from community
+  conversations.
+- The server accepts a channel write from any reader, even when admins have
+  restricted channel info, and from a timed-out member (C5). Apps will not
+  show such a record, but a device with nothing cached (a joiner, a restore)
+  shows placeholders until an admin writes again.
+- Backups and new-device transfers carry no info keys; a restored device
+  asks again.

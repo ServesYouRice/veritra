@@ -33,6 +33,13 @@ func (a *API) registerProfileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/conversations/{id}/profile", a.withAuth(a.getConversationProfile))
 	mux.HandleFunc("DELETE /api/v1/conversations/{id}/title", a.withAuth(a.withWriteBudget(a.clearConversationTitle)))
 	mux.HandleFunc("POST /api/v1/profiles/versions", a.withAuth(a.profileVersions))
+	// C3 community info (docs/designs/C3-private-channels-and-info.md).
+	mux.HandleFunc("PUT /api/v1/communities/{id}/info", a.withAuth(a.withWriteBudget(a.putCommunityInfo)))
+	mux.HandleFunc("GET /api/v1/communities/{id}/info", a.withAuth(a.getCommunityInfo))
+	mux.HandleFunc("PUT /api/v1/communities/{id}/categories/{cid}", a.withAuth(a.withWriteBudget(a.putCategoryInfo)))
+	mux.HandleFunc("GET /api/v1/communities/{id}/categories/{cid}", a.withAuth(a.getCategoryInfo))
+	mux.HandleFunc("PUT /api/v1/channels/{id}/info", a.withAuth(a.withWriteBudget(a.putChannelInfo)))
+	mux.HandleFunc("GET /api/v1/channels/{id}/info", a.withAuth(a.getChannelInfo))
 }
 
 func validProfileKeyID(v string) bool {
@@ -65,14 +72,39 @@ func parseProfilePrecondition(r *http.Request) (int64, bool) {
 }
 
 func (a *API) putAccountProfile(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
-	a.putProfile(w, r, principal, storage.ProfileKindAccount, principal.AccountID)
+	a.putProfile(w, r, principal, storage.ProfileKindAccount, principal.AccountID, "")
 }
 
 func (a *API) putConversationProfile(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
-	a.putProfile(w, r, principal, storage.ProfileKindConversation, r.PathValue("id"))
+	a.putProfile(w, r, principal, storage.ProfileKindConversation, r.PathValue("id"), "")
 }
 
-func (a *API) putProfile(w http.ResponseWriter, r *http.Request, principal domain.Principal, kind, subjectID string) {
+func (a *API) putCommunityInfo(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	a.putProfile(w, r, principal, storage.ProfileKindCommunity, r.PathValue("id"), "")
+}
+
+func (a *API) putCategoryInfo(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	a.putProfile(w, r, principal, storage.ProfileKindCategory, r.PathValue("cid"), r.PathValue("id"))
+}
+
+func (a *API) putChannelInfo(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	a.putProfile(w, r, principal, storage.ProfileKindChannel, r.PathValue("id"), "")
+}
+
+func (a *API) getCommunityInfo(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	a.getProfile(w, r, principal, storage.ProfileKindCommunity, r.PathValue("id"))
+}
+
+func (a *API) getCategoryInfo(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	p, err := a.Store.GetCategoryInfo(r.Context(), principal.AccountID, r.PathValue("id"), r.PathValue("cid"))
+	a.writeProfile(w, r, p, err)
+}
+
+func (a *API) getChannelInfo(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	a.getProfile(w, r, principal, storage.ProfileKindChannel, r.PathValue("id"))
+}
+
+func (a *API) putProfile(w http.ResponseWriter, r *http.Request, principal domain.Principal, kind, subjectID, communityID string) {
 	if r.Header.Get("X-Private-Messenger-Encrypted") != "1" {
 		writeError(w, http.StatusBadRequest, "encrypted_upload_header_required")
 		return
@@ -99,11 +131,14 @@ func (a *API) putProfile(w http.ResponseWriter, r *http.Request, principal domai
 	}
 	version, notices, err := a.Store.PutProfile(r.Context(), storage.ProfileWrite{
 		Kind: kind, SubjectID: subjectID, WriterAccountID: principal.AccountID,
-		KeyID: keyID, Ciphertext: body, ExpectedVersion: expected,
+		KeyID: keyID, Ciphertext: body, ExpectedVersion: expected, CommunityID: communityID,
 	})
 	switch {
 	case errors.Is(err, storage.ErrProfileVersionConflict):
 		writeError(w, http.StatusPreconditionFailed, "version_conflict")
+		return
+	case errors.Is(err, storage.ErrCategoryLimit):
+		writeError(w, http.StatusConflict, "category_limit_reached")
 		return
 	case err != nil:
 		handleStorageError(w, err)
@@ -111,7 +146,7 @@ func (a *API) putProfile(w http.ResponseWriter, r *http.Request, principal domai
 	}
 	for _, n := range notices {
 		a.publishCommittedEvent(r.Context(), []string{n.AccountID}, realtime.Event{
-			Version: "v1", Type: storage.ProfileUpdatedEventType, ID: n.EventID, Payload: n.Payload, CreatedAt: time.Now().UTC(),
+			Version: "v1", Type: n.EventType, ID: n.EventID, Payload: n.Payload, CreatedAt: time.Now().UTC(),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]int64{"version": version})
@@ -127,6 +162,10 @@ func (a *API) getConversationProfile(w http.ResponseWriter, r *http.Request, pri
 
 func (a *API) getProfile(w http.ResponseWriter, r *http.Request, principal domain.Principal, kind, subjectID string) {
 	p, err := a.Store.GetProfile(r.Context(), principal.AccountID, kind, subjectID)
+	a.writeProfile(w, r, p, err)
+}
+
+func (a *API) writeProfile(w http.ResponseWriter, r *http.Request, p storage.EncryptedProfile, err error) {
 	if err != nil {
 		// Strangers, ex-members, blocked accounts and missing records all
 		// answer 404, so the route is not an existence oracle.
@@ -162,12 +201,18 @@ func (a *API) profileVersions(w http.ResponseWriter, r *http.Request, principal 
 	var req struct {
 		AccountIDs      []string `json:"account_ids"`
 		ConversationIDs []string `json:"conversation_ids"`
+		CommunityIDs    []string `json:"community_ids"`
+		CategoryIDs     []string `json:"category_ids"`
+		ChannelIDs      []string `json:"channel_ids"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64*1024)).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_input")
 		return
 	}
-	versions, err := a.Store.ProfileVersions(r.Context(), principal.AccountID, req.AccountIDs, req.ConversationIDs)
+	versions, err := a.Store.SubjectVersions(r.Context(), principal.AccountID, storage.ProfileVersionQuery{
+		AccountIDs: req.AccountIDs, ConversationIDs: req.ConversationIDs,
+		CommunityIDs: req.CommunityIDs, CategoryIDs: req.CategoryIDs, ChannelIDs: req.ChannelIDs,
+	})
 	if err != nil {
 		handleStorageError(w, err)
 		return
