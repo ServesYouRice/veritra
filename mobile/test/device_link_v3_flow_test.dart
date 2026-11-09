@@ -619,6 +619,8 @@ class _World {
   Future<void> dispose() async {
     _drop(source);
     _drop(fresh);
+    await sourceCrypto.dispose();
+    await newCrypto?.dispose();
   }
 }
 
@@ -633,7 +635,14 @@ Future<void> _withWorld(
     await body(world);
   } finally {
     await world.dispose();
-    dir.deleteSync(recursive: true);
+    try {
+      dir.deleteSync(recursive: true);
+    } catch (_) {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      try {
+        dir.deleteSync(recursive: true);
+      } catch (_) {}
+    }
   }
 }
 
@@ -911,6 +920,7 @@ void main() {
             expect(w.fresh.session?.deviceId, _newDevice);
             expect(w.server.completes, 1);
             w.newClockLag = Duration.zero;
+            await w.drain();
           }),
       skip: skip);
 
@@ -990,6 +1000,7 @@ void main() {
             await w.source.approveActiveDeviceLink(sas);
             await w.fresh.completeDeviceLinkClaim();
             expect(w.fresh.session?.deviceId, _newDevice);
+            await w.drain();
           }),
       skip: skip);
 
