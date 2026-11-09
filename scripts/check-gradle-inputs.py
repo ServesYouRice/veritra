@@ -14,9 +14,8 @@ SNAPSHOT in any letter case.
 
 gradle/wrapper/gradle-wrapper.properties must name exactly one
 distributionUrl on https://services.gradle.org/distributions/ for a pinned
-gradle-X.Y[.Z]-(bin|all).zip. A distributionSha256Sum, when present, must be
-64 lowercase hex characters. Its absence is reported as a warning for now:
-requiring it needs the official checksum added to the properties file.
+gradle-X.Y[.Z]-(bin|all).zip. A distributionSha256Sum must be 64 lowercase hex
+characters.
 
 Fails closed: a missing app build script (app/build.gradle.kts or
 app/build.gradle), a missing or empty wrapper properties file, an unreadable
@@ -218,10 +217,10 @@ def check_wrapper(android: Path) -> list[str]:
         )
     checksum = properties.get("distributionSha256Sum")
     if checksum is None:
-        return [
+        raise GradleInputError(
             f"{path} has no distributionSha256Sum: the Gradle distribution is not integrity-pinned "
             f"(add the official checksum from {url}.sha256)"
-        ]
+        )
     if not WRAPPER_SHA256.fullmatch(checksum):
         raise GradleInputError(f"{path}: distributionSha256Sum must be 64 lowercase hex characters")
     return []
