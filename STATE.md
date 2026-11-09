@@ -233,6 +233,16 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D102** (2026-11-08, owner via L1-3; #162) | Reverses D100 check 02 (A): the server refuses key packages that a signed L1 list does not name (`key_package_not_listed`), and claims hand out only listed packages. Text from unapproved senders stays dropped; a made-up genesis is never a sticky conflict |
 | **D103** (2026-11-08, coordinator) | Counters after round 5: crypto ABI 19 (K1 renumbered from 16 at integration; L1 and K2 took 14–18), mobile local schema 26, server migration 0060. Reserved: schema 27 for C6; ABI 21, schema 29 and migration 0062 for the C1 invite rebase (#141) |
 | **D104** (2026-11-09, coordinator) | Counters for C1 invite rebase (#141): crypto ABI 21, mobile local schema 32, server migration 0066 |
+| **D105** (2026-11-09, owner) | Strangers' requests show the username and photo but not the display name until accepted |
+| **D106** (2026-11-09, owner) | Group calls, L2, L3 and SDK use all the design defaults in the owner-question sections of [B6](docs/designs/B6-group-calls.md#owner-questions-defaults-in-bold), [L2](docs/designs/L2-server-learns-less.md#open-questions-for-the-owner), [L3](docs/designs/L3-confidential-cloud.md#open-questions-for-the-owner) and [SDK](docs/designs/phase3-client-sdk.md#open-questions-for-the-owner). B6's required fail-closed cryptor settings still apply |
+| **D107** (2026-11-09, owner) | The desktop update check is on by default and can be turned off |
+| **D108** (2026-11-09, owner) | The F-Droid build uses UnifiedPush |
+| **D109** (2026-11-09, owner) | C7 records have `seq <= 2^31`; after a valid record has been seen, the next valid record is at most 1024 above the highest valid sequence seen. A newcomer's first record may be anywhere up to the ceiling (D101; `docs/designs/C7-channel-history.md`) |
+| **D110** (2026-11-09, owner) | Only admins create channels |
+| **D111** (2026-11-09, owner) | Backup space is shared per account |
+| **D112** (2026-11-09, owner) | Phones back up when the app opens |
+| **D113** (2026-11-09, owner) | Desktop message previews are shared across accounts for now |
+| **D114** (2026-11-09, owner) | The owner accepts the recommended defaults for the bug-hunt owner questions: TASK-039 holds application sends until the removal commit applies (D68); TASK-103 flushes drafts before sign-out or expiry clears data (D65); TASK-106 uses the sender's signed expiry and the shorter time (D100); TASK-130-132 verify the signing block, bind policy to the candidate and scope audit exceptions (D100); TASK-201 cancels unfinished approved links at expiry with their keys and membership (D100); check 24 excludes credentials and MLS state from backups (D71/D73). For check 02, D102's signed-L1 server key-package gate remains required; the older quiz's no-server-check recommendation remains superseded |
 
 ## Roadmap
 
