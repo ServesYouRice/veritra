@@ -481,6 +481,7 @@ class OutgoingApplicationStateTransition {
     required this.envelope,
     this.draftText,
     this.messageEffects = const <MessageEffect>[],
+    this.communityInfo = const <CommunityInfoEvent>[],
   });
 
   final int expectedCounter;
@@ -491,6 +492,11 @@ class OutgoingApplicationStateTransition {
 
   /// This device's own copy of what it sent, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
+
+  /// C3: this device's own info key or announcement. MLS never decrypts a
+  /// device's own application message, so without this copy the sender
+  /// would not hold its own key or pass its own announcement check.
+  final List<CommunityInfoEvent> communityInfo;
 }
 
 /// The backup plaintext format. Version 6 (D71, D73) carries the account
@@ -676,6 +682,10 @@ abstract class LocalStore {
   /// oldest first, bounded per subject.
   Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
       CommunityInfoEventKind kind, String subjectKind, String subjectId);
+
+  /// Keeps events this device made itself (its own new keys), outside any
+  /// MLS commit, under the same bounds as received ones.
+  Future<void> recordOwnCommunityInfoEvents(List<CommunityInfoEvent> events);
 
   /// The record this device last accepted for a subject, or null.
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
@@ -1453,6 +1463,18 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
+  Future<void> recordOwnCommunityInfoEvents(
+      List<CommunityInfoEvent> events) async {
+    final protectedKeyIds = {
+      for (final record in _acceptedCommunityInfo.values) record.keyId
+    };
+    for (final event in events) {
+      _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
+          protectedKeyIds: protectedKeyIds);
+    }
+  }
+
+  @override
   Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
           CommunityInfoEventKind kind,
           String subjectKind,
@@ -1758,6 +1780,13 @@ class MemoryLocalStore implements LocalStore {
       throw const OutboxFullException();
     }
     _applyHistoryEffects(transition.messageEffects);
+    final protectedKeyIds = {
+      for (final record in _acceptedCommunityInfo.values) record.keyId
+    };
+    for (final event in transition.communityInfo) {
+      _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
+          protectedKeyIds: protectedKeyIds);
+    }
     _setCryptoState(transition.state);
     final sentText = transition.draftText;
     final draft = _drafts[transition.envelope.conversationId];
@@ -3177,6 +3206,11 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readCommunityInfoEvents(kind, subjectKind, subjectId);
 
   @override
+  Future<void> recordOwnCommunityInfoEvents(
+          List<CommunityInfoEvent> events) async =>
+      (await _database()).writeCommunityInfoEvents(events);
+
+  @override
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
           String subjectKind, String subjectId) async =>
       (await _database()).readAcceptedCommunityInfo(subjectKind, subjectId);
@@ -3374,6 +3408,7 @@ class SecureLocalStore implements LocalStore {
         maxEntries: maxPendingEnvelopes,
         draftText: transition.draftText,
         messageEffects: transition.messageEffects,
+        communityInfo: transition.communityInfo,
         recordChanges: _recordWrites(transition.state),
         leaseKey: _syncLeaseKey,
       );
