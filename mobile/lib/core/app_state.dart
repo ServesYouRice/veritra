@@ -210,6 +210,9 @@ class Ops {
 
   /// C1: invitations, join requests and community membership.
   static const membership = 'membership';
+
+  /// C3: background community info sends (keys, requests, announcements).
+  static const communityInfo = 'community_info';
   static const blocks = 'blocks';
   static const mute = 'mute';
 
@@ -2428,16 +2431,21 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (shared != null) {
         await _setUpConversationGroup(shared);
         await refreshConversations();
-        // C3: the name also goes into the encrypted record, under a new
-        // community key this device makes.
-        await publishCommunityInfo(created!.id, name: name);
       }
     });
+    final made = created;
+    // C3: the name also goes into the encrypted record, under a new
+    // community key this device makes. Outside `_run`: it sends, and a send
+    // queues behind `_run` (a deadlock inside it).
+    if (error == null && made != null && made.sharedConversationId != null) {
+      unawaited(publishCommunityInfo(made.id, name: name, mint: true));
+    }
     return error == null ? created : null;
   }
 
   /// Creates a channel and its backing conversation in one server transaction.
   Future<void> createChannel(String communityId, String name) async {
+    ({Channel channel, bool shared})? made;
     await _run(() async {
       final current = session;
       final client = api;
@@ -2480,14 +2488,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (inSharedGroup) {
         selectChannel(creation.conversation.id, creation.channel.id);
       }
-      // C3: the encrypted channel record, and for an open channel the
-      // community record that lists it.
       if (creation.channel.isRouted) {
-        await publishChannelInfo(creation.channel, name: name);
-        if (inSharedGroup) await publishCommunityInfo(communityId);
+        made = (channel: creation.channel, shared: inSharedGroup);
       }
       await loadMessages(creation.conversation.id);
     });
+    // C3: the encrypted channel record, and for an open channel the
+    // community record that lists it. Outside `_run` (see createCommunity).
+    final routed = made;
+    if (error == null && routed != null) {
+      unawaited(() async {
+        await publishChannelInfo(routed.channel, name: name, mint: true);
+        if (routed.shared) await publishCommunityInfo(communityId);
+      }());
+    }
   }
 
   Future<void> addConversationMember(
@@ -2579,8 +2593,6 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// I51). Also used for each channel when a community removes a member.
   Future<void> _afterMemberRemoved(
       String conversationId, String accountId) async {
-    // C3 (D80): the info key this conversation carries rotates at once.
-    await _markInfoRotation(conversationId);
     // D68: hold sends until the removal commit is applied. Reconcile
     // releases the hold; without MLS nothing would, and nothing is
     // encrypted to a group either. The session queue keeps sends out
@@ -2612,6 +2624,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         _removalHoldsUpdated();
       }
     }
+    // C3 (D80): the info key this conversation carries rotates at once,
+    // after the hold above, so the new key is encrypted only after the
+    // removal commit.
+    await _markInfoRotation(conversationId);
     // Their devices leave the MLS group through reconcile (card I51). The
     // change is new, so an earlier one's backoff does not hold it.
     _mlsReconcileRequested = true;
@@ -4195,7 +4211,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }) {
     var queued = false;
     var held = false;
-    return _runScoped(Ops.send, () async {
+    // C3 info payloads are background work: their failures land under
+    // their own op, never in the composer's send error.
+    return _runScoped(
+        infoPayloadTypes.contains(type) ? Ops.communityInfo : Ops.send,
+        () async {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final current = session;
       final client = api;

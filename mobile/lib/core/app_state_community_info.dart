@@ -40,6 +40,8 @@ extension CommunityInfoActions on AppState {
       send: (conversationId, type, body) => _sendPayload(
           conversationId, type, body,
           channelId: _infoChannelFor(conversationId)),
+      // Background info sends report under their own op, never as the
+      // composer's send.
       topology: _AppInfoTopology(this),
       codec: crypto.communityInfoCodec,
       policyFor: (communityId) =>
@@ -82,8 +84,12 @@ extension CommunityInfoActions on AppState {
     }
     final routed = (channelsByCommunity[communityId] ?? const <Channel>[])
         .where((c) => c.conversationId == conversationId && c.isRouted);
+    // An announcement channel takes posts from owners and admins only; a
+    // member's request waits for an open channel.
     return (routed.where((c) => c.kind == 'open').firstOrNull ??
-            routed.where((c) => c.kind != 'private').firstOrNull)
+            (_infoAdminOf[communityId] == true
+                ? routed.where((c) => c.kind == 'announcement').firstOrNull
+                : null))
         ?.id;
   }
 
@@ -142,7 +148,7 @@ extension CommunityInfoActions on AppState {
       kind: infoKindCommunity,
       subjectId: communityId,
       revision: revision,
-      name: shown?.name ?? (legacy.isEmpty ? 'Community' : legacy),
+      name: shown?.name ?? legacy,
       icon: shown?.icon,
       categories: shown?.categories ?? const <String>[],
       channels: channels.take(infoMaxChannels).toList(),
@@ -151,9 +157,19 @@ extension CommunityInfoActions on AppState {
 
   /// Writes the community's encrypted record from what the app knows, with
   /// [name] when given. Owners and admins only (the server checks too).
-  Future<bool> publishCommunityInfo(String communityId, {String? name}) async {
+  /// [mint] only when the community was just created: anyone else without
+  /// the key asks for it instead of making a parallel one.
+  ///
+  /// Never call it from inside the session queue (`_run`): it sends, and a
+  /// send queues behind the caller.
+  Future<bool> publishCommunityInfo(String communityId,
+      {String? name, bool mint = false}) async {
     final service = _info;
     if (service == null) return false;
+    final known = name?.trim() ??
+        service.shown(infoKindCommunity, communityId)?.name ??
+        communities.where((c) => c.id == communityId).firstOrNull?.name.trim();
+    if (known == null || known.isEmpty) return false;
     try {
       await service.publish(_communitySubject(communityId), (revision) {
         final now = _communityRecordNow(communityId, revision);
@@ -166,7 +182,7 @@ extension CommunityInfoActions on AppState {
           categories: now.categories,
           channels: now.channels,
         );
-      });
+      }, mint: mint);
       return true;
     } catch (err) {
       // Body-free: no name, key or server text.
@@ -178,8 +194,10 @@ extension CommunityInfoActions on AppState {
 
   /// Writes a channel's encrypted name and topic. Any member may, unless
   /// admins restrict channel info (D80; the UI asks [mayEditCommunityInfo]).
+  /// [mint] only for a private channel just created (its own key). Never
+  /// call it from inside the session queue.
   Future<bool> publishChannelInfo(Channel channel,
-      {required String name, String topic = ''}) async {
+      {required String name, String topic = '', bool mint = false}) async {
     final service = _info;
     if (service == null) return false;
     final private = channel.kind == 'private';
@@ -205,6 +223,7 @@ extension CommunityInfoActions on AppState {
                   InfoPrivatePlace(position: position < 0 ? 0 : position)
               : null,
         ),
+        mint: mint && private,
       );
       return true;
     } catch (err) {
@@ -247,6 +266,9 @@ extension CommunityInfoActions on AppState {
     final current = session;
     final client = api;
     if (service == null || current == null || client == null) return;
+    // Until the lists load, no mark or record can be placed; a pass now
+    // would see an empty world.
+    if (!communitiesLoaded) return;
     if (_infoRefreshRunning) {
       _infoRefreshAgain = true;
       return;
@@ -288,31 +310,60 @@ extension CommunityInfoActions on AppState {
 
   Future<void> _refreshOneCommunity(CommunityInfoService service,
       ApiClient client, Session current, Community community) async {
-    // Who answers key requests: owners and admins by the server's word.
+    // Who answers key requests and rotates: owners and admins by the
+    // server's word, read once per session.
+    if (!_infoAdminOf.containsKey(community.id)) {
+      try {
+        final members =
+            await client.communityMembers(current.token, community.id);
+        _infoAdminOf[community.id] = members.any((m) =>
+            m.accountId == current.accountId &&
+            (m.role == 'owner' || m.role == 'admin'));
+      } catch (err) {
+        if (err is ApiException && err.statusCode == 401) rethrow;
+      }
+    }
+    // One versions call; only subjects above what this device accepted are
+    // fetched.
+    final communitySubject = _communitySubject(community.id);
+    await service.loadAccepted(communitySubject);
+    final channels = channelsByCommunity[community.id] ?? const <Channel>[];
+    final categories =
+        service.shown(infoKindCommunity, community.id)?.categories ??
+            const <String>[];
+    Map<String, int> versions;
     try {
-      final members =
-          await client.communityMembers(current.token, community.id);
-      _infoAdminOf[community.id] = members.any((m) =>
-          m.accountId == current.accountId &&
-          (m.role == 'owner' || m.role == 'admin'));
+      versions = {
+        for (final v in await client.infoVersions(current.token,
+            communityIds: [community.id],
+            categoryIds: categories.take(200).toList(),
+            channelIds: channels.map((c) => c.id).take(200).toList()))
+          '${v.kind}|${v.id}': v.version
+      };
     } catch (err) {
       if (err is ApiException && err.statusCode == 401) rethrow;
+      return;
     }
-    final subjects = <InfoSubject>[
-      _communitySubject(community.id),
-    ];
-    for (final subject in subjects.toList()) {
-      await _refreshSubject(service, subject);
+    Future<void> one(InfoSubject subject) async {
+      final version = versions[subject.key];
+      if (version == null) return;
+      await _refreshSubject(service, subject, version);
     }
-    final record = service.shown(infoKindCommunity, community.id);
-    for (final category in record?.categories ?? const <String>[]) {
-      await _refreshSubject(
-          service, InfoSubject(infoKindCategory, category, community.id));
+
+    await one(communitySubject);
+    // The community record may have named new categories.
+    for (final category
+        in service.shown(infoKindCommunity, community.id)?.categories ??
+            const <String>[]) {
+      final subject = InfoSubject(infoKindCategory, category, community.id);
+      if (!versions.containsKey(subject.key)) {
+        await _refreshSubject(service, subject, null);
+      } else {
+        await one(subject);
+      }
     }
-    for (final channel
-        in channelsByCommunity[community.id] ?? const <Channel>[]) {
-      await _refreshSubject(
-          service, InfoSubject(infoKindChannel, channel.id, community.id));
+    for (final channel in channels) {
+      await one(InfoSubject(infoKindChannel, channel.id, community.id));
     }
     // Answer what this device can: the community key, and each private
     // channel's key in its own group.
@@ -333,9 +384,9 @@ extension CommunityInfoActions on AppState {
   }
 
   Future<void> _refreshSubject(
-      CommunityInfoService service, InfoSubject subject) async {
+      CommunityInfoService service, InfoSubject subject, int? version) async {
     try {
-      await service.refresh(subject);
+      await service.refresh(subject, knownVersion: version);
     } catch (err) {
       if (err is ApiException && err.statusCode == 401) rethrow;
       developer.log('c3_subject_refresh_failed ${err.runtimeType}',
@@ -413,4 +464,13 @@ class _AppInfoTopology implements InfoTopology {
   @override
   bool serverSaysAdmin(String communityId) =>
       state._infoAdminOf[communityId] ?? false;
+
+  @override
+  bool sendHeld(String conversationId) =>
+      state.sendHeldForRemoval(conversationId);
+
+  @override
+  bool communityGone(String communityId) =>
+      state.communitiesLoaded &&
+      !state.communities.any((c) => c.id == communityId);
 }

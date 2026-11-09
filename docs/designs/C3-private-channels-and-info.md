@@ -257,18 +257,40 @@ big community", not "an icon"; a tiny icon may stay in the small one.
     the owning group, and not when another answer already came after the
     request. A push right after an add commit is not built (the request
     covers it).
+  - A device that answers a key request also announces again, as itself,
+    every record under that key it accepted: a joiner never saw the
+    announcements made before it came.
+  - A device makes a new key only when the keyed subject is created, or in
+    a rotation; otherwise it asks. The current key is the one whose id
+    first arrived last, so an old key delivered again never wins.
   - Rotation (D80): every removal, kick or ban marks the key the
-    conversation carries as due, kept across restarts (a setting, no
-    schema). A pass makes a new key, sends it into the owning group (the
-    send waits for the removal commit), and seals every record under it
-    again. A rotation that fails stays due.
+    conversation carries as due, kept across restarts (a setting with a
+    token per mark, changed under a lock, so a mark made during a pass
+    survives it). Only owners and admins (server's word) rotate. A pass
+    skips a group still holding sends for the removal (D68), makes a new key
+    (a retry reuses it), sends it into the owning group, and seals every
+    record under it again. A mark is kept while its group cannot be placed
+    and dropped only when its community is known gone; failures back off
+    from one minute to an hour.
+  - Publishing never runs inside the app's session queue (it sends, and a
+    send queues behind it). An own record whose announcement could not be
+    queued (no open channel yet, a pause) is announced by a later pass.
+  - Background info sends report under their own op, never as the
+    composer's send error.
 - Fetch loop: on `info.updated`, after the communities load, and after a
-  catch-up at most once a minute. Each record is fetched and judged; a 404
-  never clears what is shown.
+  catch-up at most once a minute, never before the communities have loaded.
+  One versions call per community; only records above what was accepted
+  are fetched and judged; a 404 never clears what is shown.
 - Screens: names shown as the accepted record, else the legacy server
   name, else a placeholder; a channel's topic under its name; an edit
   button for channel name and topic only where the verified role state
   allows it.
+
+**Owner question:** moderators may kick, but only owners and admins
+rotate, so a moderator's kick leaves the community key unrotated until an
+admin removes someone. Options: (a) an admin's device rotates when it sees
+a removal it did not make; (b) trust moderator-made keys; (c) only admins
+kick. Recommended: (a).
 
 **Still left:** icons and the category screens; hiding "New channel" from
 moderators (the community card does not know the viewer's role; the
@@ -308,3 +330,5 @@ the legacy server name. Rules from the first review that still bind:
   shows placeholders until an admin writes again.
 - Backups and new-device transfers carry no info keys; a restored device
   asks again.
+- Info envelopes carry no `frank_commit` while every other message does, so
+  the server can tell these control messages apart (as with C7's).
