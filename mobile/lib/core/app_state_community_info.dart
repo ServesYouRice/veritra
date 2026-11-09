@@ -34,6 +34,9 @@ extension CommunityInfoActions on AppState {
       return _infoService;
     }
     _infoServiceOwner = owner;
+    // Another session: nothing learned for the last one carries over.
+    _infoAdminOf.clear();
+    _infoPublishing.clear();
     return _infoService = CommunityInfoService(
       store: localStore,
       api: _AppInfoApi(client, current.token),
@@ -170,6 +173,10 @@ extension CommunityInfoActions on AppState {
         service.shown(infoKindCommunity, communityId)?.name ??
         communities.where((c) => c.id == communityId).firstOrNull?.name.trim();
     if (known == null || known.isEmpty) return false;
+    final previous = _infoPublishing[communityId];
+    final done = Completer<void>();
+    _infoPublishing[communityId] = done.future;
+    if (previous != null) await previous;
     try {
       await service.publish(_communitySubject(communityId), (revision) {
         final now = _communityRecordNow(communityId, revision);
@@ -189,6 +196,11 @@ extension CommunityInfoActions on AppState {
       developer.log('c3_publish_failed ${err.runtimeType}',
           name: 'veritra.sync');
       return false;
+    } finally {
+      done.complete();
+      if (identical(_infoPublishing[communityId], done.future)) {
+        _infoPublishing.remove(communityId);
+      }
     }
   }
 
@@ -208,6 +220,10 @@ extension CommunityInfoActions on AppState {
             .indexWhere((c) => c.id == channel.id)
         : 0;
     final current = service.shown(infoKindChannel, channel.id);
+    // A community record still being written (its key made at creation)
+    // finishes first, so an open channel created right after finds the key.
+    final pending = _infoPublishing[channel.communityId];
+    if (pending != null) await pending;
     try {
       await service.publish(
         InfoSubject(infoKindChannel, channel.id, channel.communityId),
@@ -462,8 +478,7 @@ class _AppInfoTopology implements InfoTopology {
   }
 
   @override
-  bool serverSaysAdmin(String communityId) =>
-      state._infoAdminOf[communityId] ?? false;
+  bool? serverSaysAdmin(String communityId) => state._infoAdminOf[communityId];
 
   @override
   bool sendHeld(String conversationId) =>

@@ -396,6 +396,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   bool _infoRefreshAgain = false;
   DateTime? _lastInfoRefresh;
   final Map<String, bool> _infoAdminOf = {};
+  final Map<String, Future<void>> _infoPublishing = {};
 
   /// The verified C4 role source for community info until the C4 client
   /// wiring makes this class one; tests set it.

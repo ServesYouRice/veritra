@@ -66,9 +66,10 @@ abstract interface class InfoTopology {
   String? privateConversationOf(String channelId);
 
   /// Whether this account is an owner or admin of the community, by the
-  /// server's word. Used only to pick who answers key requests and who
-  /// rotates, never to decide what is shown.
-  bool serverSaysAdmin(String communityId);
+  /// server's word, or null while unknown (the member list did not load).
+  /// Used only to pick who answers key requests and who rotates, never to
+  /// decide what is shown.
+  bool? serverSaysAdmin(String communityId);
 
   /// Whether sends to [conversationId] wait for a removal commit (D68).
   /// Background work skips such a group and comes back later, so one stuck
@@ -137,6 +138,7 @@ class CommunityInfoService {
   final Map<String, InfoSubject> _shownSubjects = {};
   final Map<String, DateTime> _lastAsked = {};
   final Set<String> _answered = {};
+  final Map<String, DateTime> _answeredDevice = {};
 
   static final _random = Random.secure();
   static Duration _randomDelay() =>
@@ -446,7 +448,7 @@ class CommunityInfoService {
   /// that owns the key: a request for a private channel's key made in the
   /// shared group is never answered there.
   Future<int> answerRequests(InfoKeyHome home, String communityId) async {
-    if (!topology.serverSaysAdmin(communityId) ||
+    if (topology.serverSaysAdmin(communityId) != true ||
         topology.sendHeld(home.conversationId)) {
       return 0;
     }
@@ -459,7 +461,14 @@ class CommunityInfoService {
         .where((r) =>
             mayDeliverInfoKey(home, r.conversationId) &&
             r.senderDeviceId != deviceId &&
-            !_answered.contains('${r.ident}#${r.seq}'))
+            !_answered.contains('${r.ident}#${r.seq}') &&
+            // One answer per asking device and key home per hour, however
+            // often it asks: a member repeating requests cannot make every
+            // admin send the key and every record again and again.
+            mayRequestInfoKey(
+                _answeredDevice[
+                    '${r.senderDeviceId}|${home.keySubjectKind}|${home.keySubjectId}'],
+                _clock()))
         .toList();
     if (requests.isEmpty) return 0;
     await Future<void>.delayed(_answerDelay());
@@ -472,6 +481,9 @@ class CommunityInfoService {
     final open = requests.where((r) => (r.seq ?? 0) > lastKeySeq).toList();
     for (final r in requests) {
       _answered.add('${r.ident}#${r.seq}');
+      _answeredDevice[
+              '${r.senderDeviceId}|${home.keySubjectKind}|${home.keySubjectId}'] =
+          _clock();
     }
     if (open.isEmpty) return 0;
     final sent = await send(
@@ -615,7 +627,11 @@ class CommunityInfoService {
                 conversationId: conversation);
       }
       if (home == null || topology.sendHeld(home.conversationId)) continue;
-      if (!topology.serverSaysAdmin(communityId)) {
+      // Unknown (the member list failed to load) keeps the mark; only a
+      // known non-admin drops it.
+      final admin = topology.serverSaysAdmin(communityId);
+      if (admin == null) continue;
+      if (!admin) {
         await _updateMark(id, token, (_) => null);
         continue;
       }
