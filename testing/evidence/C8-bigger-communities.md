@@ -34,3 +34,47 @@ Reading:
 
 Verdict: step 1 (250) passes. 500 and 1,000 are not enabled by default; see
 the design.
+
+## Step 2 (500 members) capacity measurement status
+
+Step 2 requires an end-to-end capacity run through `scripts/capacity.sh` with a 500-member group and `DELIVERIES_PER_MINUTE >= 1002` (per [`docs/designs/C8-bigger-communities.md`](../../docs/designs/C8-bigger-communities.md)).
+
+Rechecked 2026-11-09 on the Windows host. This capacity run cannot be
+executed here with the existing harness:
+
+1. **Docker engine unavailable.** `Get-Service com.docker.service` reports
+   `Stopped`. `docker info --format '{{.OSType}}'` fails with
+   `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`.
+   Bash is installed, but `scripts/capacity.sh` requires a working Linux
+   Docker engine for its CPU/memory-limited production container.
+2. **No 500-member workload.** The script accepts tiers `s` and `m`; the
+   load tool also has a small `smoke` profile. Both capacity tiers use
+   `GroupSize: 5` in `server/cmd/veritra-load/workload.go`.
+   `parseOptions` supports `-accounts`, but that changes the account count
+   without changing group size. No group-size flag or 500-member profile
+   exists.
+3. **Server limits are not forwarded.** The script's `docker run` passes
+   neither `PRIVATE_MESSENGER_LIMIT_CONVERSATION_MEMBERS` nor
+   `PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE`; exporting them on the
+   host does not configure the container. A future run must explicitly set
+   members to 500 and deliveries to at least 1,002, as required by
+   `Limits.Validate()`, as well as add a 500-member workload. Raising the
+   delivery budget alone leaves the container's member limit at 250.
+
+`STATE.md` still tracks the capacity run on the owner's host. No end-to-end
+500-member measurement or capacity pass is claimed here.
+
+The storage-only sanity check was run successfully:
+
+```text
+cd server
+go test -run '^$' -bench ConversationMembersScale -benchtime 5x ./internal/storage
+```
+
+At 500 members this rerun measured 2.04 ms send + recipient list, 0.60 ms
+member list and 0.23 ms message page (five iterations each). These are
+separate from the 2026-11-01 measurements above and do not exercise HTTP,
+realtime delivery, rate-limit admission or MLS clients; they cannot qualify
+step 2.
+
+Per specification, the default member limit remains at 250 (`DefaultConversationMembers = 250`).

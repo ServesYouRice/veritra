@@ -619,6 +619,8 @@ class _World {
   Future<void> dispose() async {
     _drop(source);
     _drop(fresh);
+    await sourceCrypto.dispose();
+    await newCrypto?.dispose();
   }
 }
 
@@ -633,7 +635,15 @@ Future<void> _withWorld(
     await body(world);
   } finally {
     await world.dispose();
-    dir.deleteSync(recursive: true);
+    try {
+      dir.deleteSync(recursive: true);
+    } on FileSystemException catch (error) {
+      // Windows may briefly retain a handle after the native device closes.
+      // Retry sharing violations only, and let a persistent failure fail.
+      if (error.osError?.errorCode != 32) rethrow;
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      dir.deleteSync(recursive: true);
+    }
   }
 }
 
@@ -911,6 +921,7 @@ void main() {
             expect(w.fresh.session?.deviceId, _newDevice);
             expect(w.server.completes, 1);
             w.newClockLag = Duration.zero;
+            await w.drain();
           }),
       skip: skip);
 
@@ -990,6 +1001,7 @@ void main() {
             await w.source.approveActiveDeviceLink(sas);
             await w.fresh.completeDeviceLinkClaim();
             expect(w.fresh.session?.deviceId, _newDevice);
+            await w.drain();
           }),
       skip: skip);
 
