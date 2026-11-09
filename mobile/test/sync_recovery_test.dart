@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/profile_service.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -20,6 +21,30 @@ import 'package:private_messenger/sync/sync_service.dart';
 /// the tombstone policy for proven-expired application messages.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('a membership projection batch reloads profile rosters once', () async {
+    final api = _ProfileRosterApi();
+    final harness = await _Harness.start(api);
+    addTearDown(harness.dispose);
+    await harness.waitFor(() => api.syncCalls > 0);
+    await harness.settle();
+    harness.state.profiles = _NoopProfiles();
+    harness.state.membersByConversation = {'conv_1': []};
+    api.events = [
+      for (var id = 1; id <= 2; id++)
+        SyncEvent(
+            id: id,
+            type: 'membership.updated',
+            conversationId: 'conv_1',
+            createdAt: DateTime.utc(2026)),
+    ];
+    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 2);
+    expect(api.rosterReads, 1);
+    expect(harness.state.membersByConversation['conv_1']!.single.accountId,
+        'acct_peer');
+  });
 
   test('a missing MLS control message stops sync without a poison loop',
       () async {
@@ -1038,4 +1063,20 @@ class _QuietSync implements SyncService {
 
   @override
   Future<void> dispose() => _controller.close();
+}
+
+/// The projection test needs profile bookkeeping without any native AEAD.
+class _NoopProfiles implements ProfileService {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => Future<void>.value();
+}
+
+class _ProfileRosterApi extends _ScriptedApi {
+  int rosterReads = 0;
+  @override
+  Future<List<ConversationMember>> conversationMembers(
+      String token, String conversationId) async {
+    rosterReads++;
+    return [ConversationMember(accountId: 'acct_peer', role: 'member')];
+  }
 }
