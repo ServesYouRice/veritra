@@ -82,10 +82,14 @@ void main() {
           'duration_seconds': 'ignored on unpin'
         })),
         isA<DecodedAppPayload>());
-    for (final type in ['admin_delete', 'profile_key']) {
+    // `profile_key` stopped being reserved when W11 built it; the types still
+    // reserved for other packages stay unsupported hidden rows.
+    for (final type in ['admin_delete', 'history_sync']) {
       expect(classify({...payload(type, {}), 'hidden': true}),
           isA<UnsupportedAppPayload>().having((p) => p.hidden, 'hidden', true));
     }
+    expect(classify({...payload('profile_key', {}), 'hidden': true}),
+        isA<DecodedAppPayload>());
   });
 
   test('v2 ignores additive fields and binds shared-channel context', () {

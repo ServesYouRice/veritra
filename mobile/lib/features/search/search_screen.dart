@@ -281,12 +281,14 @@ class _SearchScreenState extends State<SearchScreen> {
             .firstOrNull;
         final title = conversation == null
             ? context.l10n.searchTypeConversation
-            : conversationTitle(context.l10n, conversation);
+            : conversationTitle(context.l10n, conversation,
+                profiles: widget.state.profiles);
         return MergeSemantics(
           child: ListTile(
             leading: conversation == null
                 ? const Icon(Icons.chat_bubble_outline)
-                : conversationAvatar(context, conversation, radius: 20),
+                : conversationAvatar(context, conversation,
+                    radius: 20, profiles: widget.state.profiles),
             title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
             subtitle: Text.rich(
               _snippetSpan(hit.snippet, theme.textTheme.bodyMedium),

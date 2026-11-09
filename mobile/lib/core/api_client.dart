@@ -13,6 +13,7 @@ import 'device_lists.dart' show DeviceListPage;
 import 'membership_models.dart';
 import 'models.dart';
 import 'report_models.dart';
+import 'profile_models.dart';
 import 'server_origin.dart';
 import 'transport_policy.dart';
 
@@ -64,6 +65,9 @@ class ApiClient {
   /// minutes, a stalled one is cut after this long without a chunk.
   static const defaultTransferIdleTimeout = Duration(seconds: 30);
   static const _maxJsonResponseBytes = 2 * 1024 * 1024;
+
+  /// A profile record is 4 KiB or 256 KiB plus 28 bytes of overhead.
+  static const maxProfileBlobBytes = 256 * 1024 + 64;
 
   /// Cap for replies that carry ciphertext. One item always fits: an MLS
   /// payload is at most 4 MiB (about 5.6 MB as base64) and a message
@@ -1988,6 +1992,137 @@ class ApiClient {
       token: token,
     );
     return _decode(() => BlockedAccount.fromJson(json));
+  }
+
+  // W11 encrypted profiles. The server holds one opaque record per account
+  // and per group; names, photos and keys never reach it.
+
+  Future<ProfileFetch> fetchProfile(
+    String token,
+    String path, {
+    int? ifNoneMatchVersion,
+  }) async {
+    final request = await _openRequest('GET', Uri.parse(baseUrl).resolve(path));
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    if (ifNoneMatchVersion != null) {
+      request.headers
+          .set(HttpHeaders.ifNoneMatchHeader, '"$ifNoneMatchVersion"');
+    }
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode == 304) {
+      await response.drain<void>();
+      return const ProfileFetch.notModified();
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final version = int.tryParse(
+        (response.headers.value(HttpHeaders.etagHeader) ?? '')
+            .replaceAll('"', ''));
+    final keyId = response.headers.value('X-Profile-Key-Id');
+    final blob = await _readBounded(response, maxProfileBlobBytes);
+    if (version == null || version < 1 || keyId == null || blob.isEmpty) {
+      throw const ApiResponseException();
+    }
+    return ProfileFetch.record(version: version, keyId: keyId, blob: blob);
+  }
+
+  Future<ProfileFetch> fetchAccountProfile(String token, String accountId,
+          {int? ifNoneMatchVersion}) =>
+      fetchProfile(
+          token, '/api/v1/profiles/account/${Uri.encodeComponent(accountId)}',
+          ifNoneMatchVersion: ifNoneMatchVersion);
+
+  Future<ProfileFetch> fetchConversationProfile(
+          String token, String conversationId, {int? ifNoneMatchVersion}) =>
+      fetchProfile(token,
+          '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+          ifNoneMatchVersion: ifNoneMatchVersion);
+
+  /// Replaces a record. [ifMatchVersion] is the version being replaced, or
+  /// null for the first write. Throws [ApiException] with kind conflict when
+  /// another device wrote first (412).
+  Future<int> putProfile(
+    String token,
+    String path,
+    Uint8List blob, {
+    required String keyId,
+    int? ifMatchVersion,
+  }) async {
+    if (blob.isEmpty || blob.length > maxProfileBlobBytes) {
+      throw ArgumentError.value(blob.length, 'blob');
+    }
+    final request = await _openRequest('PUT', Uri.parse(baseUrl).resolve(path));
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    request.headers.set('X-Private-Messenger-Encrypted', '1');
+    request.headers.set('X-Profile-Key-Id', keyId);
+    if (ifMatchVersion == null) {
+      request.headers.set(HttpHeaders.ifNoneMatchHeader, '*');
+    } else {
+      request.headers.set(HttpHeaders.ifMatchHeader, '"$ifMatchVersion"');
+    }
+    request.headers.contentType = ContentType.binary;
+    request.contentLength = blob.length;
+    final response = await _sendBody(request, Stream.value(blob));
+    final json = await _readJsonResponse(response);
+    final version = json['version'];
+    if (version is! int || version < 1) throw const ApiResponseException();
+    return version;
+  }
+
+  Future<int> putAccountProfile(String token, Uint8List blob,
+          {required String keyId, int? ifMatchVersion}) =>
+      putProfile(token, '/api/v1/profiles/account/me', blob,
+          keyId: keyId, ifMatchVersion: ifMatchVersion);
+
+  Future<int> putConversationProfile(
+          String token, String conversationId, Uint8List blob,
+          {required String keyId, int? ifMatchVersion}) =>
+      putProfile(
+          token,
+          '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+          blob,
+          keyId: keyId,
+          ifMatchVersion: ifMatchVersion);
+
+  /// The current `{version, key_id}` of every subject the caller may read, at
+  /// most 200 of each kind. Unreadable and missing subjects are left out.
+  Future<List<ProfileVersion>> profileVersions(
+    String token, {
+    List<String> accountIds = const <String>[],
+    List<String> conversationIds = const <String>[],
+  }) async {
+    if (accountIds.length > 200 || conversationIds.length > 200) {
+      throw ArgumentError('at most 200 subjects of a kind');
+    }
+    final json = await _jsonRequest('POST', '/api/v1/profiles/versions',
+        token: token,
+        body: <String, Object?>{
+          'account_ids': accountIds,
+          'conversation_ids': conversationIds,
+        });
+    final list = json['versions'];
+    if (list is! List) throw const ApiResponseException();
+    return _decode(() => [
+          for (final item in list)
+            ProfileVersion.fromJson(Map<String, Object?>.from(item as Map)),
+        ]);
+  }
+
+  /// Clears the legacy plaintext title after the group's encrypted profile
+  /// holds the name (owner or admin only).
+  Future<void> clearConversationTitle(
+      String token, String conversationId) async {
+    final request = await _openRequest(
+        'DELETE',
+        Uri.parse(baseUrl).resolve(
+            '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/title'));
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    await response.drain<void>();
   }
 
   Future<void> unblockAccount(String token, String accountId) async {

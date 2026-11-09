@@ -18,8 +18,10 @@ import '../sync/sync_recovery.dart' show SyncFailureKind;
 import '../crypto/app_payload.dart' show effectiveExpiryMillis;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 import 'device_list_records.dart';
+import 'profile_records.dart';
 
 export 'device_list_records.dart';
+export 'profile_records.dart';
 
 part 'encrypted_database.g.dart';
 part 'notice_outbox_sql.dart';
@@ -30,6 +32,7 @@ part 'conversation_pause_sql.dart';
 part 'device_list_sql.dart';
 part 'filed_reports_sql.dart';
 part 'community_info_sql.dart';
+part 'profile_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -308,6 +311,36 @@ final class PollCloseEffect extends MessageEffect {
   final String closerAccountId;
   final String conversationId;
   final String? channelId;
+}
+
+/// A profile key that arrived in an MLS message (W11). Stored in the same
+/// transaction as the MLS state, because the message decrypts only once.
+/// [subjectId] is the sender's account for an account key and the
+/// conversation for a group key; the payload carries no subject field, so a
+/// member cannot hand out a key for someone else.
+final class ProfileKeyEffect extends MessageEffect {
+  const ProfileKeyEffect({
+    required this.kind,
+    required this.subjectId,
+    required this.key,
+    required this.keyId,
+    required this.version,
+    required this.receivedAt,
+  });
+
+  final String kind;
+  final String subjectId;
+  final List<int> key;
+  final String keyId;
+
+  /// The server version current when the sender sent the key.
+  final int version;
+  final int receivedAt;
+
+  /// Only an account's own hint is a rollback floor. A group key's version
+  /// is never one: any member can send it, and a high value would lock
+  /// everyone out.
+  bool get raisesFloor => kind == profileSubjectAccount;
 }
 
 final class PinMessageEffect extends MessageEffect {
@@ -605,7 +638,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 31;
+  static const currentSchemaVersion = 34;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -824,6 +857,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createDeviceLists();
             await _createFiledReports();
             await _createCommunityInfo();
+            await _createProfiles();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -975,6 +1009,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // accepted records. New tables only, self-contained, so the step
             // can be renumbered without touching another.
             if (from < 31) await _createCommunityInfo();
+            // W11 (schema 34; 27-33 are reserved for other packages): the
+            // profile keys, accepted profiles and small profile state. New
+            // tables only; `_createProfiles` is the whole step.
+            if (from < 34) await _createProfiles();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1023,6 +1061,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await _clearFrankReveals();
     await _clearDeviceLists();
     await _clearCommunityInfo();
+    await _clearProfiles();
     await delete(localMessages).go();
     await delete(localPins).go();
     await delete(localPendingPins).go();
@@ -1213,6 +1252,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearFrankReveals();
         await _clearDeviceLists();
         await _clearCommunityInfo();
+        await _clearProfiles();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localPins).go();
@@ -2371,6 +2411,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearFrankReveals();
         await _clearDeviceLists();
         await _clearCommunityInfo();
+        await _clearProfiles();
         await _clearReportKeyPins();
         await _clearFiledReports();
         await delete(localMessages).go();
@@ -2609,6 +2650,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await (update(localMessages)
                 ..where((t) => t.key.equals(effect.targetKey)))
               .write(LocalMessagesCompanion(body: Value(updated)));
+        case ProfileKeyEffect():
+          await storeProfileKey(effect);
         case PollCloseEffect():
           final poll = await (select(localMessages)
                 ..where((t) => t.key.equals(effect.targetKey)))
