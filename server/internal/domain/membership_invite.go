@@ -37,7 +37,7 @@ type MembershipInvite struct {
 // those fields. The server stores and returns it but cannot compute or check
 // it; the joiner recomputes it from the link and refuses any mismatch.
 //
-// Signature (v2, migration 0052) is the creating device's Ed25519 signature,
+// Signature (v2, migration 0066) is the creating device's Ed25519 signature,
 // 64 bytes, over the same fields and the link's locator; it is empty on an
 // invitation made before v2, which the app refuses. The server stores and
 // returns it and cannot verify it: the joiner does, against the key the link

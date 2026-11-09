@@ -148,7 +148,7 @@ func TestInviteBindingTagVector(t *testing.T) {
 	}
 }
 
-// A row made before migration 0052 has no signature. The store returns it as
+// A row made before migration 0066 has no signature. The store returns it as
 // it is (an empty signature) and the v2 app refuses it; nothing rewrites it.
 func TestInviteWithoutSignatureIsReturnedEmpty(t *testing.T) {
 	ctx := context.Background()

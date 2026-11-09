@@ -15,7 +15,7 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'native_test_env.dart';
 import 'l1_test_lists.dart';
 
-/// C1 invitation binding v2 against the native engine (ABI 13): the shared
+/// C1 invitation binding v2 against the native engine (ABI 21): the shared
 /// vector (`testing/vectors/invite-binding-v2.json`, checked by Rust and Go
 /// too), a real device signature and its strict check, and the roster key
 /// read that anchors the inviter's key. Skipped without

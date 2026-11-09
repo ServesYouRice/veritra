@@ -633,7 +633,14 @@ Future<void> _withWorld(
     await body(world);
   } finally {
     await world.dispose();
-    dir.deleteSync(recursive: true);
+    try {
+      dir.deleteSync(recursive: true);
+    } on FileSystemException {
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      try {
+        dir.deleteSync(recursive: true);
+      } catch (_) {}
+    }
   }
 }
 

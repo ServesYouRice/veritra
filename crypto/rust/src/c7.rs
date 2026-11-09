@@ -77,9 +77,8 @@ pub const SIGN_DOMAIN_POST: &[u8] = b"veritra-c7-post-sig-v1";
 pub const SIGN_DOMAIN_HISTORY: &[u8] = b"veritra-c7-history-v1";
 /// C1 invitation binding v2 (`docs/designs/C1-invite-format.md`): the
 /// creating device signs the target, its own account and device, its key and
-/// the link's locator. An allowlist entry only: no function, length or ABI
-/// number changed, so a library without it refuses the domain and the app
-/// fails closed.
+/// the link's locator. Part of ABI 21; a library without the entry refuses
+/// the domain and the app fails closed.
 pub const SIGN_DOMAIN_INVITE: &[u8] = b"veritra-invite-binding-v2";
 pub const SIGN_DOMAINS: [&[u8]; 3] = [SIGN_DOMAIN_POST, SIGN_DOMAIN_HISTORY, SIGN_DOMAIN_INVITE];
 
