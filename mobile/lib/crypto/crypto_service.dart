@@ -8,6 +8,7 @@ import '../core/device_lists.dart' show DeviceListPins, DeviceListVerifier;
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart' show DeviceListBody, DeviceListPair;
 import 'app_payload.dart';
+import 'community_info_codec.dart' show CommunityInfoCodec;
 
 class ConversationSafetyNumber {
   const ConversationSafetyNumber({
@@ -459,6 +460,12 @@ abstract interface class ExpiringPayloadCryptoService {
     List<String> attachmentRefs = const <String>[],
     String? draftText,
   });
+}
+
+/// C3: seals and opens community info records. Only the native service
+/// offers it, so the app never names that service directly.
+abstract interface class CommunityInfoCryptoService {
+  CommunityInfoCodec get communityInfoCodec;
 }
 
 abstract interface class ConversationAuthorityConsumer {

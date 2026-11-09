@@ -19,14 +19,14 @@ extension CommunityInfoActions on AppState {
   CommunityInfoService? get _info {
     final current = session;
     final client = api;
-    final crypto = cryptoService;
+    final Object crypto = cryptoService;
     final deviceId = current?.deviceId;
     final accountId = current?.accountId;
     if (current == null ||
         client == null ||
         deviceId == null ||
         accountId == null ||
-        crypto is! NativeCryptoService) {
+        crypto is! CommunityInfoCryptoService) {
       return null;
     }
     final owner = '$accountId|$deviceId|$_sessionGeneration';
@@ -41,7 +41,7 @@ extension CommunityInfoActions on AppState {
           conversationId, type, body,
           channelId: _infoChannelFor(conversationId)),
       topology: _AppInfoTopology(this),
-      codec: CommunityInfoCodec(crypto.bindings),
+      codec: crypto.communityInfoCodec,
       policyFor: (communityId) =>
           GovernanceInfoEditPolicy(verifiedCommunityRoles(communityId)),
       accountId: accountId,
