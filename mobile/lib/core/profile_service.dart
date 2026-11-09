@@ -171,12 +171,14 @@ class ProfileService extends ChangeNotifier {
 
   /// Fetches one record and keeps it only when every check of the design's
   /// "Receiving and caching" list passes. A failure, a 404 or a record this
-  /// device holds no key for keeps what is cached (S9).
-  Future<void> refresh(String kind, String subjectId,
+  /// device holds no key for keeps what is cached (S9). Returns true when the
+  /// server answered (including 404 or not-modified); false on network or
+  /// server failure.
+  Future<bool> refresh(String kind, String subjectId,
           {bool keyArrived = false}) =>
       _serial(() => _refresh(kind, subjectId, keyArrived: keyArrived));
 
-  Future<void> _refresh(String kind, String subjectId,
+  Future<bool> _refresh(String kind, String subjectId,
       {required bool keyArrived}) async {
     final cached = await store.loadProfile(kind, subjectId);
     final haveRecord = cached != null && !cached.isPlaceholder;
@@ -184,10 +186,11 @@ class ProfileService extends ChangeNotifier {
     try {
       served = await api.fetch(kind, subjectId,
           ifNoneMatchVersion: haveRecord ? cached.serverVersion : null);
-    } on ApiException {
-      return;
+    } on ApiException catch (e) {
+      if (e.kind == ApiErrorKind.notFound) return true;
+      return false;
     } on Object {
-      return;
+      return false;
     }
     final keys = await store.loadProfileKeys(kind, subjectId);
     if (served.notModified || served.blob == null) {
@@ -199,7 +202,7 @@ class ProfileService extends ChangeNotifier {
           kind == profileSubjectConversation) {
         await _dropOtherGroupKeys(subjectId, keys, cached.keyId, cached.keyId);
       }
-      return;
+      return true;
     }
     final key = keys.where((k) => k.keyId == served.keyId).firstOrNull;
     if (key == null) {
@@ -208,7 +211,7 @@ class ProfileService extends ChangeNotifier {
       if (keyArrived && kind == profileSubjectConversation) {
         await _dropOtherGroupKeys(subjectId, keys, null, cached?.keyId);
       }
-      return;
+      return true;
     }
     final ProfileRecord record;
     try {
@@ -226,7 +229,7 @@ class ProfileService extends ChangeNotifier {
       // A held key whose id is the served id is the real key (ids are
       // derived), so a failure means the blob is bad. Never delete it: a
       // member or the server could otherwise make everyone drop the key.
-      return;
+      return true;
     }
     final saved = await store.saveProfile(StoredProfile(
       kind: kind,
@@ -239,13 +242,14 @@ class ProfileService extends ChangeNotifier {
       fetchedAt: _now,
       versionFloor: cached?.versionFloor ?? 0,
     ));
-    if (!saved) return;
+    if (!saved) return true;
     if (kind == profileSubjectConversation && keyArrived) {
       await _dropOtherGroupKeys(subjectId, keys, served.keyId, served.keyId);
     }
     _profiles[_id(kind, subjectId)] =
         (await store.loadProfile(kind, subjectId))!;
     _changed();
+    return true;
   }
 
   Future<void> _dropOtherGroupKeys(
@@ -282,7 +286,7 @@ class ProfileService extends ChangeNotifier {
   /// Fetches the records of keys that arrived since this device last tried:
   /// a key whose id differs from the cached record's, tried once per run.
   Future<void> onKeysMayHaveArrived() async {
-    final subjects = <String, (String, String)>{};
+    final toRefresh = <(String, String), List<String>>{};
     for (final kind in [profileSubjectAccount, profileSubjectConversation]) {
       // Group keys are scanned per group, account keys per profile row and
       // per held key.
@@ -290,12 +294,23 @@ class ProfileService extends ChangeNotifier {
         final cached = _profiles[_id(kind, key.subjectId)];
         if (cached != null && cached.keyId == key.keyId) continue;
         final attempt = '$kind\u0000${key.subjectId}\u0000${key.keyId}';
-        if (!_attempted.add(attempt)) continue;
-        subjects[_id(kind, key.subjectId)] = (kind, key.subjectId);
+        if (_attempted.contains(attempt)) continue;
+        toRefresh
+            .putIfAbsent((kind, key.subjectId), () => <String>[]).add(attempt);
       }
     }
-    for (final (kind, id) in subjects.values) {
-      await refresh(kind, id, keyArrived: true);
+    for (final entry in toRefresh.entries) {
+      final (kind, id) = entry.key;
+      final attempts = entry.value;
+      for (final a in attempts) {
+        _attempted.add(a);
+      }
+      final reached = await refresh(kind, id, keyArrived: true);
+      if (!reached) {
+        for (final a in attempts) {
+          _attempted.remove(a);
+        }
+      }
     }
   }
 
@@ -523,6 +538,7 @@ class ProfileService extends ChangeNotifier {
   Future<void> retryDeliveries() => _deliver();
 
   bool _delivering = false;
+  bool _rerun = false;
 
   Future<void>? _running;
 
@@ -530,63 +546,73 @@ class ProfileService extends ChangeNotifier {
   Future<void> get deliveriesIdle => _running ?? Future<void>.value();
 
   Future<void> _deliver() {
-    final run = _deliverOnce();
+    if (_delivering) {
+      _rerun = true;
+      return _running ?? Future<void>.value();
+    }
+    final run = _drainDeliveries();
     _running = run;
     return run;
+  }
+
+  Future<void> _drainDeliveries() async {
+    _delivering = true;
+    try {
+      do {
+        _rerun = false;
+        await _deliverOnce();
+      } while (_rerun);
+    } finally {
+      _delivering = false;
+      _running = null;
+    }
   }
 
   Future<void> _deliverOnce() async {
     // Key messages go through the app's send queue, which can be waiting on
     // a write that is waiting on this service: never hold [_serial] here.
-    if (_delivering) return;
-    _delivering = true;
-    try {
-      final queued = await store.loadProfileStatePrefix(_deliverPrefix);
-      final postable = postableConversationIds().toSet();
-      final known = knownConversationIds();
-      for (final entry in queued.entries) {
-        final rest = entry.key.substring(_deliverPrefix.length);
-        final dot = rest.indexOf('.');
-        if (dot < 0) continue;
-        final isGroup = rest.substring(0, dot) == 'group';
-        final conversationId = rest.substring(dot + 1);
-        if (!postable.contains(conversationId)) {
-          // Gone for sure: drop. Otherwise (blocks or the list not loaded,
-          // a removal hold, an announcement chat) keep it for later.
-          if (known != null && !known.contains(conversationId)) {
-            await _dropIfUnchanged(entry.key, entry.value);
-          }
-          continue;
-        }
-        final kind =
-            isGroup ? profileSubjectConversation : profileSubjectAccount;
-        final subject = isGroup ? conversationId : accountId;
-        final key = (await store.loadProfileKeys(kind, subject))
-            .where((k) => k.keyId == entry.value)
-            .firstOrNull;
-        if (key == null) {
+    final queued = await store.loadProfileStatePrefix(_deliverPrefix);
+    final postable = postableConversationIds().toSet();
+    final known = knownConversationIds();
+    for (final entry in queued.entries) {
+      final rest = entry.key.substring(_deliverPrefix.length);
+      final dot = rest.indexOf('.');
+      if (dot < 0) continue;
+      final isGroup = rest.substring(0, dot) == 'group';
+      final conversationId = rest.substring(dot + 1);
+      if (!postable.contains(conversationId)) {
+        // Gone for sure: drop. Otherwise (blocks or the list not loaded,
+        // a removal hold, an announcement chat) keep it for later.
+        if (known != null && !known.contains(conversationId)) {
           await _dropIfUnchanged(entry.key, entry.value);
-          continue;
         }
-        final body = profileKeyBody(
-            key: key.key,
-            keyId: key.keyId,
-            version: isGroup ? 0 : versionOf(profileSubjectAccount, accountId));
-        bool sent;
-        try {
-          sent = await sendKey(
-              conversationId,
-              isGroup
-                  ? AppPayloadType.groupProfileKey
-                  : AppPayloadType.profileKey,
-              body);
-        } on Object {
-          sent = false;
-        }
-        if (sent) await _dropIfUnchanged(entry.key, entry.value);
+        continue;
       }
-    } finally {
-      _delivering = false;
+      final kind = isGroup ? profileSubjectConversation : profileSubjectAccount;
+      final subject = isGroup ? conversationId : accountId;
+      final key = (await store.loadProfileKeys(kind, subject))
+          .where((k) => k.keyId == entry.value)
+          .firstOrNull;
+      if (key == null) {
+        await _dropIfUnchanged(entry.key, entry.value);
+        continue;
+      }
+      final body = profileKeyBody(
+          key: key.key,
+          keyId: key.keyId,
+          version: isGroup ? 0 : versionOf(profileSubjectAccount, accountId));
+      bool sent;
+      try {
+        sent = await sendKey(
+            conversationId,
+            isGroup
+                ? AppPayloadType.groupProfileKey
+                : AppPayloadType.profileKey,
+            body);
+      } on Object {
+        sent = false;
+      }
+      if (sent) await _dropIfUnchanged(entry.key, entry.value);
     }
   }
 

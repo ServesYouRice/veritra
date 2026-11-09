@@ -94,6 +94,13 @@ ProfilePhoto? profilePhotoFromPng(Uint8List png) {
     if (png[i] != signature[i]) return null;
   }
   final view = ByteData.sublistView(png);
+  if (view.getUint32(8) != 13 ||
+      png[12] != 0x49 ||
+      png[13] != 0x48 ||
+      png[14] != 0x44 ||
+      png[15] != 0x52) {
+    return null;
+  }
   final width = view.getUint32(16);
   final height = view.getUint32(20);
   if (width == 0 ||

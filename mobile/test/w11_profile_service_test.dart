@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -37,6 +38,7 @@ class _Server {
   int puts = 0;
   int versionCalls = 0;
   bool loseNextPutReply = false;
+  bool failFetch = false;
 }
 
 class _Api implements ProfileApi {
@@ -50,6 +52,9 @@ class _Api implements ProfileApi {
   Future<ProfileFetch> fetch(String kind, String subjectId,
       {int? ifNoneMatchVersion}) async {
     server.gets++;
+    if (server.failFetch) {
+      throw ApiException(503, '{"error":"unavailable"}');
+    }
     final key = _k(kind, subjectId);
     final row = server.rows[key];
     if (row == null || server.hidden.contains(key)) {
@@ -120,6 +125,7 @@ class _Device {
       accountId: account,
       sendKey: (conversationId, type, body) async {
         if (!sendOk) return false;
+        if (onSend != null) await onSend!(conversationId);
         sent.add(_Sent(conversationId, type, body));
         return true;
       },
@@ -136,6 +142,7 @@ class _Device {
   late final ProfileService service;
   final List<_Sent> sent = [];
   bool sendOk = true;
+  Future<void> Function(String conversationId)? onSend;
   Set<String>? coMembers;
   Set<String>? known;
   List<String> postable = const [grp, dm];
@@ -675,6 +682,49 @@ void main() {
     expect(again.own, isNull);
     await again.load();
     expect(again.own?.name, 'Ana');
+  });
+
+  test('deliveries queued while delivery is in flight are drained', skip: skip,
+      () async {
+    final a = device(ana);
+    final pause = Completer<void>();
+    var pausedOnce = false;
+    a.onSend = (convId) async {
+      if (!pausedOnce) {
+        pausedOnce = true;
+        await pause.future;
+      }
+    };
+    final saveFuture = a.service.saveOwnProfile(name: 'Ana');
+    // Wait a tick for save to queue and start delivery
+    await Future<void>.delayed(Duration.zero);
+    // While in flight, queue another conversation delivery
+    const extraConv = 'conv_77777777777777777777777777777777';
+    a.postable = [grp, dm, extraConv];
+    await a.service.onConversationAvailable(extraConv);
+    pause.complete();
+    await saveFuture;
+    await a.service.deliveriesIdle;
+    expect(a.sent.map((s) => s.conversationId).toSet(), {grp, dm, extraConv});
+  });
+
+  test('network failure during onKeysMayHaveArrived allows retry', skip: skip,
+      () async {
+    final a = device(ana);
+    final b = device(bob);
+    await a.service.saveOwnProfile(name: 'Ana');
+    await a.service.deliveriesIdle;
+    await b.receive(a.sent.first, from: ana);
+
+    // Simulate transient network error during fetch
+    server.failFetch = true;
+    await b.service.onKeysMayHaveArrived();
+    expect(b.service.account(ana), isNull);
+
+    // Network recovers: subsequent arrival/check retries and succeeds
+    server.failFetch = false;
+    await b.service.onKeysMayHaveArrived();
+    expect(b.service.account(ana)?.name, 'Ana');
   });
 }
 

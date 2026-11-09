@@ -52,6 +52,15 @@ void main() {
       expect((again.width, again.height), (photo.width, photo.height));
       expect(profilePhotoFromPng(Uint8List(40)), isNull);
       expect(profilePhotoFromPng(Uint8List(0)), isNull);
+
+      // Corrupt IHDR chunk length or tag: refused.
+      final badLength = Uint8List.fromList(photo.png);
+      ByteData.sublistView(badLength).setUint32(8, 14);
+      expect(profilePhotoFromPng(badLength), isNull);
+
+      final badTag = Uint8List.fromList(photo.png);
+      badTag[12] = 0x58; // 'X'HDR
+      expect(profilePhotoFromPng(badTag), isNull);
     });
   });
 
