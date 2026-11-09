@@ -149,16 +149,18 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
     List<CommunityInfoEvent> rows, CommunityInfoEvent event,
     {Set<String> protectedKeyIds = const <String>{}}) {
   if (!event.isStorable) return rows;
+  // Numbers are never reused, as with SQLite's AUTOINCREMENT: taken before
+  // a repeated request's old row goes.
+  var top = 0;
+  for (final row in rows) {
+    if ((row.seq ?? 0) > top) top = row.seq!;
+  }
   if (rows.any((r) => r.ident == event.ident)) {
     // A repeated key request is a new request (a device asking again after
     // missing a rotation): it moves to the end. Keys and announcements keep
     // their first arrival.
     if (event.kind != CommunityInfoEventKind.keyRequest) return rows;
     rows = rows.where((r) => r.ident != event.ident).toList();
-  }
-  var top = 0;
-  for (final row in rows) {
-    if ((row.seq ?? 0) > top) top = row.seq!;
   }
   final next = [...rows, event._withSeq(top + 1)];
   final same = next

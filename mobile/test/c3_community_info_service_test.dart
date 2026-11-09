@@ -64,7 +64,7 @@ class _Server implements InfoApi {
 
 class _Topology implements InfoTopology {
   _Topology(this.admin, [this.net]);
-  final bool admin;
+  bool? admin;
   final _Net? net;
   bool privateKnown = true;
   bool gone = false;
@@ -79,7 +79,7 @@ class _Topology implements InfoTopology {
   String? privateConversationOf(String channelId) =>
       privateKnown && channelId == _private ? _privateConv : null;
   @override
-  bool serverSaysAdmin(String communityId) => admin;
+  bool? serverSaysAdmin(String communityId) => admin;
 }
 
 /// One device: its store and service. [members] says which conversations it
@@ -502,6 +502,42 @@ void main() {
             .answerRequests(phone.service.homeOf(community)!, _community),
         1);
     expect(await laptop.service.refresh(community), isA<InfoAccepted>());
+  }, skip: skip);
+
+  test('an unknown admin flag keeps a rotation due; only "not admin" drops it',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    final topology = admin.service.topology as _Topology;
+    await admin.service.markRotationDue(home, _community);
+    topology.admin = null;
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+    topology.admin = true;
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    await admin.service.markRotationDue(home, _community);
+    topology.admin = false;
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    expect(await admin.service.dueRotations(), isEmpty);
+  }, skip: skip);
+
+  test('a device repeating its request is answered once an hour', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final member = device('member', {_shared});
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    Future<int> askAndCount() async {
+      await net.deliver(member, _shared, AppPayloadType.infoKeyRequest,
+          infoKeyRequestBody(subjectKind: 'community', subjectId: _community));
+      return admin.service.answerRequests(home, _community);
+    }
+
+    expect(await askAndCount(), 1);
+    expect(await askAndCount(), 0);
+    expect(await askAndCount(), 0);
+    now = now.add(const Duration(hours: 1));
+    expect(await askAndCount(), 1);
   }, skip: skip);
 
   test('info bodies the service sends pass the payload codec', () {
