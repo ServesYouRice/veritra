@@ -381,6 +381,26 @@ abstract interface class ChannelRoutedCryptoService {
   });
 }
 
+/// A crypto service that can put the sender's own expiry inside the encrypted
+/// payload (TASK-106). The expiry is the sender's signed word for when a
+/// disappearing message ends; receivers use the shorter of it and the
+/// server-stamped time. A service without this keeps sending payloads with no
+/// expiry, and receivers then trust the server time as before. [channelId]
+/// and [layoutGeneration] are given exactly for a post in a shared group, as
+/// for [ChannelRoutedCryptoService].
+abstract interface class ExpiringPayloadCryptoService {
+  Future<MessageEnvelope> encryptExpiringPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    required DateTime expiresAt,
+    String? channelId,
+    int? layoutGeneration,
+    List<String> attachmentRefs = const <String>[],
+    String? draftText,
+  });
+}
+
 abstract interface class ConversationAuthorityConsumer {
   set conversationAuthority(ConversationAuthority authority);
 }

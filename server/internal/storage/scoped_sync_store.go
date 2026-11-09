@@ -22,6 +22,30 @@ import (
 // events that carry a conversation ID (a Welcome) belong to that
 // conversation's stream, not here.
 func (s *Store) ListAccountSyncEvents(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+	page, err := s.ListAccountSyncPage(ctx, accountID, deviceID, afterID, limit)
+	return page.Events, err
+}
+
+// SyncPage is one page of a scoped stream. ScannedThrough is the highest id
+// the server examined for this page, hidden rows included, and never below
+// the cursor: a client may move its cursor there once the page's events are
+// applied, so a hidden run is crossed once. Truncated says the scan budget
+// stopped the page before the end of the stream, so more may follow even when
+// Events is short or empty.
+type SyncPage struct {
+	Events         []domain.SyncEvent
+	ScannedThrough int64
+	Truncated      bool
+}
+
+// scopedSyncScanBudget caps the candidate rows one conversation request
+// examines, so a long hidden run costs a bounded read per request.
+var scopedSyncScanBudget = 2000
+
+// ListAccountSyncPage is ListAccountSyncEvents with the scan position. The
+// account scope has no hidden rows, so ScannedThrough is the last event
+// returned (or the cursor for an empty page).
+func (s *Store) ListAccountSyncPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int) (SyncPage, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -31,22 +55,26 @@ func (s *Store) ListAccountSyncEvents(ctx context.Context, accountID, deviceID s
 		  AND (se.device_id IS NULL OR se.device_id = ?3)
 		ORDER BY se.id ASC LIMIT ?4`, accountID, afterID, deviceID, limit)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	events, err := scanSyncEventRows(rows)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	if afterID > 0 {
 		expired, err := s.scopedSyncCursorExpired(ctx, accountID, deviceID, "", afterID)
 		if err != nil {
-			return nil, err
+			return SyncPage{}, err
 		}
 		if expired {
-			return nil, ErrSyncCursorExpired
+			return SyncPage{}, ErrSyncCursorExpired
 		}
 	}
-	return events, nil
+	through := afterID
+	if n := len(events); n > 0 {
+		through = events[n-1].ID
+	}
+	return SyncPage{Events: events, ScannedThrough: through}, nil
 }
 
 // ListConversationSyncEvents returns one conversation's events after afterID
@@ -55,15 +83,26 @@ func (s *Store) ListAccountSyncEvents(ctx context.Context, accountID, deviceID s
 // returns ErrForbidden for a non-member and ErrSyncCursorExpired when
 // retention pruned an event of this scope the device could have been sent.
 func (s *Store) ListConversationSyncEvents(ctx context.Context, accountID, deviceID, conversationID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+	page, err := s.ListConversationSyncPage(ctx, accountID, deviceID, conversationID, afterID, limit, false)
+	return page.Events, err
+}
+
+// ListConversationSyncPage is ListConversationSyncEvents with the scan
+// position. Only when bounded (the client opted in) does a scan budget apply;
+// otherwise the scan is unbounded as before (C1 bounds, D92). Rows the device cannot see
+// stay hidden (the MLS join filter only grows, dead envelopes stay dead), or
+// are block-hidden, which D92 lets the cursor pass: an unblock does not
+// replay them through sync.
+func (s *Store) ListConversationSyncPage(ctx context.Context, accountID, deviceID, conversationID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
 	member, err := s.IsConversationMember(ctx, conversationID, accountID)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	if !member {
-		return nil, ErrForbidden
+		return SyncPage{}, ErrForbidden
 	}
 	// Hidden events do not count towards the page, as in the legacy merge,
 	// so the query has no LIMIT and the loop stops after limit visible rows.
@@ -75,19 +114,27 @@ func (s *Store) ListConversationSyncEvents(ctx context.Context, accountID, devic
 		  AND (+se.account_id IS NULL OR (se.account_id = ?1 AND (se.device_id IS NULL OR se.device_id = ?3)))
 		ORDER BY se.id ASC`, accountID, afterID, deviceID, conversationID)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	defer rows.Close()
 	var events []domain.SyncEvent
 	candidate := &syncCandidateScanner{rows: rows}
 	last := afterID
+	scanned := 0
+	truncated := false
 	for len(events) < limit && rows.Next() {
+		if bounded && scanned >= scopedSyncScanBudget {
+			// A candidate exists beyond the budget: stop before it.
+			truncated = true
+			break
+		}
+		scanned++
 		event, err := scanSyncEvent(candidate)
 		if err != nil {
-			return nil, err
+			return SyncPage{}, err
 		}
 		if event.ID <= last {
-			return nil, fmt.Errorf("scoped sync emitted event %d after %d", event.ID, last)
+			return SyncPage{}, fmt.Errorf("scoped sync emitted event %d after %d", event.ID, last)
 		}
 		last = event.ID
 		if candidate.visible {
@@ -95,19 +142,19 @@ func (s *Store) ListConversationSyncEvents(ctx context.Context, accountID, devic
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	rows.Close()
 	if afterID > 0 {
 		expired, err := s.scopedSyncCursorExpired(ctx, accountID, deviceID, conversationID, afterID)
 		if err != nil {
-			return nil, err
+			return SyncPage{}, err
 		}
 		if expired {
-			return nil, ErrSyncCursorExpired
+			return SyncPage{}, ErrSyncCursorExpired
 		}
 	}
-	return events, nil
+	return SyncPage{Events: events, ScannedThrough: last, Truncated: truncated}, nil
 }
 
 func scanSyncEventRows(rows *sql.Rows) ([]domain.SyncEvent, error) {
@@ -159,6 +206,27 @@ func (s *Store) scopedSyncCursorExpired(ctx context.Context, accountID, deviceID
 	}
 	if expired || (known && afterID >= legacyThrough) {
 		return expired, nil
+	}
+	// A cursor that names a row of this scope is not behind a pruned
+	// prefix, whether or not the device may see that row: this is how the
+	// scanned-through position, which can point at a hidden row, is accepted.
+	// The legacy test below would call a hidden-row cursor expired when no
+	// visible row precedes it.
+	var inScope bool
+	if conversationID == "" {
+		err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sync_events se
+			WHERE se.id = ?1 AND se.account_id = ?2 AND se.conversation_id IS NULL)`, afterID, accountID).Scan(&inScope)
+	} else {
+		err = s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sync_events se
+			WHERE se.id = ?1 AND se.conversation_id = ?3
+			  AND (+se.account_id IS NULL OR (se.account_id = ?2 AND (se.device_id IS NULL OR se.device_id = ?4))))`,
+			afterID, accountID, conversationID, deviceID).Scan(&inScope)
+	}
+	if err != nil {
+		return false, err
+	}
+	if inScope {
+		return false, nil
 	}
 	if err := s.db.QueryRowContext(ctx, legacySyncCursorExpiredQuery, accountID, afterID).Scan(&expired); err != nil {
 		return false, err

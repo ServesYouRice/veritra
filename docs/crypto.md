@@ -711,6 +711,17 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   per instance owner, and the server never learns which message a report is
   about. Migration 0047 changed in place (it was not yet merged). Details in
   [Franking v1](#franking-v1-c6), "D95".
+- **Sender expiry in the payload (TASK-106, 2026-11-07):** a `v: 2` payload
+  may carry a top-level `expires_at` (epoch milliseconds, a positive integer
+  below year 9999; anything else reads as absent). The sender sets it from
+  the conversation's disappearing timer; MLS authenticates it, and the
+  franking commitment covers it. A receiver stores the **shorter** of it and
+  the server-stamped envelope time and ignores a longer server time. The
+  sender's own copy starts with it, and its first echo can only shorten it.
+  A payload with no `expires_at` (an older sender, or no timer) falls back to
+  the server-stamped time, as before, so that case is as forgeable as it
+  always was. A server can still choose a *shorter* time; that is the
+  owner's decision (shorter wins). No ABI or schema change.
 - **C6 wiring, franking on the wire and report routes (2026-11-07):** no
   ABI, payload version or local schema change. Server migration 0047 adds the
   write-once `message_envelopes.frank_commit` column, the `report_inbox_keys`

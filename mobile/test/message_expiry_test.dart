@@ -405,6 +405,71 @@ void main() {
         later.millisecondsSinceEpoch);
   });
 
+  // TASK-106: the sender's own expiry rides inside the encrypted payload and
+  // is on the local row from the start. The server's time can only shorten it.
+  for (final shorter in <bool>[false, true]) {
+    test(
+        shorter
+            ? 'a shorter server time on the first echo shortens the sender expiry'
+            : 'a longer server time on the first echo is ignored', () async {
+      final store = createStore();
+      await seedState(store);
+      await saveList(store);
+      final own = DateTime.now().toUtc().add(const Duration(days: 1));
+      await databases.last.applyMessageEffects(<MessageEffect>[
+        InsertMessageEffect(
+          key: 'dev_own:mine',
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_own',
+          senderDeviceId: 'dev_own',
+          kind: LocalMessageKind.text,
+          body: 'my words',
+          createdAt: 1,
+          state: LocalMessageState.pending,
+          expiresAt: own.millisecondsSinceEpoch,
+        ),
+      ]);
+      final stamped = shorter
+          ? DateTime.now().toUtc().add(const Duration(hours: 1))
+          : DateTime.now().toUtc().add(const Duration(days: 30));
+      ReceivedMessageEnvelope echo(DateTime? at) => ReceivedMessageEnvelope(
+            id: 'srv_mine',
+            conversationId: 'conv_1',
+            senderAccountId: 'acct_own',
+            senderDeviceId: 'dev_own',
+            idempotencyKey: 'mine',
+            ciphertext: const <int>[1],
+            cryptoProtocol: 'mls10-openmls-v1',
+            createdAt: DateTime.utc(2026, 10, 24),
+            expiresAt: at,
+          );
+      await store.commitSyncEvent(SyncEventCommit(
+        eventKey: 'sync:1',
+        conversationId: 'conv_1',
+        expectedCursor: 0,
+        cursor: 1,
+        envelope: echo(stamped),
+        ownMessageKey: 'dev_own:mine',
+      ));
+      final want = shorter ? stamped : own;
+      expect((await store.nextMessageExpiry())?.millisecondsSinceEpoch,
+          want.millisecondsSinceEpoch);
+      // A later echo still cannot move it.
+      await store.commitSyncEvent(SyncEventCommit(
+        eventKey: 'sync:2',
+        conversationId: 'conv_1',
+        expectedCursor: 1,
+        cursor: 2,
+        envelope:
+            echo(DateTime.now().toUtc().subtract(const Duration(hours: 1))),
+        ownMessageKey: 'dev_own:mine',
+      ));
+      expect((await store.nextMessageExpiry())?.millisecondsSinceEpoch,
+          want.millisecondsSinceEpoch);
+      expect(await bodies(store), <String>['my words']);
+    });
+  }
+
   test('a backup from before schema 10 expires through its envelopes',
       () async {
     final store = createStore();
