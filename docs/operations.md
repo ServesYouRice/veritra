@@ -63,6 +63,28 @@ MLS state (D71, D73). Someone holding a backup and its recovery code can
 read that history but cannot sign in. A restored device joins the account
 as a new device.
 
+**K1 automatic backups** (D91, `docs/designs/K1-automatic-backups.md`) are
+sealed on the device to the account's recovery key, which the server never
+holds; they carry no recovery token and never expire. They stay off until
+`PRIVATE_MESSENGER_PUBLIC_ORIGIN` is set (an upload answers 503
+`recovery_not_configured`). The server keeps:
+
+- one current copy per device; an upload marks the device's copy before it
+  superseded, and that copy stays downloadable for 24 hours so a restore in
+  progress finishes, or until the device's next upload (at most two copies
+  per device);
+- a revoked device's newest copy for 90 days after the revocation, at most 3
+  such copies per account (a user who lost a phone restores from it);
+- nothing sealed to an old recovery key: changing the key deletes those
+  copies in the same transaction, except revoked devices' copies.
+
+An upload refuses another recovery key (409 `recovery_key_changed`) and a
+counter not above the device's last (409 `backup_counter_stale`); the last
+counter is kept even after the copies are deleted. The
+retention sweep and each upload prune expired copies; their files go
+through the blob deletion queue. A device deletes its own copy with its
+session; deleting another device's copy needs recent authentication.
+
 ### Account recovery (all devices lost)
 
 Someone who lost every device gets the account back on a new device with the
@@ -1098,8 +1120,9 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `PRIVATE_MESSENGER_LIMIT_...` | Default | Range | Counts | Refusal |
 |---|---|---|---|---|
 | `INSTANCE_STORAGE_MIB` | volume × 0.9 / (backup keep + 3), at most 10,240; 3,686 on the 40 GiB PVC | 64-16,777,216 | encrypted attachments and backups on the instance | 507 `storage_quota_exceeded` |
-| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account | 507 `storage_quota_exceeded` |
-| `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and backups per account (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
+| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account, except K1 automatic backups (next row) | 507 `storage_quota_exceeded` |
+| `BACKUP_ALLOWANCE_MIB` | two full-size K1 copies (2 × 64 MiB plus framing, 128.003 MiB) | 65-1,048,576 | the current K1 backup copy of each active device of an account, apart from `ACCOUNT_STORAGE_MIB` (D91). Not counted: the copy an upload replaces (at most one per device, for up to 24 hours) and revoked devices' copies (at most 3, for 90 days). Worst case per account: the allowance, plus one replaced copy per active device, plus 3 revoked copies | 507 `storage_quota_exceeded` |
+| `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and legacy backups per account (K1 copies are bounded by the allowance above) (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
 | `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
 | `CONVERSATION_MEMBERS` | 250 (was 100; step 1 of C8) | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |

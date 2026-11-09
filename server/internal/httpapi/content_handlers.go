@@ -155,6 +155,10 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		writeError(w, http.StatusBadRequest, "key_derivation_metadata_required")
 		return
 	}
+	if isK1BackupMetadata(metadata) {
+		a.uploadK1Backup(w, r, principal, metadata)
+		return
+	}
 	metadata, ok := canonicalBackupCryptoMetadata(metadata)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid_key_derivation_metadata")
@@ -186,6 +190,103 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"storage_key": blob.StorageKey, "ciphertext_sha256": blob.SHA256, "size_bytes": blob.Size})
+}
+
+// isK1BackupMetadata reports whether a backup's metadata names a kind, which
+// only K1 copies carry (legacy documents have exactly four other keys).
+func isK1BackupMetadata(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return false
+	}
+	_, ok := fields["kind"]
+	return ok
+}
+
+// parseK1BackupMetadata reads {"kind":1,"rk_id":<16 bytes, base64>,
+// "counter":<positive integer>}, each from its exact key and nothing else.
+func parseK1BackupMetadata(raw json.RawMessage) (rkID []byte, counter int64, ok bool) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil || len(fields) != 3 {
+		return nil, 0, false
+	}
+	var kind int
+	var encoded string
+	for key, target := range map[string]interface{}{"kind": &kind, "rk_id": &encoded, "counter": &counter} {
+		value, present := fields[key]
+		if !present || json.Unmarshal(value, target) != nil {
+			return nil, 0, false
+		}
+	}
+	rkID, err := base64.StdEncoding.Strict().DecodeString(encoded)
+	if err != nil || kind != storage.BackupKindK1 || len(rkID) != 16 || counter <= 0 {
+		return nil, 0, false
+	}
+	return rkID, counter, true
+}
+
+// uploadK1Backup stores a kind-1 copy (K1-2). It needs the public origin
+// (D91: K1 stays off without it, the same signal GET
+// /account/recovery-key reports as available), a device session and no
+// recovery token. The recovery key, counter and allowance checks run in the
+// store transaction, after the body is in the blob store, so every refusal
+// there removes the uncommitted blob.
+func (a *API) uploadK1Backup(w http.ResponseWriter, r *http.Request, principal domain.Principal, metadata json.RawMessage) {
+	if !a.recoveryConfigured() {
+		writeError(w, http.StatusServiceUnavailable, "recovery_not_configured")
+		return
+	}
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusForbidden, "device_required")
+		return
+	}
+	if r.Header.Get("X-Recovery-Token") != "" {
+		writeError(w, http.StatusBadRequest, "recovery_token_not_allowed")
+		return
+	}
+	rkID, counter, ok := parseK1BackupMetadata(metadata)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_key_derivation_metadata")
+		return
+	}
+	blob, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, config.MaxBackupCiphertext))
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "upload_too_large")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "backup_upload_failed")
+		return
+	}
+	backup, err := a.Store.CreateK1Backup(r.Context(), storage.K1BackupUpload{
+		AccountID: principal.AccountID, DeviceID: principal.DeviceID,
+		StorageKey: blob.StorageKey, CiphertextSHA256: blob.SHA256, SizeBytes: blob.Size,
+		ChunkDigests: blob.ChunkDigests, RKID: rkID, Counter: counter,
+	})
+	if err != nil {
+		a.cleanupUncommittedBlob(r.Context(), blob.StorageKey)
+		switch {
+		case errors.Is(err, storage.ErrRecoveryKeyChanged):
+			writeError(w, http.StatusConflict, "recovery_key_changed")
+		case errors.Is(err, storage.ErrBackupCounterStale):
+			writeError(w, http.StatusConflict, "backup_counter_stale")
+		case errors.Is(err, storage.ErrStorageQuota), errors.Is(err, storage.ErrForbidden), errors.Is(err, storage.ErrInvalidInput):
+			handleStorageError(w, err)
+		default:
+			writeError(w, http.StatusInternalServerError, "backup_record_failed")
+		}
+		return
+	}
+	// Copies the upload replaced or pruned leave the disk now, not at the
+	// next sweep (a loop of uploads must not fill it).
+	for _, key := range backup.PrunedStorageKeys {
+		a.completeQueuedBlobDeletion(r.Context(), key)
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id": backup.ID, "storage_key": blob.StorageKey, "ciphertext_sha256": blob.SHA256,
+		"size_bytes": blob.Size, "kind": backup.Kind, "counter": counter,
+	})
 }
 
 // backupCryptoMetadata is the key derivation metadata of an encrypted backup.
@@ -607,6 +708,14 @@ func (a *API) backupSubroute(w http.ResponseWriter, r *http.Request, principal d
 	case http.MethodGet:
 		a.serveEncryptedBlob(w, r, backupBlobRef(backup))
 	case http.MethodDelete:
+		// K1: a device deletes its own copy with its session; another
+		// device's copy needs recent auth.
+		ownCopy := (backup.DeviceID == nil && principal.DeviceID == "") ||
+			(backup.DeviceID != nil && *backup.DeviceID == principal.DeviceID)
+		if !ownCopy && !recentlyAuthenticated(principal) {
+			writeError(w, http.StatusForbidden, "recent_auth_required")
+			return
+		}
 		deleted, err := a.Store.DeleteBackup(r.Context(), id, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)

@@ -273,6 +273,17 @@ type BackupBlob struct {
 	CreatedAt             time.Time       `json:"created_at"`
 	// ChunkDigests: see AttachmentEnvelope.ChunkDigests.
 	ChunkDigests []byte `json:"-"`
+	// K1 (docs/designs/K1-automatic-backups.md): kind 0 is a legacy
+	// I45/VBK2 backup, kind 1 a copy sealed to the recovery key RKID with
+	// the device's Counter. Superseded copies stay downloadable for a day.
+	Kind          int    `json:"kind"`
+	RKID          []byte `json:"rk_id,omitempty"`
+	Counter       *int64 `json:"counter,omitempty"`
+	Superseded    bool   `json:"superseded"`
+	DeviceName    string `json:"device_name,omitempty"`
+	DeviceRevoked bool   `json:"device_revoked"`
+	// PrunedStorageKeys: blobs an upload queued for deletion (not stored).
+	PrunedStorageKeys []string `json:"-"`
 }
 
 type Reaction struct {

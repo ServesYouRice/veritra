@@ -15,7 +15,8 @@ func TestLimitsDefaultWhenUnset(t *testing.T) {
 	}
 	got := cfg.Limits.WithDefaults()
 	want := Limits{AccountStorageBytes: 512 << 20, AccountBlobs: 10000, DevicesPerAccount: 10, ConversationMembers: 250,
-		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, MLSSelfUpdateMinutes: 60, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200}
+		ConversationsPerAccount: 1000, KeyPackageClaimsPerTarget: 25, MLSSelfUpdateMinutes: 60, DeliveriesPerMinute: 1000, WriteBytesPerHour: 64 << 20, AttachmentBytes: 48 << 20, SocketsPerIPv6Prefix: 200,
+		BackupAllowanceBytes: 2 * (64<<20 + 64*20 + 416)}
 	if got != want {
 		t.Fatalf("defaults = %+v, want %+v", got, want)
 	}
@@ -27,6 +28,7 @@ func TestLimitsParseAndBound(t *testing.T) {
 	t.Setenv("PRIVATE_MESSENGER_LIMIT_DEVICES_PER_ACCOUNT", "4")
 	t.Setenv("PRIVATE_MESSENGER_LIMIT_CONVERSATION_MEMBERS", "50")
 	t.Setenv("PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE", "500")
+	t.Setenv("PRIVATE_MESSENGER_LIMIT_BACKUP_ALLOWANCE_MIB", "300")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
@@ -34,6 +36,9 @@ func TestLimitsParseAndBound(t *testing.T) {
 	l := cfg.Limits
 	if l.KeyPackageClaimsPerTarget != 0 {
 		t.Fatalf("key package claim limit set without its variable: %+v", l)
+	}
+	if l.BackupAllowanceBytes != 300<<20 {
+		t.Fatalf("backup allowance = %d", l.BackupAllowanceBytes)
 	}
 	if l.AccountStorageBytes != 256<<20 || l.InstanceStorageBytes != 4096<<20 || l.DevicesPerAccount != 4 || l.ConversationMembers != 50 || l.DeliveriesPerMinute != 500 {
 		t.Fatalf("limits = %+v", l)

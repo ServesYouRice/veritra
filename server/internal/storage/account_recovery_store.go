@@ -730,6 +730,11 @@ func (s *Store) SetRecoveryKeyWithDeviceList(ctx context.Context, accountID, cal
 	if listResult != nil {
 		out.DeviceListVersion, out.DeviceListEventID = listResult.Version, listResult.EventID
 	}
+	// K1: copies sealed to the old key go with it, except revoked devices'
+	// copies, which a user who just recovered restores from.
+	if err := deleteK1BackupsForKeySwapTx(ctx, tx, accountID, rkID, parseTime(now)); err != nil {
+		return RecoveryKeyResult{}, err
+	}
 	if out.CancelledRequestID, out.CancelledEventID, err = cancelWaitingRecoveryTx(ctx, tx, accountID, RecoveryCancelledKeyChanged, now); err != nil {
 		return RecoveryKeyResult{}, err
 	}
