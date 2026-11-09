@@ -7,6 +7,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/communities/membership_screens.dart';
+import 'package:private_messenger/features/communities/moderation_screen.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -210,6 +211,124 @@ void main() {
     });
   });
 
+  group('moderation (C5)', () {
+    testWidgets(
+        'an owner bans from the member menu and times out with a length',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Time out…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1 h'));
+      await tester.pumpAndSettle();
+      expect(api.moderation, <String>['timeout:comm_1:acct_alice:3600']);
+
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Lift timeout'));
+      await tester.pumpAndSettle();
+      expect(api.moderation.last, 'timeout:comm_1:acct_alice:0');
+
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ban…'));
+      await tester.pumpAndSettle();
+      expect(find.text('Ban @alice?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Ban'));
+      await tester.pumpAndSettle();
+      expect(api.moderation.last, 'ban:comm_1:acct_alice');
+      expect(find.byTooltip('Moderate @alice'), findsNothing);
+      // The banned account leaves the channel's local roster, as for a removal.
+      state.membersByConversation['conv_chan']
+          ?.forEach((m) => expect(m.accountId, isNot('acct_alice')));
+    });
+
+    testWidgets('a moderator can ban but not lift bans or pause invitations',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      state.channelsByCommunity = <String, List<Channel>>{};
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Lift ban for @bob'), findsNothing);
+      expect(find.text('Pause invitations'), findsNothing);
+      expect(find.text('ACTIVITY LOG'), findsNothing);
+      expect(find.text('BANNED ACCOUNTS'), findsOneWidget);
+    });
+
+    testWidgets('a plain member sees no moderation entry', (tester) async {
+      final api = _Api()..me = 'acct_alice';
+      final state = _state(api);
+      state.session = const Session(
+        baseUrl: _origin,
+        token: 'tok',
+        accountId: 'acct_alice',
+        deviceId: 'dev_alice',
+        username: 'alice',
+      );
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Moderation'), findsNothing);
+    });
+
+    testWidgets('the moderation screen lists bans, slow mode and the log',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      state.channelsByCommunity = <String, List<Channel>>{
+        'comm_1': <Channel>[
+          Channel(
+              id: 'chan_1',
+              communityId: 'comm_1',
+              name: 'general',
+              kind: 'open'),
+        ],
+      };
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      await tester.pumpAndSettle();
+
+      expect(find.text('@bob'), findsWidgets);
+      expect(find.text('One message every 30 s'), findsOneWidget);
+      expect(find.text('@owner banned @bob'), findsOneWidget);
+      expect(find.text('Invitation links work normally.'), findsOneWidget);
+
+      await tester.tap(find.text('general'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('5 min'));
+      await tester.pumpAndSettle();
+      expect(api.moderation, <String>['slow:comm_1:chan_1:300']);
+
+      await tester.tap(find.text('Pause invitations'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1 d'));
+      await tester.pumpAndSettle();
+      expect(api.moderation.last, 'pause:comm_1:86400');
+
+      await tester.tap(find.byTooltip('Lift ban for @bob'));
+      await tester.pumpAndSettle();
+      expect(api.moderation.last, 'unban:comm_1:acct_bob');
+      expect(find.text('Nobody is banned.'), findsOneWidget);
+    });
+  });
+
   group('community details', () {
     testWidgets('an owner sees usernames, roles, removal, invitations',
         (tester) async {
@@ -223,19 +342,23 @@ void main() {
 
       expect(find.text('@owner'), findsOneWidget);
       expect(find.text('@alice'), findsOneWidget);
-      expect(find.byTooltip('Remove @alice'), findsOneWidget);
-      expect(find.byTooltip('Remove @owner'), findsNothing);
+      expect(find.byTooltip('Moderate @alice'), findsOneWidget);
+      expect(find.byTooltip('Moderate @owner'), findsNothing);
       expect(find.text('INVITATION LINKS'), findsOneWidget);
       expect(find.text('JOIN REQUESTS'), findsOneWidget);
+      await tester.scrollUntilVisible(find.text('Leave community'), 200);
       expect(find.text('Leave community'), findsOneWidget);
+      await tester.scrollUntilVisible(find.byTooltip('Moderate @alice'), -200);
 
-      await tester.tap(find.byTooltip('Remove @alice'));
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Remove'));
       await tester.pumpAndSettle();
       expect(find.text('Remove @alice from the community?'), findsOneWidget);
       await tester.tap(find.widgetWithText(FilledButton, 'Remove'));
       await tester.pumpAndSettle();
       expect(api.removed, <String>['comm_1:acct_alice']);
-      expect(find.byTooltip('Remove @alice'), findsNothing);
+      expect(find.byTooltip('Moderate @alice'), findsNothing);
     });
 
     testWidgets('a plain member can only leave', (tester) async {
@@ -254,7 +377,7 @@ void main() {
       )));
       await tester.pumpAndSettle();
 
-      expect(find.byTooltip('Remove @owner'), findsNothing);
+      expect(find.byTooltip('Moderate @owner'), findsNothing);
       expect(find.text('INVITATION LINKS'), findsNothing);
       expect(find.text('JOIN REQUESTS'), findsNothing);
       expect(find.text('Leave community'), findsOneWidget);
@@ -398,6 +521,87 @@ class _Api extends ApiClient {
         if (!gone.contains('acct_alice'))
           ConversationMember(
               accountId: 'acct_alice', role: 'member', username: 'alice'),
+      ];
+
+  final List<String> moderation = <String>[];
+  bool bobBanned = true;
+
+  @override
+  Future<CommunityRemoval> banCommunityMember(
+      String token, String communityId, String accountId) async {
+    moderation.add('ban:$communityId:$accountId');
+    gone.add(accountId);
+    return const CommunityRemoval(<({String conversationId, int? eventId})>[
+      (conversationId: 'conv_chan', eventId: 9),
+    ]);
+  }
+
+  @override
+  Future<CommunityRemoval> kickCommunityMember(
+      String token, String communityId, String accountId) async {
+    moderation.add('kick:$communityId:$accountId');
+    gone.add(accountId);
+    return const CommunityRemoval(<({String conversationId, int? eventId})>[]);
+  }
+
+  @override
+  Future<void> unbanCommunityMember(
+      String token, String communityId, String accountId) async {
+    moderation.add('unban:$communityId:$accountId');
+    bobBanned = false;
+  }
+
+  @override
+  Future<void> setMemberTimeout(
+      String token, String communityId, String accountId, int seconds) async {
+    moderation.add('timeout:$communityId:$accountId:$seconds');
+  }
+
+  @override
+  Future<void> setChannelSlowMode(
+      String token, String communityId, String channelId, int seconds) async {
+    moderation.add('slow:$communityId:$channelId:$seconds');
+  }
+
+  @override
+  Future<void> setInvitesPaused(
+      String token, String communityId, int seconds) async {
+    moderation.add('pause:$communityId:$seconds');
+  }
+
+  @override
+  Future<List<CommunityBan>> communityBans(
+          String token, String communityId) async =>
+      <CommunityBan>[
+        if (bobBanned)
+          CommunityBan(
+            accountId: 'acct_bob',
+            username: 'bob',
+            bannedBy: 'acct_owner',
+            createdAt: DateTime.utc(2026, 11, 7),
+          ),
+      ];
+
+  @override
+  Future<ModerationState> moderationState(
+          String token, String communityId) async =>
+      const ModerationState(
+        invitesPausedUntil: null,
+        slowModeSeconds: <String, int>{'chan_1': 30},
+      );
+
+  @override
+  Future<List<ModerationEvent>> moderationEvents(
+          String token, String communityId) async =>
+      <ModerationEvent>[
+        ModerationEvent(
+          id: 'mod_1',
+          actor: 'acct_owner',
+          target: 'acct_bob',
+          channelId: null,
+          action: 'ban',
+          createdAt: DateTime.utc(2026, 11, 7),
+        ),
       ];
 
   @override

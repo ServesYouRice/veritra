@@ -1009,6 +1009,139 @@ class ApiClient {
     return _decode(() => CommunityRemoval.fromJson(json));
   }
 
+  String _moderationPath(String communityId, String rest) =>
+      '${_targetPath(InviteTargetKind.community, communityId)}/$rest';
+
+  /// Removes a member the actor outranks and records a kick (C5).
+  Future<CommunityRemoval> kickCommunityMember(
+    String token,
+    String communityId,
+    String accountId,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      _moderationPath(
+        communityId,
+        'members/${Uri.encodeComponent(accountId)}/kick',
+      ),
+      token: token,
+    );
+    return _decode(() => CommunityRemoval.fromJson(json));
+  }
+
+  /// Removes the member, if it is one, and bans the account (C5).
+  Future<CommunityRemoval> banCommunityMember(
+    String token,
+    String communityId,
+    String accountId,
+  ) async {
+    final json = await _jsonRequest(
+      'POST',
+      _moderationPath(communityId, 'bans'),
+      token: token,
+      body: <String, Object?>{'account_id': accountId},
+    );
+    return _decode(() => CommunityRemoval.fromJson(json));
+  }
+
+  Future<void> unbanCommunityMember(
+    String token,
+    String communityId,
+    String accountId,
+  ) async {
+    await _jsonRequest(
+      'DELETE',
+      _moderationPath(communityId, 'bans/${Uri.encodeComponent(accountId)}'),
+      token: token,
+    );
+  }
+
+  Future<List<CommunityBan>> communityBans(
+    String token,
+    String communityId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      _moderationPath(communityId, 'bans'),
+      token: token,
+    );
+    return _rows(json, 'bans', CommunityBan.fromJson);
+  }
+
+  /// Mutes a member for [seconds]; 0 lifts the timeout.
+  Future<void> setMemberTimeout(
+    String token,
+    String communityId,
+    String accountId,
+    int seconds,
+  ) async {
+    await _jsonRequest(
+      'PUT',
+      _moderationPath(
+        communityId,
+        'members/${Uri.encodeComponent(accountId)}/timeout',
+      ),
+      token: token,
+      body: <String, Object?>{'seconds': seconds},
+    );
+  }
+
+  /// Sets a channel's gap between a member's posts; 0 turns it off.
+  Future<void> setChannelSlowMode(
+    String token,
+    String communityId,
+    String channelId,
+    int seconds,
+  ) async {
+    await _jsonRequest(
+      'PUT',
+      _moderationPath(
+        communityId,
+        'channels/${Uri.encodeComponent(channelId)}/slow-mode',
+      ),
+      token: token,
+      body: <String, Object?>{'seconds': seconds},
+    );
+  }
+
+  /// Pauses the community's invitations for [seconds]; 0 resumes them.
+  Future<void> setInvitesPaused(
+    String token,
+    String communityId,
+    int seconds,
+  ) async {
+    await _jsonRequest(
+      'PUT',
+      _moderationPath(communityId, 'invites-pause'),
+      token: token,
+      body: <String, Object?>{'seconds': seconds},
+    );
+  }
+
+  Future<ModerationState> moderationState(
+    String token,
+    String communityId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      _moderationPath(communityId, 'moderation-state'),
+      token: token,
+    );
+    return _decode(() => ModerationState.fromJson(json));
+  }
+
+  Future<List<ModerationEvent>> moderationEvents(
+    String token,
+    String communityId,
+  ) async {
+    final json = await _jsonRequest(
+      'GET',
+      _moderationPath(communityId, 'moderation-events'),
+      token: token,
+    );
+    return _rows(json, 'events', ModerationEvent.fromJson);
+  }
+
   Future<MembershipInvite> createMembershipInvite(
     String token,
     InviteTargetKind kind,

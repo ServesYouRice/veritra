@@ -1,7 +1,9 @@
 # C5: moderation
 
-**Status: server half built (migration 0055, 2026-11-07); apps and
-delete-others not built.** Built: bans (`member_bans`; kick then record in
+**Status: server half built (migration 0055, 2026-11-07); app screens built
+(2026-11-08: member menu with remove, ban, timeout; a Moderation screen with
+paused invitations, slow mode per channel, bans and the activity log; reads
+`GET .../moderation-state`); app-side checks and delete-others not built.** Built: bans (`member_bans`; kick then record in
 one transaction; refuses add, channel add, join request), kick, timeout
 (`memberships.timeout_until`, send refused `timed_out`), slow mode
 (`channels.slow_mode_seconds`, send refused 429 `slow_mode` with
@@ -13,8 +15,8 @@ edits and reactions), paused invites
 unusable), and the audit log (`moderation_events`, ids and action kinds, admins
 and above read it). Routes in `httpapi/moderation_handlers.go`; tests in
 `storage/moderation_store_test.go` and `httpapi/moderation_handlers_test.go`.
-Not built: the app screens and API client (local schema 23 stays unused: no
-local table is needed until the apps read bans or timeouts); app-side checks
+Not built: app-side checks (local schema 23 stays unused: no local table is
+needed until the apps read bans or timeouts)
 (wait for C4's record); admins deleting others' messages (needs C4's
 authority check on receipt, and for communities C7's `history-hide`, which
 is not built); key-package claim refusal for banned accounts (adds already
@@ -23,8 +25,7 @@ refuse them, and a claim needs a member to ask); escalation and instance ban
 (`removeCommunityMemberTx`; it covers an active layout's shared and private
 conversations). Admins and above lift bans; moderators ban members they
 outrank. Known gaps: the pending-request list does not hide requests an
-active pause makes unapprovable; the C1 community remove route writes no
-audit row; leaving and rejoining clears a timeout; the instance owner's
+active pause makes unapprovable; (the C1 community remove route now writes a `kick` audit row;) leaving and rejoining clears a timeout; the instance owner's
 escalation action kinds need a table rebuild when added; MLS commits of
 legacy groups are not wire-checked by the timeout. Original status: proposed. Written against `main` at `f1b4a36`. Builds on C0
 (shared group, `channel_id`), C1 (membership), C4 (the signed built-in

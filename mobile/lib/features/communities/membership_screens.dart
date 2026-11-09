@@ -14,6 +14,7 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/conversation_details_screen.dart' show roleLabel;
+import 'moderation_screen.dart';
 
 /// C1: joining through an invitation link, and managing invitations, join
 /// requests and members of a group or community.
@@ -611,6 +612,36 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
     }
   }
 
+  Future<void> _ban(ConversationMember member) async {
+    final label = accountLabel(member.accountId, member.username);
+    final l10n = context.l10n;
+    final confirmed = await _confirm(
+      context,
+      title: l10n.banTitle(label),
+      message: l10n.banMessage,
+      confirmLabel: l10n.banConfirm,
+    );
+    if (!confirmed || !mounted) return;
+    if (await state.banCommunityMember(_communityId, member.accountId)) {
+      await _load();
+    }
+  }
+
+  Future<void> _timeout(ConversationMember member, {required bool lift}) async {
+    final label = accountLabel(member.accountId, member.username);
+    final l10n = context.l10n;
+    final seconds = lift
+        ? 0
+        : await pickDuration(
+            context,
+            title: l10n.timeoutTitle(label),
+            choices: timeoutChoices,
+            label: shortDuration,
+          );
+    if (seconds == null || !mounted) return;
+    await state.timeoutCommunityMember(_communityId, member.accountId, seconds);
+  }
+
   Future<void> _leave() async {
     final l10n = context.l10n;
     final confirmed = await _confirm(
@@ -688,6 +719,9 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
                             (_rank[myRole] ?? 0) > (_rank[member.role] ?? 0),
                         busy: busy,
                         onRemove: () => _remove(member),
+                        onBan: () => _ban(member),
+                        onTimeout: () => _timeout(member, lift: false),
+                        onLiftTimeout: () => _timeout(member, lift: true),
                       ),
                 ],
               ),
@@ -705,6 +739,28 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
                   kind: InviteTargetKind.community,
                   targetId: _communityId,
                   onApproved: _load,
+                ),
+              ],
+              if (canManageMembers) ...<Widget>[
+                const SizedBox(height: BoneSpacing.lg),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      leading: const Icon(Icons.shield_outlined),
+                      title: Text(l10n.moderationTitle),
+                      subtitle: Text(l10n.moderationDetail),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ModerationScreen(
+                            state: state,
+                            community: widget.community,
+                            canManageInvites: canInvite,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
               const SizedBox(height: BoneSpacing.lg),
@@ -733,6 +789,9 @@ class _MemberRow extends StatelessWidget {
     required this.canRemove,
     required this.busy,
     required this.onRemove,
+    required this.onBan,
+    required this.onTimeout,
+    required this.onLiftTimeout,
   });
 
   final ConversationMember member;
@@ -740,6 +799,9 @@ class _MemberRow extends StatelessWidget {
   final bool canRemove;
   final bool busy;
   final VoidCallback onRemove;
+  final VoidCallback onBan;
+  final VoidCallback onTimeout;
+  final VoidCallback onLiftTimeout;
 
   @override
   Widget build(BuildContext context) {
@@ -783,10 +845,28 @@ class _MemberRow extends StatelessWidget {
         ),
         subtitle: details.isEmpty ? null : Text(details.join(' · ')),
         trailing: canRemove
-            ? IconButton(
-                tooltip: l10n.detailsRemoveMember(label),
-                onPressed: busy ? null : onRemove,
-                icon: const Icon(Icons.person_remove_outlined),
+            ? PopupMenuButton<VoidCallback>(
+                tooltip: l10n.memberModerateTooltip(label),
+                enabled: !busy,
+                onSelected: (action) => action(),
+                itemBuilder: (_) => <PopupMenuEntry<VoidCallback>>[
+                  PopupMenuItem<VoidCallback>(
+                    value: onRemove,
+                    child: Text(l10n.communityRemoveConfirm),
+                  ),
+                  PopupMenuItem<VoidCallback>(
+                    value: onBan,
+                    child: Text(l10n.memberBanAction),
+                  ),
+                  PopupMenuItem<VoidCallback>(
+                    value: onTimeout,
+                    child: Text(l10n.memberTimeoutAction),
+                  ),
+                  PopupMenuItem<VoidCallback>(
+                    value: onLiftTimeout,
+                    child: Text(l10n.memberTimeoutLift),
+                  ),
+                ],
               )
             : null,
       ),

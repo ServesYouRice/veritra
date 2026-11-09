@@ -559,6 +559,9 @@ func TestRemoveCommunityMember(t *testing.T) {
 	if _, err := f.store.CommunityMemberRole(ctx, f.comm.ID, alice.Account.ID); err == nil {
 		t.Fatal("alice is still a community member")
 	}
+	if n := testRowCount(t, ctx, f.store, `SELECT COUNT(*) FROM moderation_events WHERE community_id = ? AND action = 'kick' AND target_account_id = ?`, f.comm.ID, alice.Account.ID); n != 1 {
+		t.Fatalf("kick audit rows = %d, want 1", n)
+	}
 	if member, _ := f.store.IsConversationMember(ctx, f.conv.ID, alice.Account.ID); member {
 		t.Fatal("alice is still in the channel conversation")
 	}

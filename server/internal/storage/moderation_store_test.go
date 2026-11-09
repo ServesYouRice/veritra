@@ -334,3 +334,33 @@ func TestModeratorCannotLiftBansAndBannedSeesNoPreview(t *testing.T) {
 		t.Fatalf("someone else previews: %v", err)
 	}
 }
+
+func TestModerationStateHidesPrivateChannelsFromNonMembers(t *testing.T) {
+	ctx := context.Background()
+	f := newLayoutFixture(t, ctx)
+	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.member.Account.ID, domain.RoleModerator); err != nil {
+		t.Fatal(err)
+	}
+	has := func(state ModerationState, id string) bool {
+		for _, c := range state.Channels {
+			if c.ChannelID == id {
+				return true
+			}
+		}
+		return false
+	}
+	moderator, err := f.store.GetModerationState(ctx, f.community.ID, f.member.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !has(moderator, f.open.ID) || !has(moderator, f.announcement.ID) || has(moderator, f.private.ID) {
+		t.Fatalf("moderator outside the private channel sees %+v", moderator.Channels)
+	}
+	owner, err := f.store.GetModerationState(ctx, f.community.ID, f.owner.Account.ID)
+	if err != nil || !has(owner, f.private.ID) {
+		t.Fatalf("a member of the private channel sees %+v err=%v", owner.Channels, err)
+	}
+	if _, err := f.store.GetModerationState(ctx, f.community.ID, f.outsider.Account.ID); !errors.Is(err, ErrNotMember) {
+		t.Fatalf("outsider: %v", err)
+	}
+}

@@ -302,4 +302,79 @@ void main() {
     }
     expect(apiErrorKinds['invalid_expires_in'], ApiErrorKind.invalidRequest);
   });
+
+  test('moderation calls use the C5 routes and bodies', () async {
+    final (client, calls) = await _client((call) {
+      if (call.path.endsWith('/bans') && call.method == 'GET') {
+        return <String, Object?>{
+          'bans': <Object?>[
+            <String, Object?>{
+              'account_id': 'acct_bob',
+              'username': 'bob',
+              'banned_by': 'acct_owner',
+              'created_at': '2026-11-07T10:00:00Z',
+            },
+          ],
+        };
+      }
+      if (call.path.endsWith('/moderation-state')) {
+        return <String, Object?>{
+          'invites_paused_until': '2026-11-08T10:00:00Z',
+          'channels': <Object?>[
+            <String, Object?>{'channel_id': 'chan_1', 'slow_mode_seconds': 30},
+          ],
+        };
+      }
+      if (call.path.endsWith('/moderation-events')) {
+        return <String, Object?>{
+          'events': <Object?>[
+            <String, Object?>{
+              'id': 'mod_1',
+              'actor_account_id': 'acct_owner',
+              'target_account_id': 'acct_bob',
+              'action': 'ban',
+              'created_at': '2026-11-07T10:00:00Z',
+            },
+          ],
+        };
+      }
+      return <String, Object?>{
+        'status': 'ok',
+        'channels': <Object?>[
+          <String, Object?>{'conversation_id': 'conv_1', 'event_id': 7},
+        ],
+      };
+    });
+    final kicked =
+        await client.kickCommunityMember('tok', 'comm_1', 'acct_bob');
+    expect(kicked.channels.single.conversationId, 'conv_1');
+    await client.banCommunityMember('tok', 'comm_1', 'acct_bob');
+    await client.unbanCommunityMember('tok', 'comm_1', 'acct_bob');
+    await client.setMemberTimeout('tok', 'comm_1', 'acct_bob', 600);
+    await client.setChannelSlowMode('tok', 'comm_1', 'chan_1', 30);
+    await client.setInvitesPaused('tok', 'comm_1', 3600);
+    final bans = await client.communityBans('tok', 'comm_1');
+    final state = await client.moderationState('tok', 'comm_1');
+    final events = await client.moderationEvents('tok', 'comm_1');
+
+    expect(bans.single.username, 'bob');
+    expect(state.slowModeSeconds, <String, int>{'chan_1': 30});
+    expect(state.invitesPausedUntil, isNotNull);
+    expect(events.single.action, 'ban');
+    expect(events.single.target, 'acct_bob');
+    expect(calls.map((c) => '${c.method} ${c.path}').toList(), <String>[
+      'POST /api/v1/communities/comm_1/members/acct_bob/kick',
+      'POST /api/v1/communities/comm_1/bans',
+      'DELETE /api/v1/communities/comm_1/bans/acct_bob',
+      'PUT /api/v1/communities/comm_1/members/acct_bob/timeout',
+      'PUT /api/v1/communities/comm_1/channels/chan_1/slow-mode',
+      'PUT /api/v1/communities/comm_1/invites-pause',
+      'GET /api/v1/communities/comm_1/bans',
+      'GET /api/v1/communities/comm_1/moderation-state',
+      'GET /api/v1/communities/comm_1/moderation-events',
+    ]);
+    expect(_bodyOf(calls[1]), <String, Object?>{'account_id': 'acct_bob'});
+    expect(_bodyOf(calls[3]), <String, Object?>{'seconds': 600});
+    expect(_bodyOf(calls[5]), <String, Object?>{'seconds': 3600});
+  });
 }
