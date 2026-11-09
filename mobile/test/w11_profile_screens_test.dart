@@ -218,6 +218,26 @@ void main() {
       expect(find.text('BO'), findsOneWidget);
     });
 
+    testWidgets('a message request shows the username, not the shared name',
+        (tester) async {
+      await shared('account', bob, 'Bobby');
+      final service = await _service(store);
+      final api = _ListApi([
+        Conversation(
+            id: 'conv_req',
+            kind: 'dm',
+            peerAccountId: bob,
+            peerUsername: 'bob',
+            createdBy: bob),
+      ]);
+      final state = _state(profiles: service)..api = api;
+      await state.refreshConversations();
+      await tester.pumpWidget(_app(ChatListScreen(state: state)));
+      await tester.pump();
+      expect(find.text('@bob'), findsWidgets);
+      expect(find.text('Bobby'), findsNothing);
+    });
+
     testWidgets('the profile screen offers the editor only with profiles',
         (tester) async {
       await tester.pumpWidget(_app(ProfileScreen(state: _state())));
@@ -358,4 +378,11 @@ void main() {
       expect(server.rows['account/$ana']!.$1, 2);
     });
   });
+}
+
+class _ListApi extends ApiClient {
+  _ListApi(this.list) : super(baseUrl: 'https://example.test');
+  final List<Conversation> list;
+  @override
+  Future<List<Conversation>> conversations(String token) async => list;
 }

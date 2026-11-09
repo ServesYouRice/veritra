@@ -188,6 +188,10 @@ class ChatListScreen extends StatelessWidget {
                     final request = requests[index - 1];
                     return _ConversationTile(
                       conversation: request,
+                      profiles: state.profiles,
+                      // A stranger's chosen name is not shown until the
+                      // request is accepted; their photo is.
+                      showProfileName: false,
                       muted: false,
                       selected: false,
                       hero: false,
@@ -372,6 +376,7 @@ class _ConversationTile extends StatelessWidget {
     required this.onTap,
     required this.onActions,
     this.profiles,
+    this.showProfileName = true,
     this.muted = false,
     this.selected = false,
     this.hero = false,
@@ -379,6 +384,7 @@ class _ConversationTile extends StatelessWidget {
 
   final Conversation conversation;
   final ProfileService? profiles;
+  final bool showProfileName;
   final VoidCallback onTap;
 
   /// Opens the row's mute/details menu.
@@ -396,7 +402,8 @@ class _ConversationTile extends StatelessWidget {
     final activityAt = conversation.lastActivityAt;
     final retention = conversation.retentionSeconds;
     final l10n = context.l10n;
-    final title = conversationTitle(l10n, conversation, profiles: profiles);
+    final title = conversationTitle(l10n, conversation,
+        profiles: showProfileName ? profiles : null);
     // MergeSemantics folds the title, activity time, and unread badge into a
     // single tappable node so a screen reader announces the row once.
     return MergeSemantics(
