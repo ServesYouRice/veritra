@@ -11,6 +11,8 @@ import 'package:flutter/foundation.dart'
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/community_info_codec.dart';
+import '../crypto/native_crypto_service.dart' show NativeCryptoService;
 import '../crypto/poll.dart';
 import '../crypto/link_preview.dart';
 import '../crypto/message_format.dart';
@@ -28,6 +30,10 @@ import '../crypto/native_crypto_bindings.dart'
         NativeCryptoException,
         idBytes;
 import 'device_lists.dart';
+import 'community_info_book.dart';
+import 'community_info_service.dart';
+import 'roles/governance.dart' show GovernanceState;
+import 'roles/posting_verdict.dart' show VerifiedRoleSource;
 import '../crypto/sha256.dart';
 import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
@@ -88,6 +94,7 @@ part 'app_state_recovery.dart';
 part 'app_state_k1_backup.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
+part 'app_state_community_info.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -379,6 +386,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// (C0): that group holds every open channel, so which one a post goes to,
   /// and which posts are listed, comes from here. Set by the chat screen.
   final Map<String, String> _selectedChannels = {};
+
+  // C3 (app_state_community_info.dart).
+  CommunityInfoService? _infoService;
+  String? _infoServiceOwner;
+  bool _infoRefreshRunning = false;
+  bool _infoRefreshAgain = false;
+  DateTime? _lastInfoRefresh;
+  final Map<String, bool> _infoAdminOf = {};
+
+  /// The verified C4 role source for community info until the C4 client
+  /// wiring makes this class one; tests set it.
+  @visibleForTesting
+  VerifiedRoleSource? debugInfoRoleSource;
   Set<String> starredMessages = {};
   bool showArchivedChats = false;
 
@@ -2063,6 +2083,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (!_refreshOwned(current, generation)) return;
     communitiesLoaded = true;
     notifyListeners();
+    unawaited(refreshCommunityInfo());
   }
 
   Future<void> _refreshConversations({
@@ -2408,6 +2429,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (shared != null) {
         await _setUpConversationGroup(shared);
         await refreshConversations();
+        // C3: the name also goes into the encrypted record, under a new
+        // community key this device makes.
+        await publishCommunityInfo(created!.id, name: name);
       }
     });
     return error == null ? created : null;
@@ -2456,6 +2480,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       selectedConversationId = creation.conversation.id;
       if (inSharedGroup) {
         selectChannel(creation.conversation.id, creation.channel.id);
+      }
+      // C3: the encrypted channel record, and for an open channel the
+      // community record that lists it.
+      if (creation.channel.isRouted) {
+        await publishChannelInfo(creation.channel, name: name);
+        if (inSharedGroup) await publishCommunityInfo(communityId);
       }
       await loadMessages(creation.conversation.id);
     });
@@ -2550,6 +2580,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// I51). Also used for each channel when a community removes a member.
   Future<void> _afterMemberRemoved(
       String conversationId, String accountId) async {
+    // C3 (D80): the info key this conversation carries rotates at once.
+    await _markInfoRotation(conversationId);
     // D68: hold sends until the removal commit is applied. Reconcile
     // releases the hold; without MLS nothing would, and nothing is
     // encrypted to a group either. The session queue keeps sends out
@@ -5460,6 +5492,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     await _syncOwner?.request();
     _retryOwedKeyPackages();
+    // C3: keys and announcements arrive over MLS; look again at most once
+    // a minute.
+    final last = _lastInfoRefresh;
+    if (last == null ||
+        DateTime.now().difference(last) >= const Duration(minutes: 1)) {
+      unawaited(refreshCommunityInfo());
+    }
   }
 
   Future<void> _runOwnedCatchUp(Session current, int ownerGeneration) async {
@@ -6423,7 +6462,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       type == 'read_receipt.updated' ||
       type == 'mls.revocation.pending' ||
       type == 'mls.revocation.completed' ||
-      type == 'device_list.updated';
+      type == 'device_list.updated' ||
+      type == 'info.updated';
 
   /// Refreshes what a run of projection events asks for, once per kind: a
   /// burst of device or membership events costs one device-list and one
@@ -6443,6 +6483,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // group change: run the membership pass now instead of waiting for
         // the fallback. IDs only; nothing local changed, so no refresh.
         _mlsReconcileRequested = true;
+        continue;
+      }
+      if (type == 'info.updated') {
+        // C3: an info record changed; fetch and judge it. IDs only.
+        unawaited(refreshCommunityInfo());
         continue;
       }
       if (type.startsWith('device.') ||

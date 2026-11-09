@@ -1009,6 +1009,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get communityNoChannelsHint => 'Use + to create the first one.';
 
   @override
+  String get communityPlaceholderName => 'Community';
+
+  @override
+  String get channelPlaceholderName => 'Channel';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Private channel';
+
+  @override
+  String get channelEditInfo => 'Edit channel';
+
+  @override
+  String get channelTopic => 'Topic';
+
+  @override
+  String get channelEditFailed => 'Couldn\'t save the channel. Try again.';
+
+  @override
+  String get channelSave => 'Save';
+
+  @override
   String get communityNotMember => 'You are not a member yet';
 
   @override

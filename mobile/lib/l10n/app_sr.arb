@@ -308,6 +308,13 @@
   "communityChannelCount": "{count, plural, one{{count} канал} few{{count} канала} other{{count} канала}}",
   "communityNewChannel": "Нови канал",
   "communityNoChannelsHint": "Користите + да направите први.",
+  "communityPlaceholderName": "Заједница",
+  "channelPlaceholderName": "Канал",
+  "channelPrivatePlaceholderName": "Приватни канал",
+  "channelEditInfo": "Уреди канал",
+  "channelTopic": "Тема",
+  "channelEditFailed": "Канал није сачуван. Покушајте поново.",
+  "channelSave": "Сачувај",
   "communityNotMember": "Још нисте члан",
 
   "backupIntro": "Резервна копија садржи кључеве и историју порука овог уређаја, шифроване на овом уређају. Сервер је чува, али не може да је прочита. За враћање на новом уређају потребан је код за опоравак који се приказује када је направите.",
