@@ -8,6 +8,8 @@ $PythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } elseif (
 if ($PythonCmd) {
   & $PythonCmd (Join-Path $Root "scripts/check-release-evidence_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/check-rust-audit-policy_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/check-dart-retractions_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/check-ci-evidence_test.py")
