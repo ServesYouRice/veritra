@@ -34,3 +34,18 @@ Reading:
 
 Verdict: step 1 (250) passes. 500 and 1,000 are not enabled by default; see
 the design.
+
+## Step 2 (500 members) capacity measurement status
+
+Step 2 requires an end-to-end capacity run through `scripts/capacity.sh` with a 500-member group and `DELIVERIES_PER_MINUTE >= 1002` (per [`docs/designs/C8-bigger-communities.md`](../../docs/designs/C8-bigger-communities.md)).
+
+This capacity run cannot be executed in this environment for the following reasons:
+1. **Local platform and Docker daemon unavailable:** `scripts/capacity.sh` is a POSIX Bash script that builds and runs a production container (`busybox:1.37.0`) with CPU and memory cgroups via Docker. On this Windows host, Docker Desktop service (`com.docker.service`) is stopped, connecting to the Docker engine fails (`open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`), and unprivileged agents cannot start Windows services.
+2. **Missing load harness support for 500-member groups:** `scripts/capacity.sh` and `server/cmd/veritra-load` only define tiers `s` (50 accounts, group size 5) and `m` (250 accounts, group size 5). There is currently no command-line flag or profile in `veritra-load` to create or drive a 500-member group fan-out workload.
+3. **Delivery budget constraints:** `Limits.Validate()` requires `DELIVERIES_PER_MINUTE >= 2 * (1 + CONVERSATION_MEMBERS)` (1,002 for 500 members). `scripts/capacity.sh` does not pass custom delivery limits to the container, and `veritra-load` has no configuration for a 500-member fan-out test.
+4. **Host requirement:** As noted in `STATE.md` and `docs/designs/C8-bigger-communities.md`, Step 2 waits for a capacity run on the owner's Linux host.
+
+The SQLite storage benchmark (`BenchmarkConversationMembersScale` at 500 members: 4.9 ms send fan-out, 1.27 ms member list) was re-verified, but the end-to-end fan-out capacity measurement cannot be run here.
+
+Per specification, the default member limit remains at 250 (`DefaultConversationMembers = 250`).
+
