@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import '../storage/local_store.dart'
     show CryptoRecordChange, PendingEnrollment, StoredCryptoState;
@@ -139,7 +140,12 @@ class RecoveryKeyStatus {
     this.setAt,
     this.pending,
     this.publicOrigin,
+    this.rkId,
   });
+
+  /// The id of the account's recovery key (16 bytes), when one is set. K1
+  /// compares it with the key this device was given.
+  final Uint8List? rkId;
 
   /// Whether the server has recovery turned on (its public origin is set).
   final bool available;
@@ -166,7 +172,18 @@ class RecoveryKeyStatus {
       setAt: _time(json['set_at']),
       pending: PendingRecoveryRequest.fromJson(json['pending_request']),
       publicOrigin: _origin(json['public_origin']),
+      rkId: _rkId(json['rk_id']),
     );
+  }
+}
+
+Uint8List? _rkId(Object? value) {
+  if (value is! String) return null;
+  try {
+    final bytes = base64.decode(value);
+    return bytes.length == 16 ? bytes : null;
+  } catch (_) {
+    return null;
   }
 }
 

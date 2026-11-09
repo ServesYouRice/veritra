@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' show max;
+import 'dart:math' show max, min;
 import 'dart:typed_data';
 
 import '../crypto/mls_commit_bundle.dart';
@@ -18,6 +18,20 @@ import 'transport_policy.dart';
 
 export 'api_errors.dart';
 export 'server_origin.dart';
+
+/// The largest K1 container (crypto/rust/src/history.rs
+/// MAX_HISTORY_CIPHERTEXT): the 64 MiB padded snapshot, 20 bytes per 1 MiB
+/// chunk and the 416-byte header.
+const int k1MaxBackupCiphertextBytes = 64 * 1024 * 1024 + 64 * 20 + 416;
+
+/// [bytes] as 64 KiB views, without copying.
+Stream<List<int>> k1UploadSlices(Uint8List bytes) async* {
+  const slice = 64 * 1024;
+  for (var offset = 0; offset < bytes.length; offset += slice) {
+    yield Uint8List.sublistView(
+        bytes, offset, min(offset + slice, bytes.length));
+  }
+}
 
 class ApiClient {
   /// [transport] decides which origins the device-link checks accept. It
@@ -1470,6 +1484,43 @@ class ApiClient {
     );
     request.contentLength = ciphertextLength;
     final response = await _sendBody(request, ciphertext);
+    await _readJsonResponse(response);
+  }
+
+  /// Uploads a K1 copy (K1-2): sealed to the recovery key [rkId] with this
+  /// device's [counter], and no recovery token. Errors carry the server's
+  /// code (`recovery_key_changed`, `backup_counter_stale`,
+  /// `storage_quota_exceeded`, `recovery_not_configured`).
+  Future<void> uploadK1Backup(
+    String token,
+    Uint8List ciphertext, {
+    required List<int> rkId,
+    required int counter,
+  }) async {
+    if (ciphertext.isEmpty ||
+        ciphertext.length > k1MaxBackupCiphertextBytes ||
+        rkId.length != 16 ||
+        counter <= 0) {
+      throw ArgumentError('invalid K1 backup');
+    }
+    final request = await _openRequest(
+      'POST',
+      Uri.parse(baseUrl).resolve('/api/v1/backups'),
+    );
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    request.headers.set('X-Private-Messenger-Encrypted', '1');
+    request.headers.set(
+      'X-Key-Derivation-Metadata',
+      jsonEncode(<String, Object?>{
+        'kind': 1,
+        'rk_id': base64.encode(rkId),
+        'counter': counter,
+      }),
+    );
+    request.contentLength = ciphertext.length;
+    // 64 KiB slices, like the file streams of other uploads: _sendBody's
+    // idle watchdog re-arms per slice, so a slow link is not cut off.
+    final response = await _sendBody(request, k1UploadSlices(ciphertext));
     await _readJsonResponse(response);
   }
 

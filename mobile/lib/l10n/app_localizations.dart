@@ -5912,6 +5912,144 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This device holds your report key. Signing out deletes it, and reports already sent to it can no longer be opened. Deal with your reports first.'**
   String get c6SignOutSeedWarning;
+
+  /// No description provided for @autoBackupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic backups'**
+  String get autoBackupTitle;
+
+  /// No description provided for @autoBackupIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Every day this device backs up your chats, locked with your recovery key. Only that key opens them; the server cannot. The new backup replaces the old one. Disappearing messages are never backed up.'**
+  String get autoBackupIntro;
+
+  /// No description provided for @autoBackupIntroPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone backs up your chats when you open the app, at most once a day, locked with your recovery key. Only that key opens them; the server cannot. The new backup replaces the old one. Disappearing messages are never backed up.'**
+  String get autoBackupIntroPhone;
+
+  /// No description provided for @autoBackupLast.
+  ///
+  /// In en, this message translates to:
+  /// **'Last backup {date}'**
+  String autoBackupLast(String date);
+
+  /// No description provided for @autoBackupPending.
+  ///
+  /// In en, this message translates to:
+  /// **'First backup not made yet'**
+  String get autoBackupPending;
+
+  /// No description provided for @autoBackupServerOff.
+  ///
+  /// In en, this message translates to:
+  /// **'This server has backups turned off'**
+  String get autoBackupServerOff;
+
+  /// No description provided for @autoBackupNoKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Save a recovery key to turn on backups'**
+  String get autoBackupNoKey;
+
+  /// No description provided for @autoBackupNeedsKeyHere.
+  ///
+  /// In en, this message translates to:
+  /// **'Type your recovery key to turn on backups here'**
+  String get autoBackupNeedsKeyHere;
+
+  /// No description provided for @autoBackupKeyChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'Your recovery key changed. Type the new key to go on backing up here.'**
+  String get autoBackupKeyChanged;
+
+  /// No description provided for @autoBackupErrorNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'The last backup could not reach the server. It will try again.'**
+  String get autoBackupErrorNetwork;
+
+  /// No description provided for @autoBackupErrorSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Backup space is full. The last good backup is kept.'**
+  String get autoBackupErrorSpace;
+
+  /// No description provided for @autoBackupErrorTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Your history is too large to back up. The last good backup is kept.'**
+  String get autoBackupErrorTooLarge;
+
+  /// No description provided for @autoBackupErrorFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The last backup failed. It will try again.'**
+  String get autoBackupErrorFailed;
+
+  /// No description provided for @autoBackupStale.
+  ///
+  /// In en, this message translates to:
+  /// **'No backup for over a week.'**
+  String get autoBackupStale;
+
+  /// No description provided for @autoBackupPhoneNote.
+  ///
+  /// In en, this message translates to:
+  /// **'This phone backs up when you open the app.'**
+  String get autoBackupPhoneNote;
+
+  /// No description provided for @autoBackupNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Back up now'**
+  String get autoBackupNow;
+
+  /// No description provided for @autoBackupRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Backing up…'**
+  String get autoBackupRunning;
+
+  /// No description provided for @autoBackupTypeKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Type recovery key'**
+  String get autoBackupTypeKey;
+
+  /// No description provided for @autoBackupKeyWrong.
+  ///
+  /// In en, this message translates to:
+  /// **'That is not this account\'s recovery key.'**
+  String get autoBackupKeyWrong;
+
+  /// No description provided for @autoBackupKeyOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Backups are on for this device.'**
+  String get autoBackupKeyOn;
+
+  /// No description provided for @autoBackupPromptMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Save a recovery key. It turns on automatic backups and gets your account back if you lose every device.'**
+  String get autoBackupPromptMessage;
+
+  /// No description provided for @autoBackupPromptSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save key'**
+  String get autoBackupPromptSave;
+
+  /// No description provided for @autoBackupPromptLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Not now'**
+  String get autoBackupPromptLater;
 }
 
 class _AppLocalizationsDelegate

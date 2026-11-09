@@ -96,9 +96,12 @@ class _FaultStore extends MemoryLocalStore {
   }
 
   @override
-  Future<List<int>> exportHistorySnapshot() async => exported == null
-      ? await super.exportHistorySnapshot()
-      : Uint8List.fromList(exported!);
+  Future<List<int>> exportHistorySnapshot(
+          {bool omitDisappearing = false}) async =>
+      exported == null
+          ? await super
+              .exportHistorySnapshot(omitDisappearing: omitDisappearing)
+          : Uint8List.fromList(exported!);
 }
 
 /// The server's side of one transfer, in memory.
