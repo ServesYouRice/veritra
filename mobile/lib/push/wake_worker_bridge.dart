@@ -44,10 +44,19 @@ class WakePermitStatus {
 /// Native worker wiring is distinct from server capability opt-in. This bridge
 /// never creates storage, selects an entry point, or claims platform readiness.
 class PlatformWakeWorkerBridge {
-  PlatformWakeWorkerBridge({MethodChannel? channel})
+  /// [allowOptIn] is false for every caller except the demo entry point (D52).
+  /// Even then it only permits reading native's own answer: native decides at
+  /// build time and never takes the flag from Dart.
+  PlatformWakeWorkerBridge({MethodChannel? channel, this.allowOptIn = false})
       : _channel = channel ??
             const MethodChannel('org.veritra.private_messenger/wake_worker');
   final MethodChannel _channel;
+  final bool allowOptIn;
+  bool _canOptIn = false;
+
+  /// True only after a successful [install] whose native reply said this
+  /// build may request phone wakes. Reset by [uninstall] and failed installs.
+  bool get canOptIn => _canOptIn;
   static final Set<String> _ownedChannels = {};
   bool _ownsChannel = false;
   bool _observingUi = false;
@@ -158,15 +167,18 @@ class PlatformWakeWorkerBridge {
           await _channel.invokeMethod<Object?>(
               'install', {'protocol': 1, 'profile': profile}),
           {'protocol', 'native_silent', 'worker_attached', 'can_opt_in'});
-      // Until the separate activation review, no bridge caller may interpret
-      // native installation as authorization to request extra phone wakes.
-      if (_bool(map['can_opt_in'])) _invalid();
+      // Native installation authorizes extra phone wakes only for a bridge
+      // built with allowOptIn; any other caller treats true as a bad reply.
+      final optIn = _bool(map['can_opt_in']);
+      if (optIn && !allowOptIn) _invalid();
       installed = _bool(map['native_silent']) && _bool(map['worker_attached']);
+      _canOptIn = installed && optIn;
       return installed;
     } on MissingPluginException {
       return false;
     } finally {
       if (!installed) {
+        _canOptIn = false;
         if (!_observingUi) _release();
         _profile = null;
         _run = null;
@@ -268,6 +280,7 @@ class PlatformWakeWorkerBridge {
     } on MissingPluginException {
       return false;
     } finally {
+      _canOptIn = false;
       _release();
       _profile = null;
       _run = null;

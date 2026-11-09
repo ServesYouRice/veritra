@@ -342,7 +342,7 @@ void main() {
         Conversation(id: 'conv', kind: 'group', title: 'Team', createdBy: 'bob')
       ], const {}, 0);
       api = _FakeApi();
-      crypto = _FakeCrypto(store)..noticeCaptureEnabled = true;
+      crypto = _FakeCrypto(store);
       bridge = _FakeBridge();
       push = _CountingPush();
       sockets = 0;
@@ -357,6 +357,8 @@ void main() {
           });
       // A headless engine has no view; main_demo does the same.
       state.handleAppLifecycleState(AppLifecycleState.detached);
+      // main_demo does this once native's install reply allowed opt-in.
+      state.allowPhoneNotices();
       runner = BackgroundWakeRunner(
           profile: 'demo',
           bridge: bridge,
@@ -390,6 +392,27 @@ void main() {
       expect(api.closed, greaterThan(0), reason: 'job client is closed');
       expect(state.foregroundActive, isFalse);
       expect(await store.pendingNoticeReferences(_owner), isEmpty);
+    });
+
+    test('capture is switched on by the restore only after opt-in is allowed',
+        () async {
+      expect(crypto.noticeCaptureEnabled, isFalse);
+      api.muted = true;
+      api.events.add(api.event(1, 'mention', mention: 'alice'));
+      expect(await runner.run(permit()), WakeOutcome.committed);
+      expect(crypto.noticeCaptureEnabled, isTrue);
+      expect(bridge.presented, hasLength(1));
+    });
+
+    test('without opt-in no reference is captured and nothing alerts',
+        () async {
+      state.phoneNoticesAllowed = false;
+      crypto.noticeCaptureEnabled = true; // must be forced off by restore
+      api.muted = true;
+      api.events.add(api.event(1, 'mention', mention: 'alice'));
+      expect(await runner.run(permit()), WakeOutcome.committed);
+      expect(crypto.noticeCaptureEnabled, isFalse);
+      expect(bridge.presented, isEmpty);
     });
 
     test('an unreadable mute commits messages but keeps the wake pending',

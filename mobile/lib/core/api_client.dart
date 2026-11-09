@@ -1870,6 +1870,7 @@ class ApiClient {
     required String endpoint,
     required String publicKey,
     required String authSecret,
+    String? notificationMode,
   }) async {
     final json = await _jsonRequest(
       'POST',
@@ -1880,6 +1881,7 @@ class ApiClient {
         'endpoint': endpoint,
         'public_key': publicKey,
         'auth_secret': authSecret,
+        if (notificationMode != null) 'notification_mode': notificationMode,
       },
     );
     return _decode(() => json['subscription_id'] as String);
@@ -1889,6 +1891,7 @@ class ApiClient {
     String token, {
     required String provider,
     required String deviceToken,
+    String? notificationMode,
   }) async {
     final json = await _jsonRequest(
       'POST',
@@ -1899,6 +1902,7 @@ class ApiClient {
         'endpoint': deviceToken,
         'public_key': '',
         'auth_secret': '',
+        if (notificationMode != null) 'notification_mode': notificationMode,
       },
     );
     return _decode(() => json['subscription_id'] as String);

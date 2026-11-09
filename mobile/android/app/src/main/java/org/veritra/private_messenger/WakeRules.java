@@ -50,6 +50,14 @@ public final class WakeRules {
         result.put("native_silent", available); result.put("can_opt_in", false);
         return result;
     }
+    /** Reply to a successful install. Opt-in is offered only after install
+     * bound the profile, and only when this build allows phone notices. */
+    public static Map<String, Object> installReply(boolean phoneNoticesBuild) {
+        Map<String, Object> result = new HashMap<>();
+        result.put("protocol", 1); result.put("native_silent", true);
+        result.put("worker_attached", true); result.put("can_opt_in", phoneNoticesBuild);
+        return result;
+    }
     public enum NoticeClaim { NEW, DUPLICATE, FULL, CLOCK_ROLLBACK }
     public static final int MAX_NOTICE_ENTRIES = 4096;
     public static final long NOTICE_RETENTION_MS = 60L * 60 * 1000;
