@@ -169,5 +169,9 @@ func TestDeviceKeyPackageStructuralValidation(t *testing.T) {
 		if status, response := publish(mlswiretest.KeyPackage()); status != http.StatusCreated {
 			t.Fatalf("synthetic key package: publish status=%d body=%s", status, response)
 		}
+		// C4 (ABI 20): a key package advertising the role-record extension.
+		if status, response := publish(mlswiretest.OpenMLSKeyPackageABI20()); status != http.StatusCreated {
+			t.Fatalf("ABI 20 client key package: publish status=%d body=%s", status, response)
+		}
 	})
 }

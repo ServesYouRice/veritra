@@ -349,6 +349,14 @@ flag electors (which closes the D82 path for good).
 
 ## Built and not built
 
+**ABI 20 (2026-11-08): items 1 to 5 above are built, not wired.** The
+coordinator assigned ABI 20. Rust: `crypto/rust/src/mls/c4.rs`,
+`ffi/c4_calls.rs`; Dart binding: `mobile/lib/crypto/c4_roles.dart`; rules
+and formats: `docs/crypto.md`, "Group role state (C4)". The one-shot commit
+calls refuse a record proposal, so producers and the two-phase receive path
+must be wired together. The wiring check below still holds for C1's removal
+proofs.
+
 **Wiring check (2026-11-07, C4 wiring package).** The condition "C1 removal
 proofs exist" is **not met**, and the receiver wiring cannot start under ABI
 13 either:
@@ -440,3 +448,15 @@ overrides, limits, the effective-switch check, `rev` races and `prev_hash`,
 and the snapshot hand-off. Owner decisions (2026-11-01, D80): built-in roles
 only; new crypto ABI functions approved with independent review; ownership
 only to current admins, oldest admin inherits.
+
+## ABI 20 review notes (2026-11-08)
+
+Independent review: the carrier is sound and fails closed. Two things for
+the wiring: (1) sealing between stage and merge is now refused by the library;
+(2) **committer identity is self-asserted**: a member can add a leaf under
+another account's id with its own key, so a committer's role and the rosters
+count only for devices the L1 approved-device list approves. Without that, a
+member could act as the owner. Producers that carry a record must land with
+the two-phase receiver, and the server must stop rate-limiting record-only
+commits as self-updates (`mls_group_store.go`), and ABI 19 key packages must
+be replenished before adds into record groups.

@@ -440,8 +440,11 @@ List<int> encodeKeyedMembershipChanges({
           })>
       adds,
   required List<({List<int> accountId, List<int> deviceId})> removes,
+  bool allowEmpty = false,
 }) {
-  if (adds.isEmpty && removes.isEmpty) {
+  // Only a commit that carries a role record (C4, ABI 20) may change no
+  // membership; an empty list on its own asks for a self-update.
+  if (adds.isEmpty && removes.isEmpty && !allowEmpty) {
     throw ArgumentError('a commit needs at least one change');
   }
   if (adds.length > 256 || removes.length > 256) {

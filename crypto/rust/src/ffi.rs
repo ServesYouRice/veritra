@@ -16,6 +16,7 @@ use std::{
     },
 };
 
+mod c4_calls;
 mod k2;
 mod l1_calls;
 
@@ -2173,6 +2174,10 @@ mod c7_tests;
 #[cfg(test)]
 #[path = "ffi/l1_tests.rs"]
 mod l1_tests;
+
+#[cfg(test)]
+#[path = "ffi/c4_tests.rs"]
+mod c4_tests;
 
 #[cfg(test)]
 mod tests {

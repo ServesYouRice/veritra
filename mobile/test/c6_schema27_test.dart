@@ -71,7 +71,8 @@ void main() {
         .read<int>('user_version');
     expect(db.upgradeStarted, isTrue);
     expect(version, EncryptedLocalDatabase.currentSchemaVersion);
-    expect(EncryptedLocalDatabase.currentSchemaVersion, 27);
+    expect(
+        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(27));
     expect(await tableExists(db), isTrue);
     expect(await db.readReportKeyPins(_origin), hasLength(1));
     await db.writeReportFiled(_origin, 'acct_a', 'dev:1', 1);

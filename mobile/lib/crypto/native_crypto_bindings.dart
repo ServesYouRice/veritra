@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../core/models.dart';
 
+part 'c4_roles.dart';
 part 'k2_native_controls.dart';
 part 'k2_native_streams.dart';
 part 'l1_device_list.dart';
@@ -268,6 +269,22 @@ typedef _L1MergeDart = int Function(
     Pointer<_PmOwnedBuffer>,
     Pointer<_PmOwnedBuffer>,
     Pointer<_PmOwnedBuffer>);
+typedef _StageWithRolesNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _StageWithRolesDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
 typedef _RecoveryProofNative = Int32 Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RecoveryProofDart = int Function(_PmByteSlice, _PmByteSlice,
@@ -471,6 +488,22 @@ class NativeCryptoBindings {
                 'pm_crypto_group_l1_process_commit'),
         _groupL1Merge = library.lookupFunction<_L1MergeNative, _L1MergeDart>(
             'pm_crypto_group_l1_merge_pending_commit'),
+        _groupCreateWithRoles = library.lookupFunction<_HandleTwoSlicesNative,
+            _HandleTwoSlicesDart>('pm_crypto_group_create_with_roles'),
+        _groupStageWithRoles =
+            library.lookupFunction<_StageWithRolesNative, _StageWithRolesDart>(
+                'pm_crypto_group_stage_commit_with_roles'),
+        _groupStageIncoming = library.lookupFunction<
+                _HandleTwoSlicesOutputNative, _HandleTwoSlicesOutputDart>(
+            'pm_crypto_group_stage_incoming_commit'),
+        _groupMergeIncoming =
+            library.lookupFunction<_L1ProcessNative, _L1ProcessDart>(
+                'pm_crypto_group_merge_incoming_commit'),
+        _groupDiscardIncoming =
+            library.lookupFunction<_GroupDeleteNative, _GroupDeleteDart>(
+                'pm_crypto_group_discard_incoming_commit'),
+        _groupRoleState = library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_group_role_state'),
         _createKeyPackage =
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_create_key_package'),
@@ -517,13 +550,11 @@ class NativeCryptoBindings {
         _c7MemberKey =
             library.lookupFunction<_C7MemberKeyNative, _C7MemberKeyDart>(
                 'pm_crypto_group_member_signature_key'),
-        _c7Sign = library.lookupFunction<_HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart>('pm_crypto_c7_sign'),
         _attachmentEncrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 19) {
+    if (_abiVersion() != 20) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -597,6 +628,12 @@ class NativeCryptoBindings {
   final _HandleSliceOutputDart _groupMembers;
   final _L1ProcessDart _groupL1Process;
   final _L1MergeDart _groupL1Merge;
+  final _HandleTwoSlicesDart _groupCreateWithRoles;
+  final _StageWithRolesDart _groupStageWithRoles;
+  final _HandleTwoSlicesOutputDart _groupStageIncoming;
+  final _L1ProcessDart _groupMergeIncoming;
+  final _GroupDeleteDart _groupDiscardIncoming;
+  final _HandleSliceOutputDart _groupRoleState;
 
   /// K0 recovery key entropy length (ABI 11).
   static const recoveryKeyEntropyBytes = 30;
@@ -1194,7 +1231,6 @@ class NativeCryptoBindings {
   final _C7MergeDart _c7MergePending;
   final _C7DecryptDart _c7GroupDecrypt;
   final _C7MemberKeyDart _c7MemberKey;
-  final _HandleTwoSlicesOutputDart _c7Sign;
   final _AttachmentChunkDart _attachmentEncrypt;
   final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
