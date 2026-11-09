@@ -124,8 +124,10 @@ void main() {
     expect(await db.readDeviceListPin('acct_a'), isNull);
     expect(await db.writeDeviceListPin(_pin(1), expectedVersion: null), isTrue);
     final version = await db.customSelect('PRAGMA user_version').getSingle();
-    expect(version.read<int>('user_version'), 26);
-    expect(EncryptedLocalDatabase.currentSchemaVersion, 26);
+    expect(version.read<int>('user_version'),
+        EncryptedLocalDatabase.currentSchemaVersion);
+    expect(
+        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(26));
   });
 
   test('sign-out clears every L1 table', () async {

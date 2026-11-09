@@ -129,7 +129,16 @@ class ProfileRecordCodec {
     final max = kind == profileKindAccount
         ? profileAccountNameMax
         : profileConversationNameMax;
-    if (name.length > max || name.trim().isEmpty) return false;
+    return validText(name, max: max);
+  }
+
+  /// [validName]'s rules for any short text: at most [max] UTF-16 units, no
+  /// control, bidi or line-separator characters, no unpaired surrogates, and
+  /// not blank unless [allowEmpty] (C3 topics may be empty).
+  static bool validText(String name,
+      {required int max, bool allowEmpty = false}) {
+    if (name.length > max) return false;
+    if (name.trim().isEmpty) return allowEmpty && name.isEmpty;
     final units = name.codeUnits;
     for (var i = 0; i < units.length; i++) {
       final unit = units[i];
@@ -366,7 +375,12 @@ class ProfileRecordCodec {
 
   /// Checks a PNG before any decoder sees it: signature, size, and an IHDR
   /// whose width and height are within bounds and equal the declared ones.
-  static void _checkPhoto(Uint8List png, int width, int height) {
+  static void _checkPhoto(Uint8List png, int width, int height) =>
+      checkPhoto(png, width, height);
+
+  /// [_checkPhoto] with a caller's side limit (C3 icons are at most 256).
+  static void checkPhoto(Uint8List png, int width, int height,
+      {int maxSide = profileMaxPhotoSide}) {
     const bad = ProfileRecordException(ProfileRecordFailure.badPhoto);
     if (png.length < 33 || png.length > profileMaxPhotoBytes) throw bad;
     const signature = <int>[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
@@ -382,13 +396,16 @@ class ProfileRecordCodec {
     final h = view.getUint32(20);
     if (w == 0 ||
         h == 0 ||
-        w > profileMaxPhotoSide ||
-        h > profileMaxPhotoSide ||
+        w > maxSide ||
+        h > maxSide ||
         w != width ||
         h != height) {
       throw bad;
     }
   }
+
+  static bool startsWith(List<int> data, List<int> prefix) =>
+      _startsWith(data, prefix);
 
   static bool _startsWith(List<int> data, List<int> prefix) {
     if (data.length < prefix.length) return false;
