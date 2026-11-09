@@ -986,7 +986,7 @@ func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []b
 		return RecoveryTransfer{}, err
 	}
 	maxServed := RecoveryServedBytesMultiplier * transfer.Backup.SizeBytes
-	if bytesServed >= maxServed {
+	if bytesServed > 0 && bytesServed >= maxServed {
 		// Cap on served bytes exceeded: consume capability to enforce one-time use.
 		_, _ = tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL WHERE id = ?`, transfer.Backup.ID)
 		_ = tx.Commit()

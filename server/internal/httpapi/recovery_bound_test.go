@@ -102,3 +102,38 @@ func TestRecoveryLegitimateResumeAfterInterruption(t *testing.T) {
 		t.Fatalf("re-read after completion status=%d, want 404", status)
 	}
 }
+
+// Empty backup recovery succeeds on its first download and is consumed on completion.
+func TestRecoveryEmptyBlobSucceedsAndConsumes(t *testing.T) {
+	handler, token, _ := newTestHandlerWithOwner(t)
+	payload := []byte{}
+	recoveryToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{13}, 32))
+
+	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, payload, map[string]string{
+		"X-Private-Messenger-Encrypted": "1",
+		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
+		"X-Recovery-Token":              recoveryToken,
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("create backup status=%d body=%s", status, response)
+	}
+
+	get := func() (int, []byte) {
+		return doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, map[string]string{
+			"X-Recovery-Token": recoveryToken,
+		})
+	}
+
+	// 1. First download succeeds
+	status, body := get()
+	if status != http.StatusOK || len(body) != 0 {
+		t.Fatalf("download status=%d body=%q, want 200 and empty", status, body)
+	}
+
+	// 2. Capability was consumed
+	status, _ = get()
+	if status != http.StatusNotFound {
+		t.Fatalf("re-read after completion status=%d, want 404", status)
+	}
+}
+

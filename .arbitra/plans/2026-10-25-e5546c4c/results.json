@@ -2121,7 +2121,7 @@
       "task": "TASK-168",
       "result": "fixed",
       "failedBefore": true,
-      "test": "server/internal/httpapi/recovery_bound_test.go (TestRecoveryRepeatedRangeReadsConsumeAtBound, TestRecoveryLegitimateResumeAfterInterruption)",
+      "test": "server/internal/httpapi/recovery_bound_test.go (TestRecoveryRepeatedRangeReadsConsumeAtBound, TestRecoveryLegitimateResumeAfterInterruption, TestRecoveryEmptyBlobSucceedsAndConsumes)",
       "proof": "Migration 0077 added recovery_bytes_served. BeginRecoveryTransfer and CompleteRecoveryTransfer enforce plan Q-004 option (a): total bytes served per capability is capped at 2x backup size, consuming the capability once reached to prevent unbounded repeated reads while legitimate resumed downloads still complete (VAL-215).",
       "checkedEndToEnd": false
     },

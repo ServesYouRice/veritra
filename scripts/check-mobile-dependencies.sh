@@ -38,7 +38,7 @@ if ! python3 "$ROOT/scripts/check-dart-retractions.py" "$OUTDATED"; then
 fi
 
 # The wrapper must download a pinned Gradle over https from services.gradle.org
-# (and a distributionSha256Sum, when set, must be well formed); every Gradle
+# with a 64-hex distributionSha256Sum; every Gradle
 # build, settings and version-catalog file, comments skipped, must be free of
 # +, range, latest.* and SNAPSHOT versions. Fails if the app build script is
 # missing or any input cannot be read.
