@@ -39,13 +39,42 @@ the design.
 
 Step 2 requires an end-to-end capacity run through `scripts/capacity.sh` with a 500-member group and `DELIVERIES_PER_MINUTE >= 1002` (per [`docs/designs/C8-bigger-communities.md`](../../docs/designs/C8-bigger-communities.md)).
 
-This capacity run cannot be executed in this environment for the following reasons:
-1. **Local platform and Docker daemon unavailable:** `scripts/capacity.sh` is a POSIX Bash script that builds and runs a production container (`busybox:1.37.0`) with CPU and memory cgroups via Docker. On this Windows host, Docker Desktop service (`com.docker.service`) is stopped, connecting to the Docker engine fails (`open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`), and unprivileged agents cannot start Windows services.
-2. **Missing load harness support for 500-member groups:** `scripts/capacity.sh` and `server/cmd/veritra-load` only define tiers `s` (50 accounts, group size 5) and `m` (250 accounts, group size 5). There is currently no command-line flag or profile in `veritra-load` to create or drive a 500-member group fan-out workload.
-3. **Delivery budget constraints:** `Limits.Validate()` requires `DELIVERIES_PER_MINUTE >= 2 * (1 + CONVERSATION_MEMBERS)` (1,002 for 500 members). `scripts/capacity.sh` does not pass custom delivery limits to the container, and `veritra-load` has no configuration for a 500-member fan-out test.
-4. **Host requirement:** As noted in `STATE.md` and `docs/designs/C8-bigger-communities.md`, Step 2 waits for a capacity run on the owner's Linux host.
+Rechecked 2026-11-09 on the Windows host. This capacity run cannot be
+executed here with the existing harness:
 
-The SQLite storage benchmark (`BenchmarkConversationMembersScale` at 500 members: 4.9 ms send fan-out, 1.27 ms member list) was re-verified, but the end-to-end fan-out capacity measurement cannot be run here.
+1. **Docker engine unavailable.** `Get-Service com.docker.service` reports
+   `Stopped`. `docker info --format '{{.OSType}}'` fails with
+   `open //./pipe/dockerDesktopLinuxEngine: The system cannot find the file specified`.
+   Bash is installed, but `scripts/capacity.sh` requires a working Linux
+   Docker engine for its CPU/memory-limited production container.
+2. **No 500-member workload.** The script accepts tiers `s` and `m`; the
+   load tool also has a small `smoke` profile. Both capacity tiers use
+   `GroupSize: 5` in `server/cmd/veritra-load/workload.go`.
+   `parseOptions` supports `-accounts`, but that changes the account count
+   without changing group size. No group-size flag or 500-member profile
+   exists.
+3. **Server limits are not forwarded.** The script's `docker run` passes
+   neither `PRIVATE_MESSENGER_LIMIT_CONVERSATION_MEMBERS` nor
+   `PRIVATE_MESSENGER_LIMIT_DELIVERIES_PER_MINUTE`; exporting them on the
+   host does not configure the container. A future run must explicitly set
+   members to 500 and deliveries to at least 1,002, as required by
+   `Limits.Validate()`, as well as add a 500-member workload. Raising the
+   delivery budget alone leaves the container's member limit at 250.
+
+`STATE.md` still tracks the capacity run on the owner's host. No end-to-end
+500-member measurement or capacity pass is claimed here.
+
+The storage-only sanity check was run successfully:
+
+```text
+cd server
+go test -run '^$' -bench ConversationMembersScale -benchtime 5x ./internal/storage
+```
+
+At 500 members this rerun measured 2.04 ms send + recipient list, 0.60 ms
+member list and 0.23 ms message page (five iterations each). These are
+separate from the 2026-11-01 measurements above and do not exercise HTTP,
+realtime delivery, rate-limit admission or MLS clients; they cannot qualify
+step 2.
 
 Per specification, the default member limit remains at 250 (`DefaultConversationMembers = 250`).
-
