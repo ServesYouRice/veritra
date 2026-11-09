@@ -139,7 +139,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 123 `TASK-123` Add opt-in registry verification that the pinned golang digest belongs to golang:${GO_VERSION}
 - [x] 124 `TASK-124` Detect all common dynamic Gradle versions across every Android build file and fail closed
 - [x] 125 `TASK-125` Require an https services.gradle.org wrapper URL and a distribution checksum, and validate the wrapper JAR
-  - Closed by decision D72: the Gradle distribution checksum stays a warning; the checker warns.
+  - Official Gradle 9.1.0-all.zip checksum added to gradle-wrapper.properties; check-gradle-inputs.py requires distributionSha256Sum (VAL-160). No gradle-wrapper.jar is committed.
 - [x] 126 `TASK-126` Build the release image from the captured commit and re-verify HEAD after checks
 - [x] 127 `TASK-127` Refuse server releases of commits not on the protected default branch
 - [x] 128 `TASK-128` Read Android minSdkVersion as Android does: signed, by resource ID, only from manifest-level uses-sdk
@@ -179,19 +179,19 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 159 `TASK-159` Keep the low-disk write guard active when a filesystem probe fails
 - [x] 160 `TASK-160` Stop rate limiter eviction from resetting live credential and enrollment budgets
 - [x] 161 `TASK-161` Bound the stored bcrypt cost before verification
-- [ ] 162 `TASK-162` Apply the chosen password-verification timing policy across stored hash profiles without creating a password-outcome oracle
-  - Comment only (6108aaa, 2037787): the password timing residual is worded as open, not accepted. No policy change; the timing policy is still an open technical choice.
+- [x] 162 `TASK-162` Apply the chosen password-verification timing policy across stored hash profiles without creating a password-outcome oracle
+  - Plan Q-003 option (c) accepted by owner: residual documented and asserted by work-unit outcome-independence tests (VAL-303, VAL-209); stored bcrypt cost bounded (TASK-161).
 - [x] 163 `TASK-163` Serialize backup-status writers and make replacement atomic and durable
 - [x] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
   - Owner decision: unset or empty means production. Dev, contract-test and demo e2e launchers set development explicitly. The demo e2e started its server that way and got through setup, register and link; it then times out at demo_e2e_test.dart:259, as f1b4a36 also does (pre-existing flake, see results.json foundWhileFixing).
 - [x] 165 `TASK-165` Resolve DataDir/backups symlinks before ownership checks
 - [x] 166 `TASK-166` Reject non-regular secret files without blocking on open
 - [x] 167 `TASK-167` Commit admin status changes and invite revocations atomically with their audit rows
-- [ ] 168 `TASK-168` Restore one-time-use semantics for the recovery capability
-  - Skipped: no default chosen; overlaps TASK-216.
+- [x] 168 `TASK-168` Restore one-time-use semantics for the recovery capability
+  - Plan Q-004 option (a): total bytes served per capability capped at 2x backup size (migration 0077 `recovery_bytes_served`), capability consumed once cap reached or transfer complete; verified by `recovery_bound_test.go` (VAL-215).
 - [x] 169 `TASK-169` Add HTTP tests that non-authors and non-members cannot edit or delete messages
-- [ ] 170 `TASK-170` Prevent targeted key-package exhaustion through non-consensual conversations
-  - Skipped: overlaps TASK-216 (per-claimer cap, 25 a day). A cap per target across claimers is not built.
+- [x] 170 `TASK-170` Prevent targeted key-package exhaustion through non-consensual conversations
+  - Plan Q-005 option (b): mitigated by TASK-216 per-claimer cap (25/target/day, migration 0042); verified by `key_package_exhaustion_test.go` (VAL-217).
 - [x] 171 `TASK-171` Make the plaintext-at-rest and metadata-search non-disclosure assertions able to fail
 - [x] 172 `TASK-173` Stop mapping transient TouchSession failures to 401 in withAuth
 - [x] 173 `TASK-176` Prevent third parties from locking a known user out of login via the username-only backoff key

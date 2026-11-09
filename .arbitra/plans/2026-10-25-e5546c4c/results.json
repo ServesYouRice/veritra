@@ -1283,11 +1283,11 @@
       "title": "No coverage for a debounced, unflushed draft edit pending at sign-out or session expiry",
       "severity": "medium",
       "task": "TASK-103",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/drafts_mute_reactions_test.dart (drafts through sign-out and session expiry memory store / encrypted store)",
+      "proof": "Commits 58adb7e, 73c39b8 (D65). Pending debounced drafts flush before sign-out or session expiry clears local data; session expiry preserves drafts under UQ-003, sign-out wipes them.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-cedf62df65e4",
@@ -1569,11 +1569,11 @@
       "title": "Gradle wrapper check accepts any scheme or host and does not require a distribution checksum",
       "severity": "medium",
       "task": "TASK-125",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-gradle-inputs_test.py (test_wrapper_must_be_pinned_to_services_gradle_org, test_missing_wrapper_checksum_is_rejected)",
+      "proof": "Commit 6a82720 and subsequent fix. Pinned official distributionSha256Sum b84e04fa845fecba48551f425957641074fcc00a88a84d2aae5808743b35fc85 in gradle-wrapper.properties; scripts/check-gradle-inputs.py requires distributionSha256Sum and pins services.gradle.org. Confirmed no gradle-wrapper.jar is committed (gitignored).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-1b57b9760118",
@@ -2053,11 +2053,11 @@
       "title": "Historical password parameters defeat verification timing equalization",
       "severity": "medium",
       "task": "TASK-162",
-      "result": "no_change_needed",
-      "failedBefore": null,
-      "test": null,
-      "proof": "Comment only (6108aaa, 2037787): the password timing residual is worded as open, not accepted. No policy change; the timing policy is still an open technical choice.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/auth/auth_test.go (TestVerificationWorkUnitsDoNotDependOnOutcome, TestOlderArgon2idParametersAskForRehash)",
+      "proof": "Commits 2037787, 6108aaa and acceptance of plan Q-003 option (c) by owner. Stored bcrypt cost is bounded to MaxBcryptCost (TASK-161); timing policy accepts residual across profiles and proves outcome-independence across match and mismatch (VAL-303, VAL-209).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-79260030c62b",
@@ -2119,11 +2119,11 @@
       "title": "One-time recovery capability can be re-read repeatedly because only a transfer reaching the end consumes it",
       "severity": "medium",
       "task": "TASK-168",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: no default chosen; overlaps TASK-216.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/httpapi/recovery_bound_test.go (TestRecoveryRepeatedRangeReadsConsumeAtBound, TestRecoveryLegitimateResumeAfterInterruption)",
+      "proof": "Migration 0077 added recovery_bytes_served. BeginRecoveryTransfer and CompleteRecoveryTransfer enforce plan Q-004 option (a): total bytes served per capability is capped at 2x backup size, consuming the capability once reached to prevent unbounded repeated reads while legitimate resumed downloads still complete (VAL-215).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-64f65ae423ee",
@@ -2141,11 +2141,11 @@
       "title": "Single-use key packages, no tested last-resort package, and non-consensual conversation creation allow targeted key-package exhaustion",
       "severity": "medium",
       "task": "TASK-170",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: overlaps TASK-216 (per-claimer cap, 25 a day). A cap per target across claimers is not built.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/httpapi/key_package_exhaustion_test.go (TestTargetedKeyPackageExhaustionPreventedByClaimCap, TestTargetedKeyPackageExhaustionCharacterizationDrain)",
+      "proof": "Plan Q-005 option (b): mitigated by TASK-216 per-claimer cap (KeyPackageClaimsPerTarget default 25/day, migration 0042). Repeated non-consensual claims by an attacker hit 429 key_package_claim_limit, leaving key packages available for legitimate third-party conversations (VAL-217).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-7cefafa11536",
