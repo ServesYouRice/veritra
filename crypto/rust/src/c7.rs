@@ -69,11 +69,18 @@ pub const EXPORTER_LABEL: &str = "veritra-c7-rekey-v1";
 /// commitment labels stay inside seal and open.
 pub const DERIVE_LABELS: [&[u8]; 3] = [LABEL_POST, LABEL_REKEY_CHK, LABEL_SLOT];
 
-/// Domains the credential key signs for C7. Rust prepends the label itself,
-/// so a C7 signature can never be a valid MLS or other-protocol signature.
+/// Domains the credential key signs through the ABI 13 sign and verify
+/// calls. Rust prepends the label itself, so such a signature can never be a
+/// valid MLS or other-protocol signature. No label is a prefix of another
+/// (a test pins it), so `domain | message` has one reading.
 pub const SIGN_DOMAIN_POST: &[u8] = b"veritra-c7-post-sig-v1";
 pub const SIGN_DOMAIN_HISTORY: &[u8] = b"veritra-c7-history-v1";
-pub const SIGN_DOMAINS: [&[u8]; 2] = [SIGN_DOMAIN_POST, SIGN_DOMAIN_HISTORY];
+/// C1 invitation binding v2 (`docs/designs/C1-invite-format.md`): the
+/// creating device signs the target, its own account and device, its key and
+/// the link's locator. Part of ABI 21; a library without the entry refuses
+/// the domain and the app fails closed.
+pub const SIGN_DOMAIN_INVITE: &[u8] = b"veritra-invite-binding-v2";
+pub const SIGN_DOMAINS: [&[u8]; 3] = [SIGN_DOMAIN_POST, SIGN_DOMAIN_HISTORY, SIGN_DOMAIN_INVITE];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C7Error {
@@ -842,3 +849,7 @@ impl CompactRecord {
 #[cfg(test)]
 #[path = "c7_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "invite_binding_tests.rs"]
+mod invite_binding_tests;

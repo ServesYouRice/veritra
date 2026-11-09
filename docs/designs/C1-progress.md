@@ -55,10 +55,12 @@ silent gap. Splitting account marks by conversation would need a migration.
 ## Owner questions
 
 1. Approved by D90 (secret after `#`; binding to target, account and device
-   keys built before merge). The binding is a secret-keyed tag, built in
-   `C1-invite-format.md`; it still needs an independent design review, and a
-   v2 needs C7's ABI 13 signature and a key commitment the
-   server cannot replace; a link the server can read gets no protection.
+   keys built before merge). The binding is v2 (a device signature, a key
+   commitment in the link and the secret-keyed tag), built in
+   `C1-invite-format.md`; it still needs an independent design review; a
+   link the server can read gets no protection. Open: should an invitation
+   from someone the joiner shares no group with be refused outright? (v2
+   anchors that case on the commitment in the link.)
 2. Allow a migration splitting account prune marks by conversation, or
    accept the conservative pause?
 3. Which agent owns `app_state.dart`, `models.dart`, `api_client.dart` and
@@ -108,3 +110,17 @@ conversation replay keeps paging while `scan_truncated` and moves to
 client cursors (C1-B2 to B4), and the legacy global stream is unchanged.
 `PRIVATE_MESSENGER_SCOPED_SYNC` still defaults to off in `config.go`; the
 brief said it now defaults on, but main does not.
+
+## 2026-11-09 local port onto 0d09fcb (partial)
+
+Ported both commits from `origin/agent/invite-v2`, preserving current L1,
+C4 and L0 bindings. Counters: ABI 21, local schema 32, server migration
+0066. Group requests now persist a verified inviter/target anchor before
+submission; Welcome validation checks the actual MLS group id and inviter
+leaf key before committing state, with rollback on mismatch. See the current
+section in `C1-invite-format.md` and `testing/evidence/C1-invite-v2.md`.
+
+Remaining: the community-to-shared-group anchor, encrypted group/community
+rename app wiring, native end-to-end community approval/removal evidence,
+and independent security review. Existing request, leave, removal and
+username screens remain in place. No STATE.md or release gate changed.

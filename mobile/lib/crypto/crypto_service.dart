@@ -301,6 +301,48 @@ abstract interface class DeviceSigningKeyCryptoService {
   });
 }
 
+/// The signing domain of invitation binding v2 (C1, ABI 13 allowlist entry).
+/// The native side prepends it to the message; the app never builds
+/// `domain | message` itself.
+const String inviteBindingSigningDomain = 'veritra-invite-binding-v2';
+
+/// C1 invitation binding v2 (`docs/designs/C1-invite-format.md`): the device
+/// signature on an invitation and its check, through the ABI 13 credential-key
+/// sign and verify, plus the roster read that anchors the key. Implemented by
+/// the native engine only; callers check for it like the other capabilities,
+/// so [UnavailableCryptoService] (`PM_CRYPTO_UNAVAILABLE`) is never asked and a
+/// build without the engine neither makes nor accepts an invitation.
+abstract interface class InviteBindingCryptoService {
+  /// Signs [message] under [inviteBindingSigningDomain] with the active
+  /// device's credential key (64 bytes). The active identity must be
+  /// [accountId]/[deviceId]; any other throws.
+  Future<Uint8List> signInviteBinding({
+    required String accountId,
+    required String deviceId,
+    required List<int> message,
+  });
+
+  /// Strict Ed25519 verification of [signature] over [message] under
+  /// [inviteBindingSigningDomain] and the 32-byte [signingKey]. `false` for
+  /// any invalid signature or malformed key, and also when the engine does not
+  /// know the domain (an older library), so the caller fails closed.
+  Future<bool> verifyInviteBinding({
+    required List<int> signingKey,
+    required List<int> message,
+    required List<int> signature,
+  });
+
+  /// The signature key of the member device [accountId]/[deviceId] in the
+  /// current tree of the MLS group of [conversationId] on this device, or
+  /// null when this device holds no such group or the group has no such
+  /// member. Reads local MLS state only; the server is not asked.
+  Future<Uint8List?> memberSigningKey({
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+  });
+}
+
 /// K2/K0 (local schema 18): the one step that makes the pending identity
 /// this device's active one, with a promotion-ledger row, so its frozen
 /// pre-join MLS state can never become active again (review finding 4 on

@@ -51,6 +51,7 @@ class NativeCryptoService
         DeviceListCryptoService,
         DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
+        InviteBindingCryptoService,
         K2TransferCryptoService,
         MlsDeviceHealthCryptoService,
         ExpiringPayloadCryptoService,
@@ -164,6 +165,66 @@ class NativeCryptoService
           throw StateError('the active identity is not this device');
         }
         return Uint8List.fromList(device.signingPublicKey());
+      });
+
+  // C1 invitation binding v2 (ABI 13 sign, verify and member key read).
+
+  @override
+  Future<Uint8List> signInviteBinding({
+    required String accountId,
+    required String deviceId,
+    required List<int> message,
+  }) =>
+      _serial(() async {
+        final device = _requiredDevice();
+        if (_pendingEnrollment ||
+            _accountId != accountId ||
+            _deviceId != deviceId) {
+          throw StateError('the active identity is not this device');
+        }
+        return Uint8List.fromList(device.c7Sign(
+          domain: inviteBindingSigningDomain,
+          message: message,
+        ));
+      });
+
+  @override
+  Future<bool> verifyInviteBinding({
+    required List<int> signingKey,
+    required List<int> message,
+    required List<int> signature,
+  }) async {
+    try {
+      return bindings.c7Verify(
+        domain: inviteBindingSigningDomain,
+        publicKey: signingKey,
+        message: message,
+        signature: signature,
+      );
+    } on NativeCryptoException {
+      // An older library refuses the domain; any engine error is no proof.
+      return false;
+    } on ArgumentError {
+      return false;
+    }
+  }
+
+  @override
+  Future<Uint8List?> memberSigningKey({
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+  }) =>
+      _serial(() async {
+        final device = _requiredDevice();
+        try {
+          return Uint8List.fromList(
+            device.memberSignatureKey(conversationId, accountId, deviceId),
+          );
+        } on NativeCryptoException {
+          // No such group here, or no such member in it.
+          return null;
+        }
       });
 
   // C6 reports (ABI 12). Stateless: none touches the device or its state.
@@ -1315,6 +1376,20 @@ class NativeCryptoService
               }
               try {
                 device.joinGroup(message.conversationId, message.payload);
+                // D99: do not persist a joined group until the inviter's
+                // actual MLS leaf matches the locally verified invitation.
+                // The outer failure path restores the consumed key package
+                // and group state, so a rejected Welcome is retryable.
+                final anchor =
+                    await localStore.loadInviteAnchor(message.conversationId);
+                if (anchor != null) {
+                  final key = device.memberSignatureKey(message.conversationId,
+                      anchor.accountId, anchor.deviceId);
+                  if (!_sameBytes(key, anchor.signingKey)) {
+                    throw StateError(
+                        'Invitation does not match the encrypted group');
+                  }
+                }
               } on NativeCryptoException catch (error) {
                 if (error.kind !=
                     NativeCryptoError.welcomeKeyPackageUnavailable) {

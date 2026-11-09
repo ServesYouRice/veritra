@@ -19,6 +19,9 @@ func decodeBody(t *testing.T, body []byte, dest interface{}) {
 
 const testBindingTag = "abababababababababababababababababababababababababababababababab"
 
+// testBindingSignature stands in for the device's v2 signature (64 bytes).
+var testBindingSignature = bytes.Repeat([]byte{0xcd}, 64)
+
 // inviteBody is a create-invitation body for the session behind token: the
 // session's device key and a stand-in binding tag (only the app can compute
 // the real one, from the link secret).
@@ -37,7 +40,7 @@ func inviteBody(t *testing.T, handler http.Handler, token string, extra map[stri
 	if len(devices.Devices) == 0 || len(devices.Devices[0].SigningKey) != 32 {
 		t.Fatalf("devices = %s", body)
 	}
-	request := map[string]interface{}{"locator": testInviteLocator, "signing_key": devices.Devices[0].SigningKey, "binding_tag": testBindingTag}
+	request := map[string]interface{}{"locator": testInviteLocator, "signing_key": devices.Devices[0].SigningKey, "binding_tag": testBindingTag, "binding_signature": testBindingSignature}
 	for key, value := range extra {
 		request[key] = value
 	}
@@ -89,16 +92,19 @@ func TestGroupInviteJoinRequestFlowAPI(t *testing.T) {
 			InviterDeviceID   string `json:"inviter_device_id"`
 			InviterSigningKey []byte `json:"inviter_signing_key"`
 			Tag               string `json:"tag"`
+			Signature         []byte `json:"signature"`
 		} `json:"binding"`
 	}
 	decodeBody(t, body, &preview)
 	if preview.Binding.TargetID != groupID || preview.Binding.InviterAccountID == "" || preview.Binding.InviterDeviceID == "" ||
-		len(preview.Binding.InviterSigningKey) != 32 || preview.Binding.Tag != testBindingTag {
+		len(preview.Binding.InviterSigningKey) != 32 || preview.Binding.Tag != testBindingTag || !bytes.Equal(preview.Binding.Signature, testBindingSignature) {
 		t.Fatalf("preview binding = %+v", preview.Binding)
 	}
 	for _, mutate := range []map[string]interface{}{
 		{"binding_tag": "not-a-tag"},
 		{"binding_tag": nil},
+		{"binding_signature": nil},
+		{"binding_signature": make([]byte, 63)},
 		{"signing_key": nil},
 		{"signing_key": make([]byte, 32)},
 	} {

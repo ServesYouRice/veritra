@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -27,7 +28,7 @@ void main() {
     expect(link, isNotNull);
     expect(api.createdLocators, <String>[link!.locator]);
     expect(api.createdTargets, <String>['group:conv_1']);
-    final secret = Uri.parse(url).fragment.substring(3);
+    final secret = Uri.parse(url).fragment.split('.')[1];
     expect(api.createdLocators.single, isNot(contains(secret)));
     expect(state.errorFor(Ops.membership), isNull);
 
@@ -36,17 +37,36 @@ void main() {
     expect(api.createdKeys.single, testDeviceSigningKey);
     final tag = api.createdTags.single;
     expect(tag, matches(RegExp(r'^[0-9a-f]{64}$')));
+    final signature = api.createdSignatures.single;
+    final binding = InviteBinding(
+      kind: InviteTargetKind.group,
+      targetId: 'conv_1',
+      inviterAccountId: 'acct_owner',
+      inviterDeviceId: 'dev_owner',
+      inviterSigningKey: testDeviceSigningKey,
+      tag: tag,
+      signature: Uint8List.fromList(signature),
+    );
+    // The link commits to the device key, the tag is the secret's, and the
+    // device signed the fields and this link's locator.
+    expect(link.matches(binding), isTrue);
     expect(
-        link.verifies(InviteBinding(
-          kind: InviteTargetKind.group,
-          targetId: 'conv_1',
-          inviterAccountId: 'acct_owner',
-          inviterDeviceId: 'dev_owner',
-          inviterSigningKey: testDeviceSigningKey,
-          tag: tag,
-        )),
-        isTrue);
+        signature,
+        fakeInviteSignature(
+            testDeviceSigningKey, link.bindingMessageOf(binding)));
     expect(tag, isNot(contains(secret)));
+  });
+
+  test('a link whose own signature does not verify is never handed out',
+      () async {
+    final api = _Api();
+    final crypto = TestOnlyCryptoService()..forcedVerification = false;
+    final state = _state(api, crypto: crypto);
+
+    expect(
+        await state.createInviteLink(InviteTargetKind.group, 'conv_1'), isNull);
+    expect(api.createdLocators, isEmpty);
+    expect(state.errorFor(Ops.membership), isNotNull);
   });
 
   test('no invitation is made without an engine that reads the device key',
@@ -64,7 +84,7 @@ void main() {
   test('a link of another server is refused before any request', () async {
     final api = _Api();
     final state = _state(api);
-    final foreign = MembershipInviteLink.generate(origin: 'https://evil.test');
+    final foreign = newInviteLink(origin: 'https://evil.test');
 
     final result = await state.previewInviteLink(foreign.url);
 
@@ -72,7 +92,7 @@ void main() {
     expect(api.previewed, isEmpty);
     final message = state.errorFor(Ops.membership)!;
     expect(message, isNot(contains('evil.test')));
-    final secret = Uri.parse(foreign.url).fragment.substring(3);
+    final secret = Uri.parse(foreign.url).fragment.split('.')[1];
     expect(message, isNot(contains(secret)));
   });
 
@@ -110,6 +130,20 @@ void main() {
       'an empty tag': tampered(honest, tag: ''),
       'a tag in capitals': tampered(honest, tag: honest.tag.toUpperCase()),
       'a truncated tag': tampered(honest, tag: honest.tag.substring(1)),
+      'no signature (made before v2)':
+          tampered(honest, signature: Uint8List(0)),
+      'a short signature':
+          tampered(honest, signature: honest.signature.sublist(1)),
+      'a signature that fits no message':
+          tampered(honest, signature: List<int>.filled(64, 3)),
+      'a signature over another target': tampered(honest,
+          signature: honestBinding(link, targetId: 'conv_2').signature),
+      // A server holding the link and its own key: the key does not fit the
+      // commitment in the link, however well it signs and recomputes the tag.
+      'its own key, signed and tagged': (() {
+        final forged = honestBinding(link, signingKey: _otherKey);
+        return forged;
+      })(),
     };
     for (final entry in swaps.entries) {
       final api = _Api()..binding = entry.value;
@@ -148,6 +182,9 @@ void main() {
       'another inviter': tampered(honest, accountId: 'acct_mallory'),
       'the kind of another target':
           tampered(honest, kind: InviteTargetKind.community),
+      'no signature': tampered(honest, signature: Uint8List(0)),
+      'a signature of another target': tampered(honest,
+          signature: honestBinding(link, targetId: 'conv_other').signature),
     };
     for (final entry in cases.entries) {
       final api = _Api()
@@ -173,7 +210,110 @@ void main() {
 
     expect(request, isNotNull);
     expect(api.cancelled, isEmpty);
+    final anchor = await state.localStore.loadInviteAnchor('conv_1');
+    expect(anchor, isNotNull);
+    expect(anchor!.accountId, 'acct_alice');
+    expect(anchor.signingKey, defaultInviterKey);
     expect(state.errorFor(Ops.membership), isNull);
+  });
+
+  test('a failed anchor write files no join request', () async {
+    final link = _newLink();
+    final api = _Api()..binding = honestBinding(link);
+    final state = _state(api, store: _FailingAnchorStore());
+    expect(await state.requestToJoin(link), isNull);
+    expect(api.requested, isEmpty);
+    expect(state.errorFor(Ops.membership), isNotNull);
+  });
+
+  test('a preview is refused when the engine finds the signature invalid',
+      () async {
+    final link = _newLink();
+    final api = _Api()..binding = honestBinding(link);
+    final crypto = TestOnlyCryptoService()..forcedVerification = false;
+
+    final result =
+        await _state(api, crypto: crypto).previewInviteLink(link.url);
+
+    expect(result, isNull);
+    expect(api.requested, isEmpty);
+  });
+
+  test('a join without the signing engine is refused (fail closed)', () async {
+    final link = _newLink();
+    final api = _Api()..binding = honestBinding(link);
+    final state = _state(api, crypto: UnavailableCryptoService());
+
+    expect(await state.previewInviteLink(link.url), isNull);
+    expect(await state.requestToJoin(link), isNull);
+    expect(api.requested, isEmpty);
+    expect(api.cancelled, isEmpty);
+    expect(state.errorFor(Ops.membership), isNotNull);
+  });
+
+  test('a v1 link is not read', () async {
+    final link = _newLink();
+    final api = _Api()..binding = honestBinding(link);
+    final secret = Uri.parse(link.url).fragment.split('.')[1];
+
+    expect(
+        await _state(api)
+            .previewInviteLink('https://localhost:8080/join#v1.$secret'),
+        isNull);
+    expect(api.previewed, isEmpty);
+  });
+
+  group('the MLS roster anchors the key where this device has the group', () {
+    final conversations = <Conversation>[
+      Conversation(id: 'conv_a', kind: 'direct'),
+      Conversation(id: 'conv_b', kind: 'group'),
+    ];
+
+    test('a group naming the same key for the inviter passes', () async {
+      final link = _newLink();
+      final api = _Api()..binding = honestBinding(link);
+      final crypto = TestOnlyCryptoService()
+        ..memberKeys['conv_b|acct_alice|dev_alice'] = defaultInviterKey;
+      final state = _state(api, crypto: crypto)..conversations = conversations;
+
+      expect(await state.previewInviteLink(link.url), isNotNull);
+    });
+
+    test('a group naming another key for the inviter refuses', () async {
+      final link = _newLink();
+      final api = _Api()..binding = honestBinding(link);
+      final crypto = TestOnlyCryptoService()
+        ..memberKeys['conv_a|acct_alice|dev_alice'] = defaultInviterKey
+        ..memberKeys['conv_b|acct_alice|dev_alice'] =
+            Uint8List.fromList(_otherKey);
+      final state = _state(api, crypto: crypto)..conversations = conversations;
+
+      expect(await state.previewInviteLink(link.url), isNull);
+      expect(state.errorFor(Ops.membership), isNotNull);
+      // Refuse before filing a request or persisting an anchor.
+      expect(await state.requestToJoin(link), isNull);
+      expect(api.requested, isEmpty);
+      expect(api.cancelled, isEmpty);
+      expect(await state.localStore.loadInviteAnchor('conv_1'), isNull);
+    });
+
+    test('no shared group means the commitment in the link is the anchor',
+        () async {
+      final link = _newLink();
+      final api = _Api()..binding = honestBinding(link);
+      final state = _state(api)..conversations = conversations;
+
+      expect(await state.previewInviteLink(link.url), isNotNull);
+    });
+
+    test('a roster read that fails is no evidence either way', () async {
+      final link = _newLink();
+      final api = _Api()..binding = honestBinding(link);
+      final state = _state(api, crypto: _ThrowingRosterCrypto())
+        ..conversations = conversations;
+
+      expect(await state.previewInviteLink(link.url), isNotNull);
+    });
   });
 
   test('approving asks reconcile for the target group; declining does not',
@@ -291,14 +431,13 @@ void main() {
 
 final List<int> _otherKey = List<int>.generate(32, (i) => 0x70 + i);
 
-MembershipInviteLink _newLink() =>
-    MembershipInviteLink.generate(origin: 'https://localhost:8080');
+MembershipInviteLink _newLink() => newInviteLink();
 
-AppState _state(ApiClient api, {CryptoService? crypto}) {
+AppState _state(ApiClient api, {CryptoService? crypto, LocalStore? store}) {
   return AppState(
     apiClientFactory: (_) => api,
     cryptoService: crypto ?? TestOnlyCryptoService(),
-    localStore: MemoryLocalStore(),
+    localStore: store ?? MemoryLocalStore(),
     syncServiceFactory: (_, __) => _SyncService(),
   )
     ..api = api
@@ -318,6 +457,7 @@ class _Api extends ApiClient {
   final List<String> createdTargets = <String>[];
   final List<List<int>> createdKeys = <List<int>>[];
   final List<String> createdTags = <String>[];
+  final List<List<int>> createdSignatures = <List<int>>[];
   final List<String> previewed = <String>[];
   final List<String> requested = <String>[];
   final List<String> cancelled = <String>[];
@@ -339,12 +479,14 @@ class _Api extends ApiClient {
     required String locator,
     required List<int> signingKey,
     required String bindingTag,
+    required List<int> bindingSignature,
     int maxUses = 10,
     Duration lifetime = const Duration(days: 7),
   }) async {
     createdLocators.add(locator);
     createdKeys.add(signingKey);
     createdTags.add(bindingTag);
+    createdSignatures.add(bindingSignature);
     createdTargets.add('${kind.wire}:$targetId');
     return MembershipInvite(
       id: 'minv_1',
@@ -423,6 +565,17 @@ class _Api extends ApiClient {
   }
 }
 
+/// An engine whose roster read always fails.
+class _ThrowingRosterCrypto extends TestOnlyCryptoService {
+  @override
+  Future<Uint8List?> memberSigningKey({
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+  }) async =>
+      throw StateError('no readable group');
+}
+
 class _SyncService implements SyncService {
   final _controller = StreamController<Map<String, Object?>>.broadcast();
 
@@ -435,5 +588,12 @@ class _SyncService implements SyncService {
   @override
   Future<void> dispose() async {
     _controller.close();
+  }
+}
+
+class _FailingAnchorStore extends MemoryLocalStore {
+  @override
+  Future<void> saveInviteAnchor(InviteAnchor anchor) async {
+    throw StateError('storage unavailable');
   }
 }

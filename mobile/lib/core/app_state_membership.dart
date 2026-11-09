@@ -29,21 +29,24 @@ extension MembershipActions on AppState {
   /// administers and returns the link to share. The link holds the secret and
   /// is not stored anywhere: the server keeps a hash of the locator only.
   ///
-  /// The invitation is bound (D90) to the target, this account and device, and
-  /// the device's signing key by a tag derived from the secret, so the joiner
-  /// can tell that the target was not swapped on the way. The key comes from
-  /// the native engine; without it (any build that is not the reviewed
-  /// engine) no invitation is made.
+  /// The invitation is bound (D90, v2) to the target, this account and device,
+  /// and the device's signing key: by a tag derived from the secret, by a
+  /// commitment to the key in the link, and by this device's signature over
+  /// the same fields and the link's locator (ABI 13 sign, domain
+  /// `veritra-invite-binding-v2`). The key and the signature come from the
+  /// native engine; without it (any build that is not the reviewed engine) no
+  /// invitation is made.
   Future<String?> createInviteLink(InviteTargetKind kind, String targetId) {
     return _membershipCall<String>((current, client) async {
-      // Only the native engine reads the device key; the unavailable
-      // service does not implement this, so it is refused (D90).
-      final DeviceSigningKeyCryptoService keys;
-      if (cryptoService case final DeviceSigningKeyCryptoService engine) {
-        keys = engine;
-      } else {
+      // Only the native engine reads the device key and signs; the
+      // unavailable service implements neither, so it is refused (D90).
+      final engine = cryptoService;
+      if (engine is! DeviceSigningKeyCryptoService ||
+          engine is! InviteBindingCryptoService) {
         throw UserFacingException(l10n.errorActionUnavailable);
       }
+      final keys = engine as DeviceSigningKeyCryptoService;
+      final signer = engine as InviteBindingCryptoService;
       final accountId = current.accountId;
       final deviceId = current.deviceId;
       if (accountId == null || deviceId == null) {
@@ -53,7 +56,30 @@ extension MembershipActions on AppState {
         accountId: accountId,
         deviceId: deviceId,
       );
-      final link = MembershipInviteLink.generate(origin: client.baseUrl);
+      final link = MembershipInviteLink.generate(
+        origin: client.baseUrl,
+        inviterSigningKey: signingKey,
+      );
+      final message = link.bindingMessage(
+        kind: kind,
+        targetId: targetId,
+        inviterAccountId: accountId,
+        inviterDeviceId: deviceId,
+        inviterSigningKey: signingKey,
+      );
+      final signature = await signer.signInviteBinding(
+        accountId: accountId,
+        deviceId: deviceId,
+        message: message,
+      );
+      // Never hand out a link whose own signature does not verify.
+      if (!await signer.verifyInviteBinding(
+        signingKey: signingKey,
+        message: message,
+        signature: signature,
+      )) {
+        throw UserFacingException(l10n.errorActionUnavailable);
+      }
       await client.createMembershipInvite(
         current.token,
         kind,
@@ -67,9 +93,69 @@ extension MembershipActions on AppState {
           inviterDeviceId: deviceId,
           inviterSigningKey: signingKey,
         ),
+        bindingSignature: signature,
       );
       return link.url;
     });
+  }
+
+  /// Whether what the server says about an invitation is what its creating
+  /// device bound it to (D90, v2). Fails closed: every check below must pass,
+  /// and a build without the signing engine accepts nothing.
+  ///
+  /// 1. The shown kind is the bound kind, the key hashes to the commitment in
+  ///    the link, and the tag is the one the secret makes
+  ///    (`MembershipInviteLink.matches`).
+  /// 2. The device's signature verifies under the key over the message the
+  ///    link rebuilds, in the invitation domain.
+  /// 3. Where this device already holds an MLS group with the inviting device,
+  ///    that group's roster key must be the key named. A stranger to the
+  ///    inviter shares no group, so nothing is read and the commitment in the
+  ///    link is the anchor; any group that names another key refuses.
+  Future<bool> _inviteBindingHolds(
+    MembershipInviteLink link,
+    InviteBinding binding,
+    InviteTargetKind shownKind,
+  ) async {
+    if (binding.kind != shownKind || !link.matches(binding)) return false;
+    final engine = cryptoService;
+    if (engine is! InviteBindingCryptoService) return false;
+    final signer = engine as InviteBindingCryptoService;
+    try {
+      final signed = await signer.verifyInviteBinding(
+        signingKey: binding.inviterSigningKey,
+        message: link.bindingMessageOf(binding),
+        signature: binding.signature,
+      );
+      if (!signed) return false;
+      for (final conversation in conversations.toList(growable: false)) {
+        final Uint8List? known;
+        try {
+          known = await signer.memberSigningKey(
+            conversationId: conversation.id,
+            accountId: binding.inviterAccountId,
+            deviceId: binding.inviterDeviceId,
+          );
+        } on Object {
+          // This conversation has no readable group here: nothing to compare.
+          continue;
+        }
+        if (known == null) continue;
+        if (!_sameBytes(known, binding.inviterSigningKey)) return false;
+      }
+    } on Object {
+      return false;
+    }
+    return true;
+  }
+
+  static bool _sameBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    var difference = 0;
+    for (var i = 0; i < a.length; i++) {
+      difference |= a[i] ^ b[i];
+    }
+    return difference == 0;
   }
 
   Future<List<MembershipInvite>?> loadMembershipInvites(
@@ -111,10 +197,10 @@ extension MembershipActions on AppState {
           link.locator,
         );
         // What the server says the link leads to must be what the device that
-        // made the link bound it to. A swapped target fails here, before the
-        // person sees it or any request is filed.
-        if (preview.binding.kind != preview.kind ||
-            !link.verifies(preview.binding)) {
+        // made the link bound it to, signed by that device and anchored to its
+        // key. A swapped target fails here, before the person sees it or any
+        // request is filed.
+        if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
           throw UserFacingException(l10n.joinLinkUnusable);
         }
         return (link: link, preview: preview);
@@ -132,14 +218,29 @@ extension MembershipActions on AppState {
   Future<JoinRequest?> requestToJoin(MembershipInviteLink link) {
     return _membershipCall<JoinRequest>((current, client) async {
       try {
+        // Persist the verified group anchor before the server can approve and
+        // deliver a Welcome, including when the request response is lost.
+        final preview =
+            await client.previewMembershipInvite(current.token, link.locator);
+        if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
+          throw UserFacingException(l10n.joinLinkUnusable);
+        }
+        if (preview.kind == InviteTargetKind.group) {
+          final binding = preview.binding;
+          await localStore.saveInviteAnchor(InviteAnchor(
+            conversationId: binding.targetId,
+            accountId: binding.inviterAccountId,
+            deviceId: binding.inviterDeviceId,
+            signingKey: binding.inviterSigningKey,
+          ));
+        }
         final request = await client.requestToJoin(current.token, link.locator);
         // The answer must carry the binding of this very link; otherwise the
         // server filed the request against something else (a swap between
         // the preview and the request). Withdraw it, best effort.
         final binding = request.binding;
         if (binding == null ||
-            binding.kind != request.kind ||
-            !link.verifies(binding)) {
+            !await _inviteBindingHolds(link, binding, request.kind)) {
           try {
             await client.cancelJoinRequest(current.token, request.id);
           } on Object {

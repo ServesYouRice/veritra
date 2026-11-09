@@ -504,6 +504,9 @@ class NativeCryptoBindings {
                 'pm_crypto_group_discard_incoming_commit'),
         _groupRoleState = library.lookupFunction<_HandleSliceOutputNative,
             _HandleSliceOutputDart>('pm_crypto_group_role_state'),
+        _memberSignatureKey =
+            library.lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
+                'pm_crypto_group_member_signature_key'),
         _createKeyPackage =
             library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
                 'pm_crypto_device_create_key_package'),
@@ -554,7 +557,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 20) {
+    if (_abiVersion() != 21) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -634,6 +637,7 @@ class NativeCryptoBindings {
   final _L1ProcessDart _groupMergeIncoming;
   final _GroupDeleteDart _groupDiscardIncoming;
   final _HandleSliceOutputDart _groupRoleState;
+  final _RemoveMemberDart _memberSignatureKey;
 
   /// K0 recovery key entropy length (ABI 11).
   static const recoveryKeyEntropyBytes = 30;
@@ -1152,7 +1156,8 @@ class NativeCryptoBindings {
   }
 
   /// Strict Ed25519 verification of `domain | message` (ABI 13). [domain] is
-  /// `veritra-c7-post-sig-v1` or `veritra-c7-history-v1`; any other is
+  /// `veritra-c7-post-sig-v1`, `veritra-c7-history-v1` or
+  /// `veritra-invite-binding-v2`; any other is
   /// [NativeCryptoError.invalidArgument]. `false` for an invalid signature,
   /// a malformed key included.
   bool c7Verify({
@@ -1828,6 +1833,23 @@ class NativeCryptoDevice implements Finalizable {
 
   List<int> signingPublicKey() =>
       _bindings._output((out) => _bindings._signingKey(_liveHandle, out));
+
+  /// The 32-byte signature key of the member device [accountId]/[deviceId]
+  /// in the current tree of [groupId] (ABI 13,
+  /// `pm_crypto_group_member_signature_key`). Fails when this device has no
+  /// such group or the group has no such member.
+  List<int> memberSignatureKey(
+      String groupId, String accountId, String deviceId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(accountId.codeUnits, 128);
+    _bindings._bounded(deviceId.codeUnits, 128);
+    return _bindings._withByteLists(
+        [groupId.codeUnits, accountId.codeUnits, deviceId.codeUnits],
+        (slices) => _bindings._output(
+            (out) => _bindings._memberSignatureKey(
+                _liveHandle, slices[0], slices[1], slices[2], out),
+            maximum: 32));
+  }
 
   List<int> createKeyPackage() =>
       _bindings._output((out) => _bindings._createKeyPackage(_liveHandle, out));
