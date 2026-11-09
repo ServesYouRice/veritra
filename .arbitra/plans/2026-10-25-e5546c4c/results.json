@@ -1646,33 +1646,33 @@
       "title": "Android tests never check an APK whose signing block names the pinned certificate but whose signature does not verify",
       "severity": "medium",
       "task": "TASK-130",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-release-evidence_test.py",
+      "proof": "Commits 7901973a, 61bac06. Owner decision 2026-11-07 (release Q-1 option a): stdlib verification in check-release-evidence.py; v2/v3 signatures (RSA PKCS#1 v1.5/PSS, ECDSA P-256/P-384), public key matches certificate, and chunked content digests verified over all three APK sections. Negative tests with pinned cert blocked for bad signatures, wrong digests, foreign keys, and post-signing edits in scripts/check-release-evidence_test.py.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-bcd2b9e19b66",
       "title": "Fixture never commits release-policy.json and runs approval positives off the candidate checkout, so no test binds the policy or checkout to the candidate",
       "severity": "medium",
       "task": "TASK-131",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-release-evidence_test.py",
+      "proof": "Commits 7a85f034, 61bac06. Owner decision 2026-11-07 (release Q-2): checker binds the release policy, .go-version, and HEAD checkout to the candidate commit. Fixture commits release-policy.json into candidate commit; negative cases verify checker blocks working-tree policy drift and non-candidate checkouts.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-a378f12b51ca",
       "title": "Each advisory exception requires a 'scope', but the ignore it produces applies to the whole dependency graph",
       "severity": "medium",
       "task": "TASK-132",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-rust-audit-policy_test.py",
+      "proof": "Commits b0ed3efe, 61bac06. Owner decision 2026-11-07 (release Q-4): each cargo-audit exception in crypto/rust/audit-policy.json defines machine-checkable scope {crate, versions, parents, built}, validated over the full dependency graph in Cargo.lock before cargo audit --file. Tests in scripts/check-rust-audit-policy_test.py cover in-scope, out-of-scope normal/dev/build/target/optional paths, extra crate versions, and built=false build-graph checks.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-28c46d206d15",
