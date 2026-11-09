@@ -139,6 +139,7 @@ class CommunityInfoService {
   final Map<String, DateTime> _lastAsked = {};
   final Set<String> _answered = {};
   final Map<String, DateTime> _answeredDevice = {};
+  final Map<String, Future<int>> _answerRuns = {};
 
   static final _random = Random.secure();
   static Duration _randomDelay() =>
@@ -312,7 +313,11 @@ class CommunityInfoService {
     final keys = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
     for (final k in keys) {
-      if (k.keyId != accepted.keyId || k.key == null) continue;
+      if (k.keyId != accepted.keyId ||
+          k.key == null ||
+          k.conversationId != home.conversationId) {
+        continue;
+      }
       try {
         _show(
             subject,
@@ -435,12 +440,19 @@ class CommunityInfoService {
     if (topology.sendHeld(home.conversationId)) return false;
     if (!mayRequestInfoKey(_lastAsked[id], now)) return false;
     _lastAsked[id] = now;
-    return send(
-      home.conversationId,
-      AppPayloadType.infoKeyRequest,
-      infoKeyRequestBody(
-          subjectKind: home.keySubjectKind, subjectId: home.keySubjectId),
-    );
+    var sent = false;
+    try {
+      sent = await send(
+        home.conversationId,
+        AppPayloadType.infoKeyRequest,
+        infoKeyRequestBody(
+            subjectKind: home.keySubjectKind, subjectId: home.keySubjectId),
+      );
+      return sent;
+    } finally {
+      // A paused group or a failed queue write did not send a request.
+      if (!sent && _lastAsked[id] == now) _lastAsked.remove(id);
+    }
   }
 
   /// Answers key requests for [home] that no key has followed yet. Only an
@@ -448,6 +460,20 @@ class CommunityInfoService {
   /// that owns the key: a request for a private channel's key made in the
   /// shared group is never answered there.
   Future<int> answerRequests(InfoKeyHome home, String communityId) async {
+    final id =
+        '${home.conversationId}|${home.keySubjectKind}|${home.keySubjectId}';
+    final running = _answerRuns[id];
+    if (running != null) return running;
+    final run = _answerRequests(home, communityId);
+    _answerRuns[id] = run;
+    try {
+      return await run;
+    } finally {
+      _answerRuns.remove(id);
+    }
+  }
+
+  Future<int> _answerRequests(InfoKeyHome home, String communityId) async {
     if (topology.serverSaysAdmin(communityId) != true ||
         topology.sendHeld(home.conversationId)) {
       return 0;
@@ -479,6 +505,16 @@ class CommunityInfoService {
         .where((k) => k.conversationId == home.conversationId)
         .fold<int>(0, (m, k) => max(m, k.seq ?? 0));
     final open = requests.where((r) => (r.seq ?? 0) > lastKeySeq).toList();
+    final sent = open.isEmpty ||
+        await send(
+          home.conversationId,
+          AppPayloadType.infoKey,
+          infoKeyBody(
+              subjectKind: home.keySubjectKind,
+              subjectId: home.keySubjectId,
+              key: key.key!),
+        );
+    if (!sent) return 0;
     for (final r in requests) {
       _answered.add('${r.ident}#${r.seq}');
       _answeredDevice[
@@ -486,15 +522,6 @@ class CommunityInfoService {
           _clock();
     }
     if (open.isEmpty) return 0;
-    final sent = await send(
-      home.conversationId,
-      AppPayloadType.infoKey,
-      infoKeyBody(
-          subjectKind: home.keySubjectKind,
-          subjectId: home.keySubjectId,
-          key: key.key!),
-    );
-    if (!sent) return 0;
     // A device that asks is new to the group (a joiner, a new or restored
     // device): it never saw the announcements made before it came. Announce
     // again, as this admin, every record under this key that this device
@@ -701,6 +728,8 @@ class CommunityInfoService {
       );
 
   void _show(InfoSubject subject, CommunityInfoRecord record) {
+    final held = _shown[subject.key];
+    if (held != null && held.revision >= record.revision) return;
     _shown[subject.key] = record;
     _shownSubjects[subject.key] = subject;
     onChanged?.call();

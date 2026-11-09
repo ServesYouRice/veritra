@@ -30,19 +30,27 @@ extension CommunityInfoActions on AppState {
       return null;
     }
     final owner = '$accountId|$deviceId|$_sessionGeneration';
-    if (_infoServiceOwner == owner && _infoService != null) {
+    final previous = _infoServiceSession;
+    if (_infoServiceOwner == owner &&
+        previous != null &&
+        _sameSession(previous) &&
+        _infoService != null) {
       return _infoService;
     }
     _infoServiceOwner = owner;
+    _infoServiceSession = current;
     // Another session: nothing learned for the last one carries over.
     _infoAdminOf.clear();
     _infoPublishing.clear();
+    final generation = _sessionGeneration;
+    bool active() => !_disposed && _syncOwnerActive(current, generation);
     return _infoService = CommunityInfoService(
       store: localStore,
-      api: _AppInfoApi(client, current.token),
-      send: (conversationId, type, body) => _sendPayload(
-          conversationId, type, body,
-          channelId: _infoChannelFor(conversationId)),
+      api: _AppInfoApi(client, current.token, active),
+      send: (conversationId, type, body) => active()
+          ? _sendPayload(conversationId, type, body,
+              channelId: _infoChannelFor(conversationId))
+          : Future.value(false),
       // Background info sends report under their own op, never as the
       // composer's send.
       topology: _AppInfoTopology(this),
@@ -51,7 +59,9 @@ extension CommunityInfoActions on AppState {
           GovernanceInfoEditPolicy(verifiedCommunityRoles(communityId)),
       accountId: accountId,
       deviceId: deviceId,
-      onChanged: notifyListeners,
+      onChanged: () {
+        if (active()) notifyListeners();
+      },
     );
   }
 
@@ -352,8 +362,8 @@ extension CommunityInfoActions on AppState {
       versions = {
         for (final v in await client.infoVersions(current.token,
             communityIds: [community.id],
-            categoryIds: categories.take(200).toList(),
-            channelIds: channels.map((c) => c.id).take(200).toList()))
+            categoryIds: categories,
+            channelIds: channels.map((c) => c.id).toList()))
           '${v.kind}|${v.id}': v.version
       };
     } catch (err) {
@@ -412,17 +422,24 @@ extension CommunityInfoActions on AppState {
 }
 
 class _AppInfoApi implements InfoApi {
-  _AppInfoApi(this.client, this.token);
+  _AppInfoApi(this.client, this.token, this.active);
   final ApiClient client;
   final String token;
+  final bool Function() active;
+
+  void checkActive() {
+    if (!active()) throw const CryptoOperationCancelled();
+  }
 
   @override
   Future<ServedCommunityInfo?> get(
       {required String kind,
       required String subjectId,
       String? communityId}) async {
+    checkActive();
     final got = await client.getInfoRecord(token,
         kind: kind, subjectId: subjectId, communityId: communityId);
+    checkActive();
     if (got == null) return null;
     return ServedCommunityInfo(
         subjectKind: kind,
@@ -440,14 +457,17 @@ class _AppInfoApi implements InfoApi {
       required String keyId,
       required List<int> blob,
       required int expectedVersion}) async {
+    checkActive();
     try {
-      return await client.putInfoRecord(token,
+      final version = await client.putInfoRecord(token,
           kind: kind,
           subjectId: subjectId,
           communityId: communityId,
           keyId: keyId,
           blob: blob,
           expectedVersion: expectedVersion);
+      checkActive();
+      return version;
     } on ApiException catch (err) {
       if (err.statusCode == 412) throw const InfoVersionConflict();
       rethrow;

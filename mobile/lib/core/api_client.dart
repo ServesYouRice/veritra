@@ -1129,6 +1129,25 @@ class ApiClient {
     List<String> categoryIds = const <String>[],
     List<String> channelIds = const <String>[],
   }) async {
+    // Each server list is bounded to 200 IDs; a community may have 500
+    // channels. Fetch every batch rather than silently omitting the tail.
+    if (communityIds.length > 200 ||
+        categoryIds.length > 200 ||
+        channelIds.length > 200) {
+      final versions =
+          <({String kind, String id, int version, String keyId})>[];
+      for (var offset = 0;
+          offset < communityIds.length ||
+              offset < categoryIds.length ||
+              offset < channelIds.length;
+          offset += 200) {
+        versions.addAll(await infoVersions(token,
+            communityIds: communityIds.skip(offset).take(200).toList(),
+            categoryIds: categoryIds.skip(offset).take(200).toList(),
+            channelIds: channelIds.skip(offset).take(200).toList()));
+      }
+      return versions;
+    }
     final json = await _jsonRequest('POST', '/api/v1/profiles/versions',
         token: token,
         body: <String, Object?>{

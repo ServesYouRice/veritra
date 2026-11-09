@@ -1,7 +1,8 @@
 # C3: private channels and encrypted community info (design)
 
-**Status: steps 1-2 and the receive side of step 3 built (2026-11-08); see
-[Build status](#build-status-2026-11-08).** Written 2026-11-01 against `main`
+**Status: steps 1-2 and a tested sender/fetch slice of step 3 built
+(2026-11-09); C3 remains partial.** See [local port evidence](../../testing/evidence/C3-rest-2026-11-09.md).
+Written 2026-11-01 against `main`
 at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
 [W11](W11-profiles.md) (encrypted record mechanism).
 
@@ -166,9 +167,7 @@ migration drops the columns once no client sends them. This is W11's
    key delivery on add, rotation on removal, UI.
 4. Remove the plaintext server names and drop the columns.
 
-Nothing is built under C3 yet: steps 1-3 sit on C0's conversation model and
-W11's table, and neither exists. Building C3's own tables or keys now would
-invent those foundations a second time.
+Steps 1-3 reuse C0's conversation model and W11's table and record codec.
 
 ## Risks and residuals
 
@@ -286,13 +285,36 @@ big community", not "an icon"; a tiny icon may stay in the small one.
   button for channel name and topic only where the verified role state
   allows it.
 
-**Owner question:** moderators may kick, but only owners and admins
+**Remaining removal integration:** moderators may kick, but only owners and admins
 rotate, so a moderator's kick leaves the community key unrotated until an
 admin removes someone. Options: (a) an admin's device rotates when it sees
 a removal it did not make; (b) trust moderator-made keys; (c) only admins
-kick. Recommended: (a).
+kick. Recommended: (a). This is the selected follow-up; remote-removal
+rotation is not implemented by this slice.
 
-**Still left:** icons and the category screens; hiding "New channel" from
+### Local port and verification (2026-11-09)
+
+Ported the six C3 commits from `origin/agent/c3-2` onto `ai/c3-rest`, whose
+base already includes `origin/agent/c3`. No C4 or other package commits
+were copied. Existing unfinished worktree edits are preserved in the local
+stash named `c3-rest-preexisting-preserved`.
+
+Additional fixes: retry a request or answer immediately when its send was
+not queued; coalesce overlapping answer passes; query all 500 channels in
+batches of 200; keep a newer displayed record when an older cache read
+finishes; require a cached record's key to come from its current owning
+group; cancel uploads and sends when their app session ends. Focused tests include actual native MLS send/receive, record
+encryption, both local stores, failed sends and fetch batching.
+
+The actual app still has no implementation of `VerifiedRoleSource`:
+`debugInfoRoleSource` is test-only. Receiver acceptance therefore stays
+closed. This prevents calling the whole package complete or removing the
+legacy-name fallback yet. See the remaining work below. No new schema,
+server migration, crypto ABI or dependency is needed by this slice; reserved
+local schema 35 and server migration 0067 remain unused.
+
+**Still left:** private-channel creation/member-selection and conversion UI;
+icons and the category screens; hiding "New channel" from
 moderators (the community card does not know the viewer's role; the
 server refuses them); a push of the key right after an add commit; and step
 4 (`400 plaintext_name_refused`, dropping the plaintext columns). Step 4

@@ -75,6 +75,8 @@ class _InfoCrypto extends UnavailableCryptoService
 class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://example.test');
   int puts = 0;
+  final putTokens = <String>[];
+  void Function()? onPut;
 
   @override
   Future<ChannelCreation> createChannel(
@@ -115,9 +117,11 @@ class _Api extends ApiClient {
       required List<int> blob,
       required int expectedVersion}) async {
     puts++;
+    putTokens.add(token);
     final version = expectedVersion + 1;
     records['$kind|$subjectId'] =
         (version: version, keyId: keyId, blob: Uint8List.fromList(blob));
+    onPut?.call();
     return version;
   }
 }
@@ -166,6 +170,56 @@ void main() {
     // A refresh is a quiet no-op.
     await state.refreshCommunityInfo();
   });
+
+  test('the info service uses a rotated session token', () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final api = _Api();
+    final state = AppState(
+        apiClientFactory: (_) => api,
+        syncServiceFactory: (_, __) => _QuietSync(),
+        localStore: MemoryLocalStore(),
+        cryptoService: _InfoCrypto(bindings));
+    state.session = _session;
+    state.api = api;
+    final id = 'comm_${'1' * 32}';
+    state.communities = [
+      Community(id: id, name: 'Club', sharedConversationId: 'conv_shared'),
+    ];
+    expect(
+        await state.publishCommunityInfo(id, name: 'Club', mint: true), isTrue);
+    state.session = const Session(
+        baseUrl: 'https://example.test',
+        token: 'rotated-token',
+        accountId: 'alice',
+        deviceId: 'dev');
+    expect(await state.publishCommunityInfo(id, name: 'Renamed'), isTrue);
+    expect(api.putTokens, ['token', 'rotated-token']);
+    expect(state.communityDisplayName(state.communities.single), 'Renamed');
+  }, skip: nativeCryptoSkip());
+
+  test('an upload finishing after sign-out is not cached or announced',
+      () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final api = _Api();
+    final store = MemoryLocalStore();
+    final state = AppState(
+        apiClientFactory: (_) => api,
+        syncServiceFactory: (_, __) => _QuietSync(),
+        localStore: store,
+        cryptoService: _InfoCrypto(bindings));
+    state.session = _session;
+    state.api = api;
+    final id = 'comm_${'1' * 32}';
+    state.communities = [
+      Community(id: id, name: 'Club', sharedConversationId: 'conv_shared'),
+    ];
+    api.onPut = () => state.session = null;
+    expect(await state.publishCommunityInfo(id, name: 'Club', mint: true),
+        isFalse);
+    expect(api.puts, 1);
+    expect(await store.loadAcceptedCommunityInfo('community', id), isNull);
+    expect(state.errorFor(Ops.communityInfo), isNull);
+  }, skip: nativeCryptoSkip());
 
   test('creating a channel never waits on its own info sends (no deadlock)',
       () async {

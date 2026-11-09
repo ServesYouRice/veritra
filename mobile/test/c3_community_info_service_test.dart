@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -68,18 +69,38 @@ class _Topology implements InfoTopology {
   final _Net? net;
   bool privateKnown = true;
   bool gone = false;
+  String sharedConversation = _shared;
   @override
   bool sendHeld(String conversationId) => net?.held ?? false;
   @override
   bool communityGone(String communityId) => gone;
   @override
   String? sharedConversationOf(String communityId) =>
-      communityId == _community ? _shared : null;
+      communityId == _community ? sharedConversation : null;
   @override
   String? privateConversationOf(String channelId) =>
       privateKnown && channelId == _private ? _privateConv : null;
   @override
   bool? serverSaysAdmin(String communityId) => admin;
+}
+
+class _DelayedCacheStore extends MemoryLocalStore {
+  bool delayNextRead = false;
+  final reading = Completer<void>();
+  final resume = Completer<void>();
+
+  @override
+  Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
+      String subjectKind, String subjectId) async {
+    final snapshot =
+        await super.loadAcceptedCommunityInfo(subjectKind, subjectId);
+    if (delayNextRead) {
+      delayNextRead = false;
+      reading.complete();
+      await resume.future;
+    }
+    return snapshot;
+  }
 }
 
 /// One device: its store and service. [members] says which conversations it
@@ -149,8 +170,8 @@ void main() {
   );
 
   _Device device(String name, Set<String> members,
-      {bool admin = false, GovernanceState? verified}) {
-    final d = _Device(name, MemoryLocalStore(), members);
+      {bool admin = false, GovernanceState? verified, LocalStore? store}) {
+    final d = _Device(name, store ?? MemoryLocalStore(), members);
     d.service = CommunityInfoService(
       store: d.store,
       api: server,
@@ -538,6 +559,69 @@ void main() {
     expect(await askAndCount(), 0);
     now = now.add(const Duration(hours: 1));
     expect(await askAndCount(), 1);
+  }, skip: skip);
+
+  test('a request that was not queued can be retried immediately', () async {
+    final member = device('member', {_shared});
+    final home = member.service.homeOf(community)!;
+    net.refuse = true;
+    expect(await member.service.requestKey(home), isFalse);
+    net.refuse = false;
+    expect(await member.service.requestKey(home), isTrue);
+    expect(await member.service.requestKey(home), isFalse);
+    expect(member.sent, hasLength(1));
+  }, skip: skip);
+
+  test('a failed answer is retried without waiting an hour', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final member = device('member', {_shared});
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await member.service.requestKey(home);
+    net.refuse = true;
+    expect(await admin.service.answerRequests(home, _community), 0);
+    net.refuse = false;
+    expect(await admin.service.answerRequests(home, _community), 1);
+    expect(await member.service.refresh(community), isA<InfoAccepted>());
+  }, skip: skip);
+
+  test('overlapping answer passes send one key', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final member = device('member', {_shared});
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await member.service.requestKey(home);
+    await Future.wait([
+      admin.service.answerRequests(home, _community),
+      admin.service.answerRequests(home, _community),
+    ]);
+    expect(
+        admin.sent.where((s) => s.$2 == AppPayloadType.infoKey), hasLength(1));
+  }, skip: skip);
+
+  test('a slow cache read never replaces a newer displayed edit', () async {
+    final store = _DelayedCacheStore();
+    final admin = device('admin', {_shared}, admin: true, store: store);
+    await admin.service
+        .publish(community, (r) => named('Before', r), mint: true);
+    store.delayNextRead = true;
+    final loading = admin.service.loadAccepted(community);
+    await store.reading.future;
+    await admin.service.publish(community, (r) => named('After', r));
+    store.resume.complete();
+    await loading;
+    expect(admin.service.shown(infoKindCommunity, _community)?.name, 'After');
+    expect(admin.service.shown(infoKindCommunity, _community)?.revision, 2);
+  }, skip: skip);
+
+  test('cached records require a key from the current owning group', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final otherHome =
+        device('admin', {'conv_other'}, admin: true, store: admin.store);
+    (otherHome.service.topology as _Topology).sharedConversation = 'conv_other';
+    await otherHome.service.loadAccepted(community);
+    expect(otherHome.service.shown(infoKindCommunity, _community), isNull);
   }, skip: skip);
 
   test('info bodies the service sends pass the payload codec', () {

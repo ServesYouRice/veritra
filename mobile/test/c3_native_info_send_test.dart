@@ -35,6 +35,57 @@ final _key = List<int>.generate(32, (i) => i + 1);
 void main() {
   final skip = nativeCryptoSkip();
 
+  test('info announcements and requests survive the native MLS send path',
+      () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _start(alice, bob, 'conv_info');
+    bob.service.conversationAuthority = _Kinds('community_channel');
+
+    for (final (type, kind, body) in [
+      (
+        AppPayloadType.infoUpdate,
+        CommunityInfoEventKind.update,
+        infoUpdateBody(
+            subjectKind: 'channel',
+            subjectId: _channel,
+            revision: 7,
+            keyId: 'a' * 32,
+            recordSha256: 'b' * 64),
+      ),
+      (
+        AppPayloadType.infoKeyRequest,
+        CommunityInfoEventKind.keyRequest,
+        infoKeyRequestBody(subjectKind: 'channel', subjectId: _channel),
+      ),
+    ]) {
+      final sent = await alice.service.encryptPayload('conv_info', type, body);
+      expect(sent.frankCommit, isNull);
+      await bob.service.processApplicationMessage(
+          bob.envelopeFrom(alice, sent), bob.nextEvent());
+      for (final client in [alice, bob]) {
+        final event = (await client.store
+                .loadCommunityInfoEvents(kind, 'channel', _channel))
+            .single;
+        expect(event.conversationId, 'conv_info');
+        expect(event.senderAccountId, 'acct_alice');
+        if (kind == CommunityInfoEventKind.update) {
+          expect(event.revision, 7);
+          expect(event.recordSha256, 'b' * 64);
+        }
+      }
+    }
+    final rows = await bob.store.loadMessages('conv_info');
+    expect(rows, hasLength(2));
+    for (final row in rows) {
+      expect(row.kind, 'action');
+      expect(row.senderHidden, isTrue);
+      expect(row.body, isNull);
+      expect(await bob.store.loadFrankReveal(row.key), isNull);
+    }
+  }, skip: skip);
+
   test('an info key goes out unfranked and hidden, and both sides keep it',
       () async {
     final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());

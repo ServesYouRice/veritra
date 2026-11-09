@@ -463,7 +463,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   expiry, a hidden action row, and the sender's own copy kept in the same
   transaction (the outgoing transition gained `communityInfo`). A device's
   own new keys are written locally outside any MLS commit. Rotation marks
-  are a setting. Design: C3, "Built 2026-11-09".
+  are a setting. Design: C3, "Built 2026-11-09". The local port also fences
+  API results and sends to their session, refreshes the captured token after
+  reauthentication, checks cached keys' owning conversation, and prevents a
+  late cache read from rolling back the displayed revision. It retries
+  unqueued key requests/answers and batches the versions query beyond 200
+  channels. [Local verification and remaining work](../testing/evidence/C3-rest-2026-11-09.md).
 - **C3, encrypted community info: records, payloads, local schema 31
   (2026-11-08):** no ABI change. Design
   [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),

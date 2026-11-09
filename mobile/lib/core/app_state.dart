@@ -392,6 +392,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   // C3 (app_state_community_info.dart).
   CommunityInfoService? _infoService;
   String? _infoServiceOwner;
+  Session? _infoServiceSession;
   bool _infoRefreshRunning = false;
   bool _infoRefreshAgain = false;
   DateTime? _lastInfoRefresh;

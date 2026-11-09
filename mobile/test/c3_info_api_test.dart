@@ -42,15 +42,12 @@ void main() {
           ..set('X-Profile-Key-Id', 'a' * 32);
         res.add(List<int>.filled(4124, 1));
       } else {
+        final sent = jsonDecode(utf8.decode(body)) as Map;
         res.headers.contentType = ContentType.json;
         res.write(jsonEncode({
           'versions': [
-            {
-              'kind': 'channel',
-              'id': 'chan_x',
-              'version': 2,
-              'key_id': 'b' * 32
-            },
+            for (final id in sent['channel_ids'] as List)
+              {'kind': 'channel', 'id': id, 'version': 2, 'key_id': 'b' * 32},
             {'kind': 'bad'},
           ]
         }));
@@ -125,5 +122,22 @@ void main() {
     expect(sent['community_ids'], isEmpty);
     expect(versions.single.id, 'chan_x');
     expect(versions.single.version, 2);
+  });
+
+  test('versions: all 500 channels are queried in bounded batches', () async {
+    final ids = List.generate(500, (index) => 'chan_$index');
+    final versions = await client.infoVersions('t',
+        communityIds: const ['comm_1'],
+        categoryIds: const ['cat_1'],
+        channelIds: ids);
+    expect(versions.map((v) => v.id), ids);
+    expect(bodies, hasLength(3));
+    final batches =
+        bodies.map((b) => jsonDecode(utf8.decode(b)) as Map).toList();
+    expect(
+        batches.map((b) => (b['channel_ids'] as List).length), [200, 200, 100]);
+    expect(batches.first['community_ids'], ['comm_1']);
+    expect(batches.first['category_ids'], ['cat_1']);
+    expect(batches.last['community_ids'], isEmpty);
   });
 }
