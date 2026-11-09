@@ -139,6 +139,31 @@ func (s *Store) SetInstanceReportKey(ctx context.Context, accountID string, publ
 	return ReportRecipient{InboxID: accountID, PublicKey: publicKey, KeyRev: rev, UpdatedAt: parseTime(now)}, nil
 }
 
+// InstanceReportKey returns the calling owner's own published report key, so
+// an owner's device can show the current key's code after another device
+// replaced it. ErrForbidden unless the caller is an active owner; ErrNotFound
+// when none was published.
+func (s *Store) InstanceReportKey(ctx context.Context, accountID string) (ReportRecipient, error) {
+	allowed, err := mayReadReportInbox(ctx, s.db, accountID, franking.InboxInstanceOwner, accountID)
+	if err != nil {
+		return ReportRecipient{}, err
+	}
+	if !allowed {
+		return ReportRecipient{}, ErrForbidden
+	}
+	var r ReportRecipient
+	var updated string
+	err = s.db.QueryRowContext(ctx, `SELECT inbox_id, public_key, key_rev, updated_at FROM report_inbox_keys WHERE inbox_kind = ? AND inbox_id = ?`, franking.InboxInstanceOwner, accountID).Scan(&r.InboxID, &r.PublicKey, &r.KeyRev, &updated)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReportRecipient{}, ErrNotFound
+		}
+		return ReportRecipient{}, err
+	}
+	r.UpdatedAt = parseTime(updated)
+	return r, nil
+}
+
 type reportQuerier interface {
 	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
 	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
@@ -473,4 +498,55 @@ func (s *Store) DeleteReport(ctx context.Context, accountID, reportID string) (R
 		return Report{}, err
 	}
 	return report, nil
+}
+
+// ReportEnvelopeRecord is what the server recorded when a message was sent
+// that a report's recipient needs to verify the report: the sender, the
+// conversation, the time and the franking commitment (C6, G1).
+type ReportEnvelopeRecord struct {
+	EnvelopeID      string    `json:"envelope_id"`
+	ConversationID  string    `json:"conversation_id"`
+	SenderAccountID string    `json:"sender_account_id"`
+	SenderDeviceID  string    `json:"sender_device_id"`
+	FrankCommit     []byte    `json:"frank_commit,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+}
+
+// ReportEnvelopeRecord returns the recorded envelope data for a message of
+// the conversation a report copy was filed about, to the recipient of that
+// copy only (D95: this is the one moment the server learns an envelope id,
+// at review time and only from the recipient). An envelope of another
+// conversation, a copy of another inbox and a missing report all read as
+// ErrNotFound. Nothing here changes a row.
+func (s *Store) ReportEnvelopeRecord(ctx context.Context, accountID, reportRowID, envelopeID string) (ReportEnvelopeRecord, error) {
+	report, err := scanReport(s.db.QueryRowContext(ctx, `SELECT `+reportColumns+` FROM reports WHERE id = ?`, reportRowID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReportEnvelopeRecord{}, ErrNotFound
+		}
+		return ReportEnvelopeRecord{}, err
+	}
+	allowed, err := mayReadReportInbox(ctx, s.db, accountID, report.InboxKind, report.InboxID)
+	if err != nil {
+		return ReportEnvelopeRecord{}, err
+	}
+	// A copy past its retention that the sweeper has not removed yet is gone
+	// as far as listing goes, so it authorizes nothing either.
+	if !allowed || report.CreatedAt.Before(time.Now().UTC().Add(-ReportRetention)) {
+		return ReportEnvelopeRecord{}, ErrNotFound
+	}
+	var record ReportEnvelopeRecord
+	var created string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id, conversation_id, sender_account_id, sender_device_id, frank_commit, created_at
+		FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, envelopeID, report.ConversationID, nowString()).
+		Scan(&record.EnvelopeID, &record.ConversationID, &record.SenderAccountID, &record.SenderDeviceID, &record.FrankCommit, &created)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReportEnvelopeRecord{}, ErrNotFound
+		}
+		return ReportEnvelopeRecord{}, err
+	}
+	record.CreatedAt = parseTime(created)
+	return record, nil
 }

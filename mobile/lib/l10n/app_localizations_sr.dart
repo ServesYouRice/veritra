@@ -3379,6 +3379,240 @@ class AppLocalizationsSr extends AppLocalizations {
   String moderationLogInvitesResumed(String actor) {
     return '$actor је наставио/ла позивнице';
   }
+
+  @override
+  String get c6ReportMessage => 'Пријави поруку';
+
+  @override
+  String get c6ReportTitle => 'Пријави ову поруку';
+
+  @override
+  String get c6ReportIntro =>
+      'Овим се шаље само ова једна порука, са доказом да је аутентична, власницима овог сервера. Запечаћена је, па је сам сервер не може прочитати. Ништа друго из ћаскања се не шаље.';
+
+  @override
+  String get c6ReportPreviewLabel => 'Ова порука ће бити послата';
+
+  @override
+  String get c6ReportPreviewNoText =>
+      'Порука без текста, на пример прилог. Шаљу се њени подаци, укључујући кључ којим се датотека отвара, али не и сама датотека.';
+
+  @override
+  String get c6ReportSend => 'Пошаљи пријаву';
+
+  @override
+  String get c6ReportSent => 'Пријава је послата.';
+
+  @override
+  String c6ReportRecipientCount(int count) {
+    return 'Власника сервера који добијају копију: $count';
+  }
+
+  @override
+  String get c6ReportPinTitle => 'Провери кључеве власника';
+
+  @override
+  String get c6ReportPinBody =>
+      'Замоли сваког власника да ти прочита код из Подешавања, Пријаве, на свом уређају. Ако се поклапа, веруј му. Ако се не поклапа, не шаљи пријаву.';
+
+  @override
+  String c6ReportOwnerKey(String owner, String fingerprint) {
+    return 'Власник $owner: $fingerprint';
+  }
+
+  @override
+  String get c6ReportKeyChanged =>
+      'Кључ овог власника се променио од када си му последњи пут веровао. Питај га да ли га је променио.';
+
+  @override
+  String get c6ReportKeyMissing =>
+      'Власник коме си раније веровао сада не добија копију. Могуће је да га сервер задржава.';
+
+  @override
+  String get c6ReportTrust => 'Верујем, настави';
+
+  @override
+  String get c6ReportCommunityUnavailable =>
+      'Пријаве модераторима заједнице још нису доступне.';
+
+  @override
+  String get c6ReportNoOwnerKey =>
+      'Ниједан власник сервера још не може да прима пријаве. Замоли га да подеси кључ за пријаве.';
+
+  @override
+  String get c6ReportNotReportable =>
+      'Ова порука се не може пријавити. Примљена је пре увођења пријава, послата је без доказа или је обрисана.';
+
+  @override
+  String get c6ReportKeysNotPinned =>
+      'Кључ власника још није поверен. Поново отвори пријаву и провери га.';
+
+  @override
+  String get c6ReportAlready => 'Већ си пријавио ову поруку.';
+
+  @override
+  String get c6ReportUnavailable =>
+      'Пријављивање није доступно у овој верзији.';
+
+  @override
+  String get c6ReportsTitle => 'Пријаве';
+
+  @override
+  String get c6ReportsSettingsDetail =>
+      'Поруке које су ти људи пријавили као власнику сервера';
+
+  @override
+  String get c6ReportsKeySection => 'Кључ за пријаве';
+
+  @override
+  String get c6ReportsKeyNone =>
+      'Овај уређај нема кључ за пријаве. Без њега ти нико не може слати пријаве.';
+
+  @override
+  String get c6ReportsKeyActive =>
+      'Овај уређај држи твој кључ за пријаве. Прочитај његов код људима који траже да га провере.';
+
+  @override
+  String c6ReportsKeyCode(String fingerprint) {
+    return 'Код: $fingerprint';
+  }
+
+  @override
+  String get c6ReportsKeyCreate => 'Направи кључ за пријаве';
+
+  @override
+  String get c6ReportsKeyCreateTitle => 'Направити нови кључ за пријаве овде?';
+
+  @override
+  String get c6ReportsKeyCreateBody =>
+      'Ако већ имаш кључ за пријаве на другом уређају, овај га замењује. Пријаве већ послате на стари кључ отварају се само на уређају који још држи тај кључ, а на овом су изгубљене. Људи морају да поверују новом кључу пре следеће пријаве.';
+
+  @override
+  String get c6ReportsKeyReplace => 'Замени кључ';
+
+  @override
+  String get c6ReportsKeyPublish => 'Објави кључ поново';
+
+  @override
+  String get c6ReportsKeyReady => 'Кључ за пријаве је објављен.';
+
+  @override
+  String get c6ReportsEmpty => 'Нема пријава';
+
+  @override
+  String get c6ReportsEmptyDetail =>
+      'Пријаве се чувају док их не одбациш или 90 дана.';
+
+  @override
+  String get c6ReportsCommunity => 'Пријаве заједнице';
+
+  @override
+  String get c6ReportsCommunityUnavailable =>
+      'Још није доступно. Пријаве модераторима стижу уз улоге у заједници.';
+
+  @override
+  String c6ReportsFiled(String when) {
+    return 'Пријављено $when';
+  }
+
+  @override
+  String get c6ReportsLocked => 'Не може да се отвори';
+
+  @override
+  String get c6ReportsLockedNoSeed =>
+      'Овај уређај нема кључ за пријаве, па не може да отвори ову пријаву. Отвори је на уређају који је направио твој кључ.';
+
+  @override
+  String get c6ReportsLockedOtherKey =>
+      'Послато на старији кључ за пријаве који овај уређај не држи.';
+
+  @override
+  String get c6ReportsLockedDamaged =>
+      'Ова пријава је оштећена или није била намењена теби.';
+
+  @override
+  String get c6ReportsMessageLabel => 'Пријављена порука';
+
+  @override
+  String get c6ReportsNoText =>
+      'Није текстуална порука. Њени подаци, укључујући кључ којим се датотека отвара, налазе се у пријави, али не и сама датотека.';
+
+  @override
+  String c6ReportsReporter(String account) {
+    return 'Пријавио налог $account';
+  }
+
+  @override
+  String c6ReportsSender(String account) {
+    return 'Послао налог $account';
+  }
+
+  @override
+  String get c6ReportsCheck => 'Провери према записима сервера';
+
+  @override
+  String get c6ReportsChecking => 'Проверавам…';
+
+  @override
+  String get c6ReportsCheckNote =>
+      'Провером сервер сазнаје о којој се поруци ради у овој пријави.';
+
+  @override
+  String get c6VerdictVerified => 'Поклапа се са записом сервера';
+
+  @override
+  String get c6VerdictVerifiedDetail =>
+      'Сервер је забележио баш ову поруку овог пошиљаоца у овом разговору. То је поуздано само колико и сопствени запис сервера.';
+
+  @override
+  String get c6VerdictMismatch => 'Не поклапа се';
+
+  @override
+  String get c6VerdictMismatchDetail =>
+      'Запис сервера се не слаже са овом пријавом. Сматрај је недоказаном или лажном.';
+
+  @override
+  String get c6VerdictGone => 'Не може да се провери';
+
+  @override
+  String get c6VerdictGoneDetail =>
+      'Сервер више нема ову поруку, па нема шта да се упореди.';
+
+  @override
+  String get c6VerdictUnfranked => 'Не може да се докаже';
+
+  @override
+  String get c6VerdictUnfrankedDetail =>
+      'Ову поруку је послала апликација која не додаје доказ.';
+
+  @override
+  String get c6ReportsDismiss => 'Одбаци пријаву';
+
+  @override
+  String get c6ReportsDismissTitle => 'Одбацити ову пријаву?';
+
+  @override
+  String get c6ReportsDismissBody =>
+      'Ово заувек уклања твоју копију. Остали власници задржавају своје.';
+
+  @override
+  String get c6ReportsDismissed => 'Пријава је одбачена.';
+
+  @override
+  String get c6ReportsKeyElsewhere =>
+      'Твој кључ за пријаве је на другом уређају. Пријаве за њега се отварају тамо, не овде.';
+
+  @override
+  String get c6ReportsKeyReplacedElsewhere =>
+      'Други уређај је заменио твој кључ за пријаве. Нове пријаве иду на кључ испод; овај уређај отвара само пријаве послате на његов старији кључ.';
+
+  @override
+  String get c6ReportsKeyUnpublished =>
+      'Овај уређај држи кључ за пријаве који још није објављен. Објави га да би ти људи могли слати пријаве.';
+
+  @override
+  String get c6SignOutSeedWarning =>
+      'Овај уређај држи твој кључ за пријаве. Одјавом се он брише, а пријаве већ послате на њега више се не могу отворити. Прво обради своје пријаве.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6760,4 +6994,238 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String moderationLogInvitesResumed(String actor) {
     return '$actor je nastavio/la pozivnice';
   }
+
+  @override
+  String get c6ReportMessage => 'Prijavi poruku';
+
+  @override
+  String get c6ReportTitle => 'Prijavi ovu poruku';
+
+  @override
+  String get c6ReportIntro =>
+      'Ovim se šalje samo ova jedna poruka, sa dokazom da je autentična, vlasnicima ovog servera. Zapečaćena je, pa je sam server ne može pročitati. Ništa drugo iz ćaskanja se ne šalje.';
+
+  @override
+  String get c6ReportPreviewLabel => 'Ova poruka će biti poslata';
+
+  @override
+  String get c6ReportPreviewNoText =>
+      'Poruka bez teksta, na primer prilog. Šalju se njeni podaci, uključujući ključ kojim se datoteka otvara, ali ne i sama datoteka.';
+
+  @override
+  String get c6ReportSend => 'Pošalji prijavu';
+
+  @override
+  String get c6ReportSent => 'Prijava je poslata.';
+
+  @override
+  String c6ReportRecipientCount(int count) {
+    return 'Vlasnika servera koji dobijaju kopiju: $count';
+  }
+
+  @override
+  String get c6ReportPinTitle => 'Proveri ključeve vlasnika';
+
+  @override
+  String get c6ReportPinBody =>
+      'Zamoli svakog vlasnika da ti pročita kod iz Podešavanja, Prijave, na svom uređaju. Ako se poklapa, veruj mu. Ako se ne poklapa, ne šalji prijavu.';
+
+  @override
+  String c6ReportOwnerKey(String owner, String fingerprint) {
+    return 'Vlasnik $owner: $fingerprint';
+  }
+
+  @override
+  String get c6ReportKeyChanged =>
+      'Ključ ovog vlasnika se promenio od kada si mu poslednji put verovao. Pitaj ga da li ga je promenio.';
+
+  @override
+  String get c6ReportKeyMissing =>
+      'Vlasnik kome si ranije verovao sada ne dobija kopiju. Moguće je da ga server zadržava.';
+
+  @override
+  String get c6ReportTrust => 'Verujem, nastavi';
+
+  @override
+  String get c6ReportCommunityUnavailable =>
+      'Prijave moderatorima zajednice još nisu dostupne.';
+
+  @override
+  String get c6ReportNoOwnerKey =>
+      'Nijedan vlasnik servera još ne može da prima prijave. Zamoli ga da podesi ključ za prijave.';
+
+  @override
+  String get c6ReportNotReportable =>
+      'Ova poruka se ne može prijaviti. Primljena je pre uvođenja prijava, poslata je bez dokaza ili je obrisana.';
+
+  @override
+  String get c6ReportKeysNotPinned =>
+      'Ključ vlasnika još nije poveren. Ponovo otvori prijavu i proveri ga.';
+
+  @override
+  String get c6ReportAlready => 'Već si prijavio ovu poruku.';
+
+  @override
+  String get c6ReportUnavailable =>
+      'Prijavljivanje nije dostupno u ovoj verziji.';
+
+  @override
+  String get c6ReportsTitle => 'Prijave';
+
+  @override
+  String get c6ReportsSettingsDetail =>
+      'Poruke koje su ti ljudi prijavili kao vlasniku servera';
+
+  @override
+  String get c6ReportsKeySection => 'Ključ za prijave';
+
+  @override
+  String get c6ReportsKeyNone =>
+      'Ovaj uređaj nema ključ za prijave. Bez njega ti niko ne može slati prijave.';
+
+  @override
+  String get c6ReportsKeyActive =>
+      'Ovaj uređaj drži tvoj ključ za prijave. Pročitaj njegov kod ljudima koji traže da ga provere.';
+
+  @override
+  String c6ReportsKeyCode(String fingerprint) {
+    return 'Kod: $fingerprint';
+  }
+
+  @override
+  String get c6ReportsKeyCreate => 'Napravi ključ za prijave';
+
+  @override
+  String get c6ReportsKeyCreateTitle => 'Napraviti novi ključ za prijave ovde?';
+
+  @override
+  String get c6ReportsKeyCreateBody =>
+      'Ako već imaš ključ za prijave na drugom uređaju, ovaj ga zamenjuje. Prijave već poslate na stari ključ otvaraju se samo na uređaju koji još drži taj ključ, a na ovom su izgubljene. Ljudi moraju da poveruju novom ključu pre sledeće prijave.';
+
+  @override
+  String get c6ReportsKeyReplace => 'Zameni ključ';
+
+  @override
+  String get c6ReportsKeyPublish => 'Objavi ključ ponovo';
+
+  @override
+  String get c6ReportsKeyReady => 'Ključ za prijave je objavljen.';
+
+  @override
+  String get c6ReportsEmpty => 'Nema prijava';
+
+  @override
+  String get c6ReportsEmptyDetail =>
+      'Prijave se čuvaju dok ih ne odbaciš ili 90 dana.';
+
+  @override
+  String get c6ReportsCommunity => 'Prijave zajednice';
+
+  @override
+  String get c6ReportsCommunityUnavailable =>
+      'Još nije dostupno. Prijave moderatorima stižu uz uloge u zajednici.';
+
+  @override
+  String c6ReportsFiled(String when) {
+    return 'Prijavljeno $when';
+  }
+
+  @override
+  String get c6ReportsLocked => 'Ne može da se otvori';
+
+  @override
+  String get c6ReportsLockedNoSeed =>
+      'Ovaj uređaj nema ključ za prijave, pa ne može da otvori ovu prijavu. Otvori je na uređaju koji je napravio tvoj ključ.';
+
+  @override
+  String get c6ReportsLockedOtherKey =>
+      'Poslato na stariji ključ za prijave koji ovaj uređaj ne drži.';
+
+  @override
+  String get c6ReportsLockedDamaged =>
+      'Ova prijava je oštećena ili nije bila namenjena tebi.';
+
+  @override
+  String get c6ReportsMessageLabel => 'Prijavljena poruka';
+
+  @override
+  String get c6ReportsNoText =>
+      'Nije tekstualna poruka. Njeni podaci, uključujući ključ kojim se datoteka otvara, nalaze se u prijavi, ali ne i sama datoteka.';
+
+  @override
+  String c6ReportsReporter(String account) {
+    return 'Prijavio nalog $account';
+  }
+
+  @override
+  String c6ReportsSender(String account) {
+    return 'Poslao nalog $account';
+  }
+
+  @override
+  String get c6ReportsCheck => 'Proveri prema zapisima servera';
+
+  @override
+  String get c6ReportsChecking => 'Proveravam…';
+
+  @override
+  String get c6ReportsCheckNote =>
+      'Proverom server saznaje o kojoj se poruci radi u ovoj prijavi.';
+
+  @override
+  String get c6VerdictVerified => 'Poklapa se sa zapisom servera';
+
+  @override
+  String get c6VerdictVerifiedDetail =>
+      'Server je zabeležio baš ovu poruku ovog pošiljaoca u ovom razgovoru. To je pouzdano samo koliko i sopstveni zapis servera.';
+
+  @override
+  String get c6VerdictMismatch => 'Ne poklapa se';
+
+  @override
+  String get c6VerdictMismatchDetail =>
+      'Zapis servera se ne slaže sa ovom prijavom. Smatraj je nedokazanom ili lažnom.';
+
+  @override
+  String get c6VerdictGone => 'Ne može da se proveri';
+
+  @override
+  String get c6VerdictGoneDetail =>
+      'Server više nema ovu poruku, pa nema šta da se uporedi.';
+
+  @override
+  String get c6VerdictUnfranked => 'Ne može da se dokaže';
+
+  @override
+  String get c6VerdictUnfrankedDetail =>
+      'Ovu poruku je poslala aplikacija koja ne dodaje dokaz.';
+
+  @override
+  String get c6ReportsDismiss => 'Odbaci prijavu';
+
+  @override
+  String get c6ReportsDismissTitle => 'Odbaciti ovu prijavu?';
+
+  @override
+  String get c6ReportsDismissBody =>
+      'Ovo zauvek uklanja tvoju kopiju. Ostali vlasnici zadržavaju svoje.';
+
+  @override
+  String get c6ReportsDismissed => 'Prijava je odbačena.';
+
+  @override
+  String get c6ReportsKeyElsewhere =>
+      'Tvoj ključ za prijave je na drugom uređaju. Prijave za njega se otvaraju tamo, ne ovde.';
+
+  @override
+  String get c6ReportsKeyReplacedElsewhere =>
+      'Drugi uređaj je zamenio tvoj ključ za prijave. Nove prijave idu na ključ ispod; ovaj uređaj otvara samo prijave poslate na njegov stariji ključ.';
+
+  @override
+  String get c6ReportsKeyUnpublished =>
+      'Ovaj uređaj drži ključ za prijave koji još nije objavljen. Objavi ga da bi ti ljudi mogli slati prijave.';
+
+  @override
+  String get c6SignOutSeedWarning =>
+      'Ovaj uređaj drži tvoj ključ za prijave. Odjavom se on briše, a prijave već poslate na njega više se ne mogu otvoriti. Prvo obradi svoje prijave.';
 }

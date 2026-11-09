@@ -28,6 +28,7 @@ part 'k2_transfer_sql.dart';
 part 'frank_reveals_sql.dart';
 part 'conversation_pause_sql.dart';
 part 'device_list_sql.dart';
+part 'filed_reports_sql.dart';
 part 'community_info_sql.dart';
 
 enum MlsCommitStage {
@@ -819,6 +820,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createFrankReveals();
             await _createConversationPauses();
             await _createDeviceLists();
+            await _createFiledReports();
             await _createCommunityInfo();
             await _createSearchIndex();
             await into(localSyncStates).insert(
@@ -963,6 +965,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // New tables only. A group from before this upgrade has no leaf
             // rows and is judged (audited) before it is next used.
             if (from < 26) await _createDeviceLists();
+            // C6 (schema 27): which messages this account already reported.
+            // New table only.
+            if (from < 27) await _createFiledReports();
             // C3 (schema 31; 27-30 are reserved for other packages): received
             // community info keys, announcements and key requests, and the
             // accepted records. New tables only, self-contained, so the step
@@ -2365,6 +2370,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearDeviceLists();
         await _clearCommunityInfo();
         await _clearReportKeyPins();
+        await _clearFiledReports();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localDrafts).go();
