@@ -76,6 +76,7 @@ import 'reports_service.dart';
 import 'typing_state.dart';
 import '../l10n/l10n.dart';
 import 'account_recovery.dart';
+import 'k1_backup.dart';
 
 export 'account_recovery.dart';
 export 'membership_invite_link.dart';
@@ -84,6 +85,7 @@ export 'membership_models.dart';
 part 'app_state_membership.dart';
 part 'app_state_reports.dart';
 part 'app_state_recovery.dart';
+part 'app_state_k1_backup.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
 
@@ -521,6 +523,23 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   // membership event drops the list until it is read again.
   final Set<String> _lastKnownNoPeer = <String>{};
   Timer? _recoveryPollTimer;
+
+  /// K1 automatic backups (app_state_k1_backup.dart): this device's state,
+  /// whether a run is under way, and the desktop hourly check.
+  K1BackupState? _k1State;
+  bool _k1Running = false;
+  bool _k1RerunRequested = false;
+  Timer? _k1Timer;
+
+  /// The clock K1 schedules read; tests move it.
+  @visibleForTesting
+  DateTime Function() k1Clock = () => DateTime.now().toUtc();
+
+  /// Desktop apps keep running in the tray (W4), so they check hourly;
+  /// phones run when the app is opened (D91, until D52).
+  @visibleForTesting
+  bool k1DesktopTimerEnabled =
+      Platform.isLinux || Platform.isWindows || Platform.isMacOS;
   DateTime? _recoveryStatusReadAt;
   String? error;
   bool busy = false;
@@ -772,6 +791,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         (!wasForeground && _isForeground)) {
       unawaited(_resumeForegroundSync());
       _resumeAccountRecovery();
+      unawaited(runK1BackupIfDue());
     }
   }
 
@@ -6855,6 +6875,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     required bool keepApiOpen,
   }) async {
     _sessionGeneration++;
+    // K1: before any await, so a run under way can never write its state
+    // (with rk_pub) back into a store this is about to wipe.
+    _k1State = null;
+    _stopK1Backups();
     _syncStartFailed = null;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
@@ -6935,6 +6959,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// stored MLS outbox, not the session.
   void _resetSessionMemory() {
     phoneNoticesAllowed = false;
+    // K1: a run under way keeps its own copies; nothing of this identity's
+    // backup state survives in memory or is written back after a wipe.
+    _k1State = null;
+    _stopK1Backups();
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
     _keyPackageRetryAt = null;
@@ -8785,6 +8813,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _disposed = true;
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
+    _stopK1Backups();
     _orphanSweeper?.stop();
     _orphanSweeper = null;
     _resetDeviceLinkState();

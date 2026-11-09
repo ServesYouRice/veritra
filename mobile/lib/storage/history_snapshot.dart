@@ -838,7 +838,8 @@ HistorySnapshot captureHistory(
     required List<LocalPin> pins,
     required Map<String, int> starred,
     required List<LocalConversationPref> preferences,
-    required int now}) {
+    required int now,
+    bool omitDisappearing = false}) {
   final descriptors =
       Map<String, HistoryConversation>.of(namespace.conversations);
   for (final c in conversations) {
@@ -868,6 +869,9 @@ HistorySnapshot captureHistory(
     if (m.kind == LocalMessageKind.poll) continue;
     if (m.state == 'pending' || (m.expiresAt != null && m.expiresAt! <= now))
       continue;
+    // K1 backups leave out every disappearing message, expired or not: a
+    // restore must never bring back what the sender asked to vanish.
+    if (omitDisappearing && m.expiresAt != null) continue;
     if (!descriptors.containsKey(m.conversationId)) _invalid();
     // Unsupported hidden controls from pre-W8 databases also remain hidden.
     var hidden = m.senderHidden == true;

@@ -425,8 +425,11 @@ class _Store extends MemoryLocalStore {
   List<int>? snapshot;
 
   @override
-  Future<List<int>> exportHistorySnapshot() async =>
-      snapshot == null ? super.exportHistorySnapshot() : List.of(snapshot!);
+  Future<List<int>> exportHistorySnapshot(
+          {bool omitDisappearing = false}) async =>
+      snapshot == null
+          ? super.exportHistorySnapshot(omitDisappearing: omitDisappearing)
+          : List.of(snapshot!);
 }
 
 class _QuietSync implements SyncService {

@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import '../../core/app_state.dart';
 import '../../l10n/l10n.dart';
 import '../../push/push_service.dart';
+import 'auto_backup_screen.dart';
 import 'backup_screen.dart';
 import '../../core/models.dart';
 import '../../desktop/message_notifications.dart';
@@ -108,6 +109,22 @@ class SettingsScreen extends StatelessWidget {
                     subtitle: Text(l10n.settingsChangePasswordDetail),
                     onTap: state.busy ? null : () => _changePassword(context),
                   ),
+                  if (state.k1BackupSupported)
+                    ListTile(
+                      key: const ValueKey<String>('settings-auto-backup'),
+                      leading: const Icon(Icons.cloud_upload_outlined),
+                      title: Text(l10n.autoBackupTitle),
+                      subtitle: Text(autoBackupStatusText(context, state)),
+                      trailing: state.k1BackupNeedsAttention
+                          ? Icon(Icons.error_outline,
+                              color: Theme.of(context).colorScheme.error)
+                          : const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => AutoBackupScreen(state: state),
+                        ),
+                      ),
+                    ),
                   if (state.recoveryAvailable)
                     ListTile(
                       key: const ValueKey<String>('settings-recovery-key'),

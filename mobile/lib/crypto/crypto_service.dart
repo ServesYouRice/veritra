@@ -222,6 +222,24 @@ class RecoveryKeyValues {
   final Uint8List? rkListPub;
 }
 
+/// K1 automatic backups (ABI 19): seals a history snapshot to the
+/// account's recovery key as a VHC1 kind-1 container. The file key is fresh
+/// per backup and never leaves the engine; padding is applied inside.
+abstract interface class BackupSealCryptoService {
+  /// The sealed container. [plaintext] belongs to the caller, who wipes it.
+  Future<Uint8List> sealK1Backup({
+    required String accountId,
+    required String sourceDeviceId,
+    required int createdAtMs,
+    required int counter,
+    required Uint8List rkPub,
+    required Uint8List plaintext,
+  });
+
+  /// The largest snapshot [sealK1Backup] takes.
+  int get k1BackupMaxPlaintextBytes;
+}
+
 /// K0 recovery (docs/designs/K0-recovery-enrollment.md, R3/R4). Kept apart
 /// from [CryptoService] so a build without the native library is simply
 /// never asked: [UnavailableCryptoService] implements it only to refuse.

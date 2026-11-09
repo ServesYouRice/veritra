@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../core/device_lists.dart' show DeviceListPins;
+import '../core/k1_backup.dart' show k1BackupPlaintextVersion;
 import '../core/models.dart';
 import '../core/roles/posting_verdict.dart';
 import '../core/server_origin.dart';
@@ -43,6 +44,7 @@ import 'native_crypto_bindings.dart';
 
 class NativeCryptoService
     implements
+        BackupSealCryptoService,
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
@@ -222,6 +224,28 @@ class NativeCryptoService
   @override
   Future<Uint8List> decodeRecoveryKey(String text) async =>
       bindings.decodeRecoveryKey(text);
+
+  @override
+  Future<Uint8List> sealK1Backup({
+    required String accountId,
+    required String sourceDeviceId,
+    required int createdAtMs,
+    required int counter,
+    required Uint8List rkPub,
+    required Uint8List plaintext,
+  }) async =>
+      bindings.sealBackup(
+          accountId: accountId,
+          sourceDeviceId: sourceDeviceId,
+          createdAtMs: createdAtMs,
+          counter: counter,
+          plaintextVersion: k1BackupPlaintextVersion,
+          rkPub: rkPub,
+          plaintext: plaintext);
+
+  @override
+  int get k1BackupMaxPlaintextBytes =>
+      NativeCryptoBindings.backupMaxPlaintextBytes;
 
   @override
   Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy) async {
