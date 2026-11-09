@@ -77,3 +77,24 @@ has not happened (owner required solo work). C1 is partial: community shared
 group anchoring and W11/C3 encrypted rename wiring remain, plus real-device
 and community lifecycle evidence. Existing membership approval/removal and
 username UI are retained and exercised by the focused tests.
+
+The first full Flutter run exposed older-schema fixtures that retain new
+tables. The new table creation now uses `IF NOT EXISTS`, matching adjacent
+migration helpers, and has an explicit retained-table regression test.
+A concurrent full-script Flutter launch also hit Windows' locked
+`build/native_assets/windows/sqlite3mc.dll`; full checks are being repeated
+serially. These failures are not counted as passes.
+
+Final checks after the migration correction:
+- Six storage/search/migration suites: 95 pass, including the retained-table
+  regression, encrypted-store rollback and old-schema upgrades.
+- `scripts/lint.ps1`: pass again after the correction.
+- `scripts/test.ps1`: release-policy fixtures, Go and Rust pass; Flutter
+  finishes with 2359 passed, 21 skipped and 2 failures. Both failures are in
+  `device_link_v3_flow_test.dart`: "an approval read after the link window
+  still finishes" and "a waiting claim inside its expiry survives a status
+  error". A focused two-test rerun confirms `PathAccessException`, Windows
+  error 32, at `_withWorld`'s temporary-directory deletion (line 636).
+  No assertion in the link flows fails in that rerun. These tests remain
+  failing; no full-suite green result is claimed. Production link code and
+  its test file are unchanged by this port.
