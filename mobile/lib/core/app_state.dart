@@ -12,7 +12,6 @@ import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
 import '../crypto/community_info_codec.dart';
-import '../crypto/native_crypto_service.dart' show NativeCryptoService;
 import '../crypto/poll.dart';
 import '../crypto/link_preview.dart';
 import '../crypto/message_format.dart';

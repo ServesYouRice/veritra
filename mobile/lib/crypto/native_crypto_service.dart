@@ -33,6 +33,7 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
 import 'message_format.dart';
 import 'poll.dart' show pollRowBody;
@@ -45,6 +46,7 @@ import 'native_crypto_bindings.dart';
 class NativeCryptoService
     implements
         BackupSealCryptoService,
+        CommunityInfoCryptoService,
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
@@ -77,6 +79,9 @@ class NativeCryptoService
   final DateTime Function() _clock;
   @override
   set conversationAuthority(ConversationAuthority value) => _authority = value;
+
+  @override
+  CommunityInfoCodec get communityInfoCodec => CommunityInfoCodec(bindings);
   ConversationAuthority? _authority;
   NativeCryptoDevice? _device;
 
