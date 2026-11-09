@@ -637,11 +637,12 @@ Future<void> _withWorld(
     await world.dispose();
     try {
       dir.deleteSync(recursive: true);
-    } catch (_) {
+    } on FileSystemException catch (error) {
+      // Windows may briefly retain a handle after the native device closes.
+      // Retry sharing violations only, and let a persistent failure fail.
+      if (error.osError?.errorCode != 32) rethrow;
       await Future<void>.delayed(const Duration(milliseconds: 50));
-      try {
-        dir.deleteSync(recursive: true);
-      } catch (_) {}
+      dir.deleteSync(recursive: true);
     }
   }
 }
