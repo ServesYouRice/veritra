@@ -66,9 +66,24 @@ abstract interface class InfoTopology {
   String? privateConversationOf(String channelId);
 
   /// Whether this account is an owner or admin of the community, by the
-  /// server's word. Used only to pick who answers a key request, never to
-  /// decide what is shown.
+  /// server's word. Used only to pick who answers key requests and who
+  /// rotates, never to decide what is shown.
   bool serverSaysAdmin(String communityId);
+
+  /// Whether sends to [conversationId] wait for a removal commit (D68).
+  /// Background work skips such a group and comes back later, so one stuck
+  /// group never stalls the others.
+  bool sendHeld(String conversationId);
+
+  /// Whether the community is known to be gone (the lists loaded and it is
+  /// not there). False while the lists are not loaded: unknown is not gone.
+  bool communityGone(String communityId);
+}
+
+/// [CommunityInfoService.publish] could not find a key it trusts and may not
+/// make one: it asked the group for it instead.
+class InfoKeyMissing implements Exception {
+  const InfoKeyMissing();
 }
 
 /// One info subject: its kind, id, and the community it belongs to.
@@ -119,6 +134,7 @@ class CommunityInfoService {
   final String _rotationSetting;
 
   final Map<String, CommunityInfoRecord> _shown = {};
+  final Map<String, InfoSubject> _shownSubjects = {};
   final Map<String, DateTime> _lastAsked = {};
   final Set<String> _answered = {};
 
@@ -149,24 +165,52 @@ class CommunityInfoService {
         conversationId: shared);
   }
 
-  /// The key to seal with: the newest key in the owning group from an owner
-  /// or admin under the verified role state, or from this account (a device
-  /// trusts the keys its own account made).
+  /// The key to seal with: of the keys in the owning group from this
+  /// account or from an owner or admin under the verified role state, the
+  /// one whose id FIRST arrived last. A later re-delivery of an old key (an
+  /// admin answering with a key from before a rotation) never makes it
+  /// current again.
   Future<CommunityInfoEvent?> currentKey(
       InfoKeyHome home, String communityId) async {
     final policy = policyFor(communityId);
     final keys = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    final firstSeen = <String, int>{};
+    for (final k in keys) {
+      if (k.conversationId != home.conversationId) continue;
+      final id = k.keyId;
+      if (id == null) continue;
+      final seq = k.seq ?? 0;
+      final held = firstSeen[id];
+      if (held == null || seq < held) firstSeen[id] = seq;
+    }
     CommunityInfoEvent? best;
+    var bestSeq = -1;
     for (final k in keys) {
       if (k.conversationId != home.conversationId || k.key == null) continue;
       if (k.senderAccountId != accountId &&
           !policy.mayEdit(k.senderAccountId, infoKindCommunity)) {
         continue;
       }
-      if (best == null || (k.seq ?? 0) > (best.seq ?? 0)) best = k;
+      final first = firstSeen[k.keyId] ?? 0;
+      if (first > bestSeq) {
+        best = k;
+        bestSeq = first;
+      }
     }
     return best;
+  }
+
+  Future<CommunityInfoEvent?> _ownKey(InfoKeyHome home, String keyId) async {
+    final keys = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    return keys
+        .where((k) =>
+            k.keyId == keyId &&
+            k.key != null &&
+            k.conversationId == home.conversationId &&
+            k.senderAccountId == accountId)
+        .firstOrNull;
   }
 
   /// Makes a fresh key for [home] and keeps it locally. Others get it by
@@ -190,21 +234,41 @@ class CommunityInfoService {
   /// Seals and uploads a record for [subject], then announces it in the
   /// group that owns its key. [build] gets the revision the upload becomes.
   /// Retries a stale `If-Match` a few times. Returns the accepted record.
+  ///
+  /// [mint] allows a new key when none is trusted: only when the keyed
+  /// subject is being created. Otherwise a device without the key asks for
+  /// it and throws [InfoKeyMissing], so no parallel key ever appears. An
+  /// announcement that could not be queued is sent again by [refresh].
   Future<CommunityInfoRecord> publish(
     InfoSubject subject,
     CommunityInfoRecord Function(int revision) build, {
     int attempts = 3,
+    bool mint = false,
+    CommunityInfoEvent? withKey,
   }) async {
     final home = homeOf(subject);
     if (home == null) throw StateError('C3 is not active here');
-    final key =
-        await currentKey(home, subject.communityId) ?? await newKey(home);
+    var key = withKey ?? await currentKey(home, subject.communityId);
+    if (key == null) {
+      if (!mint) {
+        await requestKey(home);
+        throw const InfoKeyMissing();
+      }
+      key = await newKey(home);
+    }
+    final accepted =
+        await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
     for (var attempt = 0;; attempt++) {
       final served = await api.get(
           kind: subject.kind,
           subjectId: subject.id,
           communityId: subject.communityId);
       final version = served?.version ?? 0;
+      // A server serving less than this device already accepted would make
+      // the edit invisible to others (they keep the newer one): refuse.
+      if (accepted != null && version < accepted.revision) {
+        throw const InfoVersionConflict();
+      }
       final record = build(version + 1);
       final blob = codec.seal(key: key.key!, record: record);
       final int stored;
@@ -232,17 +296,7 @@ class CommunityInfoService {
         blob: blob,
       ));
       _show(subject, record);
-      await send(
-        home.conversationId,
-        AppPayloadType.infoUpdate,
-        infoUpdateBody(
-          subjectKind: subject.kind,
-          subjectId: subject.id,
-          revision: stored,
-          keyId: key.keyId!,
-          recordSha256: CommunityInfoCodec.recordSha256(blob),
-        ),
-      );
+      await _announce(subject, home, stored, key.keyId!, blob);
       return record;
     }
   }
@@ -275,12 +329,64 @@ class CommunityInfoService {
     }
   }
 
+  Future<bool> _announce(InfoSubject subject, InfoKeyHome home, int revision,
+          String keyId, List<int> blob) =>
+      send(
+        home.conversationId,
+        AppPayloadType.infoUpdate,
+        infoUpdateBody(
+          subjectKind: subject.kind,
+          subjectId: subject.id,
+          revision: revision,
+          keyId: keyId,
+          recordSha256: CommunityInfoCodec.recordSha256(blob),
+        ),
+      );
+
+  /// Sends the announcement of an accepted record again when none is held
+  /// for it: a record is accepted from others only with one, so this is this
+  /// device's own upload whose announcement could not be queued (no open
+  /// channel yet, a pause, an ended session). Skipped while the group holds
+  /// sends for a removal.
+  Future<bool> healAnnouncement(InfoSubject subject,
+      {int? servedVersion}) async {
+    final home = homeOf(subject);
+    if (home == null || topology.sendHeld(home.conversationId)) return false;
+    final accepted =
+        await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
+    if (accepted == null ||
+        (servedVersion != null && servedVersion != accepted.revision)) {
+      return false;
+    }
+    final digest = CommunityInfoCodec.recordSha256(accepted.blob);
+    final updates = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.update, subject.kind, subject.id);
+    if (updates.any((u) =>
+        u.revision == accepted.revision &&
+        u.recordSha256 == digest &&
+        u.conversationId == home.conversationId)) {
+      return false;
+    }
+    return _announce(
+        subject, home, accepted.revision, accepted.keyId, accepted.blob);
+  }
+
   /// Fetches and judges one subject. A missing record (404) never clears
-  /// what is shown. A missing key asks the group for it.
-  Future<InfoVerdict?> refresh(InfoSubject subject) async {
+  /// what is shown. A missing key asks the group for it. With
+  /// [knownVersion] (from the versions route) a subject already at that
+  /// version is not fetched.
+  Future<InfoVerdict?> refresh(InfoSubject subject, {int? knownVersion}) async {
     final home = homeOf(subject);
     if (home == null) return null;
     if (!_shown.containsKey(subject.key)) await loadAccepted(subject);
+    if (knownVersion != null) {
+      final accepted =
+          await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
+      if (accepted != null && accepted.revision >= knownVersion) {
+        await healAnnouncement(subject, servedVersion: knownVersion);
+        return null;
+      }
+    }
     final served = await api.get(
         kind: subject.kind,
         subjectId: subject.id,
@@ -311,8 +417,10 @@ class CommunityInfoService {
         _show(subject, record);
       case InfoNeedsKey(:final home):
         await requestKey(home);
-      case InfoKept():
-        break;
+      case InfoKept(:final reason):
+        if (reason == InfoKeptReason.notNewer) {
+          await healAnnouncement(subject, servedVersion: served.version);
+        }
     }
     return verdict;
   }
@@ -322,6 +430,7 @@ class CommunityInfoService {
   Future<bool> requestKey(InfoKeyHome home) async {
     final id = '${home.keySubjectKind}|${home.keySubjectId}';
     final now = _clock();
+    if (topology.sendHeld(home.conversationId)) return false;
     if (!mayRequestInfoKey(_lastAsked[id], now)) return false;
     _lastAsked[id] = now;
     return send(
@@ -337,7 +446,10 @@ class CommunityInfoService {
   /// that owns the key: a request for a private channel's key made in the
   /// shared group is never answered there.
   Future<int> answerRequests(InfoKeyHome home, String communityId) async {
-    if (!topology.serverSaysAdmin(communityId)) return 0;
+    if (!topology.serverSaysAdmin(communityId) ||
+        topology.sendHeld(home.conversationId)) {
+      return 0;
+    }
     final key = await currentKey(home, communityId);
     if (key == null) return 0;
     final requests = (await store.loadCommunityInfoEvents(
@@ -346,8 +458,8 @@ class CommunityInfoService {
             home.keySubjectId))
         .where((r) =>
             mayDeliverInfoKey(home, r.conversationId) &&
-            r.senderAccountId != accountId &&
-            !_answered.contains(r.ident))
+            r.senderDeviceId != deviceId &&
+            !_answered.contains('${r.ident}#${r.seq}'))
         .toList();
     if (requests.isEmpty) return 0;
     await Future<void>.delayed(_answerDelay());
@@ -359,7 +471,7 @@ class CommunityInfoService {
         .fold<int>(0, (m, k) => max(m, k.seq ?? 0));
     final open = requests.where((r) => (r.seq ?? 0) > lastKeySeq).toList();
     for (final r in requests) {
-      _answered.add(r.ident);
+      _answered.add('${r.ident}#${r.seq}');
     }
     if (open.isEmpty) return 0;
     final sent = await send(
@@ -370,18 +482,54 @@ class CommunityInfoService {
           subjectId: home.keySubjectId,
           key: key.key!),
     );
-    return sent ? 1 : 0;
+    if (!sent) return 0;
+    // A device that asks is new to the group (a joiner, a new or restored
+    // device): it never saw the announcements made before it came. Announce
+    // again, as this admin, every record under this key that this device
+    // accepted.
+    for (final subject in _shownSubjects.values.toList()) {
+      final at = homeOf(subject);
+      if (at == null ||
+          at.conversationId != home.conversationId ||
+          at.keySubjectId != home.keySubjectId) {
+        continue;
+      }
+      final accepted =
+          await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
+      if (accepted == null) continue;
+      await _announce(
+          subject, home, accepted.revision, accepted.keyId, accepted.blob);
+    }
+    return 1;
   }
 
   /// Marks [home]'s key for rotation (D80: at once on a kick or ban; a
-  /// private channel's on a removal from it). Kept across restarts.
-  Future<void> markRotationDue(InfoKeyHome home, String communityId) async {
-    final due = await _dueRotations();
-    due['${home.keySubjectKind}|${home.keySubjectId}'] = communityId;
-    await store.saveSetting(_rotationSetting, jsonEncode(due));
+  /// private channel's on a removal from it). Kept across restarts. A new
+  /// mark for a key already due replaces the old one, so a pass that started
+  /// before it does not clear it.
+  Future<void> markRotationDue(InfoKeyHome home, String communityId) =>
+      _locked(() async {
+        final due = await _dueRotations();
+        due['${home.keySubjectKind}|${home.keySubjectId}'] = <String, Object?>{
+          'c': communityId,
+          't': '${_clock().microsecondsSinceEpoch}.${_marks++}',
+        };
+        await _saveDue(due);
+      });
+
+  int _marks = 0;
+  Future<void> _lock = Future<void>.value();
+  final Map<String, ({int failures, DateTime next})> _backoff = {};
+
+  /// Runs [body] after every earlier locked step: the due list is read,
+  /// changed and written by one step at a time.
+  Future<T> _locked<T>(Future<T> Function() body) {
+    final result = _lock.then((_) => body());
+    _lock = result.then((_) {}, onError: (_) {});
+    return result;
   }
 
-  Future<Map<String, String>> _dueRotations() async {
+  Future<Map<String, Map<String, Object?>>> _dueRotations() async {
     final raw = await store.loadSetting(_rotationSetting);
     if (raw == null) return {};
     try {
@@ -389,41 +537,90 @@ class CommunityInfoService {
       if (decoded is Map) {
         return {
           for (final e in decoded.entries)
-            if (e.key is String && e.value is String)
-              e.key as String: e.value as String
+            if (e.key is String &&
+                e.value is Map &&
+                (e.value as Map)['c'] is String)
+              e.key as String: Map<String, Object?>.from(e.value as Map)
         };
       }
     } on FormatException {
-      // A broken mark is dropped; the next removal marks again.
+      // A broken list is dropped; the next removal marks again.
     }
     return {};
   }
 
-  /// Runs every due rotation: a new key, sent at once into the owning group
-  /// (the send waits for the removal commit, D68, so the removed member never
-  /// gets it), then every record under the old key sealed again and
-  /// announced. [subjectsUnder] lists the records a key covers. A rotation
-  /// that fails stays due.
+  Future<void> _saveDue(Map<String, Map<String, Object?>> due) =>
+      store.saveSetting(_rotationSetting, jsonEncode(due));
+
+  /// Changes one entry only if it is still the mark [token] (no newer mark
+  /// replaced it meanwhile). [change] null removes it.
+  Future<void> _updateMark(String id, Object? token,
+          Map<String, Object?>? Function(Map<String, Object?> entry) change) =>
+      _locked(() async {
+        final due = await _dueRotations();
+        final entry = due[id];
+        if (entry == null || entry['t'] != token) return;
+        final next = change(entry);
+        if (next == null) {
+          due.remove(id);
+        } else {
+          due[id] = next;
+        }
+        await _saveDue(due);
+      });
+
+  /// The keys due for rotation, by their keyed subject (for tests and
+  /// screens).
+  Future<Set<String>> dueRotations() async =>
+      (await _dueRotations()).keys.toSet();
+
+  /// Runs every due rotation this device should run: a new key, sent at once
+  /// into the owning group (the send waits for the removal commit, D68, so
+  /// the removed member never gets it), then every record under the old key
+  /// sealed again and announced. [subjectsUnder] lists the records a key
+  /// covers.
+  ///
+  /// - A mark whose group or community this device cannot place yet stays.
+  /// - A group still holding sends for the removal is skipped and stays.
+  /// - Only owners and admins (server's word) rotate; a moderator's own mark
+  ///   is dropped on its device (owner question: who rotates then).
+  /// - A retry reuses the key it already made and sent; failures back off.
   Future<int> runRotations(
       List<InfoSubject> Function(InfoKeyHome home, String communityId)
           subjectsUnder) async {
-    final due = await _dueRotations();
+    final due = await _locked(_dueRotations);
     var done = 0;
-    for (final entry in Map.of(due).entries) {
-      final parts = entry.key.split('|');
-      if (parts.length != 2) {
-        due.remove(entry.key);
+    for (final entry in due.entries) {
+      final id = entry.key;
+      final mark = entry.value;
+      final token = mark['t'];
+      final communityId = mark['c'] as String;
+      final parts = id.split('|');
+      if (parts.length != 2 || topology.communityGone(communityId)) {
+        await _updateMark(id, token, (_) => null);
         continue;
       }
-      final communityId = entry.value;
-      final keyed = InfoSubject(parts[0], parts[1], communityId);
-      final home = parts[0] == infoKindCommunity
-          ? homeOf(InfoSubject(infoKindCommunity, communityId, communityId))
-          : homeOf(keyed);
-      if (home == null) {
-        due.remove(entry.key);
+      final InfoKeyHome? home;
+      if (parts[0] == infoKindCommunity) {
+        home = homeOf(InfoSubject(infoKindCommunity, communityId, communityId));
+      } else {
+        // A private channel's key lives in its own group only: never fall
+        // back to the community's.
+        final conversation = topology.privateConversationOf(parts[1]);
+        home = conversation == null
+            ? null
+            : InfoKeyHome(
+                keySubjectKind: infoKindChannel,
+                keySubjectId: parts[1],
+                conversationId: conversation);
+      }
+      if (home == null || topology.sendHeld(home.conversationId)) continue;
+      if (!topology.serverSaysAdmin(communityId)) {
+        await _updateMark(id, token, (_) => null);
         continue;
       }
+      final wait = _backoff[id];
+      if (wait != null && _clock().isBefore(wait.next)) continue;
       try {
         // Remember what the records say before the key changes.
         final records = <InfoSubject, CommunityInfoRecord>{};
@@ -432,26 +629,45 @@ class CommunityInfoService {
           final shown = _shown[subject.key];
           if (shown != null) records[subject] = shown;
         }
-        final fresh = await newKey(home);
-        final delivered = await send(
-          home.conversationId,
-          AppPayloadType.infoKey,
-          infoKeyBody(
-              subjectKind: home.keySubjectKind,
-              subjectId: home.keySubjectId,
-              key: fresh.key!),
-        );
-        if (!delivered) continue;
-        for (final entry in records.entries) {
-          await publish(entry.key, (revision) => _copy(entry.value, revision));
+        // The key this mark already made, if any; otherwise a new one.
+        final made = mark['k'] is String
+            ? await _ownKey(home, mark['k'] as String)
+            : null;
+        final fresh = made ?? await newKey(home);
+        if (made == null) {
+          await _updateMark(id, token, (e) => {...e, 'k': fresh.keyId});
         }
-        due.remove('${home.keySubjectKind}|${home.keySubjectId}');
+        if (mark['s'] != true) {
+          final delivered = await send(
+            home.conversationId,
+            AppPayloadType.infoKey,
+            infoKeyBody(
+                subjectKind: home.keySubjectKind,
+                subjectId: home.keySubjectId,
+                key: fresh.key!),
+          );
+          if (!delivered) throw const InfoKeyMissing();
+          await _updateMark(
+              id, token, (e) => {...e, 'k': fresh.keyId, 's': true});
+        }
+        for (final record in records.entries) {
+          await publish(record.key, (revision) => _copy(record.value, revision),
+              withKey: fresh);
+        }
+        await _updateMark(id, token, (_) => null);
+        _backoff.remove(id);
         done++;
       } catch (_) {
-        // Stays due; the next pass tries again.
+        // Stays due, and waits longer each time (1 minute doubling to an
+        // hour), so a failing re-seal never storms the group.
+        final failures = (wait?.failures ?? 0) + 1;
+        final minutes = min(60, 1 << min(failures - 1, 6));
+        _backoff[id] = (
+          failures: failures,
+          next: _clock().add(Duration(minutes: minutes)),
+        );
       }
     }
-    await store.saveSetting(_rotationSetting, jsonEncode(due));
     return done;
   }
 
@@ -470,6 +686,7 @@ class CommunityInfoService {
 
   void _show(InfoSubject subject, CommunityInfoRecord record) {
     _shown[subject.key] = record;
+    _shownSubjects[subject.key] = subject;
     onChanged?.call();
   }
 }

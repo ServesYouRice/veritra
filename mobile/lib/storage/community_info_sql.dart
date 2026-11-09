@@ -88,7 +88,7 @@ class CommunityInfoEvent {
         CommunityInfoEventKind.update =>
           'u|$subjectKind|$subjectId|$conversationId|$senderAccountId|$revision|$recordSha256',
         CommunityInfoEventKind.keyRequest =>
-          'r|$subjectKind|$subjectId|$conversationId|$senderAccountId',
+          'r|$subjectKind|$subjectId|$conversationId|$senderAccountId|$senderDeviceId',
       };
 
   bool get isStorable =>
@@ -148,8 +148,13 @@ class AcceptedCommunityInfo {
 List<CommunityInfoEvent> addCommunityInfoEvent(
     List<CommunityInfoEvent> rows, CommunityInfoEvent event,
     {Set<String> protectedKeyIds = const <String>{}}) {
-  if (!event.isStorable || rows.any((r) => r.ident == event.ident)) {
-    return rows;
+  if (!event.isStorable) return rows;
+  if (rows.any((r) => r.ident == event.ident)) {
+    // A repeated key request is a new request (a device asking again after
+    // missing a rotation): it moves to the end. Keys and announcements keep
+    // their first arrival.
+    if (event.kind != CommunityInfoEventKind.keyRequest) return rows;
+    rows = rows.where((r) => r.ident != event.ident).toList();
   }
   var top = 0;
   for (final row in rows) {
@@ -209,7 +214,7 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
     for (final event in events) {
       if (!event.isStorable) continue;
       await customStatement(
-          'INSERT OR IGNORE INTO local_info_events '
+          '${event.kind == CommunityInfoEventKind.keyRequest ? 'INSERT OR REPLACE' : 'INSERT OR IGNORE'} INTO local_info_events '
           '(ident, kind, subject_kind, subject_id, conversation_id, '
           'sender_account_id, sender_device_id, key_id, info_key, revision, '
           'record_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
