@@ -1132,7 +1132,7 @@ func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID stri
 	}
 	blobs, err := countRows(ctx, tx, `SELECT
 		(SELECT COUNT(*) FROM attachment_envelopes WHERE owner_account_id = ?) +
-		(SELECT COUNT(*) FROM backup_blobs WHERE account_id = ?) +
+		(SELECT COUNT(*) FROM backup_blobs WHERE account_id = ? AND kind = 0) +
 		(SELECT COUNT(*) FROM device_history_transfers WHERE account_id = ? AND state='active') +
 		(SELECT COUNT(*) FROM device_history_upload_intents WHERE account_id = ?)`, accountID, accountID, accountID, accountID)
 	if err != nil {
@@ -1148,17 +1148,18 @@ func (s *Store) ListBackups(ctx context.Context, accountID string, limit int) ([
 	if limit <= 0 || limit > 100 {
 		limit = 25
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at FROM backup_blobs WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, accountID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+backupColumnsK1+` FROM backup_blobs WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, accountID, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	result := make([]domain.BackupBlob, 0)
 	for rows.Next() {
-		backup, err := scanBackup(rows)
+		backup, err := scanBackupWithK1(rows)
 		if err != nil {
 			return nil, err
 		}
+		backup.ChunkDigests = nil
 		result = append(result, backup)
 	}
 	return result, rows.Err()
@@ -1167,12 +1168,10 @@ func (s *Store) ListBackups(ctx context.Context, accountID string, limit int) ([
 // BackupForAccount returns one of the account's backups, including its
 // chunk-digest record.
 func (s *Store) BackupForAccount(ctx context.Context, id, accountID string) (domain.BackupBlob, error) {
-	var digests []byte
-	backup, err := scanBackup(s.db.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, chunk_digests FROM backup_blobs WHERE id = ? AND account_id = ?`, id, accountID), &digests)
+	backup, err := scanBackupWithK1(s.db.QueryRowContext(ctx, `SELECT `+backupColumnsK1+` FROM backup_blobs WHERE id = ? AND account_id = ?`, id, accountID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.BackupBlob{}, ErrNotFound
 	}
-	backup.ChunkDigests = digests
 	return backup, err
 }
 

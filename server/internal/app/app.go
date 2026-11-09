@@ -400,6 +400,12 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 			}
 		}
 		a.drainExpiredContent(ctx, time.Now().UTC())
+		// K1 (D91): superseded backup copies after a day, revoked devices'
+		// copies after 90 days or beyond the account's newest three. Before
+		// the blob reconcile, so their files go in the same sweep.
+		a.drainRetention(ctx, "k1_backups", func() (int64, error) {
+			return a.Store.PruneK1Backups(ctx, time.Now().UTC())
+		})
 		a.reconcileBlobDeletions(ctx)
 		a.drainRetention(ctx, "call_sessions", func() (int64, error) {
 			return a.Store.PruneCallSessions(ctx, time.Now().UTC())
