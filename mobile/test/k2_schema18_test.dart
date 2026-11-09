@@ -355,7 +355,7 @@ void main() {
           '"username":"alice","account_id":"acct_me","device_id":"dev_new",'
           '"device_name":"Phone","request_id":"arr_1",'
           '"claim_token":"$_claimToken","device_secret":"s",'
-          '"ready_at":"2026-11-08T12:30:00.000Z","needs_login":false,'
+          '"ready_at":"2099-11-08T12:30:00.000Z","needs_login":false,'
           '"mls":{"counter":1,'
           '"key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",'
           '"root":"cm9vdC12MS1maXh0dXJl","records":[]}}';

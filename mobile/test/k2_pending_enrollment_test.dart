@@ -34,7 +34,7 @@ PendingAccountRecovery _claim({bool needsLogin = false}) =>
       requestId: 'arr_1',
       claimToken: _claimToken,
       deviceSecret: _deviceSecret,
-      readyAt: DateTime.utc(2026, 11, 8, 12, 30),
+      readyAt: DateTime.utc(2099, 11, 8, 12, 30),
       needsLogin: needsLogin,
       mlsState: StoredCryptoState(
         counter: 1,
@@ -293,7 +293,7 @@ void main() {
             '"username":"alice","account_id":"acct_me","device_id":"dev_new",'
             '"device_name":"Phone","request_id":"arr_1",'
             '"claim_token":"$_claimToken","device_secret":"$_deviceSecret",'
-            '"ready_at":"2026-11-08T12:30:00.000Z","needs_login":$needsLogin,'
+            '"ready_at":"2099-11-08T12:30:00.000Z","needs_login":$needsLogin,'
             '"mls":{"counter":1,'
             '"key":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",'
             '"root":"cm9vdC12MS1maXh0dXJl","records":['
@@ -315,7 +315,7 @@ void main() {
               requestId: 'arr_1',
               claimToken: _claimToken,
               deviceSecret: _deviceSecret,
-              readyAt: DateTime.utc(2026, 11, 8, 12, 30),
+              readyAt: DateTime.utc(2099, 11, 8, 12, 30),
               needsLogin: needsLogin,
               mlsState: StoredCryptoState(
                 counter: 1,

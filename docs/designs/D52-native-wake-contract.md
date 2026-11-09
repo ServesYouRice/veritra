@@ -124,9 +124,15 @@ Native to Dart:
 - `uiAttached` `{protocol:1,attached:bool}` (notification, result ignored)
   informs bootstrap/UI coordination without constructing another owner.
 
-Default platform implementation exposes `can_opt_in:false`. Enabling that
-capability is a separately reviewed change after bounded Dart installation
-and actual Android/iOS build/lifecycle evidence. An unsupported method,
+`bootstrap` always says `can_opt_in:false`. `install` says `can_opt_in:true`
+only in a demo build (`--dart-define=VERITRA_DEMO=true`, unless
+`VERITRA_PHONE_NOTICES=false`) (Android: a Gradle BuildConfig flag,
+forced false in the release and profile build types; iOS: only Debug.xcconfig
+copies the build's `DART_DEFINES` into Info.plist). Native decides this at build
+time; nothing Dart sends changes it, and the Dart bridge accepts a true reply
+only when constructed with `allowOptIn` (demo entry point). Release builds
+(`main.dart`, release build types) therefore stay at `can_opt_in:false` with
+cold execution off. The owner decided demo builds turn it on by default, pending actual Android/iOS lifecycle evidence. An unsupported method,
 worker missing, locked/missing key, profile mismatch or unavailable release
 crypto stays quiet and leaves the wake pending. No legacy fallback alert for
 v2 is permitted.

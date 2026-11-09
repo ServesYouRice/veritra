@@ -167,6 +167,77 @@ void main() {
     state.dispose();
   });
 
+  Future<(AppState, _PushApi, _FakePush)> startWith(
+      {Future<bool> Function()? installer, PushEndpointEvent? pending}) async {
+    final store = MemoryLocalStore();
+    await store.saveSession(const Session(
+      baseUrl: 'https://localhost:8080',
+      token: 'token',
+      accountId: 'acct_1',
+      deviceId: 'dev_1',
+    ));
+    final api = _PushApi(<String, Object?>{
+      'enabled': true,
+      'providers': <String>['fcm'],
+    });
+    final push = _FakePush()..pending = pending;
+    final state = AppState(
+      apiClientFactory: (_) => api,
+      cryptoService: TestOnlyCryptoService(),
+      localStore: store,
+      syncServiceFactory: (_, __) => _QuietSync(),
+      pushService: push,
+    )..phoneNoticeInstaller = installer;
+    await state.tryRestoreSession();
+    await _until(() => push.registrations.isNotEmpty);
+    return (state, api, push);
+  }
+
+  test('phone notices are off by default: no notification mode is sent',
+      () async {
+    final (state, api, push) = await startWith(pending: rotated);
+    await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+    push.emit(rotated);
+    await _until(() => api.registeredModes.length == 2);
+    expect(api.registeredModes, <String?>[null, null]);
+    expect(state.phoneNoticesAllowed, isFalse);
+    state.dispose();
+  });
+
+  test(
+      'a worker that native allowed registers local_decrypt_v1 on a pending '
+      'record and again on every later rotation', () async {
+    var installs = 0;
+    final (state, api, push) = await startWith(
+        pending: rotated,
+        installer: () async {
+          installs++;
+          return true;
+        });
+    await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+    push.emit(rotated);
+    await _until(() => api.registeredModes.length == 2);
+    expect(installs, 1);
+    expect(
+        api.registeredModes, <String?>['local_decrypt_v1', 'local_decrypt_v1']);
+    state.dispose();
+  });
+
+  test('a refused or failing install never requests local_decrypt_v1',
+      () async {
+    for (final installer in <Future<bool> Function()>[
+      () async => false,
+      () async => throw StateError('no worker'),
+    ]) {
+      final (state, api, push) =
+          await startWith(pending: rotated, installer: installer);
+      await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+      expect(api.registeredModes, <String?>[null]);
+      expect(state.phoneNoticesAllowed, isFalse);
+      state.dispose();
+    }
+  });
+
   test('a failed server registration leaves the record unacknowledged',
       () async {
     final store = MemoryLocalStore();
@@ -276,6 +347,7 @@ class _PushApi extends ApiClient {
   ApiException? testError;
   Object? registerError;
   final List<String> registeredTokens = <String>[];
+  final List<String?> registeredModes = <String?>[];
 
   @override
   Future<Map<String, Object?>> pushConfig(String token) async => config;
@@ -294,7 +366,10 @@ class _PushApi extends ApiClient {
 
   @override
   Future<String> registerNativePush(String token,
-      {required String provider, required String deviceToken}) async {
+      {required String provider,
+      required String deviceToken,
+      String? notificationMode}) async {
+    registeredModes.add(notificationMode);
     onRegister?.call();
     final error = registerError;
     if (error != null) throw error;

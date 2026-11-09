@@ -217,13 +217,20 @@ class AppPayloadCodec {
         'body': body,
       }));
 
-  Uint8List _frame(Uint8List encoded) {
-    if (encoded.length > _maxPayloadBytes - _headerLength) {
+  /// The length of the `VAP1` value for an inner JSON of [innerBytes]: the
+  /// 8-byte header, then the next 256-byte bucket. C7 budgets its record
+  /// message against this (`docs/designs/C7-channel-history.md` decision 3).
+  static int framedLength(int innerBytes) {
+    if (innerBytes > _maxPayloadBytes - _headerLength) {
       throw const FormatException('application payload is too large');
     }
+    final unpadded = _headerLength + innerBytes;
+    return ((unpadded + _paddingBucket - 1) ~/ _paddingBucket) * _paddingBucket;
+  }
+
+  Uint8List _frame(Uint8List encoded) {
+    final paddedLength = framedLength(encoded.length);
     final unpadded = _headerLength + encoded.length;
-    final paddedLength =
-        ((unpadded + _paddingBucket - 1) ~/ _paddingBucket) * _paddingBucket;
     final result = Uint8List(paddedLength);
     result.setRange(0, _magic.length, _magic);
     ByteData.sublistView(result).setUint32(4, encoded.length, Endian.big);

@@ -336,9 +336,31 @@ final class IOSWakeJournal {
   }
 }
 
+/// Phone notices (D52) exist only in a Debug-configuration build made with both
+/// `--dart-define=VERITRA_DEMO=true` (and not `VERITRA_PHONE_NOTICES=false`).
+/// Only Debug.xcconfig copies DART_DEFINES into Info.plist at build time; nothing Dart sends at runtime can change this, and Release is always off.
+enum PhoneNoticeBuild {
+  static let enabled: Bool = {
+    // Empty outside the Debug xcconfig, so Release and Profile are always off.
+    guard let raw = Bundle.main.object(forInfoDictionaryKey: "VeritraDartDefines") as? String else { return false }
+    return parse(defines: raw)
+  }()
+
+  /// base64 "NAME=value" entries joined by commas; the last entry for a name wins.
+  static func parse(defines raw: String) -> Bool {
+    let entries = raw.split(separator: ",").compactMap { part in
+      Data(base64Encoded: String(part)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+    func value(_ name: String) -> String? {
+      entries.last { $0.hasPrefix(name + "=") }.map { String($0.dropFirst(name.count + 1)) }
+    }
+    return value("VERITRA_DEMO") == "true" && value("VERITRA_PHONE_NOTICES") != "false"
+  }
+}
+
 final class IOSWakeCoordinator {
-  // Enabling cold execution requires the reviewed existing-only Dart bootstrap.
-  static let coldExecutionEnabled = false
+  // Build-time only: see PhoneNoticeBuild. Release builds are always false.
+  static let coldExecutionEnabled = PhoneNoticeBuild.enabled
   let journal = IOSWakeJournal()
   private var channel: FlutterMethodChannel?
   private var profile: String?
@@ -406,7 +428,8 @@ final class IOSWakeCoordinator {
         }
         do {
           try self.journal.bind(profile); self.profile = profile
-          result(["protocol": 1, "native_silent": true, "worker_attached": true, "can_opt_in": false])
+          result(["protocol": 1, "native_silent": true, "worker_attached": true,
+            "can_opt_in": Self.coldExecutionEnabled])
           self.startNext()
         } catch { result(FlutterError(code: "wake_storage_unavailable", message: nil, details: nil)) }
       case "uninstall":

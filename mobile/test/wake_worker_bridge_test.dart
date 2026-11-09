@@ -196,6 +196,36 @@ void main() {
             onCancel: (_) async {}),
         throwsFormatException);
   });
+  test('a demo bridge accepts native opt-in only after a successful install',
+      () async {
+    final demo = PlatformWakeWorkerBridge(channel: channel, allowOptIn: true);
+    addTearDown(demo.dispose);
+    var attached = true;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+            channel,
+            (call) async => call.method == 'uninstall'
+                ? true
+                : {
+                    'protocol': 1,
+                    'native_silent': true,
+                    'worker_attached': attached,
+                    'can_opt_in': true
+                  });
+    Future<bool> install() => demo.install(
+        profile: 'demo',
+        onRun: (_) async => WakeOutcome.noChange,
+        onCancel: (_) async {});
+    expect(demo.canOptIn, isFalse);
+    expect(await install(), isTrue);
+    expect(demo.canOptIn, isTrue);
+    await demo.uninstall('demo');
+    expect(demo.canOptIn, isFalse);
+    // A native that is not attached never authorizes opt-in.
+    attached = false;
+    expect(await install(), isFalse);
+    expect(demo.canOptIn, isFalse);
+  });
   test(
       'UI observer needs no profile and survives unavailable worker installation',
       () async {

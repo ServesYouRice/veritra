@@ -1,2 +1,4 @@
 #include "Crypto.xcconfig"
 #include "Generated.xcconfig"
+// Debug only: Info.plist copies this so native can see the demo switches (D52).
+VERITRA_PLIST_DEFINES = $(DART_DEFINES)

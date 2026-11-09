@@ -884,6 +884,44 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     and epochs. The Dart binding adds only the stateless calls (derive,
     chk_commit, seal, open, verify); the device-level calls come with step 4.
   - No new crate and no Cargo.lock change (D84).
+- **C7 steps 3 and 4, vectors, Go check and Dart building blocks (2026-11-07):**
+  no ABI change (counters stay ABI 13, schema 20, migration 0050); nothing is
+  wired into send, receive, the database or the server, and no payload type is
+  registered. Every ABI 13 piece still needs the independent crypto review
+  before release. Evidence: `testing/evidence/C7-steps3-4.md`.
+  - **Vector** `testing/vectors/c7-ordering-v1.json`: every row of the
+    ordering table (Trace 2 plus the other rows, invalid records, `unsure`
+    and `keyless` moves), the implicit genesis, the generation windows
+    (decision 6) and the VAP1 slack (the compact record message is a 512-byte
+    VAP1 with 19 bytes spare; a move is 768 with 55). Dart checks it with the
+    app logic, Go re-writes the table and re-derives every value of
+    `c7-primitives-v1.json` from the inputs
+    (`server/internal/c7vector`, standard library only), Rust checks that the
+    vector is well formed and that the window and slack arithmetic follow the
+    core's sizes.
+  - **Dart device calls** (`NativeCryptoDevice`): `c7ProcessCommit` and
+    `c7MergePendingCommit` (outcome and exporter root, `C7CommitOutcome`),
+    `c7Decrypt` (plaintext and epoch), `c7MemberSignatureKey`, `c7Sign`.
+  - **Dart logic** (`mobile/lib/crypto/c7_history.dart`, `c7_keys.dart`):
+    full and compact record codecs, the ordering table as an immutable
+    per-channel state, the window check, the sender-key rule (tree key, else
+    the server's list and "from a former member", else drop), the key
+    schedule and body helpers. `AppPayloadCodec.framedLength` exposes the
+    bucket arithmetic.
+  - **Reading of the table to confirm at review:** a `closed` channel leaves
+    `closed` only through a live switch or move above the highest valid
+    `seq` (row 5, or row 3 when it also chains from the head); every `full`
+    channel keeps the highest miss epoch and only a record or slot above it
+    returns `unsure` or `keyless` to `ok`; a record whose chain shape is wrong
+    (create not at seq 0 with zero `prev`, or a non-create at seq 0) is
+    invalid before the table; a valid record has `seq <= 2^31` and at most
+    1024 above the highest valid `seq` seen (owner answer 2026-11-08), so
+    recovery room always remains; row 5 and row 1 start a new period.
+  - **Not built:** persistence (local schema), `history_sync` assembly and
+    handling, rekey at the three merge sites, targeted-action sealing, the
+    backward walk, two-pass import, prefetch and the UI marking. They need a
+    local schema bump (the C7 tables in `backup_exclusion.dart`), which this
+    package may not take.
 - **B3 polls (2026-11-07):** additive, app layer only (no ABI, schema,
   migration or server change). `poll` and `poll_vote` payload types turned
   on (wire names `poll`, `poll_vote`); votes live in the poll row's body, so

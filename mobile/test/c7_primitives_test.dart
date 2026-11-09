@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/crypto/c7_keys.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 import 'native_test_env.dart';
@@ -97,6 +98,59 @@ void main() {
             sealed: hex(outputs['sealed_body_hex']),
           ),
           isNull,
+        );
+      },
+      skip: nativeCryptoSkip(),
+    );
+
+    test(
+      'the key schedule and body helpers match the shared vector',
+      () {
+        final keys = C7Keys(bindings);
+        final chk = keys.rekeyChk(
+          root: hex(inputs['root_hex']),
+          communityId: inputs['community_id'] as String,
+          channelId: inputs['channel_id'] as String,
+        );
+        expect(chk, hex(outputs['chk_hex']));
+        final bodyKey = keys.postBodyKey(
+          chk: chk,
+          communityId: inputs['community_id'] as String,
+          channelId: inputs['channel_id'] as String,
+          senderDeviceId: inputs['sender_device_id'] as String,
+          actionId: inputs['action_id'] as String,
+        );
+        expect(bodyKey, hex(outputs['body_key_hex']));
+        final aad = C7Keys.bodyAad(
+          conversationId: inputs['conversation_id'] as String,
+          channelId: inputs['channel_id'] as String,
+          senderDeviceId: inputs['sender_device_id'] as String,
+          actionId: inputs['action_id'] as String,
+        );
+        expect(aad, hex(outputs['body_aad_hex']));
+        final opened = keys.openBody(
+          bodyKey: bodyKey,
+          aad: aad,
+          sealed: hex(outputs['sealed_body_hex']),
+        )!;
+        expect(
+            opened.signature, hex(inputs['body_plaintext_hex']).sublist(0, 64));
+        expect(
+            opened.paddedVap1, hex(inputs['body_plaintext_hex']).sublist(64));
+        // Another key is "not this one", never an error.
+        expect(
+          keys.openBody(
+            bodyKey: Uint8List(32),
+            aad: aad,
+            sealed: hex(outputs['sealed_body_hex']),
+          ),
+          isNull,
+        );
+        // A group-level message has an empty channel in its aad.
+        expect(
+          C7Keys.bodyAad(
+              conversationId: 'c', senderDeviceId: 'd', actionId: 'a'),
+          [0, 1, 0x63, 0, 0, 0, 1, 0x64, 0, 1, 0x61],
         );
       },
       skip: nativeCryptoSkip(),
