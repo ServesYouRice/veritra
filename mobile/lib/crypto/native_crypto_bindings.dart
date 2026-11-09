@@ -550,8 +550,6 @@ class NativeCryptoBindings {
         _c7MemberKey =
             library.lookupFunction<_C7MemberKeyNative, _C7MemberKeyDart>(
                 'pm_crypto_group_member_signature_key'),
-        _c7Sign = library.lookupFunction<_HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart>('pm_crypto_c7_sign'),
         _attachmentEncrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
@@ -1233,7 +1231,6 @@ class NativeCryptoBindings {
   final _C7MergeDart _c7MergePending;
   final _C7DecryptDart _c7GroupDecrypt;
   final _C7MemberKeyDart _c7MemberKey;
-  final _HandleTwoSlicesOutputDart _c7Sign;
   final _AttachmentChunkDart _attachmentEncrypt;
   final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
