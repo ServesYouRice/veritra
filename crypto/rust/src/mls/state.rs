@@ -196,6 +196,7 @@ impl MlsDevice {
                 pending_transfers,
                 sealed: Default::default(),
                 held_list_seed: None,
+                held: Default::default(),
             },
             counter,
         ))

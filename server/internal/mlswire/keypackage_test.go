@@ -23,6 +23,44 @@ func TestValidateKeyPackageAcceptsClientAndSyntheticPackages(t *testing.T) {
 	}
 }
 
+// C4 (ABI 20): every client key package advertises the role-record
+// GroupContext extension 0xF0C4 in its leaf capabilities, and the server
+// must keep accepting it (and reading its leaf key) exactly as before.
+func TestValidateKeyPackageAcceptsTheRoleRecordCapability(t *testing.T) {
+	abi20 := mlswiretest.OpenMLSKeyPackageABI20()
+	if err := mlswire.ValidateKeyPackage(abi20); err != nil {
+		t.Fatalf("ABI 20 client key package rejected: %v", err)
+	}
+	// The capability is really there: extensions list {0xF0C4}, between
+	// the cipher suites {1, 2, 3} and the empty proposals list.
+	capabilities := []byte{0x06, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x02, 0xf0, 0xc4, 0x00}
+	if !bytes.Contains(abi20, capabilities) {
+		t.Fatal("ABI 20 fixture does not list extension 0xF0C4")
+	}
+	key, err := mlswire.LeafSignatureKey(abi20)
+	if err != nil || len(key) != 32 {
+		t.Fatalf("LeafSignatureKey = %x, %v", key, err)
+	}
+	for n := 0; n < len(abi20); n++ {
+		if mlswire.ValidateKeyPackage(abi20[:n]) == nil {
+			t.Fatalf("ABI 20 package truncated to %d bytes accepted", n)
+		}
+	}
+	// Any extension capability list of whole uint16 values passes, the role
+	// record's among others; an odd-length one does not.
+	for name, list := range map[string][]byte{
+		"role record only":     {0xf0, 0xc4},
+		"role record and more": {0xf0, 0xc4, 0xf0, 0xc5, 0x0a, 0x0a},
+	} {
+		if err := mlswire.ValidateKeyPackage(build(func(k *keyPackage) { k.capabilities[2] = list })); err != nil {
+			t.Errorf("%s rejected: %v", name, err)
+		}
+	}
+	if mlswire.ValidateKeyPackage(build(func(k *keyPackage) { k.capabilities[2] = []byte{0xf0, 0xc4, 0x00} })) == nil {
+		t.Error("odd-length extension capability list accepted")
+	}
+}
+
 func TestValidateKeyPackageRejectsNonPackages(t *testing.T) {
 	fixture := mlswiretest.OpenMLSKeyPackage()
 	cases := map[string][]byte{
@@ -97,6 +135,7 @@ func TestValidateKeyPackageRejectsMalformedFields(t *testing.T) {
 // whatever it accepts stops being accepted once a byte is added or removed.
 func FuzzValidateKeyPackage(f *testing.F) {
 	f.Add(mlswiretest.OpenMLSKeyPackage())
+	f.Add(mlswiretest.OpenMLSKeyPackageABI20())
 	f.Add(mlswiretest.KeyPackage())
 	f.Add(build(nil))
 	f.Add(make([]byte, 64))
