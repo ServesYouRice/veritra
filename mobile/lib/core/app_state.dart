@@ -4206,9 +4206,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // carry it; otherwise the payload has none and receivers fall back to
       // the server-stamped time.
       final retention = conversation.retentionSeconds;
-      final DateTime? senderExpiry = retention != null && retention > 0
-          ? DateTime.now().toUtc().add(Duration(seconds: retention))
-          : null;
+      // C3 info payloads never expire: a key must outlive the timer.
+      final DateTime? senderExpiry =
+          retention != null && retention > 0 && !infoPayloadTypes.contains(type)
+              ? DateTime.now().toUtc().add(Duration(seconds: retention))
+              : null;
       final Object? expiringService = mls;
       if (mls != null &&
           senderExpiry != null &&

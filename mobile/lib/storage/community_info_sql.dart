@@ -43,6 +43,7 @@ class CommunityInfoEvent {
     List<int>? key,
     this.revision,
     this.recordSha256,
+    this.seq,
   }) : key = key == null ? null : List<int>.unmodifiable(key);
 
   final CommunityInfoEventKind kind;
@@ -60,6 +61,24 @@ class CommunityInfoEvent {
   final List<int>? key;
   final int? revision;
   final String? recordSha256;
+
+  /// Arrival order, set by the store on read (null on a new event). Later
+  /// rows have larger numbers.
+  final int? seq;
+
+  CommunityInfoEvent _withSeq(int value) => CommunityInfoEvent(
+        kind: kind,
+        subjectKind: subjectKind,
+        subjectId: subjectId,
+        conversationId: conversationId,
+        senderAccountId: senderAccountId,
+        senderDeviceId: senderDeviceId,
+        keyId: keyId,
+        key: key,
+        revision: revision,
+        recordSha256: recordSha256,
+        seq: value,
+      );
 
   /// The row's identity: a repeat of the same key, announcement or request
   /// is one row.
@@ -132,7 +151,11 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
   if (!event.isStorable || rows.any((r) => r.ident == event.ident)) {
     return rows;
   }
-  final next = [...rows, event];
+  var top = 0;
+  for (final row in rows) {
+    if ((row.seq ?? 0) > top) top = row.seq!;
+  }
+  final next = [...rows, event._withSeq(top + 1)];
   final same = next
       .where((r) =>
           r.kind == event.kind &&
@@ -246,9 +269,15 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
           key: row.readNullable<Uint8List>('info_key'),
           revision: row.readNullable<int>('revision'),
           recordSha256: row.readNullable<String>('record_sha256'),
+          seq: row.read<int>('seq'),
         ),
     ];
   }
+
+  /// Writes events outside any MLS commit: this device's own keys, which it
+  /// creates itself and never receives.
+  Future<void> writeCommunityInfoEvents(List<CommunityInfoEvent> events) =>
+      transaction(() => _writeCommunityInfoInTransaction(events));
 
   Future<AcceptedCommunityInfo?> readAcceptedCommunityInfo(
       String subjectKind, String subjectId) async {
