@@ -21,6 +21,7 @@ import (
 //	PUT    {id}/members/{account}/timeout {seconds}   (0 clears)
 //	PUT    {id}/channels/{channel}/slow-mode {seconds} (0 turns off)
 //	PUT    {id}/invites-pause             {seconds}   (0 resumes)
+//	GET    {id}/moderation-state              (pause and slow modes, visible channels only)
 //	GET    {id}/moderation-events
 func (a *API) moderationRoute(w http.ResponseWriter, r *http.Request, principal domain.Principal, parts []string) bool {
 	community := parts[0]
@@ -37,7 +38,7 @@ func (a *API) moderationRoute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		a.publishCommunityRemoval(r, community, target, "membership.removed", removal)
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "community.member.kicked", map[string]string{"community_id": community})
-		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "membership_removed", "mls_coordination": "pending"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "membership_removed", "mls_coordination": "pending", "channels": removalChannels(removal)})
 	case len(parts) == 2 && parts[1] == "bans" && r.Method == http.MethodPost:
 		var req struct {
 			AccountID string `json:"account_id"`
@@ -56,7 +57,7 @@ func (a *API) moderationRoute(w http.ResponseWriter, r *http.Request, principal 
 		}
 		a.publishCommunityRemoval(r, community, target, "membership.removed", removal)
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "community.member.banned", map[string]string{"community_id": community})
-		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "banned", "mls_coordination": "pending"})
+		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "banned", "mls_coordination": "pending", "channels": removalChannels(removal)})
 	case len(parts) == 2 && parts[1] == "bans" && r.Method == http.MethodGet:
 		bans, err := a.Store.ListCommunityBans(r.Context(), community, principal.AccountID)
 		if err != nil {
@@ -111,6 +112,13 @@ func (a *API) moderationRoute(w http.ResponseWriter, r *http.Request, principal 
 			return true
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok", "invites_paused_until": until})
+	case len(parts) == 2 && parts[1] == "moderation-state" && r.Method == http.MethodGet:
+		state, err := a.Store.GetModerationState(r.Context(), community, principal.AccountID)
+		if err != nil {
+			handleStorageError(w, err)
+			return true
+		}
+		writeJSON(w, http.StatusOK, state)
 	case len(parts) == 2 && parts[1] == "moderation-events" && r.Method == http.MethodGet:
 		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 		events, err := a.Store.ListModerationEvents(r.Context(), community, principal.AccountID, limit)
@@ -158,4 +166,14 @@ func (a *API) publishCommunityRemoval(r *http.Request, communityID, target, even
 		a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), channel.ConversationID), realtime.Event{Version: "v1", Type: eventType, ID: channel.RemainingMembersEventID, ConversationID: channel.ConversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.publishCommittedEvent(r.Context(), []string{target}, realtime.Event{Version: "v1", Type: eventType, ID: channel.RemovedMemberEventID, ConversationID: channel.ConversationID, Payload: payload, CreatedAt: time.Now().UTC()})
 	}
+}
+
+// removalChannels is the per-channel part of a removal response, the same
+// shape as DELETE /communities/{id}/members/{account}.
+func removalChannels(removal storage.CommunityRemoval) []map[string]interface{} {
+	channels := make([]map[string]interface{}, 0, len(removal.Channels))
+	for _, channel := range removal.Channels {
+		channels = append(channels, map[string]interface{}{"conversation_id": channel.ConversationID, "event_id": channel.RemovedMemberEventID})
+	}
+	return channels
 }

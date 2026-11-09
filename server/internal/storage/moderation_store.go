@@ -427,3 +427,59 @@ func checkNotTimedOutTx(ctx context.Context, tx *sql.Tx, conversationID, account
 	}
 	return nil
 }
+
+// ChannelSlowMode is one channel's slow-mode setting.
+type ChannelSlowMode struct {
+	ChannelID       string `json:"channel_id"`
+	SlowModeSeconds int64  `json:"slow_mode_seconds"`
+}
+
+// ModerationState is what a moderation screen shows besides the lists.
+type ModerationState struct {
+	InvitesPausedUntil *time.Time        `json:"invites_paused_until"`
+	Channels           []ChannelSlowMode `json:"channels"`
+}
+
+// GetModerationState returns the pause and the channels' slow modes to the
+// community's moderators and above.
+func (s *Store) GetModerationState(ctx context.Context, communityID, actorAccountID string) (ModerationState, error) {
+	role, err := communityRoleTx(ctx, s.db, communityID, actorAccountID)
+	if err != nil {
+		return ModerationState{}, err
+	}
+	if !domain.CanManageMembers(role) {
+		return ModerationState{}, ErrForbidden
+	}
+	state := ModerationState{Channels: make([]ChannelSlowMode, 0)}
+	var paused sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT invites_paused_until FROM communities WHERE id = ?`, communityID).Scan(&paused); err != nil {
+		return ModerationState{}, err
+	}
+	if paused.Valid {
+		if end := parseTime(paused.String); end.After(time.Now().UTC()) {
+			state.InvitesPausedUntil = &end
+		}
+	}
+	// Same visibility as the channel list: a private channel is shown only to
+	// members of its conversation, so its id and setting do not leak.
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT ch.id, ch.slow_mode_seconds
+		FROM channels ch
+		LEFT JOIN community_channel_routes r ON r.channel_id = ch.id
+		WHERE ch.community_id = ?1
+		  AND (r.channel_id IS NULL OR r.access_mode <> 'private'
+		       OR EXISTS (SELECT 1 FROM memberships m WHERE m.conversation_id = r.conversation_id AND m.account_id = ?2))
+		ORDER BY ch.created_at, ch.id`, communityID, actorAccountID)
+	if err != nil {
+		return ModerationState{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c ChannelSlowMode
+		if err := rows.Scan(&c.ChannelID, &c.SlowModeSeconds); err != nil {
+			return ModerationState{}, err
+		}
+		state.Channels = append(state.Channels, c)
+	}
+	return state, rows.Err()
+}

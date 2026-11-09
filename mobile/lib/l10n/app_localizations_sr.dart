@@ -3248,6 +3248,137 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get callNoticeFailed =>
       'Позив није успео да се повеже. За позиве је потребна подешена релејна (TURN) услуга сервера.';
+
+  @override
+  String get moderationTitle => 'Модерација';
+
+  @override
+  String get moderationDetail =>
+      'Забране, утишавање чланова, спори режим, паузирање позивница и дневник активности';
+
+  @override
+  String memberModerateTooltip(String username) {
+    return 'Модерирај $username';
+  }
+
+  @override
+  String get memberBanAction => 'Забрани…';
+
+  @override
+  String get memberTimeoutAction => 'Привремено утишај…';
+
+  @override
+  String get memberTimeoutLift => 'Укини утишавање';
+
+  @override
+  String banTitle(String username) {
+    return 'Забранити $username?';
+  }
+
+  @override
+  String get banMessage =>
+      'Уклањају се из заједнице и не могу се вратити док се забрана не укине.';
+
+  @override
+  String get banConfirm => 'Забрани';
+
+  @override
+  String timeoutTitle(String username) {
+    return 'Колико дуго утишати $username?';
+  }
+
+  @override
+  String get timeoutDone => 'Утишавање је постављено.';
+
+  @override
+  String get moderationSectionInvites => 'Позивнице';
+
+  @override
+  String get moderationInvitesOpen => 'Везе за позивнице раде нормално.';
+
+  @override
+  String moderationInvitesPaused(String time) {
+    return 'Паузирано до $time.';
+  }
+
+  @override
+  String get moderationPauseInvites => 'Паузирај позивнице';
+
+  @override
+  String get moderationResumeInvites => 'Настави позивнице';
+
+  @override
+  String get moderationSectionSlow => 'Спори режим';
+
+  @override
+  String get moderationSlowOff => 'Искључено';
+
+  @override
+  String moderationSlowEvery(String interval) {
+    return 'Једна порука на сваких $interval';
+  }
+
+  @override
+  String moderationSlowTitle(String channel) {
+    return 'Спори режим у каналу $channel';
+  }
+
+  @override
+  String get moderationSectionBans => 'Забрањени налози';
+
+  @override
+  String get moderationNoBans => 'Нико није забрањен.';
+
+  @override
+  String moderationUnban(String username) {
+    return 'Укини забрану за $username';
+  }
+
+  @override
+  String get moderationSectionLog => 'Дневник активности';
+
+  @override
+  String get moderationNoEvents => 'Још ништа.';
+
+  @override
+  String moderationLogKick(String actor, String target) {
+    return '$actor је уклонио/ла $target';
+  }
+
+  @override
+  String moderationLogBan(String actor, String target) {
+    return '$actor је забранио/ла $target';
+  }
+
+  @override
+  String moderationLogUnban(String actor, String target) {
+    return '$actor је укинуо/ла забрану за $target';
+  }
+
+  @override
+  String moderationLogTimeout(String actor, String target) {
+    return '$actor је утишао/ла $target';
+  }
+
+  @override
+  String moderationLogTimeoutCleared(String actor, String target) {
+    return '$actor је укинуо/ла утишавање за $target';
+  }
+
+  @override
+  String moderationLogSlowMode(String actor) {
+    return '$actor је променио/ла спори режим';
+  }
+
+  @override
+  String moderationLogInvitesPaused(String actor) {
+    return '$actor је паузирао/ла позивнице';
+  }
+
+  @override
+  String moderationLogInvitesResumed(String actor) {
+    return '$actor је наставио/ла позивнице';
+  }
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6498,4 +6629,135 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get callNoticeFailed =>
       'Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.';
+
+  @override
+  String get moderationTitle => 'Moderacija';
+
+  @override
+  String get moderationDetail =>
+      'Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti';
+
+  @override
+  String memberModerateTooltip(String username) {
+    return 'Moderiraj $username';
+  }
+
+  @override
+  String get memberBanAction => 'Zabrani…';
+
+  @override
+  String get memberTimeoutAction => 'Privremeno utišaj…';
+
+  @override
+  String get memberTimeoutLift => 'Ukini utišavanje';
+
+  @override
+  String banTitle(String username) {
+    return 'Zabraniti $username?';
+  }
+
+  @override
+  String get banMessage =>
+      'Uklanjaju se iz zajednice i ne mogu se vratiti dok se zabrana ne ukine.';
+
+  @override
+  String get banConfirm => 'Zabrani';
+
+  @override
+  String timeoutTitle(String username) {
+    return 'Koliko dugo utišati $username?';
+  }
+
+  @override
+  String get timeoutDone => 'Utišavanje je postavljeno.';
+
+  @override
+  String get moderationSectionInvites => 'Pozivnice';
+
+  @override
+  String get moderationInvitesOpen => 'Veze za pozivnice rade normalno.';
+
+  @override
+  String moderationInvitesPaused(String time) {
+    return 'Pauzirano do $time.';
+  }
+
+  @override
+  String get moderationPauseInvites => 'Pauziraj pozivnice';
+
+  @override
+  String get moderationResumeInvites => 'Nastavi pozivnice';
+
+  @override
+  String get moderationSectionSlow => 'Spori režim';
+
+  @override
+  String get moderationSlowOff => 'Isključeno';
+
+  @override
+  String moderationSlowEvery(String interval) {
+    return 'Jedna poruka na svakih $interval';
+  }
+
+  @override
+  String moderationSlowTitle(String channel) {
+    return 'Spori režim u kanalu $channel';
+  }
+
+  @override
+  String get moderationSectionBans => 'Zabranjeni nalozi';
+
+  @override
+  String get moderationNoBans => 'Niko nije zabranjen.';
+
+  @override
+  String moderationUnban(String username) {
+    return 'Ukini zabranu za $username';
+  }
+
+  @override
+  String get moderationSectionLog => 'Dnevnik aktivnosti';
+
+  @override
+  String get moderationNoEvents => 'Još ništa.';
+
+  @override
+  String moderationLogKick(String actor, String target) {
+    return '$actor je uklonio/la $target';
+  }
+
+  @override
+  String moderationLogBan(String actor, String target) {
+    return '$actor je zabranio/la $target';
+  }
+
+  @override
+  String moderationLogUnban(String actor, String target) {
+    return '$actor je ukinuo/la zabranu za $target';
+  }
+
+  @override
+  String moderationLogTimeout(String actor, String target) {
+    return '$actor je utišao/la $target';
+  }
+
+  @override
+  String moderationLogTimeoutCleared(String actor, String target) {
+    return '$actor je ukinuo/la utišavanje za $target';
+  }
+
+  @override
+  String moderationLogSlowMode(String actor) {
+    return '$actor je promenio/la spori režim';
+  }
+
+  @override
+  String moderationLogInvitesPaused(String actor) {
+    return '$actor je pauzirao/la pozivnice';
+  }
+
+  @override
+  String moderationLogInvitesResumed(String actor) {
+    return '$actor je nastavio/la pozivnice';
+  }
 }

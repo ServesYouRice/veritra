@@ -241,3 +241,92 @@ class CommunityRemoval {
     return CommunityRemoval(channels);
   }
 }
+
+/// One ban in a community (C5).
+class CommunityBan {
+  const CommunityBan({
+    required this.accountId,
+    required this.username,
+    required this.bannedBy,
+    required this.createdAt,
+  });
+
+  final String accountId;
+  final String? username;
+  final String bannedBy;
+  final DateTime createdAt;
+
+  factory CommunityBan.fromJson(Map<String, Object?> json) {
+    final username = json['username'];
+    return CommunityBan(
+      accountId: json['account_id']! as String,
+      username: username is String && username.isNotEmpty ? username : null,
+      bannedBy: json['banned_by']! as String,
+      createdAt: DateTime.parse(json['created_at']! as String),
+    );
+  }
+}
+
+/// One audit row (C5): ids and an action kind, never a reason.
+class ModerationEvent {
+  const ModerationEvent({
+    required this.id,
+    required this.actor,
+    required this.target,
+    required this.channelId,
+    required this.action,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String actor;
+  final String? target;
+  final String? channelId;
+
+  /// `kick`, `ban`, `unban`, `timeout`, `timeout_cleared`, `slow_mode`,
+  /// `invites_paused` or `invites_resumed`.
+  final String action;
+  final DateTime createdAt;
+
+  factory ModerationEvent.fromJson(Map<String, Object?> json) {
+    String? optional(String key) {
+      final value = json[key];
+      return value is String && value.isNotEmpty ? value : null;
+    }
+
+    return ModerationEvent(
+      id: json['id']! as String,
+      actor: json['actor_account_id']! as String,
+      target: optional('target_account_id'),
+      channelId: optional('channel_id'),
+      action: json['action']! as String,
+      createdAt: DateTime.parse(json['created_at']! as String),
+    );
+  }
+}
+
+/// What a moderation screen shows besides the lists: whether invitations are
+/// paused and each channel's slow mode, in seconds (0 is off).
+class ModerationState {
+  const ModerationState({
+    required this.invitesPausedUntil,
+    required this.slowModeSeconds,
+  });
+
+  final DateTime? invitesPausedUntil;
+  final Map<String, int> slowModeSeconds;
+
+  factory ModerationState.fromJson(Map<String, Object?> json) {
+    final paused = json['invites_paused_until'];
+    final channels = json['channels'];
+    return ModerationState(
+      invitesPausedUntil: paused is String ? DateTime.parse(paused) : null,
+      slowModeSeconds: <String, int>{
+        if (channels is List)
+          for (final row in channels)
+            if (row is Map)
+              row['channel_id']! as String: row['slow_mode_seconds']! as int,
+      },
+    );
+  }
+}
