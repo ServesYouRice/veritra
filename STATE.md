@@ -226,7 +226,17 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D100** (2026-11-07, owner; bug-hunt quiz `docs/owner-questions-2026-11-07.md`) | Recommended answer (A) for all 14 items: TASK-006 messaging stays blocked in releases until L1 is checked on every add; TASK-010/048 commit-then-reveal and key commitment built with L1; TASK-012 the phone saves a rotated push address and sends it at next open; check 02 no server key-package identity check (phones via L1); TASK-168 recovery strictly one use; TASK-170 an extra per-target daily cap; TASK-201 an unfinished approved link is cancelled at expiry with its keys and membership; TASK-162 equal password work for every case, upgrade at login; TASK-209 bounded sync paging behind scoped sync; TASK-106 the sender's signed expiry wins, the shorter time applies; TASK-130/131/132 stricter release checks (verify signing block, bind policy to the candidate, scoped audit exceptions) |
 | **D101** (2026-11-08, owner; round-5 quiz) | C7 (#153): a `closed` channel recovers only through a live switch or a record above the highest valid sequence number, and one record's sequence jump is capped so recovery room always remains. C6 (#151): the report seed never moves between devices (a second owner device makes a new key, as built), is deleted on sign-out after a warning, "already reported" is kept durably, and an owner-only route returns the owner's current report key. W8 phones (#152): demo builds turn muted-mention phone notices on by default; release and profile builds still cannot. The out-of-list edits for TASK-012 are approved. L1-3 builds the Q-1 server key-package gate now (#162) |
 | **D102** (2026-11-08, owner via L1-3; #162) | Reverses D100 check 02 (A): the server refuses key packages that a signed L1 list does not name (`key_package_not_listed`), and claims hand out only listed packages. Text from unapproved senders stays dropped; a made-up genesis is never a sticky conflict |
-| **D103** (2026-11-08, coordinator) | Counters after round 5: crypto ABI 19 (K1 renumbered from 16 at integration; L1 and K2 took 14–18), mobile local schema 26, server migration 0060. Reserved: schema 27 for C6; ABI 21, schema 29 and migration 0062 for the C1 invite rebase (#141) |
+| **D103** (2026-11-08, coordinator) | Counters: crypto ABI 20, mobile local schema 31, server migration 0064 |
+| **D104** (2026-11-09, owner) | Strangers' requests show the username and photo but not the display name until accepted |
+| **D105** (2026-11-09, owner) | Group calls, L2, L3 and SDK use all the design defaults |
+| **D106** (2026-11-09, owner) | The desktop update check is on by default and can be turned off |
+| **D107** (2026-11-09, owner) | The F-Droid build uses UnifiedPush |
+| **D108** (2026-11-09, owner) | C7 sequence cap is 1024, at most 2^31 |
+| **D109** (2026-11-09, owner) | Only admins create channels |
+| **D110** (2026-11-09, owner) | Backup space is shared per account |
+| **D111** (2026-11-09, owner) | Phones back up when the app opens |
+| **D112** (2026-11-09, owner) | Desktop message previews are shared across accounts for now |
+| **D113** (2026-11-09, owner) | The owner accepts the recommended defaults for the bug-hunt owner questions (TASK-039, 103, 106, 130-132, 201, checks 02 and 24) |
 
 ## Roadmap
 
