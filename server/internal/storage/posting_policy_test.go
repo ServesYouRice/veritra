@@ -114,3 +114,61 @@ func TestAnnouncementChannelRefusesMemberPosts(t *testing.T) {
 		t.Fatalf("by id: %+v %v", got, err)
 	}
 }
+
+func TestOnlyAdminsCreateChannels(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	moderator := registerTestMember(t, ctx, store, invite.Code, "moderator")
+	member := registerTestMember(t, ctx, store, invite.Code, "member")
+	admin := registerTestMember(t, ctx, store, invite.Code, "admin")
+
+	community, err := store.CreateCommunity(ctx, "comm", owner.Account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, community.ID, owner.Account.ID, moderator.Account.ID, domain.RoleModerator); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, community.ID, owner.Account.ID, member.Account.ID, domain.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ManageCommunityMember(ctx, community.ID, owner.Account.ID, admin.Account.ID, domain.RoleAdmin); err != nil {
+		t.Fatal(err)
+	}
+
+	// Member and moderator cannot create channels (owner decision).
+	if _, _, err := store.CreateChannelWithConversation(ctx, community.ID, "mod-chan", "private", moderator.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("moderator created channel: %v", err)
+	}
+	if _, err := store.CreateChannel(ctx, community.ID, "mod-chan-legacy", "private", moderator.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("moderator created legacy channel: %v", err)
+	}
+	if _, _, err := store.CreateChannelWithConversation(ctx, community.ID, "mem-chan", "private", member.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("member created channel: %v", err)
+	}
+	if _, err := store.CreateChannel(ctx, community.ID, "mem-chan-legacy", "private", member.Account.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("member created legacy channel: %v", err)
+	}
+
+	// Admin and owner can create channels.
+	adminChan, adminConv, err := store.CreateChannelWithConversation(ctx, community.ID, "admin-chan", "private", admin.Account.ID)
+	if err != nil {
+		t.Fatalf("admin create channel: %v", err)
+	}
+	if adminChan.Name != "admin-chan" || adminConv.ID == "" {
+		t.Fatalf("unexpected channel: %+v %+v", adminChan, adminConv)
+	}
+	ownerChan, ownerConv, err := store.CreateChannelWithConversation(ctx, community.ID, "owner-chan", "private", owner.Account.ID)
+	if err != nil {
+		t.Fatalf("owner create channel: %v", err)
+	}
+	if ownerChan.Name != "owner-chan" || ownerConv.ID == "" {
+		t.Fatalf("unexpected channel: %+v %+v", ownerChan, ownerConv)
+	}
+}
