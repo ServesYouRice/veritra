@@ -3761,6 +3761,8 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get autoBackupPromptLater => 'Не сада';
+
+  @override
   String get connectSignInPasskey => 'Пријава приступним кључем';
 
   @override
@@ -7710,6 +7712,8 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupPromptLater => 'Ne sada';
+
+  @override
   String get connectSignInPasskey => 'Prijava pristupnim ključem';
 
   @override

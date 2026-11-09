@@ -8964,11 +8964,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// The AppState is unusable afterwards.
   Future<void> closeForSwitch() async {
     dispose();
+    await _switchResourceClose;
     // A request that never answers must not hold the switch: the client was
     // closed above, and the generation fence drops anything that arrives.
     await backgroundWorkIdle.timeout(const Duration(seconds: 5),
         onTimeout: () {});
   }
+
+  Future<void>? _switchResourceClose;
 
   @override
   void dispose() {
@@ -9003,7 +9006,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(sync?.dispose());
     unawaited(_pushSubscription?.cancel());
     pushService.dispose();
-    unawaited(_mlsCrypto?.dispose());
+    _switchResourceClose = _mlsCrypto?.dispose();
+    unawaited(_switchResourceClose);
     unawaited(_callSignals.close());
     api?.close();
     super.dispose();

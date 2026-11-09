@@ -30,7 +30,78 @@ Package B7, design `docs/designs/B7-passkeys.md`, owner defaults D93.
   open ceremonies (S2, O5 default).
 - Account export lists passkey name and times only.
 
-## Not done yet
+# B7 passkeys and accounts — integration evidence
 
-- S3 (Flutter app), S4 to S6 (account switcher), and the on-device runs
-  (Windows Hello by the owner; Android and iOS need signed builds).
+2026-11-09, Windows, branch `ai/b7-passkeys`, base
+`6a62e3c68bdabc7f3854795246cc516ce5d00513`.
+
+## Scope and source
+
+Ported PR #169 from `origin/agent/b7-phone`: `bbb728d`, `4516cfa`,
+`098c43b` and its review fixes `691c615`. The later K0 test-date change was
+already superseded on this base (2099 rather than 2030), so it was skipped.
+Preserved current profiles, reporting, automatic backups and phone notices
+when resolving the overlapping AppState, demo entry point and settings code.
+
+S1–S2 were already on the base (server migration `0057_passkeys.sql`). This
+port adds no schema, server migration or ABI number. `STATE.md` is unchanged.
+
+## Additional integration fixes
+
+- A cold demo wake selects only the protected registry's active account.
+  The native bound profile must match it; unreadable registry state opens
+  no background runtime. Every demo account retains the existing phone
+  notice build switch and binds/uninstalls its own wake worker.
+- Desktop preview preferences are actually wired per slot. A new slot
+  copies the primary choice before the primary can be removed. Late settings
+  reads after teardown stay silent.
+- C6 report seeds use slot-specific keystore names; the primary retains its
+  existing names. Removing a slot erases its seeds and preferences only.
+- Switching waits for serialized native crypto disposal and desktop teardown.
+  Old desktop notifications are closed, and late notification work is refused.
+  Failed desktop startup closes the attempted runtime before rollback.
+- Added the passkey entitlement fixtures to the Windows test script and
+  documented the matching Apple entitlement/Dart-domain build inputs.
+- Removed a trailing blank line in the base's `recovery_bound_test.go` that
+  prevented the required gofmt check from passing.
+
+## Checks
+
+- `flutter pub get --enforce-lockfile`: passed with the port's pinned plugin
+  family and existing dependency notices.
+- B7 passkey, slot, host, screen, isolation and wake tests: passed. Extra
+  regression tests cover report-seed erasure, copied privacy settings,
+  native-handle drain, desktop-start rollback and delayed notices/settings.
+- `flutter analyze`: passed; Dart formatting passed.
+- Full `flutter test` with `VERITRA_CRYPTO_LIBRARY` naming this worktree's
+  absolute Windows DLL: 2,599 passed, 22 skipped in the final script run.
+- `go test ./...`, `go vet ./...`: passed.
+- `cargo build --release`, `cargo test`, `cargo clippy --all-targets -- -D warnings`:
+  passed (223 Rust unit tests and 7 integration tests; measurement/vector
+  generators remain ignored).
+- `scripts/lint.ps1`: passed.
+- `scripts/check-demo-boundary.sh`: passed, using the repository's Python
+  shim helper on Windows. Release slots retain `UnavailableCryptoService`.
+- `scripts/license-check.sh`, passkey entitlement fixtures (4 tests), Serbian
+  Latin generation check and `git diff --check`: passed.
+- Final `scripts/test.ps1`: passed (policy fixtures, Go, Rust and all Flutter tests).
+
+The added `demo_e2e_test.dart` B7 case passed against a freshly built Go
+server on loopback and the real Windows OpenMLS DLL. One AccountHost creates
+two accounts, switches back and forth, receives messages sent while paused,
+and keeps the second account's draft out of the first. The test waits for
+server acceptance before pausing a sender: a durable queued send is not yet
+an upload. It runs through the existing demo e2e scripts, without CI changes.
+
+## Decisions and remaining evidence
+
+D93/O1–O10 retained: fixed compiled Apple hosts, Linux password-only,
+password-only recent auth and K0 claims, passkey deletion on K0 completion,
+operator opt-in, paused inactive accounts, five accounts, passwords retained,
+and a same-server linkability warning. No release gate was changed.
+
+S7 remains open: a Windows Hello hand run and signed Android/iOS passkey
+ceremonies/associations on devices. Apple builds cannot be exercised on this
+Windows host. No new platform CI evidence, independent review, signing or
+release approval is claimed. Work was performed alone as requested; the
+original branch's review fixes are preserved. No push or PR change was made.

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
+import 'package:private_messenger/core/account_host.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/attachments.dart';
 import 'package:private_messenger/core/client_config.dart';
@@ -13,6 +14,7 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/storage/account_slots.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 /// Real clients, real OpenMLS, real server: the demo's message flow end to
@@ -26,6 +28,74 @@ void main() {
   final skip = serverPath == null || dataDir == null || libraryPath == null
       ? 'run scripts/test-demo-e2e.sh'
       : false;
+
+  test('B7 switches two accounts with real MLS in one process', () async {
+    final server = _Server(serverPath!, '$dataDir/b7', port);
+    addTearDown(server.stop);
+    await server.start();
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final stores = <String, MemoryLocalStore>{};
+    final clients = <String, _DemoClient>{};
+    final host = AccountHost(
+      registryStore: AccountRegistryStore(
+          storage: MemorySlotKeyValue(), primaryNamespace: 'demo'),
+      eraser: _E2eEraser(),
+      primaryNamespace: 'demo',
+      build: (slot) async {
+        final client = _DemoClient(bindings, server.baseUrl,
+            store: stores.putIfAbsent(slot, MemoryLocalStore.new));
+        clients[slot] = client;
+        return AccountRuntime(
+            namespace: slot, state: client.state, closeStore: () async {});
+      },
+    );
+    addTearDown(host.dispose);
+    await host.start();
+    final owner = clients['demo']!;
+    await owner.state.createOwner(server.baseUrl, 'switchowner',
+        'owner-password-123', 'demo-e2e-setup-token');
+    owner.expectOk();
+    final ownerId = owner.accountId;
+    final invitation = await owner.state.createInvite();
+    owner.expectOk();
+    await host.idle();
+    expect(await host.beginAdd(), SwitchOutcome.done);
+    final secondSlot = host.runtime!.namespace;
+    final alice = clients[secondSlot]!;
+    await alice.state.registerWithInvite(
+        server.baseUrl, invitation!.code, 'switchalice', 'alice-password-123');
+    alice.expectOk();
+    final aliceId = alice.accountId;
+    await host.idle();
+    expect(host.registry.slots.where((s) => s.hasIdentity).length, 2);
+    final dm = await alice.state
+        .startConversation(kind: 'dm', memberAccountIds: [ownerId]);
+    alice.expectOk();
+    expect(await alice.state.sendMessageTo(dm!.id, 'for paused owner'), isTrue);
+    await alice.waitUntil(() async => (await alice.store.loadMessages(dm.id))
+        .any((m) =>
+            m.body == 'for paused owner' && m.state == LocalMessageState.sent));
+    alice.state.composerDrafts.setText(dm.id, 'alice draft');
+
+    expect(await host.switchTo('demo'), SwitchOutcome.done);
+    final reopenedOwner = clients['demo']!;
+    await reopenedOwner.waitFor(dm.id, (m) => m.body == 'for paused owner');
+    expect(reopenedOwner.accountId, ownerId);
+    expect(reopenedOwner.state.composerDrafts.textFor(dm.id), isEmpty);
+    expect(await reopenedOwner.state.sendMessageTo(dm.id, 'for paused alice'),
+        isTrue);
+    await reopenedOwner.waitUntil(() async =>
+        (await reopenedOwner.store.loadMessages(dm.id)).any((m) =>
+            m.body == 'for paused alice' && m.state == LocalMessageState.sent));
+
+    expect(await host.switchTo(secondSlot), SwitchOutcome.done);
+    final reopenedAlice = clients[secondSlot]!;
+    await reopenedAlice.waitFor(dm.id, (m) => m.body == 'for paused alice');
+    expect(reopenedAlice.accountId, aliceId);
+    expect(reopenedAlice.state.composerDrafts.textFor(dm.id), 'alice draft');
+    expect(await stores['demo']!.loadCryptoState(), isNotNull);
+    expect(await stores[secondSlot]!.loadCryptoState(), isNotNull);
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 4)));
 
   test('demo clients exchange every message type and work offline', () async {
     final server = _Server(serverPath!, dataDir!, port);
@@ -300,6 +370,11 @@ void main() {
     expect(replacement.state.syncRecovery, isNull);
     expect(replacement.state.deviceRecoveryRequired, isFalse);
   }, skip: skip, timeout: const Timeout(Duration(minutes: 12)));
+}
+
+class _E2eEraser implements SlotErasing {
+  @override
+  Future<void> erase(String namespace) async {}
 }
 
 class _Server {

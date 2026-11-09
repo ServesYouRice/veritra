@@ -27,6 +27,7 @@ class SecureNotificationSettingsStore implements NotificationSettingsStore {
       {FlutterSecureStorage? storage,
       ProfileScope scope = const ProfileScope()})
       : _key = scope.secureKey('notifications.hide_preview.v1'),
+        _isPrimary = scope.isPrimary,
         _storage = storage ??
             const FlutterSecureStorage(
               mOptions: MacOsOptions(usesDataProtectionKeychain: false),
@@ -36,12 +37,22 @@ class SecureNotificationSettingsStore implements NotificationSettingsStore {
   static const key = 'veritra.notifications.hide_preview.v1';
 
   final String _key;
+  final bool _isPrimary;
 
   final FlutterSecureStorage _storage;
 
   @override
   Future<bool?> loadHidePreview() async {
-    final value = await _storage.read(key: _key);
+    var value = await _storage.read(key: _key);
+    if (value == null && !_isPrimary) {
+      // Copy once, then each account owns its preference. A failed read or
+      // write leaves previews hidden through NotificationSettings.load.
+      value = await _storage.read(key: key) ?? 'false';
+      await _storage.write(key: _key, value: value);
+      if (await _storage.read(key: _key) != value) {
+        throw StateError('notification preference storage failed');
+      }
+    }
     return value == null ? null : value == 'true';
   }
 
@@ -78,6 +89,7 @@ class NotificationSettings extends ChangeNotifier {
   bool _hidePreview = false;
   bool _changed = false;
   bool _loaded = false;
+  bool _disposed = false;
 
   /// The choice the settings screen shows.
   bool get hidePreview => _hidePreview;
@@ -95,6 +107,7 @@ class NotificationSettings extends ChangeNotifier {
     } catch (_) {
       return;
     }
+    if (_disposed) return;
     _loaded = true;
     if (saved == null || _changed || saved == _hidePreview) return;
     _hidePreview = saved;
@@ -108,6 +121,12 @@ class NotificationSettings extends ChangeNotifier {
       notifyListeners();
     }
     await _store.saveHidePreview(value);
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }
 

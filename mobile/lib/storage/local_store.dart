@@ -2959,6 +2959,9 @@ class SecureLocalStore implements LocalStore {
   /// release layout (database in the support directory, key
   /// `veritra.database_key.v1`) byte for byte.
   final String _namespace;
+
+  /// The fixed account slot this store owns.
+  String get namespace => _namespace;
   bool _existingOnly;
 
   /// Only the actual attached UI may enable initialization. An already-started

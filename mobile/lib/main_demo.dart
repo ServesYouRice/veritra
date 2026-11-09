@@ -68,37 +68,43 @@ Future<void> main(List<String> args) async {
   }
   final namespace = profile == null ? 'demo' : 'demo-$profile';
   usePastedImageProfile(namespace);
+  final kv = SecureSlotKeyValue();
+  final registryStore =
+      AccountRegistryStore(storage: kv, primaryNamespace: namespace);
+  // A cold wake may open only the protected registry's active slot. The
+  // native profile is checked against it by WakeLaunchCoordinator.
+  final startupSlot = await activeAccountSlotForWake(registryStore);
   final bridge = PlatformWakeWorkerBridge(allowOptIn: _phoneNotices);
   // At most one live store and AppState per process (D52 contract): a
-  // background wake and the UI share the primary slot's, so two owners never
+  // background wake and the UI share the active slot's, so two owners never
   // race on MLS state. The account switcher (B7) tears a slot down fully
   // before it builds the next.
-  SecureLocalStore? primaryStore;
-  AppState? primaryState;
+  SecureLocalStore? liveStore;
+  AppState? liveState;
+  String? liveSlot;
 
-  Future<void> _closePrimary() async {
-    final store = primaryStore;
-    primaryStore = null;
-    primaryState = null;
+  Future<void> closeLive() async {
+    final store = liveStore;
+    liveStore = null;
+    liveState = null;
+    liveSlot = null;
     await store?.close();
   }
 
   Future<AccountRuntime> buildRuntime(String slot,
       {required bool background}) async {
-    final isPrimary = slot == namespace;
-    final existing = primaryState;
-    if (isPrimary && existing != null) {
-      if (!background) primaryStore?.allowForegroundInitialization();
+    final existing = liveState;
+    if (liveSlot == slot && existing != null) {
+      if (!background) liveStore?.allowForegroundInitialization();
       return AccountRuntime(
-          namespace: slot, state: existing, closeStore: _closePrimary);
+          namespace: slot, state: existing, closeStore: closeLive);
     }
     final scope = ProfileScope(namespace: slot, primaryNamespace: namespace);
     usePastedImageProfile(scope.pasteScope);
     useOpenedFilesScope(scope.openedFilesFolder);
     // A cold background start opens only existing protected state: no key,
     // database or profile is created for a push.
-    final store = SecureLocalStore(
-        namespace: slot, existingOnly: background && isPrimary);
+    final store = SecureLocalStore(namespace: slot, existingOnly: background);
     final bindings = NativeCryptoBindings.load();
     final state = AppState(
       apiClientFactory: (baseUrl) =>
@@ -121,7 +127,7 @@ Future<void> main(List<String> args) async {
           return ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo);
         },
       ),
-      reportSeedStore: SecureReportSeedStore(),
+      reportSeedStore: SecureReportSeedStore(scope: scope),
       attachmentService: AttachmentCryptoService(bindings,
           directoryProvider: () => slotWorkingDirectory(scope)),
       receiptPreferences:
@@ -144,14 +150,13 @@ Future<void> main(List<String> args) async {
     )..historyTransferDirectory = slotHistoryTransferDirectory(scope);
     // A headless engine has no view: never treat it as resumed.
     if (background) state.handleAppLifecycleState(AppLifecycleState.detached);
-    if (isPrimary) {
-      primaryStore = store;
-      primaryState = state;
-    }
+    liveStore = store;
+    liveState = state;
+    liveSlot = slot;
     return AccountRuntime(
       namespace: slot,
       state: state,
-      closeStore: isPrimary ? _closePrimary : store.close,
+      closeStore: closeLive,
     );
   }
 
@@ -160,9 +165,9 @@ Future<void> main(List<String> args) async {
   /// Installs the native worker for [state]'s account and reports whether
   /// native allows phone notices. Used by a cold background start and, when
   /// the demo switch is on, by the UI process after sign-in.
-  Future<bool> installWorker(AppState state) async {
+  Future<bool> installWorker(AppState state, String slot) async {
     final worker = runner = BackgroundWakeRunner(
-      profile: namespace,
+      profile: slot,
       bridge: bridge,
       restoreExisting: state.restoreForBackgroundWake,
       catchUp: state.catchUpForBackgroundWake,
@@ -175,14 +180,14 @@ Future<void> main(List<String> args) async {
     // stays uninstalled until the next sign-in or process start.
     state.beforeLocalSessionClear = () async {
       worker.cancelForForeground();
-      await bridge.uninstall(namespace);
+      await bridge.uninstall(slot);
     };
     final installed = await bridge.install(
-        profile: namespace, onRun: worker.run, onCancel: worker.cancel);
+        profile: slot, onRun: worker.run, onCancel: worker.cancel);
     if (installed && bridge.canOptIn) return true;
     // Native did not allow phone notices (a build without them): no worker
     // may stay bound, so warm runs cannot catch up either.
-    if (installed) await bridge.uninstall(namespace);
+    if (installed) await bridge.uninstall(slot);
     state.beforeLocalSessionClear = null;
     runner = null;
     return false;
@@ -190,14 +195,16 @@ Future<void> main(List<String> args) async {
 
   final launch = WakeLaunchCoordinator(
     bridge: bridge,
-    profile: namespace,
+    profile: startupSlot ?? namespace,
     // Reached only when native reports a background launch bound to this
     // compiled profile with its silent path installed. Native cold execution
     // exists only in builds made with VERITRA_PHONE_NOTICES; otherwise native
     // never starts this and nothing registers for muted-mention wakes.
     onBackground: () async {
-      final state = (await buildRuntime(namespace, background: true)).state;
-      if (await installWorker(state)) state.allowPhoneNotices();
+      final slot = startupSlot;
+      if (slot == null) return;
+      final state = (await buildRuntime(slot, background: true)).state;
+      if (await installWorker(state, slot)) state.allowPhoneNotices();
     },
     // The UI takes over: cancel any wake first, then wait for its atomic
     // work to drain before the foreground owner starts.
@@ -208,35 +215,38 @@ Future<void> main(List<String> args) async {
       await worker.drain();
     },
     onUi: () async {
-      final kv = SecureSlotKeyValue();
       final host = AccountHost(
-        registryStore:
-            AccountRegistryStore(storage: kv, primaryNamespace: namespace),
+        registryStore: registryStore,
         eraser: SlotEraser(
             storage: kv,
             scope: ProfileScope(
                 namespace: namespace, primaryNamespace: namespace)),
         build: (slot) async {
           final runtime = await buildRuntime(slot, background: false);
-          if (slot == namespace && _phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
-            runtime.state.phoneNoticeInstaller = () => installWorker(runtime.state);
+          if (_phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
+            runtime.state.phoneNoticeInstaller =
+                () => installWorker(runtime.state, slot);
           }
           // At start and then hourly: a crash while running leaves files too.
           runtime.state.startAttachmentOrphanSweep();
           return runtime;
         },
         primaryNamespace: namespace,
-        desktopFactory: DesktopServices.startIfSupported,
+        desktopFactory: (state) => DesktopServices.startIfSupported(state,
+            scope: ProfileScope(
+                namespace: (state.localStore as SecureLocalStore).namespace,
+                primaryNamespace: namespace)),
         inspect: slotInspectorFor(namespace),
         revoke: slotRevokerFor((baseUrl) =>
             ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo)),
-        // Step 3: the wake worker and the bridge leave with the primary slot;
-        // the permit is bound to the profile that is open. The bridge accepts
-        // a new profile after the uninstall; background wakes stay off.
+        // The permit follows the active slot; uninstall fences stale wakes
+        // before another runtime can install a new permit.
         beforeLeave: (runtime) async {
-          if (runtime.namespace != namespace) return;
-          runner?.cancelForForeground();
-          await bridge.uninstall(namespace);
+          final worker = runner;
+          worker?.cancelForForeground();
+          await bridge.uninstall(runtime.namespace);
+          await worker?.drain();
+          runner = null;
         },
         afterClose: (_) async {
           await purgeOpenedAttachments(thisSlotOnly: true);

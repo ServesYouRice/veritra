@@ -128,7 +128,7 @@ void main() {
     }
   });
 
-  AccountHost newHost({bool desktop = false}) {
+  AccountHost newHost({AccountDesktopFactory? desktopFactory}) {
     final scope = const ProfileScope();
     return AccountHost(
       registryStore: AccountRegistryStore(storage: kv),
@@ -139,6 +139,7 @@ void main() {
               directoryProvider: () async => world.support),
           world),
       primaryNamespace: '',
+      desktopFactory: desktopFactory,
       build: (ns) async {
         if (world.failBuild.contains(ns)) throw StateError('cannot open');
         // The design's rule: nothing else is alive while a slot is built.
@@ -177,6 +178,25 @@ void main() {
     expect(host.runtime!.namespace, '');
     expect(host.registry.slots, hasLength(1));
     expect(world.live, 1);
+  });
+
+  test('desktop startup failure closes the new slot before reopening the old',
+      () async {
+    final host = newHost(desktopFactory: (state) async {
+      if ((state as _HostState).namespace.isNotEmpty) {
+        throw StateError('desktop startup failed');
+      }
+      return null;
+    });
+    addTearDown(host.dispose);
+    await host.start();
+    stateOf(host).signInAs('acct_1');
+    await host.idle();
+    expect(await host.beginAdd(), SwitchOutcome.failed);
+    expect(host.runtime!.namespace, '');
+    expect(world.maxLive, 1);
+    expect(world.live, 1);
+    expect(host.registry.slots, hasLength(1));
   });
 
   test('adding an account tears the old one down before the new one builds',

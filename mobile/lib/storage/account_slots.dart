@@ -427,7 +427,19 @@ class AccountRegistryStore {
 
   Future<AccountRegistry> addPending() async {
     final current = await load();
-    final next = current.withPending(newNamespace(current), _clock());
+    final namespace = newNamespace(current);
+    final next = current.withPending(namespace, _clock());
+    // Snapshot the primary's preview choice before it can be removed. A new
+    // account then owns this choice even if it has never been opened yet.
+    final preview =
+        await _storage.read('veritra.notifications.hide_preview.v1') ?? 'false';
+    final key =
+        ProfileScope(namespace: namespace, primaryNamespace: primaryNamespace)
+            .secureKey('notifications.hide_preview.v1');
+    await _storage.write(key, preview);
+    if (await _storage.read(key) != preview) {
+      throw const AccountRegistryException('readback');
+    }
     await save(next);
     return next;
   }
@@ -501,13 +513,25 @@ class SlotEraser implements SlotErasing {
       databaseKey,
       slot.legacyRecordKey,
       slot.secureKey('read_receipts.v1'),
-      // Desktop notifications still read the primary's hide-preview choice
-      // for every slot (DesktopServices.startIfSupported), so removing the
-      // primary must not turn message previews back on for the others.
-      if (!slot.isPrimary) slot.secureKey('notifications.hide_preview.v1'),
+      slot.secureKey('notifications.hide_preview.v1'),
+      ...await _storage.keysWithPrefix(slot.secureKey('report_seed.v1.')),
       ...await _storage.keysWithPrefix('$databaseKey.quarantined.'),
     ]) {
       await _storage.delete(name);
     }
+  }
+}
+
+/// A cold wake may open only the active slot named by protected storage.
+/// Missing or locked registry data never delegates profile choice to native.
+Future<String?> activeAccountSlotForWake(AccountRegistryStore store) async {
+  try {
+    final registry = await store.load();
+    final active = registry.slot(registry.active);
+    return active != null && active.state != SlotState.removing
+        ? active.namespace
+        : null;
+  } catch (_) {
+    return null;
   }
 }

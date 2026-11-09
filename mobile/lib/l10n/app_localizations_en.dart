@@ -3747,6 +3747,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get autoBackupPromptLater => 'Not now';
+
+  @override
   String get connectSignInPasskey => 'Sign in with a passkey';
 
   @override

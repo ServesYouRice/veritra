@@ -62,7 +62,9 @@ AccountHost buildReleaseHost({
     eraser: SlotEraser(storage: kv, scope: const ProfileScope()),
     build: build ?? buildReleaseRuntime,
     primaryNamespace: '',
-    desktopFactory: DesktopServices.startIfSupported,
+    desktopFactory: (state) => DesktopServices.startIfSupported(state,
+        scope: ProfileScope(
+            namespace: (state.localStore as SecureLocalStore).namespace)),
     inspect: slotInspectorFor(''),
     revoke: slotRevokerFor((baseUrl) => ApiClient(baseUrl: baseUrl)),
     afterClose: (_) async {

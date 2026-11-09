@@ -4,10 +4,13 @@
 // other slot's folder alone.
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/attachments.dart';
+import 'package:private_messenger/core/report_seed_store.dart';
+import 'package:private_messenger/desktop/message_notifications.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/storage/account_slots.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
@@ -38,7 +41,8 @@ void main() {
     test('the demo primary keeps its names too', () {
       expect(demo.databaseKey, 'veritra.demo.database_key.v1');
       expect(demo.secureKey('read_receipts.v1'), 'veritra.read_receipts.v1');
-      expect(demo.directoryIn(Directory('/s')).path, '/s/profiles/demo');
+      expect(demo.directoryIn(Directory('/s')).path,
+          '/s${Platform.pathSeparator}profiles${Platform.pathSeparator}demo');
       expect(demo.pasteScope, 'demo');
     });
 
@@ -132,6 +136,32 @@ void main() {
       // A slot being removed no longer counts.
       final removing = registry.withRemoving(registry.slots.last.namespace);
       expect(removing.canAdd, isTrue);
+    });
+
+    test('cold wakes select only the protected active slot', () async {
+      expect(await activeAccountSlotForWake(store), '');
+      var registry = await store.addPending();
+      final slot = store.newestPending(registry);
+      registry = registry.withActive(slot);
+      await store.save(registry);
+      expect(await activeAccountSlotForWake(store), slot);
+      registry = registry.withRemoving(slot);
+      await store.save(registry);
+      expect(await activeAccountSlotForWake(store), isNull);
+      kv.values[store.key] = 'unreadable';
+      expect(await activeAccountSlotForWake(store), isNull);
+    });
+
+    test('new slots copy preview privacy before the primary is removed',
+        () async {
+      kv.values['veritra.notifications.hide_preview.v1'] = 'true';
+      final registry = await store.addPending();
+      final slot = store.newestPending(registry);
+      final key = ProfileScope(namespace: slot)
+          .secureKey('notifications.hide_preview.v1');
+      expect(kv.values[key], 'true');
+      kv.values.remove('veritra.notifications.hide_preview.v1');
+      expect(kv.values[key], 'true');
     });
 
     test('one account per slot', () async {
@@ -291,6 +321,36 @@ void main() {
       expect(a, isNot(b));
     });
 
+    test('report seeds and preview choices are isolated and erased per slot',
+        () async {
+      const primary = ProfileScope();
+      const other = ProfileScope(namespace: 'a-aaaaaaaaaaaa');
+      final a = SecureReportSeedStore(storage: plain, scope: primary);
+      final b = SecureReportSeedStore(storage: plain, scope: other);
+      final seed = Uint8List.fromList(List.filled(32, 7));
+      await a.save('https://a.example', 'acct', seed);
+      expect(await b.load('https://a.example', 'acct'), isNull);
+      await b.save('https://a.example', 'acct', Uint8List(32));
+      final prefsA =
+          SecureNotificationSettingsStore(storage: plain, scope: primary);
+      final prefsB =
+          SecureNotificationSettingsStore(storage: plain, scope: other);
+      await prefsA.saveHidePreview(true);
+      expect(await prefsB.loadHidePreview(), isTrue);
+      await prefsA.saveHidePreview(false);
+      expect(await prefsB.loadHidePreview(), isTrue);
+      await eraser().erase('');
+      expect(await a.load('https://a.example', 'acct'), isNull);
+      expect(await b.load('https://a.example', 'acct'), Uint8List(32));
+      expect(await prefsB.loadHidePreview(), isTrue);
+      await eraser().erase(other.namespace);
+      expect(await b.load('https://a.example', 'acct'), isNull);
+      expect(
+          await plain.read(
+              key: other.secureKey('notifications.hide_preview.v1')),
+          isNull);
+    });
+
     test('erasing the primary leaves every other slot untouched', () async {
       await open('').saveSyncCursor(11);
       await open('a-aaaaaaaaaaaa').saveSyncCursor(22);
@@ -304,8 +364,7 @@ void main() {
           key: 'veritra.database_key.v1.quarantined.1', value: 'k');
       File('${support.path}/.veritra-recovery.partial').writeAsStringSync('p');
       await plain.write(key: 'veritra.read_receipts.v1', value: 'off');
-      // Desktop notifications read the primary's hide-preview choice for
-      // every slot: removing the primary must not turn previews back on.
+      // Each slot owns its preview choice.
       await plain.write(
           key: 'veritra.notifications.hide_preview.v1', value: 'true');
       final slotDir = Directory('${support.path}/profiles/a-aaaaaaaaaaaa');
@@ -325,7 +384,7 @@ void main() {
           isNull);
       expect(await plain.read(key: 'veritra.read_receipts.v1'), isNull);
       expect(await plain.read(key: 'veritra.notifications.hide_preview.v1'),
-          'true');
+          isNull);
       expect(support.existsSync(), isTrue);
       final after =
           slotDir.listSync(recursive: true).map((e) => e.path).toList()..sort();

@@ -6,11 +6,48 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/storage/local_store.dart';
 
 import 'b7_passkey_fakes.dart';
+import 'test_crypto_service.dart';
+
+class _ClosingCrypto extends TestOnlyCryptoService
+    implements MlsConversationCryptoService {
+  final closing = Completer<void>();
+  final release = Completer<void>();
+
+  @override
+  Future<void> dispose() async {
+    closing.complete();
+    await release.future;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('switch teardown waits until native crypto handles are closed',
+      () async {
+    final crypto = _ClosingCrypto();
+    final state = AppState(
+      apiClientFactory: (_) => throw StateError('unused'),
+      cryptoService: crypto,
+      localStore: MemoryLocalStore(),
+      syncServiceFactory: (_, __) => PkQuietSync(),
+    );
+    var closed = false;
+    final leaving = state.closeForSwitch().then((_) => closed = true);
+    await crypto.closing.future;
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse);
+    crypto.release.complete();
+    await leaving;
+    expect(closed, isTrue);
+  });
 
   Future<PkHarness> signedIn() async {
     final h = PkHarness();

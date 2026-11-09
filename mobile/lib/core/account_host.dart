@@ -210,8 +210,14 @@ class AccountHost extends ChangeNotifier {
 
   Future<void> _mount(String namespace) async {
     final next = await _build(namespace);
-    next.desktop = await desktopFactory?.call(next.state);
-    next.desktop?.attach();
+    try {
+      next.desktop = await desktopFactory?.call(next.state);
+      next.desktop?.attach();
+    } catch (_) {
+      await next.state.closeForSwitch();
+      await next.closeStore();
+      rethrow;
+    }
     next.state.addListener(_bindIdentity);
     runtime = next;
     _boundIdentity = null;
@@ -357,7 +363,7 @@ class AccountHost extends ChangeNotifier {
   Future<void> _leaveAndClose(AccountRuntime current,
       {bool signedOutAlready = false}) async {
     current.state.removeListener(_bindIdentity);
-    current.desktop?.detach();
+    await current.desktop?.detach();
     current.desktop = null;
     await current.state.closeForSwitch();
     try {
