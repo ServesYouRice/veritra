@@ -198,10 +198,32 @@ void main() {
       ),
     ];
     for (final (type, payload) in cases) {
+      // Each case must deliver its own keys; an earlier key message must not
+      // make a broken sidecar path pass.
+      await harness.bob.store.deleteProfileSubject('account', 'acct_alice');
+      await harness.bob.store
+          .deleteProfileSubject('conversation', _conversation);
       final envelope = await harness.aliceCrypto
           .encryptPayload(_conversation, type, payload);
       await harness.alice.retryEnvelope(envelope.idempotencyKey);
       await harness.deliverToBob(await harness.nextEnvelope());
+      if (type != AppPayloadType.groupProfileKey) {
+        expect(
+            (await harness.bob.store.loadProfileKeys('account', 'acct_alice'))
+                .single
+                .key,
+            key,
+            reason: type.name);
+      }
+      if (type != AppPayloadType.profileKey) {
+        expect(
+            (await harness.bob.store
+                    .loadProfileKeys('conversation', _conversation))
+                .single
+                .key,
+            key,
+            reason: type.name);
+      }
     }
     final accountKeys =
         await harness.bob.store.loadProfileKeys('account', 'acct_alice');
