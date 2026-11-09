@@ -1,8 +1,8 @@
 # C1 invitation binding v2: evidence
 
 2026-11-07, branch `agent/invite-v2`. Design: `docs/designs/C1-invite-format.md`.
-Counters unchanged: crypto ABI 13, mobile local schema 20. Server migration
-0052 added (`binding_signature`). Not done: the independent security review.
+Original branch counters: crypto ABI 13, mobile local schema 20, server
+migration 0052. The 2026-11-09 port below supersedes these reservations. Not done: the independent security review.
 
 ## Rust (`crypto/rust`)
 
@@ -17,7 +17,7 @@ Counters unchanged: crypto ABI 13, mobile local schema 20. Server migration
 - `go test ./internal/storage ./internal/httpapi`: pass. New or changed:
   `TestInviteBindingV2Vector` (rebuilds the message and signature from the
   shared vector with `crypto/ed25519`), `TestInviteWithoutSignatureIsReturnedEmpty`
-  (a pre-0052 row), signature length refusals in
+  (a pre-0066 row), signature length refusals in
   `TestInviteBindingMustMatchTheCreatingDevice`, the handler tests.
 - The migration is applied by every storage test (they run all migrations).
 
@@ -36,3 +36,44 @@ Counters unchanged: crypto ABI 13, mobile local schema 20. Server migration
   vector signature through `pm_crypto_c7_verify`, a real device signature, a
   second device verifying it, tampering, and the roster key read from a real
   MLS group.
+
+## 2026-11-09 port on ai/c1-invites
+
+Base `0d09fcb36a06d9bc309bba226b8bc95997f499b8`; ported `f10ce21` and
+`974dd98` rather than recreating them. Assigned counters: crypto ABI 21,
+local schema 32, server migration 0066. No dependency added.
+
+Group-only D99 slice: verified anchor stored before sending a request,
+including a lost response; target group id checked by existing OpenMLS join,
+and inviter leaf key checked before seal/cursor/marker writes. Rejection
+restores committed crypto state and uses the existing conversation pause UI.
+The local table survives reopen, upgrades from 31 atomically, and is cleared
+with identity replacement, backup restoration and full wipe. No fragment,
+secret, locator or signed binding is retained in it or exported in backups.
+
+Focused checks:
+- Go `go test ./...` and `go vet ./...`: pass (all server packages).
+- Rust `cargo test -- --test-threads=1`: 223 unit + 7 integration pass;
+  measurement tests remain ignored. `cargo clippy`: pass.
+- `cargo build --release`: pass, ABI-21 Windows DLL built locally.
+- Flutter membership parser/API/actions/widgets + anchor-store tests: pass
+  (71 including six native tests and anchor-write failure).
+- Native invitation tests: 6 pass with VERITRA_CRYPTO_LIBRARY set to that
+  DLL and VERITRA_REQUIRE_NATIVE_CRYPTO=1, including successful Welcome,
+  changed key, missing inviter, wrong MLS target, restart and rollback.
+- `scripts/lint.ps1`: pass (Go vet/format, Rust all-target clippy/format,
+  Flutter analyze and formatter).
+
+Initial Rust compilation exceeded the Windows paging file; retry with
+CARGO_BUILD_JOBS=1 and dev/test debug info disabled passed. An initial native
+fixture produced no Welcome because it did not enroll peers in the existing
+L1 test list; updated it to use TestNativeCryptoService, preserving the L1
+add gate. The native tests now exercise a nonempty real Welcome.
+
+Solo self-review against docs/crypto.md: Rust changes are the existing
+sign-domain allowlist and ABI pin only; no MLS processing, release gate,
+server plaintext path, or new dependency. An independent security review
+has not happened (owner required solo work). C1 is partial: community shared
+group anchoring and W11/C3 encrypted rename wiring remain, plus real-device
+and community lifecycle evidence. Existing membership approval/removal and
+username UI are retained and exercised by the focused tests.

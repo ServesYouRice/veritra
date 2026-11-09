@@ -18,6 +18,7 @@ import '../sync/sync_recovery.dart' show SyncFailureKind;
 import '../crypto/app_payload.dart' show effectiveExpiryMillis;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 import 'device_list_records.dart';
+import 'invite_anchor.dart';
 
 export 'device_list_records.dart';
 
@@ -30,6 +31,7 @@ part 'conversation_pause_sql.dart';
 part 'device_list_sql.dart';
 part 'filed_reports_sql.dart';
 part 'community_info_sql.dart';
+part 'invite_anchor_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -605,7 +607,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 31;
+  static const currentSchemaVersion = 32;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -824,6 +826,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createDeviceLists();
             await _createFiledReports();
             await _createCommunityInfo();
+            await _createInviteAnchors();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -975,6 +978,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // accepted records. New tables only, self-contained, so the step
             // can be renumbered without touching another.
             if (from < 31) await _createCommunityInfo();
+            if (from < 32) await _createInviteAnchors();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1023,6 +1027,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await _clearFrankReveals();
     await _clearDeviceLists();
     await _clearCommunityInfo();
+    await _clearInviteAnchors();
     await delete(localMessages).go();
     await delete(localPins).go();
     await delete(localPendingPins).go();
@@ -1213,6 +1218,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearFrankReveals();
         await _clearDeviceLists();
         await _clearCommunityInfo();
+        await _clearInviteAnchors();
         await delete(localMessages).go();
         await delete(localMessageReactions).go();
         await delete(localPins).go();
@@ -2371,6 +2377,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _clearFrankReveals();
         await _clearDeviceLists();
         await _clearCommunityInfo();
+        await _clearInviteAnchors();
         await _clearReportKeyPins();
         await _clearFiledReports();
         await delete(localMessages).go();

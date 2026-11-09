@@ -2,7 +2,7 @@
 
 Status 2026-11-07. Built on the owner's approval of the format (secret after
 the `#`, requests an admin approves; bound to the target, account and device
-keys by D90, see "Binding" below). Server migrations 0048 and 0052 (v2).
+keys by D90, see "Binding" below). Server migrations 0048 and 0066 (v2).
 Format v2 (owner decision 2026-11-07: close the collusion residual with a
 real device signature). Read with
 [C1-membership-plan](C1-membership-plan.md) and
@@ -30,7 +30,7 @@ otherwise and never echoes the input.
 key commitment and no signature, and nothing was released with it (the release
 gate is closed and C1 had not merged to a release), so there is no
 compatibility to keep: a v1 link is "invalid", a v1 invitation row (made
-before migration 0052) is refused by the joiner as "no longer works" and
+before migration 0066) is refused by the joiner as "no longer works" and
 expires like any invitation. Nothing rewrites those rows.
 
 ## What the server sees
@@ -93,7 +93,7 @@ to the two C7 domains. Rust prepends the label itself, so no one can ask the
 engine to sign chosen bytes under another protocol's label, and a signature of
 one domain never verifies in another (a test pins that no label is a prefix of
 another). It is an allowlist entry only: no function, length, struct or ABI
-number changed (counters stay ABI 13), and a library without the entry refuses
+layout changed (the integration pins ABI 21), and a library without the entry refuses
 the domain, so the app fails closed. The Dart side adds bindings for the
 already exported `pm_crypto_c7_sign` and `pm_crypto_group_member_signature_key`
 behind a new capability interface (`InviteBindingCryptoService`) that only the
@@ -123,7 +123,7 @@ device, a tag that is not 64 lowercase hex characters, and a signature that is
 not 64 bytes. It cannot check the tag (that needs the secret) or the signature
 (it does not know the origin the link names): it stores them for the joiner. An
 invitation is bound to its device, so it stops working when that device is
-revoked. Migration 0052 adds `membership_invites.binding_signature` (nullable
+revoked. Migration 0066 adds `membership_invites.binding_signature` (nullable
 BLOB, 64 bytes when set); `binding_tag` and every other column are unchanged.
 
 **Joining.** `POST /membership-invites/preview` returns `binding` (target
@@ -252,3 +252,27 @@ strictly higher rank. Groups keep their existing routes.
   neither of which exists. No plaintext rename route was added.
 - Join-request notifications: admins read the list when they open it.
 - C0 shared groups, per-conversation sync bounds, client cursors.
+
+## 2026-11-09 port: group Welcome anchor (partial C1)
+
+The port uses crypto ABI 21, local schema 32 and server migration 0066.
+Before submitting a group join request, the app fetches and verifies its
+binding again and persists the target group id, inviter account/device and
+committed signing key in `local_invite_anchors`. This table holds no secret
+or locator, is excluded from backup/history exports, and is cleared on
+identity replacement, backup restoration and full wipe. The key remains
+pinned after joining; a later explicit request through a verified link may
+replace it.
+
+After `joinGroup` checks the Welcome's actual MLS group id against the target
+conversation id, the receiver reads the inviter leaf key and compares it
+with that anchor before sealing or committing any state. A missing inviter
+or a different key restores the previous state and enters the existing
+per-conversation failure/retry UI. No cursor or processed marker is written.
+This refuses the join rather than trusting a server roster.
+
+This is a group-only D99 slice. Community target ids differ from shared MLS
+group ids: the signed invitation does not carry that shared id. A durable
+community anchor and authenticated mapping still need implementation and
+review. Encrypted rename also needs the W11/C3 app wiring. C1 remains open.
+The owner requested solo work, so no independent review was performed.

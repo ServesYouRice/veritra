@@ -110,3 +110,17 @@ conversation replay keeps paging while `scan_truncated` and moves to
 client cursors (C1-B2 to B4), and the legacy global stream is unchanged.
 `PRIVATE_MESSENGER_SCOPED_SYNC` still defaults to off in `config.go`; the
 brief said it now defaults on, but main does not.
+
+## 2026-11-09 local port onto 0d09fcb (partial)
+
+Ported both commits from `origin/agent/invite-v2`, preserving current L1,
+C4 and L0 bindings. Counters: ABI 21, local schema 32, server migration
+0066. Group requests now persist a verified inviter/target anchor before
+submission; Welcome validation checks the actual MLS group id and inviter
+leaf key before committing state, with rollback on mismatch. See the current
+section in `C1-invite-format.md` and `testing/evidence/C1-invite-v2.md`.
+
+Remaining: the community-to-shared-group anchor, encrypted group/community
+rename app wiring, native end-to-end community approval/removal evidence,
+and independent security review. Existing request, leave, removal and
+username screens remain in place. No STATE.md or release gate changed.

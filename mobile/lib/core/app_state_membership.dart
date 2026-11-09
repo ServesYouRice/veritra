@@ -218,6 +218,22 @@ extension MembershipActions on AppState {
   Future<JoinRequest?> requestToJoin(MembershipInviteLink link) {
     return _membershipCall<JoinRequest>((current, client) async {
       try {
+        // Persist the verified group anchor before the server can approve and
+        // deliver a Welcome, including when the request response is lost.
+        final preview =
+            await client.previewMembershipInvite(current.token, link.locator);
+        if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
+          throw UserFacingException(l10n.joinLinkUnusable);
+        }
+        if (preview.kind == InviteTargetKind.group) {
+          final binding = preview.binding;
+          await localStore.saveInviteAnchor(InviteAnchor(
+            conversationId: binding.targetId,
+            accountId: binding.inviterAccountId,
+            deviceId: binding.inviterDeviceId,
+            signingKey: binding.inviterSigningKey,
+          ));
+        }
         final request = await client.requestToJoin(current.token, link.locator);
         // The answer must carry the binding of this very link; otherwise the
         // server filed the request against something else (a swap between

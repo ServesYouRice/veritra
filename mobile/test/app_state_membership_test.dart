@@ -210,7 +210,20 @@ void main() {
 
     expect(request, isNotNull);
     expect(api.cancelled, isEmpty);
+    final anchor = await state.localStore.loadInviteAnchor('conv_1');
+    expect(anchor, isNotNull);
+    expect(anchor!.accountId, 'acct_alice');
+    expect(anchor.signingKey, defaultInviterKey);
     expect(state.errorFor(Ops.membership), isNull);
+  });
+
+  test('a failed anchor write files no join request', () async {
+    final link = _newLink();
+    final api = _Api()..binding = honestBinding(link);
+    final state = _state(api, store: _FailingAnchorStore());
+    expect(await state.requestToJoin(link), isNull);
+    expect(api.requested, isEmpty);
+    expect(state.errorFor(Ops.membership), isNotNull);
   });
 
   test('a preview is refused when the engine finds the signature invalid',
@@ -233,7 +246,8 @@ void main() {
 
     expect(await state.previewInviteLink(link.url), isNull);
     expect(await state.requestToJoin(link), isNull);
-    expect(api.cancelled, <String>['jreq_1']);
+    expect(api.requested, isEmpty);
+    expect(api.cancelled, isEmpty);
     expect(state.errorFor(Ops.membership), isNotNull);
   });
 
@@ -276,9 +290,11 @@ void main() {
 
       expect(await state.previewInviteLink(link.url), isNull);
       expect(state.errorFor(Ops.membership), isNotNull);
-      // And a request answered with the same binding is withdrawn.
+      // Refuse before filing a request or persisting an anchor.
       expect(await state.requestToJoin(link), isNull);
-      expect(api.cancelled, <String>['jreq_1']);
+      expect(api.requested, isEmpty);
+      expect(api.cancelled, isEmpty);
+      expect(await state.localStore.loadInviteAnchor('conv_1'), isNull);
     });
 
     test('no shared group means the commitment in the link is the anchor',
@@ -417,11 +433,11 @@ final List<int> _otherKey = List<int>.generate(32, (i) => 0x70 + i);
 
 MembershipInviteLink _newLink() => newInviteLink();
 
-AppState _state(ApiClient api, {CryptoService? crypto}) {
+AppState _state(ApiClient api, {CryptoService? crypto, LocalStore? store}) {
   return AppState(
     apiClientFactory: (_) => api,
     cryptoService: crypto ?? TestOnlyCryptoService(),
-    localStore: MemoryLocalStore(),
+    localStore: store ?? MemoryLocalStore(),
     syncServiceFactory: (_, __) => _SyncService(),
   )
     ..api = api
@@ -572,5 +588,12 @@ class _SyncService implements SyncService {
   @override
   Future<void> dispose() async {
     _controller.close();
+  }
+}
+
+class _FailingAnchorStore extends MemoryLocalStore {
+  @override
+  Future<void> saveInviteAnchor(InviteAnchor anchor) async {
+    throw StateError('storage unavailable');
   }
 }

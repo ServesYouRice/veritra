@@ -13,6 +13,7 @@ import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'native_test_env.dart';
+import 'l1_test_lists.dart';
 
 /// C1 invitation binding v2 against the native engine (ABI 13): the shared
 /// vector (`testing/vectors/invite-binding-v2.json`, checked by Rust and Go
@@ -87,6 +88,55 @@ void main() {
       throwsA(isA<NativeCryptoException>()),
     );
   }, skip: nativeCryptoSkip());
+
+  for (final failure in ['none', 'key', 'missing inviter', 'target']) {
+    test('Welcome checks the persisted invitation anchor ($failure)', () async {
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      final key = await alice.service.deviceSigningPublicKey(
+          accountId: alice.accountId, deviceId: alice.deviceId);
+      final pinned = Uint8List.fromList(key);
+      if (failure == 'key') pinned[0] ^= 1;
+      await bob.store.saveInviteAnchor(InviteAnchor(
+          conversationId: 'conv_1',
+          accountId: alice.accountId,
+          deviceId: failure == 'missing inviter' ? 'absent' : alice.deviceId,
+          signingKey: pinned));
+      final package = await bob.keyPackage();
+      // Restart the receiver before the Welcome: the anchor is store state.
+      final restarted =
+          TestNativeCryptoService(bindings: bindings, localStore: bob.store);
+      await restarted.activateSession(_session(bob.accountId, bob.deviceId));
+      final receiver =
+          _Client(restarted, bob.store, bob.accountId, bob.deviceId);
+      final before = (await bob.store.loadCryptoState())!.counter;
+      if (failure != 'none') {
+        await expectLater(
+            _startConversation(alice, receiver,
+                package: package,
+                envelopeConversationId:
+                    failure == 'target' ? 'conv_other' : 'conv_1'),
+            throwsA(anyOf(isA<StateError>(), isA<NativeCryptoException>())));
+        expect((await bob.store.loadCryptoState())!.counter, before);
+        expect(await bob.store.loadSyncCursor(), 0);
+        expect(
+            await restarted.memberSigningKey(
+                conversationId: 'conv_1',
+                accountId: alice.accountId,
+                deviceId: alice.deviceId),
+            isNull);
+      } else {
+        await _startConversation(alice, receiver, package: package);
+        expect(
+            await restarted.memberSigningKey(
+                conversationId: 'conv_1',
+                accountId: alice.accountId,
+                deviceId: alice.deviceId),
+            key);
+        expect(await bob.store.loadSyncCursor(), 1);
+      }
+    }, skip: nativeCryptoSkip());
+  }
 
   test('a device signs a link binding and another device verifies it',
       () async {
@@ -219,7 +269,8 @@ class _Client {
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
     final store = MemoryLocalStore();
-    final service = NativeCryptoService(bindings: bindings, localStore: store);
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,
@@ -241,14 +292,16 @@ class _Client {
       );
 }
 
-Future<void> _startConversation(_Client alice, _Client bob) async {
+Future<void> _startConversation(_Client alice, _Client bob,
+    {DeviceKeyPackage? package,
+    String envelopeConversationId = 'conv_1'}) async {
   await alice.service.initializeConversation(
-      'conv_1', <DeviceKeyPackage>[await bob.keyPackage()]);
+      'conv_1', <DeviceKeyPackage>[package ?? await bob.keyPackage()]);
   final item = (await alice.store.pendingMlsMessages()).single;
   await alice.service.completeCommitBundle(item);
   await bob.service.processMlsMessage(MlsMessage(
     id: 'mls_${++_serverIds}',
-    conversationId: 'conv_1',
+    conversationId: envelopeConversationId,
     senderAccountId: alice.accountId,
     senderDeviceId: alice.deviceId,
     kind: 'welcome',

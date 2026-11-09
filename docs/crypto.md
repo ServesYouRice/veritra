@@ -895,9 +895,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   - **Refactor.** The K2 bundle (kind 2) shares the header reader and the
     chunk decoder; its bytes and tests are unchanged.
 
-- **C1 invitation binding v2, signing domain on ABI 13 (2026-11-07):** an
-  allowlist entry only; no function, struct, length or ABI number changed
-  (counters stay ABI 13, local schema 20). `veritra-invite-binding-v2` joins
+- **C1 invitation binding v2, ABI 21 (ported 2026-11-09):** an
+  allowlist entry only; no function, struct or length changed. The current
+  header and Dart binding pin ABI 21; local schema 32 stores group invite
+  anchors and server migration 0066 stores signatures. The label
+  `veritra-invite-binding-v2` joins
   `SIGN_DOMAINS` in `crypto/rust/src/c7.rs`, so `pm_crypto_c7_sign` and
   `pm_crypto_c7_verify` accept it; the header and doc comments list it. A
   library without the entry refuses the domain (`PM_CRYPTO_INVALID_ARGUMENT`),
@@ -907,7 +909,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   calls) behind `InviteBindingCryptoService`. Layout, vector and limits:
   [`C1-invite-format.md`](designs/C1-invite-format.md); vector
   `testing/vectors/invite-binding-v2.json` (Rust, Go and Dart). **Needs the
-  independent crypto review with the rest of ABI 13.**
+  independent crypto review before release.**
 - **C7 step 2, history primitives, ABI 13 (2026-11-07):** additive; the Dart
   binding and the header now pin ABI 13 exactly. Design:
   [`C7-channel-history.md`](designs/C7-channel-history.md) revision 7 (owner

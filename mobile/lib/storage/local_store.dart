@@ -21,6 +21,8 @@ import 'encrypted_database.dart';
 import 'message_search.dart';
 import 'history_snapshot.dart';
 import 'notice_outbox.dart';
+import 'invite_anchor.dart';
+export 'invite_anchor.dart';
 
 export 'notice_outbox.dart';
 export 'encrypted_database.dart'
@@ -762,6 +764,10 @@ abstract class LocalStore {
   Future<void> saveLastBackupAt(DateTime at);
   Future<DateTime?> loadLastBackupAt();
 
+  /// Group invite commitments, excluded from backups and identity changes.
+  Future<void> saveInviteAnchor(InviteAnchor anchor);
+  Future<InviteAnchor?> loadInviteAnchor(String conversationId);
+
   /// Small local settings (the encrypted `local_metadata` key-value table).
   Future<String?> loadSetting(String name);
   Future<void> saveSetting(String name, String value);
@@ -1014,6 +1020,16 @@ class MemoryLocalStore implements LocalStore {
 
   final Map<String, String> _settings = <String, String>{};
 
+  final Map<String, InviteAnchor> _inviteAnchors = {};
+  @override
+  Future<void> saveInviteAnchor(InviteAnchor anchor) async {
+    _inviteAnchors[anchor.conversationId] = anchor;
+  }
+
+  @override
+  Future<InviteAnchor?> loadInviteAnchor(String conversationId) async =>
+      _inviteAnchors[conversationId];
+
   @override
   Future<String?> loadSetting(String name) async => _settings[name];
 
@@ -1161,6 +1177,7 @@ class MemoryLocalStore implements LocalStore {
     _conversationPrefs.clear();
     _frankReveals.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
+    _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
     _deviceListPins.clear();
     _deviceListConflicts.clear();
@@ -2148,6 +2165,7 @@ class MemoryLocalStore implements LocalStore {
     // C3: info keys and records are never in a backup; the restored device
     // asks the groups for keys again.
     _communityInfoEvents = const <CommunityInfoEvent>[];
+    _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
     final kept = withoutPendingHistory(
         history: backup.history,
@@ -2213,6 +2231,7 @@ class MemoryLocalStore implements LocalStore {
     _conversationPrefs.clear();
     _frankReveals.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
+    _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
     _deviceListPins.clear();
     _deviceListConflicts.clear();
@@ -2818,6 +2837,13 @@ class SecureLocalStore implements LocalStore {
           EncryptedLocalDatabase.syncRecoveryName, recovery.encode());
     }
   }
+
+  @override
+  Future<void> saveInviteAnchor(InviteAnchor anchor) async =>
+      (await _database()).writeInviteAnchor(anchor);
+  @override
+  Future<InviteAnchor?> loadInviteAnchor(String conversationId) async =>
+      (await _database()).readInviteAnchor(conversationId);
 
   @override
   Future<String?> loadSetting(String name) async =>

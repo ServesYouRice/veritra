@@ -1376,6 +1376,20 @@ class NativeCryptoService
               }
               try {
                 device.joinGroup(message.conversationId, message.payload);
+                // D99: do not persist a joined group until the inviter's
+                // actual MLS leaf matches the locally verified invitation.
+                // The outer failure path restores the consumed key package
+                // and group state, so a rejected Welcome is retryable.
+                final anchor =
+                    await localStore.loadInviteAnchor(message.conversationId);
+                if (anchor != null) {
+                  final key = device.memberSignatureKey(message.conversationId,
+                      anchor.accountId, anchor.deviceId);
+                  if (!_sameBytes(key, anchor.signingKey)) {
+                    throw StateError(
+                        'Invitation does not match the encrypted group');
+                  }
+                }
               } on NativeCryptoException catch (error) {
                 if (error.kind !=
                     NativeCryptoError.welcomeKeyPackageUnavailable) {
