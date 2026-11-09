@@ -885,7 +885,7 @@ class _ScriptedApi extends ApiClient {
   /// The per-conversation stream (C1 P1) is not served here, so a failure
   /// at one conversation's event still stops the device (I33).
   @override
-  Future<List<SyncEvent>> conversationSyncEvents(
+  Future<ConversationSyncPage> conversationSyncPage(
     String token,
     String conversationId, {
     int after = 0,

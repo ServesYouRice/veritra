@@ -4172,7 +4172,26 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       }
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final MessageEnvelope encrypted;
-      if (mls != null && route != null) {
+      // The sender's own expiry goes inside the encrypted payload (TASK-106)
+      // when the conversation has a disappearing timer and the service can
+      // carry it; otherwise the payload has none and receivers fall back to
+      // the server-stamped time.
+      final retention = conversation.retentionSeconds;
+      final DateTime? senderExpiry = retention != null && retention > 0
+          ? DateTime.now().toUtc().add(Duration(seconds: retention))
+          : null;
+      final Object? expiringService = mls;
+      if (mls != null &&
+          senderExpiry != null &&
+          expiringService is ExpiringPayloadCryptoService) {
+        encrypted = await expiringService.encryptExpiringPayload(
+            conversation.id, type, body,
+            expiresAt: senderExpiry,
+            channelId: route?.channelId,
+            layoutGeneration: route?.generation,
+            attachmentRefs: attachmentRefs,
+            draftText: draftText);
+      } else if (mls != null && route != null) {
         final Object service = mls;
         if (service is! ChannelRoutedCryptoService) {
           throw StateError('this crypto service cannot post into a channel');
@@ -5876,10 +5895,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (!_syncOwnerActive(current, ownerGeneration)) return false;
     final SyncEvent? served;
     try {
-      final page = await client.conversationSyncEvents(
+      final page = await client.conversationSyncPage(
           current.token, conversationId,
           after: eventId - 1, limit: 1);
-      served = page.firstOrNull;
+      served = page.events.firstOrNull;
     } catch (err) {
       if (_isTransientSyncError(err) ||
           (err is ApiException && err.statusCode == 401)) {
@@ -6033,9 +6052,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     try {
       while (true) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
-        final List<SyncEvent> events;
+        final ConversationSyncPage syncPage;
         try {
-          events = await client.conversationSyncEvents(
+          syncPage = await client.conversationSyncPage(
               current.token, conversationId,
               after: after, limit: pageSize);
         } on ApiException catch (err) {
@@ -6052,6 +6071,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        final events = syncPage.events;
+        final pageStart = after;
         var last = after;
         for (final event in events) {
           if (event.id <= last || event.conversationId != conversationId) {
@@ -6118,7 +6139,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // reply is over the response limit, and a server may send short
         // pages. The stream ends at an empty page, or at an event the global
         // stream has not reached yet.
-        if (due.length < events.length || events.isEmpty) break;
+        if (due.length < events.length) break;
+        if (syncPage.truncated) {
+          // The server's scan budget ended this page early, so an empty or
+          // short page is not the end. Everything it scanned is applied or
+          // hidden from this device for good (D92), so the next page starts
+          // at the scan position. It must move forward, or the stream would
+          // be asked for the same page again.
+          final scanned = syncPage.scannedThrough;
+          if (scanned == null || scanned <= pageStart) {
+            throw StateError('conversation sync scan did not advance');
+          }
+          after = max(after, scanned);
+          if (after >= through) break;
+          continue;
+        }
+        if (events.isEmpty) break;
       }
       if (!_syncOwnerActive(current, ownerGeneration)) return;
       final cleared = await localStore.clearConversationPause(conversationId,

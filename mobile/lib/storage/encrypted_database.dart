@@ -15,6 +15,7 @@ import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart' show SyncFailureKind;
+import '../crypto/app_payload.dart' show effectiveExpiryMillis;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 import 'device_list_records.dart';
 
@@ -1787,20 +1788,35 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           // The server echoed a message this device sent: link the local
           // record to its server ID and mark it delivered.
           // The server stamps the expiry when it accepts the message, so the
-          // sender learns it from the first echo only (W2). Later echoes
-          // cannot add, move or clear it.
-          await (update(localMessages)
+          // sender learns it from the first echo only (W2). The sender's own
+          // expiry is already on the row when the payload carried one: the
+          // first echo can only shorten it (the shorter wins, TASK-106), and
+          // later echoes cannot add, move or clear it.
+          final firstEcho = await (select(localMessages)
                 ..where((table) =>
                     table.key.equals(ownMessageKey) &
                     table.conversationId.equals(conversationId) &
                     (channel == null
                         ? table.channelId.isNull()
                         : table.channelId.equals(channel as String)) &
-                    table.serverMessageId.isNull() &
-                    table.expiresAt.isNull()))
-              .write(LocalMessagesCompanion(
-            expiresAt: Value(envelopeExpiryMillis(envelope.payloadJson)),
-          ));
+                    table.serverMessageId.isNull()))
+              .getSingleOrNull();
+          if (firstEcho != null) {
+            final merged = effectiveExpiryMillis(
+                senderMs: firstEcho.expiresAt,
+                serverMs: envelopeExpiryMillis(envelope.payloadJson));
+            if (merged != firstEcho.expiresAt) {
+              await (update(localMessages)
+                    ..where((table) =>
+                        table.key.equals(ownMessageKey) &
+                        table.conversationId.equals(conversationId) &
+                        (channel == null
+                            ? table.channelId.isNull()
+                            : table.channelId.equals(channel as String)) &
+                        table.serverMessageId.isNull()))
+                  .write(LocalMessagesCompanion(expiresAt: Value(merged)));
+            }
+          }
           await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(ownMessageKey) &

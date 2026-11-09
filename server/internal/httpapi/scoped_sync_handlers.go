@@ -31,15 +31,16 @@ func (a *API) registerScopedSyncRoutes(mux *http.ServeMux) {
 
 func (a *API) accountSyncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	after, limit := syncPageParams(r)
-	events, err := a.Store.ListAccountSyncEvents(r.Context(), principal.AccountID, principal.DeviceID, after, limit)
-	a.writeScopedSync(w, r, principal, syncScopeAccount, principal.AccountID, events, err)
+	page, err := a.Store.ListAccountSyncPage(r.Context(), principal.AccountID, principal.DeviceID, after, limit)
+	a.writeScopedSync(w, r, principal, syncScopeAccount, principal.AccountID, page, false, err)
 }
 
 func (a *API) conversationSyncEvents(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	after, limit := syncPageParams(r)
+	bounded := r.URL.Query().Get("scan") == "bounded"
 	conversationID := r.PathValue("id")
-	events, err := a.Store.ListConversationSyncEvents(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit)
-	a.writeScopedSync(w, r, principal, syncScopeConversation, conversationID, events, err)
+	page, err := a.Store.ListConversationSyncPage(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit, bounded)
+	a.writeScopedSync(w, r, principal, syncScopeConversation, conversationID, page, bounded, err)
 }
 
 func syncPageParams(r *http.Request) (int64, int) {
@@ -56,7 +57,7 @@ func syncPageParams(r *http.Request) (int64, int) {
 // device-wide condition), a conversation scope answers
 // conversation_recovery_required so a client never relinks the whole device
 // over one paused conversation.
-func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal domain.Principal, scope, scopeID string, events []domain.SyncEvent, err error) {
+func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal domain.Principal, scope, scopeID string, page storage.SyncPage, bounded bool, err error) {
 	expired := errors.Is(err, storage.ErrSyncCursorExpired)
 	if err != nil && !expired {
 		if errors.Is(err, storage.ErrForbidden) || errors.Is(err, storage.ErrNotMember) {
@@ -80,10 +81,21 @@ func (a *API) writeScopedSync(w http.ResponseWriter, r *http.Request, principal 
 		writeJSON(w, http.StatusConflict, body)
 		return
 	}
+	events := page.Events
 	if events == nil {
 		events = []domain.SyncEvent{}
 	}
 	body["events"] = events
+	// The position the server scanned to, hidden rows included, and whether
+	// the scan budget cut the page short (D92, C1 bounds). A client may move
+	// its cursor to scanned_through after applying the events, and keeps
+	// paging while scan_truncated. Sent only on request (?scan=bounded): an
+	// older client would stop at a truncated empty page, so it never gets
+	// the budget or the fields.
+	if bounded {
+		body["scanned_through"] = page.ScannedThrough
+		body["scan_truncated"] = page.Truncated
+	}
 	candidates := a.deliveryCandidates(r.Context(), principal.AccountID, events)
 	writeJSON(w, http.StatusOK, body)
 	a.recordDeliveredAsync(principal.AccountID, candidates)

@@ -14,12 +14,14 @@ import (
 )
 
 type scopedSyncPage struct {
-	Scope         string `json:"scope"`
-	ScopeID       string `json:"scope_id"`
-	Epoch         string `json:"sync_epoch"`
-	OldestEventID int64  `json:"oldest_event_id"`
-	LatestEventID int64  `json:"latest_event_id"`
-	Events        []struct {
+	Scope          string `json:"scope"`
+	ScopeID        string `json:"scope_id"`
+	Epoch          string `json:"sync_epoch"`
+	OldestEventID  int64  `json:"oldest_event_id"`
+	LatestEventID  int64  `json:"latest_event_id"`
+	ScannedThrough int64  `json:"scanned_through"`
+	ScanTruncated  bool   `json:"scan_truncated"`
+	Events         []struct {
 		ID             int64  `json:"id"`
 		ConversationID string `json:"conversation_id"`
 	} `json:"events"`
@@ -128,10 +130,35 @@ func TestScopedSyncEnvelopeAndLegacyEquivalence(t *testing.T) {
 	}
 
 	// A page past the end is an empty list, not null.
-	_, body := doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversationID+"/sync-events?after=999999", ownerToken, nil)
+	_, body := doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversationID+"/sync-events?after=999999&scan=bounded", ownerToken, nil)
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil || string(raw["events"]) != "[]" {
 		t.Fatalf("empty page body=%s err=%v", body, err)
+	}
+	// The scan position: never below the cursor, at the last event for a
+	// page that ended there, untruncated. The legacy route has neither field.
+	if string(raw["scan_truncated"]) != "false" || string(raw["scanned_through"]) != "999999" {
+		t.Fatalf("empty page scan fields body=%s", body)
+	}
+	full := getScopedSyncPage(t, handler, "/api/v1/conversations/"+conversationID+"/sync-events?after=0&limit=200&scan=bounded", ownerToken, http.StatusOK)
+	if n := len(full.Events); n == 0 || full.ScannedThrough != full.Events[n-1].ID || full.ScanTruncated {
+		t.Fatalf("conversation scan fields %+v", full)
+	}
+	_, plain := doJSON(t, handler, http.MethodGet, "/api/v1/conversations/"+conversationID+"/sync-events?after=0&limit=200", ownerToken, nil)
+	var plainRaw map[string]json.RawMessage
+	if err := json.Unmarshal(plain, &plainRaw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := plainRaw["scanned_through"]; ok {
+		t.Fatalf("scoped route sent scanned_through without the opt-in: %s", plain)
+	}
+	_, legacyBody := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=200", ownerToken, nil)
+	var legacyRaw map[string]json.RawMessage
+	if err := json.Unmarshal(legacyBody, &legacyRaw); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := legacyRaw["scanned_through"]; ok {
+		t.Fatalf("legacy route grew scanned_through: %s", legacyBody)
 	}
 }
 

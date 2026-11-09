@@ -50,6 +50,7 @@ class NativeCryptoService
         EnrollmentPromotionCryptoService,
         K2TransferCryptoService,
         MlsDeviceHealthCryptoService,
+        ExpiringPayloadCryptoService,
         MlsSelfUpdateCryptoService,
         MlsStateMaintenanceCryptoService,
         NoticeCaptureConsumer,
@@ -1610,6 +1611,24 @@ class NativeCryptoService
           routeChannelId: channelId,
           routeGeneration: layoutGeneration);
 
+  @override
+  Future<MessageEnvelope> encryptExpiringPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    required DateTime expiresAt,
+    String? channelId,
+    int? layoutGeneration,
+    List<String> attachmentRefs = const <String>[],
+    String? draftText,
+  }) =>
+      _encryptPayload(conversationId, type, body,
+          attachmentRefs: attachmentRefs,
+          draftText: draftText,
+          routeChannelId: channelId,
+          routeGeneration: layoutGeneration,
+          expiresAt: expiresAt);
+
   /// [routeChannelId] and [routeGeneration] are given exactly for a post in a
   /// community's shared group; any other pairing fails before anything is
   /// encrypted, so a post can neither lose its channel nor gain one.
@@ -1621,6 +1640,7 @@ class NativeCryptoService
     required String? draftText,
     String? routeChannelId,
     int? routeGeneration,
+    DateTime? expiresAt,
   }) =>
       _serial(() async {
         if (!_messageTypes.contains(type)) {
@@ -1657,6 +1677,7 @@ class NativeCryptoService
             frankKey: frankKey,
             hidden: type.sendsHidden,
             channelId: channelId,
+            expiresAtMs: expiresAt?.toUtc().millisecondsSinceEpoch,
           );
           final payload = framed.padded;
           final commit = bindings.frankCommit(
@@ -1710,6 +1731,8 @@ class NativeCryptoService
                 senderDeviceId: deviceId,
                 createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
                 state: LocalMessageState.pending,
+                // The sender's own word: the first echo can only shorten it.
+                expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
                 authority: _authority,
               ),
             ),
@@ -1966,7 +1989,13 @@ class NativeCryptoService
                 serverMessageId: envelope.id,
                 createdAt: envelope.createdAt.millisecondsSinceEpoch,
                 state: LocalMessageState.received,
-                expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
+                // The sender's signed expiry bounds the server's: the shorter
+                // wins. A payload without one (an older sender) keeps the
+                // server-stamped time, as before.
+                expiresAt: effectiveExpiryMillis(
+                    senderMs: payload.expiresAtMs,
+                    serverMs:
+                        envelope.expiresAt?.toUtc().millisecondsSinceEpoch),
                 authority: _authority,
               );
               noticePayload = const {
