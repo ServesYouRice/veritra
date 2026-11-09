@@ -528,3 +528,92 @@ func TestCommunityReportsRouteToModerators(t *testing.T) {
 		t.Fatalf("instance inbox status=%d reports=%d", status, len(reports))
 	}
 }
+
+func TestReportEnvelopeRecordGoesToTheCopyHolderOnly(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+	senderToken, senderID := registerMemberWithID(t, handler, ownerToken, "sender")
+	reporterToken, reporterID := registerMemberWithID(t, handler, ownerToken, "reporter")
+	conversationID := createConversation(t, handler, ownerToken)
+	addMember(t, handler, ownerToken, conversationID, senderID)
+	addMember(t, handler, ownerToken, conversationID, reporterID)
+	otherConversation := createConversation(t, handler, ownerToken)
+	addMember(t, handler, ownerToken, otherConversation, senderID)
+
+	key := bytes.Repeat([]byte{7}, 32)
+	if status, body := putReportKey(t, handler, ownerToken, key); status != http.StatusOK {
+		t.Fatalf("publish status=%d body=%s", status, body)
+	}
+	commit := commitOf(0xcd)
+	messageID, _ := frankedMessage(t, handler, senderToken, conversationID, "franked-r1", commit)
+	otherID, _ := frankedMessage(t, handler, senderToken, otherConversation, "franked-r2", commitOf(0xee))
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, reportCopy{InboxID: ownerID, Rev: 1, Key: key, Sealed: sealedWith(1)}); status != http.StatusCreated {
+		t.Fatalf("report status=%d body=%s", status, body)
+	}
+	status, reports, body := listReportsAs(t, handler, ownerToken, "inbox=instance_owner")
+	if status != http.StatusOK || len(reports) != 1 {
+		t.Fatalf("list status=%d body=%s", status, body)
+	}
+	path := "/api/v1/reports/" + reports[0].ID + "/envelope?envelope_id="
+
+	status, response := doJSON(t, handler, http.MethodGet, path+messageID, ownerToken, nil)
+	var record struct {
+		EnvelopeID      string `json:"envelope_id"`
+		SenderAccountID string `json:"sender_account_id"`
+		SenderDeviceID  string `json:"sender_device_id"`
+		FrankCommit     []byte `json:"frank_commit"`
+	}
+	if status != http.StatusOK || json.Unmarshal(response, &record) != nil || record.EnvelopeID != messageID || record.SenderAccountID != senderID || record.SenderDeviceID == "" || !bytes.Equal(record.FrankCommit, commit) {
+		t.Fatalf("record status=%d body=%s", status, response)
+	}
+	// A message of another conversation, a missing id, the reporter and the
+	// sender all learn nothing.
+	if status, _ := doJSON(t, handler, http.MethodGet, path+otherID, ownerToken, nil); status != http.StatusNotFound {
+		t.Fatalf("other conversation status=%d", status)
+	}
+	if status, _ := doJSON(t, handler, http.MethodGet, path+"no-such-envelope", ownerToken, nil); status != http.StatusNotFound {
+		t.Fatalf("missing envelope status=%d", status)
+	}
+	if status, _ := doJSON(t, handler, http.MethodGet, path, ownerToken, nil); status != http.StatusBadRequest {
+		t.Fatalf("empty envelope id status=%d", status)
+	}
+	for name, token := range map[string]string{"reporter": reporterToken, "sender": senderToken} {
+		if status, _ := doJSON(t, handler, http.MethodGet, path+messageID, token, nil); status != http.StatusNotFound {
+			t.Fatalf("%s status=%d", name, status)
+		}
+	}
+}
+
+func TestOwnerReadsOnlyTheirOwnCurrentReportKey(t *testing.T) {
+	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+	memberToken := registerMember(t, handler, ownerToken, "member")
+	path := "/api/v1/reports/inbox-keys/instance"
+
+	if status, _ := doJSON(t, handler, http.MethodGet, path, ownerToken, nil); status != http.StatusNotFound {
+		t.Fatalf("before publish status=%d", status)
+	}
+	key1, key2 := bytes.Repeat([]byte{7}, 32), bytes.Repeat([]byte{8}, 32)
+	if status, body := putReportKey(t, handler, ownerToken, key1); status != http.StatusOK {
+		t.Fatalf("publish status=%d body=%s", status, body)
+	}
+	status, response := doJSON(t, handler, http.MethodGet, path, ownerToken, nil)
+	if status != http.StatusOK || !strings.Contains(string(response), base64.StdEncoding.EncodeToString(key1)) || !strings.Contains(string(response), ownerID) || !strings.Contains(string(response), `"key_rev":1`) {
+		t.Fatalf("own key status=%d body=%s", status, response)
+	}
+	// A replaced key is what is returned next, at its new revision.
+	if status, body := putReportKey(t, handler, ownerToken, key2); status != http.StatusOK {
+		t.Fatalf("replace status=%d body=%s", status, body)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, path, ownerToken, nil)
+	if status != http.StatusOK || !strings.Contains(string(response), base64.StdEncoding.EncodeToString(key2)) || !strings.Contains(string(response), `"key_rev":2`) {
+		t.Fatalf("replaced key status=%d body=%s", status, response)
+	}
+	// Members get nothing, and no token gets nothing.
+	if status, _ := doJSON(t, handler, http.MethodGet, path, memberToken, nil); status != http.StatusForbidden {
+		t.Fatalf("member status=%d", status)
+	}
+	if status, _ := doJSON(t, handler, http.MethodGet, path, "", nil); status != http.StatusUnauthorized {
+		t.Fatalf("anonymous status=%d", status)
+	}
+}

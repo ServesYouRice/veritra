@@ -1,0 +1,554 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/api_client.dart';
+import 'package:private_messenger/core/report_models.dart';
+import 'package:private_messenger/core/report_seed_store.dart';
+import 'package:private_messenger/core/reports_service.dart';
+import 'package:private_messenger/crypto/app_payload.dart';
+import 'package:private_messenger/crypto/franking.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/crypto/report_key_pins.dart';
+import 'package:private_messenger/storage/local_store.dart';
+
+import 'native_test_env.dart';
+
+/// C6 step 4: the reporter's flow (pin, seal, file) and the owner's inbox
+/// (key custody, open, verify, dismiss) against an in-memory server and the
+/// real native seal. The in-memory server mimics the routes' rules: one
+/// sealed copy per owner at the current keys, copies listed to their owner,
+/// the envelope record only for a copy's conversation.
+
+const _origin = 'https://chat.example.org';
+const _conversation = 'conv_1';
+const _sender = 'dev_sender';
+const _action = 'action1';
+const _envelope = 'msg_envelope_1';
+const _reporterAccount = 'acct_reporter';
+const _ownerAccount = 'acct_owner';
+
+class _Store extends MemoryLocalStore {
+  final Map<String, FrankReveal> reveals = <String, FrankReveal>{};
+
+  @override
+  Future<FrankReveal?> loadFrankReveal(String messageKey) async =>
+      reveals[messageKey];
+}
+
+class _Server extends ApiClient {
+  _Server() : super(baseUrl: _origin);
+
+  String kind = 'instance_owner';
+  final Map<String, ReportInboxRecipient> keys = {};
+  final List<ReportCopyRow> copies = [];
+  ReportEnvelopeRecord? record;
+  int nextId = 0;
+  int filedReports = 0;
+  final List<String> envelopeRequests = [];
+
+  @override
+  Future<ReportInbox> getReportInbox(
+          String token, String conversationId) async =>
+      ReportInbox(kind: kind, recipients: keys.values.toList());
+
+  @override
+  Future<ReportInboxRecipient?> getOwnReportKey(String token) async =>
+      keys[token];
+
+  @override
+  Future<int> putInstanceReportKey(String token, List<int> publicKey) async {
+    final old = keys[token];
+    final same = old != null && _eq(old.publicKey, publicKey);
+    final rev = old == null ? 1 : (same ? old.keyRev : old.keyRev + 1);
+    // The token doubles as the owner's account id in this fake.
+    keys[token] =
+        ReportInboxRecipient(inboxId: token, publicKey: publicKey, keyRev: rev);
+    return rev;
+  }
+
+  @override
+  Future<void> createReport(
+    String token, {
+    required String conversationId,
+    required String reportId,
+    required List<Map<String, Object?>> copies,
+  }) async {
+    final wanted = keys.values.toList();
+    if (copies.length != wanted.length) {
+      throw ApiException(409, '{"error":"report_inbox_changed"}');
+    }
+    for (final raw in copies) {
+      final owner = keys[raw['inbox_id']];
+      if (owner == null ||
+          raw['key_rev'] != owner.keyRev ||
+          raw['recipient_public_key'] != base64Encode(owner.publicKey)) {
+        throw ApiException(409, '{"error":"report_inbox_changed"}');
+      }
+      this.copies.add(ReportCopyRow(
+            id: 'row_${nextId++}',
+            reportId: reportId,
+            inboxKind: 'instance_owner',
+            inboxId: owner.inboxId,
+            keyRev: owner.keyRev,
+            recipientPublicKey: owner.publicKey,
+            conversationId: conversationId,
+            reporterAccountId: _reporterAccount,
+            sealed: base64Decode(raw['sealed'] as String),
+            createdAt: DateTime.utc(2026, 11, 7),
+          ));
+    }
+    filedReports++;
+  }
+
+  @override
+  Future<List<ReportCopyRow>> listOwnerReports(String token,
+          {String? afterId, int limit = 50}) async =>
+      [
+        for (final c in copies)
+          if (c.inboxId == token) c
+      ];
+
+  @override
+  Future<void> deleteReport(String token, String reportRowId) async {
+    copies.removeWhere((c) => c.id == reportRowId && c.inboxId == token);
+  }
+
+  @override
+  Future<ReportEnvelopeRecord> getReportEnvelope(
+      String token, String reportRowId, String envelopeId) async {
+    envelopeRequests.add(envelopeId);
+    final found = record;
+    if (found == null || found.envelopeId != envelopeId) {
+      throw ApiException(404, '{"error":"not_found"}');
+    }
+    return found;
+  }
+}
+
+bool _eq(List<int> a, List<int> b) =>
+    a.length == b.length &&
+    Iterable.generate(a.length).every((i) => a[i] == b[i]);
+
+void main() {
+  late NativeCryptoService crypto;
+  late _Store store;
+  late _Server server;
+  late MemoryReportSeedStore seeds;
+  late Uint8List frankKey;
+  late Uint8List payload;
+  late Uint8List commit;
+
+  ReportsService serviceFor(String account) => ReportsService(
+        api: server,
+        // The fake server reads the caller's account id from the token.
+        token: account,
+        accountId: account,
+        crypto: crypto,
+        store: store,
+        seeds: seeds,
+      );
+
+  setUp(() async {
+    // The tests that need the native seal fail on `crypto` when the library
+    // is required and missing; the model and store tests run without it.
+    if (nativeCryptoLibraryPath == null) return;
+    crypto = NativeCryptoService(
+        bindings: NativeCryptoBindings.open(requireNativeCryptoLibrary()),
+        localStore: MemoryLocalStore());
+    store = _Store();
+    server = _Server();
+    seeds = MemoryReportSeedStore();
+    frankKey = Uint8List.fromList(List<int>.filled(32, 9));
+    payload = Uint8List.fromList(utf8.encode(jsonEncode({
+      'v': 2,
+      'type': 'text',
+      'conversation_id': _conversation,
+      'sender_device_id': _sender,
+      'action_id': _action,
+      'body': {'text': 'the reported words'},
+    })));
+    commit = await crypto.frankCommit(
+      key: frankKey,
+      conversationId: _conversation,
+      senderDeviceId: _sender,
+      actionId: _action,
+      payload: payload,
+    );
+    store.reveals['$_sender:$_action'] = FrankReveal(
+      messageKey: '$_sender:$_action',
+      conversationId: _conversation,
+      envelopeId: _envelope,
+      frankKey: frankKey,
+      payload: payload,
+    );
+    server.record = ReportEnvelopeRecord(
+      envelopeId: _envelope,
+      conversationId: _conversation,
+      senderAccountId: 'acct_sender',
+      senderDeviceId: _sender,
+      frankCommit: commit,
+      createdAt: DateTime.utc(2026, 11, 7),
+    );
+  });
+
+  Future<void> ownerSetsUpKey() async {
+    await serviceFor(_ownerAccount).createKey();
+  }
+
+  Future<void> reporterTrustsAndFiles() async {
+    final reporter = serviceFor(_reporterAccount);
+    final plan = await reporter.prepare(_conversation);
+    await reporter.pinKeys(plan);
+    await reporter.file(
+        conversationId: _conversation, messageKey: '$_sender:$_action');
+  }
+
+  final Object nativeSkip = nativeCryptoSkip();
+
+  test(
+      'owner key custody: the seed stays on this device, republishing is stable',
+      () async {
+    final owner = serviceFor(_ownerAccount);
+    expect((await owner.keyStatus()).state, OwnerReportKeyState.none);
+    final (key, rev) = await owner.createKey();
+    expect(rev, 1);
+    final status = await owner.keyStatus();
+    expect(status.state, OwnerReportKeyState.active);
+    expect(status.localKey, key);
+    expect(status.listedKey, key);
+    // Creating again would silently lose the seed: refused unless replacing.
+    await expectLater(owner.createKey(), throwsStateError);
+    final (again, sameRev) = await owner.publishKey();
+    expect(again, key);
+    expect(sameRev, 1);
+    // A second device holds no seed: the key is held elsewhere, and making a
+    // new one is an explicit replace.
+    final other = ReportsService(
+      api: server,
+      token: _ownerAccount,
+      accountId: _ownerAccount,
+      crypto: crypto,
+      store: store,
+      seeds: MemoryReportSeedStore(),
+    );
+    expect((await other.keyStatus()).state, OwnerReportKeyState.heldElsewhere);
+    final (replacement, newRev) = await other.createKey(replace: true);
+    expect(replacement, isNot(key));
+    expect(newRev, 2);
+    // The first device now sees the key reporters see, and that it is not its
+    // own.
+    final first = await owner.keyStatus();
+    expect(first.state, OwnerReportKeyState.replacedElsewhere);
+    expect(first.listedKey, replacement);
+    expect(first.localKey, key);
+    // A seed whose key was never published reads as unpublished.
+    server.keys.clear();
+    expect((await owner.keyStatus()).state, OwnerReportKeyState.unpublished);
+  }, skip: nativeSkip);
+
+  test('report round trip: pin, file, open, verify, dismiss', () async {
+    await ownerSetsUpKey();
+    final reporter = serviceFor(_reporterAccount);
+
+    // First sight of the owner's key: refused until a person pins it.
+    final plan = await reporter.prepare(_conversation);
+    expect(plan.canSend, isFalse);
+    expect(plan.check.recipients.single.status, ReportKeyStatus.unpinned);
+    await expectLater(
+        reporter.file(
+            conversationId: _conversation, messageKey: '$_sender:$_action'),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
+    expect(server.copies, isEmpty);
+
+    await reporter.pinKeys(plan);
+    expect((await reporter.prepare(_conversation)).canSend, isTrue);
+    await reporter.file(
+        conversationId: _conversation, messageKey: '$_sender:$_action');
+    expect(server.copies, hasLength(1));
+    // The server sees no envelope id and no text in what it stored.
+    final stored =
+        utf8.decode(server.copies.single.sealed, allowMalformed: true);
+    expect(stored, isNot(contains(_envelope)));
+    expect(stored, isNot(contains('the reported words')));
+    expect(server.envelopeRequests, isEmpty);
+
+    // A second tap on the same message files nothing more.
+    await expectLater(
+        reporter.file(
+            conversationId: _conversation, messageKey: '$_sender:$_action'),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.alreadyReported)));
+    expect(server.filedReports, 1);
+
+    // The owner opens it; listing and opening touch the server not at all
+    // about the envelope.
+    final owner = serviceFor(_ownerAccount);
+    final rows = await owner.list();
+    final opened = await owner.open(rows.single);
+    expect(opened.isOpen, isTrue);
+    expect(opened.text, 'the reported words');
+    expect(opened.body!.envelopeId, _envelope);
+    expect(server.envelopeRequests, isEmpty);
+
+    // Verifying asks the server for exactly that envelope.
+    final verdict = await owner.verify(opened);
+    expect(verdict.verdict, ReportVerdict.verified);
+    expect(server.envelopeRequests, [_envelope]);
+
+    await owner.dismiss(rows.single);
+    expect(await owner.list(), isEmpty);
+  }, skip: nativeSkip);
+
+  test('verification refuses what the server record contradicts', () async {
+    await ownerSetsUpKey();
+    await reporterTrustsAndFiles();
+    final owner = serviceFor(_ownerAccount);
+    final opened = await owner.open((await owner.list()).single);
+
+    Future<ReportVerdict> verdictFor(ReportEnvelopeRecord? record) async {
+      server.record = record;
+      return (await owner.verify(opened)).verdict;
+    }
+
+    ReportEnvelopeRecord with_({
+      String? conversation,
+      String? device,
+      List<int>? commit_,
+      bool noCommit = false,
+    }) =>
+        ReportEnvelopeRecord(
+          envelopeId: _envelope,
+          conversationId: conversation ?? _conversation,
+          senderAccountId: 'acct_sender',
+          senderDeviceId: device ?? _sender,
+          frankCommit: noCommit ? null : (commit_ ?? commit),
+          createdAt: DateTime.utc(2026, 11, 7),
+        );
+
+    expect(await verdictFor(with_()), ReportVerdict.verified);
+    expect(await verdictFor(with_(commit_: List<int>.filled(32, 1))),
+        ReportVerdict.mismatch);
+    expect(
+        await verdictFor(with_(device: 'dev_other')), ReportVerdict.mismatch);
+    expect(await verdictFor(with_(conversation: 'conv_2')),
+        ReportVerdict.mismatch);
+    expect(await verdictFor(with_(noCommit: true)), ReportVerdict.unfranked);
+    expect(await verdictFor(null), ReportVerdict.recordGone);
+  }, skip: nativeSkip);
+
+  test('a forged body (wrong key) does not verify', () async {
+    await ownerSetsUpKey();
+    // The reporter does not know kf: it reveals a made-up one.
+    store.reveals['$_sender:$_action'] = FrankReveal(
+      messageKey: '$_sender:$_action',
+      conversationId: _conversation,
+      envelopeId: _envelope,
+      frankKey: List<int>.filled(32, 3),
+      payload: payload,
+    );
+    await reporterTrustsAndFiles();
+    final owner = serviceFor(_ownerAccount);
+    final opened = await owner.open((await owner.list()).single);
+    expect((await owner.verify(opened)).verdict, ReportVerdict.mismatch);
+  }, skip: nativeSkip);
+
+  test('a changed owner key is refused until pinned again', () async {
+    await ownerSetsUpKey();
+    final reporter = serviceFor(_reporterAccount);
+    await reporter.pinKeys(await reporter.prepare(_conversation));
+    // The owner replaces the key (new device): the old pin no longer matches.
+    await ReportsService(
+      api: server,
+      token: _ownerAccount,
+      accountId: _ownerAccount,
+      crypto: crypto,
+      store: store,
+      seeds: MemoryReportSeedStore(),
+    ).createKey(replace: true);
+    final plan = await reporter.prepare(_conversation);
+    expect(plan.check.recipients.single.status, ReportKeyStatus.changed);
+    expect(plan.canSend, isFalse);
+    await expectLater(
+        reporter.file(
+            conversationId: _conversation, messageKey: '$_sender:$_action'),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
+    expect(server.copies, isEmpty);
+  }, skip: nativeSkip);
+
+  test('this device cannot open what is sealed to a key it does not hold',
+      () async {
+    await ownerSetsUpKey();
+    await reporterTrustsAndFiles();
+    final row = (await serviceFor(_ownerAccount).list()).single;
+    // No seed on this device.
+    final blank = ReportsService(
+      api: server,
+      token: _ownerAccount,
+      accountId: _ownerAccount,
+      crypto: crypto,
+      store: store,
+      seeds: MemoryReportSeedStore(),
+    );
+    expect((await blank.open(row)).failure, ReportOpenFailure.noSeed);
+    // A different seed: sealed to an older key.
+    await blank.createKey(replace: true);
+    expect((await blank.open(row)).failure, ReportOpenFailure.otherKey);
+    // A copy opened under another reporter or conversation does not open.
+    final owner = serviceFor(_ownerAccount);
+    final tampered = ReportCopyRow(
+      id: row.id,
+      reportId: row.reportId,
+      inboxKind: row.inboxKind,
+      inboxId: row.inboxId,
+      keyRev: row.keyRev,
+      recipientPublicKey: row.recipientPublicKey,
+      conversationId: 'conv_other',
+      reporterAccountId: row.reporterAccountId,
+      sealed: row.sealed,
+      createdAt: row.createdAt,
+    );
+    expect((await owner.open(tampered)).failure, ReportOpenFailure.cannotOpen);
+  }, skip: nativeSkip);
+
+  test('community conversations and unreportable messages are refused',
+      () async {
+    await ownerSetsUpKey();
+    final reporter = serviceFor(_reporterAccount);
+    server.kind = 'community';
+    final plan = await reporter.prepare(_conversation);
+    expect(plan.isCommunity, isTrue);
+    expect(plan.canSend, isFalse);
+    await expectLater(
+        reporter.file(
+            conversationId: _conversation, messageKey: '$_sender:$_action'),
+        throwsA(isA<ReportFailureException>().having(
+            (e) => e.kind, 'kind', ReportFailure.communityUnavailable)));
+    server.kind = 'instance_owner';
+    await expectLater(
+        reporter.file(conversationId: _conversation, messageKey: 'dev:none'),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.notReportable)));
+    server.keys.clear();
+    await expectLater(
+        reporter.prepare(_conversation),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.noRecipients)));
+    expect(server.copies, isEmpty);
+  }, skip: nativeSkip);
+
+  test('verification shows nothing about the sender unless it matches',
+      () async {
+    await ownerSetsUpKey();
+    await reporterTrustsAndFiles();
+    final owner = serviceFor(_ownerAccount);
+    final opened = await owner.open((await owner.list()).single);
+    ReportEnvelopeRecord record(
+            {String sender = 'acct_sender', List<int>? c}) =>
+        ReportEnvelopeRecord(
+          envelopeId: _envelope,
+          conversationId: _conversation,
+          senderAccountId: sender,
+          senderDeviceId: _sender,
+          frankCommit: c,
+          createdAt: DateTime.utc(2026, 11, 7),
+        );
+    // Unfranked: no sender shown.
+    server.record = record();
+    var result = await owner.verify(opened);
+    expect(result.verdict, ReportVerdict.unfranked);
+    expect(result.record, isNull);
+    // Wrong commitment: no sender shown.
+    server.record = record(c: List<int>.filled(32, 1));
+    result = await owner.verify(opened);
+    expect(result.verdict, ReportVerdict.mismatch);
+    expect(result.record, isNull);
+    // Reporter is the sender: never verified.
+    server.record = record(sender: _reporterAccount, c: commit);
+    expect((await owner.verify(opened)).verdict, ReportVerdict.mismatch);
+    server.record = record(c: commit);
+    result = await owner.verify(opened);
+    expect(result.verdict, ReportVerdict.verified);
+    expect(result.record?.senderAccountId, 'acct_sender');
+  }, skip: nativeSkip);
+
+  test('the preview is the proof that is sealed, not the edited message',
+      () async {
+    final reporter = serviceFor(_reporterAccount);
+    expect(
+        await reporter.previewText('$_sender:$_action'), 'the reported words');
+    expect(await reporter.previewText('dev:none'), isNull);
+  }, skip: nativeSkip);
+
+  test('a failed replace puts the old seed back', () async {
+    final owner = serviceFor(_ownerAccount);
+    final (key, _) = await owner.createKey();
+    server.keys.clear();
+    final failing = _FailingPut(server);
+    final broken = ReportsService(
+      api: failing,
+      token: _ownerAccount,
+      accountId: _ownerAccount,
+      crypto: crypto,
+      store: store,
+      seeds: seeds,
+    );
+    await expectLater(broken.createKey(replace: true), throwsA(anything));
+    expect((await owner.keyStatus()).localKey, key);
+  }, skip: nativeSkip);
+
+  test('report models bound what the server sends', () {
+    Map<String, Object?> row() => {
+          'id': 'row_1',
+          'report_id': 'rpt_1',
+          'inbox_kind': 'instance_owner',
+          'inbox_id': 'acct_owner',
+          'key_rev': 1,
+          'recipient_public_key': base64Encode(List<int>.filled(32, 1)),
+          'conversation_id': 'conv_1',
+          'reporter_account_id': 'acct_reporter',
+          'sealed': base64Encode(List<int>.filled(60, 2)),
+          'created_at': '2026-11-07T10:00:00Z',
+        };
+    expect(ReportCopyRow.fromJson(row()).toString(), 'ReportCopyRow(row_1)');
+    for (final bad in <Map<String, Object?>>[
+      {...row(), 'key_rev': 0},
+      {...row(), 'id': ''},
+      {...row(), 'recipient_public_key': base64Encode(List<int>.filled(31, 1))},
+      {...row(), 'created_at': 5},
+      {...row(), 'sealed': 5},
+    ]) {
+      expect(() => ReportCopyRow.fromJson(bad), throwsA(anything));
+    }
+  });
+
+  test('the seed store keeps one seed per server and account', () async {
+    final store = MemoryReportSeedStore();
+    final seed = Uint8List.fromList(List<int>.filled(32, 5));
+    await store.save(_origin, 'a', seed);
+    seed.fillRange(0, 32, 0);
+    expect(await store.load(_origin, 'a'), List<int>.filled(32, 5));
+    expect(await store.load(_origin, 'b'), isNull);
+    expect(await store.load('https://other.example', 'a'), isNull);
+    await store.delete(_origin, 'a');
+    expect(await store.load(_origin, 'a'), isNull);
+  });
+
+  test('payload rules the screens rely on', () {
+    expect(frankCommitBytes, 32);
+    expect(AppPayloadType.text.wireName, 'text');
+  });
+}
+
+class _FailingPut extends _Server {
+  _FailingPut(_Server inner) {
+    record = inner.record;
+  }
+
+  @override
+  Future<int> putInstanceReportKey(String token, List<int> publicKey) async =>
+      throw ApiException(500, '{"error":"x"}');
+}

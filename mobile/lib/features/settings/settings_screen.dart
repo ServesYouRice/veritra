@@ -23,6 +23,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
+import '../reports/owner_reports_screen.dart';
 import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
@@ -133,6 +134,20 @@ class SettingsScreen extends StatelessWidget {
                           );
                         }
                       },
+                    ),
+                  if (state.reportsAvailable && state.isInstanceOwner)
+                    ListTile(
+                      leading: const Icon(Icons.flag_outlined),
+                      title: Text(l10n.c6ReportsTitle),
+                      subtitle: Text(l10n.c6ReportsSettingsDetail),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => OwnerReportsScreen(
+                            state: state,
+                            reauthenticate: _reauthenticate,
+                          ),
+                        ),
+                      ),
                     ),
                   if (isAdmin)
                     ListTile(
@@ -453,10 +468,16 @@ class SettingsScreen extends StatelessWidget {
   }
 
   Future<void> _confirmLogout(BuildContext context) async {
+    // C6: signing out deletes this device's report key; say so first.
+    final holdsSeed = await state.holdsReportSeed();
+    if (!context.mounted) return;
     final confirmed = await _confirm(
       context,
       title: context.l10n.settingsSignOutTitle,
-      message: context.l10n.settingsSignOutMessage,
+      message: holdsSeed
+          ? '${context.l10n.settingsSignOutMessage}\n\n'
+              '${context.l10n.c6SignOutSeedWarning}'
+          : context.l10n.settingsSignOutMessage,
       confirmLabel: context.l10n.settingsSignOut,
     );
     if (confirmed) {

@@ -7,6 +7,7 @@ import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
 import 'core/receipts_state.dart';
+import 'core/report_seed_store.dart';
 import 'core/transport_policy.dart';
 import 'crypto/attachment_crypto.dart';
 import 'desktop/desktop_services.dart';
@@ -96,6 +97,7 @@ Future<void> main(List<String> args) async {
         },
       ),
       attachmentService: AttachmentCryptoService(bindings),
+      reportSeedStore: SecureReportSeedStore(),
       receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
       syncServiceFactory: (baseUrl, token) =>
           WebSocketSyncService(baseUrl: baseUrl, token: token),

@@ -43,6 +43,7 @@ import 'emoji_picker.dart';
 import 'message_request_screen.dart';
 import 'message_ticks.dart';
 import 'poll_widgets.dart';
+import '../reports/report_message_screen.dart';
 import 'typing_line.dart';
 import 'voice_notes.dart';
 import 'voice_recorder.dart';
@@ -819,6 +820,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 leading: const Icon(Icons.hide_source),
                 title: Text(context.l10n.w8DeleteForMe),
                 onTap: () => Navigator.of(sheetContext).pop('hide')),
+            // C6: report a message someone else sent. Offered only where the
+            // build can report; the screen explains what is sent first.
+            if (actionable && !mine && state.reportsAvailable)
+              ListTile(
+                  leading: const Icon(Icons.flag_outlined),
+                  title: Text(context.l10n.c6ReportMessage),
+                  onTap: () => Navigator.of(sheetContext).pop('report')),
             if (actionable && sendable && state.canPinMessages(conversationId))
               ListTile(
                   leading: const Icon(Icons.push_pin_outlined),
@@ -875,6 +883,15 @@ class _ChatScreenState extends State<ChatScreen> {
       await state.toggleMessageStar(message);
     } else if (action == 'hide') {
       await state.deleteMessageForMe(message);
+    } else if (action == 'report') {
+      await Navigator.of(context).push<void>(MaterialPageRoute<void>(
+        builder: (_) => ReportMessageScreen(
+          state: state,
+          conversationId: conversationId,
+          messageKey: message.key,
+        ),
+      ));
+      return;
     } else if (action == 'forward') {
       final selected = <String>{};
       final destinations = await showDialog<List<String>>(

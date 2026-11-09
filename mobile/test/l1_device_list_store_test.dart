@@ -124,6 +124,7 @@ void main() {
     expect(await db.readDeviceListPin('acct_a'), isNull);
     expect(await db.writeDeviceListPin(_pin(1), expectedVersion: null), isTrue);
     final version = await db.customSelect('PRAGMA user_version').getSingle();
+    // Whatever the current schema is: later packages add tables after 26.
     expect(version.read<int>('user_version'),
         EncryptedLocalDatabase.currentSchemaVersion);
     expect(
