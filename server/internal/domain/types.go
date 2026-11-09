@@ -345,6 +345,12 @@ func CanPostRestricted(role string) bool {
 	return role == RoleOwner || role == RoleAdmin
 }
 
+// CanCreateChannel: only a community's owner and admins create channels
+// (owner decision 2026-11-09, C3). Moderators manage members, not channels.
+func CanCreateChannel(role string) bool {
+	return role == RoleOwner || role == RoleAdmin
+}
+
 func CanManageMembers(role string) bool {
 	return role == RoleOwner || role == RoleAdmin || role == RoleModerator
 }
