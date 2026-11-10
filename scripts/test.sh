@@ -20,6 +20,7 @@ if command -v python3 >/dev/null 2>&1; then
   python3 "$ROOT/scripts/check-go-toolchain_test.py"
   python3 "$ROOT/scripts/check-rust-audit-policy_test.py"
   python3 "$ROOT/scripts/check-gradle-inputs_test.py"
+  python3 "$ROOT/scripts/build-windows-installer_test.py"
   python3 "$ROOT/scripts/release-image_test.py"
 elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-release-evidence_test.py"
@@ -35,6 +36,7 @@ elif command -v python >/dev/null 2>&1; then
   python "$ROOT/scripts/check-go-toolchain_test.py"
   python "$ROOT/scripts/check-rust-audit-policy_test.py"
   python "$ROOT/scripts/check-gradle-inputs_test.py"
+  python "$ROOT/scripts/build-windows-installer_test.py"
   python "$ROOT/scripts/release-image_test.py"
 else
   echo "release-policy fixtures need python3 or python; none found" >&2

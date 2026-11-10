@@ -1126,5 +1126,16 @@
   "accountsErrorRegistry": "Списак налога није могао да се сачува.",
   "accountsErrorRemove": "Налог није могао да се уклони. Покушајте поново.",
   "accountsDuplicate": "Овај уређај већ има тај налог, па је додатна пријава уклоњена. Уклоните вишак уређаја са листе уређаја налога.",
-  "accountsBack": "Назад на моје налоге"
+  "accountsBack": "Назад на моје налоге",
+
+  "settingsSectionUpdates": "Ажурирања",
+  "settingsAutoUpdateCheck": "Аутоматски проверавај ажурирања",
+  "settingsAutoUpdateCheckDetail": "Проверавај нове верзије при покретању",
+  "settingsCheckForUpdates": "Провери ажурирања",
+  "settingsCheckingForUpdates": "Провера ажурирања…",
+  "settingsUpdateUpToDate": "Veritra је ажурирана",
+  "settingsUpdateAvailable": "Верзија {version} је доступна",
+  "@settingsUpdateAvailable": {"placeholders": {"version": {"type": "String"}}},
+  "settingsUpdateError": "Провера ажурирања није успела",
+  "settingsUpdateDisabled": "Аутоматска провера ажурирања је искључена"
 }

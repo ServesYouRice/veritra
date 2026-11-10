@@ -595,6 +595,58 @@ The app has no custom trust, no trust-on-first-use and no way to skip TLS checks
 
 Never use self-signed leaf certificates, or plain HTTP outside loopback demo builds.
 
+### Connecting a second PC (Windows LAN client)
+
+The app accepts only HTTPS and has no "skip certificate check". For a second PC on the local network to connect to the Veritra server, choose one of the following two paths:
+
+#### Path A: A real certificate (easiest for the client)
+
+1. **Domain name:** Use a hostname in a domain you control, e.g. `chat.example.com`.
+2. **DNS:** Point the record at the server PC's local LAN address (or public DNS record resolving to the private IP).
+3. **Caddy setup:** In `deploy/caddy/Caddyfile`, set your hostname (replace `messenger.example.com` and email), set `VERITRA_IMAGE` in `deploy/docker-compose.yml`, and start Caddy with:
+   ```sh
+   docker compose --profile caddy up -d
+   ```
+   Caddy obtains and renews the ACME certificate automatically. For LAN-only servers not reachable from the public internet, configure the DNS-01 challenge with your provider's Caddy plugin (Option 1 above).
+4. **Connect:** On the second PC, launch Veritra and enter `https://chat.example.com`. No certificate installation is required on the second PC.
+
+#### Path B: Internal CA (local network only, no public domain)
+
+1. **Server PC configuration:** Edit `deploy/caddy/Caddyfile` in place. Change the site block domain to a local DNS name (for example, `veritra.home.arpa`) and add `tls internal` inside that site block. Keep the security headers and log filters intact (they prevent token leakage in Caddy logs). Start Caddy:
+   ```sh
+   docker compose --profile caddy up -d
+   ```
+   Caddy generates its own internal root CA and issues the server certificate. Note: Veritra requires a valid hostname; raw IP addresses and `.local` mDNS names are not supported.
+2. **Host resolution on second PC:** Map the hostname to the server PC's LAN IP address. On the second PC, edit `C:\Windows\System32\drivers\etc\hosts` (as Administrator):
+   ```text
+   192.168.1.20  veritra.home.arpa
+   ```
+   (Replace `192.168.1.20` with the actual LAN address of the server PC).
+3. **Export Caddy root CA:** Copy Caddy's root certificate from the server's data volume to the second PC:
+   ```sh
+   docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
+   ```
+   **Security:** Copy only `root.crt`, **never** copy `root.key`.
+4. **Trust the root certificate on the second PC:**
+   Verify the SHA-256 fingerprint on both machines to prevent tampering:
+   ```cmd
+   certutil -hashfile root.crt SHA256
+   ```
+   Once confirmed identical, install it into the Windows user root store (as the Windows user who runs Veritra):
+   ```cmd
+   certutil -addstore -user Root root.crt
+   ```
+   Confirm the Windows prompt to trust the CA.
+5. **Verify in browser:** Open `https://veritra.home.arpa` in Microsoft Edge or Google Chrome. If the secure lock icon displays without certificate warnings, the Windows trust store is correctly configured.
+6. **Connect from Veritra:** In the Veritra app on the second PC, enter `https://veritra.home.arpa`.
+
+#### Safety and firewall rules
+
+- **CA security:** Install the internal CA only on workstations you own and control. Anyone holding `root.key` can impersonate any host on machines that trust that CA. Keep `root.key` restricted to the server host.
+- **Mobile caveats:** Android 7+ does not trust user-added root CAs for user applications; use Path A for Android mobile clients.
+- **Firewall:** Open inbound ports 80 and 443 on the server PC's firewall for the LAN subnet only.
+- **No cleartext:** Plain `http://` is strictly prohibited outside loopback demo builds (`mobile/lib/main_demo.dart`).
+
 
 ## Post-quantum TLS
 
