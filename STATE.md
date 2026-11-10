@@ -7,6 +7,12 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-09.**
 
+2026-11-09 C3 review: sender/fetch/UI slice ported, but C3 remains partial.
+Verified C4 role wiring, remote-removal rotation, private-channel lifecycle
+screens and plaintext-name removal are still missing. Review fixes protect
+pending rotations and key replies; see
+[`C3 review evidence`](testing/evidence/C3-review-2026-11-09.md).
+
 2026-11-09 integration: C1 invite binding v2 merged with schema 32,
 migration 0066 and ABI 21; no counter collisions. Focused checks and full
 Windows test/lint scripts pass. C1 remains partial; see
