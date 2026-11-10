@@ -80,6 +80,45 @@ void main() {
     state.dispose();
   });
 
+  test('a unifiedpush distributor missing or refusing sets noDistributor',
+      () async {
+    final (state, _, push) = await start(<String, Object?>{
+      'enabled': true,
+      'providers': <String>['unifiedpush'],
+      'vapid_public_key': 'vapid',
+    });
+    push.emit(const PushRegistrationFailedEvent('acct_1:dev_1',
+        provider: 'unifiedpush'));
+    await _until(() => state.pushState == PushState.noDistributor);
+    state.dispose();
+  });
+
+  test('a UnifiedPush endpoint registers with provider unifiedpush', () async {
+    final (state, api, push) = await start(<String, Object?>{
+      'enabled': true,
+      'providers': <String>['unifiedpush'],
+      'vapid_public_key': 'vapid',
+    });
+    expect(push.registrations.single.providers, <String>['unifiedpush']);
+    expect(push.registrations.single.vapid, 'vapid');
+
+    push.emit(const PushEndpointEvent(
+      instance: 'acct_1:dev_1',
+      provider: 'unifiedpush',
+      endpoint: 'https://up.example.com/endpoint/abc',
+      publicKey: 'pubkey123',
+      authSecret: 'auth123',
+    ));
+    await _until(() => state.pushState == PushState.registered);
+    expect(state.pushProvider, 'unifiedpush');
+    expect(api.webPushRegistrations.single.provider, 'unifiedpush');
+    expect(api.webPushRegistrations.single.endpoint,
+        'https://up.example.com/endpoint/abc');
+    expect(api.webPushRegistrations.single.publicKey, 'pubkey123');
+    expect(api.webPushRegistrations.single.authSecret, 'auth123');
+    state.dispose();
+  });
+
   test('a server without push says so and registers nothing', () async {
     final (state, _, push) =
         await start(<String, Object?>{'enabled': false, 'providers': []});
@@ -348,6 +387,20 @@ class _PushApi extends ApiClient {
   Object? registerError;
   final List<String> registeredTokens = <String>[];
   final List<String?> registeredModes = <String?>[];
+  final List<
+      ({
+        String endpoint,
+        String publicKey,
+        String authSecret,
+        String? mode,
+        String provider
+      })> webPushRegistrations = <({
+    String endpoint,
+    String publicKey,
+    String authSecret,
+    String? mode,
+    String provider,
+  })>[];
 
   @override
   Future<Map<String, Object?>> pushConfig(String token) async => config;
@@ -375,6 +428,30 @@ class _PushApi extends ApiClient {
     if (error != null) throw error;
     nativeRegistrations.add(provider);
     registeredTokens.add(deviceToken);
+    return 'push_1';
+  }
+
+  @override
+  Future<String> registerWebPush(
+    String token, {
+    String provider = 'webpush',
+    required String endpoint,
+    required String publicKey,
+    required String authSecret,
+    String? notificationMode,
+  }) async {
+    registeredModes.add(notificationMode);
+    onRegister?.call();
+    final error = registerError;
+    if (error != null) throw error;
+    webPushRegistrations.add((
+      endpoint: endpoint,
+      publicKey: publicKey,
+      authSecret: authSecret,
+      mode: notificationMode,
+      provider: provider,
+    ));
+    registeredTokens.add(endpoint);
     return 'push_1';
   }
 

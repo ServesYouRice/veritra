@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -162,5 +163,48 @@ func TestTestPushSendsTheGenericWakeAndIsRateLimited(t *testing.T) {
 	}
 	if _, list := call(t, api.listDevicePushSubscriptions, principal, http.MethodGet, ""); len(list["subscriptions"].([]any)) != 0 {
 		t.Fatalf("gone registration still listed: %v", list)
+	}
+}
+
+func TestUnifiedPushSubscriptionLifecycleAndTestWake(t *testing.T) {
+	api, principal, provider := newPushTestAPI(t, "unifiedpush")
+	_, body := call(t, api.pushConfig, principal, http.MethodGet, "")
+	if body["enabled"] != true || body["vapid_public_key"] != "vapid-public" {
+		t.Fatalf("unexpected push config: %v", body)
+	}
+
+	pubBytes := append([]byte{4}, bytes.Repeat([]byte{1}, 64)...)
+	validPubKey := base64.RawURLEncoding.EncodeToString(pubBytes)
+	authSecret := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 16))
+
+	// 1. Register with UnifiedPush with keys
+	subReq := `{"provider":"unifiedpush","endpoint":"https://push.example.org/up/ep1","public_key":"` + validPubKey + `","auth_secret":"` + authSecret + `"}`
+	status, first := call(t, api.createPushSubscription, principal, http.MethodPost, subReq)
+	if status != http.StatusCreated {
+		t.Fatalf("unifiedpush registration failed: status=%d body=%v", status, first)
+	}
+
+	// 2. Also register without keys (keyless UnifiedPush distributor)
+	status, second := call(t, api.createPushSubscription, principal, http.MethodPost,
+		`{"provider":"unifiedpush","endpoint":"https://push.example.org/up/ep2"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("keyless unifiedpush registration failed: status=%d body=%v", status, second)
+	}
+	if first["subscription_id"] != second["subscription_id"] {
+		t.Fatalf("rotation created a second registration: %v %v", first, second)
+	}
+
+	// 3. Test wake delivery
+	api.pushTestLast = nil
+	status, testBody := call(t, api.sendTestPush, principal, http.MethodPost, "")
+	if status != http.StatusOK {
+		t.Fatalf("test push status=%d body=%v", status, testBody)
+	}
+	results := testBody["results"].([]any)
+	if len(results) != 1 || results[0].(map[string]any)["result"] != "delivered" {
+		t.Fatalf("results=%v", results)
+	}
+	if len(provider.sent) != 1 || provider.sent[0].Provider != "unifiedpush" || provider.sent[0].Endpoint != "https://push.example.org/up/ep2" {
+		t.Fatalf("sent notification unexpected: %v", provider.sent)
 	}
 }

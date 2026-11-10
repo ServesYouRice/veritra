@@ -173,6 +173,18 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		}
 		providers["apns"] = provider
 	}
+	upProvider, err := push.NewUnifiedPushProvider(push.UnifiedPushConfig{
+		VAPID: push.WebPushConfig{
+			Subscriber: cfg.VAPIDSubscriber,
+			PublicKey:  cfg.VAPIDPublicKey,
+			PrivateKey: cfg.VAPIDPrivateKey,
+		},
+	})
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("configure unified push: %w", err)
+	}
+	providers["unifiedpush"] = upProvider
 	pushProvider := push.NewRouter(providers)
 	hub := realtime.NewHubWithLimits(realtime.HubLimits{PerIPv6Prefix: cfg.Limits.WithDefaults().SocketsPerIPv6Prefix})
 	metrics := newHTTPMetrics()
@@ -206,10 +218,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	pushProviders := make([]string, 0, 3)
+	pushProviders := make([]string, 0, 4)
 	if a.Config.VAPIDPublicKey != "" {
 		pushProviders = append(pushProviders, "webpush")
 	}
+	pushProviders = append(pushProviders, "unifiedpush")
 	if a.Config.FCMProjectID != "" {
 		pushProviders = append(pushProviders, "fcm")
 	}

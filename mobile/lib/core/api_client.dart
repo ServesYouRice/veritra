@@ -2452,6 +2452,7 @@ class ApiClient {
 
   Future<String> registerWebPush(
     String token, {
+    String provider = 'webpush',
     required String endpoint,
     required String publicKey,
     required String authSecret,
@@ -2462,7 +2463,7 @@ class ApiClient {
       '/api/v1/push/subscriptions',
       token: token,
       body: <String, Object?>{
-        'provider': 'webpush',
+        'provider': provider,
         'endpoint': endpoint,
         'public_key': publicKey,
         'auth_secret': authSecret,

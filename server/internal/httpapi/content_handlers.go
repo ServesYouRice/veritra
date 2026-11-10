@@ -836,6 +836,7 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 		return
 	}
 	valid := (req.Provider == "webpush" && push.ValidateWebPushTarget(push.Notification{Provider: "webpush", Endpoint: req.Endpoint, PublicKey: req.PublicKey, AuthSecret: req.AuthSecret}) == nil) ||
+		(req.Provider == "unifiedpush" && push.ValidateUnifiedPushTarget(push.Notification{Provider: "unifiedpush", Endpoint: req.Endpoint, PublicKey: req.PublicKey, AuthSecret: req.AuthSecret}) == nil) ||
 		((req.Provider == "fcm" || req.Provider == "apns") && push.ValidateNativeTarget(req.Provider, req.Endpoint) == nil && req.PublicKey == "" && req.AuthSecret == "")
 	if !valid {
 		writeError(w, http.StatusBadRequest, "invalid_push_subscription")
@@ -859,15 +860,15 @@ func (a *API) createPushSubscription(w http.ResponseWriter, r *http.Request, pri
 }
 
 // pushConfig tells the client which providers this server delivers
-// through. The VAPID key is sent only with Web Push: FCM and APNs never need
-// it (card I41).
+// through. The VAPID key is sent with Web Push and UnifiedPush: FCM and APNs
+// never need it (card I41).
 func (a *API) pushConfig(w http.ResponseWriter, _ *http.Request, _ domain.Principal) {
 	response := map[string]any{
 		"enabled":        len(a.PushProviders) > 0,
 		"providers":      a.PushProviders,
 		"payload_policy": "generic_encrypted_event_only",
 	}
-	if a.pushProviderOffered("webpush") {
+	if (a.pushProviderOffered("webpush") || a.pushProviderOffered("unifiedpush")) && a.VAPIDPublicKey != "" {
 		response["vapid_public_key"] = a.VAPIDPublicKey
 	}
 	writeJSON(w, http.StatusOK, response)

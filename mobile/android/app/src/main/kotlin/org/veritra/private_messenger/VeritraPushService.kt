@@ -8,14 +8,17 @@ import org.unifiedpush.android.connector.data.PushMessage
 
 class VeritraPushService : PushService() {
     override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
-        val keys = endpoint.pubKeySet ?: return
-        PushEventBridge.recordEndpoint(applicationContext, "webpush", instance,
-            endpoint.url, keys.pubKey, keys.auth, temporary = endpoint.temporary)
+        val keys = endpoint.pubKeySet
+        val pubKey = keys?.pubKey ?: ""
+        val auth = keys?.auth ?: ""
+        val provider = if ("unifiedpush" in PushRegistrationConfig.providers) "unifiedpush" else "webpush"
+        PushEventBridge.recordEndpoint(applicationContext, provider, instance,
+            endpoint.url, pubKey, auth, temporary = endpoint.temporary)
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
-        if (!message.decrypted) return
-        val payload = runCatching { JSONObject(String(message.content, Charsets.UTF_8)) }.getOrNull() ?: return
+        val content = String(message.content, Charsets.UTF_8)
+        val payload = runCatching { JSONObject(content) }.getOrNull() ?: return
         val fields = payload.keys().asSequence().associateWith { payload.get(it) }
         when (WakeRules.payload(fields)) {
             WakeRules.Payload.LEGACY -> PushEventBridge.markWake(applicationContext)
@@ -30,7 +33,7 @@ class VeritraPushService : PushService() {
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) {
-        PushEventBridge.emit(mapOf("type" to "registration_failed", "instance" to instance))
+        val provider = if ("unifiedpush" in PushRegistrationConfig.providers) "unifiedpush" else "webpush"
+        PushEventBridge.emit(mapOf("type" to "registration_failed", "instance" to instance, "provider" to provider))
     }
-
 }
