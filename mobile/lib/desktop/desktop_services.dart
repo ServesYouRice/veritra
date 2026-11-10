@@ -9,22 +9,27 @@ import '../ui/about.dart';
 import '../storage/profile_scope.dart';
 import 'desktop_shell.dart';
 import 'message_notifications.dart';
+import 'update_service.dart';
 
 /// The desktop shell features (W3, W4) wired together: tray, closing to the
-/// tray, one window, and notifications for messages that arrive while the
-/// window is not in front. Absent on Android and iOS.
+/// tray, one window, notifications, and update checks (W12). Absent on Android
+/// and iOS.
 class DesktopServices {
   DesktopServices({
     required this.state,
     required this.shell,
     required this.notifier,
     required this.settings,
+    required this.updateSettings,
+    required this.updateService,
   });
 
   final AppState state;
   final DesktopShell shell;
   final DesktopNotifier notifier;
   final NotificationSettings settings;
+  final UpdateSettings updateSettings;
+  final UpdateService updateService;
   late final MessageNotifier _messages = MessageNotifier(
     state: state,
     shell: shell,
@@ -50,6 +55,11 @@ class DesktopServices {
       final settings =
           NotificationSettings(SecureNotificationSettingsStore(scope: scope));
       unawaited(settings.load());
+      final updateSettings =
+          UpdateSettings(SecureUpdateSettingsStore(scope: scope));
+      unawaited(updateSettings.load());
+      final updateService = UpdateService(settings: updateSettings);
+      unawaited(updateService.checkForUpdatesIfEnabled());
       return DesktopServices(
         state: state,
         shell: shell,
@@ -58,6 +68,8 @@ class DesktopServices {
           onClick: () => unawaited(shell.showWindow()),
         ),
         settings: settings,
+        updateSettings: updateSettings,
+        updateService: updateService,
       );
     } catch (_) {
       return null;
@@ -71,6 +83,8 @@ class DesktopServices {
     if (notifier case final PluginDesktopNotifier plugin) await plugin.clear();
     await shell.dispose();
     settings.dispose();
+    updateSettings.dispose();
+    updateService.dispose();
   }
 }
 
@@ -89,9 +103,16 @@ AppLocalizations deviceL10n() {
   return englishL10n;
 }
 
-/// Offers the notification settings to the settings screen when running on
-/// desktop.
+/// Offers the notification settings and update service to the settings screen
+/// when running on desktop.
 Widget wrapDesktopScope(DesktopServices? desktop, Widget child) {
   if (desktop == null) return child;
-  return NotificationSettingsScope(settings: desktop.settings, child: child);
+  return NotificationSettingsScope(
+    settings: desktop.settings,
+    child: UpdateSettingsScope(
+      settings: desktop.updateSettings,
+      service: desktop.updateService,
+      child: child,
+    ),
+  );
 }

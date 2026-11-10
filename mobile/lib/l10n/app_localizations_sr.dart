@@ -3951,6 +3951,37 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get accountsBack => 'Назад на моје налоге';
+
+  @override
+  String get settingsSectionUpdates => 'Ажурирања';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Аутоматски проверавај ажурирања';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Проверавај нове верзије при покретању';
+
+  @override
+  String get settingsCheckForUpdates => 'Провери ажурирања';
+
+  @override
+  String get settingsCheckingForUpdates => 'Провера ажурирања…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra је ажурирана';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Верзија $version је доступна';
+  }
+
+  @override
+  String get settingsUpdateError => 'Провера ажурирања није успела';
+
+  @override
+  String get settingsUpdateDisabled =>
+      'Аутоматска провера ажурирања је искључена';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -7905,4 +7936,35 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get accountsBack => 'Nazad na moje naloge';
+
+  @override
+  String get settingsSectionUpdates => 'Ažuriranja';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Automatski proveravaj ažuriranja';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Proveravaj nove verzije pri pokretanju';
+
+  @override
+  String get settingsCheckForUpdates => 'Proveri ažuriranja';
+
+  @override
+  String get settingsCheckingForUpdates => 'Provera ažuriranja…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra je ažurirana';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Verzija $version je dostupna';
+  }
+
+  @override
+  String get settingsUpdateError => 'Provera ažuriranja nije uspela';
+
+  @override
+  String get settingsUpdateDisabled =>
+      'Automatska provera ažuriranja je isključena';
 }
