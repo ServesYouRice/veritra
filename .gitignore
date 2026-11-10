@@ -48,3 +48,8 @@ Thumbs.db
 # Operator secrets and local backups for deploy/docker-compose.yml (I46)
 deploy/secrets/
 deploy/offsite-backups/
+
+# Local test outputs and artifacts
+*.log
+.b7-*
+b7-review-*
