@@ -192,14 +192,38 @@ class PkApi extends ApiClient {
 
   /// Offers push, so the app registers one.
   bool pushEnabled = false;
+  Completer<void>? pushConfigGate;
+  Completer<void>? registerPushGate;
+  int pushConfigRequests = 0;
+  int pushRegisterRequests = 0;
+  final disabledPush = <String>[];
 
   @override
-  Future<Map<String, Object?>> pushConfig(String token) async => pushEnabled
-      ? <String, Object?>{
-          'enabled': true,
-          'providers': <String>['fcm'],
-        }
-      : const <String, Object?>{'enabled': false};
+  Future<String> registerNativePush(String token,
+      {required String provider,
+      required String deviceToken,
+      String? notificationMode}) async {
+    pushRegisterRequests++;
+    await registerPushGate?.future;
+    return 'sub-late';
+  }
+
+  @override
+  Future<void> disablePush(String token, String subscriptionId) async {
+    disabledPush.add(subscriptionId);
+  }
+
+  @override
+  Future<Map<String, Object?>> pushConfig(String token) async {
+    pushConfigRequests++;
+    await pushConfigGate?.future;
+    return pushEnabled
+        ? <String, Object?>{
+            'enabled': true,
+            'providers': <String>['fcm'],
+          }
+        : const <String, Object?>{'enabled': false};
+  }
 
   @override
   Future<void> logout(String token) async {}
@@ -285,6 +309,16 @@ class PkHarness {
 
 /// A push service that records registrations and can refuse to unregister.
 class FakePush extends DisabledMobilePushService {
+  final endpointEvents = StreamController<PushEvent>.broadcast();
+  @override
+  Stream<PushEvent> get events => endpointEvents.stream;
+  @override
+  void dispose() {
+    unawaited(endpointEvents.close());
+  }
+
+  Completer<void>? registerGate;
+  final registerStarted = Completer<void>();
   bool failUnregister = false;
   int unregisterAttempts = 0;
   final List<String> registered = <String>[];
@@ -295,6 +329,8 @@ class FakePush extends DisabledMobilePushService {
     String vapid = '',
     List<String> providers = const <String>[],
   }) async {
+    if (!registerStarted.isCompleted) registerStarted.complete();
+    await registerGate?.future;
     registered.add(instance);
   }
 

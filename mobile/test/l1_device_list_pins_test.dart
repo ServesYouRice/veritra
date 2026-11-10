@@ -444,9 +444,15 @@ void main() {
       final pin = (await store.loadDeviceListPin('acct_own'))!;
       expect(pin.version, 2);
       expect(pin.standing(idBytes('dev_bob'), bobKey), PinStanding.approved);
-      // The same step again does not verify against the new head.
-      expect(() => pins.pinOwnStep('acct_own', add),
+      // A refresh can pin our accepted step before its POST returns.
+      expect(await pins.pinOwnStep('acct_own', add), isFalse);
+      expect((await store.loadDeviceListPin('acct_own'))!.headStatement, add);
+      // A different statement at that version still fails verification.
+      final changed = Uint8List.fromList(add);
+      changed[changed.length - 1] ^= 1;
+      expect(() => pins.pinOwnStep('acct_own', changed),
           throwsA(isA<NativeCryptoException>()));
+      expect((await store.loadDeviceListPin('acct_own'))!.headStatement, add);
     });
 
     test('pinChain refuses a chain that does not end in the head', () async {

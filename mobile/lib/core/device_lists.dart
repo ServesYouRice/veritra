@@ -249,6 +249,10 @@ class DeviceListPins {
   Future<bool> pinOwnStep(String accountId, List<int> statement) async {
     final pin = await store.loadDeviceListPin(accountId);
     if (pin == null || pin.conflict) return false;
+    // Sync may have verified and pinned our server-accepted statement while
+    // its POST was returning. Only the identical signed bytes are a no-op;
+    // a different statement still has to pass the native step verifier.
+    if (_same(pin.headStatement, statement)) return false;
     final next = _step(accountId, pin, statement);
     final moved =
         await store.saveDeviceListPin(next, expectedVersion: pin.version);

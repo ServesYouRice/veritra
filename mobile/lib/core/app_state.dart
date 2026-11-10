@@ -4931,14 +4931,35 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
-  Future<void> _startPush() async {
+  bool _pushLeaving = false;
+  int _pushGeneration = 0;
+  final Set<Future<bool>> _pushRegistrations = <Future<bool>>{};
+  final Set<Future<void>> _pushStarts = <Future<void>>{};
+  bool _pushTeardownFailed = false;
+
+  bool _pushOwnerActive(Session current, int generation, int pushGeneration) =>
+      !_pushLeaving &&
+      pushGeneration == _pushGeneration &&
+      _syncOwnerActive(current, generation);
+
+  Future<void> _startPush() {
+    if (_pushLeaving || _disposed) return Future.value();
+    final work = _startPushRun();
+    _pushStarts.add(work);
+    unawaited(work.then((_) => _pushStarts.remove(work)));
+    return work;
+  }
+
+  Future<void> _startPushRun() async {
+    if (_pushLeaving || _disposed) return;
+    final pushGeneration = _pushGeneration;
     final current = session;
     final client = api;
     if (current == null || client == null) return;
     final ownerGeneration = _sessionGeneration;
     try {
       final config = await client.pushConfig(current.token);
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       final vapid = config['vapid_public_key'] as String? ?? '';
       final providers = (config['providers'] as List? ?? const <Object?>[])
           .whereType<String>()
@@ -4951,39 +4972,56 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       pushConfigured = true;
       pushProviders = providers;
       notificationPermission = await pushService.notificationPermission();
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       _setPushState(PushState.registering);
       _pushInstance = '${current.accountId}:${current.deviceId}';
       phoneNoticesAllowed = false;
       final installer = phoneNoticeInstaller;
       if (installer != null) {
-        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
         // The worker must be installed, and capture on, before the server is
         // told this device decides mention notices locally.
         var allowed = false;
         try {
           allowed = await installer();
         } catch (_) {}
-        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+          // Installation can finish after a timed-out handoff. The callback
+          // captures this slot, so it cannot uninstall a newer slot's worker.
+          await beforeLocalSessionClear?.call();
+          return;
+        }
         phoneNoticesAllowed = allowed;
         _applyNoticeCapture();
       }
       await _pushSubscription?.cancel();
       _pushSubscription = pushService.events.listen(_handlePushEvent);
       final wakeGeneration = await pushService.pendingWakeGeneration();
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       if (wakeGeneration > 0) {
         _pendingWakeGeneration = max(_pendingWakeGeneration, wakeGeneration);
         unawaited(_catchUpSyncEvents());
       }
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       await _consumePendingEndpoint(current, client, ownerGeneration);
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
+      final instance = _pushInstance!;
       await pushService.register(
-          instance: _pushInstance!, vapid: vapid, providers: providers);
+          instance: instance, vapid: vapid, providers: providers);
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+        try {
+          await pushService
+              .unregister(instance)
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {
+          _pushTeardownFailed = true;
+        }
+        return;
+      }
       notifyListeners();
     } catch (_) {
       // Push is optional; realtime and foreground catch-up remain available.
-      if (pushState == PushState.registering) {
+      if (!_disposed && !_pushLeaving && pushState == PushState.registering) {
         _setPushState(PushState.registrationFailed);
       }
     }
@@ -5053,6 +5091,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   Future<void> _handlePushEvent(PushEvent event) async {
+    if (_pushLeaving || _disposed) return;
     final current = session;
     final client = api;
     if (current == null || client == null) return;
@@ -5089,7 +5128,17 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// acknowledges its native record. A failure leaves the record for the
   /// next startup or resume. Registering twice (live and pending) is safe.
   Future<bool> _registerEndpoint(Session current, ApiClient client,
-      int ownerGeneration, PushEndpointEvent event) async {
+      int ownerGeneration, PushEndpointEvent event) {
+    if (_pushLeaving || _disposed) return Future.value(false);
+    final work = _registerEndpointRun(
+        current, client, ownerGeneration, _pushGeneration, event);
+    _pushRegistrations.add(work);
+    unawaited(work.then((_) => _pushRegistrations.remove(work)));
+    return work;
+  }
+
+  Future<bool> _registerEndpointRun(Session current, ApiClient client,
+      int ownerGeneration, int pushGeneration, PushEndpointEvent event) async {
     try {
       // Every rotation carries the mode again: the server resets a
       // subscription registered without it back to the generic mode.
@@ -5104,14 +5153,28 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               provider: event.provider,
               deviceToken: event.endpoint,
               notificationMode: mode);
-      if (!_syncOwnerActive(current, ownerGeneration)) return false;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+        // A server registration can commit after teardown started. Use a
+        // fresh transport when the old runtime has already closed its own.
+        final cleanup = apiClientFactory(current.baseUrl);
+        try {
+          await cleanup
+              .disablePush(current.token, subscriptionId)
+              .timeout(const Duration(seconds: 5));
+        } finally {
+          cleanup.close();
+        }
+        return true;
+      }
       _pushSubscriptionId = subscriptionId;
       pushProvider = event.provider;
       _setPushState(PushState.registered);
       notifyListeners();
     } catch (_) {
       // Re-registration on the next startup retries endpoint delivery.
-      _setPushState(PushState.registrationFailed);
+      if (!_pushLeaving && !_disposed) {
+        _setPushState(PushState.registrationFailed);
+      }
       return false;
     }
     if (event.generation > 0) {
@@ -5537,7 +5600,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     Future<bool> attempt(Future<void> Function() action) async {
       for (var i = 0; i < attempts; i++) {
         try {
-          await action();
+          await action().timeout(const Duration(seconds: 5));
           return true;
         } catch (_) {}
       }
@@ -8947,7 +9010,22 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     var pushGone = true;
     await _enqueueSessionTransition(() async {
       await _flushDraftsBeforeSessionEnd();
-      pushGone = await _stopPushStrict(session, api, attempts: 3);
+      _pushLeaving = true;
+      _pushGeneration++;
+      // Pending registrations may already have committed server-side.
+      var drained = true;
+      try {
+        await Future.wait(_pushStarts.toList())
+            .timeout(const Duration(seconds: 5));
+        drained = (await Future.wait(_pushRegistrations.toList())
+                .timeout(const Duration(seconds: 5)))
+            .every((gone) => gone);
+      } catch (_) {
+        drained = false;
+      }
+      pushGone = await _stopPushStrict(session, api, attempts: 3) &&
+          drained &&
+          !_pushTeardownFailed;
     });
     return pushGone;
   }
@@ -8955,7 +9033,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// The user kept this account open after push could not be taken down:
   /// register again, as a resume would.
   void resumeAfterCancelledSwitch() {
-    if (session != null && !_disposed) unawaited(_startPush());
+    _pushLeaving = false;
+    _pushTeardownFailed = false;
+    // Let old registrations remove their late subscriptions before a new
+    // registration can reuse the same server-side subscription identity.
+    unawaited(Future.wait<void>([
+      ..._pushStarts,
+      for (final pending in _pushRegistrations) pending.then<void>((_) {}),
+    ]).then((_) {
+      if (session != null && !_disposed && !_pushLeaving) {
+        unawaited(_startPush());
+      }
+    }));
   }
 
   /// Steps 4 and 6: stops sync, sockets and timers, advances the session

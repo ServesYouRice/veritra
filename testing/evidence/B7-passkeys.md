@@ -105,3 +105,63 @@ ceremonies/associations on devices. Apple builds cannot be exercised on this
 Windows host. No new platform CI evidence, independent review, signing or
 release approval is claimed. Work was performed alone as requested; the
 original branch's review fixes are preserved. No push or PR change was made.
+
+## Independent review fixes (2026-11-09)
+
+Reviewed the port against `6a62e3c68bdabc7f3854795246cc516ce5d00513`
+with an independent credential/storage and lifecycle review agent.
+
+- Primary-account removal left interrupted attachment ciphertext and
+  plaintext working files behind. Removal now uses the orphan sweeper's
+  exact filename allowlist, without its age guard, and propagates deletion
+  failures to the removal journal. The disk regression includes all four
+  working-file forms, a fresh plaintext partial, an unrelated file and a
+  sibling account's attachment and database.
+- Push setup and endpoint registration could complete after teardown took
+  its subscription snapshot. A separate push generation now fences starts
+  and events, outstanding setup/registration is drained with a timeout,
+  and late server/native registrations are removed. Uncertain teardown
+  still requires the existing switch-anyway confirmation. Cancelling the
+  switch waits for old registrations before restarting push.
+- A native wake-uninstall failure no longer skips the cancelled worker's
+  atomic drain. The drain runs in `finally`.
+- A B7 build-plan edit in `STATE.md` was already present on takeover. It
+  was left untouched and excluded from the completion commit. No schema,
+  server migration or ABI change; the supplied reservations are unused.
+
+The live demo script passed both tests on repeat, using the local Go build
+and this worktree's Windows OpenMLS DLL. Its first run passed the B7 case
+but failed the existing device-link approval assertion at
+`demo_e2e_test.dart:323`. The unchanged K2/device-list path was independently
+inspected; the transient cause remains unknown. No link validation was
+relaxed to obtain the repeat pass.
+
+## Takeover verification (2026-11-10)
+
+Worked alone, preserving the existing port commits and finishing the
+previously uncommitted lifecycle fixes above. Compared the remote phone
+branch and retained its implementation and review fixes.
+
+The broader live demo reproduced the device-link approval failure twice.
+A temporary exception-type/stack diagnostic located it in `pinOwnStep`:
+sync can verify and pin the server-accepted statement before the approval
+POST returns. Pinning the exact same signed bytes is now a no-op. Different
+bytes still go through native verification. The native-backed regression
+checks both the no-op and rejection of an altered statement without changing
+the pin. The diagnostic was removed.
+
+- Focused B7 tests: 108 passed; native device-list pin tests: 17 passed.
+- Both live Go/OpenMLS demo tests passed after the fix, including account
+  switching, device approval and linked-device convergence.
+- `go test ./...`, `go vet ./...`, `cargo test`, `cargo build --release`,
+  and `scripts/lint.ps1` passed. Clippy runs with all targets and warnings
+  denied; Flutter analysis and formatting passed.
+- Demo/release boundary check passed. Release messaging remains gated.
+
+PowerShell's in-process output redirection treats expected native stderr as
+an exception. The script reruns use outer `cmd /c` redirection. Concurrent
+Flutter test commands also hit a native-assets file lock; those checks were
+rerun after the full suite released it.
+
+No new dependency, counter, CI, remote branch or release-policy change.
+D93 defaults remain in effect. S7 hardware/signing evidence stays open.

@@ -189,7 +189,7 @@ Future<void> main(List<String> args) async {
     // may stay bound, so warm runs cannot catch up either.
     if (installed) await bridge.uninstall(slot);
     state.beforeLocalSessionClear = null;
-    runner = null;
+    if (identical(runner, worker)) runner = null;
     return false;
   }
 
@@ -244,9 +244,13 @@ Future<void> main(List<String> args) async {
         beforeLeave: (runtime) async {
           final worker = runner;
           worker?.cancelForForeground();
-          await bridge.uninstall(runtime.namespace);
-          await worker?.drain();
-          runner = null;
+          try {
+            await bridge.uninstall(runtime.namespace);
+          } finally {
+            // Native failure must not skip an atomic in-flight job's drain.
+            await worker?.drain();
+            if (identical(runner, worker)) runner = null;
+          }
         },
         afterClose: (_) async {
           await purgeOpenedAttachments(thisSlotOnly: true);

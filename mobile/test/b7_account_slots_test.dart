@@ -363,11 +363,24 @@ void main() {
       await plain.write(
           key: 'veritra.database_key.v1.quarantined.1', value: 'k');
       File('${support.path}/.veritra-recovery.partial').writeAsStringSync('p');
+      final attachmentNames = <String>[
+        _orphanName(),
+        '.veritra-attachment-ab12.ciphertext',
+        '.veritra-attachment-ab12.plaintext',
+        '.veritra-attachment-ab12.plaintext.part',
+      ];
+      for (final name in attachmentNames) {
+        // Even fresh files must go when the owning account is removed.
+        File('${support.path}/$name').writeAsStringSync('leftover');
+      }
+      final unrelated = File('${support.path}/personal.plaintext')
+        ..writeAsStringSync('keep');
       await plain.write(key: 'veritra.read_receipts.v1', value: 'off');
       // Each slot owns its preview choice.
       await plain.write(
           key: 'veritra.notifications.hide_preview.v1', value: 'true');
       final slotDir = Directory('${support.path}/profiles/a-aaaaaaaaaaaa');
+      File('${slotDir.path}/${_orphanName()}').writeAsStringSync('keep');
       final before =
           slotDir.listSync(recursive: true).map((e) => e.path).toList()..sort();
       final slotKey =
@@ -376,6 +389,11 @@ void main() {
       await eraser().erase('');
 
       expect(File('${support.path}/veritra-local.db').existsSync(), isFalse);
+      for (final name in attachmentNames) {
+        expect(File('${support.path}/$name').existsSync(), isFalse,
+            reason: 'removed account left $name behind');
+      }
+      expect(unrelated.readAsStringSync(), 'keep');
       expect(Directory('${support.path}/unreadable-1').existsSync(), isFalse);
       expect(File('${support.path}/.veritra-recovery.partial').existsSync(),
           isFalse);

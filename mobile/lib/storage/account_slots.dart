@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../core/attachments.dart' show isAttachmentWorkingFile;
 import 'profile_scope.dart';
 
 // B7 account switcher, slot storage (docs/designs/B7-passkeys.md, S4).
@@ -499,7 +500,8 @@ class SlotEraser implements SlotErasing {
               (leaf.startsWith('unreadable-') || leaf == 'k2')) {
             await entry.delete(recursive: true);
           } else if (entry is File &&
-              (leaf.endsWith('.backup-ciphertext') ||
+              (isAttachmentWorkingFile(leaf) ||
+                  leaf.endsWith('.backup-ciphertext') ||
                   leaf == '.veritra-recovery.partial')) {
             await entry.delete();
           }

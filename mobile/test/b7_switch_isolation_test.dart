@@ -8,6 +8,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/push/push_service.dart';
 
 import 'b7_passkey_fakes.dart';
 import 'test_crypto_service.dart';
@@ -142,6 +143,114 @@ void main() {
       expect(h.state.pushConfigured, isTrue, reason: 'push registered');
       return h;
     }
+
+    test('a pending native registration is removed before leaving', () async {
+      final a = PkHarness();
+      a.api.pushEnabled = true;
+      final gate = a.push.registerGate = Completer<void>();
+      await a.enrolled();
+      await a.state.signInWithPasskey(pkOrigin);
+      await a.push.registerStarted.future;
+      var left = false;
+      final leaving = a.state.prepareToLeave().then((gone) {
+        left = true;
+        return gone;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(left, isFalse, reason: 'native registration is still in flight');
+      gate.complete();
+      expect(await leaving, isTrue);
+      expect(a.push.unregisterAttempts, greaterThanOrEqualTo(1));
+      expect(a.push.registered, isEmpty);
+      await a.state.closeForSwitch();
+    });
+
+    test('a pending server registration is removed before leaving', () async {
+      final a = await withPush();
+      final gate = a.api.registerPushGate = Completer<void>();
+      a.push.endpointEvents.add(const PushEndpointEvent(
+        instance: 'acct_owner:dev_owner',
+        provider: 'fcm',
+        endpoint: 'opaque-token',
+        publicKey: '',
+        authSecret: '',
+      ));
+      for (var i = 0; i < 200 && a.api.pushRegisterRequests == 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(a.api.pushRegisterRequests, 1);
+      var left = false;
+      final leaving = a.state.prepareToLeave().then((gone) {
+        left = true;
+        return gone;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(left, isFalse);
+      gate.complete();
+      expect(await leaving, isTrue);
+      expect(a.api.disabledPush, contains('sub-late'));
+      expect(a.state.pushRegistered, isFalse);
+      await a.state.closeForSwitch();
+    });
+
+    test('timed-out registration is reported and cleaned after disposal',
+        () async {
+      final a = await withPush();
+      final gate = a.api.registerPushGate = Completer<void>();
+      a.push.endpointEvents.add(const PushEndpointEvent(
+        instance: 'acct_owner:dev_owner',
+        provider: 'fcm',
+        endpoint: 'opaque-token',
+        publicKey: '',
+        authSecret: '',
+      ));
+      for (var i = 0; i < 200 && a.api.pushRegisterRequests == 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(a.api.pushRegisterRequests, 1);
+      // The handoff is bounded; callers must ask before accepting this risk.
+      expect(await a.state.prepareToLeave(), isFalse);
+      await a.state.closeForSwitch();
+      gate.complete();
+      for (var i = 0; i < 200 && a.api.disabledPush.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(a.api.disabledPush, contains('sub-late'));
+      expect(a.state.pushRegistered, isFalse);
+    });
+
+    test('a pending push start cannot register after leaving', () async {
+      final a = PkHarness();
+      a.api.pushEnabled = true;
+      final gate = a.api.pushConfigGate = Completer<void>();
+      await a.enrolled();
+      await a.state.signInWithPasskey(pkOrigin);
+      for (var i = 0; i < 200 && a.api.pushConfigRequests == 0; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(a.api.pushConfigRequests, 1);
+      final leaving = a.state.prepareToLeave();
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      gate.complete();
+      expect(await leaving, isTrue);
+      expect(a.push.registered, isEmpty);
+      await a.state.closeForSwitch();
+    });
+
+    test('cancelled switch can register push again', () async {
+      final a = await withPush();
+      a.push.failUnregister = true;
+      expect(await a.state.prepareToLeave(), isFalse);
+      a.push.failUnregister = false;
+      final before = a.api.pushConfigRequests;
+      a.state.resumeAfterCancelledSwitch();
+      for (var i = 0; i < 200 && a.api.pushConfigRequests == before; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 2));
+      }
+      expect(a.api.pushConfigRequests, greaterThan(before));
+      await a.state.prepareToLeave();
+      await a.state.closeForSwitch();
+    });
 
     test('is taken down once, and the account then closes', () async {
       final a = await withPush();

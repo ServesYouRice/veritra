@@ -184,6 +184,12 @@ final RegExp _attachmentOrphanName = RegExp(
   r'|veritra-attachment-[0-9a-f]+\.(ciphertext|plaintext|plaintext\.part))$',
 );
 
+/// Whether a filename belongs to an attachment operation's working files.
+/// Account removal uses the same allowlist as the orphan sweep, without
+/// its age guard: the account runtime has already been closed.
+bool isAttachmentWorkingFile(String name) =>
+    _attachmentOrphanName.hasMatch(name);
+
 /// Files younger than this are left alone: another process (a second demo
 /// profile shares the directory) or an upload still running may own them.
 const Duration attachmentOrphanMinAge = Duration(hours: 1);
@@ -261,7 +267,7 @@ Future<void> cleanupAttachmentOrphans(
   for (final entry in entries) {
     if (entry is! File) continue;
     final name = entry.uri.pathSegments.last;
-    if (!_attachmentOrphanName.hasMatch(name)) continue;
+    if (!isAttachmentWorkingFile(name)) continue;
     try {
       if ((await entry.lastModified()).isAfter(cutoff)) continue;
       await entry.delete();
