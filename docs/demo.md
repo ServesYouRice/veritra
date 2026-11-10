@@ -151,3 +151,23 @@ server again and checks the message arrives. CI runs it on every push.
 Windows crypto DLL and a server on loopback. The `desktop-windows` CI job runs
 it (owner setup, invite, direct message, reply, edit, reaction, delete) before
 building the Windows demo app.
+
+## Passkeys and accounts (B7)
+
+Settings, Accounts adds up to five local accounts. Only the open account
+syncs or receives notices; each account keeps its own keys, drafts and files.
+Two accounts on one server are allowed, with the D93 linkability warning.
+The release entry point keeps unavailable messaging for every slot.
+
+Passkeys require operator opt-in and an already enrolled device. They replace
+the password only at sign-in. Sensitive settings still require the password.
+Linux stays password-only. Apple builds also need their server hostname in
+the signed associated-domains entitlement. Before a team-signed build, run
+`python3 scripts/passkey-entitlements.py 'chat.example.org' mobile/ios/Runner/Runner.entitlements`
+and build with the matching `--dart-define=VERITRA_PASSKEY_DOMAINS=chat.example.org`.
+For macOS, apply the script to `mobile/macos/Runner/DebugProfile.entitlements`
+or `Release.entitlements`, according to the build configuration. Use an empty
+first argument to remove the passkey entitlement again. Default builds have
+no associated-domains entitlement. Keep the hostname list identical in the
+entitlement and Dart define. Android needs the operator's app association
+and signing fingerprint; the app does not enable the passkey plugin's doctor.

@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import '../core/app_state.dart';
 import '../l10n/l10n.dart';
 import '../ui/about.dart';
+import '../storage/profile_scope.dart';
 import 'desktop_shell.dart';
 import 'message_notifications.dart';
 
@@ -35,7 +36,8 @@ class DesktopServices {
   /// Starts the real shell on Windows, Linux and macOS. Returns null on
   /// other platforms and when the shell cannot start, so the app still runs
   /// as a normal window.
-  static Future<DesktopServices?> startIfSupported(AppState state) async {
+  static Future<DesktopServices?> startIfSupported(AppState state,
+      {ProfileScope scope = const ProfileScope()}) async {
     if (!desktopShellSupported) return null;
     try {
       final shell = PluginDesktopShell();
@@ -45,7 +47,8 @@ class DesktopServices {
         quitLabel: strings.trayQuit,
         tooltip: veritraProductName,
       );
-      final settings = NotificationSettings(SecureNotificationSettingsStore());
+      final settings =
+          NotificationSettings(SecureNotificationSettingsStore(scope: scope));
       unawaited(settings.load());
       return DesktopServices(
         state: state,
@@ -63,9 +66,11 @@ class DesktopServices {
 
   void attach() => _messages.attach();
 
-  void detach() {
+  Future<void> detach() async {
     _messages.detach();
-    unawaited(shell.dispose());
+    if (notifier case final PluginDesktopNotifier plugin) await plugin.clear();
+    await shell.dispose();
+    settings.dispose();
   }
 }
 

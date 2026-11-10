@@ -136,4 +136,3 @@ func TestRecoveryEmptyBlobSucceedsAndConsumes(t *testing.T) {
 		t.Fatalf("re-read after completion status=%d, want 404", status)
 	}
 }
-

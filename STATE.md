@@ -345,7 +345,7 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 | B4 ✅ | Files | Several files per send, a size cap the operator sets, and phones open more than images | Sonnet — 2026-10-24 with `open_filex`; `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB` |
 | B5 | One-to-one calls | A call screen in demo builds on the existing call service, with media through the relay by default to hide addresses | Opus review |
 | B6 | Group calls and voice rooms | Encrypted voice rooms and screen share modelled on Discord's DAVE: MLS keys, SFrame frames, a forwarding server that cannot read them | Opus designs |
-| B7 | Passkeys and accounts | Passkey sign-in and an in-app account switcher | Opus designs 2026-11-07: designed (#132, D93). |
+| B7 | Passkeys and accounts | Passkey sign-in and an in-app account switcher | Designed (#132, D93). 2026-11-09: S1–S6 implemented; PR #169 phone work ported and independently reviewed, with attachment-removal and push-handoff race fixes. S7 Windows Hello hand run, signed Android/iOS association and ceremony runs, and platform CI evidence remain open. See [`B7 evidence`](testing/evidence/B7-passkeys.md). |
 | B8 ✅ | Safe defaults | Messages from strangers wait as requests, and nothing from them downloads by itself | Sonnet — 2026-10-24, DMs and groups from strangers; acceptance is per device; Opus-reviewed |
 | B9 ✅ | Admin screen | Owners list and suspend accounts and read the audit log, on the existing admin API | Opus review — 2026-10-24; Opus-reviewed |
 

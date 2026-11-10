@@ -7,7 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart'
-    show mapEquals, setEquals, visibleForTesting;
+    show defaultTargetPlatform, mapEquals, setEquals, visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
@@ -74,6 +74,7 @@ import 'profile_models.dart';
 import 'profile_service.dart';
 import '../crypto/profile_record_codec.dart'
     show ProfileRecordException, ProfilePhoto;
+import 'passkeys.dart';
 import 'receipts_state.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
@@ -88,6 +89,7 @@ export 'membership_models.dart';
 
 part 'app_state_membership.dart';
 part 'app_state_reports.dart';
+part 'app_state_passkeys.dart';
 part 'app_state_recovery.dart';
 part 'app_state_k1_backup.dart';
 part 'app_state_link_v3.dart';
@@ -125,6 +127,8 @@ class SetupProbeResult {
     required this.state,
     this.setupRequired,
     this.instanceName,
+    this.passkeys,
+    this.origin,
   });
 
   const SetupProbeResult.idle() : this(state: SetupProbeState.idle);
@@ -134,6 +138,12 @@ class SetupProbeResult {
   final SetupProbeState state;
   final bool? setupRequired;
   final String? instanceName;
+
+  /// What the server says about passkeys; null when off or not said (B7).
+  final PasskeyServerInfo? passkeys;
+
+  /// The canonical origin that was probed.
+  final String? origin;
 
   bool get isReachable => state == SetupProbeState.reachable;
 
@@ -218,6 +228,9 @@ class Ops {
   static const recoveryKey = 'recovery_key';
   static const accountRecovery = 'account_recovery';
 
+  /// B7: the passkey list and its changes.
+  static const passkeys = 'passkeys';
+
   /// K2: the link screen of the existing device, and the claim form of the
   /// new one.
   static const deviceLink = 'device_link';
@@ -260,7 +273,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     this.config = ClientConfig.production,
     ReceiptPreferences? receiptPreferences,
     ReportSeedStore? reportSeedStore,
+    this.passkeyClient = const UnsupportedPasskeyClient(),
+    PasskeyPlatform? passkeyPlatform,
+    List<String>? passkeyAppleDomains,
   })  : reportSeedStore = reportSeedStore ?? MemoryReportSeedStore(),
+        passkeyPlatform =
+            passkeyPlatform ?? passkeyPlatformOf(defaultTargetPlatform),
+        passkeyAppleDomains = passkeyAppleDomains ??
+            parsePasskeyDomains(passkeyAppleDomainsDefine),
         pushService = pushService ?? DisabledMobilePushService(),
         receiptPreferences = receiptPreferences ??
             ReceiptPreferences(MemoryReceiptPreferenceStore()) {
@@ -284,6 +304,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// The "send read receipts" switch (W5).
   final ReceiptPreferences receiptPreferences;
+
+  /// The platform's passkey ceremonies (B7); Linux and tests use the
+  /// unsupported one.
+  final PasskeyClient passkeyClient;
+  final PasskeyPlatform passkeyPlatform;
+
+  /// Hostnames compiled into the build's associated domains (iOS, macOS).
+  final List<String> passkeyAppleDomains;
+
+  /// Passkeys of the signed-in account, as last read.
+  List<PasskeyRecord> passkeyList = const <PasskeyRecord>[];
+  bool passkeysLoaded = false;
+
+  /// A passkey was added to or removed from this account somewhere else.
+  PasskeyNotice? passkeyNotice;
+
+  /// Passkey row IDs this device changed itself, so its own sync events do
+  /// not raise a notice.
+  final Set<String> _ownPasskeyChanges = <String>{};
 
   /// The approved-device list pins (L1); null without an L1 engine.
   DeviceListPins? _deviceListPins;
@@ -1526,6 +1565,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         state: SetupProbeState.reachable,
         setupRequired: required,
         instanceName: name is String ? name : null,
+        passkeys: PasskeyServerInfo.fromStatus(status),
+        origin: origin,
       );
     } on HandshakeException {
       return const SetupProbeResult(state: SetupProbeState.tlsFailure);
@@ -1900,7 +1941,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         deviceId: deviceId,
         deviceSecret: deviceSecret,
       );
-      final sameIdentity = localSession!.accountId != null &&
+      await _finishDeviceSignIn(localSession!, hadMlsState);
+    });
+  }
+
+  /// The steps after a sign-in on an enrolled device, shared by the password
+  /// and the passkey paths: [session] is the server's answer, [localSession]
+  /// the device identity stored before it, [hadMlsState] whether MLS state
+  /// existed before the answer was saved.
+  Future<void> _finishDeviceSignIn(
+      Session localSession, bool hadMlsState) async {
+    {
+      final sameIdentity = localSession.accountId != null &&
           localSession.baseUrl == session!.baseUrl &&
           localSession.accountId == session!.accountId &&
           localSession.deviceId == session!.deviceId;
@@ -1919,7 +1971,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await _refreshDevices();
         await _ensureKeyPackageSupply();
       });
-    });
+    }
   }
 
   /// The network steps after a sign-in: [steps] runs once the session is
@@ -4879,14 +4931,35 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
-  Future<void> _startPush() async {
+  bool _pushLeaving = false;
+  int _pushGeneration = 0;
+  final Set<Future<bool>> _pushRegistrations = <Future<bool>>{};
+  final Set<Future<void>> _pushStarts = <Future<void>>{};
+  bool _pushTeardownFailed = false;
+
+  bool _pushOwnerActive(Session current, int generation, int pushGeneration) =>
+      !_pushLeaving &&
+      pushGeneration == _pushGeneration &&
+      _syncOwnerActive(current, generation);
+
+  Future<void> _startPush() {
+    if (_pushLeaving || _disposed) return Future.value();
+    final work = _startPushRun();
+    _pushStarts.add(work);
+    unawaited(work.then((_) => _pushStarts.remove(work)));
+    return work;
+  }
+
+  Future<void> _startPushRun() async {
+    if (_pushLeaving || _disposed) return;
+    final pushGeneration = _pushGeneration;
     final current = session;
     final client = api;
     if (current == null || client == null) return;
     final ownerGeneration = _sessionGeneration;
     try {
       final config = await client.pushConfig(current.token);
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       final vapid = config['vapid_public_key'] as String? ?? '';
       final providers = (config['providers'] as List? ?? const <Object?>[])
           .whereType<String>()
@@ -4899,39 +4972,56 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       pushConfigured = true;
       pushProviders = providers;
       notificationPermission = await pushService.notificationPermission();
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       _setPushState(PushState.registering);
       _pushInstance = '${current.accountId}:${current.deviceId}';
       phoneNoticesAllowed = false;
       final installer = phoneNoticeInstaller;
       if (installer != null) {
-        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
         // The worker must be installed, and capture on, before the server is
         // told this device decides mention notices locally.
         var allowed = false;
         try {
           allowed = await installer();
         } catch (_) {}
-        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+          // Installation can finish after a timed-out handoff. The callback
+          // captures this slot, so it cannot uninstall a newer slot's worker.
+          await beforeLocalSessionClear?.call();
+          return;
+        }
         phoneNoticesAllowed = allowed;
         _applyNoticeCapture();
       }
       await _pushSubscription?.cancel();
       _pushSubscription = pushService.events.listen(_handlePushEvent);
       final wakeGeneration = await pushService.pendingWakeGeneration();
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       if (wakeGeneration > 0) {
         _pendingWakeGeneration = max(_pendingWakeGeneration, wakeGeneration);
         unawaited(_catchUpSyncEvents());
       }
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       await _consumePendingEndpoint(current, client, ownerGeneration);
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
+      final instance = _pushInstance!;
       await pushService.register(
-          instance: _pushInstance!, vapid: vapid, providers: providers);
+          instance: instance, vapid: vapid, providers: providers);
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+        try {
+          await pushService
+              .unregister(instance)
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {
+          _pushTeardownFailed = true;
+        }
+        return;
+      }
       notifyListeners();
     } catch (_) {
       // Push is optional; realtime and foreground catch-up remain available.
-      if (pushState == PushState.registering) {
+      if (!_disposed && !_pushLeaving && pushState == PushState.registering) {
         _setPushState(PushState.registrationFailed);
       }
     }
@@ -5001,6 +5091,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   Future<void> _handlePushEvent(PushEvent event) async {
+    if (_pushLeaving || _disposed) return;
     final current = session;
     final client = api;
     if (current == null || client == null) return;
@@ -5037,7 +5128,17 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// acknowledges its native record. A failure leaves the record for the
   /// next startup or resume. Registering twice (live and pending) is safe.
   Future<bool> _registerEndpoint(Session current, ApiClient client,
-      int ownerGeneration, PushEndpointEvent event) async {
+      int ownerGeneration, PushEndpointEvent event) {
+    if (_pushLeaving || _disposed) return Future.value(false);
+    final work = _registerEndpointRun(
+        current, client, ownerGeneration, _pushGeneration, event);
+    _pushRegistrations.add(work);
+    unawaited(work.then((_) => _pushRegistrations.remove(work)));
+    return work;
+  }
+
+  Future<bool> _registerEndpointRun(Session current, ApiClient client,
+      int ownerGeneration, int pushGeneration, PushEndpointEvent event) async {
     try {
       // Every rotation carries the mode again: the server resets a
       // subscription registered without it back to the generic mode.
@@ -5052,14 +5153,28 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               provider: event.provider,
               deviceToken: event.endpoint,
               notificationMode: mode);
-      if (!_syncOwnerActive(current, ownerGeneration)) return false;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+        // A server registration can commit after teardown started. Use a
+        // fresh transport when the old runtime has already closed its own.
+        final cleanup = apiClientFactory(current.baseUrl);
+        try {
+          await cleanup
+              .disablePush(current.token, subscriptionId)
+              .timeout(const Duration(seconds: 5));
+        } finally {
+          cleanup.close();
+        }
+        return true;
+      }
       _pushSubscriptionId = subscriptionId;
       pushProvider = event.provider;
       _setPushState(PushState.registered);
       notifyListeners();
     } catch (_) {
       // Re-registration on the next startup retries endpoint delivery.
-      _setPushState(PushState.registrationFailed);
+      if (!_pushLeaving && !_disposed) {
+        _setPushState(PushState.registrationFailed);
+      }
       return false;
     }
     if (event.generation > 0) {
@@ -5473,17 +5588,32 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   Future<void> _stopPush(Session? current, ApiClient? client) async {
+    await _stopPushStrict(current, client, attempts: 1);
+  }
+
+  /// Takes the server subscription and the native registration down, trying
+  /// each [attempts] times. Returns whether both are gone (true too when
+  /// nothing was registered). The local push state is cleared either way.
+  Future<bool> _stopPushStrict(Session? current, ApiClient? client,
+      {required int attempts}) async {
+    var gone = true;
+    Future<bool> attempt(Future<void> Function() action) async {
+      for (var i = 0; i < attempts; i++) {
+        try {
+          await action().timeout(const Duration(seconds: 5));
+          return true;
+        } catch (_) {}
+      }
+      return false;
+    }
+
     final id = _pushSubscriptionId;
     final instance = _pushInstance;
     if (id != null && current != null && client != null) {
-      try {
-        await client.disablePush(current.token, id);
-      } catch (_) {}
+      gone = await attempt(() => client.disablePush(current.token, id));
     }
     if (instance != null) {
-      try {
-        await pushService.unregister(instance);
-      } catch (_) {}
+      gone = await attempt(() => pushService.unregister(instance)) && gone;
     }
     await _pushSubscription?.cancel();
     _pushSubscription = null;
@@ -5494,6 +5624,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     pushProviders = const <String>[];
     pushState = PushState.unknown;
     pushTestResult = null;
+    return gone;
   }
 
   Future<void> _catchUpSyncEvents() async {
@@ -7036,6 +7167,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     devices = <Device>[];
     recoveryKeyStatus = null;
     recoveryFollowUp = null;
+    passkeyList = const <PasskeyRecord>[];
+    passkeysLoaded = false;
+    passkeyNotice = null;
+    _ownPasskeyChanges.clear();
     _passwordLeakDay = null;
     _recoveredDevice = false;
     _recoveredMarkGeneration = -1;
@@ -8865,6 +9000,68 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return next;
   }
 
+  // ---- B7 account switcher (docs/designs/B7-passkeys.md, S5) ----
+
+  /// Steps 2 and 5 of a switch: writes pending drafts and takes this
+  /// device's push registration down (the server subscription and the native
+  /// registration, each tried up to three times). Returns false when push
+  /// could not be taken down, so the caller can ask before leaving.
+  Future<bool> prepareToLeave() async {
+    var pushGone = true;
+    await _enqueueSessionTransition(() async {
+      await _flushDraftsBeforeSessionEnd();
+      _pushLeaving = true;
+      _pushGeneration++;
+      // Pending registrations may already have committed server-side.
+      var drained = true;
+      try {
+        await Future.wait(_pushStarts.toList())
+            .timeout(const Duration(seconds: 5));
+        drained = (await Future.wait(_pushRegistrations.toList())
+                .timeout(const Duration(seconds: 5)))
+            .every((gone) => gone);
+      } catch (_) {
+        drained = false;
+      }
+      pushGone = await _stopPushStrict(session, api, attempts: 3) &&
+          drained &&
+          !_pushTeardownFailed;
+    });
+    return pushGone;
+  }
+
+  /// The user kept this account open after push could not be taken down:
+  /// register again, as a resume would.
+  void resumeAfterCancelledSwitch() {
+    _pushLeaving = false;
+    _pushTeardownFailed = false;
+    // Let old registrations remove their late subscriptions before a new
+    // registration can reuse the same server-side subscription identity.
+    unawaited(Future.wait<void>([
+      ..._pushStarts,
+      for (final pending in _pushRegistrations) pending.then<void>((_) {}),
+    ]).then((_) {
+      if (session != null && !_disposed && !_pushLeaving) {
+        unawaited(_startPush());
+      }
+    }));
+  }
+
+  /// Steps 4 and 6: stops sync, sockets and timers, advances the session
+  /// generation (the I30 fences then drop any late result), closes the
+  /// crypto handles, and waits for the work that cannot be cancelled.
+  /// The AppState is unusable afterwards.
+  Future<void> closeForSwitch() async {
+    dispose();
+    await _switchResourceClose;
+    // A request that never answers must not hold the switch: the client was
+    // closed above, and the generation fence drops anything that arrives.
+    await backgroundWorkIdle.timeout(const Duration(seconds: 5),
+        onTimeout: () {});
+  }
+
+  Future<void>? _switchResourceClose;
+
   @override
   void dispose() {
     _disposed = true;
@@ -8898,7 +9095,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(sync?.dispose());
     unawaited(_pushSubscription?.cancel());
     pushService.dispose();
-    unawaited(_mlsCrypto?.dispose());
+    _switchResourceClose = _mlsCrypto?.dispose();
+    unawaited(_switchResourceClose);
     unawaited(_callSignals.close());
     api?.close();
     super.dispose();

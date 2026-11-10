@@ -5,7 +5,10 @@ import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/account_host.dart';
 import '../../core/app_state.dart';
+import '../../storage/account_slots.dart';
+import '../settings/accounts_screen.dart' show AccountsShortcut;
 import '../settings/backup_screen.dart';
 import '../../ui/about.dart';
 import '../../ui/tokens.dart';
@@ -46,6 +49,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
   SetupProbeResult _probeResult = const SetupProbeResult.idle();
   bool? setupRequired;
   bool _hasStoredDevice = false;
+  // B7: the server offers passkeys to this build on this platform.
+  bool _passkeysOffered = false;
   bool _modeManuallySelected = false;
   Timer? _setupProbeDebounce;
   int _setupProbeGeneration = 0;
@@ -82,6 +87,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   void _scheduleSetupProbe() {
     if (url.text == _lastUrlText) return;
     _lastUrlText = url.text;
+    _passkeysOffered = false;
     _modeManuallySelected = false;
     _setupProbeDebounce?.cancel();
     _setupProbeGeneration++;
@@ -132,6 +138,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       _probeResult = result;
       setupRequired = result.setupRequired;
       _hasStoredDevice = linked;
+      _passkeysOffered = widget.state.passkeysOfferedFor(result);
       if (_modeManuallySelected) return;
       if (result.setupRequired == true) {
         mode = AuthMode.owner;
@@ -165,6 +172,21 @@ class _ConnectScreenState extends State<ConnectScreen> {
                 shrinkWrap: true,
                 padding: const EdgeInsets.all(BoneSpacing.xl),
                 children: <Widget>[
+                  if (_pendingSlotHost case final host?)
+                    Align(
+                      alignment: AlignmentDirectional.centerStart,
+                      child: TextButton.icon(
+                        key: const ValueKey<String>('connect-back'),
+                        onPressed:
+                            host.switching ? null : () => _backToAccounts(host),
+                        icon: const Icon(Icons.arrow_back),
+                        label: Text(context.l10n.accountsBack),
+                      ),
+                    )
+                  else
+                    // A signed-out account (an expired session, a sign-out)
+                    // still reaches the other accounts on this device.
+                    const AccountsShortcut(),
                   const _BrandHeader(),
                   const SizedBox(height: BoneSpacing.xl + BoneSpacing.sm),
                   // One path, chosen by the probe rather than asked for. The
@@ -208,6 +230,12 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     const SizedBox(height: BoneSpacing.sm),
                     _ProbeStatus(result: _probeResult),
                   ],
+                  if (_sharesServerWithAnotherAccount) ...<Widget>[
+                    const SizedBox(height: BoneSpacing.sm),
+                    Text(context.l10n.accountsSameServer,
+                        key: const ValueKey<String>('connect-same-server'),
+                        style: theme.textTheme.bodySmall),
+                  ],
                   const SizedBox(height: BoneSpacing.lg),
                   if (mode == AuthMode.linkDevice)
                     ..._linkDeviceFields(theme, pendingLink)
@@ -240,6 +268,22 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             label: Text(_submitLabel),
                           ),
                   ),
+                  if (mode == AuthMode.signIn &&
+                      _hasStoredDevice &&
+                      _passkeysOffered) ...<Widget>[
+                    const SizedBox(height: BoneSpacing.md),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        key: const ValueKey<String>('connect-passkey'),
+                        onPressed: widget.state.busy || _submitting
+                            ? null
+                            : _signInWithPasskey,
+                        icon: const Icon(Icons.fingerprint),
+                        label: Text(context.l10n.connectSignInPasskey),
+                      ),
+                    ),
+                  ],
                   if (widget.state.error != null) ...<Widget>[
                     const SizedBox(height: BoneSpacing.lg),
                     _ErrorCard(
@@ -629,6 +673,49 @@ class _ConnectScreenState extends State<ConnectScreen> {
     setState(() => _submitting = true);
     try {
       await _submitForm();
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// The account switcher's host, when this screen belongs to an account
+  /// being added (a pending slot) and another account exists to go back to.
+  AccountHost? get _pendingSlotHost {
+    final host = AccountHostScope.maybeOf(context);
+    if (host == null) return null;
+    final active = host.activeSlot;
+    if (active == null || active.state != SlotState.pending) return null;
+    final others = host.registry.slots.where((s) =>
+        s.namespace != active.namespace && s.state != SlotState.removing);
+    return others.isEmpty ? null : host;
+  }
+
+  /// This server already holds one of the accounts on this device (O10).
+  bool get _sharesServerWithAnotherAccount {
+    final host = AccountHostScope.maybeOf(context);
+    final origin = _probeResult.origin;
+    if (host == null || origin == null) return false;
+    final active = host.registry.active;
+    return host.registry.slots.any((s) =>
+        s.namespace != active &&
+        s.state != SlotState.removing &&
+        s.origin == origin);
+  }
+
+  Future<void> _backToAccounts(AccountHost host) async {
+    final active = host.registry.active;
+    // The empty pending slot is removed; the first other account opens.
+    await host.remove(active);
+  }
+
+  /// Passkey sign-in: the same post-sign-in path as the password, with no
+  /// username or password typed. The URL is the only field read.
+  Future<void> _signInWithPasskey() async {
+    final raw = url.text.trim();
+    if (_validateUrl(raw) != null) return;
+    setState(() => _submitting = true);
+    try {
+      await widget.state.signInWithPasskey(raw);
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

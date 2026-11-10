@@ -1,9 +1,11 @@
 # B7: passkeys and accounts (design)
 
-**Status: proposed (2026-11-07), not built.** This is a credential-area
-change. An independent review must approve S1 and S3 before either lands
-(AGENTS.md). B7 does not change the MLS protocol, the crypto ABI or any
-payload, so `docs/crypto.md` stays as it is.
+**Status: S1–S6 implemented; S7 device evidence remains open (2026-11-09).**
+The phone work from PR #169 is ported onto current main, including its
+review fixes. Integration checks and remaining platform evidence are in
+[`B7 evidence`](../../testing/evidence/B7-passkeys.md). B7 does not change
+the MLS protocol, the crypto ABI or any payload, so `docs/crypto.md` stays
+as it is. No new migration or local schema is needed by S3–S6.
 
 - **Package:** B7 in the `STATE.md` build plan (route "Opus designs").
 - **Done when:** "Passkey sign-in and an in-app account switcher."

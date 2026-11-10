@@ -1046,5 +1046,106 @@
   "autoBackupKeyOn": "Rezervne kopije su uključene na ovom uređaju.",
   "autoBackupPromptMessage": "Sačuvajte ključ za oporavak. Uključuje automatske rezervne kopije i vraća vaš nalog ako izgubite sve uređaje.",
   "autoBackupPromptSave": "Sačuvaj ključ",
-  "autoBackupPromptLater": "Ne sada"
+  "autoBackupPromptLater": "Ne sada",
+  "connectSignInPasskey": "Prijava pristupnim ključem",
+  "passkeySignInFailed": "Prijava pristupnim ključem nije uspela. Pokušajte ponovo ili koristite lozinku.",
+  "passkeyUnavailable": "Pristupni ključevi nisu dostupni na ovom uređaju ili nisu podešeni za ovaj server.",
+  "passkeyPinRefused": "Server je zatražio pristupni ključ za drugu adresu, pa ga aplikacija odbija.",
+  "apiErrorPasskeyLimit": "Dostigli ste granicu broja pristupnih ključeva. Prvo uklonite jedan.",
+  "apiErrorPasskeyExists": "Ovaj pristupni ključ je već dodat.",
+  "apiErrorInvalidPasskey": "Server nije mogao da proveri taj pristupni ključ.",
+  "apiErrorPasskeysOff": "Ovaj server ne nudi pristupne ključeve.",
+  "settingsPasskeys": "Pristupni ključevi",
+  "settingsPasskeysDetail": "Prijava zaključavanjem ekrana umesto lozinke",
+  "passkeysIntro": "Pristupni ključ vas prijavljuje na ovom uređaju umesto lozinke. Za promene podešavanja i dalje se traži lozinka. Usluga koja čuva vaš pristupni ključ, na primer Google ili Apple, saznaje adresu ovog servera.",
+  "passkeysNotOffered": "Pristupni ključevi nisu dostupni za ovaj server na ovom uređaju.",
+  "passkeysEmpty": "Još nema pristupnih ključeva.",
+  "passkeysAdd": "Dodaj pristupni ključ",
+  "passkeysAdded": "Pristupni ključ je dodat.",
+  "passkeyCreated": "Dodat {date}",
+  "@passkeyCreated": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "passkeyLastUsed": "Poslednja upotreba {date}",
+  "@passkeyLastUsed": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "passkeyBackedUp": "Rezervna kopija postoji",
+  "passkeyRename": "Preimenuj",
+  "passkeyRemove": "Ukloni",
+  "passkeyNameLabel": "Naziv",
+  "passkeyRemoveTitle": "Ukloniti ovaj pristupni ključ?",
+  "passkeyRemoveBody": "„{name}” se više neće prijavljivati na ovaj nalog. Možete ga ponovo dodati kasnije.",
+  "@passkeyRemoveBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "passkeyRemoved": "Pristupni ključ je uklonjen.",
+  "passkeyNoticeAdded": "Pristupni ključ je dodat vašem nalogu. Niste vi? Promenite lozinku.",
+  "passkeyNoticeRemoved": "Pristupni ključ je uklonjen sa vašeg naloga.",
+  "passkeyNoticeDismiss": "Odbaci",
+  "passkeyNamePrefix": "Pristupni ključ",
+  "settingsAccounts": "Nalozi",
+  "settingsAccountsDetail": "Prebacivanje između naloga na ovom uređaju",
+  "accountsTitle": "Nalozi",
+  "accountsIntro": "Jedan nalog je otvoren u isto vreme. Ostali su pauzirani: za njih ne stižu poruke ni obaveštenja dok se na njih ne prebacite.",
+  "accountsOpenNow": "Otvoren",
+  "accountsPending": "Još nije prijavljen",
+  "accountsRemoving": "Uklanjanje…",
+  "accountsNewAccount": "Novi nalog",
+  "accountsAdd": "Dodaj nalog",
+  "accountsFull": "Ovaj uređaj drži {count} naloga, najviše što može. Uklonite jedan da biste dodali drugi.",
+  "@accountsFull": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsSameServer": "Ovaj server može da zaključi da su ovi nalozi na istom uređaju.",
+  "accountsSwitching": "Prebacivanje…",
+  "accountsSwitchTo": "Prebaci na {name}",
+  "@accountsSwitchTo": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsRemove": "Ukloni sa ovog uređaja",
+  "accountsRemoveTitle": "Ukloniti {name} sa ovog uređaja?",
+  "@accountsRemoveTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsRemoveBody": "Nalog se odjavljuje, a njegove poruke i ključevi brišu sa ovog uređaja. Nalog ostaje na svom serveru. Ako više nećete koristiti ovaj uređaj, uklonite ga sa liste uređaja naloga na drugom uređaju.",
+  "accountsPushFailTitle": "Ipak prebaciti?",
+  "accountsPushFailBody": "Obaveštenja za {name} nisu mogla da se isključe. Možda ćete dobijati obaveštenja za ovaj nalog dok ga ponovo ne otvorite.",
+  "@accountsPushFailBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsSwitchAnyway": "Ipak prebaci",
+  "accountsErrorOpen": "Taj nalog nije mogao da se otvori. Prethodni nalog je ponovo otvoren.",
+  "accountsErrorRegistry": "Spisak naloga nije mogao da se sačuva.",
+  "accountsErrorRemove": "Nalog nije mogao da se ukloni. Pokušajte ponovo.",
+  "accountsDuplicate": "Ovaj uređaj već ima taj nalog, pa je dodatna prijava uklonjena. Uklonite višak uređaja sa liste uređaja naloga.",
+  "accountsBack": "Nazad na moje naloge"
 }

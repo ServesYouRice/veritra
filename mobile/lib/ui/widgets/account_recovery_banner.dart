@@ -19,7 +19,8 @@ class AccountRecoveryBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // Rebuilds only when what it draws changes (T49C-1).
-    return ListenableSelector<(String?, String?, DateTime?, String?)>(
+    return ListenableSelector<
+        (String?, String?, DateTime?, String?, PasskeyNotice?)>(
       listenable: state,
       select: () {
         final pending = state.recoveryKeyStatus?.pending;
@@ -28,17 +29,22 @@ class AccountRecoveryBanner extends StatelessWidget {
           pending?.deviceName,
           pending?.readyAt,
           state.passwordLeakWarningDay,
+          state.passkeyNotice,
         );
       },
       builder: (context, _, __) {
         final pending = state.recoveryKeyStatus?.pending;
         final leakDay = state.passwordLeakWarningDay;
-        if (pending == null && leakDay == null) return const SizedBox.shrink();
+        final passkeyNotice = state.passkeyNotice;
+        if (pending == null && leakDay == null && passkeyNotice == null) {
+          return const SizedBox.shrink();
+        }
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             if (pending != null) _pendingNotice(context, pending),
             if (leakDay != null) _leakNotice(context),
+            if (passkeyNotice != null) _passkeyNotice(context, passkeyNotice),
           ],
         );
       },
@@ -103,6 +109,23 @@ class AccountRecoveryBanner extends StatelessWidget {
               ? null
               : () => _confirmCancel(context, pending),
           child: Text(l10n.recoveryPendingCancel),
+        ),
+      ],
+    );
+  }
+
+  Widget _passkeyNotice(BuildContext context, PasskeyNotice notice) {
+    final l10n = context.l10n;
+    return _frame(
+      context,
+      icon: Icons.fingerprint,
+      message: notice == PasskeyNotice.added
+          ? l10n.passkeyNoticeAdded
+          : l10n.passkeyNoticeRemoved,
+      actions: <Widget>[
+        TextButton(
+          onPressed: state.dismissPasskeyNotice,
+          child: Text(l10n.passkeyNoticeDismiss),
         ),
       ],
     );
