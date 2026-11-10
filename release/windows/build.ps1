@@ -10,5 +10,8 @@ param(
   [switch]$DryRun
 )
 
+$ErrorActionPreference = "Stop"
+
 $Script = Join-Path $PSScriptRoot "..\..\scripts\build-windows-installer.ps1"
 & $Script @PSBoundParameters
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

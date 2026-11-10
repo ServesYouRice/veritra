@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,12 +40,15 @@ class WindowsInstallerScriptTest(unittest.TestCase):
         )
 
     def test_dry_run_default(self) -> None:
+        pubspec = (ROOT / "mobile" / "pubspec.yaml").read_text(encoding="utf-8")
+        match = re.search(r"^version:\s*([0-9]+\.[0-9]+\.[0-9]+)", pubspec, re.M)
+        ver = match.group(1) if match else "0.1.0"
         result = self.run_ps("-DryRun")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("building unsigned installer (signing placeholder)", result.stdout)
         self.assertIn("[DryRun] Inno Setup compiler:", result.stdout)
-        self.assertIn("/DAppVersion=0.1.0", result.stdout)
-        self.assertIn("Veritra-Setup-0.1.0-x64.exe", result.stdout)
+        self.assertIn(f"/DAppVersion={ver}", result.stdout)
+        self.assertIn(f"Veritra-Setup-{ver}-x64.exe", result.stdout)
 
     def test_dry_run_with_signing_placeholder_command(self) -> None:
         sign_cmd = "signtool.exe sign /fd sha256 $f"

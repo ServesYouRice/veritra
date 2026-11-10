@@ -70,6 +70,7 @@ if (-not $OutDir) {
   $OutDir = Join-Path $Root "release\windows\dist"
 }
 $ResolvedOutDir = [System.IO.Path]::GetFullPath($OutDir)
+$ResolvedAppDir = [System.IO.Path]::GetFullPath($AppDir)
 
 # Locate Inno Setup 6 compiler (iscc.exe)
 if (-not $IsccPath) {
@@ -97,7 +98,7 @@ if (-not $IsccPath -and -not $DryRun) {
 
 # Build ISCC argument list
 $IsccArgs = @(
-  "/DAppDir=$AppDir",
+  "/DAppDir=$ResolvedAppDir",
   "/DAppVersion=$AppVersion",
   "/DOutDir=$ResolvedOutDir"
 )

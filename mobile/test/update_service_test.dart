@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/desktop/update_service.dart';
 
@@ -35,6 +37,19 @@ void main() {
     test('rejects non-https url', () {
       final invalid = Map<String, Object?>.from(validJson)
         ..['url'] = 'http://example.com/installer.exe';
+      expect(() => UpdateInfo.fromJson(invalid), throwsFormatException);
+    });
+
+    test('rejects url with empty host', () {
+      final invalid = Map<String, Object?>.from(validJson)
+        ..['url'] = 'https:///installer.exe';
+      expect(() => UpdateInfo.fromJson(invalid), throwsFormatException);
+    });
+
+    test('rejects inverted issue and expiry dates', () {
+      final invalid = Map<String, Object?>.from(validJson)
+        ..['issued_at'] = '2026-11-20T12:00:00Z'
+        ..['expires_at'] = '2026-11-10T12:00:00Z';
       expect(() => UpdateInfo.fromJson(invalid), throwsFormatException);
     });
 
@@ -99,6 +114,16 @@ void main() {
       final reloaded = UpdateSettings(store);
       await reloaded.load();
       expect(reloaded.autoCheckEnabled, isFalse);
+    });
+
+    test('concurrent load calls share single execution', () async {
+      final store = MemoryUpdateSettingsStore(false);
+      final settings = UpdateSettings(store);
+      final future1 = settings.load();
+      final future2 = settings.load();
+      expect(identical(future1, future2), isTrue);
+      await future1;
+      expect(settings.autoCheckEnabled, isFalse);
     });
   });
 
@@ -219,5 +244,148 @@ void main() {
       expect(status.kind, UpdateStatusKind.error);
       expect(status.errorMessage, contains('architecture'));
     });
+
+    test('startup check awaits settings load and respects disabled setting',
+        () async {
+      final completer = Completer<bool?>();
+      final slowStore = _SlowSettingsStore(completer.future);
+      final settings = UpdateSettings(slowStore);
+      unawaited(settings.load());
+
+      var fetchCalled = false;
+      final client = _TrackingUpdateClient(
+        onFetch: () => fetchCalled = true,
+        responseBytes: Uint8List.fromList(updatePayload),
+      );
+      final service = UpdateService(
+        settings: settings,
+        client: client,
+        currentBuild: 1,
+        now: () => now,
+      );
+
+      final checkFuture = service.checkForUpdatesIfEnabled();
+      completer.complete(false);
+      final status = await checkFuture;
+
+      expect(status.kind, UpdateStatusKind.disabled);
+      expect(fetchCalled, isFalse,
+          reason: 'Must not contact network when setting is disabled');
+    });
+
+    test('rejects invalid signature', () async {
+      final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
+      final client =
+          MemoryUpdateClient(responseBytes: Uint8List.fromList(updatePayload));
+      final service = UpdateService(
+        settings: settings,
+        client: client,
+        verifier: _AlwaysRejectVerifier(),
+        currentBuild: 1,
+        now: () => now,
+      );
+
+      final status = await service.checkForUpdates();
+      expect(status.kind, UpdateStatusKind.error);
+      expect(status.errorMessage, contains('signature is invalid'));
+    });
+
+    test('handles malformed json payload', () async {
+      final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
+      final client = MemoryUpdateClient(
+          responseBytes: Uint8List.fromList(utf8.encode('not-a-json')));
+      final service = UpdateService(
+        settings: settings,
+        client: client,
+        currentBuild: 1,
+        now: () => now,
+      );
+
+      final status = await service.checkForUpdates();
+      expect(status.kind, UpdateStatusKind.error);
+    });
+
+    test('handles network error', () async {
+      final settings = UpdateSettings(MemoryUpdateSettingsStore(true));
+      final client =
+          MemoryUpdateClient(error: const HttpException('Failed to connect'));
+      final service = UpdateService(
+        settings: settings,
+        client: client,
+        currentBuild: 1,
+        now: () => now,
+      );
+
+      final status = await service.checkForUpdates();
+      expect(status.kind, UpdateStatusKind.error);
+      expect(status.errorMessage, contains('Failed to connect'));
+    });
+
+    test('reacts to settings change from idle to disabled and back', () async {
+      final store = MemoryUpdateSettingsStore(true);
+      final settings = UpdateSettings(store);
+      final service = UpdateService(
+        settings: settings,
+        client: MemoryUpdateClient(),
+        currentBuild: 1,
+      );
+      expect(service.status.kind, UpdateStatusKind.idle);
+
+      await settings.setAutoCheckEnabled(false);
+      expect(service.status.kind, UpdateStatusKind.disabled);
+
+      await settings.setAutoCheckEnabled(true);
+      expect(service.status.kind, UpdateStatusKind.idle);
+      service.dispose();
+    });
   });
+
+  group('HttpUpdateClient', () {
+    test('rejects non-https feed uri', () async {
+      const client = HttpUpdateClient();
+      expect(
+        () => client.fetchUpdate(Uri.parse('http://example.com/update.json')),
+        throwsFormatException,
+      );
+    });
+
+    test('rejects feed uri with empty host', () async {
+      const client = HttpUpdateClient();
+      expect(
+        () => client.fetchUpdate(Uri.parse('https:///update.json')),
+        throwsFormatException,
+      );
+    });
+  });
+}
+
+class _SlowSettingsStore implements UpdateSettingsStore {
+  _SlowSettingsStore(this._future);
+  final Future<bool?> _future;
+
+  @override
+  Future<bool?> loadAutoCheck() => _future;
+
+  @override
+  Future<void> saveAutoCheck(bool value) async {}
+}
+
+class _TrackingUpdateClient implements UpdateClient {
+  _TrackingUpdateClient({required this.onFetch, required this.responseBytes});
+  final VoidCallback onFetch;
+  final Uint8List responseBytes;
+
+  @override
+  Future<({Uint8List jsonBytes, Uint8List? signatureBytes})> fetchUpdate(
+      Uri feedUri) async {
+    onFetch();
+    return (jsonBytes: responseBytes, signatureBytes: null);
+  }
+}
+
+class _AlwaysRejectVerifier implements UpdateSignatureVerifier {
+  @override
+  Future<bool> verify(
+          {required List<int> data, required List<int>? signature}) async =>
+      false;
 }

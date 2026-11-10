@@ -8,6 +8,13 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../storage/profile_scope.dart';
+import '../ui/about.dart';
+
+/// Maximum size for update feed or signature file (64 KiB).
+const int maxUpdateFeedBytes = 64 * 1024;
+
+/// Network timeout for update checks.
+const Duration updateCheckTimeout = Duration(seconds: 15);
 
 /// Metadata for a published Veritra update (W12, docs/release-engineering.md).
 /// Delivered via static update.json and detached update.json.sig.
@@ -73,12 +80,18 @@ class UpdateInfo {
     if (expiresAt == null) {
       throw const FormatException('Invalid ISO-8601 update expires_at');
     }
+    if (expiresAt.isBefore(issuedAt)) {
+      throw const FormatException('Update expires_at cannot precede issued_at');
+    }
     if (url is! String || url.trim().isEmpty) {
       throw const FormatException('Missing or invalid update url');
     }
     final parsedUri = Uri.tryParse(url);
-    if (parsedUri == null || parsedUri.scheme != 'https') {
-      throw const FormatException('Update URL must use https');
+    if (parsedUri == null ||
+        parsedUri.scheme != 'https' ||
+        parsedUri.host.trim().isEmpty) {
+      throw const FormatException(
+          'Update URL must use https with a valid host');
     }
     if (sha256 is! String || !_hex64.hasMatch(sha256)) {
       throw const FormatException(
@@ -222,42 +235,58 @@ abstract interface class UpdateClient {
 
 /// Real HTTPS update client. Sends one clean HTTPS GET without credentials or cookies.
 class HttpUpdateClient implements UpdateClient {
-  const HttpUpdateClient({this.client});
+  const HttpUpdateClient({
+    this.client,
+    this.timeout = updateCheckTimeout,
+    this.maxBytes = maxUpdateFeedBytes,
+  });
 
   final HttpClient? client;
+  final Duration timeout;
+  final int maxBytes;
 
   @override
   Future<({Uint8List jsonBytes, Uint8List? signatureBytes})> fetchUpdate(
       Uri feedUri) async {
-    if (feedUri.scheme != 'https') {
-      throw const FormatException('Update feed must use https');
+    if (feedUri.scheme != 'https' || feedUri.host.trim().isEmpty) {
+      throw const FormatException(
+          'Update feed must use https with a valid host');
     }
     final http = client ?? HttpClient();
+    http.connectionTimeout = timeout;
     try {
-      final request = await http.getUrl(feedUri);
+      final request = await http.getUrl(feedUri).timeout(timeout);
       request.cookies.clear();
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
-      final response = await request.close();
+      final response = await request.close().timeout(timeout);
       if (response.statusCode != HttpStatus.ok) {
         throw HttpException('Update feed answered HTTP ${response.statusCode}',
             uri: feedUri);
       }
       final bytesBuilder = BytesBuilder(copy: false);
-      await for (final chunk in response) {
+      await for (final chunk in response.timeout(timeout)) {
         bytesBuilder.add(chunk);
+        if (bytesBuilder.length > maxBytes) {
+          throw const FormatException(
+              'Update feed response exceeds size limit');
+        }
       }
       final jsonBytes = bytesBuilder.takeBytes();
 
       Uint8List? sigBytes;
       try {
         final sigUri = feedUri.replace(path: '${feedUri.path}.sig');
-        final sigReq = await http.getUrl(sigUri);
+        final sigReq = await http.getUrl(sigUri).timeout(timeout);
         sigReq.cookies.clear();
-        final sigResp = await sigReq.close();
+        final sigResp = await sigReq.close().timeout(timeout);
         if (sigResp.statusCode == HttpStatus.ok) {
           final sigBuilder = BytesBuilder(copy: false);
-          await for (final chunk in sigResp) {
+          await for (final chunk in sigResp.timeout(timeout)) {
             sigBuilder.add(chunk);
+            if (sigBuilder.length > maxBytes) {
+              throw const FormatException(
+                  'Update signature exceeds size limit');
+            }
           }
           sigBytes = sigBuilder.takeBytes();
         }
@@ -356,6 +385,7 @@ class UpdateSettings extends ChangeNotifier {
   bool _autoCheck = true;
   bool _loaded = false;
   bool _disposed = false;
+  Future<void>? _loadFuture;
 
   /// Whether automatic update check is enabled (on by default).
   bool get autoCheckEnabled => _autoCheck;
@@ -363,11 +393,14 @@ class UpdateSettings extends ChangeNotifier {
   /// Whether stored settings have finished loading.
   bool get isLoaded => _loaded;
 
-  Future<void> load() async {
+  Future<void> load() => _loadFuture ??= _load();
+
+  Future<void> _load() async {
     final bool? saved;
     try {
       saved = await _store.loadAutoCheck();
     } catch (_) {
+      _loaded = true;
       return;
     }
     if (_disposed) return;
@@ -401,7 +434,7 @@ class UpdateService extends ChangeNotifier {
     Uri? feedUri,
     String? platform,
     String? arch,
-    int currentBuild = 1,
+    int? currentBuild,
     DateTime Function()? now,
   })  : _client = client ?? const HttpUpdateClient(),
         _verifier = verifier ?? const PlaceholderUpdateSignatureVerifier(),
@@ -410,8 +443,10 @@ class UpdateService extends ChangeNotifier {
                 'https://raw.githubusercontent.com/ServesYouRice/veritra/main/release/windows/update.json'),
         _platform = platform ?? 'windows',
         _arch = arch ?? 'x64',
-        _currentBuild = currentBuild,
-        _now = now ?? DateTime.now;
+        _currentBuild = currentBuild ?? veritraBuildNumber,
+        _now = now ?? DateTime.now {
+    settings.addListener(_onSettingsChanged);
+  }
 
   final UpdateSettings settings;
   final UpdateClient _client;
@@ -429,8 +464,22 @@ class UpdateService extends ChangeNotifier {
   DateTime? get lastCheckTime => _lastCheckTime;
   bool get isChecking => _status.kind == UpdateStatusKind.checking;
 
+  void _onSettingsChanged() {
+    if (!settings.autoCheckEnabled && _status.kind == UpdateStatusKind.idle) {
+      _status = const UpdateStatus.disabled();
+      notifyListeners();
+    } else if (settings.autoCheckEnabled &&
+        _status.kind == UpdateStatusKind.disabled) {
+      _status = const UpdateStatus.idle();
+      notifyListeners();
+    }
+  }
+
   /// Checks for updates if automatic checking is enabled.
   Future<UpdateStatus> checkForUpdatesIfEnabled() async {
+    if (!settings.isLoaded) {
+      await settings.load();
+    }
     if (!settings.autoCheckEnabled) {
       _status = const UpdateStatus.disabled();
       notifyListeners();
@@ -442,6 +491,9 @@ class UpdateService extends ChangeNotifier {
   /// Runs an update check. [force] ignores the disabled setting (used by manual button).
   Future<UpdateStatus> checkForUpdates(
       {bool force = false, Uri? feedUri}) async {
+    if (!settings.isLoaded) {
+      await settings.load();
+    }
     if (!settings.autoCheckEnabled && !force) {
       _status = const UpdateStatus.disabled();
       notifyListeners();
@@ -507,6 +559,12 @@ class UpdateService extends ChangeNotifier {
       notifyListeners();
       return _status;
     }
+  }
+
+  @override
+  void dispose() {
+    settings.removeListener(_onSettingsChanged);
+    super.dispose();
   }
 }
 

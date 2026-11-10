@@ -57,9 +57,14 @@ class DesktopServices {
       unawaited(settings.load());
       final updateSettings =
           UpdateSettings(SecureUpdateSettingsStore(scope: scope));
-      unawaited(updateSettings.load());
-      final updateService = UpdateService(settings: updateSettings);
-      unawaited(updateService.checkForUpdatesIfEnabled());
+      await updateSettings.load();
+      final updateService = UpdateService(
+        settings: updateSettings,
+        currentBuild: veritraBuildNumber,
+      );
+      if (updateSettings.autoCheckEnabled) {
+        unawaited(updateService.checkForUpdatesIfEnabled());
+      }
       return DesktopServices(
         state: state,
         shell: shell,
