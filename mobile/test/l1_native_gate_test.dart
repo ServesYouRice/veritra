@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
@@ -68,6 +71,130 @@ void main() {
         throwsA(isA<DeviceListNotApprovedException>()));
     expect(await alice.store.pendingMlsMessages(), isEmpty);
   }, skip: skip);
+
+  test(
+    'a signed removal overrides cached approval before encryption',
+    () async {
+      final alice = await client('acct_alice', 'dev_alice');
+      final sibling = await client('acct_alice', 'dev_sibling');
+      final bob = await client('acct_bob', 'dev_bob');
+      await alice.trust(bob);
+      final aliceKey = await alice.service.currentSigningKey();
+      final siblingKey = await sibling.service.currentSigningKey();
+      final genesis = await alice.service.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes('acct_alice'),
+          version: 1,
+          prevHash: DeviceListBody.zeroHash,
+          createdAtMs: 1,
+          change: DeviceListChange.migrationGenesis,
+          entries: [
+            DeviceListPair(idBytes('dev_alice'), aliceKey),
+            DeviceListPair(idBytes('dev_sibling'), siblingKey),
+          ],
+        ),
+      );
+      final source = _ListSource()..chain = [genesis];
+      var now = DateTime.utc(2026, 11, 10);
+      final pins = DeviceListPins(
+        store: bob.store,
+        source: source,
+        verifier: bob.service,
+        clock: () => now,
+      );
+      bob.service.deviceListPins = pins;
+      await alice.service.initializeConversation('conv_1', [
+        await bob.keyPackage(),
+      ]);
+      await _accept(alice, [bob], const []);
+      expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+      expect(
+        (await bob.store.loadApprovalLeaves(
+          'conv_1',
+        ))
+            .every((leaf) => leaf.verdict == LeafVerdict.approved),
+        isTrue,
+      );
+
+      final head = bindings.checkDeviceListStep(
+        expectedAccountId: idBytes('acct_alice'),
+        statement: genesis,
+      );
+      final removal = await sibling.service.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes('acct_alice'),
+          version: 2,
+          prevHash: head.listHash,
+          createdAtMs: 2,
+          change: DeviceListChange.remove,
+          entries: [DeviceListPair(idBytes('dev_sibling'), siblingKey)],
+        ),
+      );
+      source.chain.add(removal);
+      // The normal refresh discovers the signed update, without any MLS
+      // removal or change in pending-changes/roster responses.
+      now = now.add(const Duration(minutes: 2));
+      final held = throwsA(isA<ConversationApprovalHeldException>());
+      await expectLater(bob.send('must not reach the removed device'), held);
+      expect((await bob.store.loadDeviceListPin('acct_alice'))?.version, 2);
+      await expectLater(
+        bob.service.encryptCallSignal('conv_1', <String, Object?>{
+          'type': 'offer',
+          'sdp': 'v=0',
+        }),
+        held,
+      );
+      await expectLater(bob.service.stageSelfUpdate('conv_1'), held);
+      expect(await bob.store.pendingEnvelopes(), isEmpty);
+      expect(await bob.store.pendingMlsMessages(), isEmpty);
+      expect(
+        (await bob.store.loadApprovalLeaves('conv_1'))
+            .firstWhere(
+              (leaf) => String.fromCharCodes(leaf.deviceId) == 'dev_alice',
+            )
+            .verdict,
+        LeafVerdict.removed,
+      );
+
+      // Incoming messages still follow the formerly-approved sender policy.
+      await bob.receive(alice, await alice.send('sent before MLS removal'));
+      expect((await bob.history()).single.body, 'sent before MLS removal');
+      expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
+
+      // A removal is permitted while held. Only removing the leaf from the
+      // actual MLS tree clears the hold.
+      await bob.service.stageMembershipChange(
+        'conv_1',
+        removes: [(accountId: 'acct_alice', deviceId: 'dev_alice')],
+      );
+      await _accept(bob, const [], const []);
+      expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+      await bob.send('safe after MLS removal');
+    },
+    skip: skip,
+  );
+
+  test(
+    'incoming sender approval is rechecked against a changed list',
+    () async {
+      final alice = await client('acct_alice', 'dev_alice');
+      final bob = await client('acct_bob', 'dev_bob');
+      await alice.trust(bob);
+      await bob.trust(alice);
+      await alice.service.initializeConversation('conv_1', [
+        await bob.keyPackage(),
+      ]);
+      await _accept(alice, [bob], const []);
+      expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+      bob.lists.remove('acct_alice', 'dev_alice');
+      await bob.receive(alice, await alice.send('must stay hidden'));
+      final message = (await bob.history()).single;
+      expect(message.body, isNull);
+      expect(message.key, startsWith('unapproved:'));
+      expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
+    },
+    skip: skip,
+  );
 
   test('a key package with another key than the pinned one is refused',
       () async {
@@ -290,6 +417,24 @@ void main() {
 }
 
 int _serverIds = 0;
+
+class _ListSource implements DeviceListSource {
+  List<Uint8List> chain = [];
+
+  @override
+  Future<DeviceListPage?> fetchDeviceList(
+    String accountId, {
+    required int after,
+  }) async =>
+      DeviceListPage(
+        headVersion: chain.length,
+        more: false,
+        statements: [
+          for (var i = after; i < chain.length; i++)
+            (version: i + 1, statement: chain[i]),
+        ],
+      );
+}
 
 class _Members implements ConversationAuthority {
   _Members(this.members);

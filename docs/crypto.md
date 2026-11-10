@@ -457,6 +457,17 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 current-list integration (2026-11-10):** design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). Reuses the already
+  merged Rust, server and mobile L1 implementation. Rejudges previously approved
+  leaves before sending and when judging incoming senders, using the existing
+  bounded/rate-limited list refresh. A verified signed removal holds outgoing
+  encryption until the leaf leaves the MLS tree. Cached approval cannot override
+  a newer pin or signed fork. Incoming formerly approved senders retain the
+  existing `removed` policy. No ABI, schema or migration change is needed;
+  assigned counters 24/41/0074 remain unused. Full-package follow-ups are recorded
+  in the integration design; independent security review is still required.
+
 - **C3, encrypted community info: records, payloads, local schema 31
   (2026-11-08):** no ABI change. Design
   [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),
@@ -641,9 +652,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     the last fetch is not hidden for good. The signed change 4 is stored and
     posted again until the server takes it. Setup and registration pin their
     own genesis. Call signals from a leaf that is not approved are dropped.
-  - **Known gaps after review:** a leaf approved once is not judged again
-    (a device removed by change 3 stays approved until its MLS removal
-    lands, so D68's residual is not closed yet); a conflict is sticky with
+  - **Known gaps after review (historical):** the cached-approved-leaf gap is
+    fixed by the 2026-11-10 current-list integration above. A conflict is sticky with
     no clear path, and a made-up genesis from the server alone triggers it;
     text from a `checking` sender is dropped, not kept hidden (owner
     question); judging a commit can wait about 25 s for the server inside
