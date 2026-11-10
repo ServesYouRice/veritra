@@ -185,7 +185,8 @@ void main() {
     state.localStoreOverride = store;
     state.membersByConversation = {
       'conv': [
-        ConversationMember(accountId: 'bob', username: 'robert', role: 'member'),
+        ConversationMember(
+            accountId: 'bob', username: 'robert', role: 'member'),
       ]
     };
     await _seed(store,
@@ -216,12 +217,18 @@ void main() {
     state.localStoreOverride = store;
     state.conversations = [
       Conversation(id: 'conv', kind: 'dm', title: 'Chat 1', createdBy: 'alice'),
-      Conversation(id: 'dest1', kind: 'dm', title: 'Chat 2', createdBy: 'alice'),
-      Conversation(id: 'dest2', kind: 'dm', title: 'Chat 3', createdBy: 'alice'),
-      Conversation(id: 'dest3', kind: 'dm', title: 'Chat 4', createdBy: 'alice'),
-      Conversation(id: 'dest4', kind: 'dm', title: 'Chat 5', createdBy: 'alice'),
-      Conversation(id: 'dest5', kind: 'dm', title: 'Chat 6', createdBy: 'alice'),
-      Conversation(id: 'dest6', kind: 'dm', title: 'Chat 7', createdBy: 'alice'),
+      Conversation(
+          id: 'dest1', kind: 'dm', title: 'Chat 2', createdBy: 'alice'),
+      Conversation(
+          id: 'dest2', kind: 'dm', title: 'Chat 3', createdBy: 'alice'),
+      Conversation(
+          id: 'dest3', kind: 'dm', title: 'Chat 4', createdBy: 'alice'),
+      Conversation(
+          id: 'dest4', kind: 'dm', title: 'Chat 5', createdBy: 'alice'),
+      Conversation(
+          id: 'dest5', kind: 'dm', title: 'Chat 6', createdBy: 'alice'),
+      Conversation(
+          id: 'dest6', kind: 'dm', title: 'Chat 7', createdBy: 'alice'),
     ];
     await _seed(store,
         key: 'dev:f1',
@@ -260,8 +267,10 @@ void main() {
     // Tapping a second destination (Chat 3) must NOT add it because hops >= 5 limits to 1
     await tester.tap(find.text('Chat 3'));
     await tester.pumpAndSettle();
-    final checkTilesHops5 = tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile));
-    final selectedHops5 = checkTilesHops5.where((t) => t.value == true).toList();
+    final checkTilesHops5 =
+        tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile));
+    final selectedHops5 =
+        checkTilesHops5.where((t) => t.value == true).toList();
     expect(selectedHops5.length, equals(1));
     await tester.tap(find.widgetWithText(FilledButton, englishL10n.w8Forward));
     await tester.pumpAndSettle();
@@ -283,8 +292,10 @@ void main() {
     // Attempt to select a 6th destination (Chat 7); must not exceed 5
     await tester.tap(find.text('Chat 7'));
     await tester.pumpAndSettle();
-    final checkTilesHops1 = tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile));
-    final selectedHops1 = checkTilesHops1.where((t) => t.value == true).toList();
+    final checkTilesHops1 =
+        tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile));
+    final selectedHops1 =
+        checkTilesHops1.where((t) => t.value == true).toList();
     expect(selectedHops1.length, equals(5));
 
     await tester.tap(find.widgetWithText(FilledButton, englishL10n.w8Forward));
@@ -324,7 +335,8 @@ void main() {
     expect(state.stub.lastEncryptedType, equals(AppPayloadType.pin));
     expect(state.stub.lastEncryptedBody?['message_id'], equals('dev:t'));
     expect(state.stub.lastEncryptedBody?['pinned'], isTrue);
-    expect(state.stub.lastEncryptedBody?['duration_seconds'], equals(7 * 86400));
+    expect(
+        state.stub.lastEncryptedBody?['duration_seconds'], equals(7 * 86400));
 
     // Simulate pin applied on store
     await store.commitMlsTransition(MlsStateTransition(
@@ -363,27 +375,38 @@ void main() {
     expect(state.stub.lastEncryptedType, equals(AppPayloadType.pin));
     expect(state.stub.lastEncryptedBody?['message_id'], equals('dev:t'));
     expect(state.stub.lastEncryptedBody?['pinned'], isFalse);
-    expect(state.stub.lastEncryptedBody?.containsKey('duration_seconds'), isFalse);
+    expect(
+        state.stub.lastEncryptedBody?.containsKey('duration_seconds'), isFalse);
 
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });
 
-  testWidgets('pinned chats appear at top of chat list and order by pinnedAt desc',
+  testWidgets(
+      'pinned chats appear at top of chat list and order by pinnedAt desc',
       (tester) async {
     final state = _state();
     state.conversations = [
-      Conversation(id: 'c1', kind: 'group', title: 'Chat Alpha', createdBy: 'alice'),
-      Conversation(id: 'c2', kind: 'group', title: 'Chat Beta', createdBy: 'alice'),
-      Conversation(id: 'c3', kind: 'group', title: 'Chat Gamma', createdBy: 'alice'),
-      Conversation(id: 'c4', kind: 'group', title: 'Chat Delta', createdBy: 'alice'),
-      Conversation(id: 'c5', kind: 'group', title: 'Chat Epsilon', createdBy: 'alice'),
+      Conversation(
+          id: 'c1', kind: 'group', title: 'Chat Alpha', createdBy: 'alice'),
+      Conversation(
+          id: 'c2', kind: 'group', title: 'Chat Beta', createdBy: 'alice'),
+      Conversation(
+          id: 'c3', kind: 'group', title: 'Chat Gamma', createdBy: 'alice'),
+      Conversation(
+          id: 'c4', kind: 'group', title: 'Chat Delta', createdBy: 'alice'),
+      Conversation(
+          id: 'c5', kind: 'group', title: 'Chat Epsilon', createdBy: 'alice'),
     ];
     // Pin c2 (pinnedAt = 100), c3 (pinnedAt = 200), and c4/c5 with equal pinnedAt = 300
-    await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c2', pinnedAt: 100));
-    await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c3', pinnedAt: 200));
-    await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c4', pinnedAt: 300));
-    await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c5', pinnedAt: 300));
+    await state.localStore.saveConversationPref(
+        const LocalConversationPref(conversationId: 'c2', pinnedAt: 100));
+    await state.localStore.saveConversationPref(
+        const LocalConversationPref(conversationId: 'c3', pinnedAt: 200));
+    await state.localStore.saveConversationPref(
+        const LocalConversationPref(conversationId: 'c4', pinnedAt: 300));
+    await state.localStore.saveConversationPref(
+        const LocalConversationPref(conversationId: 'c5', pinnedAt: 300));
     state.conversationPrefs = {
       'c2': const LocalConversationPref(conversationId: 'c2', pinnedAt: 100),
       'c3': const LocalConversationPref(conversationId: 'c3', pinnedAt: 200),
@@ -460,6 +483,7 @@ _UiState _state() {
     ]
     ..conversationsLoaded = true;
 }
+
 Future<void> _seed(LocalStore store,
     {String messageState = LocalMessageState.received,
     String conversationId = 'conv',
@@ -520,6 +544,7 @@ class _MlsStub implements MlsConversationCryptoService {
         ciphertext: const [1],
         cryptoProtocol: 'test');
   }
+
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
