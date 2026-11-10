@@ -87,6 +87,11 @@ class InfoKeyMissing implements Exception {
   const InfoKeyMissing();
 }
 
+/// An edit must wait until removal and info-key rotation finish.
+class InfoRotationPending implements Exception {
+  const InfoRotationPending();
+}
+
 /// One info subject: its kind, id, and the community it belongs to.
 class InfoSubject {
   const InfoSubject(this.kind, this.id, this.communityId);
@@ -140,6 +145,16 @@ class CommunityInfoService {
   final Set<String> _answered = {};
   final Map<String, DateTime> _answeredDevice = {};
   final Map<String, Future<int>> _answerRuns = {};
+  Future<void> _writes = Future<void>.value();
+
+  // A rotation reads the displayed records before re-sealing them. Keep
+  // edits and rotation passes in one queue so that snapshot cannot overwrite
+  // an edit that completed while the new key was being sent.
+  Future<T> _serializeWrites<T>(Future<T> Function() body) {
+    final result = _writes.then((_) => body());
+    _writes = result.then((_) {}, onError: (_) {});
+    return result;
+  }
 
   static final _random = Random.secure();
   static Duration _randomDelay() =>
@@ -247,18 +262,39 @@ class CommunityInfoService {
     CommunityInfoRecord Function(int revision) build, {
     int attempts = 3,
     bool mint = false,
+  }) =>
+      _serializeWrites(
+          () => _publish(subject, build, attempts: attempts, mint: mint));
+
+  Future<void> _checkWritable(InfoKeyHome home,
+      {required bool rotating}) async {
+    final due = await _locked(_dueRotations);
+    if (topology.sendHeld(home.conversationId) ||
+        (!rotating &&
+            due.containsKey('${home.keySubjectKind}|${home.keySubjectId}'))) {
+      throw const InfoRotationPending();
+    }
+  }
+
+  Future<CommunityInfoRecord> _publish(
+    InfoSubject subject,
+    CommunityInfoRecord Function(int revision) build, {
+    int attempts = 3,
+    bool mint = false,
     CommunityInfoEvent? withKey,
   }) async {
     final home = homeOf(subject);
     if (home == null) throw StateError('C3 is not active here');
-    var key = withKey ?? await currentKey(home, subject.communityId);
-    if (key == null) {
+    await _checkWritable(home, rotating: withKey != null);
+    var selected = withKey ?? await currentKey(home, subject.communityId);
+    if (selected == null) {
       if (!mint) {
         await requestKey(home);
         throw const InfoKeyMissing();
       }
-      key = await newKey(home);
+      selected = await newKey(home);
     }
+    CommunityInfoEvent key = selected;
     final accepted =
         await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
     for (var attempt = 0;; attempt++) {
@@ -272,6 +308,16 @@ class CommunityInfoService {
       if (accepted != null && version < accepted.revision) {
         throw const InfoVersionConflict();
       }
+      // Another admin may have delivered a rotation while the HTTP read
+      // was in flight (or between conflict retries). Ordinary edits must
+      // use that current key rather than the one selected before the read.
+      if (withKey == null) {
+        final latest = await currentKey(home, subject.communityId);
+        if (latest == null) throw const InfoKeyMissing();
+        key = latest;
+      }
+      // A removal may have started while either read was in flight.
+      await _checkWritable(home, rotating: withKey != null);
       final record = build(version + 1);
       final blob = codec.seal(key: key.key!, record: record);
       final int stored;
@@ -464,7 +510,7 @@ class CommunityInfoService {
         '${home.conversationId}|${home.keySubjectKind}|${home.keySubjectId}';
     final running = _answerRuns[id];
     if (running != null) return running;
-    final run = _answerRequests(home, communityId);
+    final run = _serializeWrites(() => _answerRequests(home, communityId));
     _answerRuns[id] = run;
     try {
       return await run;
@@ -478,8 +524,7 @@ class CommunityInfoService {
         topology.sendHeld(home.conversationId)) {
       return 0;
     }
-    final key = await currentKey(home, communityId);
-    if (key == null) return 0;
+    if (await currentKey(home, communityId) == null) return 0;
     final requests = (await store.loadCommunityInfoEvents(
             CommunityInfoEventKind.keyRequest,
             home.keySubjectKind,
@@ -498,11 +543,27 @@ class CommunityInfoService {
         .toList();
     if (requests.isEmpty) return 0;
     await Future<void>.delayed(_answerDelay());
-    // Skip what another member already answered meanwhile.
+    // The write queue keeps rotation from replacing the selected key during
+    // the delay. A new removal mark still cancels this answer until rotation.
+    try {
+      await _checkWritable(home, rotating: false);
+    } on InfoRotationPending {
+      return 0;
+    }
+    // Another admin's rotation may have arrived over MLS during the delay.
+    final key = await currentKey(home, communityId);
+    if (key == null) return 0;
+    // Only a trusted delivery of the current key answers a request. An
+    // unrelated member key must not suppress delivery to a joiner.
+    final policy = policyFor(communityId);
     final keys = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
     final lastKeySeq = keys
-        .where((k) => k.conversationId == home.conversationId)
+        .where((k) =>
+            k.conversationId == home.conversationId &&
+            k.keyId == key.keyId &&
+            (k.senderAccountId == accountId ||
+                policy.mayEdit(k.senderAccountId, infoKindCommunity)))
         .fold<int>(0, (m, k) => max(m, k.seq ?? 0));
     final open = requests.where((r) => (r.seq ?? 0) > lastKeySeq).toList();
     final sent = open.isEmpty ||
@@ -515,13 +576,6 @@ class CommunityInfoService {
               key: key.key!),
         );
     if (!sent) return 0;
-    for (final r in requests) {
-      _answered.add('${r.ident}#${r.seq}');
-      _answeredDevice[
-              '${r.senderDeviceId}|${home.keySubjectKind}|${home.keySubjectId}'] =
-          _clock();
-    }
-    if (open.isEmpty) return 0;
     // A device that asks is new to the group (a joiner, a new or restored
     // device): it never saw the announcements made before it came. Announce
     // again, as this admin, every record under this key that this device
@@ -536,10 +590,21 @@ class CommunityInfoService {
       final accepted =
           await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
       if (accepted == null) continue;
-      await _announce(
-          subject, home, accepted.revision, accepted.keyId, accepted.blob);
+      if (!await _announce(
+          subject, home, accepted.revision, accepted.keyId, accepted.blob)) {
+        return 0;
+      }
     }
-    return 1;
+    // A key alone is insufficient for a joiner: retry failed announcements
+    // before consuming the request's hourly allowance, even if the key was
+    // already delivered by this device or another admin.
+    for (final r in requests) {
+      _answered.add('${r.ident}#${r.seq}');
+      _answeredDevice[
+              '${r.senderDeviceId}|${home.keySubjectKind}|${home.keySubjectId}'] =
+          _clock();
+    }
+    return open.isEmpty ? 0 : 1;
   }
 
   /// Marks [home]'s key for rotation (D80: at once on a kick or ban; a
@@ -625,6 +690,11 @@ class CommunityInfoService {
   ///   is dropped on its device (owner question: who rotates then).
   /// - A retry reuses the key it already made and sent; failures back off.
   Future<int> runRotations(
+          List<InfoSubject> Function(InfoKeyHome home, String communityId)
+              subjectsUnder) =>
+      _serializeWrites(() => _runRotations(subjectsUnder));
+
+  Future<int> _runRotations(
       List<InfoSubject> Function(InfoKeyHome home, String communityId)
           subjectsUnder) async {
     final due = await _locked(_dueRotations);
@@ -694,7 +764,8 @@ class CommunityInfoService {
               id, token, (e) => {...e, 'k': fresh.keyId, 's': true});
         }
         for (final record in records.entries) {
-          await publish(record.key, (revision) => _copy(record.value, revision),
+          await _publish(
+              record.key, (revision) => _copy(record.value, revision),
               withKey: fresh);
         }
         await _updateMark(id, token, (_) => null);
