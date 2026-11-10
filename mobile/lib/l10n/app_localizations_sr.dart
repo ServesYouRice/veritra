@@ -3982,6 +3982,13 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get settingsUpdateDisabled =>
       'Аутоматска провера ажурирања је искључена';
+
+  @override
+  String get settingsScreenGuard => 'Заштита екрана';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -7967,4 +7974,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsUpdateDisabled =>
       'Automatska provera ažuriranja je isključena';
+
+  @override
+  String get settingsScreenGuard => 'Zaštita ekrana';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.';
 }

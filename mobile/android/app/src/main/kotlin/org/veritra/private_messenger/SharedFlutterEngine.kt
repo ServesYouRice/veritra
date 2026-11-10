@@ -64,6 +64,14 @@ object SharedFlutterEngine {
                     ?: result.error("ui_unavailable", null, null)
             }
         }
+        MethodChannel(messenger, "org.veritra.private_messenger/screen_guard").setMethodCallHandler { call, result ->
+            val act = activity.get()
+            if (act == null) {
+                result.error("ui_unavailable", "Activity not available", null)
+                return@setMethodCallHandler
+            }
+            act.handleScreenGuardMethod(call, result)
+        }
         WakeWorkerCoordinator.installChannel(app, messenger, background)
         created.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
         return created

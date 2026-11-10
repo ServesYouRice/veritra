@@ -121,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    widget.state.enterChatView();
     composer.addListener(_saveDraft);
     _lastTypedText = composer.text;
     composer.addListener(_noticeTyping);
@@ -213,6 +214,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void didUpdateWidget(ChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.state, widget.state)) {
+      oldWidget.state.leaveChatView();
+      widget.state.enterChatView();
+    }
     if (oldWidget.conversationId == widget.conversationId &&
         identical(oldWidget.state, widget.state)) {
       return;
@@ -231,6 +236,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    widget.state.leaveChatView();
     _highlightTimer?.cancel();
     composer.removeListener(_saveDraft);
     composer.removeListener(_noticeTyping);

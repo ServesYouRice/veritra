@@ -3966,4 +3966,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsUpdateDisabled => 'Automatic update checks are turned off';
+
+  @override
+  String get settingsScreenGuard => 'Screen guard';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Block screenshots and AI-assistant screen reading in chats.';
 }
