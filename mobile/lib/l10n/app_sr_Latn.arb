@@ -526,6 +526,7 @@
   "chatSendingFile": "Slanje datoteke",
   "chatAttachFile": "Priloži datoteku",
   "chatComposerHint": "Poruka",
+  "chatPostingRestricted": "Samo administratori mogu da objavljuju",
   "chatComposerCounter": "{length} / {max}",
   "chatPausedNotice": "Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.",
   "chatSyncPausedNotice": "Poruke u ovom razgovoru su pauzirane: ažuriranje šifrovanja nije moglo da se primeni. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.",

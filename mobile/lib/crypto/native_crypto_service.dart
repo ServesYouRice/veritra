@@ -9,6 +9,8 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../core/device_lists.dart' show DeviceListPins;
 import '../core/k1_backup.dart' show k1BackupPlaintextVersion;
 import '../core/models.dart';
+import '../core/roles/governance.dart' show GovernanceState;
+import '../core/roles/governance_codec.dart' show decodeGovernance;
 import '../core/roles/posting_verdict.dart';
 import '../core/server_origin.dart';
 import '../storage/encrypted_database.dart'
@@ -92,6 +94,20 @@ class NativeCryptoService
   set conversationAuthority(ConversationAuthority value) => _authority = value;
   ConversationAuthority? _authority;
   NativeCryptoDevice? _device;
+
+  @override
+  GovernanceState? governanceOf(String conversationId) {
+    final device = _device;
+    if (device == null) return null;
+    try {
+      final state = device.groupRoleState(conversationId);
+      final record = state.record;
+      if (record == null) return null;
+      return decodeGovernance(record);
+    } catch (_) {
+      return null;
+    }
+  }
 
   /// The rollback counter of the state [_device] holds in memory.
   int? _deviceCounter;

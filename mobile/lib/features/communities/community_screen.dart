@@ -315,11 +315,13 @@ class _CommunityCard extends StatelessWidget {
                   : context.l10n.communityChannelCount(channels.length),
             ),
             onTap: onOpenDetails,
-            trailing: IconButton(
-              tooltip: context.l10n.communityNewChannel,
-              onPressed: state.busy ? null : onCreateChannel,
-              icon: const Icon(Icons.add),
-            ),
+            trailing: state.canCreateChannel(community.id)
+                ? IconButton(
+                    tooltip: context.l10n.communityNewChannel,
+                    onPressed: state.busy ? null : onCreateChannel,
+                    icon: const Icon(Icons.add),
+                  )
+                : null,
           ),
           if (channels.isEmpty)
             ListTile(
