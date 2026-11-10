@@ -76,23 +76,25 @@ class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://example.test');
   int puts = 0;
   final putTokens = <String>[];
+  final channelKinds = <String>[];
   void Function()? onPut;
 
   @override
   Future<ChannelCreation> createChannel(
       String token, String communityId, String name,
       {String kind = 'private'}) async {
+    channelKinds.add(kind);
     return ChannelCreation(
       channel: Channel(
           id: 'chan_${'2' * 32}',
           communityId: communityId,
           name: name,
-          kind: 'open',
-          conversationId: 'conv_shared',
+          kind: kind,
+          conversationId: kind == 'private' ? 'conv_private' : 'conv_shared',
           layoutGeneration: 1),
       conversation: Conversation(
-          id: 'conv_shared',
-          kind: 'community_shared',
+          id: kind == 'private' ? 'conv_private' : 'conv_shared',
+          kind: kind == 'private' ? 'community_channel' : 'community_shared',
           communityId: communityId,
           createdBy: 'alice'),
     );
@@ -170,6 +172,42 @@ void main() {
     // A refresh is a quiet no-op.
     await state.refreshCommunityInfo();
   });
+
+  test('explicit private creation uses its own conversation and info key',
+      () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final api = _Api();
+    final store = MemoryLocalStore();
+    final state = AppState(
+        apiClientFactory: (_) => api,
+        syncServiceFactory: (_, __) => _QuietSync(),
+        localStore: store,
+        cryptoService: _InfoCrypto(bindings));
+    addTearDown(state.dispose);
+    state.session = _session;
+    state.api = api;
+    final id = 'comm_${'1' * 32}';
+    state.communities = [
+      Community(id: id, name: 'Club', sharedConversationId: 'conv_shared'),
+    ];
+    expect(
+        await state.publishCommunityInfo(id, name: 'Club', mint: true), isTrue);
+    final channel = await state.createChannel(id, 'secret', kind: 'private');
+    expect(channel?.kind, 'private');
+    expect(channel?.conversationId, 'conv_private');
+    expect(api.channelKinds, ['private']);
+    // Wait for the outside-session-queue publish, then inspect the sealed
+    // record: private info must not reuse the community's shared key.
+    for (var i = 0; i < 100 && api.puts < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    }
+    final communityRecord = api.records['community|$id']!;
+    final channelRecord = api.records['channel|${channel!.id}']!;
+    expect(channelRecord.keyId, isNot(communityRecord.keyId));
+    final events = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, 'channel', channel.id);
+    expect(events.single.conversationId, 'conv_private');
+  }, skip: nativeCryptoSkip());
 
   test('the info service uses a rotated session token', () async {
     final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());

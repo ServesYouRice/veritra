@@ -3703,4 +3703,25 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get autoBackupPromptLater => 'Not now';
+
+  @override
+  String get channelPrivate => 'Private channel';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Only selected members can see this channel. The server can see who is in it.';
+
+  @override
+  String get channelOpenDisclosure =>
+      'Every community member can see this channel.';
+
+  @override
+  String get channelCreateFailed => 'Could not create the channel. Try again.';
+
+  @override
+  String get channelMembersFailed =>
+      'The channel was created. Some members could not be added. Retry to add only those members.';
+
+  @override
+  String get channelAdminOnly => 'Only owners and admins can create channels.';
 }

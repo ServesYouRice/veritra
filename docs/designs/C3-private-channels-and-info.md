@@ -313,7 +313,24 @@ legacy-name fallback yet. See the remaining work below. No new schema,
 server migration, crypto ABI or dependency is needed by this slice; reserved
 local schema 35 and server migration 0067 remain unused.
 
-**Still left:** private-channel creation/member-selection and conversion UI;
+**Creation UI follow-up (2026-11-10):** shared-layout communities now offer an
+open/private switch and a picker of existing community members (excluding the
+creator). The modal checks the server roster for owner/admin creation rights;
+this is only UI availability, never authority for accepting info records.
+Private creation uses its own conversation and info key. Member additions use
+the existing MLS reconciliation path. After a partial add failure, Retry keeps
+the created channel and retries only failed additions. Session changes stop
+further additions. English and both Serbian scripts include the private
+membership disclosure. Legacy communities retain their existing form, since
+their server layout adds every community member to each new channel.
+
+This is a UI slice: names still take the existing plaintext creation route
+until step 4, and peer info still fails closed without C4's verified role
+source. Creation/member-selection is covered by widget tests and a native
+record-codec integration test in `c3_app_community_info_test.dart`. Neither
+reserved counter is consumed by this slice.
+
+**Still left:** channel conversion UI;
 icons and the category screens; hiding "New channel" from
 moderators (the community card does not know the viewer's role; the
 server refuses them); a push of the key right after an add commit; and step

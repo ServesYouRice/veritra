@@ -15,6 +15,7 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 import 'membership_screens.dart';
+import 'create_channel_dialog.dart';
 import '../../ui/widgets/refresh_action.dart';
 
 /// Communities: create a community, add channels, and open channel
@@ -189,25 +190,29 @@ class CommunityScreen extends StatelessWidget {
     BuildContext context,
     Community community,
   ) async {
-    final name = await _promptForName(
-      context,
-      title: context.l10n.communityNewChannelIn(
-          state.communityDisplayName(community) ??
-              context.l10n.communityPlaceholderName),
-      label: context.l10n.communityChannelName,
+    // Legacy communities put every member in each channel. Keep their
+    // existing form; a selective member picker would promise false privacy.
+    if (community.sharedConversationId == null) {
+      final name = await _promptForName(context,
+          title: context.l10n.communityNewChannelIn(
+              state.communityDisplayName(community) ??
+                  context.l10n.communityPlaceholderName),
+          label: context.l10n.communityChannelName);
+      if (name != null && name.isNotEmpty) {
+        await state.createChannel(community.id, name);
+        if (context.mounted && state.error != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(state.error!)),
+          );
+        }
+      }
+      return;
+    }
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => CreateChannelDialog(state: state, community: community),
     );
-    if (name == null || name.isEmpty) {
-      return;
-    }
-    await state.createChannel(community.id, name);
-    if (!context.mounted) {
-      return;
-    }
-    if (state.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(state.error!)),
-      );
-    }
   }
 
   Future<String?> _promptForName(

@@ -3716,6 +3716,27 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get autoBackupPromptLater => 'Не сада';
+
+  @override
+  String get channelPrivate => 'Приватни канал';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Само изабрани чланови виде овај канал. Сервер види ко је у њему.';
+
+  @override
+  String get channelOpenDisclosure => 'Сваки члан заједнице види овај канал.';
+
+  @override
+  String get channelCreateFailed => 'Канал није направљен. Покушајте поново.';
+
+  @override
+  String get channelMembersFailed =>
+      'Канал је направљен. Неки чланови нису додати. Покушајте поново да додате само те чланове.';
+
+  @override
+  String get channelAdminOnly =>
+      'Само власници и администратори могу да праве канале.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -7435,4 +7456,25 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupPromptLater => 'Ne sada';
+
+  @override
+  String get channelPrivate => 'Privatni kanal';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Samo izabrani članovi vide ovaj kanal. Server vidi ko je u njemu.';
+
+  @override
+  String get channelOpenDisclosure => 'Svaki član zajednice vidi ovaj kanal.';
+
+  @override
+  String get channelCreateFailed => 'Kanal nije napravljen. Pokušajte ponovo.';
+
+  @override
+  String get channelMembersFailed =>
+      'Kanal je napravljen. Neki članovi nisu dodati. Pokušajte ponovo da dodate samo te članove.';
+
+  @override
+  String get channelAdminOnly =>
+      'Samo vlasnici i administratori mogu da prave kanale.';
 }

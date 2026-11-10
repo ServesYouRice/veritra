@@ -1034,5 +1034,11 @@
   "autoBackupKeyOn": "Rezervne kopije su uključene na ovom uređaju.",
   "autoBackupPromptMessage": "Sačuvajte ključ za oporavak. Uključuje automatske rezervne kopije i vraća vaš nalog ako izgubite sve uređaje.",
   "autoBackupPromptSave": "Sačuvaj ključ",
-  "autoBackupPromptLater": "Ne sada"
+  "autoBackupPromptLater": "Ne sada",
+  "channelPrivate": "Privatni kanal",
+  "channelPrivateDisclosure": "Samo izabrani članovi vide ovaj kanal. Server vidi ko je u njemu.",
+  "channelOpenDisclosure": "Svaki član zajednice vidi ovaj kanal.",
+  "channelCreateFailed": "Kanal nije napravljen. Pokušajte ponovo.",
+  "channelMembersFailed": "Kanal je napravljen. Neki članovi nisu dodati. Pokušajte ponovo da dodate samo te članove.",
+  "channelAdminOnly": "Samo vlasnici i administratori mogu da prave kanale."
 }

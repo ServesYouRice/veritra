@@ -6092,6 +6092,42 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Not now'**
   String get autoBackupPromptLater;
+
+  /// No description provided for @channelPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'Private channel'**
+  String get channelPrivate;
+
+  /// No description provided for @channelPrivateDisclosure.
+  ///
+  /// In en, this message translates to:
+  /// **'Only selected members can see this channel. The server can see who is in it.'**
+  String get channelPrivateDisclosure;
+
+  /// No description provided for @channelOpenDisclosure.
+  ///
+  /// In en, this message translates to:
+  /// **'Every community member can see this channel.'**
+  String get channelOpenDisclosure;
+
+  /// No description provided for @channelCreateFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not create the channel. Try again.'**
+  String get channelCreateFailed;
+
+  /// No description provided for @channelMembersFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The channel was created. Some members could not be added. Retry to add only those members.'**
+  String get channelMembersFailed;
+
+  /// No description provided for @channelAdminOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Only owners and admins can create channels.'**
+  String get channelAdminOnly;
 }
 
 class _AppLocalizationsDelegate

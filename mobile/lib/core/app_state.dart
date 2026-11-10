@@ -2446,8 +2446,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   /// Creates a channel and its backing conversation in one server transaction.
-  Future<void> createChannel(String communityId, String name) async {
+  Future<Channel?> createChannel(String communityId, String name,
+      {String? kind}) async {
     ({Channel channel, bool shared})? made;
+    Channel? created;
     await _run(() async {
       final current = session;
       final client = api;
@@ -2463,8 +2465,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         current.token,
         communityId,
         name,
-        kind: sharedLayout ? 'open' : 'private',
+        kind: kind ?? (sharedLayout ? 'open' : 'private'),
       );
+      created = creation.channel;
       final inSharedGroup = creation.conversation.isCommunityShared;
       // An open channel posts into the community's existing group.
       if (!inSharedGroup) {
@@ -2504,13 +2507,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         if (routed.shared) await publishCommunityInfo(communityId);
       }());
     }
+    return error == null ? created : null;
   }
 
-  Future<void> addConversationMember(
+  Future<bool> addConversationMember(
     String conversationId,
     String accountId, {
     String role = 'member',
   }) async {
+    var added = false;
     await _run(() async {
       final current = session;
       final client = api;
@@ -2530,6 +2535,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         accountId,
         role: role,
       );
+      added = true;
       // Their devices join the MLS group through reconcile (card I51). The
       // change is new, so an earlier one's backoff does not hold it.
       _mlsReconcileRequested = true;
@@ -2537,6 +2543,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _mlsChangeRetries.remove(conversationId);
       unawaited(_catchUpSyncEvents());
     });
+    return added;
   }
 
   /// Loads the server-recorded roster for a conversation.

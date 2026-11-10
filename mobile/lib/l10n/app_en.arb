@@ -1306,5 +1306,11 @@
   "autoBackupKeyOn": "Backups are on for this device.",
   "autoBackupPromptMessage": "Save a recovery key. It turns on automatic backups and gets your account back if you lose every device.",
   "autoBackupPromptSave": "Save key",
-  "autoBackupPromptLater": "Not now"
+  "autoBackupPromptLater": "Not now",
+  "channelPrivate": "Private channel",
+  "channelPrivateDisclosure": "Only selected members can see this channel. The server can see who is in it.",
+  "channelOpenDisclosure": "Every community member can see this channel.",
+  "channelCreateFailed": "Could not create the channel. Try again.",
+  "channelMembersFailed": "The channel was created. Some members could not be added. Retry to add only those members.",
+  "channelAdminOnly": "Only owners and admins can create channels."
 }
