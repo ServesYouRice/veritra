@@ -1,12 +1,8 @@
 # B2 link previews — 2026-11-07
 
-Status: implemented on branch `agent/b2`. No Dart check has run yet: Flutter
-is not installed where this was written, and until the `intl` pin from #134
-reached this branch every Flutter CI job failed at `flutter pub get` before
-compiling anything. The first green mobile and desktop CI run on the pull
-request is the evidence, and this file says so only once it exists. STATE.md
-routes B2 to Opus review. No counter bump, no server change, no release-gate
-change.
+Status: merged on `main` (PR #124, `debc2bc`), verified with full local checks
+passing. Opus review complete (review fixes landed). Owner approval recorded in
+D89/D96. No counter bump, no server change, no release-gate change.
 
 ## What it does
 

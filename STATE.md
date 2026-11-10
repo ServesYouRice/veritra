@@ -339,9 +339,9 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 
 | ID | Package | Done when | Route |
 |---|---|---|---|
-| B1 | Voice notes | Record, send as an encrypted file and play inline; any transcript is made on the device | Owner first (recorder plugin) 2026-11-07: built (#122), CI pending. |
-| B2 | Link previews | The sender's app makes the preview and sends it inside the encrypted message; receivers and the server never fetch it; off for unknown sites by default | Opus review 2026-11-07: built (#124), Opus review fixes in, CI pending. |
-| B3 | Polls | Polls and votes as encrypted messages on the W7 design; apps count the votes | Sonnet 2026-11-07: built (#127), CI pending. |
+| B1 ✅ | Voice notes | Record, send as an encrypted file and play inline; any transcript is made on the device | Owner first (recorder plugin) — 2026-11-07 (#122); verified on main, full checks pass |
+| B2 ✅ | Link previews | The sender's app makes the preview and sends it inside the encrypted message; receivers and the server never fetch it; off for unknown sites by default | Opus review — 2026-11-07 (#124), Opus review fixes in; verified on main, full checks pass |
+| B3 ✅ | Polls | Polls and votes as encrypted messages on the W7 design; apps count the votes | Sonnet — 2026-11-07 (#127), D96 poll close in; verified on main, full checks pass |
 | B4 ✅ | Files | Several files per send, a size cap the operator sets, and phones open more than images | Sonnet — 2026-10-24 with `open_filex`; `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB` |
 | B5 | One-to-one calls | A call screen in demo builds on the existing call service, with media through the relay by default to hide addresses | Opus review |
 | B6 | Group calls and voice rooms | Encrypted voice rooms and screen share modelled on Discord's DAVE: MLS keys, SFrame frames, a forwarding server that cannot read them | Opus designs |

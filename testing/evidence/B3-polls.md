@@ -1,7 +1,7 @@
 # B3 polls — 2026-11-07
 
-Status: implemented on the W7 payload v2 design; checked by CI only (no
-Flutter or Dart in the authoring environment). No counter bumped: ABI 12,
+Status: merged on `main` (PR #127, `0cc7aba`), verified with full local checks
+passing. D96 poll close implemented and tested. No counter bumped: ABI 12,
 local schema 18, migration 0046 unchanged. No server change.
 
 ## What works
