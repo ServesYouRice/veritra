@@ -1958,6 +1958,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatComposerHint => 'Message';
 
   @override
+  String get chatPostingRestricted => 'Only admins can post';
+
+  @override
   String chatComposerCounter(int length, int max) {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);

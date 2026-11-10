@@ -47,6 +47,8 @@ import '../sync/sync_service.dart';
 import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
 import 'api_client.dart';
+import 'roles/governance.dart';
+import 'roles/posting_verdict.dart';
 import 'attachments.dart';
 import 'client_config.dart';
 import 'device_link_v3_models.dart';
@@ -248,7 +250,8 @@ int passFetchedFloor({
 }) =>
     fetchedGeneration == sessionGeneration ? fetchedThrough : 0;
 
-class AppState extends ChangeNotifier implements ConversationAuthority {
+class AppState extends ChangeNotifier
+    implements ConversationAuthority, VerifiedRoleSource {
   AppState({
     required this.apiClientFactory,
     required this.cryptoService,
@@ -406,7 +409,105 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       membersFor(conversationId)
           .where((m) => m.accountId == accountId)
           .firstOrNull
-          ?.role;
+          ?.role ??
+      conversations
+          .where((c) => c.id == conversationId)
+          .firstOrNull
+          ?.currentRole;
+
+  @visibleForTesting
+  GovernanceState? Function(String conversationId)?
+      governanceOverrideForTesting;
+
+  @override
+  GovernanceState? governanceOf(String conversationId) {
+    if (governanceOverrideForTesting != null) {
+      final override = governanceOverrideForTesting!(conversationId);
+      if (override != null) return override;
+    }
+    return cryptoService.governanceOf(conversationId);
+  }
+
+  Channel? _findChannel(String? channelId) {
+    if (channelId == null) return null;
+    for (final list in channelsByCommunity.values) {
+      for (final ch in list) {
+        if (ch.id == channelId) return ch;
+      }
+    }
+    return null;
+  }
+
+  @override
+  bool serverRestrictsPosting(String conversationId, String? channelId) {
+    final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conv != null && conv.postingRestricted) return true;
+    final chId = channelId ?? conv?.channelId;
+    if (chId != null) {
+      final ch = _findChannel(chId);
+      if (ch != null && ch.kind == 'announcement') return true;
+    }
+    return false;
+  }
+
+  /// C2: reports whether the signed-in user may post in [conversationId]
+  /// (and optional [channelId]). When posting is restricted (announcement
+  /// channel or admin-only posting), only owners and admins may post.
+  bool mayPost(String conversationId, {String? channelId}) {
+    final localAccount = session?.accountId;
+    if (localAccount == null) return true;
+    final record = governanceOf(conversationId);
+    final serverRestricted = serverRestrictsPosting(conversationId, channelId);
+    final restricted = (record?.isRestricted(channelId: channelId) ?? false) ||
+        serverRestricted;
+    if (!restricted) return true;
+
+    // Restricted: only owner and admin may post.
+    if (record != null) {
+      return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
+    }
+    final role = roleOf(conversationId, localAccount);
+    return role == 'owner' || role == 'admin';
+  }
+
+  /// The local account's role in [communityId].
+  String? communityRole(String communityId) {
+    final community = communities.where((c) => c.id == communityId).firstOrNull;
+    if (community != null &&
+        community.createdBy != null &&
+        community.createdBy == session?.accountId) {
+      return 'owner';
+    }
+    if (community?.sharedConversationId != null) {
+      final shared = conversations
+          .where((c) => c.id == community!.sharedConversationId)
+          .firstOrNull;
+      if (shared?.currentRole != null) return shared!.currentRole;
+    }
+    for (final c in conversations) {
+      if (c.communityId == communityId && c.currentRole != null) {
+        return c.currentRole;
+      }
+    }
+    return null;
+  }
+
+  /// Reports whether the signed-in user may create channels in [communityId].
+  /// Only owners and admins may create channels (owner decision).
+  bool canCreateChannel(String communityId) {
+    final localAccount = session?.accountId;
+    if (localAccount == null) return false;
+    final community = communities.where((c) => c.id == communityId).firstOrNull;
+    if (community?.sharedConversationId != null) {
+      final record = governanceOf(community!.sharedConversationId!);
+      if (record != null) {
+        return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
+      }
+    }
+    final role = communityRole(communityId);
+    return role == 'owner' || role == 'admin';
+  }
+
   @override
   Set<String> memberAccounts(String conversationId) =>
       membersFor(conversationId).map((m) => m.accountId).toSet();
@@ -2429,6 +2530,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       created = await client.createCommunity(current.token, name);
+      if (created!.createdBy == null) {
+        created = Community(
+          id: created!.id,
+          name: created!.name,
+          createdBy: current.accountId,
+          createdAt: created!.createdAt,
+          sharedConversationId: created!.sharedConversationId,
+        );
+      }
       communities = <Community>[created!, ...communities];
       // A community with the C0 layout starts with its shared group, which
       // this device creates now; channels in it need no group of their own.
@@ -2448,6 +2558,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final client = api;
       if (current == null || client == null) {
         return;
+      }
+      if (!canCreateChannel(communityId)) {
+        throw ApiException(403,
+            '{"error":"forbidden","message":"Only admins can create channels"}');
       }
       final sharedLayout = communities
               .where((community) => community.id == communityId)
@@ -3246,6 +3360,24 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     });
   }
 
+  Future<void> setPostingPolicy(String conversationId, String policy) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      final updated = await client.setPostingPolicy(
+        current.token,
+        conversationId,
+        policy,
+      );
+      conversations =
+          conversations.map((c) => c.id == updated.id ? updated : c).toList();
+      notifyListeners();
+    });
+  }
+
   Future<List<MetadataSearchResult>> searchMetadata(String query) async {
     final current = session;
     final client = api;
@@ -3733,6 +3865,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     if (service == null || _mlsCrypto == null) return false;
     if (current == null || client == null) return false;
+    if (!mayPost(conversationId, channelId: channelId)) {
+      _opErrors[Ops.attachment] = 'Only admins can post';
+      notifyListeners();
+      return false;
+    }
     final ownerGeneration = _sessionGeneration;
     _busyOps.add(Ops.attachment);
     _opErrors.remove(Ops.attachment);
@@ -3919,6 +4056,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final route = _channelRouteFor(
         conversationId, channelId ?? _selectedChannels[conversationId]);
     if (route == null && _isSharedGroup(conversationId)) return false;
+    final routeChannelId = channelId ?? _selectedChannels[conversationId];
+    if (restrictedPostTypes.contains(type) &&
+        !mayPost(conversationId, channelId: routeChannelId)) {
+      _opErrors[Ops.send] = 'Only admins can post';
+      notifyListeners();
+      return false;
+    }
     // Every send takes its place in its conversation's line, and the next
     // one waits until this one is queued, refused or given up: a send held
     // inside the session queue cannot be overtaken by a later one.
@@ -6509,6 +6653,17 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             ..remove(event.conversationId);
         } else if (type.startsWith('membership.')) {
           membersByConversation = {};
+        }
+        if (type == 'conversation.posting_policy.updated' &&
+            event.payload is Map) {
+          try {
+            final updated = Conversation.fromJson(
+                Map<String, Object?>.from(event.payload as Map));
+            conversations = <Conversation>[
+              for (final c in conversations)
+                if (c.id == updated.id) updated else c,
+            ];
+          } catch (_) {}
         }
         conversationList = true;
       } else if (type.startsWith('reaction.') ||

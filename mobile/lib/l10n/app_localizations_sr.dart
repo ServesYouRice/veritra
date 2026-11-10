@@ -1972,6 +1972,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatComposerHint => 'Порука';
 
   @override
+  String get chatPostingRestricted => 'Само администратори могу да објављују';
+
+  @override
   String chatComposerCounter(int length, int max) {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -5729,6 +5732,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatComposerHint => 'Poruka';
+
+  @override
+  String get chatPostingRestricted => 'Samo administratori mogu da objavljuju';
 
   @override
   String chatComposerCounter(int length, int max) {

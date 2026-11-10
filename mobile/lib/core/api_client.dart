@@ -842,6 +842,7 @@ class ApiClient {
       peerAccountId: conversation.peerAccountId,
       peerUsername: conversation.peerUsername,
       createdBy: conversation.createdBy,
+      postingRestricted: conversation.postingRestricted,
       existedOnServer: true,
     );
   }
@@ -1403,6 +1404,20 @@ class ApiClient {
       '/api/v1/conversations/$conversationId/retention',
       token: token,
       body: <String, Object?>{'retention_seconds': retentionSeconds},
+    );
+    return _decode(() => Conversation.fromJson(json));
+  }
+
+  Future<Conversation> setPostingPolicy(
+    String token,
+    String conversationId,
+    String policy,
+  ) async {
+    final json = await _jsonRequest(
+      'PUT',
+      '/api/v1/conversations/$conversationId/posting-policy',
+      token: token,
+      body: <String, Object?>{'policy': policy},
     );
     return _decode(() => Conversation.fromJson(json));
   }

@@ -3249,6 +3249,12 @@ abstract class AppLocalizations {
   /// **'Message'**
   String get chatComposerHint;
 
+  /// Hint shown in chat composer when posting is restricted to admins.
+  ///
+  /// In en, this message translates to:
+  /// **'Only admins can post'**
+  String get chatPostingRestricted;
+
   /// No description provided for @chatComposerCounter.
   ///
   /// In en, this message translates to:

@@ -684,6 +684,8 @@
   "chatSendingFile": "Sending file",
   "chatAttachFile": "Attach a file",
   "chatComposerHint": "Message",
+  "chatPostingRestricted": "Only admins can post",
+  "@chatPostingRestricted": {"description": "Hint shown in chat composer when posting is restricted to admins."},
   "chatComposerCounter": "{length} / {max}",
   "@chatComposerCounter": {"placeholders": {"length": {"type": "int", "format": "decimalPattern"}, "max": {"type": "int", "format": "decimalPattern"}}},
   "chatPausedNotice": "Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.",
