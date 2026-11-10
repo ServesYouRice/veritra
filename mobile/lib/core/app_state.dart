@@ -405,15 +405,23 @@ class AppState extends ChangeNotifier
       LinkPreviewService(thumbnailEncoder: encodePngThumbnail);
   final Set<String> _previewPending = <String>{};
   @override
-  String? roleOf(String conversationId, String accountId) =>
-      membersFor(conversationId)
-          .where((m) => m.accountId == accountId)
-          .firstOrNull
-          ?.role ??
-      conversations
-          .where((c) => c.id == conversationId)
-          .firstOrNull
-          ?.currentRole;
+  String? roleOf(String conversationId, String accountId) {
+    final memberRole = membersFor(conversationId)
+        .where((m) => m.accountId == accountId)
+        .firstOrNull
+        ?.role;
+    if (memberRole != null) return memberRole;
+    final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conv != null) {
+      if (conv.currentRole != null) return conv.currentRole;
+      if (conv.createdBy != null && conv.createdBy == accountId) return 'owner';
+      if (conv.communityId != null && accountId == session?.accountId) {
+        final commRole = communityRole(conv.communityId!);
+        if (commRole != null) return commRole;
+      }
+    }
+    return null;
+  }
 
   @visibleForTesting
   GovernanceState? Function(String conversationId)?
@@ -425,7 +433,11 @@ class AppState extends ChangeNotifier
       final override = governanceOverrideForTesting!(conversationId);
       if (override != null) return override;
     }
-    return cryptoService.governanceOf(conversationId);
+    try {
+      return cryptoService.governanceOf(conversationId);
+    } catch (_) {
+      return null;
+    }
   }
 
   Channel? _findChannel(String? channelId) {
