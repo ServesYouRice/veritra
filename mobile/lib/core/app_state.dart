@@ -413,11 +413,20 @@ class AppState extends ChangeNotifier
     if (memberRole != null) return memberRole;
     final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
     if (conv != null) {
-      if (conv.currentRole != null) return conv.currentRole;
       if (conv.createdBy != null && conv.createdBy == accountId) return 'owner';
-      if (conv.communityId != null && accountId == session?.accountId) {
-        final commRole = communityRole(conv.communityId!);
-        if (commRole != null) return commRole;
+      if (conv.communityId != null) {
+        final comm =
+            communities.where((c) => c.id == conv.communityId).firstOrNull;
+        if (comm?.createdBy != null && comm!.createdBy == accountId) {
+          return 'owner';
+        }
+      }
+      if (accountId == session?.accountId) {
+        if (conv.currentRole != null) return conv.currentRole;
+        if (conv.communityId != null) {
+          final commRole = communityRole(conv.communityId!);
+          if (commRole != null) return commRole;
+        }
       }
     }
     return null;
@@ -3369,6 +3378,7 @@ class AppState extends ChangeNotifier
       );
       conversations =
           conversations.map((c) => c.id == updated.id ? updated : c).toList();
+      notifyListeners();
     });
   }
 
@@ -3384,8 +3394,13 @@ class AppState extends ChangeNotifier
         conversationId,
         policy,
       );
-      conversations =
-          conversations.map((c) => c.id == updated.id ? updated : c).toList();
+      conversations = [
+        for (final c in conversations)
+          if (c.id == updated.id)
+            c.copyWith(postingRestricted: updated.postingRestricted)
+          else
+            c,
+      ];
       notifyListeners();
     });
   }
@@ -6673,7 +6688,10 @@ class AppState extends ChangeNotifier
                 Map<String, Object?>.from(event.payload as Map));
             conversations = <Conversation>[
               for (final c in conversations)
-                if (c.id == updated.id) updated else c,
+                if (c.id == updated.id)
+                  c.copyWith(postingRestricted: updated.postingRestricted)
+                else
+                  c,
             ];
           } catch (_) {}
         }

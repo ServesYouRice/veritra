@@ -5,6 +5,9 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/core/roles/posting_verdict.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/features/chat/chat_screen.dart';
 import 'package:private_messenger/features/communities/community_screen.dart';
 import 'package:private_messenger/l10n/app_localizations.dart';
@@ -12,6 +15,7 @@ import 'package:private_messenger/l10n/app_localizations_en.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
+import 'native_test_env.dart';
 import 'test_crypto_service.dart';
 
 class _FakeApi extends ApiClient {
@@ -264,6 +268,48 @@ void main() {
       expect(state.mayPost('c_group'), isTrue);
     });
 
+    test(
+        'roleOf does not leak session currentRole to other accounts and resolves creator',
+        () {
+      final api = _FakeApi();
+      final state = createAppState(api: api, accountId: 'acct_alice')
+        ..conversations = [
+          Conversation(
+            id: 'c_group',
+            kind: 'group',
+            postingRestricted: true,
+            createdBy: 'acct_bob',
+            currentRole: 'admin',
+          ),
+          Conversation(
+            id: 'c_chan',
+            kind: 'community_channel',
+            communityId: 'comm_1',
+            channelId: 'ch_1',
+            currentRole: 'member',
+          ),
+        ]
+        ..communities = [
+          Community(
+            id: 'comm_1',
+            name: 'Comm 1',
+            createdBy: 'acct_founder',
+          ),
+        ];
+
+      // Local user Alice gets her currentRole 'admin'
+      expect(state.roleOf('c_group', 'acct_alice'), 'admin');
+
+      // Conversation creator Bob gets 'owner' even though Alice is admin
+      expect(state.roleOf('c_group', 'acct_bob'), 'owner');
+
+      // Community creator Founder gets 'owner' for channels in the community
+      expect(state.roleOf('c_chan', 'acct_founder'), 'owner');
+
+      // Third party Carol has no record -> null, NOT Alice's 'admin'
+      expect(state.roleOf('c_group', 'acct_carol'), isNull);
+    });
+
     test('canCreateChannel allows only admins and owners', () {
       final api = _FakeApi();
       final state = createAppState(api: api, accountId: 'acct_member')
@@ -393,7 +439,8 @@ void main() {
       expect(api.sends, 0);
     });
 
-    test('setPostingPolicy updates conversation state', () async {
+    test('setPostingPolicy updates conversation state and preserves metadata',
+        () async {
       final api = _FakeApi();
       final state = createAppState(api: api, accountId: 'acct_owner')
         ..conversations = [
@@ -401,11 +448,14 @@ void main() {
               id: 'c_group',
               kind: 'group',
               postingRestricted: false,
+              unreadCount: 5,
               currentRole: 'owner'),
         ];
 
       await state.setPostingPolicy('c_group', 'admins');
       expect(state.conversations.first.postingRestricted, isTrue);
+      expect(state.conversations.first.currentRole, 'owner');
+      expect(state.conversations.first.unreadCount, 5);
     });
 
     test(
@@ -653,6 +703,28 @@ void main() {
       // "New channel" icon button IS shown for admin
       expect(find.byTooltip(AppLocalizationsEn().communityNewChannel),
           findsOneWidget);
+    });
+  });
+
+  group('C2: CryptoService governanceOf safe defaults', () {
+    test('UnavailableCryptoService and TestOnlyCryptoService return null', () {
+      final unavail = UnavailableCryptoService();
+      expect(unavail.governanceOf('conv_1'), isNull);
+
+      final testOnly = TestOnlyCryptoService();
+      expect(testOnly.governanceOf('conv_1'), isNull);
+    });
+
+    test(
+        'NativeCryptoService.governanceOf returns null without active device or record',
+        () {
+      if (nativeCryptoSkip() != false) return;
+      final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+      final service = NativeCryptoService(
+        bindings: bindings,
+        localStore: MemoryLocalStore(),
+      );
+      expect(service.governanceOf('conv_unknown'), isNull);
     });
   });
 }
