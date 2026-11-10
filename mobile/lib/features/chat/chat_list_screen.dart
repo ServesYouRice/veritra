@@ -78,7 +78,9 @@ class ChatListScreen extends StatelessWidget {
           return positions[a.id]!.compareTo(positions[b.id]!);
         if (ap == null) return 1;
         if (bp == null) return -1;
-        return bp.compareTo(ap);
+        final c = bp.compareTo(ap);
+        if (c != 0) return c;
+        return positions[a.id]!.compareTo(positions[b.id]!);
       });
     final requestRows = requests.isEmpty ? 0 : requests.length + 1;
     return Scaffold(

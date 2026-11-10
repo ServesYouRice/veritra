@@ -218,6 +218,10 @@ void main() {
       Conversation(id: 'conv', kind: 'dm', title: 'Chat 1', createdBy: 'alice'),
       Conversation(id: 'dest1', kind: 'dm', title: 'Chat 2', createdBy: 'alice'),
       Conversation(id: 'dest2', kind: 'dm', title: 'Chat 3', createdBy: 'alice'),
+      Conversation(id: 'dest3', kind: 'dm', title: 'Chat 4', createdBy: 'alice'),
+      Conversation(id: 'dest4', kind: 'dm', title: 'Chat 5', createdBy: 'alice'),
+      Conversation(id: 'dest5', kind: 'dm', title: 'Chat 6', createdBy: 'alice'),
+      Conversation(id: 'dest6', kind: 'dm', title: 'Chat 7', createdBy: 'alice'),
     ];
     await _seed(store,
         key: 'dev:f1',
@@ -242,18 +246,47 @@ void main() {
     expect(find.text(englishL10n.w8Forwarded), findsOneWidget);
     expect(find.text(englishL10n.w8ForwardedMany), findsOneWidget);
 
-    // Right-click on the f1 bubble and open forward dialog
+    // 1. Right-click on the f5 bubble (hops >= 5: limit is 1 destination)
+    await tester.tap(find.text('forward many'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text(englishL10n.w8Forward));
+    await tester.tap(find.text(englishL10n.w8Forward));
+    await tester.pumpAndSettle();
+
+    // Destination dialog for hops >= 5 enforces at most 1 destination
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.text('Chat 2'));
+    await tester.pumpAndSettle();
+    // Tapping a second destination (Chat 3) must NOT add it because hops >= 5 limits to 1
+    await tester.tap(find.text('Chat 3'));
+    await tester.pumpAndSettle();
+    final checkTilesHops5 = tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile));
+    final selectedHops5 = checkTilesHops5.where((t) => t.value == true).toList();
+    expect(selectedHops5.length, equals(1));
+    await tester.tap(find.widgetWithText(FilledButton, englishL10n.w8Forward));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+
+    // 2. Right-click on the f1 bubble (hops < 5: limit is 5 destinations)
     await tester.tap(find.text('forward once'), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text(englishL10n.w8Forward));
     await tester.tap(find.text(englishL10n.w8Forward));
     await tester.pumpAndSettle();
 
-    // The forward dialog shows destinations with checkboxes
     expect(find.byType(AlertDialog), findsOneWidget);
-    expect(find.text(englishL10n.w8Forward), findsWidgets);
-    await tester.tap(find.text('Chat 2'));
+    // Select 5 destinations (Chat 2, 3, 4, 5, 6)
+    for (final chatName in ['Chat 2', 'Chat 3', 'Chat 4', 'Chat 5', 'Chat 6']) {
+      await tester.tap(find.text(chatName));
+      await tester.pumpAndSettle();
+    }
+    // Attempt to select a 6th destination (Chat 7); must not exceed 5
+    await tester.tap(find.text('Chat 7'));
     await tester.pumpAndSettle();
+    final checkTilesHops1 = tester.widgetList<CheckboxListTile>(find.byType(CheckboxListTile));
+    final selectedHops1 = checkTilesHops1.where((t) => t.value == true).toList();
+    expect(selectedHops1.length, equals(5));
+
     await tester.tap(find.widgetWithText(FilledButton, englishL10n.w8Forward));
     await tester.pumpAndSettle();
     expect(find.byType(AlertDialog), findsNothing);
@@ -286,6 +319,12 @@ void main() {
     expect(find.text(englishL10n.w8PinDays(30)), findsOneWidget);
     await tester.tap(find.text(englishL10n.w8PinDays(7)));
     await tester.pumpAndSettle();
+
+    // Verify pin payload was sent with 7 days duration
+    expect(state.stub.lastEncryptedType, equals(AppPayloadType.pin));
+    expect(state.stub.lastEncryptedBody?['message_id'], equals('dev:t'));
+    expect(state.stub.lastEncryptedBody?['pinned'], isTrue);
+    expect(state.stub.lastEncryptedBody?['duration_seconds'], equals(7 * 86400));
 
     // Simulate pin applied on store
     await store.commitMlsTransition(MlsStateTransition(
@@ -320,6 +359,12 @@ void main() {
     await tester.tap(find.text(englishL10n.w8Unpin));
     await tester.pumpAndSettle();
 
+    // Verify unpin payload was sent with pinned: false
+    expect(state.stub.lastEncryptedType, equals(AppPayloadType.pin));
+    expect(state.stub.lastEncryptedBody?['message_id'], equals('dev:t'));
+    expect(state.stub.lastEncryptedBody?['pinned'], isFalse);
+    expect(state.stub.lastEncryptedBody?.containsKey('duration_seconds'), isFalse);
+
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });
@@ -331,13 +376,19 @@ void main() {
       Conversation(id: 'c1', kind: 'group', title: 'Chat Alpha', createdBy: 'alice'),
       Conversation(id: 'c2', kind: 'group', title: 'Chat Beta', createdBy: 'alice'),
       Conversation(id: 'c3', kind: 'group', title: 'Chat Gamma', createdBy: 'alice'),
+      Conversation(id: 'c4', kind: 'group', title: 'Chat Delta', createdBy: 'alice'),
+      Conversation(id: 'c5', kind: 'group', title: 'Chat Epsilon', createdBy: 'alice'),
     ];
-    // Pin c2 first (pinnedAt = 100), then c3 later (pinnedAt = 200)
+    // Pin c2 (pinnedAt = 100), c3 (pinnedAt = 200), and c4/c5 with equal pinnedAt = 300
     await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c2', pinnedAt: 100));
     await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c3', pinnedAt: 200));
+    await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c4', pinnedAt: 300));
+    await state.localStore.saveConversationPref(const LocalConversationPref(conversationId: 'c5', pinnedAt: 300));
     state.conversationPrefs = {
       'c2': const LocalConversationPref(conversationId: 'c2', pinnedAt: 100),
       'c3': const LocalConversationPref(conversationId: 'c3', pinnedAt: 200),
+      'c4': const LocalConversationPref(conversationId: 'c4', pinnedAt: 300),
+      'c5': const LocalConversationPref(conversationId: 'c5', pinnedAt: 300),
     };
 
     await tester.pumpWidget(MaterialApp(
@@ -356,8 +407,13 @@ void main() {
     final alphaY = tester.getTopLeft(find.text('Chat Alpha')).dy;
     final betaY = tester.getTopLeft(find.text('Chat Beta')).dy;
     final gammaY = tester.getTopLeft(find.text('Chat Gamma')).dy;
+    final deltaY = tester.getTopLeft(find.text('Chat Delta')).dy;
+    final epsilonY = tester.getTopLeft(find.text('Chat Epsilon')).dy;
 
-    // Pinned chats come first: Gamma (pinned later) > Beta (pinned earlier) > Alpha (unpinned)
+    // Pinned chats come first: 300 (Delta, Epsilon) > 200 (Gamma) > 100 (Beta) > Alpha (unpinned)
+    // Between Delta and Epsilon (equal pinnedAt 300), initial list order is preserved as tie-breaker
+    expect(deltaY, lessThan(epsilonY));
+    expect(epsilonY, lessThan(gammaY));
     expect(gammaY, lessThan(betaY));
     expect(betaY, lessThan(alphaY));
 
@@ -367,12 +423,14 @@ void main() {
 }
 
 class _UiState extends AppState {
-  _UiState()
+  _UiState._(this.stub)
       : super(
             apiClientFactory: (_) => _UiApi(),
-            cryptoService: _MlsStub(),
+            cryptoService: stub,
             localStore: MemoryLocalStore(),
             syncServiceFactory: (_, __) => _QuietSync());
+  factory _UiState([_MlsStub? stub]) => _UiState._(stub ?? _MlsStub());
+  final _MlsStub stub;
   LocalStore? localStoreOverride;
   @override
   LocalStore get localStore => localStoreOverride ?? super.localStore;
@@ -388,16 +446,20 @@ class _UiApi extends ApiClient {
       const [];
 }
 
-_UiState _state() => _UiState()
-  ..session = const Session(
-      baseUrl: 'https://example.test',
-      token: 'token',
-      accountId: 'alice',
-      deviceId: 'dev')
-  ..conversations = [
-    Conversation(id: 'conv', kind: 'dm', title: 'Team', createdBy: 'alice')
-  ]
-  ..conversationsLoaded = true;
+_UiState _state() {
+  final stub = _MlsStub();
+  return _UiState(stub)
+    ..api = _UiApi()
+    ..session = const Session(
+        baseUrl: 'https://example.test',
+        token: 'token',
+        accountId: 'alice',
+        deviceId: 'dev')
+    ..conversations = [
+      Conversation(id: 'conv', kind: 'dm', title: 'Team', createdBy: 'alice')
+    ]
+    ..conversationsLoaded = true;
+}
 Future<void> _seed(LocalStore store,
     {String messageState = LocalMessageState.received,
     String conversationId = 'conv',
@@ -441,17 +503,23 @@ Future<void> _seed(LocalStore store,
 }
 
 class _MlsStub implements MlsConversationCryptoService {
+  AppPayloadType? lastEncryptedType;
+  Map<String, Object?>? lastEncryptedBody;
+
   @override
   Future<void> dispose() async {}
   @override
   Future<MessageEnvelope> encryptPayload(
       String conversationId, AppPayloadType type, Map<String, Object?> body,
-      {List<String> attachmentRefs = const [], String? draftText}) async =>
-    MessageEnvelope(
+      {List<String> attachmentRefs = const [], String? draftText}) async {
+    lastEncryptedType = type;
+    lastEncryptedBody = body;
+    return MessageEnvelope(
         conversationId: conversationId,
         idempotencyKey: 'action',
         ciphertext: const [1],
         cryptoProtocol: 'test');
+  }
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
