@@ -151,6 +151,9 @@ checks both the no-op and rejection of an altered statement without changing
 the pin. The diagnostic was removed.
 
 - Focused B7 tests: 108 passed; native device-list pin tests: 17 passed.
+- Final `scripts/test.ps1` passed: policy fixtures, Go, Rust and the full
+  Flutter suite (2,604 passed, 22 skipped), with the absolute native DLL path
+  pointing into this worktree. `git diff --check` passed.
 - Both live Go/OpenMLS demo tests passed after the fix, including account
   switching, device approval and linked-device convergence.
 - `go test ./...`, `go vet ./...`, `cargo test`, `cargo build --release`,
