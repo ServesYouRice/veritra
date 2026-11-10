@@ -1,0 +1,81 @@
+Resolving dependencies...
+Downloading packages...
+  _fe_analyzer_shared 100.0.0 (111.0.0 available)
+  analyzer 13.0.0 (14.7.0 available)
+  build 4.0.7 (5.0.0 available)
+  build_config 1.3.2 (1.4.0 available)
+  build_daemon 4.1.5 (4.1.7 available)
+  build_runner 2.15.1 (2.17.1 available)
+  built_collection 5.1.1 (6.0.0 available)
+  built_value 8.12.6 (8.13.0 available)
+  cli_util 0.5.2 (0.6.0 available)
+  clock 1.1.2 (1.1.3 available)
+  code_assets 1.2.1 (2.2.0 available)
+  cross_file 0.3.5+5 (0.4.0 available)
+  crypto 3.0.7 (3.0.8 available)
+  dart_style 3.1.9 (3.1.14 available)
+  dart_webrtc 1.8.1 (1.8.2 available)
+  dbus 0.7.15 (0.8.0 available)
+  desktop_drop 0.8.4 (0.9.2 available)
+  drift 2.34.4 (2.35.4 available)
+  drift_dev 2.35.2 (2.35.3 available)
+  file_selector_ios 0.5.3+6 (0.5.3+7 available)
+  file_selector_macos 0.9.5+1 (0.9.5+2 available)
+  flutter_secure_storage 10.3.1 (11.2.0 available)
+  flutter_secure_storage_darwin 0.3.2 (0.4.3 available)
+  flutter_secure_storage_linux 3.0.1 (3.0.3 available)
+  flutter_secure_storage_platform_interface 2.0.1 (2.1.1 available)
+  glob 2.1.3 (2.2.0 available)
+  hooks 2.0.2 (2.2.0 available)
+  http_multi_server 3.2.2 (3.2.3 available)
+  intl 0.20.2 (0.20.3 available)
+  io 1.0.5 (1.1.0 available)
+  jni 1.0.0 (1.1.2 available)
+  jni_flutter 1.0.1 (1.0.4+1 available)
+  logger 2.7.0 (2.8.0 available)
+  matcher 0.12.19 (0.12.20 available)
+  material_color_utilities 0.13.0 (0.13.1 available)
+  meta 1.18.0 (1.19.0 available)
+  mime 2.0.0 (2.1.0 available)
+  native_toolchain_c 0.19.2 (0.19.6 available)
+  objective_c 9.4.1 (9.6.3 available)
+  package_config 2.2.0 (3.0.0 available)
+  petitparser 7.0.2 (7.1.0 available)
+  platform 3.1.6 (3.2.0 available)
+  pool 1.5.2 (1.5.3 available)
+  pub_semver 2.2.0 (2.2.1 available)
+  pubspec_parse 1.5.0 (1.7.0 available)
+  qr 3.0.2 (4.0.1 available)
+  record_use 0.6.0 (1.1.1 available)
+  screen_retriever 0.2.2 (0.3.1 available)
+  shelf 1.4.2 (1.4.3 available)
+  source_gen 4.2.4 (4.3.1 available)
+  sqlite3 3.5.2 (3.9.1 available)
+  sqlparser 0.45.0 (0.45.1 available)
+  stack_trace 1.12.1 (1.12.2 available)
+  stream_transform 2.1.1 (2.1.2 available)
+  synchronized 3.4.1+1 (3.6.1+1 available)
+  test_api 0.7.11 (0.7.15 available)
+  tray_manager 0.5.3 (0.8.3 available)
+  vector_math 2.2.0 (2.4.4 available)
+  vm_service 15.2.0 (15.4.0 available)
+  web 1.1.1 (1.1.2 available)
+  win32 6.3.0 (6.4.0 available)
+  window_manager 0.5.2 (0.6.0 available)
+  xml 7.0.1 (7.1.0 available)
+  yaml 3.1.3 (3.1.4 available)
+Got dependencies!
+64 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+
+Oops; flutter has exited unexpectedly: "PathAccessException: Deletion failed, path = 'C:\tmp\vw\wt\b7-passkeys\mobile\build\native_assets\windows\sqlite3mc.dll' (OS Error: Access is denied, errno = 5)".
+A crash report has been written to C:\tmp\vw\wt\b7-passkeys\mobile\flutter_04.log
+This crash may already be reported. Check GitHub for similar crashes.
+https://github.com/flutter/flutter/issues?q=is%3Aissue+PathAccessException%3A+Deletion+failed%2C+path+%3D+%27C%3A%5Ctmp%5Cvw%5Cwt%5Cb7-passkeys%5Cmobile%5Cbuild%5Cnative_assets%5Cwindows%5Csqlite3mc.dll%27+%28OS+Error%3A+Access+is+denied%2C+errno+%3D+5%29
+
+To report your crash to the Flutter team, first read the guide to filing a bug.
+https://flutter.dev/to/report-bugs
+
+Create a new GitHub issue by pasting this link into your browser and completing the issue template. Thank you!
+https://github.com/flutter/flutter/issues/new?title=%5Btool_crash%5D+FileSystemException%3A+Deletion+failed%2C+OS+Error%3A+Access+is+denied%2C+errno+%3D+5&body=%23%23+Command%0A%60%60%60sh%0Aflutter+test+test%2Fdemo_e2e_test.dart%0A%60%60%60%0A%0A%23%23+Steps+to+Reproduce%0A1.+...%0A2.+...%0A3.+...%0A%0A%23%23+Logs%0AFileSystemException%3A+Deletion+failed%2C+OS+Error%3A+Access+is+denied%2C+errno+%3D+5%0A%60%60%60console%0A%230++++++_checkForErrorResponse+%28dart%3Aio%2Fcommon.dart%3A58%3A9%29%0A%231++++++_Directory._delete.%3Canonymous+closure%3E+%28dart%3Aio%2Fdirectory_impl.dart%3A208%3A7%29%0A%232++++++_rootRunUnary+%28dart%3Aasync%2Fzone_root.dart%3A48%3A47%29%0A%233++++++_CustomZone.runUnary+%28dart%3Aasync%2Fzone.dart%3A733%3A19%29%0A%3Casynchronous+suspension%3E%0A%234++++++_File._delete.%3Canonymous+closure%3E+%28dart%3Aio%2Ffile_impl.dart%3A345%3A63%29%0A%3Casynchronous+suspension%3E%0A%235++++++ForwardingFileSystemEntity.delete+%28package%3Afile%2Fsrc%2Fforwarding%2Fforwarding_file_system_entity.dart%3A66%3A12%29%0A%3Casynchronous+suspension%3E%0A%236++++++ForwardingFileSystemEntity.delete+%28package%3Afile%2Fsrc%2Fforwarding%2Fforwarding_file_system_entity.dart%3A66%3A12%29%0A%3Casynchronous+suspension%3E%0A%237++++++_copyNativeCodeAssetsForOS+%28package%3Aflutter_tools%2Fsrc%2Fisolated%2Fnative_assets%2Fnative_assets.dart%3A468%3A5%29%0A%3Casynchronous+suspension%3E%0A%238++++++installCodeAssets+%28package%3Aflutter_tools%2Fsrc%2Fisolated%2Fnative_assets%2Fnative_assets.dart%3A135%3A37%29%0A%3Casynchronous+suspension%3E%0A%239++++++testCompilerBuildNativeAssets+%28package%3Aflutter_tools%2Fsrc%2Fisolated%2Fnative_assets%2Ftest%2Fnative_assets.dart%3A88%3A3%29%0A%3Casynchronous+suspension%3E%0A%2310+++++TestCommand.runCommand+%28package%3Aflutter_tools%2Fsrc%2Fcommands%2Ftest.dart%3A494%3A11%29%0A%3Casynchronous+suspension%3E%0A%2311+++++FlutterCommand.run.%3Canonymous+closure%3E+%28package%3Aflutter_tools%2Fsrc%2Frunner%2Fflutter_command.dart%3A1630%3A27%29%0A%3Casynchronous+suspension%3E%0A%2312+++++AppContext.run.%3Canonymous+closure%3E+%28package%3Aflutter_tools%2Fsrc%2Fbase%2Fcontext.dart%3A154%3A19%29%0A%3Casynchronous+suspension%3E%0A%2313+++++CommandRunner.runCommand+%28package%3Aargs%2Fcommand_runner.dart%3A212%3A13%29%0A%3Casynchronous+suspension%3E%0A%60%60%60%0A%60%60%60console%0A%5B%E2%9C%93%5D+Flutter+%28Channel+stable%2C+3.44.0%2C+on+Microsoft+Windows+%5BVersion+10.0.26300.9711%5D%2C+locale+sr-Latn-RS%29+%5B250ms%5D%0A++++%E2%80%A2+Flutter+version+3.44.0+on+channel+stable+at+C%3A%5CUsers%5CV%5Cdev%5Cflutter%0A++++%E2%80%A2+Upstream+repository+https%3A%2F%2Fgithub.com%2Fflutter%2Fflutter.git%0A++++%E2%80%A2+Framework+revision+559ffa3f75+%286+months+ago%29%2C+2026-05-15+14%3A13%3A13+-0700%0A++++%E2%80%A2+Engine+revision+4c525dac5e%0A++++%E2%80%A2+Dart+version+3.12.0%0A++++%E2%80%A2+DevTools+version+2.57.0%0A++++%E2%80%A2+Feature+flags%3A+enable-web%2C+enable-linux-desktop%2C+enable-macos-desktop%2C+enable-windows-desktop%2C+enable-android%2C+enable-ios%2C+cli-animations%2C+enable-native-assets%2C+enable-swift-package-manager%2C+omit-legacy-version-file%2C+enable-lldb-debugging%2C+enable-uiscene-migration%0A%0A%5B%E2%9C%93%5D+Windows+Version+%28Windows+11+or+higher%2C+26H2%2C+2009%29+%5B683ms%5D%0A%0A%5B%E2%9C%97%5D+Android+toolchain+-+develop+for+Android+devices+%5B100ms%5D%0A++++%E2%9C%97+Unable+to+locate+Android+SDK.%0A++++++Install+Android+Studio+from%3A+https%3A%2F%2Fdeveloper.android.com%2Fstudio%2Findex.html%0A++++++On+first+launch+it+will+assist+you+in+installing+the+Android+SDK+components.%0A++++++%28or+visit+https%3A%2F%2Fflutter.dev%2Fto%2Fwindows-android-setup+for+detailed+instructions%29.%0A++++++If+the+Android+SDK+has+been+installed+to+a+custom+location%2C+please+use%0A++++++%60flutter+config+--android-sdk%60+to+update+to+that+location.%0A%0A%0A%5B%E2%9C%93%5D+Chrome+-+develop+for+the+web+%5B89ms%5D%0A++++%E2%80%A2+Chrome+at+C%3A%5CProgram+Files%5CGoogle%5CChrome%5CApplication%5Cchrome.exe%0A%0A%5B%E2%9C%93%5D+Visual+Studio+-+develop+Windows+apps+%28Visual+Studio+Build+Tools+2022+17.14.41+%28September+2026%29%29+%5B88ms%5D%0A++++%E2%80%A2+Visual+Studio+at+C%3A%5CProgram+Files+%28x86%29%5CMicrosoft+Visual+Studio%5C2022%5CBuildTools%0A++++%E2%80%A2+Visual+Studio+Build+Tools+2022+version+17.14.37710.0%0A++++%E2%80%A2+Windows+10+SDK+version+10.0.26100.0%0A%0A%5B%E2%9C%93%5D+Connected+device+%283+available%29+%5B108ms%5D%0A++++%E2%80%A2+Windows+%28desktop%29+%E2%80%A2+windows+%E2%80%A2+windows-x64++++%E2%80%A2+Microsoft+Windows+%5BVersion+10.0.26300.9711%5D%0A++++%E2%80%A2+Chrome+%28web%29++++++%E2%80%A2+chrome++%E2%80%A2+web-javascript+%E2%80%A2+Google+Chrome+157.0.8103.38%0A++++%E2%80%A2+Edge+%28web%29++++++++%E2%80%A2+edge++++%E2%80%A2+web-javascript+%E2%80%A2+Microsoft+Edge+157.0.4341.42%0A%0A%5B%E2%9C%93%5D+Network+resources+%5B281ms%5D%0A++++%E2%80%A2+All+expected+network+resources+are+available.%0A%0A%21+Doctor+found+issues+in+1+category.%0A%0A%60%60%60%0A%0A%23%23+Flutter+Application+Metadata%0A%2A%2AType%2A%2A%3A+app%0A%2A%2AVersion%2A%2A%3A+0.1.0%2B1%0A%2A%2AMaterial%2A%2A%3A+true%0A%2A%2AAndroid+X%2A%2A%3A+false%0A%2A%2AModule%2A%2A%3A+false%0A%2A%2APlugin%2A%2A%3A+false%0A%2A%2AAndroid+package%2A%2A%3A+null%0A%2A%2AiOS+bundle+identifier%2A%2A%3A+null%0A%2A%2ACreation+channel%2A%2A%3A+%5Buser-branch%5D%0A%2A%2ACreation+framework+version%2A%2A%3A+559ffa3f75e7402d65a8def9c28389a9b2e6fe42%0A%23%23%23+Plugins%0Aaudioplayers_darwin-6.5.0%0Adevice_info_plus-13.3.0%0Afile_selector_ios-0.5.3%2B6%0Aflutter_secure_storage_darwin-0.3.2%0Aflutter_webrtc-1.6.3%0Amobile_scanner-7.5.0%0Aopen_filex-5.0.0%0Apackage_info_plus-10.2.2%0Apasskeys_darwin-0.4.8%0Apasteboard-0.6.0%0Apath_provider_foundation-2.6.0%0Arecord_ios-2.1.1%0Aaudioplayers_android-5.3.0%0Adesktop_drop-0.8.4%0Afile_selector_android-0.5.2%2B11%0Aflutter_secure_storage-10.3.1%0Ajni-1.0.0%0Ajni_flutter-1.0.1%0Apasskeys_android-2.15.0%0Apasskeys_doctor-1.7.0%0Apath_provider_android-2.3.1%0Arecord_android-2.2.0%0Afile_selector_macos-0.9.5%2B1%0Alocal_notifier-0.1.6%0Arecord_macos-2.1.1%0Ascreen_retriever_macos-0.2.2%0Atray_manager-0.5.3%0Awindow_manager-0.5.2%0Aaudioplayers_linux-4.3.0%0Afile_selector_linux-0.9.4%2B1%0Aflutter_secure_storage_linux-3.0.1%0Apath_provider_linux-2.2.2%0Arecord_linux-2.1.3%0Ascreen_retriever_linux-0.2.2%0Aaudioplayers_windows-4.4.1%0Afile_selector_windows-0.9.3%2B6%0Aflutter_secure_storage_windows-4.2.2%0Apasskeys_windows-0.1.6%0Apath_provider_windows-2.3.0%0Arecord_windows-2.3.0%0Ascreen_retriever_windows-0.2.2%0Aaudioplayers_web-5.3.0%0Afile_selector_web-0.9.5%0Aflutter_secure_storage_web-2.1.1%0Apasskeys_web-2.11.0%0Arecord_web-2.1.3%0A%0A&labels=tool%2Csevere%3A+crash
+

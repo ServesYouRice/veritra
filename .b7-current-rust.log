@@ -1,0 +1,269 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.17s
+     Running unittests src\lib.rs (target\debug\deps\private_messenger_crypto-345b991ca3adbbb0.exe)
+
+running 228 tests
+test c7::invite_binding_tests::print_vector ... ignored
+test c7::invite_binding_tests::no_signing_domain_is_a_prefix_of_another ... ok
+test c7::tests::a_post_signature_binds_every_field ... ok
+test c7::tests::expanding_a_compact_record_fills_what_the_message_supplies ... ok
+test attachment::tests::chunk_context_and_order_are_authenticated ... ok
+test c7::tests::compact_records_are_143_bytes_and_a_move_adds_its_fields ... ok
+test c7::tests::print_vector ... ignored
+test c7::tests::derive_takes_only_listed_labels_and_exact_keys ... ok
+test c7::tests::full_records_fit_512_bytes_even_with_64_byte_ids ... ok
+test c7::tests::generation_entries_round_trip_and_refuse_loose_bytes ... ok
+test c7::tests::message_info_uses_u16_big_endian_prefixes ... ok
+test c7::tests::derived_keys_are_separated_by_label_key_and_every_context_field ... ok
+test c7::tests::open_checks_the_commitment_first_and_reports_which_check_failed ... ok
+test c7::tests::records_refuse_loose_structure ... ok
+test c7::tests::chk_commit_is_a_domain_separated_hash_of_the_key ... ok
+test c7::tests::seal_open_round_trip_and_framing ... ok
+test c7::tests::two_keys_never_open_one_sealed_body ... ok
+test c7::tests::record_message_fits_the_smallest_bucket_with_the_stated_slack ... ok
+test c7::tests::slots_open_only_under_their_key_channel_sender_and_action ... ok
+test c7::tests::ordering_vector_is_well_formed_and_covers_every_row ... ok
+test c7::tests::vector_matches ... ok
+test c7::tests::window_cases_follow_decision_6 ... ok
+test ffi::k2::streams::tests::maximum_bundle_allocation_measurement ... ignored, measurement: run alone with --exact --ignored --nocapture
+test ffi::c7_tests::derive_seal_open_and_the_key_mismatch_code ... ok
+test c7::tests::sequence_cap_cases_follow_decision_4 ... ok
+test ffi::k2::tests::begin_never_takes_a_caller_random_and_commitment_checks_its_input ... ok
+test ffi::k2::tests::malformed_controls_fail_before_mutation_and_output_aliases_reject ... ok
+test ffi::c4_tests::bad_arguments_are_refused_before_any_work ... ok
+test ffi::k2::tests::control_persistence_masks_approval_and_reuses_recipient_key ... ok
+test ffi::l1_tests::derive_reports_the_list_key ... ok
+test c7::tests::history_sync_sizes_match_the_design ... ok
+test c7::tests::vector_values_open_and_verify_independently ... ok
+test c7::tests::seal_accepts_the_largest_body_and_refuses_more ... ok
+test c7::tests::verify_refuses_unknown_domains_and_bad_lengths_and_rejects_tampering ... ok
+test ffi::l1_tests::the_recovered_device_cannot_return_a_removed_device ... ok
+test ffi::l1_tests::the_device_signs_a_genesis_and_only_its_own ... ok
+test ffi::l1_tests::recovery_signs_change_four_from_the_held_seed_or_typed_entropy ... ok
+test ffi::k2::tests::enrollment_proof_checks_native_keypackage_and_frozen_context ... ok
+test ffi::l1_tests::the_chain_checks_are_bound_to_the_account_asked_about ... ok
+test ffi::records_tests::a_v3_blob_migrates_to_records ... ok
+test ffi::l1_tests::the_l1_label_cannot_sign_raw_bytes_or_be_verified_as_a_c7_domain ... ok
+test ffi::records_tests::the_loader_refuses_incomplete_extra_and_stale_states ... ok
+test ffi::records_tests::change_sets_restore_through_the_loader ... ok
+test ffi::tests::decrypt_with_a_null_output_is_rejected ... ok
+test ffi::tests::handle_ownership_state_restore_and_outputs_round_trip ... ok
+test ffi::tests::invalid_ffi_inputs_fail_without_partial_outputs ... ok
+test ffi::tests::membership_change_lists_are_bounded_and_exact ... ok
+test ffi::records_tests::a_welcome_for_a_key_package_this_device_lacks_has_its_own_code ... ok
+test ffi::tests::owned_outputs_never_release_an_unwiped_secret ... ok
+test ffi::l1_tests::a_non_utf8_device_id_in_an_add_is_merged_and_reported_as_bytes ... ok
+test ffi::tests::release_profile_keeps_ffi_panic_guard_active ... ok
+test ffi::tests::release_profile_keeps_overflow_checks_active ... ok
+test ffi::tests::restore_reports_an_unsupported_state_format_separately ... ok
+test ffi::tests::eager_commits_refuse_a_null_output_before_merging ... ok
+test ffi::l1_tests::real_devices_build_a_chain_the_abi_verifies_step_and_whole ... ok
+test history::backup_tests::header_bytes_match_an_independent_encoding ... ok
+test ffi::c4_tests::a_refused_commit_is_discarded_and_the_one_shot_call_refuses_it ... ok
+test ffi::c7_tests::decrypt_with_epoch_member_key_and_signatures_through_the_abi ... ok
+test ffi::c7_tests::commit_calls_report_flags_epoch_and_root_through_the_abi ... ok
+test history::backup_tests::padding_never_shrinks_is_canonical_and_capped ... ok
+test history::backup_tests::print_k1_vector ... ignored
+test history::backup_tests::seal_refuses_a_mismatched_key_id_empty_payload_and_oversize ... ok
+test ffi::l1_tests::adds_carry_the_expected_signing_key_and_commits_report_their_pairs ... ok
+test ffi::records_tests::an_oversized_group_is_named_with_the_record_limit_code ... ok
+test ffi::c4_tests::a_record_group_is_created_reviewed_merged_and_read_through_the_abi ... ok
+test history::tests::bounded_frame_math_refuses_overflow_and_noncanonical_headers ... ok
+test ffi::tests::ffi_group_lifecycle_exchanges_and_revokes_messages ... ok
+test history::tests::canonical_k0_bundle_header_has_an_independent_vector ... ok
+test history::tests::handoff_plaintext_is_bounded_and_recovery_key_identity_is_checked ... ok
+test history::tests::hpke_handoff_authenticates_the_source_and_round_trips_bundle_keys ... ok
+test history::tests::bundle_open_requires_pinned_identity_digest_version_and_counter ... ok
+test history::tests::hpke_handoff_binds_every_pinned_context_and_refuses_substitution ... ok
+test l1::tests::a_chain_must_start_at_version_one_and_stay_in_bounds ... ok
+test history::tests::authenticated_malformed_frames_and_bad_chunk_framing_are_rejected ... ok
+test l1::tests::a_chain_of_another_account_is_refused_whole ... ok
+test l1::tests::history_is_only_extra_exclusion_and_prev_always_counts ... ok
+test l1::tests::labels_are_disjoint_from_the_other_signing_labels ... ok
+test l1::tests::print_vector ... ignored, prints the vector; run to regenerate the file
+test l1::tests::every_refusal_in_the_vector_is_refused_for_its_one_reason ... ok
+test l1::tests::recovery_list_key_is_separate_from_the_claim_proof_key ... ok
+test l1::tests::summaries_and_pairs_round_trip ... ok
+test l1::tests::the_encoder_refuses_what_the_parser_refuses ... ok
+test history::backup_tests::peek_reads_only_the_header_and_refuses_junk ... ok
+test l1::tests::the_edge_cases_pin_the_strict_verifier ... ok
+test l1::tests::the_vector_file_is_what_the_code_produces ... ok
+test mls::c4::tests::a_bare_commit_in_a_record_group_reviews_the_record_unchanged ... ok
+test l1::tests::the_vector_chains_verify_step_by_step_and_whole ... ok
+test mls::c4::tests::a_key_package_without_the_capability_cannot_join_a_record_group ... ok
+test mls::c4::tests::a_discarded_commit_changes_nothing_and_cannot_be_staged_again ... ok
+test history::backup_tests::seals_are_fresh_and_hide_equal_payloads ... ok
+test history::backup_tests::known_answer_vector ... ok
+test history::backup_tests::only_the_right_key_account_and_device_open_it ... ok
+test mls::c4::tests::a_welcome_with_an_unrequired_record_is_refused ... ok
+test mls::c4::tests::a_record_proposal_in_a_group_without_a_record_is_refused ... ok
+test ffi::tests::largest_plaintext_round_trips_through_the_ffi ... ok
+test mls::c4::tests::a_merge_must_name_the_staged_commit_on_its_epoch ... ok
+test mls::c4::tests::key_packages_and_creators_advertise_the_role_extension ... ok
+test mls::c4::tests::review_and_state_encodings_are_exact ... ok
+test history::backup_tests::every_header_byte_is_bound ... ok
+test mls::c4::tests::an_update_path_that_drops_the_capability_is_refused ... ok
+test mls::c4::tests::a_record_commit_is_reviewed_then_merged_and_a_joiner_reads_it ... ok
+test mls::c4::tests::a_removed_device_reviews_and_merges_its_own_removal ... ok
+test mls::c4::tests::sealing_between_stage_and_merge_is_refused ... ok
+test mls::c4::tests::group_creation_refuses_a_malformed_genesis ... ok
+test mls::c4::tests::deleting_processing_or_an_own_merge_forgets_a_held_commit ... ok
+test mls::link_v3::tests::a_random_substituted_after_the_commitment_fails_before_any_sas ... ok
+test mls::link_v3::tests::signed_proof_encoding_matches_shared_server_vector ... ok
+test mls::c4::tests::the_record_survives_seal_and_restore_and_nothing_held_does ... ok
+test mls::link_v3::tests::v4_binds_all_fields_and_does_not_accept_clone_identity ... ok
+test mls::link_v3::tests::v4_matches_independent_python_vector ... ok
+test mls::c4::tests::the_one_shot_calls_refuse_any_record_proposal ... ok
+test mls::records::tests::a_fresh_device_seals_every_record_and_restores_its_groups ... ok
+test history::tests::bundle_round_trips_empty_bucket_and_multiple_chunks_with_fresh_keys ... ok
+test history::backup_tests::ffi_round_trip_and_refusals ... ok
+test mls::records::tests::a_record_that_holds_a_seed_restores_only_under_its_own_key ... ok
+test mls::records::tests::a_held_recovery_seed_survives_a_seal_and_a_restore ... ok
+test mls::c4::tests::rosters_count_accounts_not_devices ... ok
+test history::tests::same_sized_chunks_cannot_be_reordered ... ok
+test mls::records::tests::a_crash_at_each_migration_step_leaves_v3_intact_and_reruns ... ok
+test mls::c4::tests::two_record_proposals_in_one_commit_never_reach_a_receiver ... ok
+test mls::records::tests::genuine_v2_fixture_migrates ... ok
+test mls::link_v3::tests::signing_is_identity_bound_and_domain_separated ... ok
+test mls::records::tests::migration_requires_the_stored_counter_and_identity ... ok
+test c7::invite_binding_tests::the_vector_matches_the_written_layout ... ok
+test mls::records::tests::only_format_4_roots_open_and_other_versions_are_unsupported ... ok
+test mls::records::tests::key_package_pruning_drops_only_long_expired_packages ... ok
+test mls::records::tests::migration_files_owned_standalone_pairs_drops_the_rest_and_refuses_unknown_labels ... ok
+test mls::records::tests::d74_a_welcome_for_a_pruned_or_expired_key_package_is_unavailable ... ok
+test mls::records::tests::own_removal_and_group_delete_drop_the_group_record ... ok
+test mls::records::tests::sealing_follows_the_generation_rule ... ok
+test mls::records::tests::the_legacy_format_three_seal_refuses_to_drop_a_held_seed ... ok
+test mls::records::tests::without_a_seed_the_device_record_is_what_abi_13_wrote_and_with_one_it_is_refused_by_it ... ok
+test mls::state::tests::corruption_identity_mismatch_and_rollback_fail_closed ... ok
+test mls::state::tests::authenticated_v3_wrapper_must_be_exact_and_keep_provider_record_checks ... ok
+test mls::state::tests::genuine_v2_fixture_splits_by_owner_and_reseals_its_records_unchanged ... ok
+test mls::state::tests::older_format_version_fails_closed ... ok
+test mls::records::tests::each_operation_reseals_only_its_own_records ... ok
+test mls::state::tests::sealed_state_restores_groups_and_signing_identity ... ok
+test mls::records::tests::restore_refuses_stale_missing_extra_foreign_and_tampered_records ... ok
+test mls::state::tests::genuine_v2_fixture_upgrades_without_losing_signer_or_live_group ... ok
+test mls::storage::tests::classifier_refuses_unknown_malformed_and_ambiguous_keys ... ok
+test mls::records::tests::genuine_v3_fixture_migrates_to_records_and_keeps_working ... ok
+test mls::storage::tests::id_parser_matches_the_openmls_serializer ... ok
+test ffi::k2::streams::tests::stream_roundtrip_authentication_leases_and_import_restart ... ok
+test ffi::k2::streams::tests::device_destroy_wipes_stream_and_releases_global_lease ... ok
+test mls::storage::tests::the_scope_guard_refuses_other_groups_and_unscoped_calls ... ok
+test mls::state::tests::skipped_epoch_fails_without_advancing_group_state ... ok
+test mls::storage::tests::every_operation_touches_only_its_own_owners ... ok
+test mls::storage::tests::every_storage_method_is_routed ... ok
+test mls::storage::tests::no_standalone_key_pair_survives_any_device_operation ... ok
+test mls::state::tests::genuine_v3_fixture_splits_by_owner_and_reseals_byte_identically ... ok
+test mls::tests::a_message_from_the_previous_epoch_still_decrypts ... ok
+test mls::tests::a_commit_changing_a_leaf_identity_is_refused ... ok
+test mls::tests::a_refused_self_update_is_cleared_and_the_winner_applies ... ok
+test mls::c4::tests::the_producer_refuses_records_receivers_would_refuse ... ok
+test mls::tests::a_welcome_for_another_group_persists_nothing ... ok
+test mls::tests::a_refused_staged_commit_is_cleared_without_forking ... ok
+test mls::tests::a_commit_adding_a_malformed_identity_is_refused ... ok
+test mls::tests::a_welcome_must_place_this_device_under_its_own_identity_and_key ... ok
+test mls::storage::tests::a_welcome_with_many_bogus_secrets_costs_one_lookup_each ... ok
+test mls::tests::adding_an_identity_twice_is_refused ... ok
+test mls::tests::a_commit_adding_an_identity_already_present_is_refused ... ok
+test mls::tests::a_staged_self_update_refreshes_the_leaf_only_after_acceptance ... ok
+test mls::tests::a_welcome_with_a_malformed_or_repeated_identity_is_refused ... ok
+test mls::tests::c7_an_update_that_changes_the_signature_key_is_refused ... ok
+test mls::tests::c7_failed_commit_processing_returns_no_root_and_keeps_the_epoch ... ok
+test mls::tests::a_removed_device_cannot_inject_through_a_past_epoch ... ok
+test mls::tests::c7_merge_without_a_staged_commit_is_refused_and_changes_nothing ... ok
+test mls::tests::c7_decrypt_returns_the_epoch_the_message_was_sent_in ... ok
+test mls::tests::device_identities_decode_exactly ... ok
+test mls::tests::device_link_locator_has_a_stable_vector ... ok
+test mls::tests::malformed_or_foreign_messages_fail_closed ... ok
+test mls::tests::enrollment_signature_covers_only_the_prefixed_proof ... ok
+test mls::tests::c7_outcome_comes_from_the_commit_bytes_alone ... ok
+test mls::tests::safety_number_v2_has_a_stable_vector_and_refuses_duplicates ... ok
+test mls::link_v3::tests::a_relay_holding_the_secret_has_nothing_to_grind ... ok
+test mls::tests::c7_member_key_read_and_signatures_cross_devices ... ok
+test mls::tests::identity_and_key_package_inputs_are_bounded_and_verified ... ok
+test mls::tests::decrypt_rejects_a_spoofed_sender ... ok
+test mls::tests::the_sender_runs_the_receivers_credential_check ... ok
+test mls::transfer::tests::a_protocol_v3_record_is_dropped_and_the_rest_of_the_state_loads ... ok
+test mls::tests::c7_add_update_and_replacement_report_what_the_commit_holds ... ok
+test mls::transfer::tests::a_revealed_source_random_never_accepts_a_claim_for_another_link ... ok
+test mls::transfer::tests::approval_status_deadlines_and_cleanup_do_not_extend_on_retries ... ok
+test mls::tests::c7_removal_returns_the_staged_export_that_the_merged_epoch_also_gives ... ok
+test mls::transfer::tests::authentic_late_approval_recovers_only_within_bounded_retention ... ok
+test mls::transfer::tests::incoming_exact_retry_reuses_private_key_before_and_after_approval ... ok
+test mls::tests::two_devices_exchange_authenticated_application_messages ... ok
+test mls::transfer::tests::native_transfer_parser_refuses_malformed_keys_identity_and_framing ... ok
+test mls::transfer::tests::full_handoff_can_resume_from_a_sealed_recipient_record ... ok
+test mls::transfer::tests::the_source_reveals_for_one_claim_and_the_new_device_checks_the_opening ... ok
+test mls::transfer::tests::source_material_exact_retry_preserves_ready_and_posted_state ... ok
+test recovery::tests::ffi_fails_closed ... ok
+test recovery::tests::decode_accepts_typing_variants_only ... ok
+test recovery::tests::ffi_matches_the_vector ... ok
+test mls::transfer::tests::transfer_keys_context_tags_and_native_identity_survive_restart ... ok
+test recovery::tests::generate_round_trips_and_differs ... ok
+test recovery::tests::inputs_out_of_bounds_are_refused ... ok
+test report::tests::ffi_fails_closed_and_writes_nothing ... ok
+test mls::tests::removing_a_device_removes_every_leaf_with_its_identity ... ok
+test recovery::tests::known_answer_vector ... ok
+test report::tests::frank_commit_matches_the_extra_vector_cases ... ok
+test report::tests::ffi_matches_the_vector_and_round_trips ... ok
+test report::tests::frank_commit_matches_the_shared_vector ... ok
+test mls::tests::the_committer_drops_a_late_message_from_the_device_it_removed ... ok
+test report::tests::go_sealed_report_opens_with_the_rust_core ... ok
+test report::tests::frank_commit_binds_every_field_and_refuses_bad_sizes ... ok
+test report::tests::report_key_and_open_match_the_shared_vector ... ok
+test report::tests::info_label_separates_reports_from_other_hpke_uses ... ok
+test report::tests::shared_vector_frank_wire_cases ... ok
+test mls::tests::update_and_revocation_converge_across_devices ... ok
+test tests::credential_boundary_requires_all_device_bindings ... ok
+test tests::every_production_operation_fails_closed_without_reading_inputs ... ok
+test tests::key_package_boundary_matches_server_transport_limits ... ok
+test report::tests::seed_derivation_is_deterministic_and_distinct_per_seed ... ok
+test report::tests::seal_refuses_bad_keys_and_sizes ... ok
+test recovery::tests::proof_binds_the_origin_and_every_field ... ok
+test mls::tests::safety_number_ignores_epochs_but_not_devices ... ok
+test mls::tests::staged_commit_adds_several_devices_with_one_welcome ... ok
+test report::tests::open_refuses_any_change ... ok
+test mls::tests::c7_roots_differ_by_group_and_by_epoch ... ok
+test report::tests::seal_round_trips_and_is_randomized ... ok
+test mls::c4::tests::record_proposals_that_change_anything_else_are_refused ... ok
+test mls::records::tests::an_oversized_group_names_itself_and_keeps_its_change ... ok
+test history::backup_tests::authenticated_noncanonical_frames_are_refused ... ok
+test history::backup_tests::backup_round_trips_and_pads_to_the_floor_then_buckets ... ok
+test mls::records::tests::a_full_key_package_pool_is_refused_at_creation ... ok
+test mls::records::tests::restarts_from_records_match_a_twin_that_never_restarts ... ok
+
+test result: ok. 223 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 16.40s
+
+     Running tests\c0_join_cost.rs (target\debug\deps\c0_join_cost-cab756589e9510fc.exe)
+
+running 4 tests
+test join_cost_by_group_size ... ignored, measurement: run in release with --ignored --nocapture
+test removal_cost_after_self_updates ... ignored, measurement: run in release with --ignored --nocapture
+test removal_cost_quick_case_shrinks_after_self_updates ... ok
+test join_cost_quick_case_does_real_work ... ok
+
+test result: ok. 2 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 2.61s
+
+     Running tests\d70_seal_cost.rs (target\debug\deps\d70_seal_cost-a2f4e468cf10c8a7.exe)
+
+running 1 test
+test seal_cost ... ignored, measurement; run in release with D70_GROUPS
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\rejoin_after_removal.rs (target\debug\deps\rejoin_after_removal-e71f52d3a395aec3.exe)
+
+running 5 tests
+test a_device_outside_the_active_group_cannot_replace_it ... ok
+test a_device_that_processed_its_removal_rejoins_through_a_newer_member ... ok
+test a_device_that_processed_its_removal_rejoins ... ok
+test a_device_that_never_saw_its_removal_is_refused_until_it_does ... ok
+test a_device_that_catches_up_on_missed_commits_rejoins ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+   Doc-tests private_messenger_crypto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
