@@ -384,19 +384,20 @@ Where the build differs from the text above, and why:
   and native crypto; the owner chats, saves a recovery key (first copy
   uploads), signs out; K0-R recovers the account on a new device, restores
   the lost device's copy (both messages back), sets a new key (with recent
-  auth) and password, and the two accounts chat again. K0-R completion
-  sends peers no `device.member_linked` notice (D96 covers link approval
-  only), so a peer adds the recovered device only through the L1
-  complete-adds audit: at a catch-up (an incoming event, opening or
-  resuming the app) once the group's 15-minute audit is due, then another
-  at least the 3-minute fallback later. Nothing wakes the app for it, so a
-  peer whose app stays closed adds it when it next opens, and until then
-  the recovered device is in none of that peer's groups. The test shortens
-  the interval; it is green only because of that. Open (next package): the
-  server writes `device.member_linked` notices when a device-list version
-  that adds a device lands (change 4); server only, no migration. The test
-  also saves the iOS copy against the real server (`exportK1SecondCopy`
-  with a recording channel).
+  auth) and password, and the two accounts chat again. The test also saves
+  the iOS copy against the real server (`exportK1SecondCopy` with a
+  recording channel).
+- **Peers add the recovered device promptly (2026-11-11).** K1-7 found that
+  peers added a recovered device only through the L1 complete-adds audit
+  (15-minute interval, then the 3-minute fallback) and that nothing woke
+  them; the test had to shorten both. Now the recovered device's change-4
+  version makes the server send the D96 `device.member_linked` notice to
+  each peer group's coordinator account, as a link approval does
+  (`docs/crypto.md`, "Coordinator notice for K0-R"); server only, no
+  migration. K1-7 runs with the default audit interval and fallback and no
+  app resume: alice's open connection gets the notice and her device adds
+  the recovered one. A peer whose app is closed gets no push wake (link
+  approval sends none either) and adds the device at its next catch-up.
 - **K1-6 (built): VBK2 and the token route retired.** Owner question 1
   (D91): no compatibility path. `POST /backups` without a K1 `kind` and
   `GET /recovery` answer 410 `backup_format_retired` and

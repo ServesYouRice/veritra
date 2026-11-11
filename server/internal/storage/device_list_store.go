@@ -365,20 +365,29 @@ func sameIDSet(got, want []string) bool {
 // migration genesis (change 6), a repair removal (change 3 of devices the
 // server already revoked) or a recovery version (change 4). Each has its own
 // rule; the route's recent-auth check for change 6 is the handler's.
-func (s *Store) PublishDeviceList(ctx context.Context, accountID, deviceID string, raw []byte) (DeviceListResult, error) {
+//
+// A recovery version also writes the D96 coordinator notices, in its own
+// transaction: it is when the recovered device joins the list head, so the
+// pending-change list starts naming it (deviceOnHeadSQL) and a peer's
+// coordinator device can add it. They are the notices a link approval writes
+// (same type, payload and recipients). Change 4 lands at most once per device
+// (the chain refuses a returning device), so one recovery tells at most
+// maxMemberLinkNotices accounts, once. Changes 3 and 6 add no device and write
+// none.
+func (s *Store) PublishDeviceList(ctx context.Context, accountID, deviceID string, raw []byte) (DeviceListResult, []MemberLinkNotice, error) {
 	// The rules below name the caller as the signer; an empty id would skip that
 	// check, and every change kind this route takes is sent from a device.
 	if deviceID == "" {
-		return DeviceListResult{}, ErrForbidden
+		return DeviceListResult{}, nil, ErrForbidden
 	}
 	parsed, err := devicelist.Parse(raw)
 	if err != nil {
-		return DeviceListResult{}, ErrInvalidDeviceList
+		return DeviceListResult{}, nil, ErrInvalidDeviceList
 	}
 	now := nowString()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return DeviceListResult{}, err
+		return DeviceListResult{}, nil, err
 	}
 	defer tx.Rollback()
 	var rule DeviceListRule
@@ -394,31 +403,37 @@ func (s *Store) PublishDeviceList(ctx context.Context, accountID, deviceID strin
 		// account's one active device.
 		var completed bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM account_recovery_requests WHERE account_id = ? AND device_id = ? AND state = 'completed')`, accountID, deviceID).Scan(&completed); err != nil {
-			return DeviceListResult{}, err
+			return DeviceListResult{}, nil, err
 		}
 		var active int
 		var activeID string
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(MIN(id), '') FROM devices WHERE account_id = ? AND revoked_at IS NULL`, accountID).Scan(&active, &activeID); err != nil {
-			return DeviceListResult{}, err
+			return DeviceListResult{}, nil, err
 		}
 		if !completed || active != 1 || activeID != deviceID {
-			return DeviceListResult{}, ErrInvalidDeviceList
+			return DeviceListResult{}, nil, ErrInvalidDeviceList
 		}
 		if len(parsed.Body.Entries) != 1 || parsed.Body.Entries[0].DeviceID != deviceID {
-			return DeviceListResult{}, ErrInvalidDeviceList
+			return DeviceListResult{}, nil, ErrInvalidDeviceList
 		}
 		rule = DeviceListRule{Changes: []devicelist.Change{devicelist.ChangeRecovery}}
 	default:
-		return DeviceListResult{}, ErrInvalidDeviceList
+		return DeviceListResult{}, nil, ErrInvalidDeviceList
 	}
 	result, err := insertDeviceListTx(ctx, tx, accountID, raw, rule, now)
 	if err != nil {
-		return DeviceListResult{}, err
+		return DeviceListResult{}, nil, err
+	}
+	var notices []MemberLinkNotice
+	if parsed.Body.Change == devicelist.ChangeRecovery {
+		if notices, err = insertMemberLinkNotices(ctx, tx, accountID, deviceID, now); err != nil {
+			return DeviceListResult{}, nil, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		return DeviceListResult{}, err
+		return DeviceListResult{}, nil, err
 	}
-	return result, nil
+	return result, notices, nil
 }
 
 // DeviceListStatement is one stored version as the read routes return it.

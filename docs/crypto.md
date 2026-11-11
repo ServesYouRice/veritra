@@ -1601,9 +1601,33 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   writes none. Payload: `account_id` and `device_id` of the link, nothing
   else, no conversation id. The client starts a membership pass on it; only
   the coordinator acts, the others keep the 3-minute fallback. Not covered:
-  coordinators beyond the 64 cap, and K0-R: the change-4 version a
-  recovered device posts writes no notice, so peers add that device only
-  through the L1 complete-adds audit (found by K1-7, 2026-11-11; open).
+  coordinators beyond the 64 cap. K0-R recovery: see the next entry.
+
+- **Coordinator notice for K0-R (D96, 2026-11-11):** no ABI, schema,
+  migration or client change. Found by K1-7: a recovered device was added by
+  peers only through the L1 complete-adds audit (15-minute interval, then the
+  3-minute fallback), and nothing woke them. Now the change-4 version a
+  recovered device posts (`POST /api/v1/account/device-list`) writes the same
+  `device.member_linked` notices as a link approval, in the version's own
+  transaction, and the route publishes them live after
+  `device_list.updated`. Same recipients (one per other account whose device
+  coordinates an MLS group the recovered account is in, at most 64), same
+  payload (`account_id`, `device_id`, no conversation), same type, so a peer
+  cannot tell a recovery from a link by the notice; it already reads change 4
+  in the account's list. It is written at change 4, not at recovery
+  completion, because only then is the device on the list head, so the
+  pending-change list names it (`deviceOnHeadSQL`) and a coordinator can add
+  it. Change 4 lands at most once per device (the chain refuses a returning
+  device, and the route accepts it only from the completed recovery's device
+  while it is the account's one active device), so one recovery fans out at
+  most once; a refused or replayed version writes nothing. Changes 3 and 6
+  write none. No push wake: link approval sends none either (push wakes are
+  for new messages and the K0-R own-account wake), so an app that is closed
+  finds the durable notice at its next catch-up and runs the pass then.
+  Not covered: pre-L1 accounts with no device list, which post no change 4.
+  Tests: `server/internal/httpapi/account_recovery_member_notice_test.go`;
+  `mobile/test/demo_e2e_test.dart` K1-7 now runs with the client's audit
+  interval and fallback unchanged and no app resume.
 
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),

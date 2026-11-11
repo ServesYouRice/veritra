@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/account_host.dart';
@@ -379,13 +378,9 @@ void main() {
     owner.expectOk();
     final alice = await owner.invite('k1alice');
     addTearDown(alice.dispose);
-    // K0-R completion sends peers no coordinator notice (D96 covers link
-    // approval only), so alice's device finds the recovered device only
-    // through the L1 complete-adds audit: at a catch-up once the group's
-    // 15-minute audit is due, then another at least the 3-minute fallback
-    // later. Nothing wakes the app for it. The interval is set from the
-    // start, as an audit already done would keep its due time.
-    alice.state.l1JoinAuditInterval = Duration.zero;
+    // No audit or fallback timing is shortened here: the recovered device's
+    // change-4 version makes the server send alice's coordinator device the
+    // D96 `device.member_linked` notice, live, as a link approval does.
 
     final dm = await owner.state.startConversation(
         kind: 'dm', memberAccountIds: <String>[alice.accountId]);
@@ -477,20 +472,14 @@ void main() {
     recovered.expectOk();
     expect(recovered.state.recoveryFollowUp, isNull);
 
-    // Alice's device adds the recovered one through its audit (above). The
-    // audit first gives the server's coordinator its turn, so the fallback
-    // is shortened, and a foreground resume stands in for the user opening
-    // the app (each one catches up and audits).
-    alice.state.reconcileFallback = Duration.zero;
+    // Alice's device adds the recovered one when the server's coordinator
+    // notice for its change-4 version arrives on her open connection
+    // (D96). Nothing nudges her app: no resume, no catch-up forced here.
     final recoveredMls =
         recovered.state.cryptoService as MlsConversationCryptoService;
-    var nudges = 0;
-    await recovered.waitUntil(() async {
-      if (nudges++ % 50 == 0) {
-        alice.state.handleAppLifecycleState(AppLifecycleState.resumed);
-      }
-      return await recoveredMls.groupEpoch(conv) != null;
-    }, timeout: const Duration(minutes: 4));
+    await recovered.waitUntil(
+        () async => await recoveredMls.groupEpoch(conv) != null,
+        timeout: const Duration(minutes: 4));
     expect(await recovered.state.sendMessageTo(conv, 'after recovery'), isTrue);
     await alice.waitFor(conv, (m) => m.body == 'after recovery',
         timeout: const Duration(minutes: 2));
