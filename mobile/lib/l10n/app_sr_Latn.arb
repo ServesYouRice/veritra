@@ -524,7 +524,7 @@
   "chatMessageInvalid": "Jedna poruka nije mogla da se pročita",
   "chatMessageUndecryptable": "Ova poruka nije mogla da se otključa",
   "chatMessageUnapprovedDevice": "Sakrivena je poruka sa uređaja koji nije odobren.",
-  "chatKeyRenewalNoAdmin": "Nijedan administrator u ovom kanalu ne može da obnovi njegov ključ; zamolite administratora da se pridruži.",
+  "chatKeyRenewalNoAdmin": "Nijedan administrator ni moderator u ovom kanalu ne može da obnovi njegov ključ; zamolite nekog od njih da se pridruži.",
   "chatDevicesNotJoined": "Neki uređaji korisnika {name} se još nisu pridružili.",
   "chatMessageWelcomeUnavailable": "Pridruživanje ovom ćaskanju nije uspelo. Zamolite člana da vas ponovo doda.",
   "chatReactionCount": "{reaction} {count}",

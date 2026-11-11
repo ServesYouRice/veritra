@@ -569,7 +569,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   3. Only trusted rows count: in the owning group, from this account or
      from an owner/admin under the verified role state. A key's freshness is
      the lowest epoch of its trusted rows; a current member replaying a key
-     at an old epoch it kept secrets for cannot retire it.
+     at an old epoch it kept secrets for cannot retire it. In a private
+     channel's group only, when no such key is fresh, rows from verified
+     moderators are trusted as a second choice (owner decision 2026-11-11:
+     a moderator member rotates when no owner or admin is a member; see
+     the C3 design, "Remote removals: who rotates"). Owner and admin keys
+     always win over a moderator's.
   4. A key whose freshness is below the group's last removal epoch (the
      watermark committed with the MLS state) is retired: never current, even
      when it is the only key held. Callers then ask, or wait for rotation.

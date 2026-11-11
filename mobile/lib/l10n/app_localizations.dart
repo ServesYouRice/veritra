@@ -3240,7 +3240,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatKeyRenewalNoAdmin.
   ///
   /// In en, this message translates to:
-  /// **'No admin in this channel can renew its key; ask an admin to join.'**
+  /// **'No admin or moderator in this channel can renew its key; ask one to join.'**
   String get chatKeyRenewalNoAdmin;
 
   /// No description provided for @chatDevicesNotJoined.

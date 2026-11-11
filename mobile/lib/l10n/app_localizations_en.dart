@@ -1944,7 +1944,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatKeyRenewalNoAdmin =>
-      'No admin in this channel can renew its key; ask an admin to join.';
+      'No admin or moderator in this channel can renew its key; ask one to join.';
 
   @override
   String chatDevicesNotJoined(String name) {

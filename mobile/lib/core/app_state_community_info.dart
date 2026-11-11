@@ -60,8 +60,11 @@ extension CommunityInfoActions on AppState {
       policyFor: (communityId) =>
           GovernanceInfoEditPolicy(verifiedCommunityRoles(communityId)),
       // Who rotates after a removal: the verified record's owner and
-      // admins, never a moderator, whatever the server says.
+      // admins, whatever the server says; a verified moderator only in a
+      // private channel whose MLS group has no owner or admin in it.
       verifiedRolesOf: verifiedCommunityRoles,
+      membersOf:
+          service is MlsRosterSource ? service.groupMemberAccounts : null,
       accountId: accountId,
       deviceId: deviceId,
       onChanged: () {

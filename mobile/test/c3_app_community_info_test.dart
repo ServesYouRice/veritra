@@ -244,8 +244,10 @@ void main() {
         await store.loadSetting('c3.rotation_due.alice'), contains('pending'));
   }, skip: nativeCryptoSkip());
 
-  test('a private channel with no admin among its members shows a notice',
-      () async {
+  /// An app whose account alice has [roles] in a community with one private
+  /// channel, and a due rotation mark for that channel in alice's store.
+  Future<(AppState, _RosterCrypto, MemoryLocalStore, String)> privateChannelApp(
+      GovernanceState roles) async {
     final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     final api = _RosterApi();
     final store = MemoryLocalStore();
@@ -274,32 +276,69 @@ void main() {
             layoutGeneration: 1),
       ],
     };
-    // Alice is a moderator; the owner is someone else.
-    state.debugInfoRoleSource = _Roles(GovernanceState(
-        rev: 1,
-        owner: 'olga',
-        ownerRev: 1,
-        moderators: const {'alice'},
-        joined: const {'olga': 0, 'alice': 1, 'bob': 2}));
+    state.debugInfoRoleSource = _Roles(roles);
     state.communitiesLoaded = true;
-    // Alice removed someone from the private channel: its key is due.
+    // Someone was removed from the private channel: its key is due.
     await store.saveSetting('c3.rotation_due.alice',
         '{"channel|$channelId":{"c":"$id","t":"pending"}}');
+    return (state, crypto, store, channelId);
+  }
+
+  test(
+      'a private channel with no owner, admin or moderator among its members '
+      'shows a notice', () async {
+    // Alice is a plain member; mia moderates, olga owns.
+    final (state, crypto, store, channelId) = await privateChannelApp(
+        GovernanceState(
+            rev: 1,
+            owner: 'olga',
+            ownerRev: 1,
+            moderators: const {'mia'},
+            joined: const {'olga': 0, 'alice': 1, 'bob': 2, 'mia': 3}));
     crypto.roster = {'alice', 'bob'};
     await state.refreshCommunityInfo();
     expect(state.channelKeyRenewalStuck('conv_private'), isTrue);
     expect(state.channelKeyRenewalStuck('conv_shared'), isFalse);
-    // The moderator never rotates: the mark stays and no key is made.
+    // A member never rotates: the mark stays and no key is made.
     expect(await store.loadSetting('c3.rotation_due.alice'),
         contains('channel|$channelId'));
     expect(
         await store.loadCommunityInfoEvents(
             CommunityInfoEventKind.key, 'channel', channelId),
         isEmpty);
-    // Once the owner is in the channel's group, the notice goes.
+    // A moderator in the channel's group can renew it: the notice goes.
+    crypto.roster = {'alice', 'bob', 'mia'};
+    await state.refreshCommunityInfo();
+    expect(state.channelKeyRenewalStuck('conv_private'), isFalse);
+    // So can the owner.
+    crypto.roster = {'alice', 'bob'};
+    await state.refreshCommunityInfo();
+    expect(state.channelKeyRenewalStuck('conv_private'), isTrue);
     crypto.roster = {'alice', 'bob', 'olga'};
     await state.refreshCommunityInfo();
     expect(state.channelKeyRenewalStuck('conv_private'), isFalse);
+  }, skip: nativeCryptoSkip());
+
+  test(
+      'a moderator renews a private channel key when no owner or admin is '
+      'among its members', () async {
+    // Alice moderates; the owner is not in the channel's group.
+    final (state, crypto, store, channelId) = await privateChannelApp(
+        GovernanceState(
+            rev: 1,
+            owner: 'olga',
+            ownerRev: 1,
+            moderators: const {'alice'},
+            joined: const {'olga': 0, 'alice': 1, 'bob': 2}));
+    crypto.roster = {'alice', 'bob'};
+    await state.refreshCommunityInfo();
+    expect(state.channelKeyRenewalStuck('conv_private'), isFalse);
+    // The roster reaches the service: alice makes the channel's new key.
+    final keys = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, 'channel', channelId);
+    expect(keys, isNotEmpty);
+    expect(keys.every((k) => k.senderAccountId == 'alice'), isTrue);
+    expect(keys.every((k) => k.conversationId == 'conv_private'), isTrue);
   }, skip: nativeCryptoSkip());
 
   test('explicit private creation uses its own conversation and info key',

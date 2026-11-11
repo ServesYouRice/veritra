@@ -1958,7 +1958,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatKeyRenewalNoAdmin =>
-      'Ниједан администратор у овом каналу не може да обнови његов кључ; замолите администратора да се придружи.';
+      'Ниједан администратор ни модератор у овом каналу не може да обнови његов кључ; замолите неког од њих да се придружи.';
 
   @override
   String chatDevicesNotJoined(String name) {
@@ -6319,7 +6319,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatKeyRenewalNoAdmin =>
-      'Nijedan administrator u ovom kanalu ne može da obnovi njegov ključ; zamolite administratora da se pridruži.';
+      'Nijedan administrator ni moderator u ovom kanalu ne može da obnovi njegov ključ; zamolite nekog od njih da se pridruži.';
 
   @override
   String chatDevicesNotJoined(String name) {
