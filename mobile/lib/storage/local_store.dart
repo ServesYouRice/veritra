@@ -364,6 +364,10 @@ class EnrollmentPromotion {
 }
 
 /// Durable C3 removal watermark, written atomically with the MLS transition.
+/// The sealed setting that holds one group's C7 state
+/// (`mobile/lib/crypto/c7_group_state.dart`).
+String c7GroupSetting(String conversationId) => 'c7.group.$conversationId';
+
 String communityInfoRemovalSetting(String conversationId) =>
     'c3.removal_epoch.$conversationId';
 
@@ -383,9 +387,16 @@ class MlsStateTransition {
     this.communityInfo = const <CommunityInfoEvent>[],
     this.approvalLeaves,
     this.infoRemovalEpoch,
+    this.c7Settings = const <String, String?>{},
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
   });
+
+  /// C7 group state (setting name to value, null deletes), written in the
+  /// same transaction as the MLS state: a crash can never apply a removal
+  /// commit and lose its rekey root (docs/designs/C7-channel-history.md,
+  /// "One local transaction"). Sealed settings are never in K1 or K2.
+  final Map<String, String?> c7Settings;
 
   /// The leaf verdicts of the commit or Welcome this transition applies
   /// (L1, D94), written in the same transaction.
@@ -774,6 +785,7 @@ abstract class LocalStore {
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
     ({String conversationId, int epoch})? infoRemoval,
+    Map<String, String?> c7Settings = const <String, String?>{},
   });
   Future<StoredCryptoState?> loadCryptoState();
 
@@ -1392,6 +1404,7 @@ class MemoryLocalStore implements LocalStore {
       _settings[communityInfoRemovalSetting(transition.conversationId)] =
           epoch.toString();
     }
+    _applyC7Settings(transition.c7Settings);
     _applyApprovalLeaves(transition.approvalLeaves);
     _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
@@ -1660,6 +1673,17 @@ class MemoryLocalStore implements LocalStore {
   Future<void> saveApprovalLeaves(ApprovalLeafChange change) async =>
       _applyApprovalLeaves(change);
 
+  void _applyC7Settings(Map<String, String?> settings) {
+    for (final entry in settings.entries) {
+      final value = entry.value;
+      if (value == null) {
+        _settings.remove(entry.key);
+      } else {
+        _settings[entry.key] = value;
+      }
+    }
+  }
+
   void _applyApprovalLeaves(ApprovalLeafChange? change) {
     if (change == null) return;
     final rows = change.replaceAll
@@ -1883,6 +1907,7 @@ class MemoryLocalStore implements LocalStore {
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
     ({String conversationId, int epoch})? infoRemoval,
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
@@ -1891,6 +1916,7 @@ class MemoryLocalStore implements LocalStore {
       _settings[communityInfoRemovalSetting(infoRemoval.conversationId)] =
           infoRemoval.epoch.toString();
     }
+    _applyC7Settings(c7Settings);
     if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
@@ -3201,6 +3227,7 @@ class SecureLocalStore implements LocalStore {
       communityInfo: transition.communityInfo,
       approvalLeaves: transition.approvalLeaves,
       infoRemovalEpoch: transition.infoRemovalEpoch,
+      c7Settings: transition.c7Settings,
     );
   }
 
@@ -3483,6 +3510,7 @@ class SecureLocalStore implements LocalStore {
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
     ({String conversationId, int epoch})? infoRemoval,
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: expectedCounter, currentCursor: expectedCursor);
@@ -3496,6 +3524,7 @@ class SecureLocalStore implements LocalStore {
       leaseKey: _syncLeaseKey,
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
       infoRemoval: infoRemoval,
+      c7Settings: c7Settings,
     );
   }
 

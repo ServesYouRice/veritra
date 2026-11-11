@@ -43,6 +43,7 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'c7_group_state.dart';
 import 'c7_two_part.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
@@ -103,6 +104,22 @@ class NativeCryptoService
   /// default; AppState follows the server's `c7_history`.
   @override
   bool c7SealedBodies = false;
+
+  /// The C7 group state change a merged commit makes, for the same MLS
+  /// transition. Empty while C7 is off or outside community conversations;
+  /// a commit that removed this device deletes the state (re-add wipe).
+  Future<Map<String, String?>> _c7AfterCommit(
+      String conversationId, C7CommitOutcome outcome) async {
+    if (!c7SealedBodies ||
+        !c7CommunityKind(_authority?.conversationKind(conversationId))) {
+      return const <String, String?>{};
+    }
+    final now = C7GroupState.decode(
+        await localStore.loadSetting(c7GroupSetting(conversationId)));
+    final next = now.afterCommit(outcome);
+    if (identical(next, now)) return const <String, String?>{};
+    return <String, String?>{c7GroupSetting(conversationId): next?.encode()};
+  }
 
   String? _c7PrivateChannel(String conversationId) => switch (_authority) {
         final ConversationCommunitySource source =>
@@ -1120,6 +1137,7 @@ class NativeCryptoService
         final previous = await _requiredState();
         try {
           int? infoRemovalEpoch;
+          var c7Settings = const <String, String?>{};
           if (bundle.hasCommit) {
             final device = _requiredDevice();
             final ({int epoch, bool pending}) before;
@@ -1145,6 +1163,7 @@ class NativeCryptoService
                 if (outcome.removedAny && !outcome.removedSelf) {
                   infoRemovalEpoch = outcome.newEpoch;
                 }
+                c7Settings = await _c7AfterCommit(item.conversationId, outcome);
               } finally {
                 outcome.wipeRoot();
               }
@@ -1161,6 +1180,7 @@ class NativeCryptoService
             expectedCursor: await localStore.loadSyncCursor(),
             state: _sealNext(previous),
             resolvedMlsOutboxKey: item.idempotencyKey,
+            c7Settings: c7Settings,
             infoRemoval: infoRemovalEpoch == null
                 ? null
                 : (
@@ -1428,6 +1448,7 @@ class NativeCryptoService
               final device = _requiredDevice();
               final expected = MlsCommitBundle.decode(bundle.payload).epoch + 1;
               int? infoRemovalEpoch;
+              var c7Settings = const <String, String?>{};
               if (device.groupEpoch(message.conversationId).pending) {
                 final outcome =
                     device.c7MergePendingCommit(message.conversationId);
@@ -1435,6 +1456,8 @@ class NativeCryptoService
                   if (outcome.removedAny && !outcome.removedSelf) {
                     infoRemovalEpoch = outcome.newEpoch;
                   }
+                  c7Settings =
+                      await _c7AfterCommit(message.conversationId, outcome);
                 } finally {
                   outcome.wipeRoot();
                 }
@@ -1453,6 +1476,7 @@ class NativeCryptoService
                 cursor: message.syncEventId,
                 resolvedMlsOutboxKey: bundle.idempotencyKey,
                 infoRemovalEpoch: infoRemovalEpoch,
+                c7Settings: c7Settings,
               ));
               await _rejudgeAfterOwnCommit(message.conversationId);
               return;
@@ -1484,6 +1508,7 @@ class NativeCryptoService
           }
           final device = _requiredDevice();
           int? infoRemovalEpoch;
+          var c7Settings = const <String, String?>{};
           switch (message.kind) {
             case 'welcome':
               if (message.recipientDeviceId != _deviceId) {
@@ -1554,6 +1579,8 @@ class NativeCryptoService
                 if (outcome.removedAny && !outcome.removedSelf) {
                   infoRemovalEpoch = outcome.newEpoch;
                 }
+                c7Settings =
+                    await _c7AfterCommit(message.conversationId, outcome);
               } finally {
                 outcome.wipeRoot();
               }
@@ -1587,6 +1614,14 @@ class NativeCryptoService
             cursor: message.syncEventId,
             approvalLeaves: approval,
             infoRemovalEpoch: infoRemovalEpoch,
+            c7Settings: message.kind == 'welcome' && c7SealedBodies
+                ? <String, String?>{
+                    // The re-add wipe and the newcomer's floor (decision 5).
+                    c7GroupSetting(message.conversationId): C7GroupState.joined(
+                            device.groupEpoch(message.conversationId).epoch)
+                        .encode(),
+                  }
+                : c7Settings,
           ));
         } catch (_) {
           await _restorePrevious(previous);
