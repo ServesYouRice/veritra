@@ -3766,6 +3766,43 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupPromptLater => 'Не сада';
 
   @override
+  String get k1ConfirmTitle => 'Проверите кључ за опоравак';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Унесите га још једном да будете сигурни да га имате. Никад не напушта овај уређај.';
+
+  @override
+  String get k1ConfirmOk => 'То је ваш кључ за опоравак.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Не поклапа се. Ако сте изгубили кључ, направите нови у подешавањима кључа за опоравак.';
+
+  @override
+  String get k1SecondCopyChoose => 'Чувај другу копију у фасцикли';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Друга копија: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Иста закључана копија, сачувана где изаберете. Отвара је само кључ за опоравак.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Последње копирање у ову фасциклу није успело. Проверите фасциклу.';
+
+  @override
+  String get k1SecondCopyOff => 'Заустави другу копију';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Друга копија у фасцикли је доступна на рачунару. Телефони чувају копију само на серверу.';
+
+  @override
   String get recoveryFollowUpRestoreDetail =>
       'Пре него што замените кључ за опоравак, можете вратити историју из копија које су направили ваши изгубљени уређаји. Оне се отварају вашим старим кључем, који за њих престаје да важи кад га замените.';
 
@@ -7824,6 +7861,43 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupPromptLater => 'Ne sada';
+
+  @override
+  String get k1ConfirmTitle => 'Proverite ključ za oporavak';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Unesite ga još jednom da budete sigurni da ga imate. Nikad ne napušta ovaj uređaj.';
+
+  @override
+  String get k1ConfirmOk => 'To je vaš ključ za oporavak.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Ne poklapa se. Ako ste izgubili ključ, napravite novi u podešavanjima ključa za oporavak.';
+
+  @override
+  String get k1SecondCopyChoose => 'Čuvaj drugu kopiju u fascikli';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Druga kopija: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Ista zaključana kopija, sačuvana gde izaberete. Otvara je samo ključ za oporavak.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Poslednje kopiranje u ovu fasciklu nije uspelo. Proverite fasciklu.';
+
+  @override
+  String get k1SecondCopyOff => 'Zaustavi drugu kopiju';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Druga kopija u fascikli je dostupna na računaru. Telefoni čuvaju kopiju samo na serveru.';
 
   @override
   String get recoveryFollowUpRestoreDetail =>

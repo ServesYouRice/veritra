@@ -29,6 +29,7 @@ import '../crypto/native_crypto_bindings.dart'
         idBytes;
 import 'device_lists.dart';
 import 'k1_restore.dart';
+import 'k1_second_copy.dart';
 import '../crypto/sha256.dart';
 import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
@@ -743,6 +744,10 @@ class AppState extends ChangeNotifier
   bool _k1Running = false;
   bool _k1RerunRequested = false;
   Timer? _k1Timer;
+
+  /// Where the second copy goes (K1-5); tests replace it.
+  @visibleForTesting
+  K1SecondCopyWriter k1SecondCopyWriter = const FileK1SecondCopyWriter();
 
   /// The clock K1 schedules read; tests move it.
   @visibleForTesting

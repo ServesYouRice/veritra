@@ -6171,6 +6171,66 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get autoBackupPromptLater;
 
+  /// No description provided for @k1ConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check your recovery key'**
+  String get k1ConfirmTitle;
+
+  /// No description provided for @k1ConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Type it once more to be sure you still have it. It never leaves this device.'**
+  String get k1ConfirmDetail;
+
+  /// No description provided for @k1ConfirmOk.
+  ///
+  /// In en, this message translates to:
+  /// **'That is your recovery key.'**
+  String get k1ConfirmOk;
+
+  /// No description provided for @k1ConfirmMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'That does not match. If you lost your key, make a new one in Recovery key settings.'**
+  String get k1ConfirmMismatch;
+
+  /// No description provided for @k1SecondCopyChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep a second copy in a folder'**
+  String get k1SecondCopyChoose;
+
+  /// No description provided for @k1SecondCopyFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Second copy: {folder}'**
+  String k1SecondCopyFolder(String folder);
+
+  /// No description provided for @k1SecondCopyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The same locked backup, saved where you choose. Only your recovery key opens it.'**
+  String get k1SecondCopyDetail;
+
+  /// No description provided for @k1SecondCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The last copy to this folder failed. Check the folder.'**
+  String get k1SecondCopyFailed;
+
+  /// No description provided for @k1SecondCopyOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the second copy'**
+  String get k1SecondCopyOff;
+
+  /// No description provided for @k1SecondCopyPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'A second copy in a folder is available on desktop. Phones keep the backup on the server only.'**
+  String get k1SecondCopyPhone;
+
   /// No description provided for @recoveryFollowUpRestoreDetail.
   ///
   /// In en, this message translates to:

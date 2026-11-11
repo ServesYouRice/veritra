@@ -3752,6 +3752,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoBackupPromptLater => 'Not now';
 
   @override
+  String get k1ConfirmTitle => 'Check your recovery key';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Type it once more to be sure you still have it. It never leaves this device.';
+
+  @override
+  String get k1ConfirmOk => 'That is your recovery key.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'That does not match. If you lost your key, make a new one in Recovery key settings.';
+
+  @override
+  String get k1SecondCopyChoose => 'Keep a second copy in a folder';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Second copy: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'The same locked backup, saved where you choose. Only your recovery key opens it.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'The last copy to this folder failed. Check the folder.';
+
+  @override
+  String get k1SecondCopyOff => 'Stop the second copy';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'A second copy in a folder is available on desktop. Phones keep the backup on the server only.';
+
+  @override
   String get recoveryFollowUpRestoreDetail =>
       'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.';
 

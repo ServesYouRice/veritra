@@ -339,9 +339,22 @@ Where the build differs from the text above, and why:
   now restore (or a warned skip), new recovery key, new password; the step
   is persisted. The old "start from the restored session" entry and the
   banner restore action stay until VBK2 is retired (K1-6).
-- **Still to do:** the confirmation schedule and the second
-  copy (K1-5), background runs and retiring VBK2 and the recovery-token
-  route (K1-6, after K1-4, so a restore path always exists).
+- **Confirmation and second copy (K1-5, built).** The device state keeps
+  `confirm_due_at`, a confirmed count and the misses. Due 3 days after the
+  key is stored, then 14 days after the first confirmation, then every 90;
+  "Not now" waits 7 days; three misses keep a Settings badge. The check is
+  local (derive `rk_pub`, compare with the stored one). The second copy is the
+  same ciphertext written as `veritra-backup-<account>-<device>.vhc` through
+  a temporary file and rename into a folder picked on Windows, Linux and
+  macOS; its failure is a warning of its own and never fails the backup.
+  Not built: Android (picked document tree, native channel) and the iOS
+  manual export; phones say the second copy is a desktop feature.
+- **Still to do (K1-6):** background runs on phones and retiring VBK2 and the
+  recovery-token route. Phone background runs stay out by the owner's
+  decision (backups when the app opens). Retiring VBK2 touches the legacy
+  restore, sync-recovery choices, the demo e2e, the smoke client and about
+  thirty tests on both sides; it is its own package. Until then K0-R keeps
+  its "restored session" entry and the banner restore action.
 
 ## Threats
 
