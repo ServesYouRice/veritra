@@ -97,7 +97,12 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	groupLevel := layout && route.channelID == ""
+	// Only a group-level body the size rule identifies as a history_sync
+	// (and not also as a channel body) skips C2 and slow mode: the server
+	// cannot read the type, so every other envelope, a private channel's
+	// posts included, takes the normal posting checks. In a private group
+	// (one channel) a history_sync is exactly 1,592 bytes.
+	groupLevel := layout && route.channelID == "" && c7SyncOnlyBodySize(len(envelope.SealedBody))
 	// C7: a sealed body is required in community conversations and refused
 	// elsewhere (and refused everywhere while C7 is off).
 	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {

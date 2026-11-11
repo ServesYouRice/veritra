@@ -68,6 +68,12 @@ func c7SyncBodySize(n int) bool {
 	return false
 }
 
+// c7SyncOnlyBodySize reports a history_sync size that is not also a channel
+// body size: the only bodies exempt from the posting checks.
+func c7SyncOnlyBodySize(n int) bool {
+	return c7SyncBodySize(n) && !c7ChannelBodySize(n)
+}
+
 // C7BodySizeValid is the size rule for a sealed body: a channel post's body,
 // or (group-level only, no channel_id) also a history_sync body.
 func C7BodySizeValid(n int, groupLevel bool) bool {

@@ -43,6 +43,7 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'c7_group_state.dart';
 import 'c7_two_part.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
@@ -103,6 +104,35 @@ class NativeCryptoService
   /// default; AppState follows the server's `c7_history`.
   @override
   bool c7SealedBodies = false;
+
+  /// The C7 group state change a merged commit makes, for the same MLS
+  /// transition. Empty while C7 is off or outside community conversations;
+  /// a commit that removed this device deletes the state (re-add wipe).
+  Future<Map<String, String?>> _c7AfterCommit(
+      String conversationId, C7CommitOutcome outcome) async {
+    if (!c7SealedBodies ||
+        !c7CommunityKind(_authority?.conversationKind(conversationId))) {
+      return const <String, String?>{};
+    }
+    final now = C7GroupState.decode(
+        await localStore.loadSetting(c7GroupSetting(conversationId)));
+    final next = now.afterCommit(outcome);
+    if (identical(next, now)) return const <String, String?>{};
+    return <String, String?>{c7GroupSetting(conversationId): next?.encode()};
+  }
+
+  String? _c7PrivateChannel(String conversationId) => switch (_authority) {
+        final ConversationCommunitySource source =>
+          source.privateGroupChannel(conversationId),
+        _ => null,
+      };
+
+  /// A conversation in the C0 layout: a shared group or a private channel's
+  /// own group. There a two-part message with no `channel_id` is
+  /// group-level and may only be a `history_sync` or its request.
+  bool _c7Layout(String conversationId) =>
+      _authority?.conversationKind(conversationId) == 'community_shared' ||
+      _c7PrivateChannel(conversationId) != null;
 
   @override
   CommunityInfoCodec get communityInfoCodec => CommunityInfoCodec(bindings);
@@ -1107,6 +1137,7 @@ class NativeCryptoService
         final previous = await _requiredState();
         try {
           int? infoRemovalEpoch;
+          var c7Settings = const <String, String?>{};
           if (bundle.hasCommit) {
             final device = _requiredDevice();
             final ({int epoch, bool pending}) before;
@@ -1132,6 +1163,7 @@ class NativeCryptoService
                 if (outcome.removedAny && !outcome.removedSelf) {
                   infoRemovalEpoch = outcome.newEpoch;
                 }
+                c7Settings = await _c7AfterCommit(item.conversationId, outcome);
               } finally {
                 outcome.wipeRoot();
               }
@@ -1148,6 +1180,7 @@ class NativeCryptoService
             expectedCursor: await localStore.loadSyncCursor(),
             state: _sealNext(previous),
             resolvedMlsOutboxKey: item.idempotencyKey,
+            c7Settings: c7Settings,
             infoRemoval: infoRemovalEpoch == null
                 ? null
                 : (
@@ -1415,6 +1448,7 @@ class NativeCryptoService
               final device = _requiredDevice();
               final expected = MlsCommitBundle.decode(bundle.payload).epoch + 1;
               int? infoRemovalEpoch;
+              var c7Settings = const <String, String?>{};
               if (device.groupEpoch(message.conversationId).pending) {
                 final outcome =
                     device.c7MergePendingCommit(message.conversationId);
@@ -1422,6 +1456,8 @@ class NativeCryptoService
                   if (outcome.removedAny && !outcome.removedSelf) {
                     infoRemovalEpoch = outcome.newEpoch;
                   }
+                  c7Settings =
+                      await _c7AfterCommit(message.conversationId, outcome);
                 } finally {
                   outcome.wipeRoot();
                 }
@@ -1440,6 +1476,7 @@ class NativeCryptoService
                 cursor: message.syncEventId,
                 resolvedMlsOutboxKey: bundle.idempotencyKey,
                 infoRemovalEpoch: infoRemovalEpoch,
+                c7Settings: c7Settings,
               ));
               await _rejudgeAfterOwnCommit(message.conversationId);
               return;
@@ -1471,6 +1508,7 @@ class NativeCryptoService
           }
           final device = _requiredDevice();
           int? infoRemovalEpoch;
+          var c7Settings = const <String, String?>{};
           switch (message.kind) {
             case 'welcome':
               if (message.recipientDeviceId != _deviceId) {
@@ -1541,6 +1579,8 @@ class NativeCryptoService
                 if (outcome.removedAny && !outcome.removedSelf) {
                   infoRemovalEpoch = outcome.newEpoch;
                 }
+                c7Settings =
+                    await _c7AfterCommit(message.conversationId, outcome);
               } finally {
                 outcome.wipeRoot();
               }
@@ -1574,6 +1614,14 @@ class NativeCryptoService
             cursor: message.syncEventId,
             approvalLeaves: approval,
             infoRemovalEpoch: infoRemovalEpoch,
+            c7Settings: message.kind == 'welcome' && c7SealedBodies
+                ? <String, String?>{
+                    // The re-add wipe and the newcomer's floor (decision 5).
+                    c7GroupSetting(message.conversationId): C7GroupState.joined(
+                            device.groupEpoch(message.conversationId).epoch)
+                        .encode(),
+                  }
+                : c7Settings,
           ));
         } catch (_) {
           await _restorePrevious(previous);
@@ -1881,6 +1929,12 @@ class NativeCryptoService
           throw StateError('a channel is named exactly for a shared group');
         }
         final channelId = sharedGroup ? routeChannelId : null;
+        // C7: a private channel's own group names its channel in the clear
+        // metadata (the server already maps the group to it), never inside
+        // the payload, so the server's posting checks apply to its posts.
+        final c7Private = c7SealedBodies && !sharedGroup
+            ? _c7PrivateChannel(conversationId)
+            : null;
         try {
           final idempotencyKey = _randomIdempotencyKey();
           final deviceId = _deviceId!;
@@ -1946,7 +2000,7 @@ class NativeCryptoService
                   domain: c7PostSignatureDomain, message: message),
               communityId: communityId,
               conversationId: conversationId,
-              channelId: channelId,
+              channelId: channelId ?? c7Private,
               senderDeviceId: deviceId,
               actionId: idempotencyKey,
               epoch: epoch,
@@ -1969,7 +2023,8 @@ class NativeCryptoService
               if (channelId != null) ...<String, Object?>{
                 'channel_id': channelId,
                 'community_layout_generation': routeGeneration,
-              },
+              } else if (c7Private != null && sealedBody != null)
+                'channel_id': c7Private,
               // The epoch is already readable in the MLS message header. The
               // server uses it to withhold a message from a device that
               // joined after that epoch and cannot decrypt it (card I51).
@@ -2128,6 +2183,10 @@ class NativeCryptoService
       try {
         operationFence();
         List<int> plaintext;
+        // C7: whether the message came in two parts, and the channel its
+        // clear metadata names (bound into the body's aad).
+        var c7TwoPart = false;
+        String? c7Channel;
         try {
           final decrypted = await _decryptOrUndecryptable(
               previous,
@@ -2211,6 +2270,8 @@ class NativeCryptoService
               actionId: envelope.idempotencyKey,
             );
             plaintext.fillRange(0, plaintext.length, 0);
+            c7TwoPart = true;
+            c7Channel = routeChannel is String ? routeChannel : null;
             if (opened == null) {
               await localStore.commitMlsTransition(MlsStateTransition(
                 checkCanCommit: operationFence,
@@ -2283,6 +2344,43 @@ class NativeCryptoService
           reveal = checked.reveal;
           switch (outcome) {
             case DecodedAppPayload(:final payload):
+              // C7: in the C0 layout a group-level two-part message (no
+              // channel_id) is a history_sync or its request, and those are
+              // never anything else; a private group names only its own
+              // channel. The C7 types come only in two parts. Anything
+              // else is an invalid row: the server cannot tell a post from
+              // a history_sync, so this is what keeps a post that skipped
+              // the posting checks from showing.
+              final c7Kind = c7PayloadTypes.contains(payload.type);
+              final layout = _c7Layout(envelope.conversationId);
+              final privateChannel = _c7PrivateChannel(envelope.conversationId);
+              if ((c7Kind && !c7TwoPart) ||
+                  (c7TwoPart &&
+                      layout &&
+                      ((c7Channel == null) !=
+                              c7GroupLevelTypes.contains(payload.type) ||
+                          (privateChannel != null &&
+                              c7Channel != null &&
+                              c7Channel != privateChannel)))) {
+                effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
+                reveal = null;
+                break;
+              }
+              if (c7Kind) {
+                // Records and history_sync are applied by the C7 state
+                // (later slice); the row stands in for the envelope.
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.action,
+                    senderHidden: true,
+                  ),
+                ];
+                reveal = null;
+                break;
+              }
               // C3: info keys, key requests and announcements change state
               // and show nothing. A hidden action row stands in for the
               // envelope; no reveal is ever kept, so a report cannot hand an
@@ -3740,6 +3838,10 @@ List<MessageEffect> messageEffectsFor(
     AppPayloadType.infoKeyRequest ||
     AppPayloadType.infoUpdate =>
       throw const FormatException('community info payloads are not messages'),
+    AppPayloadType.historyChange ||
+    AppPayloadType.historySync ||
+    AppPayloadType.historySyncRequest =>
+      throw const FormatException('C7 history payloads are not messages'),
   };
 }
 

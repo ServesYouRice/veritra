@@ -259,6 +259,8 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 	}
 	conversationID := parts[0]
 	switch {
+	case (parts[1] == "history" || parts[1] == "former-member-keys") && r.Method == http.MethodGet && !a.C7History:
+		writeError(w, http.StatusNotFound, "not_found")
 	case parts[1] == "history" && r.Method == http.MethodGet:
 		// C7: the only route that serves pre-join sealed bodies.
 		if principal.DeviceID == "" {
