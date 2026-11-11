@@ -303,6 +303,41 @@ func TestC7HistoryFetchServesExactlyWhatTheJoinFilterWithheld(t *testing.T) {
 	}
 }
 
+// The sync join filter reads any JSON integer as the epoch and the history
+// fetch only non-negative ones; an epoch they would read differently is
+// refused at write time, so a post is never both withheld and unserved.
+func TestC7EpochMetadataIsANonNegativeInteger(t *testing.T) {
+	ctx := context.Background()
+	f := newC7Fixture(t, ctx)
+	for name, epoch := range map[string]string{
+		"negative":     `-1`,
+		"fraction":     `1.5`,
+		"exponent":     `1e2`,
+		"string":       `"3"`,
+		"out of range": `9223372036854775808`,
+		"null":         `null`,
+	} {
+		metadata := json.RawMessage(`{"protocol_version":1,"channel_id":"` + f.open.ID + `","community_layout_generation":1,"mls_epoch":` + epoch + `}`)
+		if _, _, err := f.postBody(ctx, f.shared, f.member, "epoch-"+name, metadata, c7Body(c7PostBytes, 1)); !errors.Is(err, ErrInvalidEpochMetadata) {
+			t.Errorf("%s epoch: err = %v, want %v", name, err, ErrInvalidEpochMetadata)
+		}
+	}
+	// The same rule holds outside communities and with C7 off.
+	f.store.c7History = false
+	group, err := f.store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: f.owner.Account.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.post(ctx, group.ID, f.owner, "neg", json.RawMessage(`{"mls_epoch":-4}`)); !errors.Is(err, ErrInvalidEpochMetadata) {
+		t.Fatalf("negative epoch in a group: %v", err)
+	}
+	for _, metadata := range []string{`{"mls_epoch":0}`, `{"mls_epoch":12}`, `{"protocol_version":1}`} {
+		if _, err := f.post(ctx, group.ID, f.owner, "ok"+metadata, json.RawMessage(metadata)); err != nil {
+			t.Fatalf("%s: %v", metadata, err)
+		}
+	}
+}
+
 func TestC7FormerMemberKeysAndHistoryHideRules(t *testing.T) {
 	ctx := context.Background()
 	f := newC7Fixture(t, ctx)

@@ -45,6 +45,9 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err != nil {
 		return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
 	}
+	if err := checkMetadataEpoch(envelope.CryptoMetadata); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
