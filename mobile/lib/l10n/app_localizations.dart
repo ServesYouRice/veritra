@@ -6812,6 +6812,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Block screenshots and AI-assistant screen reading in chats.'**
   String get settingsScreenGuardDetail;
+
+  /// No description provided for @communityInfoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories and icon'**
+  String get communityInfoTitle;
+
+  /// No description provided for @communityIconChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an icon'**
+  String get communityIconChoose;
+
+  /// No description provided for @communityIconRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove icon'**
+  String get communityIconRemove;
+
+  /// No description provided for @communityCategories.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories'**
+  String get communityCategories;
+
+  /// No description provided for @communityCategoryNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New category'**
+  String get communityCategoryNew;
+
+  /// No description provided for @communityCategoryName.
+  ///
+  /// In en, this message translates to:
+  /// **'Category name'**
+  String get communityCategoryName;
+
+  /// No description provided for @communityCategoryRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename category'**
+  String get communityCategoryRename;
+
+  /// No description provided for @communityCategoryPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Category'**
+  String get communityCategoryPlaceholder;
+
+  /// No description provided for @communityCategoryNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No category'**
+  String get communityCategoryNone;
+
+  /// No description provided for @communityChannelPlaces.
+  ///
+  /// In en, this message translates to:
+  /// **'Where channels sit'**
+  String get communityChannelPlaces;
+
+  /// No description provided for @communityInfoSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save. Try again.'**
+  String get communityInfoSaveFailed;
+
+  /// No description provided for @communityInfoOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories and icon'**
+  String get communityInfoOpen;
 }
 
 class _AppLocalizationsDelegate

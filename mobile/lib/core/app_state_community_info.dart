@@ -181,8 +181,13 @@ extension CommunityInfoActions on AppState {
   ///
   /// Never call it from inside the session queue (`_run`): it sends, and a
   /// send queues behind the caller.
+  ///
+  /// [edit] changes the record built from what the app knows (icon,
+  /// categories, channel places) before it is sealed.
   Future<bool> publishCommunityInfo(String communityId,
-      {String? name, bool mint = false}) async {
+      {String? name,
+      bool mint = false,
+      CommunityInfoRecord Function(CommunityInfoRecord now)? edit}) async {
     final service = _info;
     if (service == null) return false;
     final known = name?.trim() ??
@@ -199,7 +204,7 @@ extension CommunityInfoActions on AppState {
           service.shown(infoKindCommunity, communityId)?.revision ?? 0;
       await service.publish(_communitySubject(communityId), (revision) {
         final now = _communityRecordNow(communityId, revision);
-        return CommunityInfoRecord(
+        final named = CommunityInfoRecord(
           kind: now.kind,
           subjectId: now.subjectId,
           revision: revision,
@@ -208,6 +213,7 @@ extension CommunityInfoActions on AppState {
           categories: now.categories,
           channels: now.channels,
         );
+        return edit == null ? named : edit(named);
       }, mint: mint, expectedRevision: revision);
       return true;
     } catch (err) {
@@ -227,8 +233,15 @@ extension CommunityInfoActions on AppState {
   /// admins restrict channel info (D80; the UI asks [mayEditCommunityInfo]).
   /// [mint] only for a private channel just created (its own key). Never
   /// call it from inside the session queue.
+  ///
+  /// [categoryId] moves a private channel (its record holds its place);
+  /// [moveCategory] says whether to apply it, so null can mean "none".
   Future<bool> publishChannelInfo(Channel channel,
-      {required String name, String topic = '', bool mint = false}) async {
+      {required String name,
+      String topic = '',
+      bool mint = false,
+      bool moveCategory = false,
+      String? categoryId}) async {
     final service = _info;
     if (service == null) return false;
     final private = channel.kind == 'private';
@@ -257,8 +270,13 @@ extension CommunityInfoActions on AppState {
           topic: topic.trim(),
           icon: current?.icon,
           privatePlace: private
-              ? current?.privatePlace ??
-                  InfoPrivatePlace(position: position < 0 ? 0 : position)
+              ? moveCategory
+                  ? InfoPrivatePlace(
+                      categoryId: categoryId,
+                      position: current?.privatePlace?.position ??
+                          (position < 0 ? 0 : position))
+                  : current?.privatePlace ??
+                      InfoPrivatePlace(position: position < 0 ? 0 : position)
               : null,
         ),
         mint: mint && private,
@@ -270,6 +288,161 @@ extension CommunityInfoActions on AppState {
           name: 'veritra.sync');
       return false;
     }
+  }
+
+  /// The community's categories in order, from its accepted record.
+  List<String> communityCategories(String communityId) =>
+      _info?.shown(infoKindCommunity, communityId)?.categories ??
+      const <String>[];
+
+  /// A category's encrypted name, or null (show a placeholder).
+  String? categoryDisplayName(String categoryId) {
+    final record = _info?.shown(infoKindCategory, categoryId);
+    return record == null || record.isTombstone ? null : record.name;
+  }
+
+  /// The category [channel] sits in, or null. An open channel's place is in
+  /// the community record; a private channel's in its own record, so members
+  /// outside it never learn where it sits.
+  String? channelCategory(Channel channel) {
+    final service = _info;
+    if (service == null) return null;
+    final String? id;
+    if (channel.kind == 'private') {
+      id = service.shown(infoKindChannel, channel.id)?.privatePlace?.categoryId;
+    } else {
+      id = service
+          .shown(infoKindCommunity, channel.communityId)
+          ?.channels
+          ?.where((p) => p.channelId == channel.id)
+          .firstOrNull
+          ?.categoryId;
+    }
+    return id != null && communityCategories(channel.communityId).contains(id)
+        ? id
+        : null;
+  }
+
+  /// The community's encrypted icon, or null.
+  ProfilePhoto? communityIcon(Community community) =>
+      _info?.shown(infoKindCommunity, community.id)?.icon;
+
+  /// Sets or clears ([icon] null) the community icon. Owners and admins only.
+  Future<bool> setCommunityIcon(String communityId, ProfilePhoto? icon) =>
+      publishCommunityInfo(communityId,
+          edit: (now) => CommunityInfoRecord(
+                kind: now.kind,
+                subjectId: now.subjectId,
+                revision: now.revision,
+                name: now.name,
+                icon: icon,
+                categories: now.categories,
+                channels: now.channels,
+              ));
+
+  /// Makes a category: its own encrypted record (under the community key),
+  /// then the community record lists it. Returns its id, or null. Owners and
+  /// admins only; the server binds the id to this community on first write.
+  Future<String?> createCommunityCategory(
+      String communityId, String name) async {
+    final service = _info;
+    final trimmed = name.trim();
+    if (service == null || trimmed.isEmpty) return null;
+    final existing = communityCategories(communityId);
+    if (existing.length >= infoMaxCategories) return null;
+    final random = Random.secure();
+    final hex = List<String>.generate(
+            16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
+        .join();
+    final id = 'cat_$hex';
+    if (!await _publishCategory(communityId, id, trimmed, expected: 0)) {
+      return null;
+    }
+    final listed = await publishCommunityInfo(communityId,
+        edit: (now) => CommunityInfoRecord(
+              kind: now.kind,
+              subjectId: now.subjectId,
+              revision: now.revision,
+              name: now.name,
+              icon: now.icon,
+              categories: <String>[
+                ...?now.categories?.where((c) => c != id),
+                id,
+              ],
+              channels: now.channels,
+            ));
+    return listed ? id : null;
+  }
+
+  /// Renames a category. Owners and admins only.
+  Future<bool> renameCommunityCategory(
+      String communityId, String categoryId, String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return Future.value(false);
+    return _publishCategory(communityId, categoryId, trimmed,
+        expected: _info?.shown(infoKindCategory, categoryId)?.revision ?? 0);
+  }
+
+  Future<bool> _publishCategory(
+      String communityId, String categoryId, String name,
+      {required int expected}) async {
+    final service = _info;
+    if (service == null) return false;
+    final pending = _infoPublishing[communityId];
+    if (pending != null) await pending;
+    try {
+      await service.publish(
+        InfoSubject(infoKindCategory, categoryId, communityId),
+        (revision) => CommunityInfoRecord(
+          kind: infoKindCategory,
+          subjectId: categoryId,
+          revision: revision,
+          name: name,
+        ),
+        expectedRevision: expected,
+      );
+      return true;
+    } catch (err) {
+      developer.log('c3_publish_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+      return false;
+    }
+  }
+
+  /// Puts [channel] in [categoryId] (null: none). An open channel's place is
+  /// the community record's (owners and admins); a private channel's is its
+  /// own record's.
+  Future<bool> placeChannel(Channel channel, String? categoryId) async {
+    if (categoryId != null &&
+        !communityCategories(channel.communityId).contains(categoryId)) {
+      return false;
+    }
+    if (channel.kind == 'private') {
+      final current = _info?.shown(infoKindChannel, channel.id);
+      final name = current?.name;
+      if (name == null) return false;
+      return publishChannelInfo(channel,
+          name: name,
+          topic: current?.topic ?? '',
+          moveCategory: true,
+          categoryId: categoryId);
+    }
+    return publishCommunityInfo(channel.communityId,
+        edit: (now) => CommunityInfoRecord(
+              kind: now.kind,
+              subjectId: now.subjectId,
+              revision: now.revision,
+              name: now.name,
+              icon: now.icon,
+              categories: now.categories,
+              channels: <InfoChannelPlace>[
+                for (final place in now.channels ?? const <InfoChannelPlace>[])
+                  place.channelId == channel.id
+                      ? InfoChannelPlace(
+                          channelId: place.channelId, categoryId: categoryId)
+                      : place,
+              ],
+            ));
   }
 
   /// After a member left [conversationId] (removed, kicked or banned): the

@@ -4143,6 +4143,42 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get settingsScreenGuardDetail =>
       'Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима.';
+
+  @override
+  String get communityInfoTitle => 'Категорије и иконица';
+
+  @override
+  String get communityIconChoose => 'Изабери иконицу';
+
+  @override
+  String get communityIconRemove => 'Уклони иконицу';
+
+  @override
+  String get communityCategories => 'Категорије';
+
+  @override
+  String get communityCategoryNew => 'Нова категорија';
+
+  @override
+  String get communityCategoryName => 'Назив категорије';
+
+  @override
+  String get communityCategoryRename => 'Преименуј категорију';
+
+  @override
+  String get communityCategoryPlaceholder => 'Категорија';
+
+  @override
+  String get communityCategoryNone => 'Без категорије';
+
+  @override
+  String get communityChannelPlaces => 'Где су канали';
+
+  @override
+  String get communityInfoSaveFailed => 'Чување није успело. Покушај поново.';
+
+  @override
+  String get communityInfoOpen => 'Категорије и иконица';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8289,4 +8325,40 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsScreenGuardDetail =>
       'Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.';
+
+  @override
+  String get communityInfoTitle => 'Kategorije i ikonica';
+
+  @override
+  String get communityIconChoose => 'Izaberi ikonicu';
+
+  @override
+  String get communityIconRemove => 'Ukloni ikonicu';
+
+  @override
+  String get communityCategories => 'Kategorije';
+
+  @override
+  String get communityCategoryNew => 'Nova kategorija';
+
+  @override
+  String get communityCategoryName => 'Naziv kategorije';
+
+  @override
+  String get communityCategoryRename => 'Preimenuj kategoriju';
+
+  @override
+  String get communityCategoryPlaceholder => 'Kategorija';
+
+  @override
+  String get communityCategoryNone => 'Bez kategorije';
+
+  @override
+  String get communityChannelPlaces => 'Gde su kanali';
+
+  @override
+  String get communityInfoSaveFailed => 'Čuvanje nije uspelo. Pokušaj ponovo.';
+
+  @override
+  String get communityInfoOpen => 'Kategorije i ikonica';
 }

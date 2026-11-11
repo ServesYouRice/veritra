@@ -4128,4 +4128,40 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsScreenGuardDetail =>
       'Block screenshots and AI-assistant screen reading in chats.';
+
+  @override
+  String get communityInfoTitle => 'Categories and icon';
+
+  @override
+  String get communityIconChoose => 'Choose an icon';
+
+  @override
+  String get communityIconRemove => 'Remove icon';
+
+  @override
+  String get communityCategories => 'Categories';
+
+  @override
+  String get communityCategoryNew => 'New category';
+
+  @override
+  String get communityCategoryName => 'Category name';
+
+  @override
+  String get communityCategoryRename => 'Rename category';
+
+  @override
+  String get communityCategoryPlaceholder => 'Category';
+
+  @override
+  String get communityCategoryNone => 'No category';
+
+  @override
+  String get communityChannelPlaces => 'Where channels sit';
+
+  @override
+  String get communityInfoSaveFailed => 'Could not save. Try again.';
+
+  @override
+  String get communityInfoOpen => 'Categories and icon';
 }

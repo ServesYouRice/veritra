@@ -4,6 +4,7 @@ import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/avatar.dart';
+import '../../ui/photo_avatar.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/validation.dart';
@@ -13,6 +14,7 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 import 'membership_screens.dart';
+import 'community_info_screen.dart';
 import 'create_channel_dialog.dart';
 import 'edit_info_dialog.dart';
 import '../../ui/widgets/refresh_action.dart';
@@ -293,6 +295,18 @@ class _CommunityCard extends StatelessWidget {
     final channels =
         state.channelsByCommunity[community.id] ?? const <Channel>[];
     final colors = avatarColorsFor(context, community.id);
+    final icon = state.communityIcon(community);
+    // C3: channels grouped by their encrypted category; uncategorised first.
+    final categories = state.communityCategories(community.id);
+    final placed = <String?, List<Channel>>{};
+    for (final channel in channels) {
+      (placed[state.channelCategory(channel)] ??= <Channel>[]).add(channel);
+    }
+    final groups = <(String?, List<Channel>)>[
+      if (placed[null] != null) (null, placed[null]!),
+      for (final id in categories)
+        if (placed[id] != null) (id, placed[id]!),
+    ];
     return Padding(
       padding: const EdgeInsets.only(bottom: BoneSpacing.md),
       child: TileGroup(
@@ -300,21 +314,26 @@ class _CommunityCard extends StatelessWidget {
           ListTile(
             // Decorative: the community name is already the tile title.
             leading: ExcludeSemantics(
-              child: Container(
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: colors.fill,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: colors.ring),
-                ),
-                child: Icon(
-                  Icons.groups_outlined,
-                  size: 18,
-                  color: colors.glyph,
-                ),
-              ),
+              child: icon != null
+                  ? PhotoAvatar(
+                      png: icon.png,
+                      radius: 20,
+                      fallback: const Icon(Icons.groups_outlined, size: 18))
+                  : Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: colors.fill,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: colors.ring),
+                      ),
+                      child: Icon(
+                        Icons.groups_outlined,
+                        size: 18,
+                        color: colors.glyph,
+                      ),
+                    ),
             ),
             title: Text(state.communityDisplayName(community) ??
                 context.l10n.communityPlaceholderName),
@@ -333,6 +352,20 @@ class _CommunityCard extends StatelessWidget {
                     onPressed: state.busy ? null : () => _editInfo(context),
                     icon: const Icon(Icons.edit_outlined),
                   ),
+                if (community.sharedConversationId != null &&
+                    (state.mayEditCommunityInfo(community.id, 'community') ||
+                        categories.isNotEmpty))
+                  IconButton(
+                    key: Key('community-info-${community.id}'),
+                    tooltip: context.l10n.communityInfoOpen,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => CommunityInfoScreen(
+                            state: state, community: community),
+                      ),
+                    ),
+                    icon: const Icon(Icons.folder_outlined),
+                  ),
                 if (state.canCreateChannel(community.id))
                   IconButton(
                     tooltip: context.l10n.communityNewChannel,
@@ -349,24 +382,37 @@ class _CommunityCard extends StatelessWidget {
               title: Text(context.l10n.communityNoChannels),
               subtitle: Text(context.l10n.communityNoChannelsHint),
             ),
-          for (final channel in channels)
-            _ChannelTile(
-              channel: channel,
-              title: state.channelDisplayName(channel) ??
-                  (channel.kind == 'private'
-                      ? context.l10n.channelPrivatePlaceholderName
-                      : context.l10n.channelPlaceholderName),
-              topic: state.channelTopic(channel),
-              conversationId: _conversationIdFor(channel),
-              onOpen: onOpenChannel,
-              // C3: editing shows only where every other device will accept
-              // the edit (the verified role state, D80).
-              onEdit: channel.isRouted &&
-                      _conversationIdFor(channel) != null &&
-                      state.mayEditCommunityInfo(community.id, 'channel')
-                  ? () => _editInfo(context, channel: channel)
-                  : null,
-            ),
+          for (final (category, members) in groups) ...<Widget>[
+            if (category != null)
+              ListTile(
+                dense: true,
+                leading: const SizedBox(
+                    width: 40, child: Icon(Icons.folder_outlined, size: 18)),
+                title: Text(
+                  state.categoryDisplayName(category) ??
+                      context.l10n.communityCategoryPlaceholder,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ),
+            for (final channel in members)
+              _ChannelTile(
+                channel: channel,
+                title: state.channelDisplayName(channel) ??
+                    (channel.kind == 'private'
+                        ? context.l10n.channelPrivatePlaceholderName
+                        : context.l10n.channelPlaceholderName),
+                topic: state.channelTopic(channel),
+                conversationId: _conversationIdFor(channel),
+                onOpen: onOpenChannel,
+                // C3: editing shows only where every other device will accept
+                // the edit (the verified role state, D80).
+                onEdit: channel.isRouted &&
+                        _conversationIdFor(channel) != null &&
+                        state.mayEditCommunityInfo(community.id, 'channel')
+                    ? () => _editInfo(context, channel: channel)
+                    : null,
+              ),
+          ],
         ],
       ),
     );

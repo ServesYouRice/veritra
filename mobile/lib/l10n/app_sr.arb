@@ -1183,5 +1183,17 @@
   "settingsUpdateError": "Провера ажурирања није успела",
   "settingsUpdateDisabled": "Аутоматска провера ажурирања је искључена",
   "settingsScreenGuard": "Заштита екрана",
-  "settingsScreenGuardDetail": "Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима."
+  "settingsScreenGuardDetail": "Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима.",
+  "communityInfoTitle": "Категорије и иконица",
+  "communityIconChoose": "Изабери иконицу",
+  "communityIconRemove": "Уклони иконицу",
+  "communityCategories": "Категорије",
+  "communityCategoryNew": "Нова категорија",
+  "communityCategoryName": "Назив категорије",
+  "communityCategoryRename": "Преименуј категорију",
+  "communityCategoryPlaceholder": "Категорија",
+  "communityCategoryNone": "Без категорије",
+  "communityChannelPlaces": "Где су канали",
+  "communityInfoSaveFailed": "Чување није успело. Покушај поново.",
+  "communityInfoOpen": "Категорије и иконица"
 }

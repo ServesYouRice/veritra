@@ -375,12 +375,26 @@ Overlapping removals now invalidate the older rotation's token before further
 re-sealing, even if its new key was already delivered. The newer mark retains
 its own fresh key and is not delayed by the abandoned pass's backoff.
 
-**Still left:** channel conversion UI;
-icons and the category screens; and step
-4 (`400 plaintext_name_refused`, dropping the plaintext columns). Step 4
-waits for C4's client role wiring: until the app holds a verified role
-record, nothing another account wrote is shown, so new names come only from
-the legacy server name. Rules from the first review that still bind:
+**Step 4 and category/icon screens (2026-11-11):** migration 0080 drops
+`communities.name`, `channels.name` and their search indexes and clears
+community channel titles. Creation answers `400 plaintext_name_refused` to a
+non-empty name; the app sends none and shows only the encrypted record or a
+placeholder. The server's name search and community names in invite previews
+are gone. Consequence: with `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` off (the
+default, and the demos), a new community has no shared group, so no info key
+home and only placeholders. Turning the layout on by default is an owner
+decision tied to the app's release (operations.md). A "Categories and icon"
+screen sets the community icon, creates and renames categories, and places
+channels (open: community record; private: the channel's own record); the
+community card groups channels by category. Key freshness: see docs/crypto.md
+("C3 key freshness", local schema 35).
+
+**Still left:** channel conversion (open to private and back: a server route
+and MLS group move, not built); category deletion (tombstone and id reuse);
+and app-to-app acceptance evidence with production C4 role records. Until the
+app holds a verified role record, nothing another account wrote is shown.
+After any removal a non-admin's rotation obligation never completes, so it
+cannot edit channel info again (contrary to D80's "any member"). Rules from the first review that still bind:
 
 - Reuse a tombstoned category ID before minting a new one: the server's
   200-binding bound is for the community's whole life.

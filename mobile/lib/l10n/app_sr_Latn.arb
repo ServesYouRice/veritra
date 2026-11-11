@@ -1210,5 +1210,17 @@
   "settingsUpdateError": "Provera ažuriranja nije uspela",
   "settingsUpdateDisabled": "Automatska provera ažuriranja je isključena",
   "settingsScreenGuard": "Zaštita ekrana",
-  "settingsScreenGuardDetail": "Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima."
+  "settingsScreenGuardDetail": "Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.",
+  "communityInfoTitle": "Kategorije i ikonica",
+  "communityIconChoose": "Izaberi ikonicu",
+  "communityIconRemove": "Ukloni ikonicu",
+  "communityCategories": "Kategorije",
+  "communityCategoryNew": "Nova kategorija",
+  "communityCategoryName": "Naziv kategorije",
+  "communityCategoryRename": "Preimenuj kategoriju",
+  "communityCategoryPlaceholder": "Kategorija",
+  "communityCategoryNone": "Bez kategorije",
+  "communityChannelPlaces": "Gde su kanali",
+  "communityInfoSaveFailed": "Čuvanje nije uspelo. Pokušaj ponovo.",
+  "communityInfoOpen": "Kategorije i ikonica"
 }

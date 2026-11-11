@@ -1446,5 +1446,17 @@
   "settingsUpdateError": "Could not check for updates",
   "settingsUpdateDisabled": "Automatic update checks are turned off",
   "settingsScreenGuard": "Screen guard",
-  "settingsScreenGuardDetail": "Block screenshots and AI-assistant screen reading in chats."
+  "settingsScreenGuardDetail": "Block screenshots and AI-assistant screen reading in chats.",
+  "communityInfoTitle": "Categories and icon",
+  "communityIconChoose": "Choose an icon",
+  "communityIconRemove": "Remove icon",
+  "communityCategories": "Categories",
+  "communityCategoryNew": "New category",
+  "communityCategoryName": "Category name",
+  "communityCategoryRename": "Rename category",
+  "communityCategoryPlaceholder": "Category",
+  "communityCategoryNone": "No category",
+  "communityChannelPlaces": "Where channels sit",
+  "communityInfoSaveFailed": "Could not save. Try again.",
+  "communityInfoOpen": "Categories and icon"
 }
