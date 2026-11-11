@@ -302,9 +302,10 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
   String _unbound(String sid) => 'unbound:$sid';
 
   Future<void> _subscribed(SfuRemoteTrack track) async {
-    await track.setPlaying(false);
     final RoomFrameCryptor cryptor;
     try {
+      // A track that cannot be muted is never kept.
+      await track.setPlaying(false);
       cryptor = await sfu.receiverCryptor(track, _unbound(track.sid));
       if (!await cryptor.setEnabled(true)) {
         await cryptor.dispose();

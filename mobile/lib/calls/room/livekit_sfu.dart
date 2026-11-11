@@ -50,6 +50,14 @@ class LiveKitSfuConnection implements SfuConnection {
     final listener = _listener = _room.createListener();
     listener
       ..on<lk.TrackSubscribedEvent>((event) {
+        // Muted here, synchronously, before the event crosses the stream:
+        // nothing plays until the session binds the track through MLS.
+        try {
+          _setTrackEnabled(event.track, false);
+        } catch (_) {
+          event.publication.unsubscribe();
+          return;
+        }
         _events.add(SfuTrackSubscribed(_LiveKitRemoteTrack(
             event.participant, event.publication, event.track)));
       })

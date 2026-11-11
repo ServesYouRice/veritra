@@ -96,8 +96,13 @@ class FakeRemoteTrack implements SfuRemoteTrack {
   final String participant;
   bool playing = true; // what a raw subscription would do
   bool unsubscribed = false;
+  bool refusesMute = false;
   @override
-  Future<void> setPlaying(bool on) async => playing = on;
+  Future<void> setPlaying(bool on) async {
+    if (!on && refusesMute) throw StateError('cannot mute');
+    playing = on;
+  }
+
   @override
   Future<void> unsubscribe() async => unsubscribed = true;
 }
@@ -461,6 +466,20 @@ void main() {
     final b2 = await start('b');
     await admit(a, b2);
     expect(a.sfu.remote['TR_sfu_b_0']!.unsubscribed, isTrue);
+    await end([a, b2]);
+  });
+
+  test('a remote track that cannot be muted is dropped, never played',
+      () async {
+    final a = await start('a');
+    final b2 = await start('b');
+    await admit(a, b2);
+    final stuck = FakeRemoteTrack('TR_stuck', 'sfu_b')..refusesMute = true;
+    a.sfu.emit(SfuTrackSubscribed(stuck));
+    await a.settle();
+    expect(stuck.unsubscribed, isTrue);
+    expect(a.sfu.receiverFor('TR_stuck'), isNull);
+    expect(a.media.boundTracks.containsKey('TR_stuck'), isFalse);
     await end([a, b2]);
   });
 

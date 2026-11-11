@@ -472,8 +472,10 @@ receive path handles every slot); the call-group context extension binding
 services and iOS broadcast extension; the core keeping
 `pm_crypto_group_b6_media_key` to call groups (would need an ABI change).
 Known gaps to check in S1: a published track sends clear silence until its
-cryptor is attached (no content); a remote track can play for the moment
-between subscription and the cryptor attaching; constant bitrate and the
+cryptor is attached (no content); a remote track is muted synchronously
+in LiveKit's subscribe event and dropped if it cannot be muted, but
+libwebrtc may render frames that arrive before that event fires, with no
+cryptor yet; constant bitrate and the
 audio-level header extension cannot be set through `livekit_client` (O4 is
 only partly met). Android and iOS builds of the new plugin are not checked
 here. Needs the independent crypto review before S2 lands; the scratch
