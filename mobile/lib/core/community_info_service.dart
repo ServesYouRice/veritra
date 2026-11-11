@@ -347,7 +347,9 @@ class CommunityInfoService {
     if (roles == null) return null;
     final moderators = verifiedModerators(roles);
     if (moderators.isEmpty) return null;
-    return _freshest(home, keys, moderators.contains);
+    // Freshness counts the owner's and admins' rows too: a moderator
+    // re-sending a key retired by a removal must not make it fresh again.
+    return _freshest(home, keys, (a) => admin(a) || moderators.contains(a));
   }
 
   /// Who else's delivery of [home]'s current key covers a due rotation

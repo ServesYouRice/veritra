@@ -2146,6 +2146,43 @@ void main() {
     expect((await member.service.currentKey(home, _community))?.keyId, rotated);
   }, skip: skip);
 
+  test(
+      'a moderator re-sending a key retired by a removal never makes it '
+      'current again', () async {
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final devices = <String, _Device>{
+      for (final name in ['second', 'mod', 'member'])
+        name: device(name, {_privateConv},
+            admin: name == 'second', verified: modStaff, roster: true),
+    };
+    final admin = devices['second']!;
+    await admin.service
+        .publish(private, (r) => secret('Secret', r), mint: true);
+    final home = admin.service.homeOf(private)!;
+    final key = (await admin.service.currentKey(home, _community))!;
+    await net.deliver(
+        admin,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    final mod = devices['mod']!;
+    final member = devices['member']!;
+    for (final d in devices.values) {
+      await d.service.refresh(private);
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    // The moderator sends the old key again, in an epoch after the removal.
+    await net.deliverAs(mod, 'dev_mod', _privateConv, AppPayloadType.infoKey,
+        infoKeyBody(subjectKind: 'channel', subjectId: _private, key: key.key!),
+        epoch: 3);
+    for (final d in devices.values) {
+      expect((await d.service.currentKey(home, _community))?.keyId,
+          isNot(key.keyId));
+    }
+  }, skip: skip);
+
   test('with the first admin offline, the next one rotates after its turn',
       () async {
     final devices = await staffAfterRemoval(['admin', 'second', 'third']);
