@@ -276,6 +276,73 @@ void main() {
     expect(member.sent, isEmpty);
   }, skip: skip);
 
+  test('rotation stays pending until its announcement is queued', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final member = device('member', {_shared});
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await member.service.requestKey(home);
+    await admin.service.answerRequests(home, _community);
+    await member.service.refresh(community);
+    await admin.service.markRotationDue(home, _community);
+    net.refuseType = AppPayloadType.infoUpdate;
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+    expect(await member.service.refresh(community), isA<InfoKept>());
+    net.refuseType = null;
+    now = now.add(const Duration(minutes: 2));
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    expect(await admin.service.dueRotations(), isEmpty);
+    expect(await member.service.refresh(community), isA<InfoAccepted>());
+  }, skip: skip);
+
+  test('snapshot edits refuse newer metadata, including on conflict retry',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final original = server.records[community.key]!;
+    final advanced = ServedCommunityInfo(
+        subjectKind: original.subjectKind,
+        subjectId: original.subjectId,
+        version: 2,
+        keyId: original.keyId,
+        blob: original.blob);
+    server.beforePut = () async => server.records[community.key] = advanced;
+    await expectLater(
+        admin.service.publish(community, (r) => named('Stale edit', r),
+            expectedRevision: 1),
+        throwsA(isA<InfoVersionConflict>()));
+    expect(server.puts, 1);
+    expect(server.records[community.key], same(advanced));
+    await expectLater(
+        admin.service.publish(community, (r) => named('Stale edit', r),
+            expectedRevision: 1),
+        throwsA(isA<InfoVersionConflict>()));
+    expect(server.puts, 1);
+  }, skip: skip);
+
+  test('an unauthorized matching announcement cannot suppress healing',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final member = device('member', {_shared});
+    net.refuseType = AppPayloadType.infoUpdate;
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    net.refuseType = null;
+    final served = server.records[community.key]!;
+    await net.deliver(
+        member,
+        _shared,
+        AppPayloadType.infoUpdate,
+        infoUpdateBody(
+            subjectKind: infoKindCommunity,
+            subjectId: _community,
+            revision: served.version,
+            keyId: served.keyId,
+            recordSha256: CommunityInfoCodec.recordSha256(served.blob)));
+    expect(await admin.service.healAnnouncement(community), isTrue);
+    expect(admin.sent.single.$2, AppPayloadType.infoUpdate);
+  }, skip: skip);
+
   test('an unrelated member key cannot suppress an admin answer', () async {
     final admin = device('admin', {_shared}, admin: true);
     await admin.service.publish(community, (r) => named('Club', r), mint: true);

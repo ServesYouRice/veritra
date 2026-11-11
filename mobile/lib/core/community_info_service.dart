@@ -257,14 +257,17 @@ class CommunityInfoService {
   /// subject is being created. Otherwise a device without the key asks for
   /// it and throws [InfoKeyMissing], so no parallel key ever appears. An
   /// announcement that could not be queued is sent again by [refresh].
+  /// [expectedRevision] protects edits that preserve fields from a displayed
+  /// snapshot: a newer server record must be fetched before trying again.
   Future<CommunityInfoRecord> publish(
     InfoSubject subject,
     CommunityInfoRecord Function(int revision) build, {
     int attempts = 3,
     bool mint = false,
+    int? expectedRevision,
   }) =>
-      _serializeWrites(
-          () => _publish(subject, build, attempts: attempts, mint: mint));
+      _serializeWrites(() => _publish(subject, build,
+          attempts: attempts, mint: mint, expectedRevision: expectedRevision));
 
   Future<void> _checkWritable(InfoKeyHome home,
       {required bool rotating}) async {
@@ -304,8 +307,8 @@ class CommunityInfoService {
           subjectId: subject.id,
           communityId: subject.communityId);
       final version = served?.version ?? 0;
-      // Rotation preserves content; it must never re-publish an older
-      // snapshot over an edit made by another device.
+      // A snapshot-based edit or rotation must never re-publish older
+      // preserved fields over an edit made by another device.
       if (expectedRevision != null && version != expectedRevision) {
         throw const InfoVersionConflict();
       }
@@ -351,7 +354,9 @@ class CommunityInfoService {
         blob: blob,
       ));
       _show(subject, record);
-      await _announce(subject, home, stored, key.keyId!, blob);
+      final announced =
+          await _announce(subject, home, stored, key.keyId!, blob);
+      if (withKey != null && !announced) throw const InfoKeyMissing();
       return record;
     }
   }
@@ -420,10 +425,14 @@ class CommunityInfoService {
     final digest = CommunityInfoCodec.recordSha256(accepted.blob);
     final updates = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.update, subject.kind, subject.id);
+    final policy = policyFor(subject.communityId);
     if (updates.any((u) =>
         u.revision == accepted.revision &&
+        u.keyId == accepted.keyId &&
         u.recordSha256 == digest &&
-        u.conversationId == home.conversationId)) {
+        u.conversationId == home.conversationId &&
+        (u.senderAccountId == accountId ||
+            policy.mayEdit(u.senderAccountId, subject.kind)))) {
       return false;
     }
     return _announce(

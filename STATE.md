@@ -7,6 +7,13 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-09.**
 
+2026-11-11 C3 final review: fixed snapshot edits overwriting unseen metadata,
+rotation completion without an announcement, and unauthorized announcements
+suppressing retries. Full Windows test/lint pass (2,442 Flutter tests).
+C3 remains incomplete. A reproduced key-ordering flaw after bounded key
+pruning can select a retired key again; this and the outstanding integration
+are blockers. See [`review evidence`](testing/evidence/C3-final-review-2026-11-11.md).
+
 2026-11-10 C3 review: fixed stale-record overwrites during key rotation,
 incomplete rotation completion, wrong-key announcements and stale admin
 availability. C3 remains incomplete; production role wiring, remote-removal

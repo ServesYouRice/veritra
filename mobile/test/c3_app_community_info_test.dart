@@ -318,6 +318,31 @@ void main() {
     expect(state.errorFor(Ops.communityInfo), isNull);
   }, skip: nativeCryptoSkip());
 
+  test('an editor never promotes an unseen server revision over its snapshot',
+      () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final api = _Api();
+    final state = AppState(
+        apiClientFactory: (_) => api,
+        syncServiceFactory: (_, __) => _QuietSync(),
+        localStore: MemoryLocalStore(),
+        cryptoService: _InfoCrypto(bindings));
+    state.session = _session;
+    state.api = api;
+    final id = 'comm_${'1' * 32}';
+    state.communities = [
+      Community(id: id, name: 'Club', sharedConversationId: 'conv_shared'),
+    ];
+    expect(
+        await state.publishCommunityInfo(id, name: 'Club', mint: true), isTrue);
+    final first = api.records['community|$id']!;
+    api.records['community|$id'] =
+        (version: 2, keyId: first.keyId, blob: first.blob);
+    expect(await state.publishCommunityInfo(id, name: 'My edit'), isFalse);
+    expect(api.puts, 1);
+    expect(state.communityDisplayName(state.communities.single), 'Club');
+  }, skip: nativeCryptoSkip());
+
   test('creating a channel never waits on its own info sends (no deadlock)',
       () async {
     final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());

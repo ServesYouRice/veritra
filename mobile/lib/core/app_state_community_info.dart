@@ -188,6 +188,9 @@ extension CommunityInfoActions on AppState {
     _infoPublishing[communityId] = done.future;
     if (previous != null) await previous;
     try {
+      await service.loadAccepted(_communitySubject(communityId));
+      final revision =
+          service.shown(infoKindCommunity, communityId)?.revision ?? 0;
       await service.publish(_communitySubject(communityId), (revision) {
         final now = _communityRecordNow(communityId, revision);
         return CommunityInfoRecord(
@@ -199,7 +202,7 @@ extension CommunityInfoActions on AppState {
           categories: now.categories,
           channels: now.channels,
         );
-      }, mint: mint);
+      }, mint: mint, expectedRevision: revision);
       return true;
     } catch (err) {
       // Body-free: no name, key or server text.
@@ -229,14 +232,17 @@ extension CommunityInfoActions on AppState {
             .toList()
             .indexWhere((c) => c.id == channel.id)
         : 0;
-    final current = service.shown(infoKindChannel, channel.id);
     // A community record still being written (its key made at creation)
     // finishes first, so an open channel created right after finds the key.
     final pending = _infoPublishing[channel.communityId];
     if (pending != null) await pending;
     try {
+      final subject =
+          InfoSubject(infoKindChannel, channel.id, channel.communityId);
+      await service.loadAccepted(subject);
+      final current = service.shown(infoKindChannel, channel.id);
       await service.publish(
-        InfoSubject(infoKindChannel, channel.id, channel.communityId),
+        subject,
         (revision) => CommunityInfoRecord(
           kind: infoKindChannel,
           subjectId: channel.id,
@@ -250,6 +256,7 @@ extension CommunityInfoActions on AppState {
               : null,
         ),
         mint: mint && private,
+        expectedRevision: current?.revision ?? 0,
       );
       return true;
     } catch (err) {
