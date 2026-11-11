@@ -3,6 +3,9 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart'
+    show BackupHeaderInfo, OpenedBackup;
+import 'dart:typed_data';
 import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, PendingEnrollmentConflict;
@@ -10,10 +13,27 @@ import 'package:private_messenger/storage/local_store.dart';
 
 import 'k0_recovery_fakes.dart';
 
+/// A build that can open K1 backups: the recovery follow-up then starts with
+/// the restore step (K1-4).
+class _RestoringCrypto extends K0Crypto implements BackupOpenCryptoService {
+  @override
+  BackupHeaderInfo peekK1Backup(Uint8List prefix) => throw UnimplementedError();
+
+  @override
+  Future<OpenedBackup> openK1Backup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  }) async =>
+      throw UnimplementedError();
+}
+
 /// K0 R3 (recovery key setup) and R4 (recovery when every device is lost)
 /// through AppState against a fake server (docs/designs/K0-recovery-
 /// enrollment.md).
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final l10n = englishL10n;
   late K0Server server;
   late MemoryLocalStore store;
@@ -408,6 +428,40 @@ void main() {
       expect(server.passwords.single, 'a new long password');
       expect(state.recoveryFollowUp, isNull);
       expect(await store.loadSetting('k0.recovery_follow_up'), '');
+    });
+
+    test('with backups to restore, the follow-up starts at the restore step',
+        () async {
+      state.dispose();
+      crypto = _RestoringCrypto();
+      state = k0App(server, store, crypto, apis: apis);
+      await claim();
+      server.statusAnswers.add(const AccountRecoveryStatus(
+        phase: AccountRecoveryPhase.completed,
+        accountId: 'acct_me',
+        deviceId: 'dev_new',
+        token: 'tok_new',
+      ));
+      expect(await state.checkAccountRecovery(), isTrue);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      // The lost phone's copy opens with the old key, so nothing replaces
+      // that key before the restore is done or skipped.
+      expect(server.puts, isEmpty);
+
+      // A crash here resumes at the same step.
+      state.dispose();
+      state = k0App(server, store, crypto, apis: apis);
+      await state.tryRestoreSession();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+
+      await state.finishRecoveryRestoreStep();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      await state.finishRecoveryRestoreStep();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+      state.dispose();
+      state = k0App(server, store, crypto, apis: apis);
+      await state.tryRestoreSession();
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
     });
 
     test('a crash between session and MLS state reopens the identity',

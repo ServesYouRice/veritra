@@ -228,21 +228,21 @@ func TestK1UploadLoopKeepsTwoFilesAndRefusalsNone(t *testing.T) {
 	}
 }
 
-// Above the allowance the upload answers the storage-quota error and its
+// Backup space is the account quota (migration 0079): above it the upload answers the storage-quota error and its
 // file is removed.
-func TestK1UploadOverTheAllowanceIsRefusedAndCleanedUp(t *testing.T) {
+func TestK1UploadOverTheAccountQuotaIsRefusedAndCleanedUp(t *testing.T) {
 	f := newRecoveryFixture(t, recoveryTestOrigin)
 	f.setRK(f.ownerToken)
 	rkID := f.accountRKID()
 	now := recoveryTestTime(time.Now())
-	// Another device of the account already holds the whole allowance.
+	// Another device of the account already holds the whole account quota.
 	f.exec(`INSERT INTO devices(id, account_id, name, key_package, auth_secret_hash, created_at) VALUES('dev_k1_full', ?, 'desktop', X'01', 'hash', ?)`, f.ownerAccountID, now)
 	f.exec(`INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, kind, rk_id, counter)
-		VALUES('backup_k1_full', ?, 'dev_k1_full', 'blob_k1_full', '', ?, '{}', ?, 1, ?, 1)`, f.ownerAccountID, 2*(64<<20+64*20+416), now, rkID)
+		VALUES('backup_k1_full', ?, 'dev_k1_full', 'blob_k1_full', '', ?, '{}', ?, 1, ?, 1)`, f.ownerAccountID, 512<<20, now, rkID)
 	before := f.blobFiles()
 	status, body := f.postK1(f.ownerToken, k1Metadata(rkID, 1), []byte("one byte too many"), nil)
 	if status != http.StatusInsufficientStorage || !bytes.Contains(body, []byte("storage_quota_exceeded")) {
-		t.Fatalf("over the allowance: %d %s", status, body)
+		t.Fatalf("over the quota: %d %s", status, body)
 	}
 	if n := f.blobFiles(); n != before {
 		t.Fatalf("the refused upload left %d files", n-before)

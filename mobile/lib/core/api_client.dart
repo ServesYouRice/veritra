@@ -1653,6 +1653,51 @@ class ApiClient {
     await _readJsonResponse(response);
   }
 
+  /// `GET /api/v1/backups`: the account's backups. Rows are the server's
+  /// claims; the restore opens the container to trust anything.
+  Future<List<Map<String, Object?>>> listBackups(String token,
+      {int limit = 100}) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/backups?limit=$limit', token: token);
+    final backups = json['backups'];
+    if (backups is! List) throw const ApiResponseException();
+    return <Map<String, Object?>>[
+      for (final b in backups)
+        if (b is Map) Map<String, Object?>.from(b),
+    ];
+  }
+
+  /// `GET /api/v1/backups/{id}` with the session: the sealed container, or
+  /// the byte range [start]..[end] of it (the header peek). The stream is
+  /// bounded by [k1MaxBackupCiphertextBytes]; the server verifies every
+  /// chunk before sending it.
+  Future<Stream<List<int>>> downloadBackup(String token, String id,
+      {int? start, int? end}) async {
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id) ||
+        (start != null && (start < 0 || (end != null && end < start)))) {
+      throw ArgumentError('invalid backup download');
+    }
+    final request = await _openRequest(
+      'GET',
+      Uri.parse(baseUrl).resolve('/api/v1/backups/$id'),
+    );
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    if (start != null) {
+      request.headers.set('Range', 'bytes=$start-${end ?? ''}');
+    }
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final ranged = start != null;
+    if (response.statusCode != (ranged ? 206 : 200)) {
+      // A 200 for a range is the whole file; a 206 for none is not ours.
+      await _discard(response);
+      throw const ApiResponseException();
+    }
+    return _boundedStream(response, k1MaxBackupCiphertextBytes);
+  }
+
   Future<Stream<List<int>>> recoverEncryptedBackup(
     List<int> recoveryToken, {
     int? startOffset,

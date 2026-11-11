@@ -9,6 +9,7 @@ import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/tile_group.dart';
+import 'k1_restore_screen.dart';
 import 'recovery_key_screen.dart';
 
 /// The status line of K1 automatic backups, for the settings tile and the
@@ -119,6 +120,18 @@ class AutoBackupScreen extends StatelessWidget {
                   onPressed: () => _typeKey(context),
                   child: Text(l10n.autoBackupTypeKey),
                 ),
+              if (state.k1RestoreSupported) ...<Widget>[
+                const SizedBox(height: BoneSpacing.sm),
+                OutlinedButton(
+                  key: const ValueKey<String>('auto-backup-restore'),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => K1RestoreScreen(state: state),
+                    ),
+                  ),
+                  child: Text(l10n.k1RestoreOpen),
+                ),
+              ],
               if (view == K1BackupView.noKey)
                 FilledButton(
                   key: const ValueKey<String>('auto-backup-create-key'),
@@ -141,7 +154,7 @@ class AutoBackupScreen extends StatelessWidget {
     final messenger = ScaffoldMessenger.of(context);
     final typed = await showDialog<String>(
       context: context,
-      builder: (_) => const _RecoveryKeyDialog(),
+      builder: (_) => const RecoveryKeyTypeDialog(),
     );
     if (typed == null || typed.trim().isEmpty) return;
     final ok = await state.enableK1BackupsWithKey(typed);
@@ -152,14 +165,14 @@ class AutoBackupScreen extends StatelessWidget {
 
 /// Asks for the recovery key. The typed text cannot be wiped from a Dart
 /// string; the field is cleared when the dialog goes (best effort, K0).
-class _RecoveryKeyDialog extends StatefulWidget {
-  const _RecoveryKeyDialog();
+class RecoveryKeyTypeDialog extends StatefulWidget {
+  const RecoveryKeyTypeDialog();
 
   @override
-  State<_RecoveryKeyDialog> createState() => _RecoveryKeyDialogState();
+  State<RecoveryKeyTypeDialog> createState() => RecoveryKeyTypeDialogState();
 }
 
-class _RecoveryKeyDialogState extends State<_RecoveryKeyDialog> {
+class RecoveryKeyTypeDialogState extends State<RecoveryKeyTypeDialog> {
   final TextEditingController _controller = TextEditingController();
 
   @override
