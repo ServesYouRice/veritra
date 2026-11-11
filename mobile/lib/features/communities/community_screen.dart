@@ -333,11 +333,12 @@ class _CommunityCard extends StatelessWidget {
                     onPressed: state.busy ? null : () => _editInfo(context),
                     icon: const Icon(Icons.edit_outlined),
                   ),
-                IconButton(
-                  tooltip: context.l10n.communityNewChannel,
-                  onPressed: state.busy ? null : onCreateChannel,
-                  icon: const Icon(Icons.add),
-                ),
+                if (state.mayCreateCommunityChannel(community.id))
+                  IconButton(
+                    tooltip: context.l10n.communityNewChannel,
+                    onPressed: state.busy ? null : onCreateChannel,
+                    icon: const Icon(Icons.add),
+                  ),
               ],
             ),
           ),

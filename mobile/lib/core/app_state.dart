@@ -573,6 +573,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   // until their first fetch resolves.
   bool conversationsLoaded = false;
   bool communitiesLoaded = false;
+  final Map<String, bool> _channelCreationAccess = {};
+  Session? _channelCreationSession;
+  int _channelCreationGeneration = 0;
+  int _communityRefreshRequest = 0;
+
   bool invitesLoaded = false;
 
   /// True when the last [refreshInvites] could not list the invites. The
@@ -2054,6 +2059,14 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   bool _refreshOwned(Session current, int generation) =>
       !_disposed && _syncOwnerActive(current, generation);
 
+  /// Availability only: the server checks creation rights on every write.
+  /// Never use this roster hint to authenticate encrypted info records.
+  bool mayCreateCommunityChannel(String communityId) =>
+      _channelCreationSession != null &&
+      identical(session, _channelCreationSession) &&
+      _sessionGeneration == _channelCreationGeneration &&
+      _channelCreationAccess[communityId] == true;
+
   /// Refreshes communities (and their channels) the account belongs to.
   /// Best-effort for the same reason as [refreshInvites].
   Future<void> refreshCommunities() async {
@@ -2063,28 +2076,48 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return;
     }
     final generation = _sessionGeneration;
+    final request = ++_communityRefreshRequest;
+    _channelCreationAccess.clear();
+    _channelCreationSession = current;
+    _channelCreationGeneration = generation;
+    notifyListeners();
+    bool active() =>
+        request == _communityRefreshRequest &&
+        _refreshOwned(current, generation);
     try {
       final list = await client.listCommunities(current.token);
       final channels = <String, List<Channel>>{};
+      final creationAccess = <String, bool>{};
       for (final community in list) {
-        if (!_refreshOwned(current, generation)) return;
+        if (!active()) return;
         try {
           channels[community.id] =
               await client.listChannels(current.token, community.id);
         } catch (_) {
-          if (!_refreshOwned(current, generation)) return;
+          if (!active()) return;
           channels[community.id] =
               channelsByCommunity[community.id] ?? const <Channel>[];
         }
+        if (!active()) return;
+        try {
+          final members =
+              await client.communityMembers(current.token, community.id);
+          creationAccess[community.id] = members.any((member) =>
+              member.accountId == current.accountId &&
+              (member.role == 'owner' || member.role == 'admin'));
+        } catch (_) {
+          // Unknown rights hide the entry; refresh can try again later.
+        }
       }
-      if (!_refreshOwned(current, generation)) return;
+      if (!active()) return;
       communities = list;
       channelsByCommunity = channels;
+      _channelCreationAccess.addAll(creationAccess);
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
     }
     // Nothing from a session that has since ended or been replaced.
-    if (!_refreshOwned(current, generation)) return;
+    if (!active()) return;
     communitiesLoaded = true;
     notifyListeners();
     unawaited(refreshCommunityInfo());
@@ -2441,6 +2474,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // queues behind `_run` (a deadlock inside it).
     if (error == null && made != null && made.sharedConversationId != null) {
       unawaited(publishCommunityInfo(made.id, name: name, mint: true));
+    }
+    if (error == null && made != null) {
+      // Load the creator's roster rights too, so the first channel does not
+      // require a manual refresh of the new community.
+      unawaited(refreshCommunities());
     }
     return error == null ? created : null;
   }

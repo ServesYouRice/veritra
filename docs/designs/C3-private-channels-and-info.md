@@ -338,10 +338,17 @@ admin availability is refreshed every pass. Key replies announce only records
 under the key actually delivered. These fixes do not complete the missing C3
 integration below. Evidence: `testing/evidence/C3-review-2026-11-10.md`.
 
+**Creation-entry follow-up (2026-11-11):** community refresh loads the viewer's
+roster role and shows "New channel" only to owners and admins, including in
+legacy communities. Unknown or failed reads hide the entry. Refresh clears
+old availability before fetching, and stale session or overlapping-refresh
+replies cannot restore it. New community creation triggers this refresh too.
+This is a server permission hint for UI availability only; encrypted info
+acceptance still requires the verified C4 role source. See
+[`creation-entry evidence`](../../testing/evidence/C3-creation-access-2026-11-11.md).
+
 **Still left:** channel conversion UI;
-icons and the category screens; hiding "New channel" from
-moderators (the community card does not know the viewer's role; the
-server refuses them); a push of the key right after an add commit; and step
+icons and the category screens; a push of the key right after an add commit; and step
 4 (`400 plaintext_name_refused`, dropping the plaintext columns). Step 4
 waits for C4's client role wiring: until the app holds a verified role
 record, nothing another account wrote is shown, so new names come only from
