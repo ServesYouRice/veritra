@@ -301,10 +301,15 @@ func (s *Store) reportInbox(ctx context.Context, q reportQuerier, conversationID
 			ORDER BY k.inbox_id`, kind)
 	} else {
 		// C6 community inbox: every member of the community who published a
-		// moderator key for it. The server cannot know who moderates (the
-		// verified role record, C4, lives in the apps), so the reporter's app
-		// seals only to the listed keys of accounts its record ranks moderator
-		// or above, and CreateReport accepts that subset.
+		// moderator key for it and is a member of the reported conversation.
+		// The server cannot know who moderates (the verified role record, C4,
+		// lives in the apps), so the reporter's app seals only to the listed
+		// keys of accounts its record ranks moderator or above, and
+		// CreateReport accepts that subset. Every community member is in the
+		// shared conversation (and in a legacy community's channels), so the
+		// conversation condition only narrows a private channel: a moderator
+		// outside it is never offered a copy of what it cannot read (owner
+		// decision 2026-11-11, docs/designs/C6-reports-franking.md).
 		rows, err = q.QueryContext(ctx, `
 			SELECT k.inbox_id, k.public_key, k.key_rev, k.updated_at
 			FROM report_inbox_keys k
@@ -313,7 +318,8 @@ func (s *Store) reportInbox(ctx context.Context, q reportQuerier, conversationID
 			  AND k.inbox_id = ? || ':' || a.id
 			  AND a.status = 'active' AND a.deleted_at IS NULL
 			  AND EXISTS (SELECT 1 FROM memberships m WHERE m.community_id = ? AND m.account_id = a.id)
-			ORDER BY k.inbox_id`, kind, id, id)
+			  AND EXISTS (SELECT 1 FROM memberships c WHERE c.conversation_id = ? AND c.account_id = a.id)
+			ORDER BY k.inbox_id`, kind, id, id, conversationID)
 	}
 	if err != nil {
 		return ReportInbox{}, err

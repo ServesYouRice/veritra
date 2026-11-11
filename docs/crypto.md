@@ -477,6 +477,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   type registry. No ABI, local schema or server migration change. Needs
   the independent review.
 
+- **C6 private-channel reports (2026-11-11):** a report about a post in a
+  private channel is sealed only to verified moderators in that channel's
+  MLS roster, and the server's community inbox lists only members of the
+  reported conversation. No wire, ABI, local schema or migration change.
+  Rules: C6 design, "Private channels".
+
 - **C4 app wiring and removal proofs (2026-11-11):** groups and community
   shared groups are created with the genesis role record; every commit
   producer carries `requiredRecord` (or a role command) through

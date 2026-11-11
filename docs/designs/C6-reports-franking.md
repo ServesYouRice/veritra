@@ -10,7 +10,8 @@ inside the report, one sealed copy per instance owner, owner keys pinned in
 the app, 90-day or dismissed retention, unfranked payloads accepted behind a
 switch. The community moderator inbox is built (2026-11-11, "Community
 moderator inbox" below), and moderator keys are trusted through MLS with no
-tap ("Moderator keys over MLS"). Not done: the owner's way to
+tap ("Moderator keys over MLS"). A private channel's reports go only to
+its own moderator members ("Private channels"). Not done: the owner's way to
 verify without the server learning the envelope id, and the app's report
 screens (step 4).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
@@ -486,6 +487,39 @@ gets no new reports") and `TestCommunityReportsRouteToModerators`. The
 copies a demoted moderator already received stay on the server until they
 dismiss them or 90 days pass; deleting them at demotion would need the
 server to know who moderates, which only the apps' verified record says.
+
+## Private channels (owner decision 2026-11-11)
+
+A report about a post in a private channel is sealed only to the verified
+moderators (owner and admins included, as for any community report) who are
+members of that private channel, not to every moderator of the community.
+Reports about posts in the shared conversation (open and announcement
+channels) are unchanged.
+
+- **App.** `reportModeratorsFor` takes the owner, admins and moderators of
+  the shared group's verified record, as before. When the reported
+  conversation is not the record group (a private channel is its own MLS
+  group), it keeps only the accounts in that group's MLS roster, read from
+  this device's own group state (`MlsRosterCryptoService.mlsAccountsOf`).
+  When the roster cannot be read, there are no recipients: no report
+  rather than one to the wrong people. Keys are still trusted from the
+  announcements in the shared group, so a copy goes to: record says
+  moderator or above, MLS roster of the channel has the account, and the
+  server lists the key that account announced.
+- **Server.** The community inbox of a conversation lists only the keys of
+  accounts that are members of that conversation (a `memberships` row for
+  it), and `CreateReport` accepts a subset of that list only. Every
+  community member is in the shared conversation, and in each channel of a
+  legacy community, so this narrows private channels only.
+- **Residuals.** A private channel with no moderator-or-above member who
+  published a key cannot take reports (the reporter is told no moderator
+  can receive it). A moderator added to the channel later gets none of the
+  earlier reports. A moderator removed from the channel keeps the copies
+  they already have, as in "Departed moderators".
+- Tests: `c6_private_channel_reports_test.dart`,
+  `c6_native_report_key_test.dart` (the roster read over real OpenMLS) and
+  `TestPrivateChannelReportsRouteOnlyToItsMembers`. No wire, ABI, local
+  schema or server migration change.
 
 ## Owner decisions (2026-11-01)
 

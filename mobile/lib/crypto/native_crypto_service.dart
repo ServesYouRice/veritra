@@ -81,7 +81,8 @@ class NativeCryptoService
         ProfileCodecSource,
         RecoveryCryptoService,
         ReportCryptoService,
-        RoleCommandCryptoService {
+        RoleCommandCryptoService,
+        MlsRosterCryptoService {
   NativeCryptoService({
     required this.bindings,
     required this.localStore,
@@ -152,6 +153,17 @@ class NativeCryptoService
       final record = state.record;
       if (record == null) return null;
       return decodeGovernance(record);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Set<String>? mlsAccountsOf(String conversationId) {
+    final device = _device;
+    if (device == null) return null;
+    try {
+      return device.groupRoleState(conversationId).accounts;
     } catch (_) {
       return null;
     }

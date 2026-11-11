@@ -47,6 +47,11 @@ extension ReportActions on AppState {
   /// C6: who receives a report about [conversationId] in a community: the
   /// owner, admins and moderators of the verified role record (C4) of the
   /// community's shared group. Null outside a community or without a record.
+  ///
+  /// A private channel (its own MLS group, not the record group) narrows
+  /// that to the accounts in its MLS roster, so a moderator outside the
+  /// channel never gets a copy of what it cannot read. Null when that roster
+  /// cannot be read: no report rather than one to the wrong people.
   ReportModerators? reportModeratorsFor(String conversationId) {
     final conversation =
         conversations.where((c) => c.id == conversationId).firstOrNull;
@@ -66,6 +71,14 @@ extension ReportActions on AppState {
       return null;
     }
     if (record == null) return null;
+    Set<String>? channelMembers;
+    if (conversationId != recordGroup) {
+      final Object crypto = cryptoService;
+      channelMembers = crypto is MlsRosterCryptoService
+          ? crypto.mlsAccountsOf(conversationId)
+          : null;
+      if (channelMembers == null) return null;
+    }
     return ReportModerators(
       communityId,
       <String>{
@@ -74,7 +87,9 @@ extension ReportActions on AppState {
           ...record.admins.keys,
           ...record.moderators,
         })
-          if (record.rankOf(account) >= BuiltInRole.moderator.rank) account,
+          if (record.rankOf(account) >= BuiltInRole.moderator.rank &&
+              (channelMembers == null || channelMembers.contains(account)))
+            account,
       },
       recordGroupId: recordGroup,
     );

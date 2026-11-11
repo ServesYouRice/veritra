@@ -53,6 +53,9 @@ void main() {
   test('a report key is kept under its MLS sender in a record group', () async {
     final (alice, bob) = await pair('conv_g', 'group');
     expect(bob.service.governanceOf('conv_g'), isNotNull);
+    // The roster a private channel's reports are narrowed by (C6).
+    expect(bob.service.mlsAccountsOf('conv_g'), {'acct_alice', 'acct_bob'});
+    expect(bob.service.mlsAccountsOf('conv_unknown'), isNull);
 
     final sent = await alice.service.encryptPayload(
         'conv_g', AppPayloadType.reportKey, <String, Object?>{'key': _key});
