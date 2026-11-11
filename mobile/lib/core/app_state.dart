@@ -3035,6 +3035,7 @@ class AppState extends ChangeNotifier
         );
         await _dropLeftConversationLocally(
             current, conversationId, leaveEventId);
+        await _leaveWentThrough(group);
       });
     } finally {
       _leavingRecordGroups.remove(group);
@@ -9557,6 +9558,8 @@ class AppState extends ChangeNotifier
         // (or a declined one) and a DM with a blocked peer get none, as
         // they get no read receipt. Their records stay for later.
         if (!_selfUpdateAllowed(conversationId)) continue;
+        // C4: an update now would void the leave statement just sent.
+        if (_leavingRecordGroups.contains(conversationId)) continue;
         if (_revocationPendingGroups.contains(conversationId) ||
             _failedMlsConversations.contains(conversationId) ||
             await _hasPendingMlsWork(conversationId)) {

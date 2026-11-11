@@ -592,6 +592,7 @@ extension MembershipActions on AppState {
           channel.eventId,
         );
       }
+      if (shared != null) await _leaveWentThrough(shared);
       communities = communities
           .where((community) => community.id != communityId)
           .toList(growable: false);

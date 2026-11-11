@@ -111,6 +111,11 @@ class MlsSelfUpdatePolicy {
     dirty = true;
   }
 
+  /// Whether a refusal or failure for [conversationId] still holds its next
+  /// self-update back at [now] ([recordBackoff]).
+  bool backingOff(String conversationId, DateTime now) =>
+      _records[conversationId]?.notBefore?.isAfter(now.toUtc()) ?? false;
+
   /// Conversations whose join update has not landed yet. Their member
   /// count sets the join jitter, so the caller loads it first.
   Iterable<String> get joinsPending => _records.entries

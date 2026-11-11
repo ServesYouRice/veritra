@@ -3661,8 +3661,8 @@ version that could order the removal against the commit (decision B keeps
 such a leaf from acting with its role); and a newcomer holds an honest
 leave-proven removal for good when the leaver sent no signed statement (an
 older build) or its leaf changed since (*leave proof in the commit*,
-below, built at ABI 24, carries it in the commit otherwise). The step-3 `checking` case
-still stalls device sync as a transient error, as before.
+below, built at ABI 24, carries it in the commit otherwise). The step-3
+`checking` case still stalls device sync as a transient error, as before.
 
 **`member_leave`** (app payload v2, hidden, never franked, never reported:
 `{"epoch": n}`). A governing member's app sends it to the record group
@@ -3672,7 +3672,9 @@ epoch MLS authenticated for the message, in the setting
 `c4.leave.<group>.<account>`, written with the message's transition. It is
 deleted when its removal merges, when the account is added again, and for
 every current member on a Welcome. The owner cannot leave (D81): the app
-refuses until it has transferred.
+refuses until it has transferred. Since ABI 24 the app then sends
+`member_leave_signed`, the signed statement a committer carries in the
+removal for members that join later (*leave proof in the commit*, below).
 
 *Leave notice* (review fix, 2026-11-11). The proof goes through the
 server's posting checks, so a moderator in an admins-only group, a voter in
@@ -3682,9 +3684,10 @@ leave. The envelope now carries the clear metadata mark `"c4_leave": true`
 exempts a marked envelope from C2, the C5 timeout and slow mode
 (`server/internal/storage/leave_notice.go`), only: in a record group (kind
 `group` outside a community, or a community's shared conversation); with no
-attachments, reply, thread or franking commitment; and at most one
-per sender account and membership per hour (`leave_notice_limited`, 429
-with Retry-After). The mark is unverifiable, so receivers turn any marked
+attachments, reply, thread or franking commitment; and at most two
+per sender account and membership per hour (the `member_leave` and, since
+ABI 24, the `member_leave_signed` after it; `leave_notice_limited`, 429
+with Retry-After counted from the oldest notice in the window). The mark is unverifiable, so receivers turn any marked
 envelope whose payload is not a leave proof into an invalid row: a
 marked post never shows. The check runs before the payload is handled
 (review L1): a marked payload of a type this app does not know is kept

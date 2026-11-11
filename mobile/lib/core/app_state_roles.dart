@@ -400,21 +400,41 @@ extension RoleActions on AppState {
           _leavingRecordGroups.contains(id)) {
         continue;
       }
-      if (await localStore.loadSetting(governanceLeaveSignedOutSetting(id)) ==
-          null) {
+      final marker =
+          await localStore.loadSetting(governanceLeaveSignedOutSetting(id));
+      if (marker == null || marker.isEmpty) continue;
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      // A self-update already queued there settles it once it merges; one
+      // the server refused (its self-update interval) waits out the
+      // policy's backoff, as a periodic one does.
+      final policy = await _selfUpdates(current);
+      final now = DateTime.now().toUtc();
+      if (await _hasPendingMlsWork(id) ||
+          (policy?.backingOff(id, now) ?? false)) {
         continue;
       }
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
-      // A self-update already queued there settles it once it merges.
-      if (await _hasPendingMlsWork(id)) continue;
       try {
         await crypto.stageSelfUpdate(id);
       } catch (err) {
+        policy?.recordBackoff(id, now, MlsSelfUpdatePolicy.failureBackoff);
+        await _saveSelfUpdates();
         developer.log('c4_leave_void_failed ${err.runtimeType}',
             name: 'veritra.sync');
         continue;
       }
       await _flushMlsOutbox();
+    }
+  }
+
+  /// The server took this account out of [group]: the leave statement it
+  /// signed there needs no voiding. Empty reads as absent (a setting cannot
+  /// be deleted from here; a Welcome or a self-update deletes it).
+  Future<void> _leaveWentThrough(String group) async {
+    try {
+      await localStore.saveSetting(governanceLeaveSignedOutSetting(group), '');
+    } catch (err) {
+      developer.log('c4_leave_marker_failed ${err.runtimeType}',
+          name: 'veritra.sync');
     }
   }
 
