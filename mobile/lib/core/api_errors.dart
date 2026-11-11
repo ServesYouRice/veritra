@@ -124,6 +124,8 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_max_uses': ApiErrorKind.invalidRequest,
   'invalid_member': ApiErrorKind.invalidRequest,
   'invalid_name': ApiErrorKind.invalidRequest,
+  'invalid_nonce': ApiErrorKind.invalidRequest,
+  'attestation_unavailable': ApiErrorKind.unavailable,
   'invalid_push_subscription': ApiErrorKind.invalidRequest,
   'invalid_recovery_range': ApiErrorKind.invalidRequest,
   'multiple_ranges_not_supported': ApiErrorKind.invalidRequest,
