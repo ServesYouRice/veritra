@@ -437,6 +437,74 @@ void main() {
     harness.dispose();
   });
 
+  // C4 leave proof in the commit (ABI 24): a signed leave statement that
+  // did not end in a removal is voided with a self-update; one in flight or
+  // one the server took is left alone. The statement itself is sent by
+  // _beforeLeavingRecordGroup (a role engine this fake is not), so each test
+  // sets the marker it leaves behind.
+  test('a leave the server refused voids its signed statement', () async {
+    final api = _ScriptedApi()..refuseLeave = true;
+    final harness = await _Harness.start(api, selfUpdates: true);
+    final crypto = harness.crypto as _SelfUpdatingCrypto;
+    await harness.waitFor(() => harness.state.lastSyncedAt != null);
+    await harness.settle();
+    expect(crypto.staged, isEmpty);
+    await harness.store
+        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
+    expect(await harness.state.leaveConversation('conv_1'), isFalse);
+    await harness.waitFor(() => crypto.staged.contains('conv_1'));
+    expect(crypto.staged, isNot(contains('conv_2')));
+    harness.dispose();
+  });
+
+  test('no void while the leave is in flight', () async {
+    final gate = Completer<void>();
+    final api = _ScriptedApi()..leaveGate = gate;
+    final harness = await _Harness.start(api, selfUpdates: true);
+    final crypto = harness.crypto as _SelfUpdatingCrypto;
+    await harness.waitFor(() => harness.state.lastSyncedAt != null);
+    await harness.store
+        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
+    final leaving = harness.state.leaveConversation('conv_1');
+    await api.leaveReached.future;
+    // A sync pass while the server holds the leave stages nothing there.
+    final passes = api.syncCalls;
+    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => api.syncCalls > passes);
+    await harness.waitFor(() => harness.state.syncError == null);
+    await harness.settle();
+    expect(crypto.staged, isEmpty);
+    // Refused after all: now it is voided.
+    api.refuseLeave = true;
+    gate.complete();
+    expect(await leaving, isFalse);
+    await harness.waitFor(() => crypto.staged.contains('conv_1'));
+    harness.dispose();
+  });
+
+  test('a leave the server took needs no void', () async {
+    final api = _ScriptedApi();
+    final harness = await _Harness.start(api, selfUpdates: true);
+    final crypto = harness.crypto as _SelfUpdatingCrypto;
+    await harness.waitFor(() => harness.state.lastSyncedAt != null);
+    await harness.store
+        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
+    expect(await harness.state.leaveConversation('conv_1'), isTrue);
+    // Neutralized, not left for a pass that still lists the conversation
+    // (a community's shared conversation stays listed after its leave).
+    expect(
+        await harness.store
+            .loadSetting(governanceLeaveSignedOutSetting('conv_1')),
+        '');
+    final passes = api.syncCalls;
+    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() => api.syncCalls > passes);
+    await harness.waitFor(() => harness.state.syncError == null);
+    await harness.settle();
+    expect(crypto.staged, isEmpty);
+    harness.dispose();
+  });
+
   test('a group over its size limit stops sync and offers to leave it',
       () async {
     final api = _ScriptedApi()
@@ -606,10 +674,12 @@ class _Harness {
 
   static Future<_Harness> start(_ScriptedApi api,
       {void Function(_FakeMlsCrypto crypto)? configure,
-      MemoryLocalStore? store}) async {
+      MemoryLocalStore? store,
+      bool selfUpdates = false}) async {
     final local = store ?? MemoryLocalStore();
     await local.saveSession(_session);
-    final crypto = _FakeMlsCrypto(local);
+    final crypto =
+        selfUpdates ? _SelfUpdatingCrypto(local) : _FakeMlsCrypto(local);
     configure?.call(crypto);
     final state = AppState(
       apiClientFactory: (_) => api,
@@ -679,6 +749,10 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
   Completer<void>? mlsGate;
   final Completer<void> mlsGateReached = Completer<void>();
   bool refuseLeave = false;
+
+  /// While set, a leave waits for it after [leaveReached] completes.
+  Completer<void>? leaveGate;
+  final Completer<void> leaveReached = Completer<void>();
   final List<String> left = <String>[];
   void Function(String conversationId)? onLeave;
 
@@ -723,6 +797,11 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
   @override
   Future<int?> removeConversationMember(
       String token, String conversationId, String accountId) async {
+    final gate = leaveGate;
+    if (gate != null) {
+      if (!leaveReached.isCompleted) leaveReached.complete();
+      await gate.future;
+    }
     if (refuseLeave) throw ApiException(403, '{"error":"forbidden"}');
     expect(accountId, 'me');
     left.add(conversationId);
@@ -879,6 +958,18 @@ class _FakeMlsCrypto
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
+}
+
+/// The fake that also stages self-updates, recording each one.
+class _SelfUpdatingCrypto extends _FakeMlsCrypto
+    implements MlsSelfUpdateCryptoService {
+  _SelfUpdatingCrypto(super.store);
+
+  final List<String> staged = <String>[];
+
+  @override
+  Future<void> stageSelfUpdate(String conversationId) async =>
+      staged.add(conversationId);
 }
 
 class _QuietSync implements SyncService {
