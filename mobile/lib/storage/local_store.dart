@@ -2617,7 +2617,7 @@ class _MemoryMessageHistory {
             deferHistoryEffect(namespace, effect, accountId);
             continue;
           }
-          if (target.senderAccountId != effect.deleterAccountId ||
+          if (!effect.allows(target.senderAccountId) ||
               target.hiddenAt != null ||
               target.deletedAt != null ||
               target.channelId != effect.channelId ||

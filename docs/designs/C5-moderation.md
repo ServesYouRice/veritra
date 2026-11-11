@@ -3,7 +3,9 @@
 **Status: server half built (migration 0055, 2026-11-07); app screens built
 (2026-11-08: member menu with remove, ban, timeout; a Moderation screen with
 paused invitations, slow mode per channel, bans and the activity log; reads
-`GET .../moderation-state`); app-side checks and delete-others not built.** Built: bans (`member_bans`; kick then record in
+`GET .../moderation-state`); 2026-11-11: delete-others built in apps
+(groups and communities, checked against C4's verified record, below); app
+checks of bans and timeouts still not built.** Built: bans (`member_bans`; kick then record in
 one transaction; refuses add, channel add, join request), kick, timeout
 (`memberships.timeout_until`, send refused `timed_out`), slow mode
 (`channels.slow_mode_seconds`, send refused 429 `slow_mode` with
@@ -265,3 +267,19 @@ change), and on C6 open item 2 for the evidence pins.
 - Server enforces built-in roles; audit log of ids and action kinds on the server; server slow-mode refusal is enough.
 - Instance ban covers the whole instance; lifting it leaves devices revoked.
 - Escalations: instance owner only; 90 days open, sealed copies kept 30 days after closing; status-only replies.
+
+## Delete-others in apps (2026-11-11)
+
+Built on C4's app wiring. A moderator or above deletes another member's
+message with the ordinary W7 `delete`; every receiver applies it only when
+its verified role record makes the sender outrank the author (`mayActOn`),
+in groups and in communities (a channel uses the shared group's record).
+Kicks and bans remove members through C4's removal proofs (a kick by an
+approved moderator who outranks the target). The chat's action sheet offers
+"Delete for everyone" on such messages. Rules: `docs/crypto.md`, "C4 app
+wiring", "C5 moderator delete". No schema, migration or ABI change.
+
+Still not built: app-side checks of bans and timeouts (they need record
+fields, a C4 record change), key-package claim refusal for banned accounts
+(adds already refuse them), escalation and the instance ban. Server slow
+mode stays the only slow-mode check (owner decision, round 2).

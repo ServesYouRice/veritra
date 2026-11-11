@@ -199,7 +199,8 @@ final class EditMessageEffect extends MessageEffect {
   final String? channelId;
 }
 
-/// Deletes the text of [targetKey], only if [deleterAccountId] sent it.
+/// Deletes the text of [targetKey], only if [deleterAccountId] sent it, or
+/// (C5) when [moderatorProtects] is set and the target's sender is not in it.
 final class DeleteMessageEffect extends MessageEffect {
   const DeleteMessageEffect({
     required this.targetKey,
@@ -207,6 +208,7 @@ final class DeleteMessageEffect extends MessageEffect {
     required this.at,
     this.conversationId,
     this.channelId,
+    this.moderatorProtects,
   });
 
   final String targetKey;
@@ -214,6 +216,17 @@ final class DeleteMessageEffect extends MessageEffect {
   final int at;
   final String? conversationId;
   final String? channelId;
+
+  /// C5 moderator delete: set only when the group's verified role record
+  /// (C4) makes [deleterAccountId] a moderator or above. It names every
+  /// account the deleter does not outrank (`mayActOn` is false), so a delete
+  /// may hide anyone else's message. Null: the author's own delete only.
+  final Set<String>? moderatorProtects;
+
+  /// Whether the delete may hide a message [sender] wrote.
+  bool allows(String sender) =>
+      sender == deleterAccountId ||
+      (moderatorProtects != null && !moderatorProtects!.contains(sender));
 }
 
 /// Sets or, with an empty [reaction], clears one account's reaction.
@@ -2462,7 +2475,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           final deleted = await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(effect.targetKey) &
-                    table.senderAccountId.equals(effect.deleterAccountId) &
+                    (effect.allows(existing.senderAccountId)
+                        ? const Constant(true)
+                        : const Constant(false)) &
                     (effect.conversationId == null
                         ? const Constant(true)
                         : table.conversationId.equals(effect.conversationId!)) &

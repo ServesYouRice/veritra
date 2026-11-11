@@ -3386,6 +3386,18 @@ and then updates the server's row, so the server's own route checks follow
 it; the two may still disagree (the record wins in every app). A posting
 switch and a new announcement channel are written to the record too.
 
+**C5 moderator delete.** The W7 `delete` payload is unchanged on the wire. A
+receiver applies a `delete` to another account's message only when the
+record it holds for the conversation (a channel: its shared group's) makes
+the authenticated sender a moderator or above that outranks the message's
+sender (`mayActOn`); the effect carries the set of accounts the deleter does
+not outrank (`DeleteMessageEffect.moderatorProtects`) and the store checks
+the target's sender against it. Without a record only the author's own
+delete applies, as before. A moderator delete whose target has not arrived
+yet is deferred as the author's own and so never applies (safe side). In a
+community with C7 the app also calls the server's history hide, which
+checks the server's moderator role.
+
 **Residuals.**
 - A plain member's forced removal needs no proof; it moves only `joined`,
   which orders the no-admin claim.

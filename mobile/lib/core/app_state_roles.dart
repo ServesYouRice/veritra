@@ -29,6 +29,16 @@ extension RoleActions on AppState {
     return null;
   }
 
+  /// C5: whether this account may delete [sender]'s messages in
+  /// [conversationId] for everyone: the verified record makes it a
+  /// moderator or above that outranks [sender]. Without a record, no.
+  bool mayModerateMessage(String conversationId, String? sender) {
+    final self = session?.accountId;
+    if (self == null || sender == null || sender == self) return false;
+    final record = governanceOf(conversationId);
+    return record != null && record.mayActOn(self, sender);
+  }
+
   RoleCommandCryptoService? get _roleCrypto {
     final Object? mls = _mlsCrypto;
     return mls is RoleCommandCryptoService ? mls : null;

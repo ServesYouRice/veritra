@@ -931,6 +931,25 @@ class _ChatScreenState extends State<ChatScreen> {
                   onTap: () => Navigator.of(sheetContext).pop('delete'),
                 ),
             ],
+            // C5: a moderator or above deletes a message of someone it
+            // outranks under the verified role record; every app checks.
+            if (!mine &&
+                sendable &&
+                state.mayModerateMessage(
+                    conversationId, message.senderAccountId) &&
+                const [
+                  LocalMessageKind.text,
+                  LocalMessageKind.attachment,
+                  LocalMessageKind.unsupported,
+                  LocalMessageKind.poll
+                ].contains(message.kind) &&
+                message.deletedAt == null)
+              ListTile(
+                key: const Key('moderator-delete'),
+                leading: const Icon(Icons.delete_outline),
+                title: Text(context.l10n.chatDeleteForEveryone),
+                onTap: () => Navigator.of(sheetContext).pop('delete'),
+              ),
           ],
         )),
       ),

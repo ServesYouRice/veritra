@@ -4301,6 +4301,8 @@ List<MessageEffect> messageEffectsFor(
         DeleteMessageEffect(
           targetKey: body['message_id'] as String,
           deleterAccountId: senderAccountId,
+          moderatorProtects:
+              moderatorProtectsFor(authority, conversationId, senderAccountId),
           at: createdAt,
           conversationId: conversationId,
           channelId: payload.channelId,
@@ -4473,4 +4475,34 @@ int? mlsMessageEpoch(List<int> message, String groupId) {
     epoch = (epoch << 8) | message[offset + index];
   }
   return epoch;
+}
+
+/// C5: the accounts [actor] may not moderate in [conversationId] under the
+/// verified role record the app holds for it (C4; a community channel uses
+/// its shared group's), or null when there is no record or [actor] is below
+/// moderator. Everyone else's messages it may delete (`mayActOn`): an
+/// account the record does not name is a member.
+Set<String>? moderatorProtectsFor(
+    ConversationAuthority? authority, String conversationId, String actor) {
+  final roles =
+      authority is VerifiedRoleSource ? authority as VerifiedRoleSource : null;
+  final GovernanceState? record;
+  try {
+    record = roles?.governanceOf(conversationId);
+  } catch (_) {
+    return null;
+  }
+  if (record == null || record.rankOf(actor) < BuiltInRole.moderator.rank) {
+    return null;
+  }
+  final rank = record.rankOf(actor);
+  return <String>{
+    actor,
+    for (final account in <String>{
+      if (record.owner != null) record.owner!,
+      ...record.admins.keys,
+      ...record.moderators,
+    })
+      if (record.rankOf(account) >= rank) account,
+  };
 }

@@ -4022,7 +4022,9 @@ class AppState extends ChangeNotifier
     }
   }
 
-  /// Deletes one of this account's own messages for every member. With C7
+  /// Deletes one of this account's own messages for every member, or (C5)
+  /// one whose sender this account outranks as a moderator or above under
+  /// the verified role record (every receiver checks that). With C7
   /// on, a community post is also marked `history_hidden`, so newcomers
   /// never fetch it (design decision 7).
   Future<bool> deleteMessage(String conversationId, String targetKey) async {
