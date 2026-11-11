@@ -3032,6 +3032,21 @@ class NativeCryptoService
           info = const <CommunityInfoEvent>[];
           settings = const <String, String?>{};
         }
+        // L1 (design, "Messages from a leaf"): a leaf that was approved once
+        // and has been removed from its account's list since is still shown,
+        // marked "sent from a device <name> removed". The verdict is recorded
+        // now, at entry: once the removal commit lands the leaf is gone and
+        // cannot be judged again. Its edits mark the text they leave.
+        if (senderVerdict == LeafVerdict.removed) {
+          effects = <MessageEffect>[
+            for (final effect in effects)
+              switch (effect) {
+                InsertMessageEffect() => effect.markedSenderRemoved(),
+                EditMessageEffect() => effect.markedSenderRemoved(),
+                _ => effect,
+              },
+          ];
+        }
         // C4: the owner's posts are its activity; a first message also
         // starts this device's clocks for a group it holds a record for.
         final observation = await _applicationObservation(

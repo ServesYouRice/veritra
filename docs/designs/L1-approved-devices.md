@@ -183,9 +183,20 @@ and self-updates stop. Check incoming removed verdicts and that an MLS removal
 releases the hold. Run inherited Rust VDL1/key-binding tests, server signed-list
 and honest-server gates, Flutter pin/store/gate tests, and repository checks.
 
-The full L1 package remains partial. Still to do: the removed-sender
-marker ("sent from a device <name> removed"), which must be recorded at
-entry, and probably needs a local schema bump; chains beyond the bounded
+### Removed-sender mark (2026-11-11, local schema 40)
+
+The receive path records the sender leaf's verdict on the stored row:
+`local_messages.sender_removed` is set when the verdict is `removed`. The
+chat shows "Sent from a device <name> removed" (or "Sent from a device you
+removed") above the text, in DMs too, and the bubble's spoken label says the
+same. An edit from a removed leaf sets the mark on its target; an approved
+edit leaves an earlier mark. History snapshots carry the mark as an optional
+`senderRemoved: true`. The upgrade adds the column first in the upgrade
+transaction (older steps read through the current rows) and is idempotent.
+Not covered: a deferred edit from a removed leaf (target not yet here) is
+applied unmarked when its target arrives; reactions are not marked.
+
+The full L1 package remains partial. Still to do: chains beyond the bounded
 limits; tests for the audit, notice, retype and confirmation flows (not
 written or run in that session, on the owner's instruction); adversarial
 demo evidence; and the independent security review. No independent review

@@ -557,6 +557,8 @@
   "chatMessageInvalid": "Једна порука није могла да се прочита",
   "chatMessageUndecryptable": "Ова порука није могла да се откључа",
   "chatMessageUnapprovedDevice": "Сакривена је порука са уређаја који није одобрен.",
+  "chatSentFromRemovedDevice": "Послато са уређаја који је уклоњен са налога корисника {name}",
+  "chatSentFromOwnRemovedDevice": "Послато са уређаја који сте уклонили",
   "chatDevicesNotJoined": "Неки уређаји корисника {name} се још нису придружили.",
   "chatMessageWelcomeUnavailable": "Придруживање овом ћаскању није успело. Замолите члана да вас поново дода.",
   "chatReactionCount": "{reaction} {count}",

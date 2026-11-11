@@ -181,6 +181,9 @@ void main() {
             .every((leaf) => leaf.verdict == LeafVerdict.approved),
         isTrue,
       );
+      // Sent while the device was approved: never marked, even later.
+      await bob.receive(alice, await alice.send('sent while approved'));
+      final approvedKey = (await bob.history()).single.key;
 
       final head = bindings.checkDeviceListStep(
         expectedAccountId: idBytes('acct_alice'),
@@ -222,9 +225,24 @@ void main() {
         LeafVerdict.removed,
       );
 
-      // Incoming messages still follow the formerly-approved sender policy.
+      // Incoming messages still follow the formerly-approved sender policy:
+      // shown, and marked at entry as sent from a removed device (schema 40).
       await bob.receive(alice, await alice.send('sent before MLS removal'));
-      expect((await bob.history()).single.body, 'sent before MLS removal');
+      final shown = {for (final m in await bob.history()) m.body: m};
+      expect(shown['sent before MLS removal']?.senderRemoved, isTrue);
+      expect(shown['sent while approved']?.senderRemoved, isNot(isTrue));
+      // An edit from the removed device marks the text it leaves.
+      final edit = await alice.service
+          .encryptPayload('conv_1', AppPayloadType.edit, <String, Object?>{
+        'message_id': approvedKey,
+        'text': 'rewritten after removal',
+      });
+      await alice.store.removePendingEnvelope(edit.idempotencyKey);
+      await bob.receive(alice, edit);
+      final edited =
+          (await bob.history()).firstWhere((m) => m.key == approvedKey);
+      expect(edited.body, 'rewritten after removal');
+      expect(edited.senderRemoved, isTrue);
       expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
 
       // A removal is permitted while held. Only removing the leaf from the

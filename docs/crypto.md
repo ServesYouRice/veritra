@@ -457,6 +457,18 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 removed-sender mark (2026-11-11, local schema 40):** a message whose
+  sender leaf is `removed` at receive time (on its account's list once,
+  removed since, still in the MLS tree) is stored with
+  `local_messages.sender_removed = 1` and shown marked "Sent from a device
+  <name> removed" ("...you removed" for this account's own devices). The
+  verdict is recorded at entry, because the leaf is gone once the removal
+  commit lands. An edit from such a leaf marks the text it leaves; an edit
+  from an approved leaf never clears a mark. History snapshots (K1, K2)
+  carry `senderRemoved: true` only on marked rows, so a snapshot without one
+  stays readable by an older importer. No ABI, wire or server change.
+  Residual: an edit from a removed leaf whose target has not arrived yet is
+  deferred unmarked; reactions carry no mark.
 - **C4 app wiring and removal proofs (2026-11-11):** groups and community
   shared groups are created with the genesis role record; every commit
   producer carries `requiredRecord` (or a role command) through

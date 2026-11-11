@@ -21,6 +21,7 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 void main() {
+  _removedSenderTests();
   testWidgets(
       'spoilers stay concealed until tapped and reset on a changed message',
       (tester) async {
@@ -440,6 +441,52 @@ void main() {
     expect(gammaY, lessThan(betaY));
     expect(betaY, lessThan(alphaY));
 
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+}
+
+void _removedSenderTests() {
+  testWidgets('L1: a message from a removed device is marked, also in a DM',
+      (tester) async {
+    final store = MemoryLocalStore(), state = _state();
+    state.localStoreOverride = store;
+    await _seed(store, key: 'dev:plain', body: 'plain words', extra: [
+      const InsertMessageEffect(
+          key: 'bobdev:r',
+          conversationId: 'conv',
+          senderAccountId: 'bob',
+          senderDeviceId: 'bobdev',
+          kind: LocalMessageKind.text,
+          body: 'from a removed phone',
+          createdAt: 2,
+          state: LocalMessageState.received,
+          senderRemoved: true),
+      const InsertMessageEffect(
+          key: 'olddev:r',
+          conversationId: 'conv',
+          senderAccountId: 'alice',
+          senderDeviceId: 'olddev',
+          kind: LocalMessageKind.text,
+          body: 'from my old laptop',
+          createdAt: 3,
+          state: LocalMessageState.received,
+          senderRemoved: true),
+    ]);
+    await state.refreshHistory('conv');
+    await tester.pumpWidget(
+        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+    await tester.pumpAndSettle();
+    expect(find.text('from a removed phone'), findsOneWidget);
+    expect(find.text(englishL10n.chatSentFromOwnRemovedDevice), findsOneWidget);
+    final others = find.textContaining('Sent from a device ');
+    // One for bob (named), one for this account's own removed device.
+    expect(others, findsNWidgets(2));
+    // The unmarked message carries no mark; the bubbles are read out with it.
+    final semantics = tester.getSemantics(find.text('from a removed phone'));
+    expect(semantics.label, contains('Sent from a device '));
+    expect(tester.getSemantics(find.text('plain words')).label,
+        isNot(contains('Sent from a device')));
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });

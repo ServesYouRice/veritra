@@ -1957,6 +1957,15 @@ class AppLocalizationsSr extends AppLocalizations {
       'Сакривена је порука са уређаја који није одобрен.';
 
   @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Послато са уређаја који је уклоњен са налога корисника $name';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice =>
+      'Послато са уређаја који сте уклонили';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Неки уређаји корисника $name се још нису придружили.';
   }
@@ -6312,6 +6321,15 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatMessageUnapprovedDevice =>
       'Sakrivena je poruka sa uređaja koji nije odobren.';
+
+  @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Poslato sa uređaja koji je uklonjen sa naloga korisnika $name';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice =>
+      'Poslato sa uređaja koji ste uklonili';
 
   @override
   String chatDevicesNotJoined(String name) {

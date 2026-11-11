@@ -3237,6 +3237,18 @@ abstract class AppLocalizations {
   /// **'A message from a device that isn\'t approved was hidden.'**
   String get chatMessageUnapprovedDevice;
 
+  /// No description provided for @chatSentFromRemovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent from a device {name} removed'**
+  String chatSentFromRemovedDevice(String name);
+
+  /// No description provided for @chatSentFromOwnRemovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent from a device you removed'**
+  String get chatSentFromOwnRemovedDevice;
+
   /// No description provided for @chatDevicesNotJoined.
   ///
   /// In en, this message translates to:

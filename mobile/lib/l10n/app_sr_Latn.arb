@@ -524,6 +524,8 @@
   "chatMessageInvalid": "Jedna poruka nije mogla da se pročita",
   "chatMessageUndecryptable": "Ova poruka nije mogla da se otključa",
   "chatMessageUnapprovedDevice": "Sakrivena je poruka sa uređaja koji nije odobren.",
+  "chatSentFromRemovedDevice": "Poslato sa uređaja koji je uklonjen sa naloga korisnika {name}",
+  "chatSentFromOwnRemovedDevice": "Poslato sa uređaja koji ste uklonili",
   "chatDevicesNotJoined": "Neki uređaji korisnika {name} se još nisu pridružili.",
   "chatMessageWelcomeUnavailable": "Pridruživanje ovom ćaskanju nije uspelo. Zamolite člana da vas ponovo doda.",
   "chatReactionCount": "{reaction} {count}",

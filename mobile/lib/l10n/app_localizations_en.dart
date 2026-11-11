@@ -1943,6 +1943,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'A message from a device that isn\'t approved was hidden.';
 
   @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Sent from a device $name removed';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice => 'Sent from a device you removed';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Some of $name\'s devices haven\'t joined yet.';
   }

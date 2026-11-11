@@ -155,6 +155,7 @@ final class InsertMessageEffect extends MessageEffect {
     this.forwardHops,
     this.channelId,
     this.senderHidden = false,
+    this.senderRemoved = false,
   });
 
   final String key;
@@ -176,6 +177,30 @@ final class InsertMessageEffect extends MessageEffect {
   final int? forwardHops;
   final String? channelId;
   final bool senderHidden;
+
+  /// L1: the sender's leaf was removed from its account's list when this
+  /// arrived ([LocalMessages.senderRemoved]).
+  final bool senderRemoved;
+
+  /// This row, marked as sent from a removed device.
+  InsertMessageEffect markedSenderRemoved() => InsertMessageEffect(
+        key: key,
+        conversationId: conversationId,
+        senderAccountId: senderAccountId,
+        senderDeviceId: senderDeviceId,
+        kind: kind,
+        createdAt: createdAt,
+        state: state,
+        serverMessageId: serverMessageId,
+        body: body,
+        replyTo: replyTo,
+        expiresAt: expiresAt,
+        formatJson: formatJson,
+        forwardHops: forwardHops,
+        channelId: channelId,
+        senderHidden: senderHidden,
+        senderRemoved: true,
+      );
 }
 
 /// Replaces the text of [targetKey], only if [editorAccountId] sent it.
@@ -188,6 +213,7 @@ final class EditMessageEffect extends MessageEffect {
     this.conversationId,
     this.formatJson,
     this.channelId,
+    this.senderRemoved = false,
   });
 
   final String targetKey;
@@ -197,6 +223,23 @@ final class EditMessageEffect extends MessageEffect {
   final String? conversationId;
   final String? formatJson;
   final String? channelId;
+
+  /// L1: the edit came from a removed leaf, so the text it leaves is marked
+  /// as sent from a removed device. An edit from an approved leaf never
+  /// clears an earlier mark.
+  final bool senderRemoved;
+
+  /// This edit, marked as sent from a removed device.
+  EditMessageEffect markedSenderRemoved() => EditMessageEffect(
+        targetKey: targetKey,
+        editorAccountId: editorAccountId,
+        body: body,
+        at: at,
+        conversationId: conversationId,
+        formatJson: formatJson,
+        channelId: channelId,
+        senderRemoved: true,
+      );
 }
 
 /// Deletes the text of [targetKey], only if [deleterAccountId] sent it, or
@@ -502,6 +545,14 @@ class LocalMessages extends Table {
   TextColumn get channelId => text().nullable()();
   BoolColumn get senderHidden => boolean().nullable()();
 
+  /// L1 (schema 40): the sender's leaf was on its account's approved-device
+  /// list once and has been removed from it since, when this row arrived (or
+  /// when an edit from such a leaf last changed it). Recorded at entry: once
+  /// the removal commit lands the leaf is gone and the verdict cannot be
+  /// judged again. The chat marks the message "sent from a device <name>
+  /// removed". Null and false mean an approved sender.
+  BoolColumn get senderRemoved => boolean().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => {key};
 }
@@ -607,7 +658,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 36;
+  static const currentSchemaVersion = 40;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -844,6 +895,12 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           if (requireExistingSchema) throw const ExistingDatabaseUnavailable();
           _upgradeStarted = true;
           await transaction(() async {
+            // L1 (schema 40; 37-39 are reserved for other packages): the
+            // removed-sender mark on decrypted messages. First, because the
+            // older expiry and backfill steps below read through the current
+            // generated rows. A store from before schema 7 creates the table
+            // whole further down. Idempotent, so it can be renumbered.
+            if (from >= 7 && from < 40) await _addSenderRemovedColumn();
             // K2/K0: the pending device enrollment. The waiting K0 claim
             // moves out of its schema 16 setting in this same transaction.
             if (from < 17) {
@@ -1001,6 +1058,19 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await customStatement('PRAGMA secure_delete = ON');
         },
       );
+
+  /// Adds `local_messages.sender_removed` unless it is there already.
+  Future<void> _addSenderRemovedColumn() async {
+    final columns = await customSelect(
+            "SELECT name FROM pragma_table_info('local_messages')")
+        .get();
+    if (columns.any((row) => row.read<String>('name') == 'sender_removed')) {
+      return;
+    }
+    await customStatement(
+        'ALTER TABLE local_messages ADD COLUMN sender_removed INTEGER '
+        'CHECK (sender_removed IN (0, 1))');
+  }
 
   Future<void> writeSessionJson(
     String? sessionJson, {
@@ -2460,6 +2530,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             body: Value(effect.body),
             editedAt: Value(effect.at),
             formatJson: Value(effect.formatJson),
+            senderRemoved:
+                effect.senderRemoved ? const Value(true) : const Value.absent(),
           ));
           if (changed > 0 && target.state == LocalMessageState.restored)
             markLiveHistoryEffect(await history(), effect, effect.targetKey);

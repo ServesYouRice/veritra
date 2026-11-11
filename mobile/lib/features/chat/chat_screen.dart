@@ -1872,6 +1872,18 @@ class _MessageBubble extends StatelessWidget {
       local?.kind == LocalMessageKind.unsupported ||
       local?.kind == LocalMessageKind.invalid;
 
+  /// L1: the sending device had been removed from its account's approved
+  /// list when this arrived (recorded at entry, schema 40). The words are
+  /// still shown, marked, so a device that is on its way out never speaks
+  /// as the account unmarked.
+  String? _removedSenderLabel(
+          AppLocalizations l10n) =>
+      local?.senderRemoved == true
+          ? (mine
+              ? l10n.chatSentFromOwnRemovedDevice
+              : l10n.chatSentFromRemovedDevice(senderLabel))
+          : null;
+
   /// A peer message this device can never decrypt (D54). The crypto service
   /// stores it as an `invalid` row, which holds no content and offers no
   /// action, keyed `undecryptable:<sync event>:<server id>`.
@@ -1983,6 +1995,7 @@ class _MessageBubble extends StatelessWidget {
         (poll != null && !deleted && !unverifiable && !placeholder);
     Widget quiet(Widget child) =>
         tileNodes ? ExcludeSemantics(child: child) : child;
+    final removedSender = deleted ? null : _removedSenderLabel(l10n);
     return Semantics(
       container: tileNodes,
       excludeSemantics: !tileNodes,
@@ -2004,6 +2017,7 @@ class _MessageBubble extends StatelessWidget {
                                   ? l10n.chatMessageSemantics(
                                       sender, time, poll.question)
                                   : l10n.chatEncryptedSemantics(sender, time)) +
+          (removedSender == null ? '' : ', $removedSender') +
           (tick == null ? '' : ', ${messageTickLabel(l10n, tick!)}'),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -2047,6 +2061,26 @@ class _MessageBubble extends StatelessWidget {
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: scheme.onSurfaceVariant,
                           ),
+                        ),
+                      )),
+                    // Shown whether or not the sender is (a DM hides it).
+                    if (removedSender != null)
+                      quiet(Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(Icons.phonelink_erase_outlined,
+                                size: 14, color: scheme.error),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                removedSender,
+                                style: theme.textTheme.labelSmall
+                                    ?.copyWith(color: scheme.error),
+                              ),
+                            ),
+                          ],
                         ),
                       )),
                     if (replyPreview != null && !deleted)
