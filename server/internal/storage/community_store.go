@@ -1751,3 +1751,50 @@ func (s *Store) IsConversationMember(ctx context.Context, conversationID, accoun
 	}
 	return count > 0, nil
 }
+
+// cancelExpiredApprovedDeviceLinks ends every legacy device link that was
+// approved but not consumed before it expired (TASK-201, D100/D114 remedy
+// d). Approval created and announced the device, but ConsumeApprovedDeviceLink
+// refuses an expired link, so nobody can ever get a session for it. Fail
+// closed: the device is revoked like any other (sessions, v3 links, the
+// device.revoked event, MLS removal from its groups), its unclaimed key
+// packages are deleted so nothing can still add it, and the link is revoked.
+// The change-2 device-list version stays until a listed device repairs the
+// list, as for any revocation that no device signed.
+func cancelExpiredApprovedDeviceLinks(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, account_id, approved_device_id FROM device_links
+		WHERE state = ? AND revoked_at IS NULL AND approved_device_id IS NOT NULL AND expires_at <= ?
+		ORDER BY expires_at, id LIMIT 100`, domain.DeviceLinkApproved, formatTime(now.UTC()))
+	if err != nil {
+		return err
+	}
+	type expired struct{ linkID, accountID, deviceID string }
+	var found []expired
+	for rows.Next() {
+		var e expired
+		if err := rows.Scan(&e.linkID, &e.accountID, &e.deviceID); err != nil {
+			rows.Close()
+			return err
+		}
+		found = append(found, e)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	at := formatTime(now.UTC())
+	for _, e := range found {
+		if _, err := revokeDeviceTx(ctx, tx, e.accountID, e.deviceID, "device.revoked", at); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, e.deviceID); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, revoked_at = ? WHERE id = ? AND state = ?`, domain.DeviceLinkRevoked, at, e.linkID, domain.DeviceLinkApproved); err != nil {
+			return err
+		}
+	}
+	return nil
+}
