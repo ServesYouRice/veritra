@@ -38,6 +38,11 @@ public final class WakeRulesTest {
         catch (IllegalArgumentException expected) { checks++; }
         // Endpoint record: a newer rotation survives an older acknowledgement.
         check(EndpointRules.nextGeneration(0) == 1 && EndpointRules.nextGeneration(4) == 5);
+        // No in-memory provider list exists on a cold distributor callback.
+        check("unifiedpush".equals(EndpointRules.distributorProvider("acct:dev", "acct:dev", "unifiedpush")));
+        check("webpush".equals(EndpointRules.distributorProvider("acct:dev", "acct:dev", "webpush")));
+        check("webpush".equals(EndpointRules.distributorProvider("acct:dev", null, null)));
+        check("webpush".equals(EndpointRules.distributorProvider("other", "acct:dev", "unifiedpush")));
         CommitStore endpoint = new CommitStore(); endpoint.memory = 3; endpoint.disk = 3;
         endpoint.memory = endpoint.disk = EndpointRules.nextGeneration(3); // rotation while handling 3
         check(!WakeRules.acknowledge(endpoint, 3)); check(endpoint.disk == 4);

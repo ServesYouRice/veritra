@@ -4,7 +4,7 @@
 #      release builds ship with messaging off (PM_CRYPTO_UNAVAILABLE).
 #   2. The Firebase dependency is gone from the F-Droid build. F-Droid rejects
 #      builds that include Google's firebase-messaging. The "fdroid" flavor
-#      uses UnifiedPush only (owner decision D107).
+#      uses UnifiedPush only, following the owner's decision.
 #   3. F-Droid's own build server can compile the Rust crypto library (it
 #      needs the pinned Rust and the Android NDK in the recipe below).
 Categories:

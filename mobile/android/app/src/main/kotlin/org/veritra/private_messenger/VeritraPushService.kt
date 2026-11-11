@@ -7,11 +7,18 @@ import org.unifiedpush.android.connector.data.PushEndpoint
 import org.unifiedpush.android.connector.data.PushMessage
 
 class VeritraPushService : PushService() {
+    private fun providerFor(instance: String): String {
+        val prefs = applicationContext.getSharedPreferences("veritra_push_state", android.content.Context.MODE_PRIVATE)
+        return EndpointRules.distributorProvider(instance,
+            prefs.getString("distributor_instance", null),
+            prefs.getString("distributor_provider", null))
+    }
+
     override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
         val keys = endpoint.pubKeySet
         val pubKey = keys?.pubKey ?: ""
         val auth = keys?.auth ?: ""
-        val provider = if ("unifiedpush" in PushRegistrationConfig.providers) "unifiedpush" else "webpush"
+        val provider = providerFor(instance)
         PushEventBridge.recordEndpoint(applicationContext, provider, instance,
             endpoint.url, pubKey, auth, temporary = endpoint.temporary)
     }
@@ -33,7 +40,7 @@ class VeritraPushService : PushService() {
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) {
-        val provider = if ("unifiedpush" in PushRegistrationConfig.providers) "unifiedpush" else "webpush"
+        val provider = providerFor(instance)
         PushEventBridge.emit(mapOf("type" to "registration_failed", "instance" to instance, "provider" to provider))
     }
 }

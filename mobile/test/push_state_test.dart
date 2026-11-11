@@ -14,8 +14,8 @@ import 'test_crypto_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<(AppState, _PushApi, _FakePush)> start(
-      Map<String, Object?> config) async {
+  Future<(AppState, _PushApi, _FakePush)> start(Map<String, Object?> config,
+      {PushEndpointEvent? pending}) async {
     final store = MemoryLocalStore();
     await store.saveSession(const Session(
       baseUrl: 'https://localhost:8080',
@@ -24,7 +24,7 @@ void main() {
       deviceId: 'dev_1',
     ));
     final api = _PushApi(config);
-    final push = _FakePush();
+    final push = _FakePush()..pending = pending;
     final state = AppState(
       apiClientFactory: (_) => api,
       cryptoService: TestOnlyCryptoService(),
@@ -117,6 +117,35 @@ void main() {
     expect(api.webPushRegistrations.single.publicKey, 'pubkey123');
     expect(api.webPushRegistrations.single.authSecret, 'auth123');
     state.dispose();
+  });
+
+  test(
+      'cold UnifiedPush rotations register without VAPID before acknowledgement',
+      () async {
+    for (final encrypted in <bool>[false, true]) {
+      final (state, api, push) = await start(<String, Object?>{
+        'enabled': true,
+        'providers': <String>['unifiedpush'],
+      },
+          pending: PushEndpointEvent(
+            instance: 'acct_1:dev_1',
+            provider: 'unifiedpush',
+            endpoint: 'https://push.example/wake',
+            publicKey: encrypted ? 'public-key' : '',
+            authSecret: encrypted ? 'auth-secret' : '',
+            generation: 9,
+          ));
+      await _until(() => push.acknowledgedEndpoints.isNotEmpty);
+      expect(push.registrations.single.vapid, '');
+      expect(api.webPushRegistrations.single.provider, 'unifiedpush');
+      expect(api.webPushRegistrations.single.publicKey,
+          encrypted ? 'public-key' : '');
+      expect(api.webPushRegistrations.single.authSecret,
+          encrypted ? 'auth-secret' : '');
+      expect(push.acknowledgedEndpoints, <int>[9]);
+      expect(state.pushState, PushState.registered);
+      state.dispose();
+    }
   });
 
   test('a server without push says so and registers nothing', () async {

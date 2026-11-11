@@ -148,8 +148,18 @@ class MainActivity : FlutterActivity() {
     private fun registerWithDistributor(usePicker: Boolean, attempt: Long) {
         if (!PushRegistrationConfig.current(attempt)) return
         val targetInstance = instance ?: return
-        val targetVapid = vapid ?: ""
+        // The connector accepts null for no VAPID; an empty string is invalid.
+        val targetVapid = vapid
         val targetProvider = if ("unifiedpush" in offeredProviders) "unifiedpush" else "webpush"
+        // Distributor callbacks may arrive after this process has died.
+        // Persist the selection before calling the distributor, keyed by instance.
+        if (!applicationContext.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
+                .edit().putString("distributor_instance", targetInstance)
+                .putString("distributor_provider", targetProvider).commit()) {
+            PushEventBridge.emit(mapOf("type" to "registration_failed",
+                "instance" to targetInstance, "provider" to targetProvider))
+            return
+        }
         val callback: (Boolean) -> Unit = { success ->
             // Unregister or a newer register may have run while the
             // distributor picker was open; then this answer is stale.
@@ -278,6 +288,7 @@ object PushRegistrationConfig {
         providers = emptyList()
         // Without a bound instance, a later FCM token refresh is not forwarded.
         context.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
-            .edit().remove("fcm_instance").commit()
+            .edit().remove("fcm_instance").remove("distributor_instance")
+            .remove("distributor_provider").commit()
     }
 }

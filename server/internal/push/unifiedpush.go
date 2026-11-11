@@ -77,6 +77,9 @@ func ValidateUnifiedPushTarget(notification Notification) error {
 	if err != nil || len(publicKey) != 65 || publicKey[0] != 4 {
 		return ErrInvalidTarget
 	}
+	if x, _ := elliptic.Unmarshal(elliptic.P256(), publicKey); x == nil {
+		return ErrInvalidTarget
+	}
 	authSecret, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(notification.AuthSecret, "="))
 	if err != nil || len(authSecret) != 16 {
 		return ErrInvalidTarget

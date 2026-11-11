@@ -365,7 +365,7 @@ func TestUnifiedPushSubscriptionGone(t *testing.T) {
 
 func TestUnifiedPushSSRFProtection(t *testing.T) {
 	var hits atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -380,10 +380,48 @@ func TestUnifiedPushSSRFProtection(t *testing.T) {
 		Provider: "unifiedpush",
 		Endpoint: server.URL + "/push",
 	}
+	if err := ValidateUnifiedPushTarget(target); err != nil {
+		t.Fatalf("test must reach the network guard: %v", err)
+	}
+	// Trust the test certificate so TLS rejection cannot mask a missing dial guard.
+	provider.client.Transport.(*http.Transport).TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig
 	if err := provider.SendEncryptedEventAvailable(context.Background(), target); err == nil {
 		t.Fatal("a loopback push endpoint was contacted")
 	}
 	if hits.Load() != 0 {
 		t.Fatal("the request reached a private address")
+	}
+}
+
+func TestUnifiedPushRejectsRedirects(t *testing.T) {
+	provider, err := NewUnifiedPushProvider(UnifiedPushConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls int
+	provider.client.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+		calls++
+		response := respond(http.StatusTemporaryRedirect, "")
+		response.Header = http.Header{"Location": {"https://127.0.0.1/private"}}
+		return response, nil
+	})
+	err = provider.SendEncryptedEventAvailable(context.Background(), Notification{
+		Provider: "unifiedpush", Endpoint: "https://push.example.org/wake",
+	})
+	if err == nil || calls != 1 {
+		t.Fatalf("redirect followed: calls=%d err=%v", calls, err)
+	}
+}
+
+func TestUnifiedPushRejectsOffCurveKey(t *testing.T) {
+	key := make([]byte, 65)
+	key[0] = 4
+	err := ValidateUnifiedPushTarget(Notification{
+		Endpoint:   "https://push.example.org/wake",
+		PublicKey:  base64.RawURLEncoding.EncodeToString(key),
+		AuthSecret: base64.RawURLEncoding.EncodeToString([]byte("0123456789abcdef")),
+	})
+	if !errors.Is(err, ErrInvalidTarget) {
+		t.Fatalf("off-curve key accepted: %v", err)
 	}
 }

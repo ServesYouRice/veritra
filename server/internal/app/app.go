@@ -981,7 +981,7 @@ func newHTTPMetrics() *httpMetrics {
 	return metrics
 }
 
-var pushMetricProviders = [...]string{"apns", "fcm", "webpush"}
+var pushMetricProviders = [...]string{"apns", "fcm", "webpush", "unifiedpush"}
 
 func (m *httpMetrics) record(pattern string, status int, elapsed time.Duration) {
 	m.total.Add(1)

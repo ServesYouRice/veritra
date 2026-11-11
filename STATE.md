@@ -7,6 +7,12 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-09.**
 
+2026-11-11 F-Droid review: Android has separate `fdroid` (UnifiedPush) and
+`play` flavors; UnifiedPush uses the existing generic push interfaces and
+delivery queues. No migration or counter change was needed. Release gates
+remain closed. Android compilation and dependency exclusion await SDK/CI
+verification; see [`review evidence`](testing/evidence/fdroid-unifiedpush-review.md).
+
 2026-11-09 integration: C1 invite binding v2 merged with schema 32,
 migration 0066 and ABI 21; no counter collisions. Focused checks and full
 Windows test/lint scripts pass. C1 remains partial; see

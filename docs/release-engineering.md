@@ -109,7 +109,7 @@ and how it is backed up (rotation would need a second key in the app).
 1. **Firebase.** Resolved: the Android app has `play` and `fdroid` product
    flavors (`distribution` dimension). The `fdroid` flavor excludes
    `firebase-messaging` completely and uses UnifiedPush only, while `play`
-   retains FCM with UnifiedPush fallback (owner decision D107).
+   retains FCM with UnifiedPush fallback, following the owner's F-Droid decision.
 2. **Messaging is off in release builds** until G24/G25.
 3. **Signing key.** Reproducible-build verification (F-Droid builds and compares
    with the developer's signed APK) needs the owner's APK signing key.

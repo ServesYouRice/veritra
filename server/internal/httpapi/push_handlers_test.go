@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/elliptic"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -173,7 +174,8 @@ func TestUnifiedPushSubscriptionLifecycleAndTestWake(t *testing.T) {
 		t.Fatalf("unexpected push config: %v", body)
 	}
 
-	pubBytes := append([]byte{4}, bytes.Repeat([]byte{1}, 64)...)
+	x, y := elliptic.P256().ScalarBaseMult([]byte{1})
+	pubBytes := elliptic.Marshal(elliptic.P256(), x, y)
 	validPubKey := base64.RawURLEncoding.EncodeToString(pubBytes)
 	authSecret := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 16))
 

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/config"
+	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/push"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/storage/storagetest"
@@ -549,5 +550,43 @@ func TestPushWakeDeliveryConcurrencyIsBounded(t *testing.T) {
 		t.Fatalf("%d jobs remain after bounded drain", len(jobs))
 	}
 	h.assertCounts(t, pushCounts{attempted: int64(total), delivered: int64(total)})
+	h.assertPrivate(t)
+}
+
+// Exercise message enqueue and the worker loop, not a directly seeded wake job.
+func TestUnifiedPushMessageReachesWorker(t *testing.T) {
+	h := newPushHarness(t, nil)
+	h.seed(t, 0)
+	h.exec(t, `INSERT INTO devices(id, account_id, name, key_package, created_at) VALUES ('dev_push_sender', ?, 'sender', X'01', ?)`, pushTestSender, time.Now().UTC().Format(pushTimeLayout))
+	h.exec(t, `UPDATE push_subscriptions SET provider = 'unifiedpush', public_key = '', auth_secret = ''`)
+	ctx := context.Background()
+	// The legacy immediate-send path and account recovery must also see it.
+	targets, err := h.app.Store.PushTargetsForConversation(ctx, pushTestConversation, pushTestSender)
+	if err != nil || len(targets) != 1 || targets[0].Provider != "unifiedpush" {
+		t.Fatalf("conversation targets: %v %v", targets, err)
+	}
+	targets, err = h.app.Store.PushTargetsForAccount(ctx, pushTestRecipient, "")
+	if err != nil || len(targets) != 1 || targets[0].Provider != "unifiedpush" {
+		t.Fatalf("account targets: %v %v", targets, err)
+	}
+	_, _, _, err = h.app.Store.SaveMessageEnvelopeWithSyncEvent(ctx, domain.MessageEnvelope{
+		ConversationID: pushTestConversation, SenderAccountID: pushTestSender, SenderDeviceID: "dev_push_sender",
+		IdempotencyKey: "unifiedpush-message", Ciphertext: []byte("opaque ciphertext"), CryptoProtocol: "mls-openmls-todo",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() { h.app.runPushWakeWorkers(workerCtx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for (h.app.metrics.push["unifiedpush"].delivered.Load() == 0 || len(h.jobs(t)) != 0) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	if h.provider.callCount() != 1 || h.app.metrics.push["unifiedpush"].delivered.Load() != 1 || len(h.jobs(t)) != 0 {
+		t.Fatalf("UnifiedPush message not delivered: calls=%d jobs=%v", h.provider.callCount(), h.jobs(t))
+	}
 	h.assertPrivate(t)
 }
