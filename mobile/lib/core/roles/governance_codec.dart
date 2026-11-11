@@ -48,11 +48,9 @@ Uint8List encodeGovernance(GovernanceState state) {
   w.u64(state.rev);
   w.u64(state.ownerRev);
   final election = state.election;
-  w.u8(
-    (state.adminsOnlyPosting ? _flagAdminsOnlyPosting : 0) |
-        (election != null ? _flagElection : 0) |
-        (state.timeouts.isNotEmpty ? _flagTimeouts : 0),
-  );
+  w.u8((state.adminsOnlyPosting ? _flagAdminsOnlyPosting : 0) |
+      (election != null ? _flagElection : 0) |
+      (state.timeouts.isNotEmpty ? _flagTimeouts : 0));
   w.id(state.owner ?? '', allowEmpty: true);
   final admins = _sorted(state.admins.keys);
   w.u16(admins.length);
@@ -273,8 +271,9 @@ void _checkId(String id) {
 /// Sorts by UTF-8 bytes, the order the format uses. Dart's string order is by
 /// UTF-16 code unit and differs for characters outside the BMP.
 List<String> _sorted(Iterable<String> ids) {
-  final list = [for (final id in ids) (id, Uint8List.fromList(utf8.encode(id)))]
-    ..sort((a, b) => _compareBytes(a.$2, b.$2));
+  final list = [
+    for (final id in ids) (id, Uint8List.fromList(utf8.encode(id))),
+  ]..sort((a, b) => _compareBytes(a.$2, b.$2));
   return [for (final e in list) e.$1];
 }
 
@@ -297,10 +296,8 @@ bool _sameBytes(List<int> a, List<int> b) {
 /// Accepts [next] only when it sorts strictly after [previous] by bytes.
 String _ascending(String? previous, String next) {
   if (previous != null &&
-      _compareBytes(
-            Uint8List.fromList(utf8.encode(previous)),
-            Uint8List.fromList(utf8.encode(next)),
-          ) >=
+      _compareBytes(Uint8List.fromList(utf8.encode(previous)),
+              Uint8List.fromList(utf8.encode(next))) >=
           0) {
     throw const GovernanceCodecException('list not sorted or has duplicates');
   }

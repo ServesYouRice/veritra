@@ -57,7 +57,7 @@ final Map<String, GovernanceState> _valid = {
       'acc_y': const MemberTimeout(
           epoch: 7, fromMs: 1700000000000, untilMs: 1700000600000),
       'acc_x': const MemberTimeout(
-          epoch: 6, fromMs: 1699999000000, untilMs: 1700002600000),
+          epoch: 6, fromMs: 1699999000000, untilMs: 1700002600000)
     },
   ),
 };

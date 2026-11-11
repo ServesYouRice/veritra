@@ -20,9 +20,7 @@ class GovernanceObservations {
 
   /// A join/restore without saved observations starts both waits now.
   factory GovernanceObservations.firstSeen(
-    GovernanceState state,
-    DateTime now,
-  ) =>
+          GovernanceState state, DateTime now) =>
       GovernanceObservations(
         owner: state.owner,
         ownerRev: state.ownerRev,
@@ -34,11 +32,8 @@ class GovernanceObservations {
   /// Call only after authenticating and accepting the commit or application
   /// message. [ownerActive] means its authenticated sender is the current
   /// owner. Activity and election clocks never use envelope timestamps.
-  GovernanceObservations accepted(
-    GovernanceState state,
-    DateTime now, {
-    required bool ownerActive,
-  }) {
+  GovernanceObservations accepted(GovernanceState state, DateTime now,
+      {required bool ownerActive}) {
     // Moving a wall clock backwards must not shorten an already observed wait.
     final receipt = now.isBefore(lastOwnerActivity) ? lastOwnerActivity : now;
     final ownerChanged = state.owner != owner;
