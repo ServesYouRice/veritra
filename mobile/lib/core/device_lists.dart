@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../crypto/native_crypto_bindings.dart'
     show
         DeviceListChainResult,
+        DeviceListChange,
         DeviceListListedPair,
         DeviceListPair,
         DeviceListSummary,
@@ -98,8 +99,12 @@ class DeviceListStatus {
   final DeviceListPin? pin;
 }
 
-/// The longest chain fetched in one refresh (the Rust chain check's cap).
-const int deviceListMaxChain = 256;
+/// The longest chain fetched in one refresh, independent of the native
+/// batch size. The native step verifier also caps accumulated key history.
+const int deviceListMaxChain = 4096;
+
+/// The Rust chain check's cap; longer chains continue with native steps.
+const int _deviceListNativeBatch = 256;
 
 class DeviceListPins {
   DeviceListPins({
@@ -216,6 +221,22 @@ class DeviceListPins {
         ],
       );
 
+  DeviceListPin _verifyChain(String accountId, List<List<int>> statements) {
+    if (statements.isEmpty || statements.length > deviceListMaxChain) {
+      throw const FormatException('invalid device list chain length');
+    }
+    final batchLength = statements.length < _deviceListNativeBatch
+        ? statements.length
+        : _deviceListNativeBatch;
+    final chain =
+        verifier.checkChain(accountId, statements.sublist(0, batchLength));
+    var pin = _pinFrom(accountId, chain, statements[batchLength - 1]);
+    for (final statement in statements.skip(batchLength)) {
+      pin = _step(accountId, pin, statement);
+    }
+    return pin;
+  }
+
   /// Trust on first use: the whole chain from version 1, verified in Rust.
   Future<DeviceListStatus> _firstSight(String accountId) async {
     final statements = await _fetchFrom(accountId, 0);
@@ -225,9 +246,8 @@ class DeviceListPins {
     if (statements.isEmpty) {
       return const DeviceListStatus(DeviceListState.empty, null);
     }
-    final chain = verifier
-        .checkChain(accountId, [for (final item in statements) item.statement]);
-    final pin = _pinFrom(accountId, chain, statements.last.statement);
+    final pin = _verifyChain(
+        accountId, [for (final item in statements) item.statement]);
     if (!await store.saveDeviceListPin(pin, expectedVersion: null)) {
       // Another refresh pinned it meanwhile: take what is stored.
       final stored = await store.loadDeviceListPin(accountId);
@@ -240,6 +260,50 @@ class DeviceListPins {
           stored);
     }
     return DeviceListStatus(DeviceListState.ok, pin);
+  }
+
+  /// Verifies a linked device's authenticated add without writing any pin.
+  /// The caller journals the result before promoting the pending identity.
+  Future<List<Uint8List>> linkedAnchor(String accountId,
+      {required List<int> deviceId,
+      required List<int> signingKey,
+      required List<int> approverDeviceId,
+      required List<int> approverSigningKey}) async {
+    final fetched = await _fetchFrom(accountId, 0);
+    if (fetched == null || fetched.isEmpty) {
+      throw StateError('linked account list unavailable');
+    }
+    final statements = [for (final item in fetched) item.statement];
+    final head = _verifyChain(accountId, statements);
+    final own = head.keys.where((key) =>
+        _same(key.deviceId, deviceId) && _same(key.signingKey, signingKey));
+    if (head.conflict ||
+        own.length != 1 ||
+        !own.single.listed ||
+        own.single.addedVersion <= 1) {
+      throw StateError('linked key has no approved add');
+    }
+    final index = own.single.addedVersion - 1;
+    final previous = _verifyChain(accountId, statements.sublist(0, index));
+    final approver = previous.listedKey(approverDeviceId);
+    if (approver == null || !_same(approver, approverSigningKey)) {
+      throw StateError('linked add approver key disagrees');
+    }
+    final add = verifier.checkStep(
+      accountId: accountId,
+      prev: previous.headStatement,
+      statement: statements[index],
+      history: [
+        for (final key in previous.keys)
+          DeviceListPair(key.deviceId, key.signingKey)
+      ],
+    );
+    if (add.change != DeviceListChange.add ||
+        add.signerKind != 1 ||
+        !_same(add.signerDeviceId, approverDeviceId)) {
+      throw StateError('linked add was not signed by the approver');
+    }
+    return statements;
   }
 
   /// Pins the head [statement] of a chain this device just verified some
@@ -268,9 +332,18 @@ class DeviceListPins {
     if (statements.isEmpty || !_same(statements.last, expectedHead)) {
       throw const FormatException('the chain does not end in the head');
     }
-    final chain = verifier.checkChain(accountId, statements);
-    final pin = _pinFrom(accountId, chain, statements.last);
+    final pin = _verifyChain(accountId, statements);
     final stored = await store.loadDeviceListPin(accountId);
+    if (stored != null) {
+      // Importing an authenticated head is not permission to reset trust.
+      // Require the exact pinned prefix, including for same-height imports.
+      if (stored.conflict ||
+          statements.length < stored.version ||
+          !_same(statements[stored.version - 1], stored.headStatement)) {
+        throw StateError('device list chain disagrees with the existing pin');
+      }
+      if (pin.version == stored.version) return stored;
+    }
     if (!await store.saveDeviceListPin(pin, expectedVersion: stored?.version)) {
       throw StateError('device list pin changed meanwhile');
     }
@@ -390,10 +463,10 @@ class DeviceListPins {
     if (whole == null || whole.length < pin.version) {
       return DeviceListStatus(DeviceListState.ok, pin);
     }
-    final DeviceListChainResult chain;
+    final DeviceListPin chain;
     try {
-      chain = verifier
-          .checkChain(accountId, [for (final item in whole) item.statement]);
+      chain =
+          _verifyChain(accountId, [for (final item in whole) item.statement]);
     } on NativeCryptoException {
       return DeviceListStatus(DeviceListState.ok, pin);
     }
@@ -434,6 +507,19 @@ class DeviceListPins {
     final pin = status.pin;
     if (status.state != DeviceListState.ok || pin == null) return null;
     return pin.listedKey(device);
+  }
+
+  /// Device inventory comes from the signed list, never a server device roster.
+  Future<List<DeviceListPair>> approvedDevices(String accountId,
+      {bool refreshFirst = true}) async {
+    final status =
+        refreshFirst ? await refresh(accountId) : await _stored(accountId);
+    final pin = status.pin;
+    if (status.state != DeviceListState.ok || pin == null) return const [];
+    return [
+      for (final key in pin.listed)
+        DeviceListPair(key.deviceId, key.signingKey),
+    ];
   }
 
   /// [refresh], then once more past the one-minute limit (but at most every

@@ -9,6 +9,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 05 `TASK-005` Validate Welcome sender and ratchet-tree roster before persisting a joined group
 - [x] 06 `TASK-006` Authorize committers, inviters and identity-key bindings against the section-52f8711c03564f2607ba13c6/Q-002 trust anchor
   - Done with L1-3 (D94, D100 A): adds gated by the pinned key, every commit and Welcome leaf judged, approval hold and hidden messages. Follow-ups in docs/crypto.md (L1-3 entry).
+  - Rechecked 2026-11-11 (bughunt-l1): device inventory now from verified lists (creation, reported changes, audit of unreported groups), claims by explicit IDs. Left: tests for the audit; independent review.
 - [x] 07 `TASK-007` Remove the raw-bytes signing oracle on the MLS identity key
 - [x] 08 `TASK-008` Reject past-epoch application messages from senders no longer in the roster
 - [x] 09 `TASK-009` Distinguish unsupported sealed-state format from corruption
@@ -261,6 +262,7 @@ The audit could not settle these, and most such reports do not hold. Check one o
   - Checked: not a bug.
 - [x] check 02 `C-875dbe0d9a3f` Key-package admission checks only self-asserted BasicCredential bytes, never an expected signing key
   - Done with L1-3 (owner 2026-11-08): for an account with a signed list, published and claimed key packages must carry the listed key.
+  - Rechecked 2026-11-11 (bughunt-l1): bare stage_membership_commit has no expected key, but every app add passes the pinned key to stage_commit_with_record.
 - [x] check 03 `C-a03d6368fdc7` Clearing identity state does not reset the sync cursor (upsert leaves cursor untouched)
   - Checked: already fixed before this pass.
 - [x] check 04 `C-f540ea390b9c` Generic channel-conversation creation grants owner rights to ordinary community members

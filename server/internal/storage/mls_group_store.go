@@ -680,7 +680,7 @@ func queryPendingChanges(ctx context.Context, tx *sql.Tx, query, kind, deviceID,
 }
 
 // ClaimDeviceKeyPackages claims one key package for each listed device of
-// a conversation member, for adding devices to an existing group. A device
+// a conversation member, for creating a group or adding to an existing one. A device
 // with no package left is skipped; the caller adds it later.
 func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requesterAccountID, requesterDeviceID string, deviceIDs []string) ([]domain.DeviceKeyPackage, error) {
 	if len(deviceIDs) == 0 || len(deviceIDs) > maxMLSBundleChanges {
@@ -696,15 +696,28 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 		return nil, err
 	}
 	var member bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM memberships WHERE conversation_id = ? AND account_id = ?)`,
-		conversationID, requesterAccountID).Scan(&member); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM memberships m JOIN devices d ON d.account_id = m.account_id
+		WHERE m.conversation_id = ? AND m.account_id = ? AND d.id = ? AND d.revoked_at IS NULL
+	)`, conversationID, requesterAccountID, requesterDeviceID).Scan(&member); err != nil {
 		return nil, err
 	}
 	if !member {
 		return nil, ErrNotMember
 	}
 	if !active {
-		return nil, ErrMLSNotInGroup
+		// Explicit claims also support first-group creation. Once any MLS state
+		// exists, only an active leaf can claim; never reopen legacy groups.
+		var initialized bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM conversation_mls_groups WHERE conversation_id = ?) OR
+			EXISTS(SELECT 1 FROM conversation_mls_messages WHERE conversation_id = ?)`,
+			conversationID, conversationID).Scan(&initialized); err != nil {
+			return nil, err
+		}
+		if initialized {
+			return nil, ErrMLSNotInGroup
+		}
 	}
 	claimedAt := time.Now().UTC()
 	seen := map[string]bool{}

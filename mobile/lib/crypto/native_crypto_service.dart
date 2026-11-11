@@ -64,6 +64,7 @@ class NativeCryptoService
         ConversationAuthorityConsumer,
         C7HistoryConsumer,
         DeviceListCryptoService,
+        ApprovedDeviceDiscoveryCryptoService,
         DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
         InviteBindingCryptoService,
@@ -400,6 +401,47 @@ class NativeCryptoService
   set deviceListPins(DeviceListPins? pins) => _deviceListPins = pins;
 
   @override
+  Future<List<MlsDeviceRef>> missingApprovedDevices(
+      String? conversationId, Iterable<String> accountIds) async {
+    final pins = _deviceListPins;
+    if (pins == null) return const [];
+    final present = await _serial(() async {
+      if (conversationId == null) {
+        return <MlsDeviceRef>{(accountId: _accountId!, deviceId: _deviceId!)};
+      }
+      return <MlsDeviceRef>{
+        for (final leaf in _requiredDevice().groupMembers(conversationId))
+          (
+            accountId: utf8.decode(leaf.accountId),
+            deviceId: utf8.decode(leaf.deviceId)
+          ),
+      };
+    });
+    final budget = Stopwatch()..start();
+    final missing = <MlsDeviceRef>[];
+    for (final account in accountIds.toSet()) {
+      final remaining = deviceListGroupBudget - budget.elapsed;
+      List<DeviceListPair> pairs;
+      try {
+        pairs = remaining > Duration.zero
+            ? await pins.approvedDevices(account).timeout(
+                remaining < deviceListJudgeTimeout
+                    ? remaining
+                    : deviceListJudgeTimeout)
+            : await pins.approvedDevices(account, refreshFirst: false);
+      } on Object {
+        // A failed refresh cannot invent additions. Existing pins still work.
+        pairs = await pins.approvedDevices(account, refreshFirst: false);
+      }
+      for (final pair in pairs) {
+        final ref = (accountId: account, deviceId: utf8.decode(pair.deviceId));
+        if (!present.contains(ref)) missing.add(ref);
+      }
+    }
+    return missing;
+  }
+
+  @override
   DeviceListChainResult checkChain(
           String accountId, List<List<int>> statements) =>
       bindings.checkDeviceListChain(idBytes(accountId), statements);
@@ -520,9 +562,8 @@ class NativeCryptoService
     }
   }
 
-  /// Judges every leaf of [conversationId]'s group (D94). A leaf already
-  /// approved with the same key keeps its row unless [rejudgeApproved]; a
-  /// leaf whose row is not approved is judged again.
+  /// Judges every leaf against the current pins (D94). Cached approval is
+  /// never authority after a signed removal or fork becomes known.
   ///
   /// The conversation's participants (when the app knows them) bound the
   /// roster: with [welcome] every leaf of an account that is not a
@@ -534,7 +575,6 @@ class NativeCryptoService
   Future<ApprovalLeafChange> _judgeGroup(
     String conversationId, {
     bool welcome = false,
-    bool rejudgeApproved = false,
   }) async {
     final leaves = _requiredDevice().groupMembers(conversationId);
     final previous = await localStore.loadApprovalLeaves(conversationId);
@@ -543,23 +583,15 @@ class NativeCryptoService
     final budget = Stopwatch()..start();
     final rows = <ApprovalLeaf>[];
     for (final leaf in leaves) {
-      final known = previous
-          .where((row) =>
-              row.sameLeaf(leaf.accountId, leaf.deviceId) &&
-              _sameBytes(row.signingKey, leaf.signingKey))
-          .firstOrNull;
-      final wasHeld = previous.any((row) =>
-          row.sameLeaf(leaf.accountId, leaf.deviceId) &&
-          row.verdict != LeafVerdict.approved);
-      LeafVerdict verdict;
-      if (known != null &&
-          known.verdict == LeafVerdict.approved &&
-          !rejudgeApproved) {
-        verdict = LeafVerdict.approved;
-      } else {
-        verdict = await _judgeLeaf(leaf,
-            network: budget.elapsed < deviceListGroupBudget);
-      }
+      final wasHeld = previous.any(
+        (row) =>
+            row.sameLeaf(leaf.accountId, leaf.deviceId) &&
+            row.verdict != LeafVerdict.approved,
+      );
+      var verdict = await _judgeLeaf(
+        leaf,
+        network: budget.elapsed < deviceListGroupBudget,
+      );
       if (participants != null &&
           (welcome || wasHeld) &&
           verdict == LeafVerdict.approved) {
@@ -573,17 +605,22 @@ class NativeCryptoService
           verdict = LeafVerdict.unapproved;
         }
       }
-      rows.add(ApprovalLeaf(
-        conversationId: conversationId,
-        accountId: leaf.accountId,
-        deviceId: leaf.deviceId,
-        signingKey: leaf.signingKey,
-        verdict: verdict,
-        updatedAt: now,
-      ));
+      rows.add(
+        ApprovalLeaf(
+          conversationId: conversationId,
+          accountId: leaf.accountId,
+          deviceId: leaf.deviceId,
+          signingKey: leaf.signingKey,
+          verdict: verdict,
+          updatedAt: now,
+        ),
+      );
     }
     return ApprovalLeafChange(
-        conversationId: conversationId, leaves: rows, replaceAll: true);
+      conversationId: conversationId,
+      leaves: rows,
+      replaceAll: true,
+    );
   }
 
   /// The participants a Welcome's roster must stay within, or null when the
@@ -596,8 +633,8 @@ class NativeCryptoService
 
   /// Whether [conversationId] is held for an unapproved, removed or
   /// undecided leaf (the approval hold, D94). A group never judged (from
-  /// before L1, or whose rows a crash lost) is judged now; leaves that are
-  /// not approved are judged again, so a list that now approves them, or a
+  /// before L1, or whose rows a crash lost) is judged now; all leaves are
+  /// judged again, so a list that now removes or approves them, or a
   /// commit that removed them, releases the hold from local evidence only.
   @override
   Future<bool> refreshApprovalHold(String conversationId) =>
@@ -605,11 +642,6 @@ class NativeCryptoService
 
   Future<bool> _refreshApprovalHold(String conversationId) async {
     if (!await _hasGroup(conversationId)) return false;
-    final rows = await localStore.loadApprovalLeaves(conversationId);
-    if (rows.isNotEmpty &&
-        rows.every((row) => row.verdict == LeafVerdict.approved)) {
-      return false;
-    }
     final change = await _judgeGroup(conversationId);
     await localStore.saveApprovalLeaves(change);
     return change.leaves.any((row) => row.verdict != LeafVerdict.approved);
@@ -632,34 +664,19 @@ class NativeCryptoService
   }
 
   /// What the sender leaf of a received message was judged (D94). A group
-  /// with no rows yet is judged first. A sender with no row (rows that an
-  /// own commit's re-judge did not write) or with a row that is not
-  /// approved is judged once more before its text is dropped: the list may
-  /// be reachable now, or name a device added after the last refresh.
+  /// is judged again even when the sender was approved previously: the
+  /// latest pin may remove it or be in conflict.
   Future<LeafVerdict> _senderVerdict(
-      String conversationId, String accountId, String deviceId) async {
-    var rows = await localStore.loadApprovalLeaves(conversationId);
-    if (rows.isEmpty) {
-      final change = await _judgeGroup(conversationId);
-      await localStore.saveApprovalLeaves(change);
-      rows = change.leaves;
-    }
-    final row = rows
+    String conversationId,
+    String accountId,
+    String deviceId,
+  ) async {
+    final change = await _judgeGroup(conversationId);
+    await localStore.saveApprovalLeaves(change);
+    final row = change.leaves
         .where((row) => row.sameLeaf(idBytes(accountId), idBytes(deviceId)))
         .firstOrNull;
-    if (row == null ||
-        row.verdict == LeafVerdict.checking ||
-        row.verdict == LeafVerdict.unapproved) {
-      final change = await _judgeGroup(conversationId);
-      await localStore.saveApprovalLeaves(change);
-      return change.leaves
-              .where((leaf) =>
-                  leaf.sameLeaf(idBytes(accountId), idBytes(deviceId)))
-              .firstOrNull
-              ?.verdict ??
-          LeafVerdict.unapproved;
-    }
-    return row.verdict;
+    return row?.verdict ?? LeafVerdict.unapproved;
   }
 
   /// The keyed adds the pins approve, each with the key the pin lists (never
