@@ -1172,7 +1172,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `PRIVATE_MESSENGER_LIMIT_...` | Default | Range | Counts | Refusal |
 |---|---|---|---|---|
 | `INSTANCE_STORAGE_MIB` | volume × 0.9 / (backup keep + 3), at most 10,240; 3,686 on the 40 GiB PVC | 64-16,777,216 | encrypted attachments and backups on the instance | 507 `storage_quota_exceeded` |
-| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account, including the account's K1 automatic backup copies (migration 0079, owner decision 2026-11-11: backup space is shared per account). A replacement upload counts the copy it replaces for up to 24 hours, so keep room for two copies per device in use | 507 `storage_quota_exceeded` |
+| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account, including the account's K1 automatic backup copies (migration 0078, owner decision 2026-11-11: backup space is shared per account). A replacement upload counts the copy it replaces for up to 24 hours, so keep room for two copies per device in use | 507 `storage_quota_exceeded` |
 | `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and legacy backups per account (K1 copies are bounded by their two-per-device rule, not counted here) (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
 | `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
 | `CONVERSATION_MEMBERS` | 250 (was 100; step 1 of C8) | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |

@@ -228,7 +228,7 @@ func TestK1UploadLoopKeepsTwoFilesAndRefusalsNone(t *testing.T) {
 	}
 }
 
-// Backup space is the account quota (migration 0079): above it the upload answers the storage-quota error and its
+// Backup space is the account quota (migration 0078): above it the upload answers the storage-quota error and its
 // file is removed.
 func TestK1UploadOverTheAccountQuotaIsRefusedAndCleanedUp(t *testing.T) {
 	f := newRecoveryFixture(t, recoveryTestOrigin)

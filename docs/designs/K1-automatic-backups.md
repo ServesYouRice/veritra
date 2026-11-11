@@ -301,7 +301,7 @@ Where the build differs from the text above, and why:
   24-hour grace, so a loop of uploads cannot pile up copies the allowance
   does not count. Each device's highest counter is kept in
   `k1_backup_counters`, so a counter is never accepted twice, even after its
-  copies were deleted. Owner decision 2026-11-11 (question 3b, migration 0079): backup
+  copies were deleted. Owner decision 2026-11-11 (question 3b, migration 0078): backup
   space is shared per account. Copies count in the account's storage
   quota with attachments (`ACCOUNT_STORAGE_MIB`); the separate allowance
   and `BACKUP_ALLOWANCE_MIB` are gone. A replacement counts the copy it
