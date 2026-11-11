@@ -85,6 +85,66 @@ void main() {
         PinStanding.unknown);
   }, skip: skip);
 
+  for (final registration in [false, true]) {
+    for (final read in ['empty', 'missing', 'unavailable']) {
+      test(
+          '${registration ? 'registration' : 'setup'} keeps its genesis '
+          'when list reads are $read', () async {
+        final api = _ListApi(bindings)..listRead = read;
+        final store = MemoryLocalStore();
+        final crypto =
+            NativeCryptoService(bindings: bindings, localStore: store);
+        final state = _state(api, crypto);
+        addTearDown(state.dispose);
+        if (registration) {
+          await state.registerWithInvite(
+              _origin, 'invite', 'owner', 'password');
+        } else {
+          await state.createOwner(_origin, 'owner', 'password', 'setup');
+        }
+        expect(api.chain, hasLength(1));
+        final original = api.chain.single;
+        expect(
+            (await store.loadDeviceListPin(_account))?.headStatement, original);
+
+        // Withholding the real list first must not allow a later first-use
+        // replacement with a server-controlled identity for this account.
+        final ghost = bindings.createDevice(_account, 'dev_ghost');
+        addTearDown(ghost.close);
+        api
+          ..listRead = 'normal'
+          ..served = [
+            ghost.signDeviceList(
+              DeviceListBody(
+                accountId: idBytes(_account),
+                version: 1,
+                prevHash: DeviceListBody.zeroHash,
+                createdAtMs: 1,
+                change: DeviceListChange.genesis,
+                entries: [
+                  DeviceListPair(
+                      idBytes('dev_ghost'), ghost.signingPublicKey()),
+                ],
+              ),
+              idBytes('dev_ghost'),
+            ),
+          ];
+        await DeviceListPins(
+          store: store,
+          source: _ApiLists(api),
+          verifier: crypto,
+        ).refresh(_account, force: true);
+        final pin = await store.loadDeviceListPin(_account);
+        expect(pin?.headStatement, original);
+        expect(pin?.conflict, isFalse);
+        expect(pin?.standing(idBytes('dev_ghost'), ghost.signingPublicKey()),
+            PinStanding.unknown);
+        expect(pin?.standing(idBytes(_own), await crypto.currentSigningKey()),
+            PinStanding.approved);
+      }, skip: skip);
+    }
+  }
+
   test(
       'an account from before L1 reviews its devices once; removals and the '
       'recovery key then chain, re-signed after a 409', () async {
@@ -93,8 +153,15 @@ void main() {
     final crypto = NativeCryptoService(bindings: bindings, localStore: store);
     final state = _state(api, crypto);
     addTearDown(state.dispose);
-    await state.createOwner(_origin, 'owner', 'password', 'setup');
-    expect(api.chain, isEmpty, reason: 'a pre-L1 server took no genesis');
+    // An existing pre-L1 identity, with no locally signed genesis. New
+    // accounts always keep their own genesis even if an old server ignores it.
+    await crypto.createEnrollmentCredential(await api.reserveOwnerEnrollment());
+    await store.saveSession(_ListApi._session);
+    await crypto.activateSession(_ListApi._session);
+    state
+      ..api = api
+      ..session = _ListApi._session;
+    expect(api.chain, isEmpty);
 
     final phone = bindings.createDevice(_account, 'dev_phone');
     final stranger = bindings.createDevice(_account, 'dev_stranger');
@@ -181,6 +248,16 @@ class _QuietSync implements SyncService {
   Future<void> dispose() => _controller.close();
 }
 
+class _ApiLists implements DeviceListSource {
+  _ApiLists(this.api);
+  final _ListApi api;
+
+  @override
+  Future<DeviceListPage?> fetchDeviceList(String accountId,
+          {required int after}) =>
+      api.fetchDeviceList('tok', accountId, after: after);
+}
+
 class _ListApi extends ApiClient {
   _ListApi(this.bindings) : super(baseUrl: _origin);
 
@@ -245,6 +322,7 @@ class _ListApi extends ApiClient {
   }
 
   int listFetches = 0;
+  String listRead = 'normal';
 
   /// What fetches serve instead of [chain] (a lying server).
   List<Uint8List>? served;
@@ -253,6 +331,11 @@ class _ListApi extends ApiClient {
   Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
       {required int after}) async {
     listFetches++;
+    if (listRead == 'empty') {
+      return const DeviceListPage(headVersion: 0, statements: [], more: false);
+    }
+    if (listRead == 'missing') return null;
+    if (listRead == 'unavailable') throw ApiException(503, '');
     if (accountId != _account) return null;
     final rest = (served ?? chain).skip(after).toList();
     return DeviceListPage(
@@ -263,6 +346,25 @@ class _ListApi extends ApiClient {
           (version: after + i + 1, statement: rest[i]),
       ],
     );
+  }
+
+  @override
+  Future<EnrollmentReservation> reserveRegistrationEnrollment(
+          String inviteCode) =>
+      reserveOwnerEnrollment();
+
+  @override
+  Future<Session> register({
+    required String inviteCode,
+    required String username,
+    required String password,
+    required String deviceName,
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
+    List<int>? deviceList,
+  }) async {
+    if (acceptGenesis) _take(deviceList);
+    return _session;
   }
 
   @override

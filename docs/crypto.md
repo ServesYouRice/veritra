@@ -457,6 +457,14 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 local genesis anchor (2026-11-11):** setup and invitation registration
+  pin their locally signed genesis without consulting the server first.
+  Withholding the list or returning a failed read cannot discard this trust
+  anchor and enable a later server-supplied genesis. Legacy accounts with no
+  locally signed genesis retain the reviewed migration flow. No ABI, schema,
+  migration or release-gate change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
 - **L1 bounded long-chain verification (2026-11-11):** client downloads now
   allow up to 4,096 statements, independently of the native 256-statement batch
   limit. First contact, chain import and fork proof verification compose the

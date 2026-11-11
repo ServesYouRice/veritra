@@ -29,6 +29,24 @@ to rename existing working structures. No dependencies or release gates change.
 
 ## Verification and remaining work
 
+### Locally signed genesis (2026-11-11)
+
+After setup or registration succeeds, pin the genesis this device signed
+without first asking the server whether a list exists. An empty, missing or
+unavailable server response cannot authorize discarding the local trust
+anchor. Later refreshes may advance only from that genesis. This also means
+an old server that ignores the submitted genesis cannot silently move the
+new account onto a different chain; the server must accept the signed chain
+before list-dependent operations can proceed. Existing accounts with no
+locally signed genesis still use the migration review flow.
+
+Test both setup and invitation registration with real native signatures:
+the server withholds the list, then serves an attacker-signed genesis. The
+original pin must persist and the attacker must stay unapproved. Check a
+failed list read as well. This changes no wire format or storage structure.
+This slice does not make the session, MLS identity and genesis pin one atomic
+write; a crash or local storage failure between those writes remains open.
+
 ### Long chains (2026-11-11)
 
 Separate the native batch limit (256 statements per chain call) from the

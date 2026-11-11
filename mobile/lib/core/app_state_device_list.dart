@@ -59,18 +59,14 @@ extension AppStateDeviceList on AppState {
 
   /// Pins this device's own genesis as its account's anchor right after
   /// setup or registration, so the first refresh does not take the own
-  /// account by trust on first use from the server. A server that kept no
-  /// list at all (one from before L1, which ignores the field) gets no pin,
-  /// so the account stays "no list yet" as it is there; any list the server
-  /// shows is otherwise answered by this genesis, never adopted. Best
-  /// effort: without it the next refresh pins as before.
+  /// account by trust on first use from the server. The locally signed
+  /// genesis is the anchor even if the server withholds or ignores it;
+  /// reading the server first would let it discard this trust anchor.
   Future<void> _pinOwnGenesis(Session current, Uint8List? genesis) async {
     final pins = _deviceListPins;
     final account = current.accountId;
     if (pins == null || genesis == null || account == null) return;
     try {
-      final page = await pins.source.fetchDeviceList(account, after: 0);
-      if (page == null || page.headVersion == 0) return;
       await pins.pinChain(account, [genesis], expectedHead: genesis);
     } on Object catch (err) {
       developer.log('L1 own genesis not pinned: ${err.runtimeType}',
