@@ -801,8 +801,10 @@ class CommunityInfoService {
   }
 
   Future<int> _answerRequests(InfoKeyHome home, String communityId) async {
-    if (topology.serverSaysAdmin(communityId) != true ||
-        topology.sendHeld(home.conversationId)) {
+    // Who answers follows who rotates: the verified C4 record's owner and
+    // admins when one is held (a moderator never answers, whatever the
+    // server says), else the server's word, as before C4.
+    if (!_mayRotate(communityId) || topology.sendHeld(home.conversationId)) {
       return 0;
     }
     if (await currentKey(home, communityId) == null) return 0;
@@ -1117,31 +1119,34 @@ class CommunityInfoService {
       }
       final home = _homeOfMark(id, communityId);
       if (home == null || topology.sendHeld(home.conversationId)) continue;
-      // A pass that already made its key finishes with it; otherwise another
-      // owner or admin device's delivered rotation may already cover this.
-      final adopted = mark['k'] is String
-          ? null
-          : await _rotatedElsewhere(home, communityId);
-      if (!_mayRotate(communityId)) {
-        // An unknown role or a non-admin never makes a key. It completes
-        // once an owner or admin has rotated (its edits then use that key);
-        // until then it keeps the mark, also for a later promotion.
-        if (adopted == null) continue;
-        try {
-          await _complete(home, id, token, mark);
-          done++;
-        } on InfoRotationPending {
-          // A newer removal arrived meanwhile: its own mark decides.
-        }
-        continue;
-      }
-      final turn = _turnOf(mark, home, communityId);
-      final early = turn != null && _clock().isBefore(turn);
-      // Not this device's turn yet, and nobody else has rotated: wait.
-      if (early && adopted == null) continue;
       final wait = _backoff[id];
-      if (wait != null && _clock().isBefore(wait.next)) continue;
       try {
+        // A pass that already made its key finishes with it; otherwise
+        // another owner or admin device's delivered rotation may already
+        // cover this.
+        final adopted = mark['k'] is String
+            ? null
+            : await _rotatedElsewhere(home, communityId);
+        if (!_mayRotate(communityId)) {
+          // An unknown role or a non-admin never makes a key. It completes
+          // once an owner or admin has rotated (its edits then use that
+          // key); until then it keeps the mark, also for a later promotion.
+          // Waiting is not a failure: no backoff.
+          if (adopted == null) continue;
+          if (wait != null && _clock().isBefore(wait.next)) continue;
+          try {
+            await _complete(home, id, token, mark);
+            done++;
+          } on InfoRotationPending {
+            // A newer removal arrived meanwhile: its own mark decides.
+          }
+          continue;
+        }
+        final turn = _turnOf(mark, home, communityId);
+        final early = turn != null && _clock().isBefore(turn);
+        // Not this device's turn yet, and nobody else has rotated: wait.
+        if (early && adopted == null) continue;
+        if (wait != null && _clock().isBefore(wait.next)) continue;
         // Remember what the records say before the key changes.
         final records = <InfoSubject, CommunityInfoRecord>{};
         for (final subject in subjectsUnder(home, communityId)) {

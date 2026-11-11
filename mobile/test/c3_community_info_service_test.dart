@@ -113,6 +113,19 @@ class _DelayedCacheStore extends MemoryLocalStore {
   }
 }
 
+/// A store whose key-event reads for one subject kind fail while [failKind]
+/// is set: a broken read in one rotation mark.
+class _FailingKeyReadStore extends MemoryLocalStore {
+  String? failKind;
+
+  @override
+  Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
+      CommunityInfoEventKind kind, String subjectKind, String subjectId) async {
+    if (failKind == subjectKind) throw StateError('store read failed');
+    return super.loadCommunityInfoEvents(kind, subjectKind, subjectId);
+  }
+}
+
 /// One device: its store and service. [members] says which conversations it
 /// is in; a send reaches every other device in that conversation.
 class _Device {
@@ -1496,6 +1509,91 @@ void main() {
     expect(admin.sent.where((s) => s.$2 == AppPayloadType.infoKey).length,
         sentKeys);
     expect(await admin.service.dueRotations(), isEmpty);
+  }, skip: skip);
+
+  test('a failing mark backs off without stopping the marks after it',
+      () async {
+    final store = _FailingKeyReadStore();
+    final admin =
+        device('admin', {_shared, _privateConv}, admin: true, store: store);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    await admin.service
+        .markRotationDue(admin.service.homeOf(community)!, _community);
+    await admin.service.markRotationDue(
+        const InfoKeyHome(
+            keySubjectKind: infoKindChannel,
+            keySubjectId: 'chan_00000000000000000000000000000003',
+            conversationId: _privateConv),
+        _community);
+    // The community mark comes first and its key read throws.
+    store.failKind = infoKindCommunity;
+    expect(await admin.service.runRotations((_, __) => []), 1);
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+    // The failure backs off: a retry at once does nothing even when the
+    // read works again.
+    store.failKind = null;
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    now = now.add(const Duration(minutes: 2));
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    expect(await admin.service.dueRotations(), isEmpty);
+  }, skip: skip);
+
+  test('a non-admin whose completion read fails keeps its mark and backs off',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final store = _FailingKeyReadStore();
+    final member = device('member', {_shared}, store: store);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await member.service.markRotationDue(home, _community);
+    await admin.service.markRotationDue(home, _community);
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    store.failKind = infoKindCommunity;
+    // The throw stays inside the pass.
+    expect(await member.service.runRotations((_, __) => [community]), 0);
+    store.failKind = null;
+    expect(await member.service.runRotations((_, __) => [community]), 0);
+    expect(await member.service.dueRotations(), {'community|$_community'});
+    now = now.add(const Duration(minutes: 2));
+    expect(await member.service.runRotations((_, __) => [community]), 1);
+    expect(await member.service.dueRotations(), isEmpty);
+  }, skip: skip);
+
+  test('answerers follow the verified record, not the server role', () async {
+    final verified = GovernanceState(
+      rev: 2,
+      owner: 'acct_admin',
+      ownerRev: 2,
+      admins: const {'acct_boss': 2},
+      moderators: const {'acct_mod'},
+      joined: const {
+        'acct_admin': 0,
+        'acct_member': 1,
+        'acct_mod': 2,
+        'acct_boss': 3,
+      },
+    );
+    final admin = device('admin', {_shared}, admin: true, verified: verified);
+    // The server calls the moderator an admin and the admin a member.
+    final mod = device('mod', {_shared}, admin: true, verified: verified);
+    final boss = device('boss', {_shared}, admin: false, verified: verified);
+    // The member joins after the key went round.
+    final member = device('member', {}, verified: verified);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    expect(await mod.service.refresh(community), isA<InfoNeedsKey>());
+    expect(await boss.service.refresh(community), isA<InfoNeedsKey>());
+    expect(await admin.service.answerRequests(home, _community), 1);
+    expect(await mod.service.refresh(community), isA<InfoAccepted>());
+    expect(await boss.service.refresh(community), isA<InfoAccepted>());
+    // Both now hold the key; the member joins and asks.
+    member.members.add(_shared);
+    expect(await member.service.requestKey(home), isTrue);
+    expect(await mod.service.answerRequests(home, _community), 0);
+    expect(mod.sent.where((s) => s.$2 == AppPayloadType.infoKey), isEmpty);
+    expect(await boss.service.answerRequests(home, _community), 1);
+    expect(
+        boss.sent.where((s) => s.$2 == AppPayloadType.infoKey), hasLength(1));
   }, skip: skip);
 
   test('an own record whose announcement could not go out is announced later',
