@@ -3766,6 +3766,74 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupPromptLater => 'Не сада';
 
   @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Пре него што замените кључ за опоравак, можете вратити историју из копија које су направили ваши изгубљени уређаји. Оне се отварају вашим старим кључем, који за њих престаје да важи кад га замените.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Прескочи';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ако прескочите, старије копије постају неупотребљиве чим замените кључ за опоравак. Прескочити ипак?';
+
+  @override
+  String get k1RestoreOpen => 'Врати из резервне копије';
+
+  @override
+  String get k1RestoreTitle => 'Враћање из резервне копије';
+
+  @override
+  String get k1RestoreIntro =>
+      'Изаберите копију коју је направио неки други ваш уређај и унесите кључ за опоравак. Историја се спаја са овом; поруке које већ постоје остају.';
+
+  @override
+  String get k1RestoreLoading => 'Тражим резервне копије…';
+
+  @override
+  String get k1RestoreEmpty => 'Није пронађена копија са другог уређаја.';
+
+  @override
+  String get k1RestoreLoadFailed => 'Списак резервних копија није учитан.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (претходна копија)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'Уређај';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'Овај уређај је уклоњен са вашег налога.';
+
+  @override
+  String get k1RestoreDone => 'Историја је враћена.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'То није исправан кључ за опоравак овог налога.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'Ова копија је закључана другим кључем за опоравак.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'Копија се не може отворити. Можда је оштећена.';
+
+  @override
+  String get k1RestoreNetwork => 'Сервер није доступан. Ништа није промењено.';
+
+  @override
+  String get k1RestoreUnavailable => 'Овај уређај не може да врати копију.';
+
+  @override
   String get connectSignInPasskey => 'Пријава приступним кључем';
 
   @override
@@ -7756,6 +7824,74 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupPromptLater => 'Ne sada';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Pre nego što zamenite ključ za oporavak, možete vratiti istoriju iz kopija koje su napravili vaši izgubljeni uređaji. One se otvaraju vašim starim ključem, koji za njih prestaje da važi kad ga zamenite.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Preskoči';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ako preskočite, starije kopije postaju neupotrebljive čim zamenite ključ za oporavak. Preskočiti ipak?';
+
+  @override
+  String get k1RestoreOpen => 'Vrati iz rezervne kopije';
+
+  @override
+  String get k1RestoreTitle => 'Vraćanje iz rezervne kopije';
+
+  @override
+  String get k1RestoreIntro =>
+      'Izaberite kopiju koju je napravio neki drugi vaš uređaj i unesite ključ za oporavak. Istorija se spaja sa ovom; poruke koje već postoje ostaju.';
+
+  @override
+  String get k1RestoreLoading => 'Tražim rezervne kopije…';
+
+  @override
+  String get k1RestoreEmpty => 'Nije pronađena kopija sa drugog uređaja.';
+
+  @override
+  String get k1RestoreLoadFailed => 'Spisak rezervnih kopija nije učitan.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (prethodna kopija)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'Uređaj';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'Ovaj uređaj je uklonjen sa vašeg naloga.';
+
+  @override
+  String get k1RestoreDone => 'Istorija je vraćena.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'To nije ispravan ključ za oporavak ovog naloga.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'Ova kopija je zaključana drugim ključem za oporavak.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'Kopija se ne može otvoriti. Možda je oštećena.';
+
+  @override
+  String get k1RestoreNetwork => 'Server nije dostupan. Ništa nije promenjeno.';
+
+  @override
+  String get k1RestoreUnavailable => 'Ovaj uređaj ne može da vrati kopiju.';
 
   @override
   String get connectSignInPasskey => 'Prijava pristupnim ključem';

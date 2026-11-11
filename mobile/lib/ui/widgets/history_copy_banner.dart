@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../features/settings/k1_restore_screen.dart';
 import '../../l10n/l10n.dart';
 import '../tokens.dart';
 import 'listenable_selector.dart';
@@ -71,6 +72,20 @@ class HistoryCopyBanner extends StatelessWidget {
                           theme.textTheme.bodySmall?.copyWith(color: onColor),
                     ),
                   ),
+                  // K2: a copy from the old device that did not arrive can
+                  // still come from an automatic backup (K1-4).
+                  if (status.phase == HistoryTransferPhase.ended &&
+                      status.incoming &&
+                      state.k1RestoreSupported)
+                    TextButton(
+                      key: const ValueKey<String>('history-copy-restore'),
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => K1RestoreScreen(state: state),
+                        ),
+                      ),
+                      child: Text(context.l10n.k1RestoreOpen),
+                    ),
                   if (status.phase == HistoryTransferPhase.ended)
                     TextButton(
                       onPressed: state.dismissHistoryCopyNotice,

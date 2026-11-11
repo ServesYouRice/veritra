@@ -685,6 +685,7 @@ Future<void> _withWorld(
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final skip = nativeCryptoSkip();
 
   test(

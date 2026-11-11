@@ -6171,6 +6171,120 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get autoBackupPromptLater;
 
+  /// No description provided for @recoveryFollowUpRestoreDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.'**
+  String get recoveryFollowUpRestoreDetail;
+
+  /// No description provided for @recoveryFollowUpRestoreSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get recoveryFollowUpRestoreSkip;
+
+  /// No description provided for @recoveryFollowUpRestoreSkipWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'If you skip, older backups become unusable after you replace your recovery key. Skip anyway?'**
+  String get recoveryFollowUpRestoreSkipWarning;
+
+  /// No description provided for @k1RestoreOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from a backup'**
+  String get k1RestoreOpen;
+
+  /// No description provided for @k1RestoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from a backup'**
+  String get k1RestoreTitle;
+
+  /// No description provided for @k1RestoreIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a backup made by one of your other devices and type your recovery key. Your history is merged in; messages already here stay.'**
+  String get k1RestoreIntro;
+
+  /// No description provided for @k1RestoreLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Looking for backups…'**
+  String get k1RestoreLoading;
+
+  /// No description provided for @k1RestoreEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No backup from another device was found.'**
+  String get k1RestoreEmpty;
+
+  /// No description provided for @k1RestoreLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The list of backups could not be loaded.'**
+  String get k1RestoreLoadFailed;
+
+  /// No description provided for @k1RestoreEntry.
+  ///
+  /// In en, this message translates to:
+  /// **'{device} · {date}'**
+  String k1RestoreEntry(String device, String date);
+
+  /// No description provided for @k1RestoreEntryPrevious.
+  ///
+  /// In en, this message translates to:
+  /// **'{device} · {date} (the copy before)'**
+  String k1RestoreEntryPrevious(String device, String date);
+
+  /// No description provided for @k1RestoreDeviceUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'A device'**
+  String get k1RestoreDeviceUnnamed;
+
+  /// No description provided for @k1RestoreDeviceRevoked.
+  ///
+  /// In en, this message translates to:
+  /// **'This device was removed from your account.'**
+  String get k1RestoreDeviceRevoked;
+
+  /// No description provided for @k1RestoreDone.
+  ///
+  /// In en, this message translates to:
+  /// **'History restored.'**
+  String get k1RestoreDone;
+
+  /// No description provided for @k1RestoreWrongKey.
+  ///
+  /// In en, this message translates to:
+  /// **'That is not a valid recovery key for this account.'**
+  String get k1RestoreWrongKey;
+
+  /// No description provided for @k1RestoreOtherKey.
+  ///
+  /// In en, this message translates to:
+  /// **'This backup was locked with a different recovery key.'**
+  String get k1RestoreOtherKey;
+
+  /// No description provided for @k1RestoreCorrupt.
+  ///
+  /// In en, this message translates to:
+  /// **'This backup could not be opened. It may be damaged.'**
+  String get k1RestoreCorrupt;
+
+  /// No description provided for @k1RestoreNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not be reached. Nothing changed.'**
+  String get k1RestoreNetwork;
+
+  /// No description provided for @k1RestoreUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This device cannot restore from a backup.'**
+  String get k1RestoreUnavailable;
+
   /// No description provided for @connectSignInPasskey.
   ///
   /// In en, this message translates to:

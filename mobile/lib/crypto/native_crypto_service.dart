@@ -55,6 +55,7 @@ import 'native_crypto_bindings.dart';
 class NativeCryptoService
     implements
         BackupSealCryptoService,
+        BackupOpenCryptoService,
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
@@ -335,6 +336,23 @@ class NativeCryptoService
   @override
   int get k1BackupMaxPlaintextBytes =>
       NativeCryptoBindings.backupMaxPlaintextBytes;
+
+  @override
+  BackupHeaderInfo peekK1Backup(Uint8List prefix) =>
+      bindings.peekBackup(prefix);
+
+  @override
+  Future<OpenedBackup> openK1Backup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  }) async =>
+      bindings.openBackup(
+          ciphertext: ciphertext,
+          entropy: entropy,
+          accountId: accountId,
+          sourceDeviceId: sourceDeviceId);
 
   @override
   Future<RecoveryKeyValues> deriveRecoveryKey(Uint8List entropy) async {
