@@ -1,33 +1,18 @@
-# Handover (2026-11-11), branch `ai/integ`
+# Handover (2026-11-11)
 
-The work was built by Codex, Gemini and Claude agents. It is 185 commits ahead of `main` and not merged.
+Rounds 6 and 7 are on `main` after their PRs merge. Counters: crypto ABI 24, local schema 40, server migration 0087 (D123).
 
-**Update 2026-11-11:** `ai/integ` was pushed to `main` directly. The gate failures it brought (3 server tests, 24 app tests, contract drift, gofmt, GO-2026-6859) are fixed on `fix/main-green`, with D115 (admin rekey after moderator removals) and D116 (layout on by default). The reviews below are still needed.
+## Done in round 7 (independently reviewed, findings fixed)
+C3, C4 (succession, held commits, leave proof D118, removed-device limits D119), C5 timeouts, C6 MLS moderator keys (D120), C7 steps 3–5 server tests, L1 marker and tests, K1 phone second copy and K1-7, K0-R recovery notice, B6 voice media (demo builds), L2 padding and own-device alert, L3 attestation script.
 
-Counters: crypto ABI 22, local schema 36, server migration 0084.
-
-## Never tested or reviewed (second-opinion areas in AGENTS.md)
-- C3 (key by MLS epoch, plaintext-name refusal, migration 0082)
-- C7 server routes (migrations 0083 and 0084, flag `PRIVATE_MESSENGER_C7_HISTORY` off) and the Dart step 4/5 slice; its tests are written but never run
-- C4 (commit receive staging, removal proofs), C5 and C6 (per-moderator sealed reports)
-- L1 (complete-adds audit, join notice, recovery-key retype)
-- K1-6 (VBK2 and token route retired, migration 0081)
-- B6 (ABI 22, rooms, LiveKit tokens; Opus review was stopped part-way)
-
-## Open items
-- C7: records, generation keys, key handover in history_sync, keyless/unsure, newcomer import and prefetch. These were waiting for C4, which has now landed.
-- C3: channel conversion (C7 `move`).
-- C4: server succession after an election is won.
-- C5: apps do not refuse a timed-out member's post; only the server does.
-- C6: moderator keys need a manual trust tap instead of MLS authentication; a departed moderator keeps copies already received.
-- L1: a marker on messages from a removed device; tests for the four new flows.
-- K1: the second copy on Android and iOS; K1-7 recover-and-restore e2e.
-- B6: media transport (`livekit_client` needs licence review) and the demo factory that sets `AppState.roomSession`.
-- L2: padding (needs an ABI bump), sealed sender, own-device alert. L3: `verify-attestation.sh` and a tested confidential-VM recipe.
-- `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` is on by default (owner decision, 2026-11-11), demos included; `0` turns it off, and new communities then show placeholder names only.
-- STATE.md has D115–D117 and a Round 6 row. The per-task reports are not in the repo.
-- Search: a one-word community name that also looks like a username (e.g. `chess`) is still sent to the server as an account lookup; a local-only "Communities" search mode would close that.
-- Review needed: the D95 franking-policy fix and the C4 role calls moved onto `NativeCryptoDevice` (`fix/app-tests`), and D115.
+## Open
+- **C7 full mode:** records with C4 authority, per-channel chain state, generation keys, `history_sync` slots, keyless/unsure states, newcomer import and prefetch, backward walk. Then **C3 channel conversion** (C7 `move`), which depends on it.
+- **L2 sealed sender** with VOPRF credentials (D122): new crypto dependency on app and server (licence check), and how sealed messages fit C6 franking.
+- **B6:** camera, screen share, S1, S7, Android foreground service, iOS extension, `call_id` extension, restricting `pm_crypto_group_b6_media_key` to call groups (ABI change). Confirm on devices: a forced reconnect sends only encrypted audio; bind/rebind plays and does not crash.
+- **K1 / native code:** Kotlin and Swift for the phone second copy were never compiled; build both apps and test the folder pick and iOS export.
+- **L2-1:** an ABI 22 core reading padded blobs is untested.
+- **L3:** real SEV-SNP run with evidence; owner choices: may `sev-snp-measure` be used, pin AMD ARK fingerprints in the repo, which confidential-VM host.
+- **Search:** a one-word community name that looks like a username is sent to the server on submit; a local-only "Communities" mode would close that.
 
 ## Release blockers outside code
-G25 independent crypto review, G24 signed-device evidence, G27 upstream advisory. Also the owner's accounts: VPS, DNS, R2, GHCR, TURN, and branch protection.
+G25 independent crypto review, G24 signed-device evidence, G27 upstream advisory. The owner's accounts: VPS, DNS, R2, GHCR, TURN, branch protection.
