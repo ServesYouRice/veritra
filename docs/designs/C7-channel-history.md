@@ -907,8 +907,10 @@ app, which sends no body, keeps working): the `sealed_body` field on
 `POST /api/v1/messages/envelopes`, migration 0083 (`envelope_bodies`, the
 body removed with its envelope by `ON DELETE CASCADE`), the size rule
 (`server/internal/storage/c7_body_store.go`), the replay comparison, the
-body served with `MessageByID`, `MessageForAccount` and both sync routes
-(read from `envelope_bodies`, never stored in `sync_events`), and the 409
+body served with its envelope on both sync routes only (read from
+`envelope_bodies`, never stored in `sync_events`; the single-message GET
+serves no body, so a newcomer cannot fetch a pre-join or hidden body by
+id), and the 409
 `history_route_only` answers for legacy edit, delete and paging in
 community conversations. Off, a body is refused everywhere (400
 `invalid_sealed_body`).

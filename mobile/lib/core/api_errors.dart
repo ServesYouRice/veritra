@@ -176,6 +176,10 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_after': ApiErrorKind.invalidRequest,
   'invalid_items': ApiErrorKind.invalidRequest,
 
+  // C7 sealed bodies (server step 3, behind PRIVATE_MESSENGER_C7_HISTORY).
+  'invalid_sealed_body': ApiErrorKind.invalidRequest,
+  'history_route_only': ApiErrorKind.conflict,
+
   // C6 franking and abuse reports.
   'invalid_frank_commit': ApiErrorKind.invalidRequest,
   'report_inbox_unavailable': ApiErrorKind.conflict,

@@ -140,7 +140,7 @@ func sealedBodyOf(ctx context.Context, q queryRower, messageID string) ([]byte, 
 	return body, err
 }
 
-// withSealedBody fills in an envelope's body before it is served.
+// withSealedBody fills in a stored envelope's body (the replay comparison).
 func withSealedBody(ctx context.Context, q queryRower, msg domain.MessageEnvelope, err error) (domain.MessageEnvelope, error) {
 	if err != nil {
 		return msg, err
@@ -198,8 +198,12 @@ func sameSealedBody(existing, requested []byte) bool {
 // attachSyncBodies serves each created envelope's sealed body with its sync
 // event, read from envelope_bodies: the stored event never holds it, so a
 // pruned envelope's body is gone with it. Events without a body (every
-// event outside community conversations) are left byte for byte as stored.
-func attachSyncBodies(ctx context.Context, q queryRower, events []domain.SyncEvent) error {
+// event outside community conversations) are left byte for byte as stored,
+// and with C7 off nothing is read: the default sync path is unchanged.
+func (s *Store) attachSyncBodies(ctx context.Context, q queryRower, events []domain.SyncEvent) error {
+	if !s.c7History {
+		return nil
+	}
 	for i := range events {
 		if events[i].Type != "message.envelope.created" || events[i].ConversationID == "" || len(events[i].Payload) == 0 {
 			continue

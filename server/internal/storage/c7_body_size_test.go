@@ -37,8 +37,10 @@ func TestC7BodySizeRule(t *testing.T) {
 			t.Fatalf("history_sync size rule wrong for %d channels", l.Channels)
 		}
 	}
-	if body := len(vector.Outputs.SealedBody) / 2; !C7BodySizeValid(body, false) {
-		t.Fatalf("vector sealed body of %d bytes refused", body)
+	// The vector seals a short 32-byte plaintext (156 bytes): the framing is
+	// 124 bytes, as the rule assumes; real bodies pad VAP1 to 256-byte blocks.
+	if body := len(vector.Outputs.SealedBody) / 2; body-c7BodyFraming != 32 {
+		t.Fatalf("vector sealed body of %d bytes: framing is not %d", body, c7BodyFraming)
 	}
 	for _, n := range []int{124 + 256, 124 + 512, 65660} {
 		if !C7BodySizeValid(n, false) {

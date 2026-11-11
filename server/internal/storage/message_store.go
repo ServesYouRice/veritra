@@ -297,7 +297,7 @@ func (s *Store) MessageByID(ctx context.Context, messageID string) (domain.Messa
 		}
 		return domain.MessageEnvelope{}, err
 	}
-	return withSealedBody(ctx, s.db, msg, nil)
+	return msg, nil
 }
 
 // MessageForAccount returns one unexpired envelope only when the requester is
@@ -329,7 +329,10 @@ func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID stri
 	if message.ExpiresAt != nil && !message.ExpiresAt.After(time.Now().UTC()) {
 		return domain.MessageEnvelope{}, ErrMessageExpired
 	}
-	return withSealedBody(ctx, s.db, message, nil)
+	// C7: no sealed body here. It is served only with its sync event (and,
+	// for pre-join posts, by the history route), so a newcomer cannot fetch
+	// a pre-join or hidden body by id.
+	return message, nil
 }
 
 func (s *Store) UpdateMessageEnvelope(ctx context.Context, messageID, accountID string, ciphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage) (domain.MessageEnvelope, error) {
@@ -1064,7 +1067,7 @@ func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, af
 			return SyncPage{}, ErrSyncCursorExpired
 		}
 	}
-	if err := attachSyncBodies(ctx, s.db, page.Events); err != nil {
+	if err := s.attachSyncBodies(ctx, s.db, page.Events); err != nil {
 		return SyncPage{}, err
 	}
 	return page, nil
