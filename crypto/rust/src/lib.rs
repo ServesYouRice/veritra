@@ -11,6 +11,7 @@ use core::ffi::c_char;
 compile_error!("Veritra's FFI crate requires panic=unwind");
 
 pub mod attachment;
+pub mod b6;
 pub mod c7;
 mod ffi;
 pub mod l1;
@@ -24,7 +25,7 @@ pub mod report;
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 21;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 28;
 
 #[cfg(test)]
 mod test_memory;

@@ -457,6 +457,26 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **B6, group-call media keys: ABI 28 (2026-11-11):** one new call and one
+  new signing domain, for [`B6-group-calls.md`](designs/B6-group-calls.md)
+  (S2). `pm_crypto_group_b6_media_key(handle, group_id, call_id, leaf, stream)`
+  returns `K(s,t) = HKDF-SHA256(salt "veritra-b6-sender-v1", ikm =
+  MLS-Exporter("veritra-b6-media-v1", lp(call_id) | u64(epoch), 32),
+  info = u32(leaf) | u8(stream))` for the group's current epoch (stream 0
+  voice, 1 camera, 2 screen, 3 screen audio). The exporter secret never
+  leaves the core. **This is the one exception to C7's rule that no
+  stand-alone exporter output leaves the core**: the keys must reach
+  libwebrtc's frame cryptor. Only `K(s,t)` leaves, for the one label, and a
+  leaf that is not in the group is refused. `pm_crypto_c7_sign` and `_verify`
+  also accept the domain `veritra-b6-join-v1` (message
+  `lp(group_id) | lp(nonce) | u64(expires_at) | sha256(key_package)`); no
+  signing domain is a prefix of another (tested), so a join signature is never
+  a valid MLS, C7, invite or L1 signature. Vector
+  `testing/vectors/b6-media-v1.json`, checked by Rust and Go
+  (`server/internal/b6vector`); the Dart check and binding come with S5. The
+  version gap 22 to 27 belongs to other packages. Needs the independent
+  crypto review before release (design S2). Not built yet: the call-group
+  context extension check.
 - **C3, encrypted community info: records, payloads, local schema 31
   (2026-11-08):** no ABI change. Design
   [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),

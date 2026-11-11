@@ -1935,6 +1935,52 @@ pub unsafe extern "C" fn pm_crypto_c7_verify(
     })
 }
 
+/// ABI 28 (B6): the 32-byte media key `K(s,t)` of the call group's current
+/// epoch for the sender at `leaf_index` and stream slot `stream` (0 voice,
+/// 1 camera, 2 screen, 3 screen audio): `HKDF-SHA256(salt =
+/// "veritra-b6-sender-v1", ikm = MLS-Exporter("veritra-b6-media-v1",
+/// lp(call_id) | u64(epoch), 32), info = u32(leaf) | u8(stream))`. `call_id`
+/// is 1 to 128 bytes. The exporter secret never leaves the core; this is the
+/// only B6 key output. Fails for a leaf that is not in the group or a stream
+/// above 3. Nothing is written on failure.
+///
+/// # Safety
+/// `handle` must be live, slices readable and `out_key` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_b6_media_key(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    call_id: PmByteSlice,
+    leaf_index: u32,
+    stream: u8,
+    out_key: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_key.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let call_id = unsafe { borrowed(call_id, crate::b6::MAX_ID_BYTES)? };
+        if stream >= crate::b6::STREAM_SLOTS {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let key = unsafe {
+            with_device(handle, |device| {
+                let group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .b6_media_key(&group, call_id, leaf_index, stream)
+                    .map_err(|error| match error {
+                        MlsError::InvalidMessage | MlsError::InvalidIdentity => {
+                            PM_CRYPTO_INVALID_ARGUMENT
+                        }
+                        _ => PM_CRYPTO_ERROR,
+                    })
+            })?
+        };
+        unsafe { output(out_key, key.as_slice().to_vec()) }
+    })
+}
+
 /// ABI 13 (C7): the signature public key (32 bytes) of the member device
 /// with this account and device id, read from the group's current tree.
 /// Fails when there is no such member.

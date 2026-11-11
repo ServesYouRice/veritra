@@ -1,0 +1,55 @@
+{
+  "description": "B6 media keys and join signature (docs/designs/B6-group-calls.md, ABI 28). E is an input; the real exporter is tied to it in crypto/rust/src/mls.rs tests. Regenerate: cargo test --lib b6::tests::print_vector -- --ignored --nocapture.",
+  "inputs": {
+    "call_id": "call_0123456789",
+    "epoch": 3,
+    "exporter_label": "veritra-b6-media-v1",
+    "exporter_secret_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+    "join_domain": "veritra-b6-join-v1",
+    "join_expires_at": 1800000060,
+    "join_group_id_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "join_key_package_hex": "3333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333",
+    "join_nonce_hex": "22222222222222222222222222222222",
+    "join_seed_hex": "4444444444444444444444444444444444444444444444444444444444444444",
+    "sender_salt": "veritra-b6-sender-v1"
+  },
+  "outputs": {
+    "exporter_context_hex": "000f63616c6c5f303132333435363738390000000000000003",
+    "join_message_hex": "00201111111111111111111111111111111111111111111111111111111111111111001022222222222222222222222222222222000000006b49d23ceaa90984064eb28c94c70cabc2f3a68e807613fb4d438f75482b543850f0d0dd",
+    "join_public_key_hex": "d759793bbc13a2819a827c76adb6fba8a49aee007f49f2d0992d99b825ad2c48",
+    "join_signature_hex": "afbb6e4dc51fbf0e7fe1277f5e4e0221dccca250a5eb4aa963c747132d6187acc87e6e202ad06f7ac6412fdc72a4827ad7c7550080935cefb27ee9f15a7b8f0e",
+    "keys": [
+      {
+        "key_hex": "45d735682a0aa798138ad1e8ffa45fa46300523b4a952cf6b8ad47baae33a97c",
+        "leaf": 0,
+        "stream": 0
+      },
+      {
+        "key_hex": "dfd94eba011c4bc9201099c7d89172f293fa89b156ea8e72fb62c286818b3af0",
+        "leaf": 0,
+        "stream": 1
+      },
+      {
+        "key_hex": "984a0a138a2322234e1b6b0599770dcf1563fd3e16aa248a42aa5a14219ea416",
+        "leaf": 1,
+        "stream": 0
+      },
+      {
+        "key_hex": "825029fb22a5b16df5d2da7b1d22c617b711b14d6588904987963913b2e7a793",
+        "leaf": 1,
+        "stream": 2
+      },
+      {
+        "key_hex": "3adc414771aeff2d0c9aadf2324279930ac22d65cc7ae770a91f0fdf47091eb0",
+        "leaf": 7,
+        "stream": 3
+      },
+      {
+        "key_hex": "2b287224f177f2ff0d16a8ac4eef5ceee638f871a455fc8897c40c76044f3ddc",
+        "leaf": 65535,
+        "stream": 0
+      }
+    ]
+  },
+  "version": 1
+}

@@ -805,6 +805,40 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
+    /// B6 (ABI 28): the media key `K(s,t)` of the call group's current epoch
+    /// for the sender at `leaf_index` and stream slot `stream`. The exporter
+    /// secret `E` stays here; only the derived key leaves.
+    pub fn b6_media_key(
+        &self,
+        group: &MlsGroup,
+        call_id: &[u8],
+        leaf_index: u32,
+        stream: u8,
+    ) -> Result<tls_codec::SecretVLBytes, MlsError> {
+        let context = crate::b6::exporter_context(call_id, group.epoch().as_u64())
+            .map_err(|_| MlsError::InvalidMessage)?;
+        if !group
+            .members()
+            .any(|member| member.index.u32() == leaf_index)
+        {
+            return Err(MlsError::InvalidIdentity);
+        }
+        let secret = tls_codec::SecretVLBytes::new(
+            group
+                .export_secret(
+                    self.provider.crypto(),
+                    crate::b6::EXPORTER_LABEL,
+                    &context,
+                    crate::b6::KEY_BYTES,
+                )
+                .map_err(|_| MlsError::GroupOperation)?,
+        );
+        crate::b6::sender_key(secret.as_slice(), leaf_index, stream).map_err(|error| match error {
+            crate::b6::B6Error::InvalidInput => MlsError::InvalidMessage,
+            crate::b6::B6Error::Crypto => MlsError::GroupOperation,
+        })
+    }
+
     /// The conversation's safety number (v2): the group id and every member
     /// device's credential and signature key. The epoch and encryption keys
     /// are left out, so routine commits keep the number; a device that joins,
@@ -2540,6 +2574,75 @@ mod tests {
             account_id: account,
             device_id: device,
         }]
+    }
+
+    // ---- B6 (ABI 28): media keys of a call group ----
+
+    #[test]
+    fn b6_media_keys_follow_the_epoch_and_leave_with_the_removed_member() {
+        let ([alice, bob, carol], [mut alice_group, bob_group, carol_group]) =
+            three_members(b"call_group_b6");
+        let call = b"call_b6";
+        let key = |device: &MlsDevice, group: &MlsGroup, leaf: u32, stream: u8| {
+            device
+                .b6_media_key(group, call, leaf, stream)
+                .unwrap()
+                .as_slice()
+                .to_vec()
+        };
+        // Every member derives the same key for the same sender and stream,
+        // and it is the exporter run through the documented schedule.
+        let (a0, b0, c0) = (
+            key(&alice, &alice_group, 0, 0),
+            key(&bob, &bob_group, 0, 0),
+            key(&carol, &carol_group, 0, 0),
+        );
+        assert_eq!(a0, b0);
+        assert_eq!(a0, c0);
+        let exported = alice_group
+            .export_secret(
+                alice.provider.crypto(),
+                crate::b6::EXPORTER_LABEL,
+                &crate::b6::exporter_context(call, alice_group.epoch().as_u64()).unwrap(),
+                32,
+            )
+            .unwrap();
+        assert_eq!(
+            a0,
+            crate::b6::sender_key(&exported, 0, 0).unwrap().as_slice()
+        );
+        // Per sender, per stream, per call.
+        assert_ne!(a0, key(&alice, &alice_group, 1, 0));
+        assert_ne!(a0, key(&alice, &alice_group, 0, 2));
+        assert_ne!(
+            a0,
+            alice
+                .b6_media_key(&alice_group, b"call_other", 0, 0)
+                .unwrap()
+                .as_slice()
+        );
+        // A leaf that is not in the group and a bad stream are refused.
+        assert!(alice.b6_media_key(&alice_group, call, 9, 0).is_err());
+        assert!(alice.b6_media_key(&alice_group, call, 0, 4).is_err());
+        // The exporter label is the only secret that matches: the C7 label gives another.
+        let c7_root = exported_root(&alice, &alice_group);
+        assert_ne!(
+            a0,
+            crate::b6::sender_key(&c7_root, 0, 0).unwrap().as_slice()
+        );
+
+        // Removing bob moves the epoch: the key changes, and bob (who never
+        // sees the next epoch) cannot derive it from his old state.
+        let staged = alice
+            .stage_membership_commit(&mut alice_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
+            .unwrap();
+        let _ = staged;
+        alice
+            .merge_pending_commit_with_outcome(&mut alice_group)
+            .unwrap();
+        let a1 = key(&alice, &alice_group, 0, 0);
+        assert_ne!(a0, a1);
+        assert_ne!(a1, key(&bob, &bob_group, 0, 0));
     }
 
     #[test]
