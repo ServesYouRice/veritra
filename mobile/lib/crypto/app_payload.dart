@@ -64,6 +64,7 @@ enum AppPayloadType {
 
   /// C6: asks the named accounts to announce their report keys again.
   reportKeyRequest,
+
   /// L2-5 (D94): this account's own device found a leaf of its account in
   /// the group that its signed list does not approve, and names the list
   /// head it holds, so peers whose pin is behind can tell.

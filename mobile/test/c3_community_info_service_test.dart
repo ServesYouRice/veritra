@@ -2167,7 +2167,6 @@ void main() {
         infoKeyBody(
             subjectKind: 'channel', subjectId: _private, key: key.key!));
     final mod = devices['mod']!;
-    final member = devices['member']!;
     for (final d in devices.values) {
       await d.service.refresh(private);
       await removedAt(d.store, _privateConv, 2);
