@@ -1419,6 +1419,12 @@ abstract class AppLocalizations {
   /// **'Clear search'**
   String get searchClear;
 
+  /// No description provided for @searchLookUpAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Look up this username'**
+  String get searchLookUpAccount;
+
   /// No description provided for @searchIntroTitle.
   ///
   /// In en, this message translates to:
@@ -1428,7 +1434,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchIntroMessage.
   ///
   /// In en, this message translates to:
-  /// **'Communities and channels are found by name on this device. People are found on the server by exact username only. Message contents are end-to-end encrypted and never searchable on the server.'**
+  /// **'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.'**
   String get searchIntroMessage;
 
   /// No description provided for @searchNoResultsTitle.

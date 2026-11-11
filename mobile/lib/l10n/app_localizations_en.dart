@@ -755,11 +755,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get searchClear => 'Clear search';
 
   @override
+  String get searchLookUpAccount => 'Look up this username';
+
+  @override
   String get searchIntroTitle => 'Search people and communities';
 
   @override
   String get searchIntroMessage =>
-      'Communities and channels are found by name on this device. People are found on the server by exact username only. Message contents are end-to-end encrypted and never searchable on the server.';
+      'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.';
 
   @override
   String get searchNoResultsTitle => 'No results';

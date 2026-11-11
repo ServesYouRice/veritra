@@ -760,11 +760,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String get searchClear => 'Обриши претрагу';
 
   @override
+  String get searchLookUpAccount => 'Потражи ово корисничко име';
+
+  @override
   String get searchIntroTitle => 'Претражите људе и заједнице';
 
   @override
   String get searchIntroMessage =>
-      'Заједнице и канали се проналазе по називу на овом уређају. Особе се проналазе на серверу само по тачном корисничком имену. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
+      'Заједнице и канали се проналазе на овом уређају док куцате. Притисните Enter да потражите тачно корисничко име на серверу. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
 
   @override
   String get searchNoResultsTitle => 'Нема резултата';
@@ -5117,11 +5120,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get searchClear => 'Obriši pretragu';
 
   @override
+  String get searchLookUpAccount => 'Potraži ovo korisničko ime';
+
+  @override
   String get searchIntroTitle => 'Pretražite ljude i zajednice';
 
   @override
   String get searchIntroMessage =>
-      'Zajednice i kanali se pronalaze po nazivu na ovom uređaju. Osobe se pronalaze na serveru samo po tačnom korisničkom imenu. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
+      'Zajednice i kanali se pronalaze na ovom uređaju dok kucate. Pritisnite Enter da potražite tačno korisničko ime na serveru. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
 
   @override
   String get searchNoResultsTitle => 'Nema rezultata';

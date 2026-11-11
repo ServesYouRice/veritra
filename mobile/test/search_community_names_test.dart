@@ -1,6 +1,7 @@
 // People and communities search: communities and channels are found in this
-// device's decrypted names (C3: the server keeps none), accounts on the
-// server, and a query that cannot be an account never leaves the device.
+// device's decrypted names (C3: the server keeps none) as the user types,
+// accounts on the server only when the user submits, and a query that cannot
+// be an account never leaves the device.
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -145,9 +146,17 @@ Future<_SearchState> _openSearch(WidgetTester tester) async {
   return state;
 }
 
+/// Types [text] and waits well past any debounce: nothing is submitted.
 Future<void> _type(WidgetTester tester, String text) async {
   await tester.enterText(find.byType(TextField), text);
-  await tester.pump(const Duration(milliseconds: 400));
+  await tester.pump(const Duration(seconds: 2));
+  await tester.pumpAndSettle();
+}
+
+/// Types [text] and presses Enter (the keyboard's search action).
+Future<void> _submit(WidgetTester tester, String text) async {
+  await _type(tester, text);
+  await tester.testTextInput.receiveAction(TextInputAction.search);
   await tester.pumpAndSettle();
 }
 
@@ -164,7 +173,7 @@ void main() {
 
   testWidgets('local hits merge with server accounts only', (tester) async {
     final state = await _openSearch(tester);
-    await _type(tester, 'club');
+    await _submit(tester, 'club');
     expect(state.serverQueries, <String>['club']);
     expect(find.text('club'), findsWidgets, reason: 'the account');
     // The community row, and each channel's second line.
@@ -180,7 +189,7 @@ void main() {
   testWidgets('a failed account lookup keeps the local hits', (tester) async {
     final state = await _openSearch(tester);
     state.serverFailure = StateError('offline');
-    await _type(tester, 'club');
+    await _submit(tester, 'club');
     expect(find.text('Club General'), findsOneWidget);
     expect(find.text('Club Secrets'), findsOneWidget);
     expect(find.text('COMMUNITY'), findsOneWidget);
@@ -192,7 +201,8 @@ void main() {
     final state = await _openSearch(tester);
     final hold = state.hold = Completer<void>();
     await tester.enterText(find.byType(TextField), 'club');
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.testTextInput.receiveAction(TextInputAction.search);
+    await tester.pump();
     expect(find.byType(LinearProgressIndicator), findsOneWidget);
     await _type(tester, 'chess club');
     expect(find.byType(LinearProgressIndicator), findsNothing);
@@ -202,6 +212,73 @@ void main() {
     expect(find.text('Club General'), findsNothing,
         reason: 'the older answer is dropped');
     expect(state.serverQueries, <String>['club']);
+  });
+
+  testWidgets('typing updates local hits and never sends a lookup',
+      (tester) async {
+    final state = await _openSearch(tester);
+    // Each prefix a user types on the way to a username.
+    for (final prefix in <String>['cl', 'clu', 'club']) {
+      await _type(tester, prefix);
+    }
+    expect(find.text('Club General'), findsOneWidget,
+        reason: 'local names follow the typing');
+    expect(find.text('COMMUNITY'), findsOneWidget);
+    expect(state.serverQueries, isEmpty,
+        reason: 'no prefix of what is typed reaches the server');
+    await _type(tester, 'secrets');
+    expect(find.text('Club Secrets'), findsOneWidget);
+    expect(find.text('Club General'), findsNothing);
+    expect(state.serverQueries, isEmpty);
+  });
+
+  testWidgets('the search button sends one lookup for the whole query',
+      (tester) async {
+    final state = await _openSearch(tester);
+    await _type(tester, 'club');
+    expect(state.serverQueries, isEmpty);
+    await tester.tap(find.byKey(const Key('search-submit')));
+    await tester.pumpAndSettle();
+    expect(state.serverQueries, <String>['club']);
+    expect(find.text('club'), findsWidgets, reason: 'the account');
+  });
+
+  testWidgets('a leading @ is dropped from the account lookup',
+      (tester) async {
+    final state = await _openSearch(tester);
+    await _submit(tester, '@club');
+    expect(state.serverQueries, <String>['club']);
+    expect(find.text('club'), findsWidgets, reason: 'the account');
+  });
+
+  testWidgets('a bare @ or a multi-word submit sends nothing',
+      (tester) async {
+    final state = await _openSearch(tester);
+    await _submit(tester, '@');
+    await _submit(tester, 'chess club');
+    expect(find.text('Chess Club'), findsOneWidget);
+    expect(state.serverQueries, isEmpty);
+  });
+
+  testWidgets('typing after a submit drops the account result',
+      (tester) async {
+    final state = await _openSearch(tester);
+    await _submit(tester, 'club');
+    expect(find.text('ACCOUNT'), findsOneWidget);
+    await _type(tester, 'clu');
+    expect(find.text('ACCOUNT'), findsNothing,
+        reason: 'the account answered a query that is no longer typed');
+    expect(find.text('Club General'), findsOneWidget);
+    expect(state.serverQueries, <String>['club']);
+  });
+
+  test('accountLookupQuery strips one @ and refuses non-usernames', () {
+    expect(accountLookupQuery(' @alice '), 'alice');
+    expect(accountLookupQuery('alice'), 'alice');
+    expect(accountLookupQuery('@@alice'), isNull);
+    expect(accountLookupQuery('@'), isNull);
+    expect(accountLookupQuery('chess club'), isNull);
+    expect(accountLookupQuery('@acct_${'0' * 32}'), 'acct_${'0' * 32}');
   });
 
   testWidgets('an open channel opens its shared group on that channel',

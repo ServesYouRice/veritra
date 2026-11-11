@@ -543,6 +543,10 @@ void main() {
       await tester.enterText(find.byType(TextField), 'alice');
       await tester.pump(const Duration(milliseconds: 400));
       await tester.pumpAndSettle();
+      expect(api.metadataQueries, isEmpty,
+          reason: 'the account lookup waits for a submit');
+      await tester.testTextInput.receiveAction(TextInputAction.search);
+      await tester.pumpAndSettle();
       expect(api.metadataQueries, <String>['alice']);
 
       // Every request any other endpoint made went through the recording

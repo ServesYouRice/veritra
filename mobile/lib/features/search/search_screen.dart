@@ -26,8 +26,11 @@ import '../../l10n/l10n.dart';
 /// device, in the encrypted records it decrypted (C3: the server keeps no
 /// names since migration 0082), and accounts through the server, by exact
 /// username or account ID only so the user directory cannot be enumerated.
-/// Only this mode sends the query, and only when it could be a username or
-/// an account ID ([mayMatchAccount]): a multi-word name stays on the device.
+/// Only this mode sends the query, only when the user submits it (Enter or
+/// the search button, never while typing, so prefixes of what is typed never
+/// reach the server), and only when it could be a username or an account ID
+/// ([accountLookupQuery]): a multi-word name stays on the device. Local
+/// community and channel hits update as the user types.
 /// Message contents are ciphertext on the server and cannot be searched
 /// there by design.
 class SearchScreen extends StatefulWidget {
@@ -63,10 +66,26 @@ class _SearchScreenState extends State<SearchScreen> {
 
   void _onChanged(String value) {
     _debounce?.cancel();
-    _debounce = Timer(
-      Duration(milliseconds: mode == _SearchMode.messages ? 150 : 350),
-      () => _search(value),
-    );
+    if (mode == _SearchMode.messages) {
+      _debounce = Timer(
+        const Duration(milliseconds: 150),
+        () => _search(value),
+      );
+      return;
+    }
+    // People and communities: only this device's names follow the typing.
+    // The account lookup waits for a submit, and an answer for older text
+    // is dropped.
+    _searchLocally(value);
+  }
+
+  void _onSubmitted(String value) {
+    _debounce?.cancel();
+    if (mode == _SearchMode.messages) {
+      _search(value);
+      return;
+    }
+    _lookUp(value);
   }
 
   void _setMode(_SearchMode next) {
@@ -125,8 +144,21 @@ class _SearchScreenState extends State<SearchScreen> {
       }
       return;
     }
-    // Communities and channels: this device's decrypted names, shown at
-    // once. Accounts: the server, only for a query that could be one.
+  }
+
+  /// Communities and channels: this device's decrypted names, shown at once.
+  /// Nothing is sent. Returns the hits, or null for an empty query.
+  List<MetadataSearchResult>? _searchLocally(String value) {
+    _generation++;
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      setState(() {
+        results = <MetadataSearchResult>[];
+        searched = false;
+        searching = false;
+      });
+      return null;
+    }
     final local = widget.state.searchCommunityNamesLocally(trimmed);
     setState(() {
       results = local;
@@ -134,10 +166,20 @@ class _SearchScreenState extends State<SearchScreen> {
       // A lookup for older text may still be running; its answer is dropped.
       searching = false;
     });
-    if (!mayMatchAccount(trimmed)) return;
+    return local;
+  }
+
+  /// A submitted query: the local hits, then accounts from the server, only
+  /// for a query that could be one.
+  Future<void> _lookUp(String value) async {
+    final local = _searchLocally(value);
+    if (local == null) return;
+    final generation = _generation;
+    final account = accountLookupQuery(value);
+    if (account == null) return;
     setState(() => searching = true);
     try {
-      final found = await widget.state.searchMetadata(trimmed);
+      final found = await widget.state.searchMetadata(account);
       if (!mounted || generation != _generation) {
         return;
       }
@@ -197,7 +239,7 @@ class _SearchScreenState extends State<SearchScreen> {
               autofocus: true,
               onChanged: _onChanged,
               textInputAction: TextInputAction.search,
-              onSubmitted: _search,
+              onSubmitted: _onSubmitted,
               style: theme.textTheme.bodyMedium,
               decoration: InputDecoration(
                 // Messages, communities and channels are searched on this
@@ -212,7 +254,16 @@ class _SearchScreenState extends State<SearchScreen> {
                 filled: false,
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(vertical: 12),
-                prefixIcon: const Icon(Icons.search, size: 20),
+                // In People mode the icon is the search button: the only
+                // way, besides Enter, to send an account lookup.
+                prefixIcon: mode == _SearchMode.people
+                    ? IconButton(
+                        key: const Key('search-submit'),
+                        tooltip: context.l10n.searchLookUpAccount,
+                        icon: const Icon(Icons.search, size: 20),
+                        onPressed: () => _onSubmitted(query.text),
+                      )
+                    : const Icon(Icons.search, size: 20),
                 prefixIconConstraints: const BoxConstraints(
                   minWidth: 32,
                   minHeight: 32,
