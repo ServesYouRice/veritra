@@ -151,6 +151,7 @@ Future<void> _settle() async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('TASK-027: a refresh started under one session', () {
     late MemoryLocalStore store;
     late _RefreshApi api;

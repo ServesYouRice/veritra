@@ -126,6 +126,7 @@ Future<(AppState, _Api, _Mls)> _start() async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('a DM the peer created makes no new group and is accepted', () async {
     final (state, api, mls) = await _start();
     addTearDown(state.dispose);

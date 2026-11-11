@@ -217,6 +217,7 @@ SyncEvent _event(String type, {String? conversationId, Object? payload}) =>
     );
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   group('a new group', () {
     test('its name goes into the encrypted profile, not the server title',
         () async {

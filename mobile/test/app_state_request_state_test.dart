@@ -134,6 +134,7 @@ Future<_FaultyStore> _upgradedStore(List<Conversation> cached) async {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final stranger = _dm('stranger', 'acct_stranger');
   final friend = _dm('friend', 'acct_friend');
   final strangerGroup = _group('sgroup', 'acct_stranger');

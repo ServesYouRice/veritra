@@ -40,6 +40,9 @@ import 'package:private_messenger/sync/sync_service.dart';
 import 'l1_test_lists.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global =
+      null; // the test binding fakes HTTP; these use a real local server
   final configured = Platform.environment['VERITRA_CRYPTO_LIBRARY'];
   final inCi = Platform.environment['CI'] == 'true';
   final skip = configured == null && !inCi

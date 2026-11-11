@@ -24,6 +24,7 @@ const _account = 'acct_owner';
 const _own = 'dev_owner';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final skip = nativeCryptoSkip();
   late NativeCryptoBindings bindings;
 

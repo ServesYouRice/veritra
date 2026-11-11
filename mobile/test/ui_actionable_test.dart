@@ -11,6 +11,7 @@ import 'package:private_messenger/sync/sync_service.dart';
 import 'test_crypto_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('conversation parses activity ordering and unread metadata', () {
     final conversation = Conversation.fromJson(<String, Object?>{
       'id': 'conv_1',

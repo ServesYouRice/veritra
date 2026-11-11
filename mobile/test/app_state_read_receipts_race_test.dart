@@ -13,6 +13,7 @@ import 'test_crypto_service.dart';
 /// A server answer read before the user changed the read-receipts switch must
 /// never undo that change (a stale "on" would share read state).
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   const session = Session(
     baseUrl: 'https://localhost:8080',
     token: 'token',

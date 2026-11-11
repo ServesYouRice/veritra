@@ -16,6 +16,7 @@ import 'package:private_messenger/sync/sync_service.dart';
 /// `scripts/check-demo-boundary.sh` holds it there. These tests describe
 /// that gate; they do not decide when it opens.
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   const reservation = EnrollmentReservation(
     id: 'enr_1',
     accountId: 'acct_1',

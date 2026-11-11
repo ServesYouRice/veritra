@@ -19,6 +19,9 @@ import 'package:private_messenger/sync/sync_service.dart';
 import 'test_crypto_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  HttpOverrides.global =
+      null; // the test binding fakes HTTP; these use a real local server
   // No test binding: it replaces HttpClient with one that answers 400.
 
   late HttpServer server;

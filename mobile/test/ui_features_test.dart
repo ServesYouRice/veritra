@@ -11,6 +11,7 @@ import 'package:private_messenger/ui/format.dart';
 import 'test_crypto_service.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   test('conversation parses community, channel, and retention metadata', () {
     final conversation = Conversation.fromJson(<String, Object?>{
       'id': 'conv_1',

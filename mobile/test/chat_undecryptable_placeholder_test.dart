@@ -11,6 +11,7 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'goldens/golden_harness.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   testWidgets('an undecryptable message shows a placeholder, never content',
       (tester) async {
     setWindowSize(tester, phoneSize);
