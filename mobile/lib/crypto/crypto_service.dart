@@ -7,8 +7,10 @@ import '../storage/encrypted_database.dart'
 import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
 import '../core/device_lists.dart' show DeviceListPins, DeviceListVerifier;
 import 'mls_commit_bundle.dart';
-import 'native_crypto_bindings.dart' show DeviceListBody, DeviceListPair;
+import 'native_crypto_bindings.dart'
+    show BackupHeaderInfo, DeviceListBody, DeviceListPair, OpenedBackup;
 import 'app_payload.dart';
+import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'profile_record_codec.dart' show ProfileRecordCodec;
 
 class ConversationSafetyNumber {
@@ -177,6 +179,14 @@ abstract interface class DeviceListCryptoService implements DeviceListVerifier {
   Future<bool> refreshApprovalHold(String conversationId);
 }
 
+/// Discovers additions independently of the server's device enumeration.
+abstract interface class ApprovedDeviceDiscoveryCryptoService {
+  /// Lists currently approved devices of member [accountIds] absent from the
+  /// actual MLS tree. Null [conversationId] means a new group with only self.
+  Future<List<MlsDeviceRef>> missingApprovedDevices(
+      String? conversationId, Iterable<String> accountIds);
+}
+
 /// A membership change named only devices that are not on their accounts'
 /// approved-device lists now (L1, D94). Nothing was staged; the change stays
 /// pending and is offered again.
@@ -244,6 +254,23 @@ abstract interface class BackupSealCryptoService {
 
   /// The largest snapshot [sealK1Backup] takes.
   int get k1BackupMaxPlaintextBytes;
+}
+
+/// Reading a K1 backup (K1-4). Kept apart from [BackupSealCryptoService] so a
+/// build that can only seal, and every test fake, stays as it is.
+abstract interface class BackupOpenCryptoService {
+  /// The unauthenticated header from the first 416 bytes of a container.
+  BackupHeaderInfo peekK1Backup(Uint8List prefix);
+
+  /// Opens a container with the typed recovery key [entropy] (the caller
+  /// wipes it). [sourceDeviceId] pins the device the server row names.
+  /// The caller wipes [OpenedBackup.plaintext].
+  Future<OpenedBackup> openK1Backup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  });
 }
 
 /// K0 recovery (docs/designs/K0-recovery-enrollment.md, R3/R4). Kept apart
@@ -465,6 +492,12 @@ abstract interface class ExpiringPayloadCryptoService {
     List<String> attachmentRefs = const <String>[],
     String? draftText,
   });
+}
+
+/// C3: seals and opens community info records. Only the native service
+/// offers it, so the app never names that service directly.
+abstract interface class CommunityInfoCryptoService {
+  CommunityInfoCodec get communityInfoCodec;
 }
 
 /// W11: the service that owns the native library also hands out the profile

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/admission"
+	"private-messenger/server/internal/attest"
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/messaging"
@@ -24,6 +25,7 @@ import (
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/uploads"
+	"private-messenger/server/internal/webrtc"
 )
 
 type API struct {
@@ -43,8 +45,10 @@ type API struct {
 	pushTestLast        map[string]time.Time
 	TURNURLs            []string
 	TURNSharedSecret    string
-	ClientIdentities    *ClientIdentityResolver
-	LoginBackoff        *LoginBackoff
+	// RoomMedia is nil while group calls are off (B6): rooms answer rooms_unavailable.
+	RoomMedia        webrtc.RoomMedia
+	ClientIdentities *ClientIdentityResolver
+	LoginBackoff     *LoginBackoff
 	// Passkeys is nil while passkeys are off (B7).
 	Passkeys      *PasskeyService
 	Ready         func() bool
@@ -77,6 +81,11 @@ type API struct {
 	// ScopedSync turns on the per-scope sync routes (scoped_sync_handlers.go).
 	// Off, they are not registered and answer 404.
 	ScopedSync bool
+	// Attest is the L3 proof hook. Nil (the default) leaves
+	// GET /api/v1/attestation unregistered, so it answers 404.
+	Attest       attest.Provider
+	TLSKeyHash   [32]byte
+	ClaimedBuild ClaimedBuild
 }
 
 // passwordService returns the account password verifier. PasswordCost is the
@@ -97,6 +106,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.readiness)
 	mux.HandleFunc("GET /api/v1/health", a.health)
+	if a.Attest != nil && a.Attest.Kind() != "none" {
+		mux.HandleFunc("GET /api/v1/attestation", a.attestation)
+	}
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
 	mux.HandleFunc("GET /api/v1/recovery", a.recoverBackup)
@@ -163,6 +175,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/calls/config", a.withAuth(a.callConfig))
 	mux.HandleFunc("GET /api/v1/calls", a.withAuth(a.listCalls))
 	mux.HandleFunc("/api/v1/calls/", a.withAuth(a.withWriteBudget(a.callSubroute)))
+	mux.HandleFunc("POST /api/v1/rooms/join", a.withAuth(a.withWriteBudget(a.joinRoom)))
+	mux.HandleFunc("GET /api/v1/rooms/{id}", a.withAuth(a.roomState))
+	mux.HandleFunc("GET /api/v1/rooms/{id}/commits", a.withAuth(a.roomCommits))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/commit", a.withAuth(a.withWriteBudget(a.roomCommit)))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/offer", a.withAuth(a.withWriteBudget(a.roomOffer)))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/leave", a.withAuth(a.withWriteBudget(a.leaveRoom)))
+	mux.HandleFunc("POST /api/v1/rooms/webhook", a.roomWebhook)
 	mux.HandleFunc("GET /api/v1/sync/ws", a.syncWebSocket)
 	mux.HandleFunc("GET /api/v1/sync/events", a.withAuth(a.syncEvents))
 	a.registerScopedSyncRoutes(mux)
@@ -519,6 +538,10 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "device_list_conflict", "head_version": head})
 	case errors.Is(err, storage.ErrNotMember), errors.Is(err, storage.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, storage.ErrHistoryRouteOnly):
+		writeError(w, http.StatusConflict, "history_route_only")
+	case errors.Is(err, storage.ErrInvalidSealedBody):
+		writeError(w, http.StatusBadRequest, "invalid_sealed_body")
 	case errors.Is(err, storage.ErrPostingRestricted):
 		writeError(w, http.StatusForbidden, "posting_restricted")
 	case errors.Is(err, storage.ErrTimedOut):

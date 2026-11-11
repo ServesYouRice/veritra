@@ -43,7 +43,7 @@
       "result": "fixed",
       "failedBefore": null,
       "test": null,
-      "proof": "Commits 0b3346f, f7d66d9. The failing-test evidence is in each commit message. TASK-006 (identity-key bindings against the trust anchor): L1-3, D94/D100 A. Adds carry the signing key the approved-device list pins (Rust refuses another), unlisted devices are never claimed or staged, every commit and Welcome leaf is judged against the pins and the verdicts commit with the group state; an unapproved leaf holds the conversation (nothing encrypted) and its messages are hidden. The commit/Welcome is applied, not refused (D94). Tests: mobile/test/l1_native_gate_test.dart, l1_device_list_pins_test.dart, l1_app_state_lists_test.dart.",
+      "proof": "Commits 0b3346f, f7d66d9. The failing-test evidence is in each commit message. TASK-006 (identity-key bindings against the trust anchor): L1-3, D94/D100 A. Adds carry the signing key the approved-device list pins (Rust refuses another), unlisted devices are never claimed or staged, every commit and Welcome leaf is judged against the pins and the verdicts commit with the group state; an unapproved leaf holds the conversation (nothing encrypted) and its messages are hidden. The commit/Welcome is applied, not refused (D94). Tests: mobile/test/l1_native_gate_test.dart, l1_device_list_pins_test.dart, l1_app_state_lists_test.dart. Rechecked 2026-11-11 (bughunt-l1) against the code: every native add goes through _gateAdds, which passes the pinned key (no pins: nothing is added), and Rust stage_commit_with_record refuses a key package whose leaf key differs (crypto/rust/src/ffi/l1_tests.rs adds_carry_the_expected_signing_key_and_commits_report_their_pairs). The device inventory now comes from the verified lists, not the server: creation, reported changes and an audit of groups the server reports no change for claim explicit IDs, and an answer outside the requested pairs is refused. Committer, inviter and Welcome leaves are judged, and an unapproved one holds the conversation; the commit is not refused (D94 question 2 default). The audit has no tests yet.",
       "checkedEndToEnd": false
     },
     {
@@ -54,7 +54,7 @@
       "result": "fixed",
       "failedBefore": null,
       "test": null,
-      "proof": "Commits 44d4c64. The failing-test evidence is in each commit message. TASK-006 (identity-key bindings against the trust anchor): L1-3, D94/D100 A. Adds carry the signing key the approved-device list pins (Rust refuses another), unlisted devices are never claimed or staged, every commit and Welcome leaf is judged against the pins and the verdicts commit with the group state; an unapproved leaf holds the conversation (nothing encrypted) and its messages are hidden. The commit/Welcome is applied, not refused (D94). Tests: mobile/test/l1_native_gate_test.dart, l1_device_list_pins_test.dart, l1_app_state_lists_test.dart.",
+      "proof": "Commits 44d4c64. The failing-test evidence is in each commit message. TASK-006 (identity-key bindings against the trust anchor): L1-3, D94/D100 A. Adds carry the signing key the approved-device list pins (Rust refuses another), unlisted devices are never claimed or staged, every commit and Welcome leaf is judged against the pins and the verdicts commit with the group state; an unapproved leaf holds the conversation (nothing encrypted) and its messages are hidden. The commit/Welcome is applied, not refused (D94). Tests: mobile/test/l1_native_gate_test.dart, l1_device_list_pins_test.dart, l1_app_state_lists_test.dart. Rechecked 2026-11-11 (bughunt-l1) against the code: every native add goes through _gateAdds, which passes the pinned key (no pins: nothing is added), and Rust stage_commit_with_record refuses a key package whose leaf key differs (crypto/rust/src/ffi/l1_tests.rs adds_carry_the_expected_signing_key_and_commits_report_their_pairs). The device inventory now comes from the verified lists, not the server: creation, reported changes and an audit of groups the server reports no change for claim explicit IDs, and an answer outside the requested pairs is refused. Committer, inviter and Welcome leaves are judged, and an unapproved one holds the conversation; the commit is not refused (D94 question 2 default). The audit has no tests yet.",
       "checkedEndToEnd": false
     },
     {
@@ -128,11 +128,11 @@
       "title": "Endpoint rotations are discarded when Flutter is not listening",
       "severity": "high",
       "task": "TASK-012",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/push_state_test.dart (pending record before subscriber; failed registration; stale instance; newer rotation), mobile/test/push_service_test.dart (pendingEndpoint/acknowledgeEndpoint), mobile/android/wake-tests WakeRulesTest (EndpointRules)",
+      "proof": "No failing run was captured first; the new tests use the new pendingEndpoint/acknowledgeEndpoint API, so they do not compile on the old code, and no separate pre-fix run was kept. The defect itself (emit-only callbacks, nullable sink) was confirmed by reading MainActivity.kt and VeritraPushService.kt. Native code is compiled only by CI. Re-verified here: push_state_test and push_service_test pass; the Kotlin wake-tests were not run (native build is not available locally).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-b1f6f8510281",
@@ -524,11 +524,11 @@
       "title": "Removing a member updates server membership only; sends are not held until the MLS removal commit lands",
       "severity": "medium",
       "task": "TASK-039",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/app_state_removal_hold_test.dart, chat_removal_hold_test.dart, removal_hold_review_test.dart",
+      "proof": "Already fixed on this branch (8ad0f01, D68; D114 default): _afterMemberRemoved sets a persisted removal hold that _sendPayload waits on until the removal commit applies; removeConversationMember is gated on membershipChangesAvailable. Re-ran the hold tests here: pass. No pre-fix failing run was captured in this session.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-56e1224e0b73",
@@ -1316,11 +1316,11 @@
       "title": "Message expiry appears to come from server-stamped envelope metadata; the first own echo is trusted without bounds",
       "severity": "medium",
       "task": "TASK-106",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/message_expiry_test.dart, app_payload_test.dart, app_state_catch_up_test.dart",
+      "proof": "Already fixed on this branch (c0f0b68, D100/D114): the sender-signed expires_at in the payload bounds the server-stamped one and the shorter time wins; no sender expiry falls back to the server time. Re-ran message_expiry_test and app_payload_test here: pass. No pre-fix failing run was captured in this session.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-7a39b59b924a",
@@ -2504,10 +2504,10 @@
       "title": "Device is created at approval, but the session can only be consumed before the original link expiry, which can orphan the device",
       "severity": "medium",
       "task": "TASK-201",
-      "result": "blocked",
-      "failedBefore": null,
-      "test": "server/internal/storage/device_link_expiry_test.go TestApprovedDeviceLinkPastExpiryLeavesActiveDevice (characterization; passes on current code)",
-      "proof": "Confirmed: after approval and expiry, ConsumeApprovedDeviceLink returns ErrDeviceLinkInvalid while the device stays active with no session and counts toward the device limit. Mitigation found: the device keeps its device secret (issued at claim), so password + device ID + secret sign-in still works. Blocked on Q-002: remedies (a) min consume window at approval, (b) extend expires_at at approval, (c) consume grace period only narrow the window; VAL-253 ('never') needs (d) revoking the device at expiry (revokeDeviceTx with MLS revocations, run from PruneOperationalRows in content_store.go, outside the write scope) or creating the device at consume (API flow change).",
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/storage/device_link_expiry_test.go TestApprovedDeviceLinkNearExpiryDoesNotOrphanDevice, TestPruneKeepsApprovedDeviceLinkInsideWindow",
+      "proof": "D100/D114 remedy (d). Before the fix the test failed: after prune active devices=1 key packages=1 link=approved, want 0, 0, revoked. PruneOperationalRows now cancels approved-but-unconsumed expired legacy links (cancelExpiredApprovedDeviceLinks in community_store.go, called from content_store.go, which is outside the prompt write scope): revokeDeviceTx (sessions, device.revoked event, MLS revocations), unclaimed key packages deleted, link revoked. Consume stays refused after expiry. A link still inside its window is untouched. Limits: the change-2 device-list version stays until a listed device repairs the list; the v3 flow creates the device at consume and is unaffected. go vet and go test ./... pass.",
       "checkedEndToEnd": false
     },
     {
@@ -2603,11 +2603,11 @@
       "title": "ListSyncEvents re-scans the entire run of hidden trailing events on every poll",
       "severity": "medium",
       "task": "TASK-209",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: needs an API change on both sides (see STATE.md Open work, hidden tail on every poll).",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": "Reproduced by timing, not a failing assertion: before the change a poll behind 40,000 hidden events took 231 ms every time and nothing in the response or the cursor could skip them (benchmark BenchmarkSyncHiddenTailPoll/legacy_every_poll; the new API did not exist, so a unit test could not compile against the old code).",
+      "test": "server/internal/storage/sync_bounded_scan_test.go, server/internal/httpapi/sync_bounded_contract_test.go, mobile/test/app_state_catch_up_test.dart (group bounded scan position), server/internal/storage/sync_hidden_run_bench_test.go",
+      "proof": "Opt-in scan=bounded on GET /api/v1/sync/events: scanned_through and scan_truncated (name from the scoped route, D92), hidden-row cursors accepted in the bounded expiry test, SyncBounds not computed for a bounded 200, app pages while scan_truncated and persists the cursor only after the page is applied. Poll behind 40,000 hidden events: 231 ms to 0.36 ms. Evidence: testing/evidence/sync-hidden-tail-poll.md. Q-002 default taken: D92, a block-hidden run the cursor passes is not replayed after an unblock.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-5d54a035cb1c",
@@ -2836,8 +2836,8 @@
       "task": "check 02",
       "result": "fixed",
       "failedBefore": null,
-      "test": "server/internal/storage/device_list_gates_test.go TestKeyPackagesMustCarryTheListedKey; server/internal/httpapi/device_list_test.go TestPublishedKeyPackagesMustCarryTheListedKey; server/internal/mlswire TestLeafSignatureKeyReadsTheLeafKey",
-      "proof": "Owner 2026-11-08 (via coordinator), replacing D100 check 02 A: L1-3 builds the server gate. For an account with a signed device list, a published key package must carry the leaf signature key the list head names for the device (400 key_package_not_listed); claims hand out only such packages and delete stored ones that do not. Accounts without a list unchanged. Phones still check with their own pins (Rust refuses another key).",
+      "test": "server/internal/storage/device_list_gates_test.go TestKeyPackagesMustCarryTheListedKey; server/internal/httpapi/device_list_test.go TestPublishedKeyPackagesMustCarryTheListedKey; server/internal/mlswire TestLeafSignatureKeyReadsTheLeafKey; crypto/rust/src/ffi/l1_tests.rs adds_carry_the_expected_signing_key_and_commits_report_their_pairs; mobile/test/l1_native_gate_test.dart 'a key package with another key than the pinned one is refused'",
+      "proof": "Owner 2026-11-08 (via coordinator), replacing D100 check 02 A: L1-3 builds the server gate. For an account with a signed device list, a published key package must carry the leaf signature key the list head names for the device (400 key_package_not_listed); claims hand out only such packages and delete stored ones that do not. Accounts without a list unchanged. Phones still check with their own pins (Rust refuses another key). Rechecked 2026-11-11 (bughunt-l1): the claim holds for the bare Rust API (stage_membership_commit passes no expected key), but the only app path (NativeCryptoService._gateAdds then stage_commit_with_record) always passes the pinned key, so it is closed on every client with the list as trust anchor.",
       "checkedEndToEnd": true
     },
     {
@@ -3076,11 +3076,11 @@
       "title": "Backups carry the bearer token, device secret, and the sealed MLS state together with its key, so a backup can clone the device",
       "severity": "medium",
       "task": "check 24",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/backup_no_credentials_test.dart, local_store_backup_test.dart, k0_recovery_backup_exclusion_test.dart",
+      "proof": "Already fixed by D71/D73 (D114 default): backup format 6 carries no bearer token, device secret or MLS state; a restore finishes by device link. Re-ran these tests here: pass. No pre-fix failing run was captured in this session.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-7bad26b22132",
@@ -3288,7 +3288,7 @@
       "result": "fixed",
       "failedBefore": false,
       "test": "mobile/test/push_state_test.dart (pending record before subscriber; failed registration; stale instance; newer rotation), mobile/test/push_service_test.dart (pendingEndpoint/acknowledgeEndpoint), mobile/android/wake-tests WakeRulesTest (EndpointRules)",
-      "proof": "No failing run was captured first; the new tests use the new pendingEndpoint/acknowledgeEndpoint API, so they do not compile on the old code, and no separate pre-fix run was kept. The defect itself (emit-only callbacks, nullable sink) was confirmed by reading MainActivity.kt and VeritraPushService.kt. Native code is compiled only by CI.",
+      "proof": "No failing run was captured first; the new tests use the new pendingEndpoint/acknowledgeEndpoint API, so they do not compile on the old code, and no separate pre-fix run was kept. The defect itself (emit-only callbacks, nullable sink) was confirmed by reading MainActivity.kt and VeritraPushService.kt. Native code is compiled only by CI. Re-verified here: push_state_test and push_service_test pass; the Kotlin wake-tests were not run (native build is not available locally).",
       "checkedEndToEnd": false
     }
   ],

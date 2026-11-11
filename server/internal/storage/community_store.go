@@ -23,7 +23,7 @@ const deviceLinkProtocolVersion = "veritra-device-link-v2"
 
 func (s *Store) ListCommunities(ctx context.Context, accountID string) ([]domain.Community, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT c.id, c.name, c.created_by, c.created_at, l.generation, l.shared_conversation_id
+		SELECT c.id, c.created_by, c.created_at, l.generation, l.shared_conversation_id
 		FROM communities c
 		JOIN memberships m ON m.community_id = c.id
 		LEFT JOIN community_layouts l ON l.community_id = c.id AND l.state = 'active'
@@ -39,7 +39,7 @@ func (s *Store) ListCommunities(ctx context.Context, accountID string) ([]domain
 		var created string
 		var generation sql.NullInt64
 		var shared sql.NullString
-		if err := rows.Scan(&community.ID, &community.Name, &community.CreatedBy, &created, &generation, &shared); err != nil {
+		if err := rows.Scan(&community.ID, &community.CreatedBy, &created, &generation, &shared); err != nil {
 			return nil, err
 		}
 		community.CreatedAt = parseTime(created)
@@ -68,7 +68,7 @@ func (s *Store) ListChannels(ctx context.Context, communityID, accountID string)
 		var created string
 		var routeConversation, access sql.NullString
 		var generation sql.NullInt64
-		if err := rows.Scan(&channel.ID, &channel.CommunityID, &channel.Name, &channel.Kind, &created, &routeConversation, &access, &generation); err != nil {
+		if err := rows.Scan(&channel.ID, &channel.CommunityID, &channel.Kind, &created, &routeConversation, &access, &generation); err != nil {
 			return nil, err
 		}
 		channel.CreatedAt = parseTime(created)
@@ -507,7 +507,9 @@ func (s *Store) ConsumeApprovedDeviceLink(ctx context.Context, linkID, claimToke
 	return ConsumedDeviceLink{AccountDevice: linked, TranscriptHash: transcriptHash, ApprovalTag: approvalTag}, nil
 }
 
-func (s *Store) CreateCommunity(ctx context.Context, name, createdBy string) (domain.Community, error) {
+// CreateCommunity makes a community with no name: its name lives in the
+// creator's encrypted info record (C3). The server never stores one.
+func (s *Store) CreateCommunity(ctx context.Context, createdBy string) (domain.Community, error) {
 	id, err := domain.NewID("comm")
 	if err != nil {
 		return domain.Community{}, err
@@ -518,7 +520,7 @@ func (s *Store) CreateCommunity(ctx context.Context, name, createdBy string) (do
 		return domain.Community{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO communities(id, name, created_by, created_at) VALUES(?, ?, ?, ?)`, id, strings.TrimSpace(name), createdBy, createdAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO communities(id, created_by, created_at) VALUES(?, ?, ?)`, id, createdBy, createdAt); err != nil {
 		return domain.Community{}, err
 	}
 	membershipID, err := domain.NewID("mbr")
@@ -535,14 +537,14 @@ func (s *Store) CreateCommunity(ctx context.Context, name, createdBy string) (do
 		return domain.Community{}, err
 	}
 	created, _ := time.Parse(time.RFC3339Nano, createdAt)
-	community := domain.Community{ID: id, Name: strings.TrimSpace(name), CreatedBy: createdBy, CreatedAt: created}
+	community := domain.Community{ID: id, CreatedBy: createdBy, CreatedAt: created}
 	if layout, err := communityLayoutOf(ctx, s.db, id); err == nil && layout.active {
 		community.LayoutVersion, community.LayoutGeneration, community.SharedConversationID = CommunityLayoutVersion, layout.generation, &layout.sharedConversationID
 	}
 	return community, nil
 }
 
-func (s *Store) CreateChannel(ctx context.Context, communityID, name, kind, createdBy string) (domain.Channel, error) {
+func (s *Store) CreateChannel(ctx context.Context, communityID, kind, createdBy string) (domain.Channel, error) {
 	role, err := s.CommunityMemberRole(ctx, communityID, createdBy)
 	if err != nil {
 		return domain.Channel{}, err
@@ -561,14 +563,17 @@ func (s *Store) CreateChannel(ctx context.Context, communityID, name, kind, crea
 		return domain.Channel{}, err
 	}
 	createdAt := nowString()
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, id, communityID, strings.TrimSpace(name), kind, createdAt); err != nil {
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO channels(id, community_id, kind, created_at) VALUES(?, ?, ?, ?)`, id, communityID, kind, createdAt); err != nil {
 		return domain.Channel{}, err
 	}
 	created, _ := time.Parse(time.RFC3339Nano, createdAt)
-	return domain.Channel{ID: id, CommunityID: communityID, Name: strings.TrimSpace(name), Kind: kind, CreatedAt: created}, nil
+	return domain.Channel{ID: id, CommunityID: communityID, Kind: kind, CreatedAt: created}, nil
 }
 
-func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, name, kind, createdBy string) (domain.Channel, domain.Conversation, error) {
+// CreateChannelWithConversation makes a channel (and, where the layout needs
+// one, its conversation) with no name or title: both are the apps' encrypted
+// info records (C3).
+func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, kind, createdBy string) (domain.Channel, domain.Conversation, error) {
 	// An empty kind is private in a legacy community and open in one with the
 	// shared-group layout; open exists only in the latter.
 	if kind != "" && kind != "private" && kind != "announcement" && kind != ChannelAccessOpen {
@@ -606,7 +611,7 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		if kind == "" {
 			kind = ChannelAccessOpen
 		}
-		channel, conversation, err := s.createRoutedChannel(ctx, tx, layout, communityID, name, kind, createdBy, actorRole, createdAt)
+		channel, conversation, err := s.createRoutedChannel(ctx, tx, layout, communityID, kind, createdBy, actorRole, createdAt)
 		if err != nil {
 			return domain.Channel{}, domain.Conversation{}, err
 		}
@@ -663,10 +668,10 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 			return domain.Channel{}, domain.Conversation{}, err
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, channelID, communityID, strings.TrimSpace(name), kind, createdAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, kind, created_at) VALUES(?, ?, ?, ?)`, channelID, communityID, kind, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', ?, ?, ?, ?, ?)`, conversationID, strings.TrimSpace(name), communityID, channelID, createdBy, createdAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', NULL, ?, ?, ?, ?)`, conversationID, communityID, channelID, createdBy, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	for _, item := range members {
@@ -686,9 +691,8 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	created := parseTime(createdAt)
-	channel := domain.Channel{ID: channelID, CommunityID: communityID, Name: strings.TrimSpace(name), Kind: kind, CreatedAt: created}
-	title := strings.TrimSpace(name)
-	conversation := domain.Conversation{ID: conversationID, Kind: "community_channel", Title: &title, CommunityID: &communityID, ChannelID: &channelID, CreatedBy: createdBy, CreatedAt: created, PostingRestricted: kind == "announcement"}
+	channel := domain.Channel{ID: channelID, CommunityID: communityID, Kind: kind, CreatedAt: created}
+	conversation := domain.Conversation{ID: conversationID, Kind: "community_channel", CommunityID: &communityID, ChannelID: &channelID, CreatedBy: createdBy, CreatedAt: created, PostingRestricted: kind == "announcement"}
 	return channel, conversation, nil
 }
 
@@ -972,7 +976,8 @@ func (s *Store) CreateOrGetConversation(ctx context.Context, input CreateConvers
 			return domain.Conversation{}, false, ErrInvalidInput
 		}
 	case "community_channel":
-		if input.CommunityID == nil || input.ChannelID == nil {
+		// No title: a channel's name is its encrypted info record (C3).
+		if input.CommunityID == nil || input.ChannelID == nil || input.Title != nil {
 			return domain.Conversation{}, false, ErrInvalidInput
 		}
 	default:
@@ -1750,4 +1755,66 @@ func (s *Store) IsConversationMember(ctx context.Context, conversationID, accoun
 		return false, err
 	}
 	return count > 0, nil
+}
+
+// cancelExpiredApprovedDeviceLinks ends every legacy device link that was
+// approved but not consumed before it expired (TASK-201, D100/D114 remedy
+// d). Approval created and announced the device, but ConsumeApprovedDeviceLink
+// refuses an expired link, so nobody can ever get a session for it. Fail
+// closed: the device is revoked like any other (sessions, v3 links, the
+// device.revoked event, MLS removal from its groups), its unclaimed key
+// packages are deleted so nothing can still add it, and the link is revoked.
+// The change-2 device-list version stays until a listed device repairs the
+// list, as for any revocation that no device signed.
+func cancelExpiredApprovedDeviceLinks(ctx context.Context, tx *sql.Tx, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT id, account_id, approved_device_id FROM device_links
+		WHERE state = ? AND revoked_at IS NULL AND consumed_at IS NULL AND approved_device_id IS NOT NULL AND expires_at <= ?
+		ORDER BY expires_at, id LIMIT 100`, domain.DeviceLinkApproved, formatTime(now.UTC()))
+	if err != nil {
+		return err
+	}
+	type expired struct{ linkID, accountID, deviceID string }
+	var found []expired
+	for rows.Next() {
+		var e expired
+		if err := rows.Scan(&e.linkID, &e.accountID, &e.deviceID); err != nil {
+			rows.Close()
+			return err
+		}
+		found = append(found, e)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	at := formatTime(now.UTC())
+	for _, e := range found {
+		// Claim the link first, guarded by its state: a link consumed or
+		// revoked meanwhile is left alone and its device is not touched.
+		result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, revoked_at = ? WHERE id = ? AND state = ? AND consumed_at IS NULL AND revoked_at IS NULL`, domain.DeviceLinkRevoked, at, e.linkID, domain.DeviceLinkApproved)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
+		}
+		// A device that is already revoked got its event and MLS removal then.
+		var alreadyRevoked int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NOT NULL`, e.deviceID, e.accountID).Scan(&alreadyRevoked); err != nil {
+			return err
+		}
+		if alreadyRevoked == 0 {
+			if _, err := revokeDeviceTx(ctx, tx, e.accountID, e.deviceID, "device.revoked", at); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, e.deviceID); err != nil {
+			return err
+		}
+	}
+	return nil
 }

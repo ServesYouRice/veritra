@@ -8,24 +8,14 @@ import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 /// D70 S5 under D73: with per-record sealed state (schema 16, format 4) a
-/// backup still carries no MLS state. Neither the root nor any
-/// `local_crypto_records` row reaches the plaintext, and a restore into a
-/// store that holds its own root and records leaves none of them, so a
-/// restored device never mixes records from two states.
+/// history snapshot carries no MLS state. Neither the root nor any
+/// `local_crypto_records` row reaches the plaintext.
 
 const _source = Session(
   baseUrl: 'https://chat.example.org',
   token: 'tok',
   accountId: 'acct_1',
   deviceId: 'dev_source',
-  username: 'alice',
-);
-
-const _target = Session(
-  baseUrl: 'https://chat.example.org',
-  token: 'tok2',
-  accountId: 'acct_1',
-  deviceId: 'dev_target',
   username: 'alice',
 );
 
@@ -100,20 +90,6 @@ List<String> _forbidden() => <String>[
       '"sealed_state"',
     ];
 
-/// The keys a version 6 backup holds, and nothing else.
-const _v6Keys = <String>{
-  'version',
-  'history_namespace',
-  'history',
-  'reactions',
-  'pins',
-  'starred',
-  'conversation_prefs',
-  'account',
-  'conversations',
-  'messages',
-};
-
 Future<void> _seedDevice(LocalStore store, Session session) async {
   await store.saveSession(session);
   await store.saveCryptoState(_first(), 10);
@@ -153,7 +129,7 @@ void main() {
         },
       );
 
-  Future<List<int>> sourceBackup(LocalStore store) async {
+  Future<List<int>> sourceSnapshot(LocalStore store) async {
     await _seedDevice(store, _source);
     await store.saveSnapshot(
         <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
@@ -190,41 +166,7 @@ void main() {
       ],
     ));
     expect(await store.loadCryptoRecords(), hasLength(2));
-    return store.exportBackup();
-  }
-
-  /// [current] as a version 5 backup that still holds a crypto state.
-  List<int> legacyV5(List<int> current) {
-    final root =
-        Map<String, Object?>.from(jsonDecode(utf8.decode(current)) as Map);
-    root
-      ..['version'] = 5
-      ..remove('account')
-      ..['account_id'] = _source.accountId
-      ..['device_id'] = _source.deviceId
-      ..['session'] = <String, Object?>{
-        'base_url': _source.baseUrl,
-        'token': _source.token,
-        'account_id': _source.accountId,
-        'device_id': _source.deviceId,
-      }
-      ..['cursor'] = 11
-      ..['crypto_state'] = <String, Object?>{
-        'counter': 3,
-        'state_key': base64Encode(_stateKey),
-        'sealed_state': base64Encode(_root),
-      };
-    return utf8.encode(jsonEncode(root));
-  }
-
-  Future<void> expectNoCryptoState(LocalStore store) async {
-    expect(await store.loadCryptoState(), isNull);
-    expect(await store.loadCryptoRecords(), isEmpty);
-    expect(await store.loadSyncCursor(), 0);
-    final session = await store.loadSession();
-    expect(session, isNotNull);
-    expect(isRestoredAccountSession(session!), isTrue);
-    expect((await store.loadMessages('conv_1')).single.body, 'hello');
+    return store.exportHistorySnapshot();
   }
 
   for (final memory in <bool>[true, false]) {
@@ -232,32 +174,11 @@ void main() {
     LocalStore store(String namespace) =>
         memory ? MemoryLocalStore() : createStore(namespace);
 
-    test('the backup holds no root, record or state key ($label)', () async {
-      final text = utf8.decode(await sourceBackup(store('source')));
+    test('the history snapshot holds no root, record or state key ($label)', () async {
+      final text = utf8.decode(await sourceSnapshot(store('source')));
       for (final needle in _forbidden()) {
         expect(text, isNot(contains(needle)), reason: needle);
       }
-      final root = Map<String, Object?>.from(jsonDecode(text) as Map);
-      expect(root['version'], 6);
-      expect(root.keys.toSet(), _v6Keys);
-    });
-
-    test('a restore over a device with records leaves none ($label)', () async {
-      final backup = await sourceBackup(store('source'));
-      final target = store('target');
-      await _seedDevice(target, _target);
-      await target.restoreBackup(backup);
-      await expectNoCryptoState(target);
-    });
-
-    test(
-        'an old backup with a crypto state restores none over a device '
-        'with records ($label)', () async {
-      final backup = legacyV5(await sourceBackup(store('source')));
-      final target = store('legacy');
-      await _seedDevice(target, _target);
-      await target.restoreBackup(backup);
-      await expectNoCryptoState(target);
     });
   }
 }

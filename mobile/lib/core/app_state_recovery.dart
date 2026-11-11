@@ -28,7 +28,12 @@ const Duration _recoveryPollInterval = Duration(hours: 1);
 /// password and recovery key may both be known to someone else, so both are
 /// replaced. [recoveryKey] includes proving the password again (completion
 /// never grants recent authentication).
-enum RecoveryFollowUpStep { recoveryKey, password }
+///
+/// K1-4 puts [restore] first: the lost devices' backups open with the old
+/// recovery key, which the user still holds and the next step replaces. After
+/// the swap those copies could no longer be restored (the server keeps a
+/// revoked device's copy 90 days as a second guard).
+enum RecoveryFollowUpStep { restore, recoveryKey, password }
 
 /// What saving or cancelling a recovery setting found, when it did not
 /// simply fail (the error is then under [Ops.recoveryKey] or
@@ -98,6 +103,15 @@ extension AccountRecoveryActions on AppState {
     } catch (_) {
       // Offline or an older server: the settings tile says it is unknown.
     }
+  }
+
+  /// Ends the restore step of the forced follow-up: after a restore, or an
+  /// explicit skip (the screen warns that older backups become unusable once
+  /// the key is replaced). The next step is the new recovery key. Safe to
+  /// call twice, and when no restore step is open.
+  Future<void> finishRecoveryRestoreStep() async {
+    if (recoveryFollowUp != RecoveryFollowUpStep.restore) return;
+    await _saveRecoveryFollowUp(RecoveryFollowUpStep.recoveryKey);
   }
 
   /// A fresh recovery key to show. The caller disposes it.
@@ -290,16 +304,8 @@ extension AccountRecoveryActions on AppState {
           // https://host[:port] this app talks to, which is what the server's
           // PRIVATE_MESSENGER_PUBLIC_ORIGIN must be.
           final origin = client.baseUrl;
-          final restored = await localStore.loadSession();
           final reservation =
               await client.reserveAccountRecovery(username.trim());
-          if (restored != null &&
-              isRestoredAccountSession(restored) &&
-              (canonicalizeServerOrigin(restored.baseUrl) != origin ||
-                  restored.accountId != reservation.accountId)) {
-            // Going on would silently drop the restored history.
-            throw UserFacingException(l10n.recoveryBackupOtherAccount);
-          }
           enrolling = true;
           final credential =
               await cryptoService.createEnrollmentCredential(reservation);
@@ -354,18 +360,6 @@ extension AccountRecoveryActions on AppState {
           }
         }
       });
-
-  /// The account a backup restore left on this device, to prefill the
-  /// recovery form; null when there is none.
-  Future<Session?> restoredAccountForRecovery() async {
-    if (session != null) return null;
-    try {
-      final stored = await localStore.loadSession();
-      return stored != null && isRestoredAccountSession(stored) ? stored : null;
-    } catch (_) {
-      return null;
-    }
-  }
 
   /// Asks the server about the waiting claim now. Completes it when ready.
   Future<bool> checkAccountRecovery() => _runRecovery(_pollAccountRecovery);
@@ -541,7 +535,10 @@ extension AccountRecoveryActions on AppState {
         recovered.token.isEmpty) {
       throw StateError('Recovery identity was substituted');
     }
-    await _saveRecoveryFollowUp(RecoveryFollowUpStep.recoveryKey,
+    await _saveRecoveryFollowUp(
+        k1RestoreSupported
+            ? RecoveryFollowUpStep.restore
+            : RecoveryFollowUpStep.recoveryKey,
         owner: recovered);
     await localStore.saveSetting(_recoveredDeviceSetting,
         '${recovered.accountId}\u0000${recovered.deviceId}');

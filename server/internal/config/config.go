@@ -30,7 +30,12 @@ type Config struct {
 	// private channel. Existing communities stay in the legacy layout. Off by
 	// default until the app, scoped sync and the layout control record are
 	// ready (C1 prerequisite 2).
-	CommunityLayout  bool
+	CommunityLayout bool
+	// C7History turns on C7 step 3 (docs/designs/C7-channel-history.md):
+	// sealed bodies are required in community conversations and the legacy
+	// edit, delete and paging routes answer 409 there. Off by default until
+	// the app sends bodies (build step 4); PRIVATE_MESSENGER_C7_HISTORY=1.
+	C7History        bool
 	ManagementAddr   string
 	TrustedProxies   []*net.IPNet
 	VAPIDSubscriber  string
@@ -45,11 +50,15 @@ type Config struct {
 	APNsPrivateKey   string
 	TURNURLs         []string
 	TURNSharedSecret string
-	Environment      string
-	LogLevel         string
-	LogFormat        string
-	PasswordCost     int
-	SyncRetention    time.Duration
+	// B6 (group calls): the SFU. All three set, or none (rooms unavailable).
+	SFUURL        string
+	SFUAPIKey     string
+	SFUAPISecret  string
+	Environment   string
+	LogLevel      string
+	LogFormat     string
+	PasswordCost  int
+	SyncRetention time.Duration
 	// Session lifetimes (card T37C). A session ends SessionIdleLifetime after
 	// its last use or SessionAbsoluteLifetime after its last password and
 	// device-secret authentication, whichever comes first. Zero means default.
@@ -69,6 +78,17 @@ type Config struct {
 	// (D49, D78). Zero means the default.
 	RecoveryActiveWindow time.Duration
 	RecoveryWait         time.Duration
+	// Attestation is the L3 proof hook: "" or "none" (default, route is
+	// 404) or "configfs-tsm". AttestationTLSCert is the PEM certificate
+	// whose key the report is bound to; the mode needs it. ImageDigest is
+	// the operator's claim of the running image, shown as claimed_build.
+	Attestation        string
+	AttestationTLSCert string
+	ImageDigest        string
+	// BuildVersion and BuildCommit are set by main from the link-time
+	// version and commit; they are the server's own claim.
+	BuildVersion string
+	BuildCommit  string
 }
 
 const (
@@ -96,6 +116,7 @@ var SecretEnvKeys = []string{
 	"PRIVATE_MESSENGER_FCM_PRIVATE_KEY",
 	"PRIVATE_MESSENGER_APNS_PRIVATE_KEY",
 	"PRIVATE_MESSENGER_TURN_SHARED_SECRET",
+	"PRIVATE_MESSENGER_SFU_API_SECRET",
 }
 
 func Load() (Config, error) {
@@ -134,6 +155,7 @@ func Load() (Config, error) {
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
 		ScopedSync:       !envOff("PRIVATE_MESSENGER_SCOPED_SYNC"),
 		CommunityLayout:  getenv("PRIVATE_MESSENGER_COMMUNITY_LAYOUT", "") == "1",
+		C7History:        getenv("PRIVATE_MESSENGER_C7_HISTORY", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
 		VAPIDSubscriber:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
@@ -148,6 +170,9 @@ func Load() (Config, error) {
 		APNsPrivateKey:   secrets["PRIVATE_MESSENGER_APNS_PRIVATE_KEY"],
 		TURNURLs:         splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
 		TURNSharedSecret: secrets["PRIVATE_MESSENGER_TURN_SHARED_SECRET"],
+		SFUURL:           strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_URL")),
+		SFUAPIKey:        strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_API_KEY")),
+		SFUAPISecret:     secrets["PRIVATE_MESSENGER_SFU_API_SECRET"],
 		Environment:      loadEnvironment(),
 		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
@@ -161,6 +186,19 @@ func Load() (Config, error) {
 		PublicOrigin:            strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_PUBLIC_ORIGIN")),
 		RecoveryActiveWindow:    DefaultRecoveryActiveWindow,
 		RecoveryWait:            DefaultRecoveryWait,
+		Attestation:             strings.ToLower(strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_ATTESTATION"))),
+		AttestationTLSCert:      strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_ATTESTATION_TLS_CERT")),
+		ImageDigest:             strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_IMAGE_DIGEST")),
+	}
+	switch cfg.Attestation {
+	case "", "none":
+		cfg.Attestation = ""
+	case "configfs-tsm":
+		if cfg.AttestationTLSCert == "" {
+			return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ATTESTATION=configfs-tsm needs PRIVATE_MESSENGER_ATTESTATION_TLS_CERT")
+		}
+	default:
+		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ATTESTATION must be none or configfs-tsm")
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")
@@ -178,6 +216,9 @@ func Load() (Config, error) {
 	}
 	if (len(cfg.TURNURLs) == 0) != (cfg.TURNSharedSecret == "") {
 		return Config{}, fmt.Errorf("TURN URLs and shared secret must be configured together")
+	}
+	if err := validateSFU(cfg); err != nil {
+		return Config{}, err
 	}
 	for i, raw := range cfg.TURNURLs {
 		canonical, err := canonicalTURNURL(raw)
@@ -557,4 +598,36 @@ func parseTrustedProxy(value string) (netip.Prefix, error) {
 		return netip.Prefix{}, fmt.Errorf("public proxy ranges must be /%d or narrower", floor)
 	}
 	return prefix, nil
+}
+
+// validateSFU: the SFU address, API key and secret are configured together,
+// the address is a ws, wss, http or https URL, and the secret is long enough
+// to sign tokens (B6).
+func validateSFU(cfg Config) error {
+	set := 0
+	for _, v := range []string{cfg.SFUURL, cfg.SFUAPIKey, cfg.SFUAPISecret} {
+		if v != "" {
+			set++
+		}
+	}
+	if set == 0 {
+		return nil
+	}
+	if set != 3 {
+		return fmt.Errorf("PRIVATE_MESSENGER_SFU_URL, _SFU_API_KEY and _SFU_API_SECRET must be configured together")
+	}
+	u, err := url.Parse(cfg.SFUURL)
+	if err != nil || u.Host == "" || (u.Scheme != "ws" && u.Scheme != "wss" && u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("invalid PRIVATE_MESSENGER_SFU_URL")
+	}
+	if len(cfg.SFUAPISecret) < 32 {
+		return fmt.Errorf("PRIVATE_MESSENGER_SFU_API_SECRET must be at least 32 characters")
+	}
+	if cfg.Environment == "production" && (u.Scheme == "ws" || u.Scheme == "http") {
+		host := u.Hostname()
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			return fmt.Errorf("PRIVATE_MESSENGER_SFU_URL must be wss or https in production")
+		}
+	}
+	return nil
 }

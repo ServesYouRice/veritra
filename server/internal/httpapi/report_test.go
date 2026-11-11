@@ -456,7 +456,7 @@ func TestCommunityReportsRouteToModerators(t *testing.T) {
 	reporterToken, reporterID := registerMemberWithID(t, handler, ownerToken, "reporter")
 	modToken, modID := registerMemberWithID(t, handler, ownerToken, "moderator")
 
-	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Reports"})
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, response)
 	}
@@ -466,7 +466,7 @@ func TestCommunityReportsRouteToModerators(t *testing.T) {
 	if err := json.Unmarshal(response, &community); err != nil {
 		t.Fatal(err)
 	}
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{"name": "general"})
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create channel status=%d body=%s", status, response)
 	}

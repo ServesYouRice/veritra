@@ -1,0 +1,25 @@
+ok  	private-messenger/server/cmd/messenger-server	(cached)
+ok  	private-messenger/server/cmd/veritra-load	(cached)
+ok  	private-messenger/server/internal/admission	(cached)
+ok  	private-messenger/server/internal/app	(cached)
+ok  	private-messenger/server/internal/auth	(cached)
+ok  	private-messenger/server/internal/backupstatus	(cached)
+ok  	private-messenger/server/internal/c7vector	(cached)
+ok  	private-messenger/server/internal/config	(cached)
+ok  	private-messenger/server/internal/cryptoapi	(cached)
+ok  	private-messenger/server/internal/devicelist	(cached)
+ok  	private-messenger/server/internal/domain	(cached)
+ok  	private-messenger/server/internal/franking	(cached)
+ok  	private-messenger/server/internal/httpapi	(cached)
+ok  	private-messenger/server/internal/messaging	(cached)
+ok  	private-messenger/server/internal/mlswire	(cached)
+?   	private-messenger/server/internal/mlswire/mlswiretest	[no test files]
+ok  	private-messenger/server/internal/opmetrics	(cached)
+ok  	private-messenger/server/internal/push	(cached)
+ok  	private-messenger/server/internal/realtime	(cached)
+ok  	private-messenger/server/internal/storage	(cached)
+?   	private-messenger/server/internal/storage/storagetest	[no test files]
+ok  	private-messenger/server/internal/uploads	(cached)
+?   	private-messenger/server/internal/webrtc	[no test files]
+?   	private-messenger/server/migrations	[no test files]
+ok  	private-messenger/server/websetup	(cached)

@@ -50,14 +50,13 @@ rotates the session token; the old token works for two more minutes so
 requests in flight finish, without recent-auth rights. Sign-out, password
 change, sign-out of other devices and device removal revoke both tokens.
 
-Recovery download capabilities are sent only in the `X-Recovery-Token` request
-header to `GET /api/v1/recovery`; they are never URL credentials. Each new
-backup rotates the previous capability, and an approved transfer expires after
-15 minutes or is consumed after its final byte. If a capability may have been
-exposed, immediately upload a fresh backup (which invalidates the old one),
-then purge application, container and reverse-proxy logs covering the exposure
-window according to the host's retention tooling. Do not copy the capability
-into tickets, shell history or diagnostic bundles. A backup holds the
+The 15-minute recovery-token route (`GET /api/v1/recovery`) and the VBK2 backup
+upload (a `POST /api/v1/backups` whose metadata has no `kind`) are retired
+(K1-6, D91). Both answer `410` with the typed codes `recovery_route_retired`
+and `backup_format_retired`, read no token and store nothing; migration 0081
+cleared every stored capability. Old VBK2 copies stay listed until their owner
+deletes them and are never restorable. Backups are K1 copies, downloaded with
+a session through `GET /api/v1/backups/{id}`. A backup holds the
 account's history and settings, never its session token, device secret or
 MLS state (D71, D73). Someone holding a backup and its recovery code can
 read that history but cannot sign in. A restored device joins the account
@@ -177,6 +176,31 @@ Native FCM and APNs use the matching `PRIVATE_MESSENGER_FCM_*` and
 wake events. Calls require a self-hosted coturn-compatible shared secret via
 `PRIVATE_MESSENGER_TURN_URLS` and `PRIVATE_MESSENGER_TURN_SHARED_SECRET`; TURN
 relays see DTLS-SRTP ciphertext, not call media plaintext.
+
+## Group calls and voice rooms (optional, B6)
+
+Group calls need a selective forwarding unit (SFU). The default stack has
+none and group calls answer `503 rooms_unavailable`. To turn them on, run an
+SFU yourself (LiveKit server, Apache-2.0, as its own container; an example
+configuration is `deploy/livekit/livekit.example.yaml`) and set:
+
+- `PRIVATE_MESSENGER_SFU_URL`: where apps connect (`wss://` in production;
+  `ws://` only for a loopback demo);
+- `PRIVATE_MESSENGER_SFU_API_KEY` and `PRIVATE_MESSENGER_SFU_API_SECRET` (or
+  `_FILE`): the SFU's API key and a secret of at least 32 characters. All
+  three are set together or not at all; the server refuses to start otherwise.
+
+The server only signs short-lived join tokens (5 minutes, a random room name
+and a random per-join identity, never an account or conversation id) and
+checks the SFU's signed webhooks at `POST /api/v1/rooms/webhook` (point the
+SFU's webhook there). It never connects to the SFU's media ports and never
+sees media or keys: the apps encrypt every frame with keys derived from a
+short-lived MLS group per call. The SFU does see client network addresses,
+who is in a room, packet sizes and timing, as TURN does for one-to-one calls.
+Rooms hold at most 50 devices (the apps limit video to 25); one live room per
+conversation. A seat the SFU never reports gone is ended after 12 hours, and
+ended rooms are deleted after an hour. Group calls are off in release builds
+with the rest of messaging.
 
 ## Mobile first-run connection
 
@@ -764,6 +788,70 @@ registrations. Once the owner is set up, remove the setup-token key from
 overlay (one without the other stops startup). A rebuilt server then
 refuses to start empty instead of offering owner setup before the restore.
 
+## Fewer address and time logs (L2-2)
+
+The shipped Caddy profile no longer writes client addresses (`remote_ip`,
+`client_ip`, `remote_port`, `X-Forwarded-For`, `X-Real-IP`) or the user agent
+to its access and error logs. Keep Traefik's access log off on k3s; if you
+turn it on, drop the same fields. This is the shipped default only: an
+operator can turn proxy logs back on, for abuse handling for example, and that
+is their choice. The live connection still shows the address in memory, and a
+network path or VPS provider may keep its own flow logs.
+
+`devices.last_seen_at` is stored as the UTC day (migration 0078) and written
+at most once per device per day. Account recovery widens its activity window
+by one day to match, so an active device is never counted as idle.
+
+## Verify a server build (L2-4)
+
+`scripts/verify-server-build.sh <tag>` checks out the tag, rebuilds the
+Dockerfile `build` stage for each platform with the pinned Go image, and
+compares the server binary's SHA-256 with the binary in the published image
+`REPO:<tag>`. It prints "binary matches release <tag>" or "binary does NOT
+match". It does not compare the multi-arch index digest, because the
+provenance and SBOM attestations inside it differ on every build. A match shows
+the published image holds the code of that tag; it does not show what any
+operator runs. Cosign signing is not used (owner default, D106).
+
+## Server attestation hook (L3-1, off by default)
+
+`GET /api/v1/attestation?nonce=<64 hex chars>` answers 404 unless
+`PRIVATE_MESSENGER_ATTESTATION=configfs-tsm` and
+`PRIVATE_MESSENGER_ATTESTATION_TLS_CERT` (a PEM certificate) are set. The
+report comes from the Linux 6.7+ `configfs-tsm` interface, so no vendor SDK is
+used. Its 64-byte user data is `SHA-512("veritra-attest-v1" || nonce ||
+SHA-256(DER public key of the TLS certificate))`, so a report relayed from
+another machine fails the check against the certificate a verifier connected
+to. That only holds when TLS terminates inside the same VM. The response also
+lists `claimed_build` (version, commit and optional
+`PRIVATE_MESSENGER_IMAGE_DIGEST`): the server's own claim, not evidence. The
+route logs nothing about the nonce or the report. The app never reads this
+route and no client trust decision depends on it.
+
+What this does: it lets a person compare a hardware-signed measurement with an
+expected one. What it does not do: it is not operator-proof. The operator
+still chooses the image, the network, the proxy and the disk, can switch the
+mode off, and sees metadata the server handles. Hardware vendors and their
+firmware stay trusted.
+
+### Confidential VM (optional)
+
+Not tested on a real host yet; it needs a provider that sells AMD SEV-SNP or
+Intel TDX VMs, which the OVH VPS does not (owner default: keep OVH for
+production, pick a provider later). The shape of the setup:
+
+1. Boot a published unified kernel image whose measured initrd holds the
+   reproducible server binary (L2-4), so the measurement covers the server. A
+   container pulled after boot is not measured.
+2. Put the data volume on an encrypted disk whose key is released only to the
+   measured VM.
+3. Terminate TLS inside the VM and set `PRIVATE_MESSENGER_ATTESTATION_TLS_CERT`
+   to that certificate.
+4. A verifier fetches a report with a fresh nonce, checks the vendor signature
+   chain, recomputes the user data from the key of the certificate it connected
+   to, and compares the launch measurement with the one recomputed from the
+   published image. `scripts/verify-attestation.sh` is not written yet.
+
 ## Pre-launch checklist
 
 Before the server holds real conversations. Items marked *owner* need
@@ -1172,9 +1260,8 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `PRIVATE_MESSENGER_LIMIT_...` | Default | Range | Counts | Refusal |
 |---|---|---|---|---|
 | `INSTANCE_STORAGE_MIB` | volume × 0.9 / (backup keep + 3), at most 10,240; 3,686 on the 40 GiB PVC | 64-16,777,216 | encrypted attachments and backups on the instance | 507 `storage_quota_exceeded` |
-| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account, except K1 automatic backups (next row) | 507 `storage_quota_exceeded` |
-| `BACKUP_ALLOWANCE_MIB` | two full-size K1 copies (2 × 64 MiB plus framing, 128.003 MiB) | 65-1,048,576 | the current K1 backup copy of each active device of an account, apart from `ACCOUNT_STORAGE_MIB` (D91). Not counted: the copy an upload replaces (at most one per device, for up to 24 hours) and revoked devices' copies (at most 3, for 90 days). Worst case per account: the allowance, plus one replaced copy per active device, plus 3 revoked copies | 507 `storage_quota_exceeded` |
-| `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and legacy backups per account (K1 copies are bounded by the allowance above) (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
+| `ACCOUNT_STORAGE_MIB` | 512, never above the instance limit | 16-1,048,576 | the same, per account, including the account's K1 automatic backup copies (migration 0079, owner decision 2026-11-11: backup space is shared per account). A replacement upload counts the copy it replaces for up to 24 hours, so keep room for two copies per device in use | 507 `storage_quota_exceeded` |
+| `ACCOUNT_BLOBS` | 10,000 | 100-1,000,000 | attachments and legacy backups per account (K1 copies are bounded by their two-per-device rule, not counted here) (each takes at least 4 KiB on disk) | 507 `storage_quota_exceeded` |
 | `DEVICES_PER_ACCOUNT` | 10 (the realtime hub allows 10 sockets per account) | 1-10 | active devices; also at most 3 open device links | 409 `device_limit_reached`, `device_link_limit_reached` |
 | `CONVERSATION_MEMBERS` | 250 (was 100; step 1 of C8) | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |

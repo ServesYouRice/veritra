@@ -427,10 +427,8 @@ void main() {
       expect(await db.readPendingEnrollment(), isNotNull);
     });
 
-    test('a cached clear and a backup restore keep the claim', () async {
+    test('a cached clear keeps the claim', () async {
       await db.clearCachedState();
-      await db.restoreBackupState(
-          sessionJson: _sessionJson, conversations: [], envelopes: []);
       expect(await db.readPendingEnrollment(), isNotNull);
     });
 
@@ -625,7 +623,6 @@ void main() {
     await store.savePendingEnrollment(_claim().toEnrollment());
     expect(await store.loadPendingEnrollment(), isNotNull);
 
-    final backup = await store.exportBackup();
     final history = await store.exportHistorySnapshot();
     for (final forbidden in <List<int>>[
       utf8.encode(_claimToken),
@@ -639,12 +636,10 @@ void main() {
       _recordSealed,
       utf8.encode(base64Encode(_recordSealed)),
     ]) {
-      expect(_containsBytes(backup, forbidden), isFalse,
-          reason: 'backup: ${utf8.decode(forbidden, allowMalformed: true)}');
       expect(_containsBytes(history, forbidden), isFalse,
           reason: 'history: ${utf8.decode(forbidden, allowMalformed: true)}');
     }
-    expect(utf8.decode(backup), contains('acct_me'));
+    expect(utf8.decode(history), contains('acct_me'));
   });
 }
 

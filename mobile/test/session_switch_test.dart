@@ -183,7 +183,7 @@ SyncEvent _event(int id) => SyncEvent(
       createdAt: DateTime.utc(2026, 10, 23),
     );
 
-class _SessionApi extends ApiClient {
+class _SessionApi extends ApiClient with LegacySyncPageFake {
   _SessionApi() : super(baseUrl: 'https://localhost:8080');
 
   final Map<String, List<List<SyncEvent>>> pages =

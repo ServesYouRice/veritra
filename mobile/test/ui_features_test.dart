@@ -160,7 +160,7 @@ AppState _connectedState(ApiClient api) {
     );
 }
 
-class FakeFeatureApiClient extends ApiClient {
+class FakeFeatureApiClient extends ApiClient with LegacySyncPageFake {
   FakeFeatureApiClient() : super(baseUrl: 'https://localhost:8080');
 
   Map<String, Object?>? lastConversationBody;

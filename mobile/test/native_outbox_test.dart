@@ -410,7 +410,7 @@ void main() {
           echo, (await harness.aliceStore.loadSyncCursor()) + 1);
       expect(await harness.aliceStore.loadPins(_conversation), isEmpty);
       expect(
-          (jsonDecode(utf8.decode(await harness.aliceStore.exportBackup()))
+          (jsonDecode(utf8.decode(await harness.aliceStore.exportHistorySnapshot()))
               as Map)['pending_pins'],
           isNull);
       authority.role = 'admin';
@@ -790,7 +790,7 @@ class _StandInServer {
 
 /// The real ApiClient; only the read endpoints AppState polls are stubbed,
 /// so commits and envelopes cross real HTTP to [_StandInServer].
-class _StandInApi extends ApiClient {
+class _StandInApi extends ApiClient with LegacySyncPageFake {
   _StandInApi(String baseUrl) : super(baseUrl: baseUrl);
 
   @override

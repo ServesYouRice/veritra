@@ -28,7 +28,7 @@ var metricLabel = regexp.MustCompile(`([a-z_]+)="((?:[^"\\]|\\.)*)"`)
 // is checked separately: it must be a registered ServeMux pattern.
 var allowedLabelValues = map[string]map[string]bool{
 	"status_class": {"1xx": true, "2xx": true, "3xx": true, "4xx": true, "5xx": true},
-	"provider":     {"apns": true, "fcm": true, "webpush": true},
+	"provider":     {"apns": true, "fcm": true, "webpush": true, "unifiedpush": true},
 	"result":       {"attempted": true, "delivered": true, "failed": true, "abandoned": true},
 	"pool":         {"writer": true, "reader": true},
 	"volume":       {"database": true, "blobs": true},

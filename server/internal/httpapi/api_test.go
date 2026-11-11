@@ -314,26 +314,6 @@ func TestMetadataSearchBackupExportAndAccountDelete(t *testing.T) {
 		}
 	}
 
-	recoveryToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{1}, 32))
-	status, response = doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, []byte("encrypted backup blob"), map[string]string{
-		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
-		"X-Recovery-Token":              recoveryToken,
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("backup status=%d body=%s", status, response)
-	}
-	status, response = doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, map[string]string{
-		"X-Recovery-Token": recoveryToken,
-	})
-	if status != http.StatusOK || !bytes.Equal(response, []byte("encrypted backup blob")) {
-		t.Fatalf("recovery status=%d body=%q", status, response)
-	}
-	status, _ = doRaw(t, handler, http.MethodGet, "/api/v1/recovery/"+recoveryToken, "", nil, nil)
-	if status != http.StatusNotFound {
-		t.Fatalf("legacy/replayed recovery status=%d want %d", status, http.StatusNotFound)
-	}
-
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/account/export", token, nil)
 	if status != http.StatusOK {
 		t.Fatalf("export status=%d body=%s", status, response)
@@ -1242,9 +1222,7 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 
 func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	handler, ownerToken, _ := newTestHandlerWithOwner(t)
-	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{
-		"name": "Neighborhood",
-	})
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, response)
 	}
@@ -1254,9 +1232,7 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	if err := json.Unmarshal(response, &community); err != nil {
 		t.Fatalf("decode community: %v", err)
 	}
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{
-		"name": "general",
-	})
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create channel status=%d body=%s", status, response)
 	}
@@ -1267,14 +1243,14 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	}
 	var communities struct {
 		Communities []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID   string  `json:"id"`
+			Name *string `json:"name"`
 		} `json:"communities"`
 	}
 	if err := json.Unmarshal(response, &communities); err != nil {
 		t.Fatalf("decode communities: %v", err)
 	}
-	if len(communities.Communities) != 1 || communities.Communities[0].Name != "Neighborhood" {
+	if len(communities.Communities) != 1 || communities.Communities[0].ID != community.ID || communities.Communities[0].Name != nil {
 		t.Fatalf("unexpected communities: %#v", communities.Communities)
 	}
 
@@ -1284,13 +1260,14 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	}
 	var channels struct {
 		Channels []struct {
-			Name string `json:"name"`
+			ID   string  `json:"id"`
+			Name *string `json:"name"`
 		} `json:"channels"`
 	}
 	if err := json.Unmarshal(response, &channels); err != nil {
 		t.Fatalf("decode channels: %v", err)
 	}
-	if len(channels.Channels) != 1 || channels.Channels[0].Name != "general" {
+	if len(channels.Channels) != 1 || channels.Channels[0].ID == "" || channels.Channels[0].Name != nil {
 		t.Fatalf("unexpected channels: %#v", channels.Channels)
 	}
 
@@ -1341,7 +1318,7 @@ func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
 		t.Fatalf("moderator demote owner status=%d body=%s", status, response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Kinds"})
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, response)
 	}
@@ -1352,7 +1329,6 @@ func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
 		t.Fatalf("decode community: %v", err)
 	}
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{
-		"name": "bad-kind",
 		"kind": "text",
 	})
 	if status != http.StatusBadRequest {
@@ -1515,61 +1491,6 @@ func TestMLSCommitBundleRoutes(t *testing.T) {
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", memberToken, nil)
 	if status != http.StatusOK || !bytes.Contains(response, []byte(`"kind":"welcome"`)) {
 		t.Fatalf("member sync status=%d body=%s", status, response)
-	}
-}
-
-// I45: a recovery download can resume from what the client actually has,
-// even when the server sent more before the connection dropped; only a
-// transfer that reaches the end consumes the capability.
-func TestRecoveryResumesFromTheClientsOffset(t *testing.T) {
-	handler, token, _ := newTestHandlerWithOwner(t)
-	payload := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
-	recoveryToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
-	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, payload, map[string]string{
-		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
-		"X-Recovery-Token":              recoveryToken,
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("backup status=%d body=%s", status, response)
-	}
-	get := func(rangeHeader string) (int, []byte) {
-		headers := map[string]string{"X-Recovery-Token": recoveryToken}
-		if rangeHeader != "" {
-			headers["Range"] = rangeHeader
-		}
-		return doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, headers)
-	}
-	// The server delivers the first 20 bytes...
-	status, response = get("bytes=0-19")
-	if status != http.StatusPartialContent || !bytes.Equal(response, payload[:20]) {
-		t.Fatalf("first part status=%d body=%q", status, response)
-	}
-	// ...but the client only kept 12 and resumes there.
-	status, response = get("bytes=12-")
-	if status != http.StatusPartialContent || !bytes.Equal(response, payload[12:]) {
-		t.Fatalf("resume status=%d body=%q", status, response)
-	}
-	// Reaching the end consumed the capability.
-	status, _ = get("")
-	if status != http.StatusNotFound {
-		t.Fatalf("replay after completion status=%d", status)
-	}
-	// Skipping ahead of what was ever sent is refused.
-	second := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
-	status, _ = doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, payload, map[string]string{
-		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":2}`,
-		"X-Recovery-Token":              second,
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("second backup status=%d", status)
-	}
-	status, _ = doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, map[string]string{
-		"X-Recovery-Token": second, "Range": "bytes=10-",
-	})
-	if status != http.StatusRequestedRangeNotSatisfiable {
-		t.Fatalf("skip-ahead status=%d", status)
 	}
 }
 

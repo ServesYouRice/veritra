@@ -1,6 +1,6 @@
 # C4: built-in roles, verified by every app
 
-**Status: rules engine, codec, ABI 20 carrier, command planner and schema 38
+**Status: rules engine, codec, ABI 20 carrier, command planner and schema 36
 observation storage; app wiring remains blocked on C1 removal proofs.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
@@ -401,7 +401,7 @@ Built (earlier): the rules engine and 62 tests (posting, hierarchy as on the ser
 step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
 open, cancel, close, vote, win, claim, electors, `joined`, `owner_rev`; the
 local waits as pure helpers; the commit-level check). The ABI 20 carrier,
-command planner and schema 38 local observation storage are now also built
+command planner and schema 36 local observation storage are now also built
 (see the follow-ups below). Not built: authenticated removal proofs,
 approved-leaf role rosters, coordinated producer/receiver wiring, automatic
 owner cancellation, UI and server succession (below).
@@ -476,7 +476,7 @@ deciding vote changes ownership and clears the election in the same record.
 Opening and voting require local observations bound to the current owner and
 `ownerRev`; voting also requires the observation of this election's `opened`
 revision. They enforce the existing 30-day and 7-day waits. Observations are
-persisted atomically with accepted MLS transitions by schema 38; they are
+persisted atomically with accepted MLS transitions by schema 36; they are
 never server timestamps. An unknown or stale observation refuses the command.
 The observation reducer starts conservatively on a join or restore without
 saved clocks, tracks authenticated owner commits and application messages,

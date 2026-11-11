@@ -255,61 +255,6 @@ func TestEverySQLiteConnectionEnforcesSafetyPragmas(t *testing.T) {
 	}
 }
 
-func TestRecoveryCapabilityExpiresAndConsumesAfterResumableTransfer(t *testing.T) {
-	ctx := context.Background()
-	store, _ := newTestStore(t, ctx)
-	defer store.Close()
-	owner := createTestOwner(t, ctx, store)
-	firstToken := bytes.Repeat([]byte{1}, 32)
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "recovery-blob", strings.Repeat("a", 64), 6, json.RawMessage(`{"state_counter":1}`), firstToken); err != nil {
-		t.Fatalf("create backup: %v", err)
-	}
-	transfer, err := store.BeginRecoveryTransfer(ctx, firstToken, 0)
-	if err != nil {
-		t.Fatalf("begin first transfer: %v", err)
-	}
-	if _, err := store.BeginRecoveryTransfer(ctx, firstToken, 0); !errors.Is(err, ErrRecoveryBusy) {
-		t.Fatalf("concurrent transfer err=%v want %v", err, ErrRecoveryBusy)
-	}
-	if _, err := store.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_expires_at = ? WHERE recovery_lease_id = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), transfer.LeaseID); err != nil {
-		t.Fatalf("expire transfer lease: %v", err)
-	}
-	if err := store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, 3, 6); !errors.Is(err, ErrRecoveryBusy) {
-		t.Fatalf("stale completion err=%v want %v", err, ErrRecoveryBusy)
-	}
-	transfer, err = store.BeginRecoveryTransfer(ctx, firstToken, 0)
-	if err != nil {
-		t.Fatalf("take over expired transfer lease: %v", err)
-	}
-	if err := store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, 3, 6); err != nil {
-		t.Fatalf("complete interrupted transfer: %v", err)
-	}
-	transfer, err = store.BeginRecoveryTransfer(ctx, firstToken, 3)
-	if err != nil {
-		t.Fatalf("resume transfer: %v", err)
-	}
-	if err := store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, 3, 3); err != nil {
-		t.Fatalf("complete final transfer: %v", err)
-	}
-	if _, err := store.BeginRecoveryTransfer(ctx, firstToken, 0); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("replayed capability err=%v want %v", err, ErrNotFound)
-	}
-
-	secondToken := bytes.Repeat([]byte{2}, 32)
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "recovery-blob-2", strings.Repeat("b", 64), 1, json.RawMessage(`{"state_counter":2}`), secondToken); err != nil {
-		t.Fatalf("create rotated backup: %v", err)
-	}
-	// firstToken was consumed above, so it proves nothing about rotation here;
-	// TestNewBackupRevokesOutstandingRecoveryCapability covers a capability
-	// that is still unconsumed when the next backup is made.
-	if _, err := store.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_expires_at = ? WHERE recovery_token_hash = ?`, formatTime(time.Now().UTC().Add(-time.Minute)), secondToken); err != nil {
-		t.Fatalf("expire capability: %v", err)
-	}
-	if _, err := store.BeginRecoveryTransfer(ctx, secondToken, 0); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("expired capability err=%v want %v", err, ErrNotFound)
-	}
-}
-
 func TestConversationRetentionPolicyMetadataPersists(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
@@ -605,7 +550,7 @@ func TestMessageMarkersSyncSearchExportAndMembershipGuards(t *testing.T) {
 	if len(results) == 0 || results[0].Type != "account" {
 		t.Fatalf("unexpected metadata search results: %#v", results)
 	}
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"state_counter":1}`), make([]byte, 32)); err != nil {
+	if err := insertLegacyBackup(ctx, store, owner.Account.ID, owner.Device.ID, "backup_blob", strings.Repeat("a", 64), 64, json.RawMessage(`{"state_counter":1}`)); err != nil {
 		t.Fatalf("create backup blob: %v", err)
 	}
 	if _, err := store.CreatePushSubscription(ctx, owner.Account.ID, owner.Device.ID, "webpush", "https://push.example.test/owner", "owner-public-key", "owner-reusable-push-secret"); err != nil {
@@ -640,14 +585,14 @@ func TestMetadataSearchRanksAndPaginatesAllowedLabelsOnly(t *testing.T) {
 	defer store.Close()
 	owner := createTestOwner(t, ctx, store)
 
-	alphaCommunity, err := store.CreateCommunity(ctx, "Alpha", owner.Account.ID)
+	alphaCommunity, err := store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatalf("create alpha community: %v", err)
 	}
-	if _, err := store.CreateChannel(ctx, alphaCommunity.ID, "Alpine", "private", owner.Account.ID); err != nil {
+	if _, err := store.CreateChannel(ctx, alphaCommunity.ID, "private", owner.Account.ID); err != nil {
 		t.Fatalf("create alpine channel: %v", err)
 	}
-	if _, err := store.CreateCommunity(ctx, "Team Alpha", owner.Account.ID); err != nil {
+	if _, err := store.CreateCommunity(ctx, owner.Account.ID); err != nil {
 		t.Fatalf("create team alpha community: %v", err)
 	}
 
@@ -1592,7 +1537,7 @@ func TestCommunityOwnershipRules(t *testing.T) {
 	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, owner, owner, domain.RoleMember); err != nil {
 		t.Fatalf("step down: %v", err)
 	}
-	if _, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "more", "", insider); err != nil {
+	if _, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "", insider); err != nil {
 		t.Fatalf("channel after transfer: %v", err)
 	}
 }

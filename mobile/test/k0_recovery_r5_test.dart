@@ -1,9 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -11,7 +8,6 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/features/auth/account_recovery_screen.dart';
 import 'package:private_messenger/features/settings/recovery_key_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
-import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/ui/theme.dart';
 
@@ -304,95 +300,6 @@ void main() {
               'https://10.0.0.2:8443', k0Origin)),
           findsOneWidget);
       screen.dispose();
-    });
-  });
-
-  group('N3 a recovered device keeps the restored history', () {
-    late Directory directory;
-    late List<EncryptedLocalDatabase> databases;
-
-    setUp(() async {
-      FlutterSecureStorage.setMockInitialValues(<String, String>{});
-      directory = await Directory.systemTemp.createTemp('veritra-k0r5-');
-      databases = <EncryptedLocalDatabase>[];
-    });
-
-    tearDown(() async {
-      for (final database in databases) {
-        await database.close();
-      }
-      await SecureLocalStore.releaseInstanceLocks();
-      if (await directory.exists()) await directory.delete(recursive: true);
-    });
-
-    SecureLocalStore createStore(String namespace) => SecureLocalStore(
-          storage: const FlutterSecureStorage(),
-          directoryProvider: () async => directory,
-          namespace: namespace,
-          databaseFactory: (file, keyHex) {
-            final database = openEncryptedLocalDatabase(file, keyHex);
-            databases.add(database);
-            return database;
-          },
-        );
-
-    StoredCryptoState cryptoState(int counter) => StoredCryptoState(
-        counter: counter,
-        stateKey: List<int>.filled(32, 7),
-        sealedState: utf8.encode('sealed'));
-
-    test('completion over a restored backup keeps its messages', () async {
-      final source = createStore('');
-      await source.saveSession(k0SignedIn);
-      await source.saveCryptoState(cryptoState(1), 10);
-      await source.saveSnapshot(
-          <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
-          const <String, List<ReceivedMessageEnvelope>>{},
-          10);
-      await source.commitMlsTransition(MlsStateTransition(
-        messageId: 'application:11:m1',
-        conversationId: 'conv_1',
-        expectedCounter: 1,
-        expectedCursor: 10,
-        state: cryptoState(2),
-        cursor: 11,
-        messageEffects: <MessageEffect>[
-          InsertMessageEffect(
-            key: 'dev_peer:m1',
-            serverMessageId: 'm1',
-            conversationId: 'conv_1',
-            senderAccountId: 'acct_peer',
-            senderDeviceId: 'dev_peer',
-            kind: LocalMessageKind.text,
-            body: 'hello',
-            createdAt: DateTime.utc(2026, 10, 24).millisecondsSinceEpoch,
-            state: LocalMessageState.received,
-          ),
-        ],
-      ));
-      final backup = await source.exportBackup();
-
-      final target = createStore('recovered');
-      await target.restoreBackup(backup);
-      expect(isRestoredAccountSession((await target.loadSession())!), isTrue);
-
-      final app = k0App(server, target, crypto);
-      addTearDown(app.dispose);
-      final ok = await app.startAccountRecovery(
-        baseUrl: k0Origin,
-        username: 'alice',
-        password: 'pw',
-        recoveryKey: k0Display,
-      );
-      expect(ok, isTrue, reason: app.errorFor(Ops.accountRecovery));
-      server.statusAnswers.add(completed);
-      expect(await app.checkAccountRecovery(), isTrue,
-          reason: app.errorFor(Ops.accountRecovery));
-
-      final session = (await target.loadSession())!;
-      expect(session.deviceId, 'dev_new');
-      expect(session.token, 'tok_new');
-      expect((await target.loadMessages('conv_1')).single.body, 'hello');
     });
   });
 }

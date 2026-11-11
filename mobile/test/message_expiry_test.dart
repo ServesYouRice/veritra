@@ -9,6 +9,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
+import 'package:private_messenger/storage/history_snapshot.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -470,89 +471,6 @@ void main() {
     });
   }
 
-  test('a backup from before schema 10 expires through its envelopes',
-      () async {
-    final store = createStore();
-    await seedState(store);
-    await saveList(store);
-    final database = databases.last;
-    final past = DateTime.now().toUtc().subtract(const Duration(hours: 1));
-    await database.restoreBackupState(
-      sessionJson: '{}',
-      conversations: const [],
-      envelopes: [
-        (
-          id: 'old',
-          conversationId: 'conv_1',
-          position: 0,
-          payloadJson: jsonEncode(_envelope('old', expiresAt: past).toJson()),
-        ),
-      ],
-      backfillExpiryFor: const {'old'},
-      history: [
-        // A version 2 backup carries no expiry for the message.
-        LocalMessage(
-          key: 'dev_peer:old',
-          serverMessageId: 'old',
-          conversationId: 'conv_1',
-          senderAccountId: 'acct_peer',
-          senderDeviceId: 'dev_peer',
-          kind: LocalMessageKind.text,
-          body: 'old text',
-          createdAt: 1,
-          state: LocalMessageState.received,
-        ),
-      ],
-    );
-    expect(await bodies(store), isEmpty);
-    expect(await envelopeIds(store), isEmpty);
-  });
-
-  test('a current backup keeps history a relisted envelope calls expired',
-      () async {
-    final store = createStore();
-    await seedState(store);
-    await store.saveSession(const Session(
-      baseUrl: 'https://localhost:8080',
-      token: 'token',
-      accountId: 'acct_own',
-      deviceId: 'dev_own',
-    ));
-    await saveList(store);
-    await receive(store, id: 'old', body: 'old text');
-    // The server relists the message with a short expiry; the app caches it.
-    await databases.last.customStatement(
-      'INSERT OR REPLACE INTO local_ciphertext_envelopes '
-      '(id, conversation_id, position, payload_json, expires_at) '
-      "VALUES ('old', 'conv_1', 0, ?, ?)",
-      <Object?>[
-        jsonEncode(_envelope('old',
-                expiresAt:
-                    DateTime.now().toUtc().subtract(const Duration(hours: 1)))
-            .toJson()),
-        DateTime.now().millisecondsSinceEpoch - 3600000,
-      ],
-    );
-    final exported = await store.exportBackup();
-
-    // Format 3 restores history as it is: envelopes never set its expiry.
-    // A restore needs an empty device (D71).
-    await store.clear();
-    await store.restoreBackup(exported);
-    expect(await bodies(store), <String>['old text']);
-
-    // The export left the expired envelope out, and a file that says
-    // version 2 but carries the expiry key is taken as it is too.
-    final legacy =
-        Map<String, Object?>.from(jsonDecode(utf8.decode(exported)) as Map)
-          ..['version'] = 2;
-    _bindLegacySession(legacy);
-    expect(jsonEncode(legacy['messages']), isNot(contains('"old"')));
-    await store.clear();
-    await store.restoreBackup(utf8.encode(jsonEncode(legacy)));
-    expect(await bodies(store), <String>['old text']);
-  });
-
   test('a signed-out device still deletes what expired', () async {
     final store = MemoryLocalStore();
     await store.saveSession(const Session(
@@ -600,9 +518,8 @@ void main() {
     expect(await bodies(store), hasLength(1));
   });
 
-  Future<Map<String, Object?>> exportedBackup(LocalStore store) async =>
-      Map<String, Object?>.from(
-          jsonDecode(utf8.decode(await store.exportBackup())) as Map);
+  Future<List<LocalMessage>> exportedHistory(LocalStore store) async =>
+      HistorySnapshot.decode(await store.exportHistorySnapshot()).messages;
 
   Future<void> saveOwnSession(LocalStore store) =>
       store.saveSession(const Session(
@@ -612,7 +529,7 @@ void main() {
         deviceId: 'dev_own',
       ));
 
-  test('a backup export leaves out rows past their expiry', () async {
+  test('a history snapshot leaves out rows past their expiry', () async {
     for (final store in <LocalStore>[createStore(), MemoryLocalStore()]) {
       await seedState(store);
       await saveOwnSession(store);
@@ -620,53 +537,13 @@ void main() {
       final soon = DateTime.now().toUtc().add(const Duration(seconds: 1));
       await receive(store, id: 'gone', expiresAt: soon, body: 'gone text');
       await receive(store, id: 'kept', body: 'kept text');
-      var backup = await exportedBackup(store);
-      expect((backup['history'] as List), hasLength(2));
+      var exported = await exportedHistory(store);
+      expect(exported, hasLength(2));
       await Future<void>.delayed(const Duration(milliseconds: 1300));
       // Nothing purged yet: the export itself must not carry expired text.
-      backup = await exportedBackup(store);
-      expect(jsonEncode(backup), isNot(contains('gone')));
-      expect((backup['history'] as List), hasLength(1));
-      final messages = Map<String, Object?>.from(backup['messages'] as Map);
-      expect((messages['conv_1'] as List), hasLength(1));
+      exported = await exportedHistory(store);
+      expect(exported.map((m) => m.body), <String?>['kept text']);
     }
-  });
-
-  test('a restore backfills expiry only for history entries without the key',
-      () async {
-    final store = createStore();
-    await seedState(store);
-    await saveOwnSession(store);
-    await saveList(store);
-    final later = DateTime.now().toUtc().add(const Duration(hours: 1));
-    await receive(store, id: 'missing', expiresAt: later);
-    await receive(store, id: 'explicit', expiresAt: later);
-    // History rows without an expiry, although the cached envelopes have one.
-    await databases.last
-        .customStatement('UPDATE local_messages SET expires_at = NULL');
-    final backup = await exportedBackup(store);
-    // A version 2 file whose entry "missing" has no expiresAt key at all, and
-    // whose entry "explicit" carries the key with null: that one never expires.
-    backup['version'] = 2;
-    _bindLegacySession(backup);
-    for (final item in backup['history'] as List) {
-      final entry = item as Map;
-      if (entry['serverMessageId'] == 'missing') entry.remove('expiresAt');
-      if (entry['serverMessageId'] == 'explicit') {
-        entry['expiresAt'] = null;
-      }
-    }
-    await store.clear();
-    await store.restoreBackup(utf8.encode(jsonEncode(backup)));
-    final rows = await databases.last
-        .customSelect('SELECT server_message_id AS id, expires_at AS at '
-            'FROM local_messages')
-        .get();
-    final byId = {
-      for (final row in rows) row.read<String>('id'): row.read<int?>('at')
-    };
-    expect(byId['missing'], later.millisecondsSinceEpoch);
-    expect(byId['explicit'], isNull);
   });
 
   test('a failing database delete still removes expired text from an open chat',
@@ -838,18 +715,4 @@ class _HistoryMls implements MlsConversationCryptoService {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
-}
-
-/// A version 1 to 5 backup carried the device's session, bound to the
-/// account and device; a current export carries the account only (D71).
-void _bindLegacySession(Map<String, Object?> backup) {
-  backup
-    ..['session'] = <String, Object?>{
-      'base_url': 'https://localhost:8080',
-      'token': 'token',
-      'account_id': 'acct_own',
-      'device_id': 'dev_own',
-    }
-    ..['account_id'] = 'acct_own'
-    ..['device_id'] = 'dev_own';
 }

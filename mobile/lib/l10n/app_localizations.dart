@@ -429,6 +429,30 @@ abstract class AppLocalizations {
   /// **'Your contacts can\'t add your devices to chats until you confirm which ones are yours.'**
   String get settingsDeviceListSetupDetail;
 
+  /// No description provided for @settingsRecoveryRetype.
+  ///
+  /// In en, this message translates to:
+  /// **'Type your recovery key again to finish recovery'**
+  String get settingsRecoveryRetype;
+
+  /// No description provided for @settingsRecoveryRetypeDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your contacts can\'t add this device to chats until you do.'**
+  String get settingsRecoveryRetypeDetail;
+
+  /// No description provided for @settingsRecoveryConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm your recovery key to keep recovery working'**
+  String get settingsRecoveryConfirm;
+
+  /// No description provided for @settingsRecoveryConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your recovery key was set before approved-device lists. Type it once, or recovering your account with it will be refused.'**
+  String get settingsRecoveryConfirmDetail;
+
   /// No description provided for @deviceListReviewTitle.
   ///
   /// In en, this message translates to:
@@ -1911,6 +1935,60 @@ abstract class AppLocalizations {
   /// **'Use + to create the first one.'**
   String get communityNoChannelsHint;
 
+  /// No description provided for @communityPlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Community'**
+  String get communityPlaceholderName;
+
+  /// No description provided for @channelPlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel'**
+  String get channelPlaceholderName;
+
+  /// No description provided for @channelPrivatePlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Private channel'**
+  String get channelPrivatePlaceholderName;
+
+  /// No description provided for @communityInfoEditFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the info. Try again.'**
+  String get communityInfoEditFailed;
+
+  /// No description provided for @communityEditInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit community'**
+  String get communityEditInfo;
+
+  /// No description provided for @channelEditInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit channel'**
+  String get channelEditInfo;
+
+  /// No description provided for @channelTopic.
+  ///
+  /// In en, this message translates to:
+  /// **'Topic'**
+  String get channelTopic;
+
+  /// No description provided for @channelEditFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save the channel. Try again.'**
+  String get channelEditFailed;
+
+  /// No description provided for @channelSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get channelSave;
+
   /// No description provided for @communityNotMember.
   ///
   /// In en, this message translates to:
@@ -3164,6 +3242,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'A message from a device that isn\'t approved was hidden.'**
   String get chatMessageUnapprovedDevice;
+
+  /// No description provided for @chatDevicesNotJoined.
+  ///
+  /// In en, this message translates to:
+  /// **'Some of {name}\'s devices haven\'t joined yet.'**
+  String chatDevicesNotJoined(String name);
 
   /// No description provided for @chatMessageWelcomeUnavailable.
   ///
@@ -4725,6 +4809,24 @@ abstract class AppLocalizations {
   /// **'That recovery key is not valid. Check it for a typo.'**
   String get recoveryKeyUnreadable;
 
+  /// No description provided for @recoveryKeyNotThisAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'That isn\'t this account\'s recovery key. Check your paper and try again.'**
+  String get recoveryKeyNotThisAccount;
+
+  /// No description provided for @recoveryKeyConfirmedForList.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery key confirmed.'**
+  String get recoveryKeyConfirmedForList;
+
+  /// No description provided for @recoveryRetypeDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery finished on this device.'**
+  String get recoveryRetypeDone;
+
   /// No description provided for @recoveryClaimRefused.
   ///
   /// In en, this message translates to:
@@ -5451,6 +5553,108 @@ abstract class AppLocalizations {
   /// **'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.'**
   String get callNoticeFailed;
 
+  /// No description provided for @roomStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Group call'**
+  String get roomStart;
+
+  /// No description provided for @roomTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Group call'**
+  String get roomTitle;
+
+  /// No description provided for @roomJoining.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining…'**
+  String get roomJoining;
+
+  /// No description provided for @roomConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'In the call'**
+  String get roomConnected;
+
+  /// No description provided for @roomEncryptedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice and video are end-to-end encrypted. The server passes them on but cannot listen.'**
+  String get roomEncryptedNote;
+
+  /// No description provided for @roomLeave.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get roomLeave;
+
+  /// No description provided for @roomYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get roomYou;
+
+  /// No description provided for @roomMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get roomMute;
+
+  /// No description provided for @roomUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get roomUnmute;
+
+  /// No description provided for @roomShareScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Share screen'**
+  String get roomShareScreen;
+
+  /// No description provided for @roomStopSharing.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop sharing'**
+  String get roomStopSharing;
+
+  /// No description provided for @roomFailedFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This call is full.'**
+  String get roomFailedFull;
+
+  /// No description provided for @roomFailedUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Group calls are not set up on this server.'**
+  String get roomFailedUnavailable;
+
+  /// No description provided for @roomFailedWelcome.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining safely was not possible. Try again.'**
+  String get roomFailedWelcome;
+
+  /// No description provided for @roomFailedOther.
+  ///
+  /// In en, this message translates to:
+  /// **'The call could not continue.'**
+  String get roomFailedOther;
+
+  /// No description provided for @roomFailedCryptor.
+  ///
+  /// In en, this message translates to:
+  /// **'This device cannot protect call media, so it did not join.'**
+  String get roomFailedCryptor;
+
+  /// No description provided for @roomPeople.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 person} other{{count} people}}'**
+  String roomPeople(int count);
+
   /// No description provided for @moderationTitle.
   ///
   /// In en, this message translates to:
@@ -6171,6 +6375,222 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get autoBackupPromptLater;
 
+  /// No description provided for @channelPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'Private channel'**
+  String get channelPrivate;
+
+  /// No description provided for @channelPrivateDisclosure.
+  ///
+  /// In en, this message translates to:
+  /// **'Only selected members can see this channel. The server can see who is in it.'**
+  String get channelPrivateDisclosure;
+
+  /// No description provided for @channelOpenDisclosure.
+  ///
+  /// In en, this message translates to:
+  /// **'Every community member can see this channel.'**
+  String get channelOpenDisclosure;
+
+  /// No description provided for @channelCreateFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not create the channel. Try again.'**
+  String get channelCreateFailed;
+
+  /// No description provided for @channelMembersFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The channel was created. Some members could not be added. Retry to add only those members.'**
+  String get channelMembersFailed;
+
+  /// No description provided for @channelAdminOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Only owners and admins can create channels.'**
+  String get channelAdminOnly;
+
+  /// No description provided for @k1ConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check your recovery key'**
+  String get k1ConfirmTitle;
+
+  /// No description provided for @k1ConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Type it once more to be sure you still have it. It never leaves this device.'**
+  String get k1ConfirmDetail;
+
+  /// No description provided for @k1ConfirmOk.
+  ///
+  /// In en, this message translates to:
+  /// **'That is your recovery key.'**
+  String get k1ConfirmOk;
+
+  /// No description provided for @k1ConfirmMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'That does not match. If you lost your key, make a new one in Recovery key settings.'**
+  String get k1ConfirmMismatch;
+
+  /// No description provided for @k1SecondCopyChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep a second copy in a folder'**
+  String get k1SecondCopyChoose;
+
+  /// No description provided for @k1SecondCopyFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Second copy: {folder}'**
+  String k1SecondCopyFolder(String folder);
+
+  /// No description provided for @k1SecondCopyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The same locked backup, saved where you choose. Only your recovery key opens it.'**
+  String get k1SecondCopyDetail;
+
+  /// No description provided for @k1SecondCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The last copy to this folder failed. Check the folder.'**
+  String get k1SecondCopyFailed;
+
+  /// No description provided for @k1SecondCopyOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the second copy'**
+  String get k1SecondCopyOff;
+
+  /// No description provided for @k1SecondCopyPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'A second copy in a folder is available on desktop. Phones keep the backup on the server only.'**
+  String get k1SecondCopyPhone;
+
+  /// No description provided for @recoveryFollowUpRestoreDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.'**
+  String get recoveryFollowUpRestoreDetail;
+
+  /// No description provided for @recoveryFollowUpRestoreSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get recoveryFollowUpRestoreSkip;
+
+  /// No description provided for @recoveryFollowUpRestoreSkipWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'If you skip, older backups become unusable after you replace your recovery key. Skip anyway?'**
+  String get recoveryFollowUpRestoreSkipWarning;
+
+  /// No description provided for @k1RestoreOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from a backup'**
+  String get k1RestoreOpen;
+
+  /// No description provided for @k1RestoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from a backup'**
+  String get k1RestoreTitle;
+
+  /// No description provided for @k1RestoreIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'Pick a backup made by one of your other devices and type your recovery key. Your history is merged in; messages already here stay.'**
+  String get k1RestoreIntro;
+
+  /// No description provided for @k1RestoreLoading.
+  ///
+  /// In en, this message translates to:
+  /// **'Looking for backups…'**
+  String get k1RestoreLoading;
+
+  /// No description provided for @k1RestoreEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No backup from another device was found.'**
+  String get k1RestoreEmpty;
+
+  /// No description provided for @k1RestoreLegacyRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.'**
+  String get k1RestoreLegacyRefused;
+
+  /// No description provided for @k1RestoreLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The list of backups could not be loaded.'**
+  String get k1RestoreLoadFailed;
+
+  /// No description provided for @k1RestoreEntry.
+  ///
+  /// In en, this message translates to:
+  /// **'{device} · {date}'**
+  String k1RestoreEntry(String device, String date);
+
+  /// No description provided for @k1RestoreEntryPrevious.
+  ///
+  /// In en, this message translates to:
+  /// **'{device} · {date} (the copy before)'**
+  String k1RestoreEntryPrevious(String device, String date);
+
+  /// No description provided for @k1RestoreDeviceUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'A device'**
+  String get k1RestoreDeviceUnnamed;
+
+  /// No description provided for @k1RestoreDeviceRevoked.
+  ///
+  /// In en, this message translates to:
+  /// **'This device was removed from your account.'**
+  String get k1RestoreDeviceRevoked;
+
+  /// No description provided for @k1RestoreDone.
+  ///
+  /// In en, this message translates to:
+  /// **'History restored.'**
+  String get k1RestoreDone;
+
+  /// No description provided for @k1RestoreWrongKey.
+  ///
+  /// In en, this message translates to:
+  /// **'That is not a valid recovery key for this account.'**
+  String get k1RestoreWrongKey;
+
+  /// No description provided for @k1RestoreOtherKey.
+  ///
+  /// In en, this message translates to:
+  /// **'This backup was locked with a different recovery key.'**
+  String get k1RestoreOtherKey;
+
+  /// No description provided for @k1RestoreCorrupt.
+  ///
+  /// In en, this message translates to:
+  /// **'This backup could not be opened. It may be damaged.'**
+  String get k1RestoreCorrupt;
+
+  /// No description provided for @k1RestoreNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not be reached. Nothing changed.'**
+  String get k1RestoreNetwork;
+
+  /// No description provided for @k1RestoreUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This device cannot restore from a backup.'**
+  String get k1RestoreUnavailable;
+
   /// No description provided for @connectSignInPasskey.
   ///
   /// In en, this message translates to:
@@ -6536,6 +6956,90 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Automatic update checks are turned off'**
   String get settingsUpdateDisabled;
+
+  /// No description provided for @settingsScreenGuard.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen guard'**
+  String get settingsScreenGuard;
+
+  /// No description provided for @settingsScreenGuardDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Block screenshots and AI-assistant screen reading in chats.'**
+  String get settingsScreenGuardDetail;
+
+  /// No description provided for @communityInfoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories and icon'**
+  String get communityInfoTitle;
+
+  /// No description provided for @communityIconChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an icon'**
+  String get communityIconChoose;
+
+  /// No description provided for @communityIconRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove icon'**
+  String get communityIconRemove;
+
+  /// No description provided for @communityCategories.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories'**
+  String get communityCategories;
+
+  /// No description provided for @communityCategoryNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New category'**
+  String get communityCategoryNew;
+
+  /// No description provided for @communityCategoryName.
+  ///
+  /// In en, this message translates to:
+  /// **'Category name'**
+  String get communityCategoryName;
+
+  /// No description provided for @communityCategoryRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename category'**
+  String get communityCategoryRename;
+
+  /// No description provided for @communityCategoryPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Category'**
+  String get communityCategoryPlaceholder;
+
+  /// No description provided for @communityCategoryNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No category'**
+  String get communityCategoryNone;
+
+  /// No description provided for @communityChannelPlaces.
+  ///
+  /// In en, this message translates to:
+  /// **'Where channels sit'**
+  String get communityChannelPlaces;
+
+  /// No description provided for @communityInfoSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save. Try again.'**
+  String get communityInfoSaveFailed;
+
+  /// No description provided for @communityInfoOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories and icon'**
+  String get communityInfoOpen;
 }
 
 class _AppLocalizationsDelegate

@@ -368,9 +368,10 @@ pending-changes list and roster, which a malicious server controls (the D68
 residual in crypto.md). The approval hold releases only on local evidence:
 after a commit, `group_members` shows no held leaf left, or a refreshed pin
 now approves it. Closing D68's residual for devices removed from the list
-also needs approved leaves to be judged again when a list removes them; as
-built in L1-3 an approved leaf is not re-judged until its MLS removal lands
-(a follow-up, see the L1-3 entry in `docs/crypto.md`).
+also needs approved leaves to be judged again when a list removes them. The
+[current-list integration](L1-approved-devices.md) rejudges all leaves before
+encryption, at incoming sender judgment and after membership changes, closing
+the cached-approval gap once a signed removal is available to the client.
 
 That is how L1 stays fail-closed without stalling:
 

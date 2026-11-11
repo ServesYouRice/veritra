@@ -7,8 +7,6 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
-import com.google.firebase.FirebaseApp
-import com.google.firebase.messaging.FirebaseMessaging
 import org.unifiedpush.android.connector.UnifiedPush
 import java.lang.ref.WeakReference
 
@@ -55,7 +53,7 @@ object SharedFlutterEngine {
                     WakeWorkerCoordinator.unregister(app)
                     val target = call.argument<String>("instance") ?: PushRegistrationConfig.instance
                     if (!target.isNullOrBlank()) UnifiedPush.unregister(app, target)
-                    if (FirebaseApp.getApps(app).isNotEmpty()) FirebaseMessaging.getInstance().deleteToken()
+                    FcmBridge.deleteToken(app)
                     PushRegistrationConfig.clear(app)
                     PushEndpointStore.clear(app)
                     result.success(null)
@@ -63,6 +61,14 @@ object SharedFlutterEngine {
                 else -> activity.get()?.handlePushMethod(call, result)
                     ?: result.error("ui_unavailable", null, null)
             }
+        }
+        MethodChannel(messenger, "org.veritra.private_messenger/screen_guard").setMethodCallHandler { call, result ->
+            val act = activity.get()
+            if (act == null) {
+                result.error("ui_unavailable", "Activity not available", null)
+                return@setMethodCallHandler
+            }
+            act.handleScreenGuardMethod(call, result)
         }
         WakeWorkerCoordinator.installChannel(app, messenger, background)
         created.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())

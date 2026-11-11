@@ -146,33 +146,4 @@ void main() {
     expect((await store.loadCryptoState())!.counter, 2);
     await service.dispose();
   }, skip: nativeCryptoSkip());
-
-  test('after a restore the frozen identity never opens again', () async {
-    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-    final store = MemoryLocalStore();
-    var service = NativeCryptoService(bindings: bindings, localStore: store);
-    final frozen = await _enroll(service, store);
-    await service.promotePendingEnrollment(_session,
-        kind: PendingEnrollment.kindDeviceLinkV3, promotionId: 'digest-1');
-    await service.createReplenishmentKeyPackages(count: 1);
-    await store.saveSnapshot(const <Conversation>[],
-        const <String, List<ReceivedMessageEnvelope>>{}, 0);
-    await store.restoreBackup(await store.exportBackup());
-    await store.saveSession(_session);
-    expect(await store.loadCryptoState(), isNull);
-    await service.dispose();
-
-    // A restart with the identity's session and an empty MLS state.
-    service = NativeCryptoService(bindings: bindings, localStore: store);
-    await expectLater(
-        service.resumePendingEnrollment(
-            accountId: 'acct_me', deviceId: 'dev_new', state: frozen),
-        throwsA(isA<StateError>()));
-    await expectLater(
-        service.activateSession(_session), throwsA(isA<StateError>()));
-    await expectLater(service.createEnrollmentCredential(_reservation),
-        throwsA(isA<StateError>()));
-    expect(await store.loadCryptoState(), isNull);
-    await service.dispose();
-  }, skip: nativeCryptoSkip());
 }

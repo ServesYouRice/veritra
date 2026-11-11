@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/device_link_v3_models.dart';
+import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/history_transfer_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/transport_policy.dart';
@@ -54,6 +55,8 @@ class _LinkServer {
   Map<String, Object?>? link;
   Map<String, Object?>? claim;
   String? reservationRequestId;
+  final chain = <Uint8List>[];
+  List<Uint8List>? servedChain;
   int completes = 0;
   bool revoked = false;
 
@@ -72,10 +75,20 @@ class _LinkServer {
       transport: TransportPolicy.production);
 }
 
-class _LinkApi extends ApiClient {
+class _LinkApi extends ApiClient with LegacySyncPageFake {
   _LinkApi(this.server) : super(baseUrl: _origin);
 
   final _LinkServer server;
+
+  @override
+  Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
+      {required int after}) async {
+    final chain = server.servedChain ?? server.chain;
+    return DeviceListPage(headVersion: chain.length, more: false, statements: [
+      for (var i = after; i < chain.length; i++)
+        (version: i + 1, statement: chain[i])
+    ]);
+  }
 
   @override
   Future<DeviceLinkV3Record> createDeviceLinkV3(
@@ -226,6 +239,7 @@ class _LinkApi extends ApiClient {
       if (!link.containsKey('source_random')) {
         throw ApiException(409, '{"error":"reveal_required"}');
       }
+      if (deviceList != null) server.chain.add(Uint8List.fromList(deviceList));
       final approved = DateTime.now().toUtc();
       server.link = <String, Object?>{
         ...link,
@@ -423,6 +437,14 @@ class _Transfer implements HistoryTransferTransport {
 class _Store extends MemoryLocalStore {
   _Store([this.snapshot]);
   List<int>? snapshot;
+  bool failPin = false;
+
+  @override
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+      {required int? expectedVersion}) async {
+    if (failPin) throw StateError('pin storage failed');
+    return super.saveDeviceListPin(pin, expectedVersion: expectedVersion);
+  }
 
   @override
   Future<List<int>> exportHistorySnapshot(
@@ -496,6 +518,7 @@ class _World {
         localStore: newStore,
         clock: () => DateTime.now().subtract(newClockLag));
     return AppState(
+      screenGuard: FakeScreenGuard(),
       apiClientFactory: (_) => api,
       cryptoService: crypto,
       localStore: newStore,
@@ -520,8 +543,17 @@ class _World {
     await sourceStore.saveSession(_sourceSession);
     await sourceCrypto.activateSession(_sourceSession);
     server = _LinkServer(credential.signingKey);
+    server.chain.add(await sourceCrypto.signDeviceList(DeviceListBody(
+      accountId: idBytes(_account),
+      version: 1,
+      prevHash: DeviceListBody.zeroHash,
+      createdAtMs: 1,
+      change: DeviceListChange.genesis,
+      entries: [DeviceListPair(idBytes(_sourceDevice), credential.signingKey)],
+    )));
     api = _LinkApi(server);
     source = AppState(
+      screenGuard: FakeScreenGuard(),
       apiClientFactory: (_) => api,
       cryptoService: sourceCrypto,
       localStore: sourceStore,
@@ -655,6 +687,7 @@ Future<void> _withWorld(
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   final skip = nativeCryptoSkip();
 
   test(
@@ -677,6 +710,136 @@ void main() {
             expect(w.fresh.pendingDeviceLinkClaim, isNull);
             expect(await w.newStore.loadPendingEnrollment(), isNull);
             expect(w.fresh.session, isNull);
+          }),
+      skip: skip);
+
+  for (final attack in [
+    'missing',
+    'unrelated genesis',
+    'wrong approver key',
+    'wrong add signer'
+  ]) {
+    test(
+        'L1 linked anchor refuses $attack before promotion and after restart',
+        () => _withWorld((w) async {
+              final sas = await w.claimAndRefresh();
+              await w.source.approveActiveDeviceLink(sas);
+              expect(w.source.errorFor(Ops.deviceLink), isNull);
+              final ownKey =
+                  base64Decode(w.server.claim!['signing_key'] as String);
+              final ghostId =
+                  attack == 'wrong approver key' ? _sourceDevice : 'dev_ghost';
+              final ghost = w.bindings.createDevice(_account, ghostId);
+              try {
+                final ghostPair =
+                    DeviceListPair(idBytes(ghostId), ghost.signingPublicKey());
+                final sourcePair = DeviceListPair(
+                    idBytes(_sourceDevice), w.server.sourceSigningKey);
+                final ownPair = DeviceListPair(idBytes(_newDevice), ownKey);
+                final genesis = ghost.signDeviceList(
+                    DeviceListBody(
+                      accountId: idBytes(_account),
+                      version: 1,
+                      prevHash: DeviceListBody.zeroHash,
+                      createdAtMs: 1,
+                      change: DeviceListChange.genesis,
+                      entries: [ghostPair],
+                    ),
+                    idBytes(ghostId));
+                var served = <Uint8List>[];
+                if (attack != 'missing') served = [genesis];
+                if (attack == 'wrong approver key') {
+                  final head = w.bindings
+                      .checkDeviceListChain(idBytes(_account), served)
+                      .head;
+                  served.add(ghost.signDeviceList(
+                      DeviceListBody(
+                        accountId: idBytes(_account),
+                        version: 2,
+                        prevHash: head.listHash,
+                        createdAtMs: 2,
+                        change: DeviceListChange.add,
+                        entries: [ghostPair, ownPair],
+                      ),
+                      idBytes(ghostId)));
+                }
+                if (attack == 'wrong add signer') {
+                  served = [w.server.chain.first];
+                  final head = w.bindings
+                      .checkDeviceListChain(idBytes(_account), served)
+                      .head;
+                  served.add(await w.sourceCrypto.signDeviceList(DeviceListBody(
+                    accountId: idBytes(_account),
+                    version: 2,
+                    prevHash: head.listHash,
+                    createdAtMs: 2,
+                    change: DeviceListChange.add,
+                    entries: [sourcePair, ghostPair],
+                  )));
+                  final previous = w.bindings
+                      .checkDeviceListChain(idBytes(_account), served)
+                      .head;
+                  served.add(ghost.signDeviceList(
+                      DeviceListBody(
+                        accountId: idBytes(_account),
+                        version: 3,
+                        prevHash: previous.listHash,
+                        createdAtMs: 3,
+                        change: DeviceListChange.add,
+                        entries: [sourcePair, ghostPair, ownPair],
+                      ),
+                      idBytes(ghostId)));
+                }
+                w.server.servedChain = served;
+                await w.fresh.completeDeviceLinkClaim();
+                expect(w.fresh.session, isNull);
+                expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNotNull);
+                expect(await w.newStore.loadSession(), isNull);
+                expect(await w.newStore.loadDeviceListPin(_account), isNull);
+                expect(await w.newStore.loadPendingEnrollment(), isNotNull);
+                await w.restartFresh();
+                await w.fresh.completeDeviceLinkClaim();
+                expect(w.fresh.session, isNull);
+                expect(await w.newStore.loadDeviceListPin(_account), isNull);
+                // Restore honest service: the same frozen claim can safely finish.
+                w.server.servedChain = null;
+                await w.fresh.completeDeviceLinkClaim();
+                expect(w.fresh.errorFor(Ops.deviceLinkClaim), isNull);
+                expect(w.fresh.session?.deviceId, _newDevice);
+                expect(
+                    (await w.newStore.loadDeviceListPin(_account))
+                        ?.headStatement,
+                    w.server.chain.last);
+              } finally {
+                ghost.close();
+              }
+            }),
+        skip: skip);
+  }
+
+  test(
+      'L1 linked pin-write failure stays pending across promotion and restart',
+      () => _withWorld((w) async {
+            final sas = await w.claimAndRefresh();
+            await w.source.approveActiveDeviceLink(sas);
+            w.newStore.failPin = true;
+            await w.fresh.completeDeviceLinkClaim();
+            expect(w.fresh.session, isNull);
+            expect(await w.newStore.loadSession(), isNotNull);
+            // Promotion atomically consumes the claim; the anchor journal now survives it.
+            expect(await w.newStore.loadPendingEnrollment(), isNull);
+            expect(await w.newStore.loadDeviceListPin(_account), isNull);
+            w.server.servedChain = [];
+            await w.restartFresh();
+            expect(w.fresh.session, isNull);
+            expect(w.fresh.lifecycle, SessionLifecycle.recoveryRequired);
+            w.newStore.failPin = false;
+            await w.fresh.tryRestoreSession();
+            expect(w.fresh.session?.deviceId, _newDevice);
+            expect(
+                (await w.newStore.loadDeviceListPin(_account))?.headStatement,
+                w.server.chain.last,
+                reason: 'replayed the authenticated journal offline');
           }),
       skip: skip);
 
@@ -828,6 +991,7 @@ void main() {
                 localStore: w.sourceStore,
                 clock: DateTime.now);
             w.source = AppState(
+              screenGuard: FakeScreenGuard(),
               apiClientFactory: (_) => w.api,
               cryptoService: w.sourceCrypto,
               localStore: w.sourceStore,

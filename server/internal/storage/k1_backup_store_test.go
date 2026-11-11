@@ -111,7 +111,7 @@ func TestK1UploadChecksKeyCounterAndDevice(t *testing.T) {
 		t.Fatalf("unknown device: err = %v, want %v", err, ErrForbidden)
 	}
 	// Legacy uploads still read their own counter, never a K1 one.
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, dev, "legacy_after_k1", strings.Repeat("c", 64), 10, json.RawMessage(`{"state_counter":1}`), bytes.Repeat([]byte{1}, 32)); err != nil {
+	if err := insertLegacyBackup(ctx, store, owner.Account.ID, dev, "legacy_after_k1", strings.Repeat("c", 64), 10, json.RawMessage(`{"state_counter":1}`)); err != nil {
 		t.Fatalf("legacy upload next to K1 copies: %v", err)
 	}
 }
@@ -161,53 +161,93 @@ func TestK1SupersededCopyKeptForADayThenPruned(t *testing.T) {
 	}
 }
 
-func TestK1AllowanceIsSeparateAndCountsAReplacementOnce(t *testing.T) {
+func TestK1BackupsShareTheAccountQuota(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
 	owner := createTestOwner(t, ctx, store)
 	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestRK)
-	full := int64(config.MaxBackupCiphertext)
-	if store.Limits().BackupAllowanceBytes != 2*full {
-		t.Fatalf("allowance = %d", store.Limits().BackupAllowanceBytes)
+	limit := store.Limits().AccountStorageBytes
+	usage := func() int64 {
+		return int64(testRowCount(t, ctx, store, `SELECT COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0)`, owner.Account.ID))
+	}
+	third := limit / 3
+	// A copy counts in the account's usage, like an attachment.
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_a1", third, 1, k1TestRK)); err != nil {
+		t.Fatalf("first copy: %v", err)
+	}
+	if usage() != third {
+		t.Fatalf("account usage = %d, want %d", usage(), third)
+	}
+	// A replacement counts the copy it replaces once (design: usage less the
+	// copy replaced, plus the new size); the old copy stays a day.
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_a2", third, 2, k1TestRK)); err != nil {
+		t.Fatalf("replacement: %v", err)
+	}
+	if usage() != 2*third {
+		t.Fatalf("account usage after a replacement = %d, want %d", usage(), 2*third)
+	}
+	// A third copy of the same device deletes the oldest superseded one
+	// first (two copies per device).
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_a3", third, 3, k1TestRK)); err != nil {
+		t.Fatalf("third copy: %v", err)
+	}
+	if usage() != 2*third {
+		t.Fatalf("account usage after the oldest went = %d, want %d", usage(), 2*third)
+	}
+	// Another device's copy cannot push the account past its quota.
+	addTestDevice(t, ctx, store, owner.Account.ID, "dev_k1_b")
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, "dev_k1_b", "k1_b1", limit, 1, k1TestRK)); !errors.Is(err, ErrStorageQuota) {
+		t.Fatalf("copy over the quota: err = %v, want %v", err, ErrStorageQuota)
+	}
+	// Deleting a copy returns its bytes to the account.
+	before := usage()
+	if _, err := store.DeleteBackup(ctx, mustBackupID(t, ctx, store, "k1_a2"), owner.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if usage() >= before {
+		t.Fatalf("account usage after a delete = %d, was %d", usage(), before)
+	}
+}
+
+// A device whose copy fills the account's quota can still replace it with a
+// same-size copy; another device's copy of that size is refused.
+func TestK1ReplacementAtTheQuotaCountsOnce(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestRK)
+	limit := store.Limits().AccountStorageBytes
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_full1", limit, 1, k1TestRK)); err != nil {
+		t.Fatalf("copy that fills the quota: %v", err)
+	}
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_full2", limit, 2, k1TestRK)); err != nil {
+		t.Fatalf("same-size replacement: %v", err)
 	}
 	addTestDevice(t, ctx, store, owner.Account.ID, "dev_k1_b")
-	addTestDevice(t, ctx, store, owner.Account.ID, "dev_k1_c")
-	// Two full-size devices fit.
-	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_a1", full, 1, k1TestRK)); err != nil {
-		t.Fatalf("first full copy: %v", err)
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, "dev_k1_b", "k1_b1", 1, 1, k1TestRK)); !errors.Is(err, ErrStorageQuota) {
+		t.Fatalf("another device at the quota: err = %v, want %v", err, ErrStorageQuota)
 	}
-	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, "dev_k1_b", "k1_b1", full, 1, k1TestRK)); err != nil {
-		t.Fatalf("second full copy: %v", err)
-	}
-	// A replacement counts once: the copy it replaces is not counted.
-	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_a2", full, 2, k1TestRK)); err != nil {
-		t.Fatalf("replacement at the allowance: %v", err)
-	}
-	// A third device does not fit.
-	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, "dev_k1_c", "k1_c1", 1, 1, k1TestRK)); !errors.Is(err, ErrStorageQuota) {
-		t.Fatalf("third device: err = %v, want %v", err, ErrStorageQuota)
-	}
-	// K1 copies use neither the attachment quota nor the blob count.
-	if n := testRowCount(t, ctx, store, `SELECT COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0)`, owner.Account.ID); n != 0 {
-		t.Fatalf("account usage = %d, want 0", n)
-	}
-	if n := testRowCount(t, ctx, store, `SELECT size_bytes FROM blob_usage_instance WHERE id = 1`); int64(n) != 3*full {
-		t.Fatalf("instance usage = %d, want %d", n, 3*full)
-	}
-	// A revoked device's copy leaves the allowance (it is kept apart).
-	if err := store.RevokeDevice(ctx, owner.Account.ID, "dev_k1_b"); err != nil {
+}
+
+func TestK1BackupSpaceIsSharedWithAttachments(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestRK)
+	limit := store.Limits().AccountStorageBytes
+	// Attachments fill all but a little of the quota.
+	if _, err := store.db.ExecContext(ctx, `INSERT INTO blob_usage_accounts(account_id, size_bytes) VALUES(?, ?)
+		ON CONFLICT(account_id) DO UPDATE SET size_bytes = excluded.size_bytes`, owner.Account.ID, limit-100); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, "dev_k1_c", "k1_c2", full, 2, k1TestRK)); err != nil {
-		t.Fatalf("device after a revocation: %v", err)
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_big", 101, 1, k1TestRK)); !errors.Is(err, ErrStorageQuota) {
+		t.Fatalf("backup over shared quota: err = %v, want %v", err, ErrStorageQuota)
 	}
-	// Deleting a K1 row returns its bytes to the instance only.
-	if _, err := store.DeleteBackup(ctx, mustBackupID(t, ctx, store, "k1_c2"), owner.Account.ID); err != nil {
-		t.Fatal(err)
-	}
-	if n := testRowCount(t, ctx, store, `SELECT COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0)`, owner.Account.ID); n != 0 {
-		t.Fatalf("account usage after a delete = %d, want 0", n)
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_ok", 100, 1, k1TestRK)); err != nil {
+		t.Fatalf("backup that fits: %v", err)
 	}
 }
 

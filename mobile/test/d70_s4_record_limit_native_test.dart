@@ -197,6 +197,10 @@ class _LimitDevice implements NativeCryptoDevice {
   void mergePendingCommit(String groupId) => real.mergePendingCommit(groupId);
 
   @override
+  C7CommitOutcome c7MergePendingCommit(String groupId) =>
+      real.c7MergePendingCommit(groupId);
+
+  @override
   void clearPendingCommit(String groupId) => real.clearPendingCommit(groupId);
 
   @override

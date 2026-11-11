@@ -120,10 +120,10 @@ and how it is backed up (rotation would need a second key in the app).
 `release/fdroid/org.veritra.private_messenger.yml` is a draft recipe in
 `fdroiddata` format; nothing is submitted. Blockers, in order:
 
-1. **Firebase.** `mobile/android/app/build.gradle.kts` depends on Google's
-   `firebase-messaging`. F-Droid rejects non-free dependencies. It needs a
-   build flavor with UnifiedPush only (which the app already supports). Not
-   built: it is a code and policy change for the owner.
+1. **Firebase.** Resolved: the Android app has `play` and `fdroid` product
+   flavors (`distribution` dimension). The `fdroid` flavor excludes
+   `firebase-messaging` completely and uses UnifiedPush only, while `play`
+   retains FCM with UnifiedPush fallback, following the owner's F-Droid decision.
 2. **Messaging is off in release builds** until G24/G25.
 3. **Signing key.** Reproducible-build verification (F-Droid builds and compares
    with the developer's signed APK) needs the owner's APK signing key.

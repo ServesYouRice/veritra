@@ -1,0 +1,37 @@
+# EXAMPLE ONLY (B6 group calls and voice rooms, docs/designs/B6-group-calls.md).
+# This file is not part of the default stack and nothing starts it. Copy it
+# next to your own LiveKit server container (Apache-2.0, separate image) and
+# edit it. The Veritra server never connects to the SFU's media ports: it only
+# signs short-lived join tokens and checks the SFU's signed webhooks.
+#
+# Veritra side (server environment):
+#   PRIVATE_MESSENGER_SFU_URL=wss://sfu.example.com
+#   PRIVATE_MESSENGER_SFU_API_KEY=veritra
+#   PRIVATE_MESSENGER_SFU_API_SECRET_FILE=/run/secrets/sfu_api_secret
+# The secret is the same value as in `keys` below (32 characters or more).
+# Unset means group calls answer 503 rooms_unavailable.
+
+port: 7880              # signalling, behind your TLS proxy as wss://
+rtc:
+  tcp_port: 7881
+  port_range_start: 50000
+  port_range_end: 50100
+  use_external_ip: true
+
+keys:
+  veritra: REPLACE-WITH-A-RANDOM-SECRET-OF-32-OR-MORE-CHARACTERS
+
+webhook:
+  api_key: veritra
+  urls:
+    - https://chat.example.com/api/v1/rooms/webhook
+
+room:
+  max_participants: 50   # voice-only cap (O3); the app caps video at 25
+  empty_timeout: 60
+  # O4: hide who is speaking. Keep these off.
+  enable_audio_level: false
+
+# End-to-end encryption is done by the apps (MLS keys, frame cryptor); the
+# SFU forwards encrypted frames and never holds a key. Do not enable any
+# server-side recording, egress or ingress.

@@ -129,11 +129,16 @@ class _ModerationScreenState extends State<ModerationScreen> {
     return _names[accountId] ?? accountLabel(accountId, ban?.username);
   }
 
+  /// The channel's encrypted name, else a placeholder (C3: the server keeps
+  /// none).
+  String _channelName(Channel channel) =>
+      state.channelDisplayName(channel) ?? context.l10n.channelPlaceholderName;
+
   Future<void> _setSlowMode(Channel channel) async {
     final l10n = context.l10n;
     final seconds = await pickDuration(
       context,
-      title: l10n.moderationSlowTitle(channel.name),
+      title: l10n.moderationSlowTitle(_channelName(channel)),
       choices: slowModeChoices,
       label: (s) => s == 0 ? l10n.moderationSlowOff : shortDuration(s),
     );
@@ -255,7 +260,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
                   for (final channel in channels)
                     ListTile(
                       leading: const Icon(Icons.speed_outlined),
-                      title: Text(channel.name),
+                      title: Text(_channelName(channel)),
                       subtitle: Text(
                         (moderation?.slowModeSeconds[channel.id] ?? 0) == 0
                             ? l10n.moderationSlowOff

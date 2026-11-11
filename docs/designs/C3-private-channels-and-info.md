@@ -1,7 +1,8 @@
 # C3: private channels and encrypted community info (design)
 
-**Status: steps 1-2 and the receive side of step 3 built (2026-11-08); see
-[Build status](#build-status-2026-11-08).** Written 2026-11-01 against `main`
+**Status: steps 1-2 and a tested sender/fetch slice of step 3 built
+(2026-11-09); C3 remains partial.** See [local port evidence](../../testing/evidence/C3-rest-2026-11-09.md).
+Written 2026-11-01 against `main`
 at `f1b4a36`. Builds on [C0](C0-community-groups.md) (group layout) and
 [W11](W11-profiles.md) (encrypted record mechanism).
 
@@ -166,12 +167,14 @@ migration drops the columns once no client sends them. This is W11's
    key delivery on add, rotation on removal, UI.
 4. Remove the plaintext server names and drop the columns.
 
-Nothing is built under C3 yet: steps 1-3 sit on C0's conversation model and
-W11's table, and neither exists. Building C3's own tables or keys now would
-invent those foundations a second time.
+Steps 1-3 reuse C0's conversation model and W11's table and record codec.
 
 ## Risks and residuals
 
+- Cached records cannot be implicitly moved between key homes by changing
+  server topology. Publication and announcement recovery require the accepted
+  record's key to have arrived in the target home. Explicit channel conversion
+  remains unimplemented. This guard does not authenticate initial topology.
 - Membership of each private channel is visible to the server (tell users).
 - Icon presence and size bucket are visible.
 - A removed member keeps what they already saw.
@@ -232,20 +235,169 @@ channels (about 80 bytes each), so it cannot fit 4 KiB. A record now takes
 the smallest bucket it fits. The large bucket therefore shows "an icon or a
 big community", not "an icon"; a tiny icon may stay in the small one.
 
-**Not built yet (left):** senders (`info_key` after an add commit, rotation
-on a removal for both keys per D80, `info_update` after each upload,
-answering `info_key_request`), the fetch and cache loop on `info.updated`,
-screens, and step 4 (`400 plaintext_name_refused`, dropping the plaintext
-columns). Rules for the senders, from the review:
+**Built 2026-11-09 (branch `agent/c3-2`):**
 
-- In the shared group every payload must name an open channel (C0), so
-  senders pick one for these hidden payloads.
+- Only owners and admins create channels (owner decision 2026-11-09; the
+  server refused moderators from then on).
+- Senders (`community_info_service.dart`, wired in
+  `app_state_community_info.dart`):
+  - Info payloads go through the app's ordinary send path, so removal holds
+    (D68) and per-conversation order apply. They are never franked, never
+    expire, and leave a hidden action row. In a shared group they ride on an
+    open channel (C0).
+  - The sender keeps its own copy of what it sends (MLS never decrypts a
+    device's own message), and its own new keys locally.
+  - Publish: seal under the current key, `PUT` with `If-Match` (a stale
+    version is retried), keep the record as accepted, then send
+    `info_update` in the group that owns the key.
+  - Keys: a community key is made when its first record is written (at
+    creation), a private channel's key when its record is. The current key
+    is the newest one in the owning group from this account or from an
+    owner or admin under the verified role state.
+  - Delivery is request and answer: a device missing a key asks at once,
+    then at most once an hour; an owner or admin (server role, only to pick
+    who speaks) holding the key answers after a short random wait, only in
+    the owning group, and not when another answer already came after the
+    request. A push right after an add commit is not built (the request
+    covers it).
+  - A device that answers a key request also announces again, as itself,
+    every record under that key it accepted: a joiner never saw the
+    announcements made before it came.
+  - A device makes a new key only when the keyed subject is created, or in
+    a rotation; otherwise it asks. The current key is chosen by the
+    authenticated MLS epoch it was sent in, never by local arrival order
+    (docs/crypto.md, change log "C3 key freshness"); a key from before the
+    group's last removal is never current.
+  - Rotation (D80): every removal, kick or ban marks the key the
+    conversation carries as due, kept across restarts (a setting with a
+    token per mark, changed under a lock, so a mark made during a pass
+    survives it). Only owners and admins (server's word) rotate. A pass
+    skips a group still holding sends for the removal (D68), makes a new key
+    (a retry reuses it), sends it into the owning group, and seals every
+    record under it again. A mark is kept while its group cannot be placed
+    and dropped only when its community is known gone; failures back off
+    from one minute to an hour.
+  - Publishing never runs inside the app's session queue (it sends, and a
+    send queues behind it). An own record whose announcement could not be
+    queued (no open channel yet, a pause) is announced by a later pass.
+  - Background info sends report under their own op, never as the
+    composer's send error.
+- Fetch loop: on `info.updated`, after the communities load, and after a
+  catch-up at most once a minute, never before the communities have loaded.
+  One versions call per community; only records above what was accepted
+  are fetched and judged; a 404 never clears what is shown.
+- Screens: names shown as the accepted record, else the legacy server
+  name, else a placeholder; a channel's topic under its name; an edit
+  button for channel name and topic only where the verified role state
+  allows it.
+
+**Remote-removal follow-up (2026-11-11):** selected recommended option (a):
+an owner/admin device rotates after observing a removal it did not make.
+The native receive path records the authenticated MLS removal epoch with
+state and cursor, including in an inbound-only wake. Once topology loads,
+foreground refresh places it in the shared or private info key home and
+runs rotation. Edits, answers and add delivery also check the durable
+watermark, so they cannot reuse the old key before refresh places the mark.
+Completion acknowledges only that pass's epoch; a later removal invalidates
+the pass. Non-admins retain the obligation for a later promotion. This
+includes device removals conservatively. C4 verified role integration still
+blocks production acceptance and publication; the native/removal and service
+tests do not establish the complete production C3 flow.
+
+### Local port and verification (2026-11-09)
+
+Ported the six C3 commits from `origin/agent/c3-2` onto `ai/c3-rest`, whose
+base already includes `origin/agent/c3`. No C4 or other package commits
+were copied. Existing unfinished worktree edits are preserved in the local
+stash named `c3-rest-preexisting-preserved`.
+
+Additional fixes: retry a request or answer immediately when its send was
+not queued; coalesce overlapping answer passes; query all 500 channels in
+batches of 200; keep a newer displayed record when an older cache read
+finishes; require a cached record's key to come from its current owning
+group; cancel uploads and sends when their app session ends. Focused tests include actual native MLS send/receive, record
+encryption, both local stores, failed sends and fetch batching.
+
+The actual app still has no implementation of `VerifiedRoleSource`:
+`debugInfoRoleSource` is test-only. Receiver acceptance therefore stays
+closed. This prevents calling the whole package complete or removing the
+legacy-name fallback yet. See the remaining work below. No new schema,
+server migration, crypto ABI or dependency is needed by this slice; reserved
+local schema 35 and server migration 0067 remain unused.
+
+**Creation UI follow-up (2026-11-10):** shared-layout communities now offer an
+open/private switch and a picker of existing community members (excluding the
+creator). The modal checks the server roster for owner/admin creation rights;
+this is only UI availability, never authority for accepting info records.
+Private creation uses its own conversation and info key. Member additions use
+the existing MLS reconciliation path. After a partial add failure, Retry keeps
+the created channel and retries only failed additions. Session changes stop
+further additions. English and both Serbian scripts include the private
+membership disclosure. Legacy communities retain their existing form, since
+their server layout adds every community member to each new channel.
+
+This is a UI slice: names still take the existing plaintext creation route
+until step 4, and peer info still fails closed without C4's verified role
+source. Creation/member-selection is covered by widget tests and a native
+record-codec integration test in `c3_app_community_info_test.dart`. Neither
+reserved counter is consumed by this slice.
+
+**Review hardening (2026-11-10):** rotation refreshes and authenticates each
+record before taking its content snapshot, then requires that same revision
+at upload (including conflict retries). Unreadable existing records keep the
+rotation pending. Non-admin devices retain their marks for a later promotion;
+admin availability is refreshed every pass. Key replies announce only records
+under the key actually delivered. These fixes do not complete the missing C3
+integration below. Evidence: `testing/evidence/C3-review-2026-11-10.md`.
+
+**Creation-entry follow-up (2026-11-11):** community refresh loads the viewer's
+roster role and shows "New channel" only to owners and admins, including in
+legacy communities. Unknown or failed reads hide the entry. Refresh clears
+old availability before fetching, and stale session or overlapping-refresh
+replies cannot restore it. New community creation triggers this refresh too.
+This is a server permission hint for UI availability only; encrypted info
+acceptance still requires the verified C4 role source. See
+[`creation-entry evidence`](../../testing/evidence/C3-creation-access-2026-11-11.md).
+
+**Add-key delivery follow-up (2026-11-11):** the committing device now pushes
+the current info key after its accepted add bundle is merged locally, in the
+key's owning group. Foreground sync resolving an own commit after a lost
+response does the same. Accepted records under that key are re-announced only
+where the verified role policy allows this account to author them. Delivery
+never mints a replacement key, defers to pending rotations, and uses the
+ordinary ordered send path outside the session queue. Missing keys, interrupted
+delivery, missing topology and inbound-only background wakes retain the
+request/answer recovery path. This hook is best effort, not a durable second
+outbox. Native-backed app tests exercise both accepted-response and
+lost-response paths; production peer acceptance still waits for C4 wiring.
+
+Overlapping removals now invalidate the older rotation's token before further
+re-sealing, even if its new key was already delivered. The newer mark retains
+its own fresh key and is not delayed by the abandoned pass's backoff.
+
+**Step 4 and category/icon screens (2026-11-11):** migration 0082 drops
+`communities.name`, `channels.name` and their search indexes and clears
+community channel titles. Creation answers `400 plaintext_name_refused` to a
+non-empty name; the app sends none and shows only the encrypted record or a
+placeholder. The server's name search and community names in invite previews
+are gone. Consequence: with `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` off (the
+default, and the demos), a new community has no shared group, so no info key
+home and only placeholders. Turning the layout on by default is an owner
+decision tied to the app's release (operations.md). A "Categories and icon"
+screen sets the community icon, creates and renames categories, and places
+channels (open: community record; private: the channel's own record); the
+community card groups channels by category. Key freshness: see docs/crypto.md
+("C3 key freshness", local schema 35).
+
+**Still left:** channel conversion (open to private and back: a server route
+and MLS group move, not built); category deletion (tombstone and id reuse);
+and app-to-app acceptance evidence with production C4 role records. Until the
+app holds a verified role record, nothing another account wrote is shown.
+After any removal a non-admin's rotation obligation never completes, so it
+cannot edit channel info again (contrary to D80's "any member"). Rules from the first review that still bind:
+
 - Reuse a tombstoned category ID before minting a new one: the server's
   200-binding bound is for the community's whole life.
-- A rotation (immediate on every kick or ban, D80) re-seals every
-  community-keyed record, or keeps delivering every key a record still
-  uses; receivers keep 4 keys per sender, plus any key an accepted record
-  uses.
 
 **Seams and residuals.**
 
@@ -274,3 +426,5 @@ columns). Rules for the senders, from the review:
   shows placeholders until an admin writes again.
 - Backups and new-device transfers carry no info keys; a restored device
   asks again.
+- Info envelopes carry no `frank_commit` while every other message does, so
+  the server can tell these control messages apart (as with C7's).

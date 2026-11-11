@@ -266,33 +266,6 @@ void main() {
       expect(left.read<int>('n'), 0);
     });
 
-    test('the index follows a restored backup, whatever its numbers were',
-        () async {
-      final store = createStore();
-      final database = await open(store);
-      await database.applyMessageEffects(<MessageEffect>[
-        message('a', 'alpha one', at: 1),
-        message('b', 'beta two', at: 2),
-        message('c', 'gamma three', at: 3),
-      ]);
-      final history = await database.readAllMessages();
-      expect(history.every((item) => item.searchId != null), isTrue);
-      await database.restoreBackupState(
-        sessionJson: '{}',
-        conversations: const [],
-        envelopes: const [],
-        // Reversed, so the old index numbers arrive out of order.
-        history: history.reversed.toList(),
-      );
-      expect(await found(store, 'alpha'), <String>['dev_peer:a']);
-      expect(await found(store, 'beta'), <String>['dev_peer:b']);
-      expect(await found(store, 'gamma'), <String>['dev_peer:c']);
-      await database.applyMessageEffects(<MessageEffect>[
-        message('d', 'delta four', at: 4),
-      ]);
-      expect(await found(store, 'delta'), <String>['dev_peer:d']);
-    });
-
     test('an upgrade from schema 11 indexes the text already stored', () async {
       final store = createStore();
       final database = await open(store);

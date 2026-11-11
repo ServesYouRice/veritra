@@ -33,6 +33,18 @@ const int _deviceListSignAttempts = 3;
 /// server take (JSON: account, device, base64 statement). Public bytes.
 const String _recoveryStatementSetting = 'l1.recovery_list_statement';
 
+/// Explicit session credentials are needed before a linked session is active.
+class _EnrollmentListSource implements DeviceListSource {
+  _EnrollmentListSource(this.client, this.current);
+  final ApiClient client;
+  final Session current;
+
+  @override
+  Future<DeviceListPage?> fetchDeviceList(String accountId,
+          {required int after}) =>
+      client.fetchDeviceList(current.token, accountId, after: after);
+}
+
 extension AppStateDeviceList on AppState {
   DeviceListCryptoService? get _listCrypto => switch (cryptoService) {
         final DeviceListCryptoService lists => lists,
@@ -57,25 +69,41 @@ extension AppStateDeviceList on AppState {
     ));
   }
 
-  /// Pins this device's own genesis as its account's anchor right after
-  /// setup or registration, so the first refresh does not take the own
-  /// account by trust on first use from the server. A server that kept no
-  /// list at all (one from before L1, which ignores the field) gets no pin,
-  /// so the account stays "no list yet" as it is there; any list the server
-  /// shows is otherwise answered by this genesis, never adopted. Best
-  /// effort: without it the next refresh pins as before.
-  Future<void> _pinOwnGenesis(Session current, Uint8List? genesis) async {
+  String _anchorJournalKey(Session current) =>
+      'l1.activation.${base64UrlEncode(utf8.encode(jsonEncode([
+            canonicalizeServerOrigin(current.baseUrl),
+            current.accountId,
+            current.deviceId,
+          ])))}';
+
+  /// Write ahead of session persistence/promotion. Only public signed bytes.
+  Future<void> _journalDeviceListAnchor(
+          Session current, List<List<int>> statements) =>
+      localStore.saveSetting(
+          _anchorJournalKey(current),
+          jsonEncode(
+              [for (final statement in statements) base64Encode(statement)]));
+
+  /// Must finish before any active-session path can read server lists.
+  /// Errors deliberately propagate: missing durable trust is not TOFU.
+  Future<void> _resumeDeviceListAnchor(Session current) async {
+    final raw = await localStore.loadSetting(_anchorJournalKey(current));
+    if (raw == null || raw.isEmpty) return;
     final pins = _deviceListPins;
-    final account = current.accountId;
-    if (pins == null || genesis == null || account == null) return;
-    try {
-      final page = await pins.source.fetchDeviceList(account, after: 0);
-      if (page == null || page.headVersion == 0) return;
-      await pins.pinChain(account, [genesis], expectedHead: genesis);
-    } on Object catch (err) {
-      developer.log('L1 own genesis not pinned: ${err.runtimeType}',
-          name: 'veritra.l1');
-    }
+    if (pins == null) throw StateError('device-list verifier unavailable');
+    final statements = [
+      for (final value in jsonDecode(raw) as List)
+        base64Decode(value as String),
+    ];
+    if (statements.isEmpty) throw StateError('empty activation anchor');
+    await pins.pinChain(current.accountId!, statements,
+        expectedHead: statements.last);
+  }
+
+  Future<void> _clearDeviceListAnchorJournal(Session current) async {
+    final key = _anchorJournalKey(current);
+    final raw = await localStore.loadSetting(key);
+    if (raw != null && raw.isNotEmpty) await localStore.saveSetting(key, '');
   }
 
   /// Refreshes this account's own pin (forced). Null when the account has no
@@ -262,34 +290,23 @@ extension AppStateDeviceList on AppState {
     await _deviceListPins?.pinOwnStep(current.accountId ?? '', statement);
   }
 
-  /// Anchors a newly linked device on its own account's list: the chain
-  /// must verify and its head must list this device with its own key, added
-  /// by the device that approved the link with the key the authenticated
-  /// transcript names. Best effort: a failure leaves no pin, and the next
-  /// refresh pins by trust on first use.
-  Future<void> _anchorLinkedDevice(Session current,
-      {required String approverDeviceId,
+  /// Validate before promotion; never let a server-selected chain become TOFU.
+  Future<void> _journalLinkedDeviceAnchor(ApiClient client, Session current,
+      {required List<int> signingKey,
+      required String approverDeviceId,
       required List<int> approverSigningKey}) async {
-    final pins = _deviceListPins;
     final crypto = _listCrypto;
-    if (pins == null || crypto == null) return;
-    try {
-      final status = await pins.refresh(current.accountId ?? '', force: true);
-      final pin = status.pin;
-      if (status.state != DeviceListState.ok || pin == null) return;
-      final own = await crypto.currentSigningKey();
-      final mine = pin.standing(idBytes(current.deviceId ?? ''), own);
-      final approver =
-          pin.standing(idBytes(approverDeviceId), approverSigningKey);
-      if (mine != PinStanding.approved ||
-          (approver != PinStanding.approved &&
-              approver != PinStanding.removed)) {
-        developer.log('L1: this device is not on its own approved list',
-            name: 'veritra.l1');
-      }
-    } on Object {
-      // Pinned later by trust on first use.
-    }
+    if (crypto == null) throw StateError('device-list verifier unavailable');
+    final pins = DeviceListPins(
+        store: localStore,
+        source: _EnrollmentListSource(client, current),
+        verifier: crypto);
+    final statements = await pins.linkedAnchor(current.accountId!,
+        deviceId: idBytes(current.deviceId!),
+        signingKey: signingKey,
+        approverDeviceId: idBytes(approverDeviceId),
+        approverSigningKey: approverSigningKey);
+    await _journalDeviceListAnchor(current, statements);
   }
 
   /// K0-R completion (design, "Recovery when every device is lost"): signs
@@ -347,6 +364,9 @@ extension AppStateDeviceList on AppState {
     } on Object catch (err) {
       developer.log('L1 recovery version not posted: ${err.runtimeType}',
           name: 'veritra.l1');
+      // No held seed, or one the head does not name: Settings asks for the
+      // recovery key again (retype).
+      unawaited(_refreshOwnListState().catchError((Object _) {}));
     }
   }
 
@@ -421,10 +441,160 @@ extension AppStateDeviceList on AppState {
     final status = await pins.refresh(account);
     if (!identical(session, current)) return;
     final missing = status.state == DeviceListState.empty;
-    if (missing != ownDeviceListMissing) {
+    final head = status.state == DeviceListState.ok ? status.pin : null;
+    final noRecoveryKey = head != null && head.recoveryKey == null;
+    var retype = false;
+    final device = current.deviceId;
+    if (head != null && device != null) {
+      await _loadRecoveredMark();
+      final own =
+          _recoveredDevice ? await _listCrypto?.currentSigningKey() : null;
+      retype = own != null &&
+          head.standing(idBytes(device), own) != PinStanding.approved &&
+          await _storedRecoveryStatement(account, device) == null;
+    }
+    if (!identical(session, current)) return;
+    if (missing != ownDeviceListMissing ||
+        noRecoveryKey != _ownHeadWithoutRecoveryKey ||
+        retype != recoveryListNeedsRetype) {
       ownDeviceListMissing = missing;
+      _ownHeadWithoutRecoveryKey = noRecoveryKey;
+      recoveryListNeedsRetype = retype;
       notifyListeners();
     }
+  }
+
+  /// A recovery key set before L1 (design, "Existing accounts"): the server
+  /// has one, but the verified head names none, so recovery is refused for
+  /// this account until the key is typed once on a device.
+  bool get recoveryKeyNeedsConfirmation =>
+      _ownHeadWithoutRecoveryKey &&
+      !ownDeviceListMissing &&
+      (recoveryKeyStatus?.configured ?? false);
+
+  /// Confirms a pre-L1 recovery key: [typed] must be the key the server
+  /// knows (same `rk_id`, compared in constant time); then the same key is
+  /// set again with the change-5 version that names its list key. Needs
+  /// recent auth. A wrong key sends nothing and fails under
+  /// [Ops.recoveryKey].
+  Future<RecoveryActionResult> confirmPreL1RecoveryKey(String typed) async {
+    var needsRecentAuth = false;
+    final ok = await _runScoped(Ops.recoveryKey, () async {
+      final current = session;
+      final client = api;
+      final serverId = recoveryKeyStatus?.rkId;
+      if (current == null || client == null) {
+        throw UserFacingException(l10n.errorRelinkRequired);
+      }
+      final crypto = _recoveryCrypto;
+      final Uint8List entropy;
+      try {
+        entropy =
+            await crypto.decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+      } catch (_) {
+        throw UserFacingException(l10n.recoveryKeyUnreadable);
+      }
+      final RecoveryKeyValues values;
+      try {
+        values = await crypto.deriveRecoveryKey(entropy);
+      } finally {
+        entropy.fillRange(0, entropy.length, 0);
+      }
+      try {
+        if (serverId == null ||
+            !_constantTimeBytesEqual(values.rkId, serverId)) {
+          throw UserFacingException(l10n.recoveryKeyNotThisAccount);
+        }
+        final status =
+            await _putRecoveryKeyWithDeviceList(client, current, values);
+        if (!identical(session, current)) return;
+        recoveryKeyStatus = status;
+        _ownHeadWithoutRecoveryKey = false;
+      } on ApiException catch (err) {
+        if (err.serverCode == 'recent_auth_required') {
+          needsRecentAuth = true;
+          return;
+        }
+        rethrow;
+      } finally {
+        values.rkPub.fillRange(0, values.rkPub.length, 0);
+      }
+    });
+    if (needsRecentAuth) return RecoveryActionResult.needsRecentAuth;
+    if (ok) unawaited(_refreshOwnListState().catchError((Object _) {}));
+    return ok ? RecoveryActionResult.done : RecoveryActionResult.failed;
+  }
+
+  /// Recovery step 4 (retype): signs this device's change 4 from the typed
+  /// recovery key, when the held seed is gone or does not match the head.
+  /// Rust refuses a key whose list key is not the head's recovery key, so a
+  /// wrong key signs nothing. Nothing derived from it is kept; the signed
+  /// (public) statement is stored and posted as after a held-seed signing.
+  Future<bool> finishRecoveryWithTypedKey(String typed) async {
+    final ok = await _runScoped(Ops.recoveryKey, () async {
+      final current = session;
+      final crypto = _listCrypto;
+      final pins = _deviceListPins;
+      final account = current?.accountId;
+      final device = current?.deviceId;
+      if (current == null ||
+          crypto == null ||
+          pins == null ||
+          account == null ||
+          device == null) {
+        throw UserFacingException(l10n.errorRelinkRequired);
+      }
+      final Uint8List entropy;
+      try {
+        entropy = await _recoveryCrypto
+            .decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+      } catch (_) {
+        throw UserFacingException(l10n.recoveryKeyUnreadable);
+      }
+      try {
+        final status = await pins.refresh(account, force: true);
+        final head = status.pin;
+        if (status.state == DeviceListState.conflict) {
+          throw UserFacingException(l10n.errorDeviceListConflict);
+        }
+        if (status.state != DeviceListState.ok || head == null) {
+          throw UserFacingException(l10n.errorRelinkRequired);
+        }
+        final own = await crypto.currentSigningKey();
+        if (head.standing(idBytes(device), own) == PinStanding.approved) {
+          return; // Done already (another attempt landed).
+        }
+        final Uint8List statement;
+        try {
+          statement = await crypto.signRecoveryDeviceList(
+            prev: head.headStatement,
+            body: _nextBody(head, DeviceListChange.recovery,
+                [DeviceListPair(idBytes(device), own)]),
+            history: [
+              for (final key in head.keys)
+                DeviceListPair(key.deviceId, key.signingKey),
+            ],
+            entropy: entropy,
+          );
+        } on NativeCryptoException {
+          // The head's recovery key is not this key's (or the body was
+          // refused): nothing was signed.
+          throw UserFacingException(l10n.recoveryKeyNotThisAccount);
+        }
+        await localStore.saveSetting(
+            _recoveryStatementSetting,
+            jsonEncode(<String, Object?>{
+              'account_id': account,
+              'device_id': device,
+              'statement': base64Encode(statement),
+            }));
+        await _sendRecoveryStatement(current, statement);
+      } finally {
+        entropy.fillRange(0, entropy.length, 0);
+      }
+    });
+    if (ok) await _refreshOwnListState().catchError((Object _) {});
+    return ok;
   }
 
   /// The migration genesis (design, "Existing accounts"): the user ticked

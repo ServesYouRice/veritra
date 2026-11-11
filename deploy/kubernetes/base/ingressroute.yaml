@@ -10,7 +10,8 @@
 # - Host header: passed through unchanged (passHostHeader defaults to true).
 # - Client address: Traefik drops X-Forwarded-For from untrusted clients and
 #   sets its own; the server trusts only the pod network (deployment.yaml).
-# - Keep Traefik access logs off for this route, or drop request URIs and the
+# - Keep Traefik access logs off (L2-2: they would record client addresses),
+#   or drop request URIs, client addresses, the user agent and the
 #   X-Recovery-Token header from them.
 #
 # The overlay replaces veritra.example.com with the real hostname. Pick it

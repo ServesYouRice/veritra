@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/app_state.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/tokens.dart';
+import '../settings/k1_restore_screen.dart';
 import '../settings/reauth_dialog.dart';
 import '../settings/recovery_key_screen.dart';
 
@@ -31,6 +32,7 @@ class RecoveryFollowUpScreen extends StatelessWidget {
           ),
           body: SafeArea(
             child: switch (step) {
+              RecoveryFollowUpStep.restore => _RestoreStep(state: state),
               RecoveryFollowUpStep.password => _NewPasswordStep(state: state),
               _ => RecoveryKeySetup(
                   state: state,
@@ -41,6 +43,67 @@ class RecoveryFollowUpScreen extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// K1-4: bring the history back from the lost devices' backups before the
+/// recovery key is replaced. Skipping is allowed, with a warning.
+class _RestoreStep extends StatelessWidget {
+  const _RestoreStep({required this.state});
+
+  final AppState state;
+
+  Future<void> _skip(BuildContext context) async {
+    final l10n = context.l10n;
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        content: Text(l10n.recoveryFollowUpRestoreSkipWarning),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialog).pop(false),
+            child: Text(l10n.commonCancel),
+          ),
+          FilledButton(
+            key: const ValueKey<String>('follow-up-restore-skip-confirm'),
+            onPressed: () => Navigator.of(dialog).pop(true),
+            child: Text(l10n.recoveryFollowUpRestoreSkip),
+          ),
+        ],
+      ),
+    );
+    if (sure == true) await state.finishRecoveryRestoreStep();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return ListView(
+      padding: const EdgeInsets.all(BoneSpacing.xl),
+      children: <Widget>[
+        Text(l10n.recoveryFollowUpRestoreDetail,
+            style: Theme.of(context).textTheme.bodyLarge),
+        const SizedBox(height: BoneSpacing.xl),
+        FilledButton(
+          key: const ValueKey<String>('follow-up-restore'),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => K1RestoreScreen(
+                state: state,
+                onRestored: () => state.finishRecoveryRestoreStep(),
+              ),
+            ),
+          ),
+          child: Text(l10n.k1RestoreOpen),
+        ),
+        const SizedBox(height: BoneSpacing.md),
+        TextButton(
+          key: const ValueKey<String>('follow-up-restore-skip'),
+          onPressed: () => _skip(context),
+          child: Text(l10n.recoveryFollowUpRestoreSkip),
+        ),
+      ],
     );
   }
 }

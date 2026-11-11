@@ -13,7 +13,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
-import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -276,52 +275,6 @@ void main() {
       h.state.handleAppLifecycleState(AppLifecycleState.resumed);
       await settle();
       expect(h.syncStarts, 0);
-      h.dispose();
-    });
-  });
-
-  group('TASK-038, D71: a restore never signs in by itself', () {
-    Future<_Harness> restored(_BackupMode mode,
-        {_FaultStore? store, _Api? api}) async {
-      final faults = store ?? _FaultStore();
-      final h =
-          _Harness(store: faults, api: api, backups: _Backups(faults, mode));
-      return h;
-    }
-
-    test('a restore keeps the history and asks to finish by linking (D71)',
-        () async {
-      final h = await restored(_BackupMode.session);
-      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
-      // No session comes back: the backup holds no token or device.
-      expect(h.state.session, isNull);
-      expect(h.state.lifecycle, SessionLifecycle.ready);
-      expect(h.state.errorFor(Ops.restore), contains('link this device'));
-      final stored = await h.store.loadSession();
-      expect(isRestoredAccountSession(stored!), isTrue);
-      expect(stored.accountId, _owner.accountId);
-      // A password alone cannot sign in a device the server does not know.
-      await h.state.login(_origin, 'owner', 'password');
-      expect(h.state.session, isNull);
-      expect(h.state.error, isNotNull);
-      h.dispose();
-    });
-
-    test('nothing stored after the restore is a failure', () async {
-      final h = await restored(_BackupMode.nothing);
-      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
-      expect(h.state.session, isNull);
-      expect(h.state.errorFor(Ops.restore), isNotNull);
-      h.dispose();
-    });
-
-    test('a store that cannot be read keeps the recovery screen', () async {
-      final store = _FaultStore()..loadSessionFailures = 1;
-      final h = await restored(_BackupMode.session, store: store);
-      expect(await h.state.restoreFromBackup('v1.code'), isFalse);
-      expect(h.state.lifecycle, SessionLifecycle.recoveryRequired);
-      expect(h.state.recoveryMessage, isNotNull);
-      expect(h.state.errorFor(Ops.restore), isNotNull);
       h.dispose();
     });
   });
@@ -777,7 +730,6 @@ class _Harness {
     bool mls = false,
     LocalStore? store,
     _Api? api,
-    this.backups,
   })  : store = store ?? MemoryLocalStore(),
         api = api ?? _Api() {
     crypto = mls ? _MlsCrypto(this.store) : null;
@@ -787,7 +739,6 @@ class _Harness {
   final LocalStore store;
   final _Api api;
   late final _MlsCrypto? crypto;
-  final BackupService? backups;
   late AppState state;
   int syncStarts = 0;
 
@@ -799,13 +750,12 @@ class _Harness {
           syncStarts++;
           return _QuietSync();
         },
-        backupService: backups,
       );
 
   void dispose() => state.dispose();
 }
 
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: _origin);
 
   Session signedIn = _owner;
@@ -1037,32 +987,6 @@ class _Api extends ApiClient {
 
   @override
   Future<void> logout(String token) async {}
-}
-
-enum _BackupMode { session, nothing }
-
-/// Stands in for the download and decryption: a successful recover leaves
-/// the backup's account, signed out with no device (D71), in the store, or
-/// (with [_BackupMode.nothing]) nothing.
-class _Backups implements BackupService {
-  _Backups(this.store, this.mode);
-
-  final MemoryLocalStore store;
-  final _BackupMode mode;
-
-  @override
-  Future<void> recover(String recoveryCode) async {
-    if (mode == _BackupMode.session) {
-      await store.saveSession(restoredAccountSession(
-          baseUrl: _owner.baseUrl,
-          accountId: _owner.accountId!,
-          username: _owner.username));
-    }
-  }
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      throw UnimplementedError('${invocation.memberName}');
 }
 
 /// The MLS calls the session paths make, and nothing else.

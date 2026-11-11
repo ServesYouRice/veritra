@@ -484,7 +484,7 @@ func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, 
 		SELECT ps.id, ps.provider, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, ''),ps.notification_mode
 		FROM push_subscriptions ps
 		JOIN memberships m ON m.account_id = ps.account_id
-		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider IN ('webpush', 'fcm', 'apns') AND ps.disabled_at IS NULL
+		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider IN ('webpush', 'fcm', 'apns', 'unifiedpush') AND ps.disabled_at IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?)
 		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))))
 		ORDER BY ps.id
@@ -847,6 +847,9 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 	if err := retireHistoryTransfers(ctx, tx, `link_id IN (SELECT link_id FROM device_history_transfers WHERE state='active' AND expires_at<=? ORDER BY expires_at LIMIT 500)`, "expired", formatTime(now.UTC())); err != nil {
 		return 0, err
 	}
+	if err := cancelExpiredApprovedDeviceLinks(ctx, tx, now); err != nil {
+		return 0, err
+	}
 	cutoff := formatTime(now.UTC().Add(-OperationalRowRetention))
 	queries := []struct {
 		query string
@@ -883,251 +886,6 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 	return removed, nil
 }
 
-func (s *Store) CreateBackupBlob(ctx context.Context, accountID, deviceID, storageKey, ciphertextSHA256 string, sizeBytes int64, keyDerivationMetadata json.RawMessage, recoveryTokenHash []byte) error {
-	return s.CreateBackupBlobWithChunkDigests(ctx, accountID, deviceID, storageKey, ciphertextSHA256, sizeBytes, nil, keyDerivationMetadata, recoveryTokenHash)
-}
-
-// CreateBackupBlobWithChunkDigests is CreateBackupBlob that also stores the
-// blob store's chunk-digest record in the same INSERT.
-func (s *Store) CreateBackupBlobWithChunkDigests(ctx context.Context, accountID, deviceID, storageKey, ciphertextSHA256 string, sizeBytes int64, chunkDigests []byte, keyDerivationMetadata json.RawMessage, recoveryTokenHash []byte) error {
-	if len(keyDerivationMetadata) == 0 {
-		keyDerivationMetadata = json.RawMessage(`{}`)
-	}
-	id, err := domain.NewID("backup")
-	if err != nil {
-		return err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := s.enforceBlobQuota(ctx, tx, accountID, sizeBytes); err != nil {
-		return err
-	}
-	if len(recoveryTokenHash) != 32 {
-		return ErrInvalidInput
-	}
-	// The counter is read the way the history check below reads stored
-	// documents, so the value checked is the value stored: encoding/json
-	// would also accept "STATE_COUNTER" or take the last of repeated keys.
-	var counterType sql.NullString
-	var stateCounter sql.NullInt64
-	if !json.Valid(keyDerivationMetadata) {
-		return ErrInvalidInput
-	}
-	if err := tx.QueryRowContext(ctx, `SELECT json_type(?1, '$.state_counter'),
-		CASE WHEN json_type(?1, '$.state_counter') = 'integer' THEN json_extract(?1, '$.state_counter') END`,
-		string(keyDerivationMetadata)).Scan(&counterType, &stateCounter); err != nil {
-		return err
-	}
-	if counterType.String != "integer" || !stateCounter.Valid || stateCounter.Int64 <= 0 {
-		return ErrInvalidInput
-	}
-	// A session without a device stores a NULL device_id; IS matches that NULL
-	// where = never does, so device-less backups share one counter sequence and
-	// one live recovery capability.
-	storedDeviceID := nullableEmptyString(deviceID)
-	var previousCounter sql.NullInt64
-	if err := tx.QueryRowContext(ctx, `SELECT MAX(CAST(json_extract(key_derivation_metadata_json, '$.state_counter') AS INTEGER))
-		FROM backup_blobs WHERE account_id = ? AND device_id IS ?`, accountID, storedDeviceID).Scan(&previousCounter); err != nil {
-		return err
-	}
-	if previousCounter.Valid && stateCounter.Int64 <= previousCounter.Int64 {
-		return ErrInvalidInput
-	}
-	recoveryExpiresAt := time.Now().UTC().Add(RecoveryCapabilityLifetime)
-	if _, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL,
-		recovery_expires_at = NULL, recovery_next_offset = 0, recovery_bytes_served = 0, recovery_lease_id = NULL,
-		recovery_lease_expires_at = NULL WHERE account_id = ? AND device_id IS ?`, accountID, storedDeviceID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO backup_blobs(id, account_id, device_id, storage_key, ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at, recovery_token_hash, recovery_expires_at, recovery_next_offset, recovery_bytes_served, chunk_digests) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)`, id, accountID, storedDeviceID, storageKey, ciphertextSHA256, sizeBytes, string(keyDerivationMetadata), nowString(), recoveryTokenHash, formatTime(recoveryExpiresAt), nullableBytes(chunkDigests)); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// BeginRecoveryTransfer atomically leases the next contiguous byte range for
-// a valid recovery capability. Reusing an earlier range, beginning after a
-// gap, or racing an active transfer is rejected.
-func (s *Store) BeginRecoveryTransfer(ctx context.Context, recoveryTokenHash []byte, start int64) (RecoveryTransfer, error) {
-	if len(recoveryTokenHash) != 32 || start < 0 {
-		return RecoveryTransfer{}, ErrRecoveryRange
-	}
-	leaseID, err := domain.NewID("recovery_lease")
-	if err != nil {
-		return RecoveryTransfer{}, err
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return RecoveryTransfer{}, err
-	}
-	defer tx.Rollback()
-
-	var transfer RecoveryTransfer
-	var deviceID sql.NullString
-	var metadata, created, recoveryExpiresAt string
-	var nextOffset, bytesServed int64
-	var lease, leaseExpiresAt sql.NullString
-	err = tx.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key,
-		ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at,
-		recovery_expires_at, recovery_next_offset, recovery_bytes_served, recovery_lease_id,
-		recovery_lease_expires_at, chunk_digests FROM backup_blobs
-		WHERE recovery_token_hash = ?`, recoveryTokenHash).Scan(
-		&transfer.Backup.ID, &transfer.Backup.AccountID, &deviceID,
-		&transfer.Backup.StorageKey, &transfer.Backup.CiphertextSHA256,
-		&transfer.Backup.SizeBytes, &metadata, &created, &recoveryExpiresAt,
-		&nextOffset, &bytesServed, &lease, &leaseExpiresAt, &transfer.Backup.ChunkDigests)
-	if errors.Is(err, sql.ErrNoRows) {
-		return RecoveryTransfer{}, ErrNotFound
-	}
-	if err != nil {
-		return RecoveryTransfer{}, err
-	}
-	maxServed := RecoveryServedBytesMultiplier * transfer.Backup.SizeBytes
-	if bytesServed > 0 && bytesServed >= maxServed {
-		// Cap on served bytes exceeded: consume capability to enforce one-time use.
-		_, _ = tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_token_hash = NULL WHERE id = ?`, transfer.Backup.ID)
-		_ = tx.Commit()
-		return RecoveryTransfer{}, ErrNotFound
-	}
-	transfer.Backup.DeviceID = stringPtr(deviceID)
-	transfer.Backup.KeyDerivationMetadata = json.RawMessage(metadata)
-	transfer.Backup.CreatedAt = parseTime(created)
-	expiresAt := parseTime(recoveryExpiresAt)
-	now := time.Now().UTC()
-	if recoveryExpiresAt == "" || !expiresAt.After(now) {
-		return RecoveryTransfer{}, ErrNotFound
-	}
-	if lease.Valid && parseTime(leaseExpiresAt.String).After(now) {
-		return RecoveryTransfer{}, ErrRecoveryBusy
-	}
-	// A resume may start at or before the recorded offset: bytes the server
-	// wrote are not always bytes the client received (card I45). Only a
-	// transfer that reaches the end consumes the capability.
-	if start > nextOffset {
-		return RecoveryTransfer{}, ErrRecoveryRange
-	}
-	leaseDeadline := now.Add(RecoveryLeaseLifetime)
-	result, err := tx.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_id = ?,
-		recovery_lease_expires_at = ? WHERE id = ? AND recovery_token_hash = ?
-		AND recovery_next_offset = ? AND (recovery_lease_id IS NULL OR recovery_lease_expires_at <= ?)`,
-		leaseID, formatTime(leaseDeadline), transfer.Backup.ID, recoveryTokenHash,
-		nextOffset, formatTime(now))
-	if err != nil {
-		return RecoveryTransfer{}, err
-	}
-	if rows, err := result.RowsAffected(); err != nil {
-		return RecoveryTransfer{}, err
-	} else if rows != 1 {
-		return RecoveryTransfer{}, ErrRecoveryBusy
-	}
-	if err := tx.Commit(); err != nil {
-		return RecoveryTransfer{}, err
-	}
-	transfer.LeaseID = leaseID
-	transfer.StartOffset = start
-	return transfer, nil
-}
-
-// RenewRecoveryTransfer extends a lease that is still live by another
-// RecoveryLeaseLifetime. A lease that has lapsed or was taken over is not
-// revived: the caller gets ErrRecoveryBusy and must stop sending.
-func (s *Store) RenewRecoveryTransfer(ctx context.Context, leaseID string) error {
-	if leaseID == "" {
-		return ErrInvalidInput
-	}
-	now := time.Now().UTC()
-	result, err := s.db.ExecContext(ctx, `UPDATE backup_blobs SET recovery_lease_expires_at = ?
-		WHERE recovery_lease_id = ? AND recovery_lease_expires_at > ?`,
-		formatTime(now.Add(RecoveryLeaseLifetime)), leaseID, formatTime(now))
-	if err != nil {
-		return err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows != 1 {
-		return ErrRecoveryBusy
-	}
-	return nil
-}
-
-// CompleteRecoveryTransfer advances a leased transfer by the bytes that the
-// HTTP writer successfully handed off. A complete final range consumes the
-// capability by clearing its hash; an interrupted range keeps it resumable.
-func (s *Store) CompleteRecoveryTransfer(ctx context.Context, leaseID string, startOffset, bytesWritten, expected int64) error {
-	if leaseID == "" || startOffset < 0 || bytesWritten < 0 || expected < 0 || bytesWritten > expected {
-		return ErrInvalidInput
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var id string
-	var nextOffset, sizeBytes, bytesServed int64
-	now := time.Now().UTC()
-	if err := tx.QueryRowContext(ctx, `SELECT id, recovery_next_offset, size_bytes, recovery_bytes_served
-		FROM backup_blobs WHERE recovery_lease_id = ? AND recovery_next_offset >= ?
-		AND recovery_lease_expires_at > ?`, leaseID, startOffset, formatTime(now)).Scan(&id, &nextOffset, &sizeBytes, &bytesServed); errors.Is(err, sql.ErrNoRows) {
-		return ErrRecoveryBusy
-	} else if err != nil {
-		return err
-	}
-	if nextOffset > sizeBytes || startOffset > sizeBytes || bytesWritten > sizeBytes-startOffset {
-		return ErrInvalidInput
-	}
-	reached := startOffset + bytesWritten
-	newOffset := nextOffset
-	if reached > newOffset {
-		newOffset = reached
-	}
-	newServed := bytesServed + bytesWritten
-	maxServed := RecoveryServedBytesMultiplier * sizeBytes
-	var query string
-	var args []interface{}
-	if (bytesWritten == expected && reached == sizeBytes) || newServed >= maxServed {
-		query = `UPDATE backup_blobs SET recovery_token_hash = NULL,
-			recovery_next_offset = ?, recovery_bytes_served = ?, recovery_lease_id = NULL,
-			recovery_lease_expires_at = NULL WHERE recovery_lease_id = ?
-			AND recovery_next_offset = ? AND recovery_lease_expires_at > ?`
-		args = []interface{}{newOffset, newServed, leaseID, nextOffset, formatTime(now)}
-	} else {
-		query = `UPDATE backup_blobs SET recovery_next_offset = ?,
-			recovery_bytes_served = ?, recovery_lease_id = NULL,
-			recovery_lease_expires_at = NULL
-			WHERE recovery_lease_id = ? AND recovery_next_offset = ?
-			AND recovery_lease_expires_at > ?`
-		args = []interface{}{newOffset, newServed, leaseID, nextOffset, formatTime(now)}
-	}
-	result, err := tx.ExecContext(ctx, query, args...)
-	if err != nil {
-		return err
-	}
-	if rows, err := result.RowsAffected(); err != nil {
-		return err
-	} else if rows != 1 {
-		return ErrRecoveryBusy
-	}
-	return tx.Commit()
-}
-
-func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []byte) (domain.BackupBlob, error) {
-	if len(recoveryTokenHash) != 32 {
-		return domain.BackupBlob{}, ErrNotFound
-	}
-	backup, err := scanBackup(s.db.QueryRowContext(ctx, `SELECT id, account_id, device_id, storage_key,
-		ciphertext_sha256, size_bytes, key_derivation_metadata_json, created_at
-		FROM backup_blobs WHERE recovery_token_hash = ? AND recovery_expires_at > ?`, recoveryTokenHash, nowString()))
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.BackupBlob{}, ErrNotFound
-	}
-	return backup, err
-}
-
 // enforceBlobQuota admits one more blob of incoming bytes for accountID
 // inside tx, the single-writer transaction that then writes the blob row.
 // Usage comes from the counters that migration 0031 keeps equal to the
@@ -1137,15 +895,8 @@ func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []
 // files on disk: every blob takes at least one 4 KiB block. One error covers
 // every storage limit.
 func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
-	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
-	var accountUsage, instanceUsage int64
-	if err := tx.QueryRowContext(ctx, `SELECT
-		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0),
-		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1)`, accountID).Scan(&accountUsage, &instanceUsage); err != nil {
+	if err := s.enforceBlobQuotaBytes(ctx, tx, accountID, incoming); err != nil {
 		return err
-	}
-	if incoming < 0 || accountUsage > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
-		return s.refuse(admission.Storage, ErrStorageQuota)
 	}
 	blobs, err := countRows(ctx, tx, `SELECT
 		(SELECT COUNT(*) FROM attachment_envelopes WHERE owner_account_id = ?) +
@@ -1157,6 +908,22 @@ func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID stri
 	}
 	if blobs >= s.limits.AccountBlobs {
 		return s.refuse(admission.Blobs, ErrStorageQuota)
+	}
+	return nil
+}
+
+// enforceBlobQuotaBytes is the byte part of enforceBlobQuota: the account's
+// and the instance's usage counters against their limits.
+func (s *Store) enforceBlobQuotaBytes(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
+	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
+	var accountUsage, instanceUsage int64
+	if err := tx.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0),
+		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1)`, accountID).Scan(&accountUsage, &instanceUsage); err != nil {
+		return err
+	}
+	if incoming < 0 || accountUsage > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
+		return s.refuse(admission.Storage, ErrStorageQuota)
 	}
 	return nil
 }

@@ -29,7 +29,7 @@ func TestCommunityLayoutHTTPRoutesPostsThroughTheSharedGroup(t *testing.T) {
 	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, func(c *config.Config) { c.CommunityLayout = true })
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "layoutmember")
 
-	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Club"})
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, body)
 	}
@@ -44,7 +44,7 @@ func TestCommunityLayoutHTTPRoutesPostsThroughTheSharedGroup(t *testing.T) {
 	}
 	channelPath := "/api/v1/communities/" + community.ID + "/channels"
 	create := func(kind string) (layoutChannelJSON, string) {
-		status, body := doJSON(t, handler, http.MethodPost, channelPath, ownerToken, map[string]interface{}{"name": "chan-" + kind, "kind": kind})
+		status, body := doJSON(t, handler, http.MethodPost, channelPath, ownerToken, map[string]interface{}{"kind": kind})
 		if status != http.StatusCreated {
 			t.Fatalf("create %q channel status=%d body=%s", kind, status, body)
 		}
@@ -128,7 +128,7 @@ func TestCommunityLayoutHTTPRoutesPostsThroughTheSharedGroup(t *testing.T) {
 
 func TestCommunityLayoutIsOffByDefault(t *testing.T) {
 	handler, ownerToken, _ := newTestHandlerWithOwner(t)
-	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Club"})
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, body)
 	}
@@ -140,11 +140,11 @@ func TestCommunityLayoutIsOffByDefault(t *testing.T) {
 	if community.SharedConversationID != "" {
 		t.Fatalf("legacy community advertises a shared conversation: %s", body)
 	}
-	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{"name": "general", "kind": "open"})
+	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{"kind": "open"})
 	if status != http.StatusBadRequest {
 		t.Fatalf("open channel in a legacy community status=%d body=%s", status, body)
 	}
-	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{"name": "general"})
+	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated || !bytes.Contains(body, []byte(`"kind":"community_channel"`)) {
 		t.Fatalf("legacy channel status=%d body=%s", status, body)
 	}

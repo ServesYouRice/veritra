@@ -1155,6 +1155,137 @@ class ApiClient {
     return _decode(() => ReportEnvelopeRecord.fromJson(json));
   }
 
+  // C3 community info records (docs/designs/C3-private-channels-and-info.md).
+  // The body is the sealed `VPE1` blob; the server never sees a name.
+
+  static String _infoPath(String kind, String subjectId, String? communityId) {
+    final id = Uri.encodeComponent(subjectId);
+    return switch (kind) {
+      'community' => '/api/v1/communities/$id/info',
+      'category' =>
+        '/api/v1/communities/${Uri.encodeComponent(communityId ?? '')}/categories/$id',
+      'channel' => '/api/v1/channels/$id/info',
+      _ => throw ArgumentError.value(kind, 'kind'),
+    };
+  }
+
+  /// Uploads an info record. [expectedVersion] 0 is the first write
+  /// (`If-None-Match: *`). Returns the stored version; a 412 is an
+  /// [ApiException] with `version_conflict`.
+  Future<int> putInfoRecord(
+    String token, {
+    required String kind,
+    required String subjectId,
+    String? communityId,
+    required String keyId,
+    required List<int> blob,
+    required int expectedVersion,
+  }) async {
+    final uri =
+        Uri.parse(baseUrl).resolve(_infoPath(kind, subjectId, communityId));
+    final request = await _openRequest('PUT', uri);
+    request.headers
+      ..set(HttpHeaders.authorizationHeader, 'Bearer $token')
+      ..set(HttpHeaders.contentTypeHeader, 'application/octet-stream')
+      ..set('X-Private-Messenger-Encrypted', '1')
+      ..set('X-Profile-Key-Id', keyId);
+    if (expectedVersion == 0) {
+      request.headers.set(HttpHeaders.ifNoneMatchHeader, '*');
+    } else {
+      request.headers.set(HttpHeaders.ifMatchHeader, '"$expectedVersion"');
+    }
+    request.add(blob);
+    final response = await request.close().timeout(_requestTimeout);
+    final json = await _readJsonResponse(response);
+    final version = json['version'];
+    if (version is! int || version < 1) throw const ApiResponseException();
+    return version;
+  }
+
+  /// Fetches an info record, or null when the server has none this account
+  /// may read (404). The blob is at most the large bucket.
+  Future<({int version, String keyId, Uint8List blob})?> getInfoRecord(
+    String token, {
+    required String kind,
+    required String subjectId,
+    String? communityId,
+  }) async {
+    final uri =
+        Uri.parse(baseUrl).resolve(_infoPath(kind, subjectId, communityId));
+    final request = await _openRequest('GET', uri);
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode == HttpStatus.notFound) {
+      await _discard(response);
+      return null;
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final version = int.tryParse(
+        (response.headers.value(HttpHeaders.etagHeader) ?? '')
+            .replaceAll('"', ''));
+    final keyId = response.headers.value('X-Profile-Key-Id') ?? '';
+    final blob = await _readBounded(response, 256 * 1024 + 28);
+    if (version == null || version < 1 || keyId.length != 32) {
+      throw const ApiResponseException();
+    }
+    return (version: version, keyId: keyId, blob: blob);
+  }
+
+  /// Versions of the info records this account may read, per kind. Missing
+  /// or unreadable subjects are left out.
+  Future<List<({String kind, String id, int version, String keyId})>>
+      infoVersions(
+    String token, {
+    List<String> communityIds = const <String>[],
+    List<String> categoryIds = const <String>[],
+    List<String> channelIds = const <String>[],
+  }) async {
+    // Each server list is bounded to 200 IDs; a community may have 500
+    // channels. Fetch every batch rather than silently omitting the tail.
+    if (communityIds.length > 200 ||
+        categoryIds.length > 200 ||
+        channelIds.length > 200) {
+      final versions =
+          <({String kind, String id, int version, String keyId})>[];
+      for (var offset = 0;
+          offset < communityIds.length ||
+              offset < categoryIds.length ||
+              offset < channelIds.length;
+          offset += 200) {
+        versions.addAll(await infoVersions(token,
+            communityIds: communityIds.skip(offset).take(200).toList(),
+            categoryIds: categoryIds.skip(offset).take(200).toList(),
+            channelIds: channelIds.skip(offset).take(200).toList()));
+      }
+      return versions;
+    }
+    final json = await _jsonRequest('POST', '/api/v1/profiles/versions',
+        token: token,
+        body: <String, Object?>{
+          'community_ids': communityIds,
+          'category_ids': categoryIds,
+          'channel_ids': channelIds,
+        });
+    final raw = json['versions'];
+    if (raw is! List) throw const ApiResponseException();
+    return _decode(() => [
+          for (final item in raw)
+            if (item is Map &&
+                item['kind'] is String &&
+                item['id'] is String &&
+                item['version'] is int &&
+                item['key_id'] is String)
+              (
+                kind: item['kind'] as String,
+                id: item['id'] as String,
+                version: item['version'] as int,
+                keyId: item['key_id'] as String,
+              ),
+        ]);
+  }
+
   Future<List<Community>> listCommunities(String token) async {
     final json = await _jsonRequest('GET', '/api/v1/communities', token: token);
     return _rows(json, 'communities', Community.fromJson);
@@ -1169,16 +1300,20 @@ class ApiClient {
     return _rows(json, 'channels', Channel.fromJson);
   }
 
+  /// [name] never leaves the device: the server keeps IDs only and refuses a
+  /// plaintext name (C3). It goes into the encrypted community record.
   Future<Community> createCommunity(String token, String name) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/communities',
       token: token,
-      body: <String, Object?>{'name': name},
+      body: const <String, Object?>{},
     );
     return _decode(() => Community.fromJson(json));
   }
 
+  /// As [createCommunity]: [name] is never sent; it goes into the encrypted
+  /// channel record.
   Future<ChannelCreation> createChannel(
     String token,
     String communityId,
@@ -1189,7 +1324,7 @@ class ApiClient {
       'POST',
       '/api/v1/communities/$communityId/channels',
       token: token,
-      body: <String, Object?>{'name': name, 'kind': kind},
+      body: <String, Object?>{'kind': kind},
     );
     return _decode(() => ChannelCreation.fromJson(json));
   }
@@ -1653,6 +1788,51 @@ class ApiClient {
     await _readJsonResponse(response);
   }
 
+  /// `GET /api/v1/backups`: the account's backups. Rows are the server's
+  /// claims; the restore opens the container to trust anything.
+  Future<List<Map<String, Object?>>> listBackups(String token,
+      {int limit = 100}) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/backups?limit=$limit', token: token);
+    final backups = json['backups'];
+    if (backups is! List) throw const ApiResponseException();
+    return <Map<String, Object?>>[
+      for (final b in backups)
+        if (b is Map) Map<String, Object?>.from(b),
+    ];
+  }
+
+  /// `GET /api/v1/backups/{id}` with the session: the sealed container, or
+  /// the byte range [start]..[end] of it (the header peek). The stream is
+  /// bounded by [k1MaxBackupCiphertextBytes]; the server verifies every
+  /// chunk before sending it.
+  Future<Stream<List<int>>> downloadBackup(String token, String id,
+      {int? start, int? end}) async {
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id) ||
+        (start != null && (start < 0 || (end != null && end < start)))) {
+      throw ArgumentError('invalid backup download');
+    }
+    final request = await _openRequest(
+      'GET',
+      Uri.parse(baseUrl).resolve('/api/v1/backups/$id'),
+    );
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    if (start != null) {
+      request.headers.set('Range', 'bytes=$start-${end ?? ''}');
+    }
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final ranged = start != null;
+    if (response.statusCode != (ranged ? 206 : 200)) {
+      // A 200 for a range is the whole file; a 206 for none is not ours.
+      await _discard(response);
+      throw const ApiResponseException();
+    }
+    return _boundedStream(response, k1MaxBackupCiphertextBytes);
+  }
+
   Future<Stream<List<int>>> recoverEncryptedBackup(
     List<int> recoveryToken, {
     int? startOffset,
@@ -1965,6 +2145,48 @@ class ApiClient {
       token: token,
     );
     return _rows(json, 'calls', CallSession.fromJson).toList(growable: false);
+  }
+
+  // ---- B6 group-call rooms (docs/designs/B6-group-calls.md). Raw JSON:
+  // the room engine's adapter (calls/room/room_api.dart) reads it. ----
+
+  Future<Map<String, Object?>> joinRoom(String token, String conversationId) =>
+      _jsonRequest('POST', '/api/v1/rooms/join',
+          token: token,
+          body: <String, Object?>{'conversation_id': conversationId});
+
+  Future<Map<String, Object?>> roomState(String token, String callId) =>
+      _jsonRequest('GET', '/api/v1/rooms/${Uri.encodeComponent(callId)}',
+          token: token);
+
+  Future<Map<String, Object?>> roomCommits(String token, String callId,
+          {required int after}) =>
+      _jsonRequest(
+          'GET',
+          Uri(
+              path: '/api/v1/rooms/${Uri.encodeComponent(callId)}/commits',
+              queryParameters: <String, String>{'after': '$after'}).toString(),
+          token: token,
+          maxResponseBytes: 8 * 1024 * 1024);
+
+  /// A 409 `room_epoch_conflict` means another commit won this epoch.
+  Future<Map<String, Object?>> sendRoomCommit(
+          String token, String callId, Map<String, Object?> body) =>
+      _jsonRequest(
+          'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/commit',
+          token: token, body: body);
+
+  Future<void> sendRoomOffer(
+      String token, String callId, Map<String, Object?> body) async {
+    await _jsonRequest(
+        'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/offer',
+        token: token, body: body);
+  }
+
+  Future<void> leaveRoom(String token, String callId) async {
+    await _jsonRequest(
+        'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/leave',
+        token: token, body: const <String, Object?>{});
   }
 
   Future<void> confirmMlsRevocation(
@@ -2290,6 +2512,48 @@ class ApiClient {
     return _rows(json, 'events', SyncEvent.fromJson);
   }
 
+  /// [syncEvents] with the scan position, asking for the bounded scan
+  /// (TASK-209, D92): the server examines at most a budget of candidates,
+  /// hidden ones included, and reports how far it looked
+  /// ([ConversationSyncPage.scannedThrough]) and whether the budget ended the
+  /// page early ([ConversationSyncPage.truncated]). Both are absent from an
+  /// older server, which also ignores the opt-in. Test fakes that only
+  /// override [syncEvents] mix in [LegacySyncPageFake].
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = Uri(
+        path: '/api/v1/sync/events',
+        queryParameters: <String, String>{
+          'after': after.toString(),
+          'limit': pageLimit.toString(),
+          'scan': 'bounded',
+        },
+      ).toString();
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
+    final events = _rows(json, 'events', SyncEvent.fromJson);
+    return _decode(() {
+      final through = json['scanned_through'];
+      final truncated = json['scan_truncated'];
+      if (through != null && (through is! int || through < 0)) {
+        throw const FormatException();
+      }
+      if (truncated != null && truncated is! bool) {
+        throw const FormatException();
+      }
+      return ConversationSyncPage(
+        events,
+        scannedThrough: through as int?,
+        truncated: truncated == true,
+      );
+    });
+  }
+
   /// One conversation's own sync stream (C1 prerequisite 1), in event order.
   /// The server serves it only when the operator turned scoped sync on, and
   /// answers 404 otherwise. A conversation whose retention was pruned past
@@ -2452,6 +2716,7 @@ class ApiClient {
 
   Future<String> registerWebPush(
     String token, {
+    String provider = 'webpush',
     required String endpoint,
     required String publicKey,
     required String authSecret,
@@ -2462,7 +2727,7 @@ class ApiClient {
       '/api/v1/push/subscriptions',
       token: token,
       body: <String, Object?>{
-        'provider': 'webpush',
+        'provider': provider,
         'endpoint': endpoint,
         'public_key': publicKey,
         'auth_secret': authSecret,
@@ -2951,4 +3216,16 @@ class ConversationSyncPage {
   final List<SyncEvent> events;
   final int? scannedThrough;
   final bool truncated;
+}
+
+/// For test fakes that override [ApiClient.syncEvents] only: the page method
+/// answers from it, with no scan position, as an older server would.
+mixin LegacySyncPageFake on ApiClient {
+  @override
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      ConversationSyncPage(await syncEvents(token, after: after, limit: limit));
 }

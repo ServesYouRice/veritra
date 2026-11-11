@@ -198,18 +198,16 @@ void main() {
       expect(observed.electionSeen, isNull);
     });
 
-    test('$label: clocks follow crypto lifetime and never travel in a backup',
+    test('$label: clocks follow crypto lifetime',
         () async {
       final s = store();
       await s.saveSession(session);
       await s.commitMlsTransition(transition(0, change(open, now)));
-      final backup = await s.exportBackup();
-      expect(utf8.decode(backup), isNot(contains('election_seen')));
       await s.clearCachedState(preserveOutbox: true);
       expect(await s.loadGovernanceObservations('shared'), isNotNull);
       await s.saveSession(session);
       expect(await s.loadGovernanceObservations('shared'), isNotNull);
-      await s.restoreBackup(backup);
+      await s.clear();
       expect(await s.loadGovernanceObservations('shared'), isNull);
       await s.saveSession(session);
       await s.commitMlsTransition(transition(0, change(open, now)));
@@ -294,7 +292,7 @@ void main() {
     return file;
   }
 
-  test('schema 34 upgrades to assigned schema 38 with empty local clocks',
+  test('schema 34 upgrades to the C4 schema with empty local clocks',
       () async {
     final db = EncryptedLocalDatabase(NativeDatabase(await schema34()));
     databases.add(db);
@@ -303,10 +301,10 @@ void main() {
     expect(
         (await db.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        38);
+        EncryptedLocalDatabase.currentSchemaVersion);
   });
 
-  test('failed schema 38 upgrade rolls back table and version; retry succeeds',
+  test('failed C4 schema upgrade rolls back table and version; retry succeeds',
       () async {
     final file = await schema34();
     final failing = _FailUpgrade(NativeDatabase(file));

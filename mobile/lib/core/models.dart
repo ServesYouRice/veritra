@@ -254,6 +254,9 @@ class Community {
   });
 
   final String id;
+
+  /// Empty from a C3 server, which keeps IDs only; the name is the
+  /// encrypted community record (`communityDisplayName`).
   final String name;
   final String? createdBy;
   final DateTime? createdAt;
@@ -265,7 +268,7 @@ class Community {
   factory Community.fromJson(Map<String, Object?> json) {
     return Community(
       id: json['id'] as String,
-      name: json['name'] as String,
+      name: (json['name'] as String?) ?? '',
       createdBy: json['created_by'] as String?,
       createdAt: _parseOptionalTime(json['created_at']),
       sharedConversationId: json['shared_conversation_id'] as String?,
@@ -285,6 +288,9 @@ class Channel {
 
   final String id;
   final String communityId;
+
+  /// Empty from a C3 server; the name is the encrypted channel record
+  /// (`channelDisplayName`).
   final String name;
 
   /// `private` or `announcement` in a legacy community; `open`,
@@ -305,7 +311,7 @@ class Channel {
     return Channel(
       id: json['id'] as String,
       communityId: json['community_id'] as String,
-      name: json['name'] as String,
+      name: (json['name'] as String?) ?? '',
       kind: json['kind'] as String,
       conversationId: json['conversation_id'] as String?,
       layoutGeneration: (json['layout_generation'] as num?)?.toInt(),

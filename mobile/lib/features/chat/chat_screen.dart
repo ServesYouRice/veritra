@@ -10,6 +10,7 @@ import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
 import '../../calls/call_controller.dart';
+import '../../calls/room/room_engine.dart' show RoomSession;
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../core/composer_drafts.dart';
@@ -31,6 +32,7 @@ import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
+import '../calls/room_screen.dart';
 import '../search/search_screen.dart';
 import 'attachment_views.dart';
 import 'chat_desktop.dart';
@@ -121,6 +123,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    widget.state.enterChatView();
     composer.addListener(_saveDraft);
     _lastTypedText = composer.text;
     composer.addListener(_noticeTyping);
@@ -213,6 +216,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void didUpdateWidget(ChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.state, widget.state)) {
+      oldWidget.state.leaveChatView();
+      widget.state.enterChatView();
+    }
     if (oldWidget.conversationId == widget.conversationId &&
         identical(oldWidget.state, widget.state)) {
       return;
@@ -231,6 +238,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    widget.state.leaveChatView();
     _highlightTimer?.cancel();
     composer.removeListener(_saveDraft);
     composer.removeListener(_noticeTyping);
@@ -431,6 +439,18 @@ class _ChatScreenState extends State<ChatScreen> {
                                 ],
                               ),
                             ),
+                    ),
+                  if (conversation != null && !conversation.isDm && !readOnly)
+                    ValueListenableBuilder<RoomSession?>(
+                      valueListenable: widget.state.roomSession,
+                      builder: (context, session, _) => session == null
+                          ? const SizedBox.shrink()
+                          : IconButton(
+                              key: const Key('chat-call-group'),
+                              tooltip: context.l10n.roomStart,
+                              onPressed: () => unawaited(
+                                  _openRoom(session, conversation.id)),
+                              icon: const Icon(Icons.groups_outlined)),
                     ),
                   IconButton(
                       tooltip: context.l10n.w8StarredMessages,
@@ -664,6 +684,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// A member's display name, as message senders are labelled. Server-
+  /// supplied metadata, not a verified identity claim.
+  String _memberName(String conversationId, String accountId) {
+    final state = widget.state;
+    final member = state
+        .membersFor(conversationId)
+        .where((item) => item.accountId == accountId)
+        .firstOrNull;
+    return state.profiles?.account(accountId)?.name ??
+        accountLabel(accountId, member?.username);
+  }
+
   /// Message area for the selected conversation. Failures get an explicit
   /// error + retry instead of masquerading as "No messages yet".
   Widget _messagesPane(
@@ -689,8 +721,18 @@ class _ChatScreenState extends State<ChatScreen> {
         message: context.l10n.chatEmptyMessage,
       );
     }
+    final notJoined = widget.state.incompleteJoinAccounts(conversationId);
     return Column(
       children: <Widget>[
+        // L1: an approved device of a member has stayed out of the group
+        // for an hour (the server gave no key package, or kept it out).
+        for (final accountId in notJoined)
+          MaterialBanner(
+            content: Text(context.l10n
+                .chatDevicesNotJoined(_memberName(conversationId, accountId))),
+            leading: const Icon(Icons.devices_other_outlined),
+            actions: const <Widget>[SizedBox.shrink()],
+          ),
         if (loadError != null)
           MaterialBanner(
             content: Text(loadError),
@@ -744,6 +786,24 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Long-press on mobile, right-click on desktop.
+  /// B6: opens the group-call screen and joins the room of this chat. The
+  /// engine lives only as long as the screen.
+  Future<void> _openRoom(RoomSession session, String conversationId) async {
+    final engine = session.createEngine();
+    final route = MaterialPageRoute<void>(
+      builder: (_) => RoomScreen(
+        engine: engine,
+        nameFor: session.nameFor,
+        controls: session.controls,
+      ),
+    );
+    final done = Navigator.of(context).push(route);
+    unawaited(engine.join(conversationId));
+    await done;
+    await engine.leave();
+    engine.dispose();
+  }
+
   Future<void> _showStarredMessages() async {
     final state = widget.state;
     final selected = await showModalBottomSheet<String>(

@@ -39,7 +39,7 @@ func newLayoutFixture(t *testing.T, ctx context.Context) layoutFixture {
 	}
 	member := registerTestMember(t, ctx, store, invite.Code, "member")
 	outsider := registerTestMember(t, ctx, store, invite.Code, "outsider")
-	community, err := store.CreateCommunity(ctx, "Club", owner.Account.ID)
+	community, err := store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,13 +48,13 @@ func newLayoutFixture(t *testing.T, ctx context.Context) layoutFixture {
 	}
 	f := layoutFixture{store: store, owner: owner, member: member, outsider: outsider, community: community, shared: *community.SharedConversationID}
 	var conversation domain.Conversation
-	if f.open, conversation, err = store.CreateChannelWithConversation(ctx, community.ID, "general", "", owner.Account.ID); err != nil || conversation.ID != f.shared {
+	if f.open, conversation, err = store.CreateChannelWithConversation(ctx, community.ID, "", owner.Account.ID); err != nil || conversation.ID != f.shared {
 		t.Fatalf("open channel: conversation=%+v err=%v", conversation, err)
 	}
-	if f.announcement, conversation, err = store.CreateChannelWithConversation(ctx, community.ID, "news", "announcement", owner.Account.ID); err != nil || conversation.ID != f.shared {
+	if f.announcement, conversation, err = store.CreateChannelWithConversation(ctx, community.ID, "announcement", owner.Account.ID); err != nil || conversation.ID != f.shared {
 		t.Fatalf("announcement channel: conversation=%+v err=%v", conversation, err)
 	}
-	if f.private, conversation, err = store.CreateChannelWithConversation(ctx, community.ID, "secret", "private", owner.Account.ID); err != nil || conversation.ID == f.shared {
+	if f.private, conversation, err = store.CreateChannelWithConversation(ctx, community.ID, "private", owner.Account.ID); err != nil || conversation.ID == f.shared {
 		t.Fatalf("private channel: conversation=%+v err=%v", conversation, err)
 	}
 	f.privateConv = conversation.ID
@@ -169,7 +169,7 @@ func TestCommunityLayoutSwitchOffKeepsTheLegacyPerChannelLayout(t *testing.T) {
 	if f.conversation.Kind != "community_channel" || f.conversation.ChannelID == nil {
 		t.Fatalf("legacy channel conversation = %+v", f.conversation)
 	}
-	if _, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "x", ChannelAccessOpen, f.owner.Account.ID); !errors.Is(err, ErrInvalidInput) {
+	if _, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, ChannelAccessOpen, f.owner.Account.ID); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("open channel in a legacy community: %v", err)
 	}
 	channels, err := f.store.ListChannels(ctx, f.community.ID, f.insider.Account.ID)
@@ -267,9 +267,11 @@ func TestActiveLayoutPrivateChannelVisibleOnlyToItsMembers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// Channels carry no names (C3): label them by the fixture's IDs.
+		labels := map[string]string{f.open.ID: "general", f.announcement.ID: "news", f.private.ID: "secret"}
 		var out []string
 		for _, c := range channels {
-			out = append(out, c.Name)
+			out = append(out, labels[c.ID])
 		}
 		return strings.Join(out, ",")
 	}
@@ -313,11 +315,11 @@ func TestActiveLayoutPostsMustNameAnOpenChannelOfTheirGroup(t *testing.T) {
 	ctx := context.Background()
 	f := newLayoutFixture(t, ctx)
 	// A second community with its own shared group and channel.
-	other, err := f.store.CreateCommunity(ctx, "Other", f.owner.Account.ID)
+	other, err := f.store.CreateCommunity(ctx, f.owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign, _, err := f.store.CreateChannelWithConversation(ctx, other.ID, "elsewhere", "", f.owner.Account.ID)
+	foreign, _, err := f.store.CreateChannelWithConversation(ctx, other.ID, "", f.owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +409,7 @@ func TestActiveLayoutAnnouncementChannelRefusesMemberPostsInTheSharedGroup(t *te
 func TestActiveLayoutRepliesStayInTheirChannel(t *testing.T) {
 	ctx := context.Background()
 	f := newLayoutFixture(t, ctx)
-	second, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "random", "open", f.owner.Account.ID)
+	second, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "open", f.owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +447,7 @@ func TestActiveLayoutRepliesStayInTheirChannel(t *testing.T) {
 func TestActiveLayoutEditAndDeleteKeepTheChannel(t *testing.T) {
 	ctx := context.Background()
 	f := newLayoutFixture(t, ctx)
-	second, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "random", "open", f.owner.Account.ID)
+	second, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "open", f.owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

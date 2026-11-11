@@ -79,6 +79,7 @@ Veritra demo server
 
 Start an app (from mobile\):
   flutter run -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
+For Android, add --flavor fdroid (or --flavor play).
 See docs\demo.md for the full walkthrough. Press Ctrl+C to stop.
 
 "@

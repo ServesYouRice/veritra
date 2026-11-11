@@ -113,6 +113,7 @@ class K1Api extends K0Api {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late K0Server server;
   late MemoryLocalStore store;
   late K1Crypto crypto;
@@ -477,7 +478,7 @@ void main() {
     expect(uploads, isEmpty);
   });
 
-  test('no k1 setting or key bytes ride in a snapshot or a backup', () async {
+  test('no k1 setting or key bytes ride in a snapshot', () async {
     await signIn();
     await saveKey();
     final rkPub = base64.encode(List<int>.filled(32, 0xC3));
@@ -488,17 +489,6 @@ void main() {
       expect(text, isNot(contains(k1SettingPrefix)));
       expect(text, isNot(contains(rkPub)));
     }
-    // Nor in the full export (format 6) the legacy backup uses.
-    await store.saveCryptoState(
-        StoredCryptoState(
-            counter: 1,
-            stateKey: List<int>.filled(32, 7),
-            sealedState: const <int>[1]),
-        0);
-    final export =
-        utf8.decode(await store.exportBackup(), allowMalformed: true);
-    expect(export, isNot(contains(k1SettingPrefix)));
-    expect(export, isNot(contains(rkPub)));
     // What was sealed is the same kind of snapshot.
     expect(crypto.k1Seals.single['plain'], isNot(contains(k1SettingPrefix)));
   });

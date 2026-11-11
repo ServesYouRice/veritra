@@ -5,6 +5,9 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+import 'package:private_messenger/storage/encrypted_database.dart'
+    show LocalMessage;
+import 'package:private_messenger/storage/history_snapshot.dart';
 
 import 'native_test_env.dart';
 
@@ -106,6 +109,57 @@ void main() {
       ]) {
         expect(attempt, throwsA(isA<NativeCryptoException>()));
       }
+    });
+
+    test('a history snapshot survives seal and open for the K1-4 import', () {
+      final entropy = hex(vector['recovery_key_entropy_hex']);
+      final rk = bindings.deriveRecoveryKey(entropy);
+      final snapshot = HistorySnapshot(
+          accountId: 'acct_1',
+          sourceDeviceId: 'dev_a',
+          counter: 4,
+          createdAt: 1730000000000,
+          conversations: const [
+            HistoryConversation('conv', 'dm')
+          ],
+          messages: [
+            LocalMessage(
+                key: 'dev_a:1',
+                conversationId: 'conv',
+                senderAccountId: 'bob',
+                senderDeviceId: 'dev_a',
+                kind: 'text',
+                body: 'hi',
+                createdAt: 1729999999000,
+                state: 'received',
+                senderHidden: false)
+          ],
+          reactions: const [],
+          pins: const [],
+          starred: const {},
+          preferences: const []);
+      final sealed = bindings.sealBackup(
+        accountId: 'acct_1',
+        sourceDeviceId: 'dev_a',
+        createdAtMs: 1730000001000,
+        counter: 9,
+        plaintextVersion: 1,
+        rkPub: rk.rkPub,
+        plaintext: Uint8List.fromList(snapshot.encode()),
+      );
+      final opened = bindings.openBackup(
+          ciphertext: sealed,
+          entropy: entropy,
+          accountId: 'acct_1',
+          sourceDeviceId: 'dev_a');
+      final back = HistorySnapshot.decode(opened.plaintext);
+      expect(back.messages.single.body, 'hi');
+      expect(back.accountId, opened.header.accountId);
+      expect(back.sourceDeviceId, opened.header.sourceDeviceId);
+      // The seal's counter and time are the container's; the snapshot keeps
+      // its own, so the restore builds the importer context from it.
+      expect(opened.header.counter, 9);
+      expect(back.counter, 4);
     });
 
     test('the padded size is the attachment bucket, floored at 1 MiB', () {

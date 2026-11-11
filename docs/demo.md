@@ -35,6 +35,9 @@ flutter run -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
 Without `--dart-define=VERITRA_DEMO=true` the demo entry point refuses to
 start.
 
+On Android, also pass `--flavor fdroid` for UnifiedPush, or `--flavor play`
+for the build that supports FCM.
+
 | App | Before `flutter run` | Server URL in the app |
 |---|---|---|
 | Android emulator | `scripts/build-mobile-crypto.sh android`, start the emulator, then `adb reverse tcp:8080 tcp:8080` (the demo script does this if the emulator is already running) | `http://localhost:8080` |
@@ -68,7 +71,7 @@ so a phone or tablet needs no toolchain:
 
 | Artifact | Install |
 |---|---|
-| `veritra-demo-android-…` | `app-debug.apk` for arm64 phones and x86_64 emulators: `adb install app-debug.apk`, or open it on the phone after allowing installs from that source. Then `adb reverse tcp:8080 tcp:8080` so the app reaches the demo server. |
+| `veritra-demo-android-…` | `app-play-debug.apk` for arm64 phones and x86_64 emulators: `adb install app-play-debug.apk`, or open it on the phone after allowing installs from that source. Then `adb reverse tcp:8080 tcp:8080` so the app reaches the demo server. |
 | `veritra-demo-ios-simulator-…` | Unzip, boot a simulator, then `xcrun simctl install booted Runner.app`. The simulator reaches the demo server on `localhost` directly. A real iPhone needs a signed build from Xcode (your own Apple ID is enough for a development build). |
 | `veritra-demo-linux-x64-…`, `veritra-demo-windows-x64-…`, `veritra-demo-macos-…` | Unzip and run the app in the folder (macOS: see the notes above for the first open). |
 

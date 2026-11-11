@@ -191,6 +191,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your contacts can\'t add your devices to chats until you confirm which ones are yours.';
 
   @override
+  String get settingsRecoveryRetype =>
+      'Type your recovery key again to finish recovery';
+
+  @override
+  String get settingsRecoveryRetypeDetail =>
+      'Your contacts can\'t add this device to chats until you do.';
+
+  @override
+  String get settingsRecoveryConfirm =>
+      'Confirm your recovery key to keep recovery working';
+
+  @override
+  String get settingsRecoveryConfirmDetail =>
+      'Your recovery key was set before approved-device lists. Type it once, or recovering your account with it will be refused.';
+
+  @override
   String get deviceListReviewTitle => 'Which devices are yours?';
 
   @override
@@ -1074,6 +1090,33 @@ class AppLocalizationsEn extends AppLocalizations {
   String get communityNoChannelsHint => 'Use + to create the first one.';
 
   @override
+  String get communityPlaceholderName => 'Community';
+
+  @override
+  String get channelPlaceholderName => 'Channel';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Private channel';
+
+  @override
+  String get communityInfoEditFailed => 'Could not save the info. Try again.';
+
+  @override
+  String get communityEditInfo => 'Edit community';
+
+  @override
+  String get channelEditInfo => 'Edit channel';
+
+  @override
+  String get channelTopic => 'Topic';
+
+  @override
+  String get channelEditFailed => 'Couldn\'t save the channel. Try again.';
+
+  @override
+  String get channelSave => 'Save';
+
+  @override
   String get communityNotMember => 'You are not a member yet';
 
   @override
@@ -1901,6 +1944,11 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get chatMessageUnapprovedDevice =>
       'A message from a device that isn\'t approved was hidden.';
+
+  @override
+  String chatDevicesNotJoined(String name) {
+    return 'Some of $name\'s devices haven\'t joined yet.';
+  }
 
   @override
   String get chatMessageWelcomeUnavailable =>
@@ -2879,6 +2927,16 @@ class AppLocalizationsEn extends AppLocalizations {
       'That recovery key is not valid. Check it for a typo.';
 
   @override
+  String get recoveryKeyNotThisAccount =>
+      'That isn\'t this account\'s recovery key. Check your paper and try again.';
+
+  @override
+  String get recoveryKeyConfirmedForList => 'Recovery key confirmed.';
+
+  @override
+  String get recoveryRetypeDone => 'Recovery finished on this device.';
+
+  @override
   String get recoveryClaimRefused =>
       'The password or recovery key is wrong, the server address differs from the one you wrote down, or this account cannot be recovered.';
 
@@ -3305,6 +3363,68 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get callNoticeFailed =>
       'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.';
+
+  @override
+  String get roomStart => 'Group call';
+
+  @override
+  String get roomTitle => 'Group call';
+
+  @override
+  String get roomJoining => 'Joining…';
+
+  @override
+  String get roomConnected => 'In the call';
+
+  @override
+  String get roomEncryptedNote =>
+      'Voice and video are end-to-end encrypted. The server passes them on but cannot listen.';
+
+  @override
+  String get roomLeave => 'Leave';
+
+  @override
+  String get roomYou => 'You';
+
+  @override
+  String get roomMute => 'Mute';
+
+  @override
+  String get roomUnmute => 'Unmute';
+
+  @override
+  String get roomShareScreen => 'Share screen';
+
+  @override
+  String get roomStopSharing => 'Stop sharing';
+
+  @override
+  String get roomFailedFull => 'This call is full.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Group calls are not set up on this server.';
+
+  @override
+  String get roomFailedWelcome => 'Joining safely was not possible. Try again.';
+
+  @override
+  String get roomFailedOther => 'The call could not continue.';
+
+  @override
+  String get roomFailedCryptor =>
+      'This device cannot protect call media, so it did not join.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count people',
+      one: '1 person',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get moderationTitle => 'Moderation';
@@ -3752,6 +3872,138 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoBackupPromptLater => 'Not now';
 
   @override
+  String get channelPrivate => 'Private channel';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Only selected members can see this channel. The server can see who is in it.';
+
+  @override
+  String get channelOpenDisclosure =>
+      'Every community member can see this channel.';
+
+  @override
+  String get channelCreateFailed => 'Could not create the channel. Try again.';
+
+  @override
+  String get channelMembersFailed =>
+      'The channel was created. Some members could not be added. Retry to add only those members.';
+
+  @override
+  String get channelAdminOnly => 'Only owners and admins can create channels.';
+
+  @override
+  String get k1ConfirmTitle => 'Check your recovery key';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Type it once more to be sure you still have it. It never leaves this device.';
+
+  @override
+  String get k1ConfirmOk => 'That is your recovery key.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'That does not match. If you lost your key, make a new one in Recovery key settings.';
+
+  @override
+  String get k1SecondCopyChoose => 'Keep a second copy in a folder';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Second copy: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'The same locked backup, saved where you choose. Only your recovery key opens it.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'The last copy to this folder failed. Check the folder.';
+
+  @override
+  String get k1SecondCopyOff => 'Stop the second copy';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'A second copy in a folder is available on desktop. Phones keep the backup on the server only.';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Skip';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'If you skip, older backups become unusable after you replace your recovery key. Skip anyway?';
+
+  @override
+  String get k1RestoreOpen => 'Restore from a backup';
+
+  @override
+  String get k1RestoreTitle => 'Restore from a backup';
+
+  @override
+  String get k1RestoreIntro =>
+      'Pick a backup made by one of your other devices and type your recovery key. Your history is merged in; messages already here stay.';
+
+  @override
+  String get k1RestoreLoading => 'Looking for backups…';
+
+  @override
+  String get k1RestoreEmpty => 'No backup from another device was found.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.';
+
+  @override
+  String get k1RestoreLoadFailed => 'The list of backups could not be loaded.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (the copy before)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'A device';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'This device was removed from your account.';
+
+  @override
+  String get k1RestoreDone => 'History restored.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'That is not a valid recovery key for this account.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'This backup was locked with a different recovery key.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'This backup could not be opened. It may be damaged.';
+
+  @override
+  String get k1RestoreNetwork =>
+      'The server could not be reached. Nothing changed.';
+
+  @override
+  String get k1RestoreUnavailable =>
+      'This device cannot restore from a backup.';
+
+  @override
   String get connectSignInPasskey => 'Sign in with a passkey';
 
   @override
@@ -3966,4 +4218,47 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsUpdateDisabled => 'Automatic update checks are turned off';
+
+  @override
+  String get settingsScreenGuard => 'Screen guard';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Block screenshots and AI-assistant screen reading in chats.';
+
+  @override
+  String get communityInfoTitle => 'Categories and icon';
+
+  @override
+  String get communityIconChoose => 'Choose an icon';
+
+  @override
+  String get communityIconRemove => 'Remove icon';
+
+  @override
+  String get communityCategories => 'Categories';
+
+  @override
+  String get communityCategoryNew => 'New category';
+
+  @override
+  String get communityCategoryName => 'Category name';
+
+  @override
+  String get communityCategoryRename => 'Rename category';
+
+  @override
+  String get communityCategoryPlaceholder => 'Category';
+
+  @override
+  String get communityCategoryNone => 'No category';
+
+  @override
+  String get communityChannelPlaces => 'Where channels sit';
+
+  @override
+  String get communityInfoSaveFailed => 'Could not save. Try again.';
+
+  @override
+  String get communityInfoOpen => 'Categories and icon';
 }

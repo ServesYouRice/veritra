@@ -43,8 +43,6 @@ var (
 	ErrSyncCursorExpired   = errors.New("sync cursor is older than retained history")
 	ErrMessageExpired      = errors.New("message envelope has expired")
 	ErrEnrollmentInvalid   = errors.New("enrollment reservation is invalid, expired, or already used")
-	ErrRecoveryBusy        = errors.New("recovery transfer is already in progress")
-	ErrRecoveryRange       = errors.New("recovery range is not the next approved range")
 
 	// ErrDeviceLinkVerificationFailed is returned when the approver does not
 	// supply the same credential-bound transcript hash committed by the claimant.
@@ -62,6 +60,8 @@ type Store struct {
 	// (community_layout_store.go). Routing of communities already in that
 	// layout does not depend on it.
 	communityLayout bool
+	// c7History turns on the C7 sealed-body rule (c7_body_store.go).
+	c7History bool
 
 	// redactCursor is where the next PruneExpiredContent looks for message
 	// sync events that outlived their envelope (redactOrphanedMessageEvents).
@@ -147,7 +147,7 @@ func Open(ctx context.Context, cfg config.Config) (*Store, error) {
 	// deferred transactions by default, while writes stay serialized through
 	// the single writer connection.
 	store := &Store{db: &dbRouter{reader: reader, writer: writer, writerAcquire: newWriterAcquireHistogram()},
-		sessions: newSessionPolicy(cfg), limits: resolveLimits(cfg.Limits), admission: &admission.Counters{}, communityLayout: cfg.CommunityLayout}
+		sessions: newSessionPolicy(cfg), limits: resolveLimits(cfg.Limits), admission: &admission.Counters{}, communityLayout: cfg.CommunityLayout, c7History: cfg.C7History}
 	return store, nil
 }
 
@@ -839,11 +839,4 @@ func nowString() string {
 
 func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000000000Z")
-}
-
-func escapeLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	value = strings.ReplaceAll(value, `_`, `\_`)
-	return value
 }

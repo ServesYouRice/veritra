@@ -65,7 +65,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	}
 	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
 	if err == nil {
-		if !sameIdempotentMessage(existing, envelope) {
+		// C7: the replay compares the stored sealed body too, so a retry
+		// with a different body is a conflict.
+		existing, err = withSealedBody(ctx, tx, existing, nil)
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		if !sameIdempotentMessage(existing, envelope) || !sameSealedBody(existing.SealedBody, envelope.SealedBody) {
 			return domain.MessageEnvelope{}, false, 0, ErrIdempotencyConflict
 		}
 		if err := tx.Commit(); err != nil {
@@ -87,6 +93,11 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	// or announcement channels; elsewhere it must name none.
 	route, err := routeEnvelope(ctx, tx, envelope.ConversationID, envelope.CryptoMetadata)
 	if err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	// C7: a sealed body is required in community conversations and refused
+	// elsewhere (and refused everywhere while C7 is off).
+	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
 	// C2: in an announcement channel or an admins-only group only owners and
@@ -158,6 +169,9 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		if _, err := tx.ExecContext(ctx, `INSERT INTO message_attachments(message_id, attachment_id) VALUES(?, ?)`, envelope.ID, attachmentID); err != nil {
 			return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
 		}
+	}
+	if err := insertSealedBody(ctx, tx, envelope, route.channelID); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
 	}
 	var eventID int64
 	if withSyncEvent {
@@ -315,6 +329,9 @@ func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID stri
 	if message.ExpiresAt != nil && !message.ExpiresAt.After(time.Now().UTC()) {
 		return domain.MessageEnvelope{}, ErrMessageExpired
 	}
+	// C7: no sealed body here. It is served only with its sync event (and,
+	// for pre-join posts, by the history route), so a newcomer cannot fetch
+	// a pre-join or hidden body by id.
 	return message, nil
 }
 
@@ -339,6 +356,11 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	// C7: in community conversations an envelope is never rewritten in
+	// place; edits and deletes go through history-hide and new envelopes.
+	if err := s.refuseLegacyCommunityMessage(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -397,6 +419,11 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	// C7: in community conversations an envelope is never rewritten in
+	// place; edits and deletes go through history-hide and new envelopes.
+	if err := s.refuseLegacyCommunityMessage(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -566,6 +593,11 @@ func (s *Store) ListMessages(ctx context.Context, conversationID, accountID stri
 	}
 	if !member {
 		return nil, ErrNotMember
+	}
+	// C7: community history is local, or comes from the history route; the
+	// server serves no paging there.
+	if err := s.refuseLegacyCommunityRoute(ctx, s.db, conversationID); err != nil {
+		return nil, err
 	}
 	limit := opts.Limit
 	if limit <= 0 || limit > 200 {
@@ -960,6 +992,9 @@ func (s *Store) SaveSyncEvent(ctx context.Context, eventType string, accountID *
 // at that event version. A later edit must never make replay fetch a newer
 // representation for an older cursor position.
 func messageSyncEventPayload(envelope domain.MessageEnvelope) map[string]interface{} {
+	// C7: a sealed body is served from envelope_bodies (attachSyncBodies),
+	// never copied into sync_events, so it is pruned with its envelope.
+	envelope.SealedBody = nil
 	return map[string]interface{}{
 		"message_id":      envelope.ID,
 		"conversation_id": envelope.ConversationID,
@@ -997,12 +1032,26 @@ func insertSyncEvent(ctx context.Context, execer syncEventExecer, eventType stri
 // pruned an event after afterID that the device could have been sent
 // (syncCursorExpired).
 func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+	page, err := s.ListSyncPage(ctx, accountID, deviceID, afterID, limit, false)
+	return page.Events, err
+}
+
+// ListSyncPage is ListSyncEvents with the scan position (D92, TASK-209). Only
+// when bounded (the client opted in with ?scan=bounded) does a scan budget
+// apply and a cursor naming a hidden row of the device's own scope count as
+// not expired; otherwise the scan, the response and the expiry test are the
+// unbounded ones. ScannedThrough is the last candidate read, hidden rows
+// included, and never below the cursor; Truncated says the budget ended the
+// page before the stream did. Hidden rows it passes stay hidden (the MLS
+// join filter only grows, dead envelopes stay dead) or are block-hidden,
+// which D92 lets the cursor pass.
+func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	events, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit)
+	page, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit, bounded)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	// The expiry check runs after the page, which is one statement and so
 	// one snapshot: a prune that removed events the page lacks committed
@@ -1010,46 +1059,60 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	// first, a prune landing between the check and the page would leave a
 	// silent gap. Only a cursor past the start can have expired.
 	if afterID > 0 {
-		expired, err := s.syncCursorExpired(ctx, accountID, deviceID, afterID)
+		expired, err := s.syncCursorExpired(ctx, accountID, deviceID, afterID, bounded)
 		if err != nil {
-			return nil, err
+			return SyncPage{}, err
 		}
 		if expired {
-			return nil, ErrSyncCursorExpired
+			return SyncPage{}, ErrSyncCursorExpired
 		}
 	}
-	return events, nil
+	if err := s.attachSyncBodies(ctx, s.db, page.Events); err != nil {
+		return SyncPage{}, err
+	}
+	return page, nil
 }
 
-func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
 	// The query streams candidates in id order and has no LIMIT, since
 	// hidden ones do not count towards the page: the page ends here, after
 	// limit visible events, and closing rows stops the merge.
 	rows, err := s.db.QueryContext(ctx, listSyncEventsQuery, accountID, afterID, deviceID)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	defer rows.Close()
 	var events []domain.SyncEvent
 	candidate := &syncCandidateScanner{rows: rows}
 	last := afterID
+	scanned := 0
+	truncated := false
 	for len(events) < limit && rows.Next() {
+		if bounded && scanned >= scopedSyncScanBudget {
+			// A candidate exists beyond the budget: stop before it.
+			truncated = true
+			break
+		}
+		scanned++
 		event, err := scanSyncEvent(candidate)
 		if err != nil {
-			return nil, err
+			return SyncPage{}, err
 		}
 		// The merge has no outer ORDER BY: it relies on SQLite emitting
 		// the queue in id order. Clients refuse a page out of order, so
 		// fail the page here rather than send one.
 		if event.ID <= last {
-			return nil, fmt.Errorf("sync merge emitted event %d after %d", event.ID, last)
+			return SyncPage{}, fmt.Errorf("sync merge emitted event %d after %d", event.ID, last)
 		}
 		last = event.ID
 		if candidate.visible {
 			events = append(events, event)
 		}
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return SyncPage{}, err
+	}
+	return SyncPage{Events: events, ScannedThrough: last, Truncated: truncated}, nil
 }
 
 // syncCursorExpired reports whether retention pruned an event after afterID
@@ -1065,7 +1128,7 @@ func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID stri
 //     existed, also gets the old test (legacySyncCursorExpiredQuery).
 //
 // It errs only towards expired; docs/operations.md lists when.
-func (s *Store) syncCursorExpired(ctx context.Context, accountID, deviceID string, afterID int64) (bool, error) {
+func (s *Store) syncCursorExpired(ctx context.Context, accountID, deviceID string, afterID int64, bounded bool) (bool, error) {
 	var legacyThrough, prunedThrough int64
 	err := s.db.QueryRowContext(ctx, `SELECT legacy_through, pruned_through FROM sync_prune_state WHERE id = 1`).Scan(&legacyThrough, &prunedThrough)
 	known := err == nil
@@ -1084,11 +1147,32 @@ func (s *Store) syncCursorExpired(ctx context.Context, accountID, deviceID strin
 	if expired || (known && afterID >= legacyThrough) {
 		return expired, nil
 	}
+	if bounded {
+		// A cursor that names a row of the device's own scope is not behind
+		// a pruned prefix (retention removes the lowest ids first), whether
+		// or not the device may see that row: this is how the scanned-through
+		// position, which can point at a hidden row, is accepted. The legacy
+		// test below would call it expired when no visible row precedes it.
+		var inScope bool
+		if err := s.db.QueryRowContext(ctx, syncCursorInScopeQuery, accountID, afterID, deviceID).Scan(&inScope); err != nil {
+			return false, err
+		}
+		if inScope {
+			return false, nil
+		}
+	}
 	if err := s.db.QueryRowContext(ctx, legacySyncCursorExpiredQuery, accountID, afterID).Scan(&expired); err != nil {
 		return false, err
 	}
 	return expired, nil
 }
+
+// syncCursorInScopeQuery is true when event ?2 is a candidate of account ?1
+// and device ?3 in listSyncEventsQuery: an account event for every device or
+// ?3, or an event of a conversation the account is a member of.
+const syncCursorInScopeQuery = `SELECT EXISTS (SELECT 1 FROM sync_events se
+	WHERE se.id = ?2 AND ((se.account_id = ?1 AND (se.device_id IS NULL OR se.device_id = ?3))
+	  OR (+se.account_id IS NULL AND EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id = se.conversation_id))))`
 
 // syncPruneMarksExpiredQuery is true when a pruned event after cursor ?2
 // could have gone to device ?3 of account ?1: its account's events for every
@@ -1336,6 +1420,13 @@ func scanStorageKeys(rows rowIterator) ([]string, error) {
 	return keys, nil
 }
 
+// SyncEpoch is the instance's sync epoch, the cheap part of SyncBounds.
+func (s *Store) SyncEpoch(ctx context.Context) (string, error) {
+	var epoch string
+	err := s.db.QueryRowContext(ctx, `SELECT epoch FROM sync_state WHERE id = 1`).Scan(&epoch)
+	return epoch, err
+}
+
 func (s *Store) SyncBounds(ctx context.Context, accountID string) (string, int64, int64, error) {
 	var epoch string
 	if err := s.db.QueryRowContext(ctx, `SELECT epoch FROM sync_state WHERE id = 1`).Scan(&epoch); err != nil {
@@ -1364,49 +1455,22 @@ func (s *Store) SearchMetadata(ctx context.Context, accountID, query string, lim
 	if domain.ValidID("acct", query) {
 		exactAccountID = query
 	}
-	prefixPattern := escapeLike(query) + "%"
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT type, id, label
 		FROM (
 			-- Accounts are matched on the exact (case-insensitive) username only.
 			-- Prefix/contains matching here would let any authenticated user walk
 			-- the substring space and enumerate the entire user directory, which
-			-- is a metadata leak for a private messenger. Communities/channels
-			-- below stay prefix/contains because they are scoped to the caller's
-			-- memberships. Prefix-only matching also keeps this endpoint on
-			-- ordinary indexes instead of leading-wildcard scans.
+			-- is a metadata leak for a private messenger. Community and channel
+			-- names are encrypted (C3, migration 0082): the server holds none to
+			-- search, and the app searches its own decrypted records.
 			SELECT 'account' AS type, id, username AS label, 0 AS rank
 			FROM accounts
 			WHERE deleted_at IS NULL AND (username = ? COLLATE NOCASE OR id = ?)
-			UNION ALL
-			SELECT 'community' AS type, c.id, c.name AS label,
-				CASE
-					WHEN c.name = ? COLLATE NOCASE THEN 0
-					ELSE 1
-				END AS rank
-			FROM communities c
-			JOIN memberships m ON m.community_id = c.id
-			WHERE m.account_id = ? AND c.name LIKE ? ESCAPE '\'
-			UNION ALL
-			SELECT 'channel' AS type, ch.id, ch.name AS label,
-				CASE
-					WHEN ch.name = ? COLLATE NOCASE THEN 0
-					ELSE 1
-				END AS rank
-			FROM channels ch
-			JOIN memberships m ON m.community_id = ch.community_id
-			LEFT JOIN community_channel_routes r ON r.channel_id = ch.id
-			WHERE m.account_id = ? AND ch.name LIKE ? ESCAPE '\'
-			  -- A private route is listed only to members of its conversation,
-			  -- as listChannelsQuery does.
-			  AND (r.channel_id IS NULL OR r.access_mode <> 'private'
-			       OR EXISTS (SELECT 1 FROM memberships pm WHERE pm.conversation_id = r.conversation_id AND pm.account_id = ?))
 		)
 		ORDER BY rank, label COLLATE NOCASE, type, id
 		LIMIT ? OFFSET ?`,
 		exact, exactAccountID,
-		exact, accountID, prefixPattern,
-		exact, accountID, prefixPattern, accountID,
 		limit, offset)
 	if err != nil {
 		return nil, err

@@ -10,7 +10,7 @@ func TestModerationRoutesAPI(t *testing.T) {
 	bobToken, bobID := registerMemberWithID(t, handler, ownerToken, "modbob")
 	carolToken, carolID := registerMemberWithID(t, handler, ownerToken, "modcarol")
 
-	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]string{"name": "Club"})
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]string{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community: status=%d body=%s", status, body)
 	}
@@ -19,7 +19,7 @@ func TestModerationRoutesAPI(t *testing.T) {
 	}
 	decodeBody(t, body, &community)
 	base := "/api/v1/communities/" + community.ID
-	if status, body := doJSON(t, handler, http.MethodPost, base+"/channels", ownerToken, map[string]string{"name": "general"}); status != http.StatusCreated {
+	if status, body := doJSON(t, handler, http.MethodPost, base+"/channels", ownerToken, map[string]string{}); status != http.StatusCreated {
 		t.Fatalf("create channel: status=%d body=%s", status, body)
 	}
 	for _, id := range []string{bobID, carolID} {

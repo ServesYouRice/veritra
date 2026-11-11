@@ -80,7 +80,12 @@ pub const SIGN_DOMAIN_HISTORY: &[u8] = b"veritra-c7-history-v1";
 /// the link's locator. Part of ABI 21; a library without the entry refuses
 /// the domain and the app fails closed.
 pub const SIGN_DOMAIN_INVITE: &[u8] = b"veritra-invite-binding-v2";
-pub const SIGN_DOMAINS: [&[u8]; 3] = [SIGN_DOMAIN_POST, SIGN_DOMAIN_HISTORY, SIGN_DOMAIN_INVITE];
+pub const SIGN_DOMAINS: [&[u8]; 4] = [
+    SIGN_DOMAIN_POST,
+    SIGN_DOMAIN_HISTORY,
+    SIGN_DOMAIN_INVITE,
+    crate::b6::SIGN_DOMAIN_JOIN,
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum C7Error {

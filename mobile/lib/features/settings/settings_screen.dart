@@ -7,8 +7,6 @@ import 'package:flutter/services.dart';
 import '../../core/app_state.dart';
 import '../../l10n/l10n.dart';
 import '../../push/push_service.dart';
-import 'auto_backup_screen.dart';
-import 'backup_screen.dart';
 import '../../core/models.dart';
 import '../../desktop/message_notifications.dart';
 import '../../desktop/update_service.dart';
@@ -28,6 +26,7 @@ import '../../ui/widgets/tile_group.dart';
 import '../reports/owner_reports_screen.dart';
 import '../../core/account_host.dart';
 import 'accounts_screen.dart';
+import 'auto_backup_screen.dart';
 import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
@@ -225,6 +224,20 @@ class SettingsScreen extends StatelessWidget {
                       subtitle: Text(l10n.settingsDeviceListSetupDetail),
                       onTap: () => _reviewDeviceList(context),
                     ),
+                  if (state.recoveryListNeedsRetype)
+                    ListTile(
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.settingsRecoveryRetype),
+                      subtitle: Text(l10n.settingsRecoveryRetypeDetail),
+                      onTap: () => _retypeRecoveryKey(context),
+                    ),
+                  if (state.recoveryKeyNeedsConfirmation)
+                    ListTile(
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.settingsRecoveryConfirm),
+                      subtitle: Text(l10n.settingsRecoveryConfirmDetail),
+                      onTap: () => _confirmPreL1RecoveryKey(context),
+                    ),
                   if (state.membershipChangesAvailable)
                     ListTile(
                       leading: const Icon(Icons.qr_code_2),
@@ -310,7 +323,8 @@ class SettingsScreen extends StatelessWidget {
                       onTap: state.requestNotificationPermission,
                     ),
                   if (defaultTargetPlatform == TargetPlatform.android &&
-                      state.pushProviders.contains('webpush'))
+                      (state.pushProviders.contains('webpush') ||
+                          state.pushProviders.contains('unifiedpush')))
                     ListTile(
                       enabled: state.pushConfigured && !state.busy,
                       leading: const Icon(Icons.hub_outlined),
@@ -352,28 +366,10 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
-              if (state.backupAvailable) ...<Widget>[
-                SectionHeader(l10n.settingsSectionRecovery),
-                TileGroup(
-                  children: <Widget>[
-                    ListTile(
-                      leading: const Icon(Icons.key_outlined),
-                      title: Text(l10n.settingsBackup),
-                      subtitle: Text(l10n.settingsBackupDetail),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => BackupScreen(state: state),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
               SectionHeader(l10n.settingsSectionComingSoon),
               TileGroup(
                 children: <Widget>[
-                  if (!state.backupAvailable)
+                  if (!state.k1BackupSupported)
                     ListTile(
                       enabled: false,
                       leading: const Icon(Icons.key_outlined),
@@ -419,6 +415,15 @@ class SettingsScreen extends StatelessWidget {
                   LinkPreviewTile(
                       mode: state.linkPreviewMode,
                       onChanged: state.setLinkPreviewMode),
+                  if (defaultTargetPlatform == TargetPlatform.android)
+                    SwitchListTile(
+                      key: const ValueKey<String>('settings-screen-guard'),
+                      secondary: const Icon(Icons.shield_outlined),
+                      title: Text(l10n.settingsScreenGuard),
+                      subtitle: Text(l10n.settingsScreenGuardDetail),
+                      value: state.screenGuardChats,
+                      onChanged: state.setScreenGuardChats,
+                    ),
                 ],
               ),
               if (appearance != null) ...<Widget>[
@@ -678,6 +683,81 @@ class SettingsScreen extends StatelessWidget {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(message)));
       }
+    }
+  }
+
+  /// Asks for the recovery key from the user's paper. The typed text is
+  /// handed on and dropped with the dialog; it is never stored.
+  Future<String?> _askRecoveryKey(BuildContext context) async {
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(dialogContext.l10n.recoveryKeyConfirmTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(dialogContext.l10n.recoveryKeyConfirmDetail),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: dialogContext.l10n.recoveryKeyField,
+                ),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(dialogContext.l10n.commonCancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: Text(dialogContext.l10n.commonContinue),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  void _showRecoveryResult(BuildContext context, bool ok, String done) {
+    final message = ok ? done : state.errorFor(Ops.recoveryKey);
+    if (message != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  /// L1 recovery retype: the held seed is gone, so the key is typed again.
+  Future<void> _retypeRecoveryKey(BuildContext context) async {
+    final typed = await _askRecoveryKey(context);
+    if (typed == null || typed.trim().isEmpty || !context.mounted) return;
+    final ok = await state.finishRecoveryWithTypedKey(typed);
+    if (context.mounted) {
+      _showRecoveryResult(context, ok, context.l10n.recoveryRetypeDone);
+    }
+  }
+
+  /// L1: a recovery key from before approved-device lists, typed once.
+  Future<void> _confirmPreL1RecoveryKey(BuildContext context) async {
+    final typed = await _askRecoveryKey(context);
+    if (typed == null || typed.trim().isEmpty || !context.mounted) return;
+    var result = await state.confirmPreL1RecoveryKey(typed);
+    if (result == RecoveryActionResult.needsRecentAuth && context.mounted) {
+      if (!await _reauthenticate(context) || !context.mounted) return;
+      result = await state.confirmPreL1RecoveryKey(typed);
+    }
+    if (context.mounted && result != RecoveryActionResult.needsRecentAuth) {
+      _showRecoveryResult(context, result == RecoveryActionResult.done,
+          context.l10n.recoveryKeyConfirmedForList);
     }
   }
 
@@ -1096,6 +1176,7 @@ String _providerName(String provider) {
     case 'apns':
       return 'Apple Push Notification service';
     case 'webpush':
+    case 'unifiedpush':
       return 'UnifiedPush';
   }
   return provider;

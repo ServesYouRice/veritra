@@ -13,7 +13,6 @@ import 'core/report_seed_store.dart';
 import 'core/transport_policy.dart';
 import 'crypto/attachment_crypto.dart';
 import 'desktop/desktop_services.dart';
-import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
 import 'features/chat/attachment_views.dart'
@@ -114,19 +113,6 @@ Future<void> main(List<String> args) async {
         localStore: store,
       ),
       localStore: store,
-      backupService: BackupService(
-        bindings: bindings,
-        localStore: store,
-        directoryProvider: () => slotWorkingDirectory(scope),
-        clientFactory: (baseUrl) {
-          // A recovery code names its server; demo builds still accept only
-          // HTTPS or loopback (D12).
-          if (!TransportPolicy.demo.allows(baseUrl)) {
-            throw StateError('recovery code names a server this build refuses');
-          }
-          return ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo);
-        },
-      ),
       reportSeedStore: SecureReportSeedStore(scope: scope),
       attachmentService: AttachmentCryptoService(bindings,
           directoryProvider: () => slotWorkingDirectory(scope)),

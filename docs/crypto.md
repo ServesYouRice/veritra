@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 20 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 22 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 21. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 22. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -457,6 +457,170 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 complete adds, join notice, recovery retype and pre-L1 RK
+  confirmation (2026-11-11):** held groups the server reports no change
+  for are audited against signed lists (bounded, after the reconcile
+  fallback). Accounts with an approved device left out for an hour are
+  shown in the chat, and the clock persists in settings. A recovered device
+  with no usable held seed signs change 4 from the retyped key through the
+  same native call. A pre-L1 key is confirmed by `rk_id` and set again with
+  change 5. No ABI, schema, migration or dependency change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). Not yet
+  covered by tests; needs the independent review.
+
+- **L1 signed-list add discovery (2026-11-11):** creation and reported pending
+  membership changes derive device candidates from verified account lists,
+  subtract the native roster and claim explicit IDs. Claim answers must be a
+  unique subset of the requested account/device pairs; the native gate still
+  enforces the pinned signing key. Entirely withheld pending conversations and
+  the incomplete-join notice remain open. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). No counter changes.
+
+- **L1 enrollment-anchor review follow-up (2026-11-11):** journal locally
+  signed genesis or authenticated linked-device chains before durable session
+  activation. Replay before foreground/background restore can activate MLS.
+  Link chains must prove the exact frozen approver signed the new key's add
+  before any pin is written. Storage and validation failures stop activation;
+  the pending claim/journal survives for retry. See
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
+- **L1 chain-import continuity review (2026-11-11):** a verified imported
+  chain must contain the exact existing pinned head before it can advance
+  that pin. An unrelated genesis or a signed fork cannot replace trust via
+  `pinChain`; conflicts remain sticky and identical imports are no-ops.
+  Native regressions cover replacement, forks, rollback and valid extension.
+  No ABI, schema, migration or release-gate change. The full package remains
+  incomplete, including durable enrollment anchors; see
+  [`review evidence`](../testing/evidence/L1-review.md).
+
+- **L1 local genesis anchor (2026-11-11):** setup and invitation registration
+  pin their locally signed genesis without consulting the server first.
+  Withholding the list or returning a failed read cannot discard this trust
+  anchor and enable a later server-supplied genesis. Legacy accounts with no
+  locally signed genesis retain the reviewed migration flow. No ABI, schema,
+  migration or release-gate change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
+- **L1 bounded long-chain verification (2026-11-11):** client downloads now
+  allow up to 4,096 statements, independently of the native 256-statement batch
+  limit. First contact, chain import and fork proof verification compose the
+  existing native chain and step verifiers with full pair history. Pinned
+  catch-up can cross 256 versions. Download and native history limits still
+  fail closed; no counter, dependency or release-gate change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
+- **L1 current-list integration (2026-11-10):** design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). Reuses the already
+  merged Rust, server and mobile L1 implementation. Rejudges previously approved
+  leaves before sending and when judging incoming senders, using the existing
+  bounded/rate-limited list refresh. A verified signed removal holds outgoing
+  encryption until the leaf leaves the MLS tree. Cached approval cannot override
+  a newer pin or signed fork. Incoming formerly approved senders retain the
+  existing `removed` policy. No ABI, schema or migration change is needed;
+  assigned counters 24/41/0074 remain unused. Full-package follow-ups are recorded
+  in the integration design; independent security review is still required.
+
+- **C3 key freshness, local schema 35 (2026-11-11):** no ABI or wire change.
+  The info key a device seals with (`CommunityInfoService.currentKey`) was
+  the one whose id first arrived here last. A retired key whose first copy
+  arrived after its replacement (a delayed message, or a past-epoch message
+  MLS still decrypts) therefore became current, and later edits were sealed
+  under a key the removed member holds. The rule is now:
+  1. Every stored `info_key` row carries `epoch`: the MLS epoch the message
+     was encrypted in, read from the PrivateMessage header **after** it
+     decrypted (the epoch picks the epoch secrets and is in the content
+     AAD, so decryption authenticates it). The server's `mls_epoch` hint is
+     never used. A device's own sent copy carries the epoch it encrypted in;
+     a key it makes carries `max(group epoch, last removal epoch)`.
+  2. A repeated row keeps its first arrival (`seq`) and the **lowest** epoch
+     seen for it, so a delayed original lowers it and a re-delivery in a
+     later epoch never raises it. Evicted keys keep the epoch with their
+     tombstone.
+  3. Only trusted rows count: in the owning group, from this account or
+     from an owner/admin under the verified role state. A key's freshness is
+     the lowest epoch of its trusted rows; a current member replaying a key
+     at an old epoch it kept secrets for cannot retire it.
+  4. A key whose freshness is below the group's last removal epoch (the
+     watermark committed with the MLS state) is retired: never current, even
+     when it is the only key held. Callers then ask, or wait for rotation.
+  5. Among the rest the freshest wins; equal epochs fall back to the key whose
+     id first arrived last (the previous rule).
+  Residuals: an owner/admin can still make any key current by sending it in a
+  fresh epoch (it is trusted to choose keys; honest code never re-sends a key
+  from before a removal it has seen). Rows stored before schema 35 have no
+  epoch and rank below every key with one and below any removal. A device
+  upgraded with a removal already recorded for a group and only such rows
+  therefore has no current key there; no admin can answer its request (their
+  keys are epoch-less too) and no rotation is due, so it stays without one
+  until the next removal rotates. There is no release: recreate such demo
+  communities. Schema 35 adds the nullable column only (idempotent
+  `ALTER TABLE`). Evidence:
+  [`C3-key-freshness-2026-11-11.md`](../testing/evidence/C3-key-freshness-2026-11-11.md).
+
+- **C3 remote-removal obligations (2026-11-11):** no ABI, schema or wire
+  change. The remote commit path uses ABI 13's authenticated removal outcome
+  and wipes its unused exporter root. Surviving devices persist the removal
+  epoch in encrypted local metadata atomically with MLS state and cursor.
+  Foreground community refresh maps that obligation to the shared or private
+  info key home. Inbound-only wakes record it without sending. Publication,
+  key answers and add delivery refuse stale keys until rotation completes;
+  a newer epoch cancels an in-flight rotation. The completion watermark is
+  separate from the native removal watermark, so a crash or overlapping
+  removal cannot acknowledge an obligation that was never completed.
+  Verified C4 role integration remains unfinished; this does not complete C3.
+
+- **C3 add-key delivery and overlapping removals (2026-11-11):** no ABI,
+  schema or wire change. After merging its accepted add bundle, the committing
+  device sends the current info key into its owning group and re-announces
+  accepted records under that key where the verified editor policy permits it.
+  Foreground sync completing an own bundle after a lost response also triggers
+  delivery. The normal send queue and removal holds apply; request/answer
+  remains the recovery path for interrupted delivery and inbound-only wakes.
+  A newer removal token cancels an older rotation before further re-sealing
+  and clears its retry delay. Production C4 role wiring remains unfinished.
+
+- **C3 senders and fetch loop (2026-11-09):** no ABI, payload or schema
+  change. The `info_key`, `info_key_request` and `info_update` types are now
+  sent: through the ordinary send path (removal holds apply), unfranked, no
+  expiry, a hidden action row, and the sender's own copy kept in the same
+  transaction (the outgoing transition gained `communityInfo`). A device's
+  own new keys are written locally outside any MLS commit. Rotation marks
+  are a setting. Design: C3, "Built 2026-11-09". The local port also fences
+  API results and sends to their session, refreshes the captured token after
+  reauthentication, checks cached keys' owning conversation, and prevents a
+  late cache read from rolling back the displayed revision. It retries
+  unqueued key requests/answers and batches the versions query beyond 200
+  channels. [Local verification and remaining work](../testing/evidence/C3-rest-2026-11-09.md).
+
+- **B6, group-call media keys: ABI 22 (2026-11-11):** one new call and one
+  new signing domain, for [`B6-group-calls.md`](designs/B6-group-calls.md)
+  (S2). `pm_crypto_group_b6_media_key(handle, group_id, call_id, account_id, device_id, stream)`
+  returns (the sender leaf is found from its identity; a device in no leaf or in two refuses) `K(s,t) = HKDF-SHA256(salt "veritra-b6-sender-v1", ikm =
+  MLS-Exporter("veritra-b6-media-v1", lp(call_id) | u64(epoch), 32),
+  info = u32(leaf) | u8(stream))` for the group's current epoch (stream 0
+  voice, 1 camera, 2 screen, 3 screen audio). The exporter secret never
+  leaves the core. **This is the one exception to C7's rule that no
+  stand-alone exporter output leaves the core**: the keys must reach
+  libwebrtc's frame cryptor. Only `K(s,t)` leaves, for the one label, and a
+  leaf that is not in the group is refused. `pm_crypto_c7_sign` and `_verify`
+  also accept the domain `veritra-b6-join-v1` (message
+  `lp(group_id) | lp(nonce) | u64(expires_at) | sha256(key_package)`); no
+  signing domain is a prefix of another (tested), so a join signature is never
+  a valid MLS, C7, invite or L1 signature. Vector
+  `testing/vectors/b6-media-v1.json`, checked by Rust and Go
+  (`server/internal/b6vector`); the Dart check and binding come with S5. The
+  number is the next free one above integ (renumbered from the first assignment, 28). Needs the independent
+  crypto review before release (design S2). Not built yet: the call-group
+  context extension check. **For the reviewer:** the core does not know
+  which groups are call groups, so the call accepts any stored group id,
+  a persistent conversation group included. The label keeps the output
+  separate from every other exporter value, but the exception is wider than
+  "call groups only" until the context extension marks call groups and the
+  call refuses the rest. A call group also lives in the same device
+  provider as the conversations, so a seal while a call is open would write
+  it into sealed state (D70); the app must not wire rooms to the messaging
+  device until the core keeps call groups out of seals (design, "Not
+  built").
 - **C3, encrypted community info: records, payloads, local schema 31
   (2026-11-08):** no ABI change. Design
   [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),
@@ -641,14 +805,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     the last fetch is not hidden for good. The signed change 4 is stored and
     posted again until the server takes it. Setup and registration pin their
     own genesis. Call signals from a leaf that is not approved are dropped.
-  - **Known gaps after review:** a leaf approved once is not judged again
-    (a device removed by change 3 stays approved until its MLS removal
-    lands, so D68's residual is not closed yet); a conflict is sticky with
+  - **Known gaps after review (historical):** the cached-approved-leaf gap is
+    fixed by the 2026-11-10 current-list integration above. A conflict is sticky with
     no clear path, and a made-up genesis from the server alone triggers it;
     text from a `checking` sender is dropped, not kept hidden (owner
     question); judging a commit can wait about 25 s for the server inside
-    the crypto queue, more than a 20 s background wake; first sight refuses
-    chains over 256 versions.
+    the crypto queue, more than a 20 s background wake. The first-sight
+    256-version limit is replaced by bounded native-step composition in the
+    2026-11-11 entry above.
 
 - **L1-1, approved-device list, crypto layer, ABI 14 (2026-11-07, D94):**
   design [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).

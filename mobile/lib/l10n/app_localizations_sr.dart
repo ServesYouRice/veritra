@@ -193,6 +193,22 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ваши контакти не могу да додају ваше уређаје у ћаскања док не потврдите који су ваши.';
 
   @override
+  String get settingsRecoveryRetype =>
+      'Поново унесите кључ за опоравак да бисте довршили опоравак';
+
+  @override
+  String get settingsRecoveryRetypeDetail =>
+      'Ваши контакти не могу да додају овај уређај у ћаскања док то не урадите.';
+
+  @override
+  String get settingsRecoveryConfirm =>
+      'Потврдите кључ за опоравак да би опоравак и даље радио';
+
+  @override
+  String get settingsRecoveryConfirmDetail =>
+      'Ваш кључ за опоравак је постављен пре листа одобрених уређаја. Унесите га једном, иначе ће опоравак налога њиме бити одбијен.';
+
+  @override
   String get deviceListReviewTitle => 'Који уређаји су ваши?';
 
   @override
@@ -1084,6 +1100,34 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityNoChannelsHint => 'Користите + да направите први.';
 
   @override
+  String get communityPlaceholderName => 'Заједница';
+
+  @override
+  String get channelPlaceholderName => 'Канал';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Приватни канал';
+
+  @override
+  String get communityInfoEditFailed =>
+      'Није могуће сачувати податке. Покушајте поново.';
+
+  @override
+  String get communityEditInfo => 'Уреди заједницу';
+
+  @override
+  String get channelEditInfo => 'Уреди канал';
+
+  @override
+  String get channelTopic => 'Тема';
+
+  @override
+  String get channelEditFailed => 'Канал није сачуван. Покушајте поново.';
+
+  @override
+  String get channelSave => 'Сачувај';
+
+  @override
   String get communityNotMember => 'Још нисте члан';
 
   @override
@@ -1915,6 +1959,11 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get chatMessageUnapprovedDevice =>
       'Сакривена је порука са уређаја који није одобрен.';
+
+  @override
+  String chatDevicesNotJoined(String name) {
+    return 'Неки уређаји корисника $name се још нису придружили.';
+  }
 
   @override
   String get chatMessageWelcomeUnavailable =>
@@ -2895,6 +2944,16 @@ class AppLocalizationsSr extends AppLocalizations {
       'Тај кључ за опоравак није исправан. Проверите да ли има грешака у куцању.';
 
   @override
+  String get recoveryKeyNotThisAccount =>
+      'То није кључ за опоравак овог налога. Проверите папир и покушајте поново.';
+
+  @override
+  String get recoveryKeyConfirmedForList => 'Кључ за опоравак је потврђен.';
+
+  @override
+  String get recoveryRetypeDone => 'Опоравак је довршен на овом уређају.';
+
+  @override
   String get recoveryClaimRefused =>
       'Лозинка или кључ за опоравак није исправан, адреса сервера се разликује од записане, или овај налог не може да се опорави.';
 
@@ -3317,6 +3376,70 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get callNoticeFailed =>
       'Позив није успео да се повеже. За позиве је потребна подешена релејна (TURN) услуга сервера.';
+
+  @override
+  String get roomStart => 'Групни позив';
+
+  @override
+  String get roomTitle => 'Групни позив';
+
+  @override
+  String get roomJoining => 'Придружујем се…';
+
+  @override
+  String get roomConnected => 'У позиву';
+
+  @override
+  String get roomEncryptedNote =>
+      'Глас и видео су шифровани од краја до краја. Сервер их преноси, али не може да их чује.';
+
+  @override
+  String get roomLeave => 'Напусти';
+
+  @override
+  String get roomYou => 'Ви';
+
+  @override
+  String get roomMute => 'Искључи звук';
+
+  @override
+  String get roomUnmute => 'Укључи звук';
+
+  @override
+  String get roomShareScreen => 'Подели екран';
+
+  @override
+  String get roomStopSharing => 'Заустави дељење';
+
+  @override
+  String get roomFailedFull => 'Овај позив је пун.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Групни позиви нису подешени на овом серверу.';
+
+  @override
+  String get roomFailedWelcome =>
+      'Безбедно придруживање није успело. Покушајте поново.';
+
+  @override
+  String get roomFailedOther => 'Позив није могао да се настави.';
+
+  @override
+  String get roomFailedCryptor =>
+      'Овај уређај не може да заштити медије позива, па се није придружио.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count особа',
+      few: '$count особе',
+      one: '$count особа',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get moderationTitle => 'Модерација';
@@ -3766,6 +3889,136 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupPromptLater => 'Не сада';
 
   @override
+  String get channelPrivate => 'Приватни канал';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Само изабрани чланови виде овај канал. Сервер види ко је у њему.';
+
+  @override
+  String get channelOpenDisclosure => 'Сваки члан заједнице види овај канал.';
+
+  @override
+  String get channelCreateFailed => 'Канал није направљен. Покушајте поново.';
+
+  @override
+  String get channelMembersFailed =>
+      'Канал је направљен. Неки чланови нису додати. Покушајте поново да додате само те чланове.';
+
+  @override
+  String get channelAdminOnly =>
+      'Само власници и администратори могу да праве канале.';
+
+  @override
+  String get k1ConfirmTitle => 'Проверите кључ за опоравак';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Унесите га још једном да будете сигурни да га имате. Никад не напушта овај уређај.';
+
+  @override
+  String get k1ConfirmOk => 'То је ваш кључ за опоравак.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Не поклапа се. Ако сте изгубили кључ, направите нови у подешавањима кључа за опоравак.';
+
+  @override
+  String get k1SecondCopyChoose => 'Чувај другу копију у фасцикли';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Друга копија: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Иста закључана копија, сачувана где изаберете. Отвара је само кључ за опоравак.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Последње копирање у ову фасциклу није успело. Проверите фасциклу.';
+
+  @override
+  String get k1SecondCopyOff => 'Заустави другу копију';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Друга копија у фасцикли је доступна на рачунару. Телефони чувају копију само на серверу.';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Пре него што замените кључ за опоравак, можете вратити историју из копија које су направили ваши изгубљени уређаји. Оне се отварају вашим старим кључем, који за њих престаје да важи кад га замените.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Прескочи';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ако прескочите, старије копије постају неупотребљиве чим замените кључ за опоравак. Прескочити ипак?';
+
+  @override
+  String get k1RestoreOpen => 'Врати из резервне копије';
+
+  @override
+  String get k1RestoreTitle => 'Враћање из резервне копије';
+
+  @override
+  String get k1RestoreIntro =>
+      'Изаберите копију коју је направио неки други ваш уређај и унесите кључ за опоравак. Историја се спаја са овом; поруке које већ постоје остају.';
+
+  @override
+  String get k1RestoreLoading => 'Тражим резервне копије…';
+
+  @override
+  String get k1RestoreEmpty => 'Није пронађена копија са другог уређаја.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Копије у старом формату (направљене пре аутоматских копија) више се не могу вратити. Нису мењане, али их апликација не отвара.';
+
+  @override
+  String get k1RestoreLoadFailed => 'Списак резервних копија није учитан.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (претходна копија)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'Уређај';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'Овај уређај је уклоњен са вашег налога.';
+
+  @override
+  String get k1RestoreDone => 'Историја је враћена.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'То није исправан кључ за опоравак овог налога.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'Ова копија је закључана другим кључем за опоравак.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'Копија се не може отворити. Можда је оштећена.';
+
+  @override
+  String get k1RestoreNetwork => 'Сервер није доступан. Ништа није промењено.';
+
+  @override
+  String get k1RestoreUnavailable => 'Овај уређај не може да врати копију.';
+
+  @override
   String get connectSignInPasskey => 'Пријава приступним кључем';
 
   @override
@@ -3982,6 +4235,49 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get settingsUpdateDisabled =>
       'Аутоматска провера ажурирања је искључена';
+
+  @override
+  String get settingsScreenGuard => 'Заштита екрана';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима.';
+
+  @override
+  String get communityInfoTitle => 'Категорије и иконица';
+
+  @override
+  String get communityIconChoose => 'Изабери иконицу';
+
+  @override
+  String get communityIconRemove => 'Уклони иконицу';
+
+  @override
+  String get communityCategories => 'Категорије';
+
+  @override
+  String get communityCategoryNew => 'Нова категорија';
+
+  @override
+  String get communityCategoryName => 'Назив категорије';
+
+  @override
+  String get communityCategoryRename => 'Преименуј категорију';
+
+  @override
+  String get communityCategoryPlaceholder => 'Категорија';
+
+  @override
+  String get communityCategoryNone => 'Без категорије';
+
+  @override
+  String get communityChannelPlaces => 'Где су канали';
+
+  @override
+  String get communityInfoSaveFailed => 'Чување није успело. Покушај поново.';
+
+  @override
+  String get communityInfoOpen => 'Категорије и иконица';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4171,6 +4467,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsDeviceListSetupDetail =>
       'Vaši kontakti ne mogu da dodaju vaše uređaje u ćaskanja dok ne potvrdite koji su vaši.';
+
+  @override
+  String get settingsRecoveryRetype =>
+      'Ponovo unesite ključ za oporavak da biste dovršili oporavak';
+
+  @override
+  String get settingsRecoveryRetypeDetail =>
+      'Vaši kontakti ne mogu da dodaju ovaj uređaj u ćaskanja dok to ne uradite.';
+
+  @override
+  String get settingsRecoveryConfirm =>
+      'Potvrdite ključ za oporavak da bi oporavak i dalje radio';
+
+  @override
+  String get settingsRecoveryConfirmDetail =>
+      'Vaš ključ za oporavak je postavljen pre lista odobrenih uređaja. Unesite ga jednom, inače će oporavak naloga njime biti odbijen.';
 
   @override
   String get deviceListReviewTitle => 'Koji uređaji su vaši?';
@@ -5064,6 +5376,34 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get communityNoChannelsHint => 'Koristite + da napravite prvi.';
 
   @override
+  String get communityPlaceholderName => 'Zajednica';
+
+  @override
+  String get channelPlaceholderName => 'Kanal';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Privatni kanal';
+
+  @override
+  String get communityInfoEditFailed =>
+      'Nije moguće sačuvati podatke. Pokušajte ponovo.';
+
+  @override
+  String get communityEditInfo => 'Uredi zajednicu';
+
+  @override
+  String get channelEditInfo => 'Uredi kanal';
+
+  @override
+  String get channelTopic => 'Tema';
+
+  @override
+  String get channelEditFailed => 'Kanal nije sačuvan. Pokušajte ponovo.';
+
+  @override
+  String get channelSave => 'Sačuvaj';
+
+  @override
   String get communityNotMember => 'Još niste član';
 
   @override
@@ -5895,6 +6235,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatMessageUnapprovedDevice =>
       'Sakrivena je poruka sa uređaja koji nije odobren.';
+
+  @override
+  String chatDevicesNotJoined(String name) {
+    return 'Neki uređaji korisnika $name se još nisu pridružili.';
+  }
 
   @override
   String get chatMessageWelcomeUnavailable =>
@@ -6879,6 +7224,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Taj ključ za oporavak nije ispravan. Proverite da li ima grešaka u kucanju.';
 
   @override
+  String get recoveryKeyNotThisAccount =>
+      'To nije ključ za oporavak ovog naloga. Proverite papir i pokušajte ponovo.';
+
+  @override
+  String get recoveryKeyConfirmedForList => 'Ključ za oporavak je potvrđen.';
+
+  @override
+  String get recoveryRetypeDone => 'Oporavak je dovršen na ovom uređaju.';
+
+  @override
   String get recoveryClaimRefused =>
       'Lozinka ili ključ za oporavak nije ispravan, adresa servera se razlikuje od zapisane, ili ovaj nalog ne može da se oporavi.';
 
@@ -7301,6 +7656,70 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get callNoticeFailed =>
       'Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.';
+
+  @override
+  String get roomStart => 'Grupni poziv';
+
+  @override
+  String get roomTitle => 'Grupni poziv';
+
+  @override
+  String get roomJoining => 'Pridružujem se…';
+
+  @override
+  String get roomConnected => 'U pozivu';
+
+  @override
+  String get roomEncryptedNote =>
+      'Glas i video su šifrovani od kraja do kraja. Server ih prenosi, ali ne može da ih čuje.';
+
+  @override
+  String get roomLeave => 'Napusti';
+
+  @override
+  String get roomYou => 'Vi';
+
+  @override
+  String get roomMute => 'Isključi zvuk';
+
+  @override
+  String get roomUnmute => 'Uključi zvuk';
+
+  @override
+  String get roomShareScreen => 'Podeli ekran';
+
+  @override
+  String get roomStopSharing => 'Zaustavi deljenje';
+
+  @override
+  String get roomFailedFull => 'Ovaj poziv je pun.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Grupni pozivi nisu podešeni na ovom serveru.';
+
+  @override
+  String get roomFailedWelcome =>
+      'Bezbedno pridruživanje nije uspelo. Pokušajte ponovo.';
+
+  @override
+  String get roomFailedOther => 'Poziv nije mogao da se nastavi.';
+
+  @override
+  String get roomFailedCryptor =>
+      'Ovaj uređaj ne može da zaštiti medije poziva, pa se nije pridružio.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count osoba',
+      few: '$count osobe',
+      one: '$count osoba',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get moderationTitle => 'Moderacija';
@@ -7751,6 +8170,136 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get autoBackupPromptLater => 'Ne sada';
 
   @override
+  String get channelPrivate => 'Privatni kanal';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Samo izabrani članovi vide ovaj kanal. Server vidi ko je u njemu.';
+
+  @override
+  String get channelOpenDisclosure => 'Svaki član zajednice vidi ovaj kanal.';
+
+  @override
+  String get channelCreateFailed => 'Kanal nije napravljen. Pokušajte ponovo.';
+
+  @override
+  String get channelMembersFailed =>
+      'Kanal je napravljen. Neki članovi nisu dodati. Pokušajte ponovo da dodate samo te članove.';
+
+  @override
+  String get channelAdminOnly =>
+      'Samo vlasnici i administratori mogu da prave kanale.';
+
+  @override
+  String get k1ConfirmTitle => 'Proverite ključ za oporavak';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Unesite ga još jednom da budete sigurni da ga imate. Nikad ne napušta ovaj uređaj.';
+
+  @override
+  String get k1ConfirmOk => 'To je vaš ključ za oporavak.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Ne poklapa se. Ako ste izgubili ključ, napravite novi u podešavanjima ključa za oporavak.';
+
+  @override
+  String get k1SecondCopyChoose => 'Čuvaj drugu kopiju u fascikli';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Druga kopija: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Ista zaključana kopija, sačuvana gde izaberete. Otvara je samo ključ za oporavak.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Poslednje kopiranje u ovu fasciklu nije uspelo. Proverite fasciklu.';
+
+  @override
+  String get k1SecondCopyOff => 'Zaustavi drugu kopiju';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Druga kopija u fascikli je dostupna na računaru. Telefoni čuvaju kopiju samo na serveru.';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Pre nego što zamenite ključ za oporavak, možete vratiti istoriju iz kopija koje su napravili vaši izgubljeni uređaji. One se otvaraju vašim starim ključem, koji za njih prestaje da važi kad ga zamenite.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Preskoči';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ako preskočite, starije kopije postaju neupotrebljive čim zamenite ključ za oporavak. Preskočiti ipak?';
+
+  @override
+  String get k1RestoreOpen => 'Vrati iz rezervne kopije';
+
+  @override
+  String get k1RestoreTitle => 'Vraćanje iz rezervne kopije';
+
+  @override
+  String get k1RestoreIntro =>
+      'Izaberite kopiju koju je napravio neki drugi vaš uređaj i unesite ključ za oporavak. Istorija se spaja sa ovom; poruke koje već postoje ostaju.';
+
+  @override
+  String get k1RestoreLoading => 'Tražim rezervne kopije…';
+
+  @override
+  String get k1RestoreEmpty => 'Nije pronađena kopija sa drugog uređaja.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Kopije u starom formatu (napravljene pre automatskih kopija) više se ne mogu vratiti. Nisu menjane, ali ih aplikacija ne otvara.';
+
+  @override
+  String get k1RestoreLoadFailed => 'Spisak rezervnih kopija nije učitan.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (prethodna kopija)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'Uređaj';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'Ovaj uređaj je uklonjen sa vašeg naloga.';
+
+  @override
+  String get k1RestoreDone => 'Istorija je vraćena.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'To nije ispravan ključ za oporavak ovog naloga.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'Ova kopija je zaključana drugim ključem za oporavak.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'Kopija se ne može otvoriti. Možda je oštećena.';
+
+  @override
+  String get k1RestoreNetwork => 'Server nije dostupan. Ništa nije promenjeno.';
+
+  @override
+  String get k1RestoreUnavailable => 'Ovaj uređaj ne može da vrati kopiju.';
+
+  @override
   String get connectSignInPasskey => 'Prijava pristupnim ključem';
 
   @override
@@ -7967,4 +8516,47 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsUpdateDisabled =>
       'Automatska provera ažuriranja je isključena';
+
+  @override
+  String get settingsScreenGuard => 'Zaštita ekrana';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.';
+
+  @override
+  String get communityInfoTitle => 'Kategorije i ikonica';
+
+  @override
+  String get communityIconChoose => 'Izaberi ikonicu';
+
+  @override
+  String get communityIconRemove => 'Ukloni ikonicu';
+
+  @override
+  String get communityCategories => 'Kategorije';
+
+  @override
+  String get communityCategoryNew => 'Nova kategorija';
+
+  @override
+  String get communityCategoryName => 'Naziv kategorije';
+
+  @override
+  String get communityCategoryRename => 'Preimenuj kategoriju';
+
+  @override
+  String get communityCategoryPlaceholder => 'Kategorija';
+
+  @override
+  String get communityCategoryNone => 'Bez kategorije';
+
+  @override
+  String get communityChannelPlaces => 'Gde su kanali';
+
+  @override
+  String get communityInfoSaveFailed => 'Čuvanje nije uspelo. Pokušaj ponovo.';
+
+  @override
+  String get communityInfoOpen => 'Kategorije i ikonica';
 }

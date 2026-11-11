@@ -20,6 +20,86 @@ import 'package:private_messenger/sync/sync_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('bounded scan position (TASK-209)', () {
+    test('pages across empty budget-limited pages and persists the cursor',
+        () async {
+      final api = _ScriptedApi()
+        ..accountScanBudget = 3
+        ..events = <SyncEvent>[
+          for (var id = 1; id <= 6; id++) _envelopeEvent(id, 'msg_h$id'),
+          _envelopeEvent(7, 'msg_visible'),
+        ]
+        ..hiddenFromAccount.addAll(<int>{1, 2, 3, 4, 5, 6});
+      final store = MemoryLocalStore();
+      await _keepIdentity(store);
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() async => await store.loadSyncCursor() == 7);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      // Two empty truncated pages, then the visible one, in one run.
+      expect(api.pageAfters, <int>[0, 3, 6]);
+      expect(harness.crypto.applied, <String>['msg_visible']);
+      harness.dispose();
+    });
+
+    test('a hidden tail after the last event is crossed once', () async {
+      final api = _ScriptedApi()
+        ..accountScanBudget = 10
+        ..events = <SyncEvent>[
+          _envelopeEvent(1, 'msg_one'),
+          for (var id = 2; id <= 5; id++) _envelopeEvent(id, 'msg_h$id'),
+        ]
+        ..hiddenFromAccount.addAll(<int>{2, 3, 4, 5});
+      final store = MemoryLocalStore();
+      await _keepIdentity(store);
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      expect(api.pageAfters, <int>[0]);
+      api.pageAfters.clear();
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() => api.pageAfters.isNotEmpty);
+      // The next poll starts behind the hidden run.
+      expect(api.pageAfters.first, 5);
+      harness.dispose();
+    });
+
+    test('the cursor is not moved past an event that was not applied',
+        () async {
+      // Showing the page fails after the events committed; the server's
+      // scan position is further, but the page was not fully applied.
+      final api = _ScriptedApi()
+        ..accountScanBudget = 10
+        ..scanReportOverride = 9
+        ..events = <SyncEvent>[_envelopeEvent(4, 'msg_one')];
+      final store = _FlakyStore()..historyFailures = 1;
+      await _keepIdentity(store);
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() => harness.state.syncError != null);
+      expect(await store.loadSyncCursor(), 4);
+      harness.dispose();
+    });
+
+    test('a server without the scan fields ends on a short page as before',
+        () async {
+      final api = _ScriptedApi()
+        ..events = <SyncEvent>[
+          _envelopeEvent(4, 'msg_one'),
+          _envelopeEvent(5, 'msg_two'),
+        ];
+      final store = MemoryLocalStore();
+      await _keepIdentity(store);
+      final harness = await _Harness.start(api, store: store);
+
+      await harness.waitFor(() async => await store.loadSyncCursor() == 5);
+      await harness.waitFor(() => harness.state.lastSyncedAt != null);
+      expect(api.syncCalls, 1);
+      harness.dispose();
+    });
+  });
+
   group('received messages whose publication failed (TASK-031)', () {
     test('are shown once by the next catch-up, even with no new events',
         () async {
@@ -827,7 +907,7 @@ class _FlakyStore extends MemoryLocalStore {
   }
 }
 
-class _ScriptedApi extends ApiClient {
+class _ScriptedApi extends ApiClient with LegacySyncPageFake {
   _ScriptedApi() : super(baseUrl: 'https://localhost:8080');
 
   List<SyncEvent> events = <SyncEvent>[];
@@ -919,6 +999,54 @@ class _ScriptedApi extends ApiClient {
   @override
   Future<Map<String, Object?>> pushConfig(String token) async =>
       const <String, Object?>{'enabled': false};
+
+  /// When set, the account page examines at most this many events after
+  /// the cursor, hidden ones included, and reports the scan position
+  /// (TASK-209). Null models a server without it.
+  int? accountScanBudget;
+
+  /// Event ids the account stream scans but does not send (a blocked
+  /// sender's), and the cursors each page was asked from.
+  final Set<int> hiddenFromAccount = <int>{};
+  final List<int> pageAfters = <int>[];
+
+  /// Reported in place of the real scan position, for a server that
+  /// claims to have looked further than the page shows.
+  int? scanReportOverride;
+
+  @override
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    final budget = accountScanBudget;
+    if (budget == null) {
+      return ConversationSyncPage(
+          await syncEvents(token, after: after, limit: limit));
+    }
+    syncCalls++;
+    pageAfters.add(after);
+    if (syncStatus == 401) {
+      throw ApiException(401, '{"error":"unauthorized"}');
+    }
+    final page = <SyncEvent>[];
+    var through = after;
+    var truncated = false;
+    var scanned = 0;
+    for (final event in events.where((event) => event.id > after)) {
+      if (page.length >= limit) break;
+      if (scanned >= budget) {
+        truncated = true;
+        break;
+      }
+      scanned++;
+      through = event.id;
+      if (!hiddenFromAccount.contains(event.id)) page.add(event);
+    }
+    return ConversationSyncPage(page,
+        scannedThrough: scanReportOverride ?? through, truncated: truncated);
+  }
 
   @override
   Future<List<SyncEvent>> syncEvents(

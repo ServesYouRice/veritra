@@ -4,6 +4,7 @@ import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/avatar.dart';
+import '../../ui/photo_avatar.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/validation.dart';
@@ -13,6 +14,9 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 import 'membership_screens.dart';
+import 'community_info_screen.dart';
+import 'create_channel_dialog.dart';
+import 'edit_info_dialog.dart';
 import '../../ui/widgets/refresh_action.dart';
 
 /// Communities: create a community, add channels, and open channel
@@ -187,23 +191,29 @@ class CommunityScreen extends StatelessWidget {
     BuildContext context,
     Community community,
   ) async {
-    final name = await _promptForName(
-      context,
-      title: context.l10n.communityNewChannelIn(community.name),
-      label: context.l10n.communityChannelName,
+    // Legacy communities put every member in each channel. Keep their
+    // existing form; a selective member picker would promise false privacy.
+    if (community.sharedConversationId == null) {
+      final name = await _promptForName(context,
+          title: context.l10n.communityNewChannelIn(
+              state.communityDisplayName(community) ??
+                  context.l10n.communityPlaceholderName),
+          label: context.l10n.communityChannelName);
+      if (name != null && name.isNotEmpty) {
+        await state.createChannel(community.id, name);
+        if (context.mounted && state.error != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(state.error!)),
+          );
+        }
+      }
+      return;
+    }
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => CreateChannelDialog(state: state, community: community),
     );
-    if (name == null || name.isEmpty) {
-      return;
-    }
-    await state.createChannel(community.id, name);
-    if (!context.mounted) {
-      return;
-    }
-    if (state.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(state.error!)),
-      );
-    }
   }
 
   Future<String?> _promptForName(
@@ -285,6 +295,18 @@ class _CommunityCard extends StatelessWidget {
     final channels =
         state.channelsByCommunity[community.id] ?? const <Channel>[];
     final colors = avatarColorsFor(context, community.id);
+    final icon = state.communityIcon(community);
+    // C3: channels grouped by their encrypted category; uncategorised first.
+    final categories = state.communityCategories(community.id);
+    final placed = <String?, List<Channel>>{};
+    for (final channel in channels) {
+      (placed[state.channelCategory(channel)] ??= <Channel>[]).add(channel);
+    }
+    final groups = <(String?, List<Channel>)>[
+      if (placed[null] != null) (null, placed[null]!),
+      for (final id in categories)
+        if (placed[id] != null) (id, placed[id]!),
+    ];
     return Padding(
       padding: const EdgeInsets.only(bottom: BoneSpacing.md),
       child: TileGroup(
@@ -292,36 +314,66 @@ class _CommunityCard extends StatelessWidget {
           ListTile(
             // Decorative: the community name is already the tile title.
             leading: ExcludeSemantics(
-              child: Container(
-                width: 40,
-                height: 40,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: colors.fill,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: colors.ring),
-                ),
-                child: Icon(
-                  Icons.groups_outlined,
-                  size: 18,
-                  color: colors.glyph,
-                ),
-              ),
+              child: icon != null
+                  ? PhotoAvatar(
+                      png: icon.png,
+                      radius: 20,
+                      fallback: const Icon(Icons.groups_outlined, size: 18))
+                  : Container(
+                      width: 40,
+                      height: 40,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: colors.fill,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: colors.ring),
+                      ),
+                      child: Icon(
+                        Icons.groups_outlined,
+                        size: 18,
+                        color: colors.glyph,
+                      ),
+                    ),
             ),
-            title: Text(community.name),
+            title: Text(state.communityDisplayName(community) ??
+                context.l10n.communityPlaceholderName),
             subtitle: Text(
               channels.isEmpty
                   ? context.l10n.communityNoChannels
                   : context.l10n.communityChannelCount(channels.length),
             ),
             onTap: onOpenDetails,
-            trailing: state.canCreateChannel(community.id)
-                ? IconButton(
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (state.mayEditCommunityInfo(community.id, 'community'))
+                  IconButton(
+                    tooltip: context.l10n.communityEditInfo,
+                    onPressed: state.busy ? null : () => _editInfo(context),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                if (community.sharedConversationId != null &&
+                    (state.mayEditCommunityInfo(community.id, 'community') ||
+                        categories.isNotEmpty))
+                  IconButton(
+                    key: Key('community-info-${community.id}'),
+                    tooltip: context.l10n.communityInfoOpen,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => CommunityInfoScreen(
+                            state: state, community: community),
+                      ),
+                    ),
+                    icon: const Icon(Icons.folder_outlined),
+                  ),
+                if (state.canCreateChannel(community.id))
+                  IconButton(
                     tooltip: context.l10n.communityNewChannel,
                     onPressed: state.busy ? null : onCreateChannel,
                     icon: const Icon(Icons.add),
-                  )
-                : null,
+                  ),
+              ],
+            ),
           ),
           if (channels.isEmpty)
             ListTile(
@@ -330,16 +382,53 @@ class _CommunityCard extends StatelessWidget {
               title: Text(context.l10n.communityNoChannels),
               subtitle: Text(context.l10n.communityNoChannelsHint),
             ),
-          for (final channel in channels)
-            _ChannelTile(
-              channel: channel,
-              conversationId: _conversationIdFor(channel),
-              onOpen: onOpenChannel,
-            ),
+          for (final (category, members) in groups) ...<Widget>[
+            if (category != null)
+              ListTile(
+                dense: true,
+                leading: const SizedBox(
+                    width: 40, child: Icon(Icons.folder_outlined, size: 18)),
+                title: Text(
+                  state.categoryDisplayName(category) ??
+                      context.l10n.communityCategoryPlaceholder,
+                  style: Theme.of(context).textTheme.labelLarge,
+                ),
+              ),
+            for (final channel in members)
+              _ChannelTile(
+                channel: channel,
+                title: state.channelDisplayName(channel) ??
+                    (channel.kind == 'private'
+                        ? context.l10n.channelPrivatePlaceholderName
+                        : context.l10n.channelPlaceholderName),
+                topic: state.channelTopic(channel),
+                conversationId: _conversationIdFor(channel),
+                onOpen: onOpenChannel,
+                // C3: editing shows only where every other device will accept
+                // the edit (the verified role state, D80).
+                onEdit: channel.isRouted &&
+                        _conversationIdFor(channel) != null &&
+                        state.mayEditCommunityInfo(community.id, 'channel')
+                    ? () => _editInfo(context, channel: channel)
+                    : null,
+              ),
+          ],
         ],
       ),
     );
   }
+
+  /// Keep drafts open until the encrypted write completes successfully.
+  Future<void> _editInfo(BuildContext context, {Channel? channel}) =>
+      showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => EditInfoDialog(
+          state: state,
+          community: community,
+          channel: channel,
+        ),
+      );
 
   /// The conversation backing a channel, if this account is a member of it.
   /// A routed channel names its group; a legacy channel has a conversation
@@ -358,11 +447,17 @@ class _CommunityCard extends StatelessWidget {
 class _ChannelTile extends StatelessWidget {
   const _ChannelTile({
     required this.channel,
+    required this.title,
+    required this.topic,
+    required this.onEdit,
     required this.conversationId,
     required this.onOpen,
   });
 
   final Channel channel;
+  final String title;
+  final String? topic;
+  final VoidCallback? onEdit;
   final String? conversationId;
   final void Function(String conversationId, String? channelId) onOpen;
 
@@ -373,8 +468,19 @@ class _ChannelTile extends StatelessWidget {
       dense: true,
       enabled: id != null,
       leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
-      title: Text(channel.name),
-      subtitle: id == null ? Text(context.l10n.communityNotMember) : null,
+      title: Text(title),
+      subtitle: id == null
+          ? Text(context.l10n.communityNotMember)
+          : topic == null
+              ? null
+              : Text(topic!, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: onEdit == null
+          ? null
+          : IconButton(
+              tooltip: context.l10n.channelEditInfo,
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined),
+            ),
       onTap: id == null
           ? null
           : () => onOpen(
