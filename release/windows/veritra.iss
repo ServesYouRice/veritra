@@ -49,8 +49,10 @@ SolidCompression=yes
 ; timestamps); only the app folder it packages is checked by verify.ps1.
 UninstallDisplayIcon={app}\private_messenger.exe
 LicenseFile={#SourcePath}\..\..\LICENSE
-; SignTool=veritra
-; SignedUninstaller=yes
+#ifdef SignToolName
+SignTool={#SignToolName}
+SignedUninstaller=yes
+#endif
 
 [Files]
 Source: "{#AppDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion

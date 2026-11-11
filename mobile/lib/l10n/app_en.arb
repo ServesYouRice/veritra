@@ -1386,5 +1386,16 @@
   "accountsErrorRegistry": "The account list could not be saved.",
   "accountsErrorRemove": "The account could not be removed. Try again.",
   "accountsDuplicate": "This device already has that account, so the extra sign-in was removed. Remove this device's extra entry from the account's device list.",
-  "accountsBack": "Back to my accounts"
+  "accountsBack": "Back to my accounts",
+
+  "settingsSectionUpdates": "Updates",
+  "settingsAutoUpdateCheck": "Check for updates automatically",
+  "settingsAutoUpdateCheckDetail": "Check for genuine new versions on launch",
+  "settingsCheckForUpdates": "Check for updates",
+  "settingsCheckingForUpdates": "Checking for updates…",
+  "settingsUpdateUpToDate": "Veritra is up to date",
+  "settingsUpdateAvailable": "Version {version} is available",
+  "@settingsUpdateAvailable": {"placeholders": {"version": {"type": "String"}}},
+  "settingsUpdateError": "Could not check for updates",
+  "settingsUpdateDisabled": "Automatic update checks are turned off"
 }

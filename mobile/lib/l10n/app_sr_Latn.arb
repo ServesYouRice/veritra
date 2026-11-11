@@ -1148,5 +1148,21 @@
   "accountsErrorRegistry": "Spisak naloga nije mogao da se sačuva.",
   "accountsErrorRemove": "Nalog nije mogao da se ukloni. Pokušajte ponovo.",
   "accountsDuplicate": "Ovaj uređaj već ima taj nalog, pa je dodatna prijava uklonjena. Uklonite višak uređaja sa liste uređaja naloga.",
-  "accountsBack": "Nazad na moje naloge"
+  "accountsBack": "Nazad na moje naloge",
+  "settingsSectionUpdates": "Ažuriranja",
+  "settingsAutoUpdateCheck": "Automatski proveravaj ažuriranja",
+  "settingsAutoUpdateCheckDetail": "Proveravaj nove verzije pri pokretanju",
+  "settingsCheckForUpdates": "Proveri ažuriranja",
+  "settingsCheckingForUpdates": "Provera ažuriranja…",
+  "settingsUpdateUpToDate": "Veritra je ažurirana",
+  "settingsUpdateAvailable": "Verzija {version} je dostupna",
+  "@settingsUpdateAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUpdateError": "Provera ažuriranja nije uspela",
+  "settingsUpdateDisabled": "Automatska provera ažuriranja je isključena"
 }

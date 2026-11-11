@@ -56,13 +56,27 @@ Known gaps (see the evidence file for what was measured):
 `release/windows/veritra.iss` is an Inno Setup 6 definition: per-user install by
 default, fixed `AppId` so updates replace the old install, Start-menu entry,
 optional desktop shortcut, uninstaller. It packages the folder
-`build.ps1` produced. Build line is in the file header.
+`build.ps1` produced.
 
-**Owner step (left open):** signing. Buy a code-signing certificate, then
-enable the two `SignTool`/`SignedUninstaller` lines and pass the `signtool`
-command on the `iscc` command line. The certificate and password stay outside
-this repository. Without signing, Windows SmartScreen warns on first run; that
-is expected for the unsigned draft.
+Build with `scripts\build-windows-installer.ps1` (or `release\windows\build.ps1`):
+```powershell
+# Build unsigned installer (default)
+.\scripts\build-windows-installer.ps1
+
+# Specify build inputs and outputs
+.\scripts\build-windows-installer.ps1 -AppDir C:\out\app -AppVersion 0.1.0 -OutDir C:\out\dist
+
+# Dry-run check (no iscc needed)
+.\scripts\build-windows-installer.ps1 -DryRun
+```
+
+**Owner step (signing placeholder):** signing. After the owner buys a code-signing
+certificate, pass `-SignToolCommand` to the build script:
+```powershell
+.\scripts\build-windows-installer.ps1 -SignToolCommand 'signtool.exe sign /fd sha256 /tr <timestamp-url> /td sha256 /f <cert> /p <password> $f'
+```
+The certificate and password stay outside this repository. Without signing, Windows
+SmartScreen warns on first run; that is expected for the unsigned draft.
 
 Open questions for the owner: Inno Setup's license (free, custom terms) is
 checked by the owner before first use; an MSIX alternative would need a

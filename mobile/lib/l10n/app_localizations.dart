@@ -6482,6 +6482,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Back to my accounts'**
   String get accountsBack;
+
+  /// No description provided for @settingsSectionUpdates.
+  ///
+  /// In en, this message translates to:
+  /// **'Updates'**
+  String get settingsSectionUpdates;
+
+  /// No description provided for @settingsAutoUpdateCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Check for updates automatically'**
+  String get settingsAutoUpdateCheck;
+
+  /// No description provided for @settingsAutoUpdateCheckDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Check for genuine new versions on launch'**
+  String get settingsAutoUpdateCheckDetail;
+
+  /// No description provided for @settingsCheckForUpdates.
+  ///
+  /// In en, this message translates to:
+  /// **'Check for updates'**
+  String get settingsCheckForUpdates;
+
+  /// No description provided for @settingsCheckingForUpdates.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking for updates…'**
+  String get settingsCheckingForUpdates;
+
+  /// No description provided for @settingsUpdateUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'Veritra is up to date'**
+  String get settingsUpdateUpToDate;
+
+  /// No description provided for @settingsUpdateAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} is available'**
+  String settingsUpdateAvailable(String version);
+
+  /// No description provided for @settingsUpdateError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not check for updates'**
+  String get settingsUpdateError;
+
+  /// No description provided for @settingsUpdateDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Automatic update checks are turned off'**
+  String get settingsUpdateDisabled;
 }
 
 class _AppLocalizationsDelegate
