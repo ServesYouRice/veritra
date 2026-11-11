@@ -839,6 +839,8 @@ func (a *API) deviceLinkSubroute(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// createCommunityRequest takes no name: a non-empty one is refused (C3). The
+// field stays only so an older app's name is refused, not silently dropped.
 type createCommunityRequest struct {
 	Name string `json:"name"`
 }

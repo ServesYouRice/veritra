@@ -1100,6 +1100,34 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityNoChannelsHint => 'Користите + да направите први.';
 
   @override
+  String get communityPlaceholderName => 'Заједница';
+
+  @override
+  String get channelPlaceholderName => 'Канал';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Приватни канал';
+
+  @override
+  String get communityInfoEditFailed =>
+      'Није могуће сачувати податке. Покушајте поново.';
+
+  @override
+  String get communityEditInfo => 'Уреди заједницу';
+
+  @override
+  String get channelEditInfo => 'Уреди канал';
+
+  @override
+  String get channelTopic => 'Тема';
+
+  @override
+  String get channelEditFailed => 'Канал није сачуван. Покушајте поново.';
+
+  @override
+  String get channelSave => 'Сачувај';
+
+  @override
   String get communityNotMember => 'Још нисте члан';
 
   @override
@@ -3861,6 +3889,27 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupPromptLater => 'Не сада';
 
   @override
+  String get channelPrivate => 'Приватни канал';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Само изабрани чланови виде овај канал. Сервер види ко је у њему.';
+
+  @override
+  String get channelOpenDisclosure => 'Сваки члан заједнице види овај канал.';
+
+  @override
+  String get channelCreateFailed => 'Канал није направљен. Покушајте поново.';
+
+  @override
+  String get channelMembersFailed =>
+      'Канал је направљен. Неки чланови нису додати. Покушајте поново да додате само те чланове.';
+
+  @override
+  String get channelAdminOnly =>
+      'Само власници и администратори могу да праве канале.';
+
+  @override
   String get k1ConfirmTitle => 'Проверите кључ за опоравак';
 
   @override
@@ -4193,6 +4242,42 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get settingsScreenGuardDetail =>
       'Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима.';
+
+  @override
+  String get communityInfoTitle => 'Категорије и иконица';
+
+  @override
+  String get communityIconChoose => 'Изабери иконицу';
+
+  @override
+  String get communityIconRemove => 'Уклони иконицу';
+
+  @override
+  String get communityCategories => 'Категорије';
+
+  @override
+  String get communityCategoryNew => 'Нова категорија';
+
+  @override
+  String get communityCategoryName => 'Назив категорије';
+
+  @override
+  String get communityCategoryRename => 'Преименуј категорију';
+
+  @override
+  String get communityCategoryPlaceholder => 'Категорија';
+
+  @override
+  String get communityCategoryNone => 'Без категорије';
+
+  @override
+  String get communityChannelPlaces => 'Где су канали';
+
+  @override
+  String get communityInfoSaveFailed => 'Чување није успело. Покушај поново.';
+
+  @override
+  String get communityInfoOpen => 'Категорије и иконица';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -5289,6 +5374,34 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get communityNoChannelsHint => 'Koristite + da napravite prvi.';
+
+  @override
+  String get communityPlaceholderName => 'Zajednica';
+
+  @override
+  String get channelPlaceholderName => 'Kanal';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Privatni kanal';
+
+  @override
+  String get communityInfoEditFailed =>
+      'Nije moguće sačuvati podatke. Pokušajte ponovo.';
+
+  @override
+  String get communityEditInfo => 'Uredi zajednicu';
+
+  @override
+  String get channelEditInfo => 'Uredi kanal';
+
+  @override
+  String get channelTopic => 'Tema';
+
+  @override
+  String get channelEditFailed => 'Kanal nije sačuvan. Pokušajte ponovo.';
+
+  @override
+  String get channelSave => 'Sačuvaj';
 
   @override
   String get communityNotMember => 'Još niste član';
@@ -8057,6 +8170,27 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get autoBackupPromptLater => 'Ne sada';
 
   @override
+  String get channelPrivate => 'Privatni kanal';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Samo izabrani članovi vide ovaj kanal. Server vidi ko je u njemu.';
+
+  @override
+  String get channelOpenDisclosure => 'Svaki član zajednice vidi ovaj kanal.';
+
+  @override
+  String get channelCreateFailed => 'Kanal nije napravljen. Pokušajte ponovo.';
+
+  @override
+  String get channelMembersFailed =>
+      'Kanal je napravljen. Neki članovi nisu dodati. Pokušajte ponovo da dodate samo te članove.';
+
+  @override
+  String get channelAdminOnly =>
+      'Samo vlasnici i administratori mogu da prave kanale.';
+
+  @override
   String get k1ConfirmTitle => 'Proverite ključ za oporavak';
 
   @override
@@ -8389,4 +8523,40 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsScreenGuardDetail =>
       'Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.';
+
+  @override
+  String get communityInfoTitle => 'Kategorije i ikonica';
+
+  @override
+  String get communityIconChoose => 'Izaberi ikonicu';
+
+  @override
+  String get communityIconRemove => 'Ukloni ikonicu';
+
+  @override
+  String get communityCategories => 'Kategorije';
+
+  @override
+  String get communityCategoryNew => 'Nova kategorija';
+
+  @override
+  String get communityCategoryName => 'Naziv kategorije';
+
+  @override
+  String get communityCategoryRename => 'Preimenuj kategoriju';
+
+  @override
+  String get communityCategoryPlaceholder => 'Kategorija';
+
+  @override
+  String get communityCategoryNone => 'Bez kategorije';
+
+  @override
+  String get communityChannelPlaces => 'Gde su kanali';
+
+  @override
+  String get communityInfoSaveFailed => 'Čuvanje nije uspelo. Pokušaj ponovo.';
+
+  @override
+  String get communityInfoOpen => 'Kategorije i ikonica';
 }

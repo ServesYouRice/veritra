@@ -185,7 +185,7 @@ func TestCommunityInviteAndMemberRemovalAPI(t *testing.T) {
 	bobToken := registerMember(t, handler, ownerToken, "invitebob")
 	carolToken, carolID := registerMemberWithID(t, handler, ownerToken, "invitecarol")
 
-	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]string{"name": "Club"})
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]string{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community: status=%d body=%s", status, body)
 	}
@@ -193,7 +193,7 @@ func TestCommunityInviteAndMemberRemovalAPI(t *testing.T) {
 		ID string `json:"id"`
 	}
 	decodeBody(t, body, &community)
-	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]string{"name": "general"}); status != http.StatusCreated {
+	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]string{}); status != http.StatusCreated {
 		t.Fatalf("create channel: status=%d body=%s", status, body)
 	}
 	if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/invites", ownerToken, inviteBody(t, handler, ownerToken, map[string]interface{}{"max_uses": 5, "expires_in_seconds": 3600})); status != http.StatusCreated {

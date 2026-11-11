@@ -21,11 +21,10 @@ func (a *API) createCommunity(w http.ResponseWriter, r *http.Request, principal 
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if !validDisplayName(req.Name) {
-		writeError(w, http.StatusBadRequest, "invalid_name")
+	if refusePlaintextName(w, req.Name) {
 		return
 	}
-	community, err := a.Store.CreateCommunity(r.Context(), req.Name, principal.AccountID)
+	community, err := a.Store.CreateCommunity(r.Context(), principal.AccountID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "community_create_failed")
 		return
@@ -103,8 +102,7 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 		if !decodeJSON(w, r, &req) {
 			return
 		}
-		if !validDisplayName(req.Name) {
-			writeError(w, http.StatusBadRequest, "invalid_name")
+		if refusePlaintextName(w, req.Name) {
 			return
 		}
 		// Empty means private in a legacy community and open in one with the
@@ -113,7 +111,7 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 			writeError(w, http.StatusBadRequest, "invalid_channel_kind")
 			return
 		}
-		channel, conversation, err := a.Store.CreateChannelWithConversation(r.Context(), parts[0], req.Name, req.Kind, principal.AccountID)
+		channel, conversation, err := a.Store.CreateChannelWithConversation(r.Context(), parts[0], req.Kind, principal.AccountID)
 		if err != nil {
 			handleStorageError(w, err)
 			return
@@ -122,6 +120,17 @@ func (a *API) communitySubroute(w http.ResponseWriter, r *http.Request, principa
 		return
 	}
 	writeError(w, http.StatusNotFound, "not_found")
+}
+
+// refusePlaintextName answers 400 plaintext_name_refused for a non-empty
+// community or channel name (C3, docs/designs/C3-private-channels-and-info.md,
+// "Migration from today"): the server keeps IDs only. Reports whether it did.
+func refusePlaintextName(w http.ResponseWriter, name string) bool {
+	if strings.TrimSpace(name) == "" {
+		return false
+	}
+	writeError(w, http.StatusBadRequest, "plaintext_name_refused")
+	return true
 }
 
 type createConversationRequest struct {
@@ -144,6 +153,10 @@ func (a *API) createConversation(w http.ResponseWriter, r *http.Request, princip
 	}
 	if !validRetention(req.RetentionSeconds) {
 		writeError(w, http.StatusBadRequest, "invalid_retention_seconds")
+		return
+	}
+	// A community channel's title is its encrypted info record (C3).
+	if req.Kind == "community_channel" && req.Title != nil && refusePlaintextName(w, *req.Title) {
 		return
 	}
 	conversation, created, err := a.Store.CreateOrGetConversation(r.Context(), storage.CreateConversationInput{
@@ -495,7 +508,10 @@ type messageEnvelopeRequest struct {
 	// FrankCommit is the C6 franking commitment: a top-level field, exactly
 	// 32 bytes when present, stored write-once in its own column. The server
 	// can neither compute nor check it.
-	FrankCommit    []byte          `json:"frank_commit,omitempty"`
+	FrankCommit []byte `json:"frank_commit,omitempty"`
+	// SealedBody is the C7 sealed body: required in community conversations
+	// while C7 is on, refused elsewhere; the storage layer checks its size.
+	SealedBody     []byte          `json:"sealed_body,omitempty"`
 	AttachmentRefs json.RawMessage `json:"attachment_refs,omitempty"`
 	ReplyToID      *string         `json:"reply_to_id,omitempty"`
 	ThreadRootID   *string         `json:"thread_root_id,omitempty"`
@@ -546,6 +562,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		CryptoProtocol:  req.CryptoProtocol,
 		CryptoMetadata:  req.CryptoMetadata,
 		FrankCommit:     req.FrankCommit,
+		SealedBody:      req.SealedBody,
 		AttachmentRefs:  req.AttachmentRefs,
 		ReplyToID:       req.ReplyToID,
 		ThreadRootID:    req.ThreadRootID,

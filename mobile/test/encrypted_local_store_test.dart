@@ -108,6 +108,49 @@ void main() {
         },
       );
 
+  test('own-removal watermark commits atomically with MLS state and outbox',
+      () async {
+    final store = createStore();
+    final key = List<int>.filled(32, 7);
+    await store.commitOutgoingMlsTransition(OutgoingMlsStateTransition(
+      expectedCounter: 0,
+      expectedCursor: 0,
+      state: StoredCryptoState(counter: 1, stateKey: key, sealedState: [1]),
+      messages: const [
+        PendingMlsMessage(
+          conversationId: 'conv_1',
+          kind: 'bundle',
+          payload: [1],
+          idempotencyKey: 'own-removal',
+        )
+      ],
+    ));
+    final database = databases.single;
+    await database.customStatement('''
+CREATE TRIGGER fail_info_removal BEFORE INSERT ON local_metadata
+WHEN NEW.name = 'setting:c3.removal_epoch.conv_1'
+BEGIN SELECT RAISE(ABORT, 'injected failure'); END
+''');
+    Future<void> commit() => store.commitLocalMlsState(
+          expectedCounter: 1,
+          expectedCursor: 0,
+          state: StoredCryptoState(counter: 2, stateKey: key, sealedState: [2]),
+          resolvedMlsOutboxKey: 'own-removal',
+          infoRemoval: (conversationId: 'conv_1', epoch: 9),
+        );
+    await expectLater(commit(), throwsA(isA<Exception>()));
+    final setting = communityInfoRemovalSetting('conv_1');
+    expect(await store.loadSetting(setting), isNull);
+    expect((await store.loadCryptoState())!.counter, 1);
+    expect(await store.pendingMlsMessages(), hasLength(1));
+    await database.customStatement('DROP TRIGGER fail_info_removal');
+    await commit();
+    expect(await store.loadSetting(setting), '9');
+    expect((await store.loadCryptoState())!.counter, 2);
+    expect(await store.loadSyncCursor(), 0);
+    expect(await store.pendingMlsMessages(), isEmpty);
+  });
+
   test('the sync recovery record persists and leaves with the identity',
       () async {
     final store = createStore();
@@ -1543,6 +1586,9 @@ void main() {
 
       final restarted = createStore();
       expect(await restarted.loadSyncCursor(), 1, reason: stage.name);
+      expect(await restarted.loadSetting(communityInfoRemovalSetting('conv_1')),
+          isNull,
+          reason: stage.name);
       expect((await restarted.loadCryptoState())?.counter, 1,
           reason: stage.name);
       final snapshot = await restarted.loadSnapshot();
@@ -1560,6 +1606,8 @@ void main() {
 
     final successful = createStore();
     await successful.commitMlsTransition(_nextTransition());
+    expect(await successful.loadSetting(communityInfoRemovalSetting('conv_1')),
+        '7');
     expect(await successful.loadSyncCursor(), 2);
     expect((await successful.loadCryptoState())?.counter, 2);
     expect(
@@ -1672,6 +1720,7 @@ bool _noFts5(CommonDatabase db, String option) => option != 'ENABLE_FTS5';
 
 MlsStateTransition _nextTransition() => MlsStateTransition(
       messageId: 'mls_message_2',
+      infoRemovalEpoch: 7,
       conversationId: 'conv_1',
       expectedCounter: 1,
       expectedCursor: 1,

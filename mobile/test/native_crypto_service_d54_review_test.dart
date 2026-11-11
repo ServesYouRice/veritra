@@ -520,6 +520,10 @@ class _FaultyDevice implements NativeCryptoDevice {
       _plain(() => real.mergePendingCommit(groupId));
 
   @override
+  C7CommitOutcome c7MergePendingCommit(String groupId) =>
+      _plain(() => real.c7MergePendingCommit(groupId));
+
+  @override
   void clearPendingCommit(String groupId) =>
       _plain(() => real.clearPendingCommit(groupId));
 

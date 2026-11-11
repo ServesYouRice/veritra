@@ -50,11 +50,11 @@ func newInviteFixture(t *testing.T, ctx context.Context, limits config.Limits) i
 	if _, err := store.ManageConversationMember(ctx, f.group.ID, owner.Account.ID, f.admin.Account.ID, domain.RoleAdmin); err != nil {
 		t.Fatalf("promote group admin: %v", err)
 	}
-	f.comm, err = store.CreateCommunity(ctx, "Club", owner.Account.ID)
+	f.comm, err = store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, f.conv, err = store.CreateChannelWithConversation(ctx, f.comm.ID, "general", "", owner.Account.ID)
+	_, f.conv, err = store.CreateChannelWithConversation(ctx, f.comm.ID, "", owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -516,7 +516,7 @@ func TestCancelAndBounds(t *testing.T) {
 	}
 	// Pending requests per account are bounded.
 	for i := 0; i < maxPendingRequestsPerAccount+1; i++ {
-		other, err := f.store.CreateCommunity(ctx, "c", f.owner.Account.ID)
+		other, err := f.store.CreateCommunity(ctx, f.owner.Account.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -594,7 +594,7 @@ func TestRemoveCommunityMember(t *testing.T) {
 		t.Fatalf("former owner leaves after the transfer: %v", err)
 	}
 	// A community without channels still notifies the removed account.
-	empty, err := f.store.CreateCommunity(ctx, "Empty", f.owner.Account.ID)
+	empty, err := f.store.CreateCommunity(ctx, f.owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

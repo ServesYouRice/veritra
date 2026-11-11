@@ -1090,6 +1090,33 @@ class AppLocalizationsEn extends AppLocalizations {
   String get communityNoChannelsHint => 'Use + to create the first one.';
 
   @override
+  String get communityPlaceholderName => 'Community';
+
+  @override
+  String get channelPlaceholderName => 'Channel';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Private channel';
+
+  @override
+  String get communityInfoEditFailed => 'Could not save the info. Try again.';
+
+  @override
+  String get communityEditInfo => 'Edit community';
+
+  @override
+  String get channelEditInfo => 'Edit channel';
+
+  @override
+  String get channelTopic => 'Topic';
+
+  @override
+  String get channelEditFailed => 'Couldn\'t save the channel. Try again.';
+
+  @override
+  String get channelSave => 'Save';
+
+  @override
   String get communityNotMember => 'You are not a member yet';
 
   @override
@@ -3845,6 +3872,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoBackupPromptLater => 'Not now';
 
   @override
+  String get channelPrivate => 'Private channel';
+
+  @override
+  String get channelPrivateDisclosure =>
+      'Only selected members can see this channel. The server can see who is in it.';
+
+  @override
+  String get channelOpenDisclosure =>
+      'Every community member can see this channel.';
+
+  @override
+  String get channelCreateFailed => 'Could not create the channel. Try again.';
+
+  @override
+  String get channelMembersFailed =>
+      'The channel was created. Some members could not be added. Retry to add only those members.';
+
+  @override
+  String get channelAdminOnly => 'Only owners and admins can create channels.';
+
+  @override
   String get k1ConfirmTitle => 'Check your recovery key';
 
   @override
@@ -4177,4 +4225,40 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get settingsScreenGuardDetail =>
       'Block screenshots and AI-assistant screen reading in chats.';
+
+  @override
+  String get communityInfoTitle => 'Categories and icon';
+
+  @override
+  String get communityIconChoose => 'Choose an icon';
+
+  @override
+  String get communityIconRemove => 'Remove icon';
+
+  @override
+  String get communityCategories => 'Categories';
+
+  @override
+  String get communityCategoryNew => 'New category';
+
+  @override
+  String get communityCategoryName => 'Category name';
+
+  @override
+  String get communityCategoryRename => 'Rename category';
+
+  @override
+  String get communityCategoryPlaceholder => 'Category';
+
+  @override
+  String get communityCategoryNone => 'No category';
+
+  @override
+  String get communityChannelPlaces => 'Where channels sit';
+
+  @override
+  String get communityInfoSaveFailed => 'Could not save. Try again.';
+
+  @override
+  String get communityInfoOpen => 'Categories and icon';
 }

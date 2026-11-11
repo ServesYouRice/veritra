@@ -1155,6 +1155,137 @@ class ApiClient {
     return _decode(() => ReportEnvelopeRecord.fromJson(json));
   }
 
+  // C3 community info records (docs/designs/C3-private-channels-and-info.md).
+  // The body is the sealed `VPE1` blob; the server never sees a name.
+
+  static String _infoPath(String kind, String subjectId, String? communityId) {
+    final id = Uri.encodeComponent(subjectId);
+    return switch (kind) {
+      'community' => '/api/v1/communities/$id/info',
+      'category' =>
+        '/api/v1/communities/${Uri.encodeComponent(communityId ?? '')}/categories/$id',
+      'channel' => '/api/v1/channels/$id/info',
+      _ => throw ArgumentError.value(kind, 'kind'),
+    };
+  }
+
+  /// Uploads an info record. [expectedVersion] 0 is the first write
+  /// (`If-None-Match: *`). Returns the stored version; a 412 is an
+  /// [ApiException] with `version_conflict`.
+  Future<int> putInfoRecord(
+    String token, {
+    required String kind,
+    required String subjectId,
+    String? communityId,
+    required String keyId,
+    required List<int> blob,
+    required int expectedVersion,
+  }) async {
+    final uri =
+        Uri.parse(baseUrl).resolve(_infoPath(kind, subjectId, communityId));
+    final request = await _openRequest('PUT', uri);
+    request.headers
+      ..set(HttpHeaders.authorizationHeader, 'Bearer $token')
+      ..set(HttpHeaders.contentTypeHeader, 'application/octet-stream')
+      ..set('X-Private-Messenger-Encrypted', '1')
+      ..set('X-Profile-Key-Id', keyId);
+    if (expectedVersion == 0) {
+      request.headers.set(HttpHeaders.ifNoneMatchHeader, '*');
+    } else {
+      request.headers.set(HttpHeaders.ifMatchHeader, '"$expectedVersion"');
+    }
+    request.add(blob);
+    final response = await request.close().timeout(_requestTimeout);
+    final json = await _readJsonResponse(response);
+    final version = json['version'];
+    if (version is! int || version < 1) throw const ApiResponseException();
+    return version;
+  }
+
+  /// Fetches an info record, or null when the server has none this account
+  /// may read (404). The blob is at most the large bucket.
+  Future<({int version, String keyId, Uint8List blob})?> getInfoRecord(
+    String token, {
+    required String kind,
+    required String subjectId,
+    String? communityId,
+  }) async {
+    final uri =
+        Uri.parse(baseUrl).resolve(_infoPath(kind, subjectId, communityId));
+    final request = await _openRequest('GET', uri);
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode == HttpStatus.notFound) {
+      await _discard(response);
+      return null;
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final version = int.tryParse(
+        (response.headers.value(HttpHeaders.etagHeader) ?? '')
+            .replaceAll('"', ''));
+    final keyId = response.headers.value('X-Profile-Key-Id') ?? '';
+    final blob = await _readBounded(response, 256 * 1024 + 28);
+    if (version == null || version < 1 || keyId.length != 32) {
+      throw const ApiResponseException();
+    }
+    return (version: version, keyId: keyId, blob: blob);
+  }
+
+  /// Versions of the info records this account may read, per kind. Missing
+  /// or unreadable subjects are left out.
+  Future<List<({String kind, String id, int version, String keyId})>>
+      infoVersions(
+    String token, {
+    List<String> communityIds = const <String>[],
+    List<String> categoryIds = const <String>[],
+    List<String> channelIds = const <String>[],
+  }) async {
+    // Each server list is bounded to 200 IDs; a community may have 500
+    // channels. Fetch every batch rather than silently omitting the tail.
+    if (communityIds.length > 200 ||
+        categoryIds.length > 200 ||
+        channelIds.length > 200) {
+      final versions =
+          <({String kind, String id, int version, String keyId})>[];
+      for (var offset = 0;
+          offset < communityIds.length ||
+              offset < categoryIds.length ||
+              offset < channelIds.length;
+          offset += 200) {
+        versions.addAll(await infoVersions(token,
+            communityIds: communityIds.skip(offset).take(200).toList(),
+            categoryIds: categoryIds.skip(offset).take(200).toList(),
+            channelIds: channelIds.skip(offset).take(200).toList()));
+      }
+      return versions;
+    }
+    final json = await _jsonRequest('POST', '/api/v1/profiles/versions',
+        token: token,
+        body: <String, Object?>{
+          'community_ids': communityIds,
+          'category_ids': categoryIds,
+          'channel_ids': channelIds,
+        });
+    final raw = json['versions'];
+    if (raw is! List) throw const ApiResponseException();
+    return _decode(() => [
+          for (final item in raw)
+            if (item is Map &&
+                item['kind'] is String &&
+                item['id'] is String &&
+                item['version'] is int &&
+                item['key_id'] is String)
+              (
+                kind: item['kind'] as String,
+                id: item['id'] as String,
+                version: item['version'] as int,
+                keyId: item['key_id'] as String,
+              ),
+        ]);
+  }
+
   Future<List<Community>> listCommunities(String token) async {
     final json = await _jsonRequest('GET', '/api/v1/communities', token: token);
     return _rows(json, 'communities', Community.fromJson);
@@ -1169,16 +1300,20 @@ class ApiClient {
     return _rows(json, 'channels', Channel.fromJson);
   }
 
+  /// [name] never leaves the device: the server keeps IDs only and refuses a
+  /// plaintext name (C3). It goes into the encrypted community record.
   Future<Community> createCommunity(String token, String name) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/communities',
       token: token,
-      body: <String, Object?>{'name': name},
+      body: const <String, Object?>{},
     );
     return _decode(() => Community.fromJson(json));
   }
 
+  /// As [createCommunity]: [name] is never sent; it goes into the encrypted
+  /// channel record.
   Future<ChannelCreation> createChannel(
     String token,
     String communityId,
@@ -1189,7 +1324,7 @@ class ApiClient {
       'POST',
       '/api/v1/communities/$communityId/channels',
       token: token,
-      body: <String, Object?>{'name': name, 'kind': kind},
+      body: <String, Object?>{'kind': kind},
     );
     return _decode(() => ChannelCreation.fromJson(json));
   }

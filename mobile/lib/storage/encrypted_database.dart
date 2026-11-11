@@ -592,7 +592,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 34;
+  static const currentSchemaVersion = 35;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -968,6 +968,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // profile keys, accepted profiles and small profile state. New
             // tables only; `_createProfiles` is the whole step.
             if (from < 34) await _createProfiles();
+            // C3 key freshness (schema 35): the authenticated MLS epoch of
+            // each info row. Idempotent: a store from before schema 31 got
+            // the column with the table above.
+            if (from < 35) await _addCommunityInfoEpoch();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1491,6 +1495,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<FrankReveal> frankReveals = const <FrankReveal>[],
     List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     ApprovalLeafChange? approvalLeaves,
+    int? infoRemovalEpoch,
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
@@ -1597,6 +1602,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _applyMessageEffects(messageEffects);
         await _writeFrankRevealsInTransaction(frankReveals);
         await _writeCommunityInfoInTransaction(communityInfo);
+        if (infoRemovalEpoch != null) {
+          await into(localMetadata).insertOnConflictUpdate(
+            LocalMetadataCompanion.insert(
+              name: 'setting:c3.removal_epoch.$conversationId',
+              value: infoRemovalEpoch.toString(),
+            ),
+          );
+        }
         // L1 (D94): the leaf verdicts of a commit or Welcome commit with the
         // group state, so a crash can never leave a merged group unjudged.
         await _writeApprovalLeavesInTransaction(approvalLeaves);
@@ -1884,6 +1897,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String? draftText,
     required int maxEntries,
     List<MessageEffect> messageEffects = const <MessageEffect>[],
+    List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
   }) =>
@@ -1946,6 +1960,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           }
         }
         await _applyMessageEffects(messageEffects);
+        await _writeCommunityInfoInTransaction(communityInfo);
       });
 
   Future<void> commitLocalMlsState({
@@ -1957,6 +1972,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) =>
       transaction(() => _commitLocalMlsStateInTransaction(
             expectedCounter: expectedCounter,
@@ -1967,6 +1983,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             recordChanges: recordChanges,
             leaseKey: leaseKey,
             resolvedMlsOutboxKey: resolvedMlsOutboxKey,
+            infoRemoval: infoRemoval,
           ));
 
   Future<void> _commitLocalMlsStateInTransaction({
@@ -1978,6 +1995,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) async {
     await _assertSyncLeaseInTransaction(leaseKey);
     final previousState = await (select(localCryptoStates)
@@ -2005,6 +2023,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             ..where(
                 (table) => table.idempotencyKey.equals(resolvedMlsOutboxKey)))
           .go();
+    }
+    if (infoRemoval != null) {
+      await into(localMetadata).insertOnConflictUpdate(
+        LocalMetadataCompanion.insert(
+          name: 'setting:c3.removal_epoch.${infoRemoval.conversationId}',
+          value: infoRemoval.epoch.toString(),
+        ),
+      );
     }
   }
 

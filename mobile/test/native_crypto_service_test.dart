@@ -183,6 +183,117 @@ void main() {
     await restarted.dispose();
   }, skip: skip);
 
+  test(
+      'bounded removal persists C3 rotation and retries a cancelled transition',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    final tablet = await _Client.enroll(bindings, 'acct_bob', 'dev_tablet');
+    addTearDown(alice.service.dispose);
+    addTearDown(bob.service.dispose);
+    addTearDown(tablet.service.dispose);
+    await _startConversation(alice, bob);
+    await bob.service
+        .stageMembershipChange('conv_1', adds: [await tablet.keyPackage()]);
+    await _accept(bob, [tablet], [alice]);
+    await bob.service.stageMembershipChange('conv_1',
+        removes: [(accountId: 'acct_bob', deviceId: 'dev_tablet')]);
+    final item = await _accept(bob, [], []);
+    final message = MlsMessage(
+      id: 'mls_bounded_removal',
+      conversationId: 'conv_1',
+      senderAccountId: bob.accountId,
+      senderDeviceId: bob.deviceId,
+      kind: 'commit',
+      payload: MlsCommitBundle.decode(item.payload).commit,
+      idempotencyKey: item.idempotencyKey,
+      syncEventId: alice.nextEvent(),
+      createdAt: DateTime.now().toUtc(),
+    );
+    final before = await alice.store.loadCryptoState();
+    await expectLater(
+        alice.service.processMlsMessageBounded(message, checkCanCommit: () {
+          // This fence runs again after the native group has advanced.
+          if (alice.store.nativeRemovalReached) throw StateError('wake ended');
+        }),
+        throwsStateError);
+    expect((await alice.store.loadCryptoState())!.counter, before!.counter);
+    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        isNull);
+    alice.store.nativeRemovalReached = false;
+    await alice.service
+        .processMlsMessageBounded(message, checkCanCommit: () {});
+    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        '3');
+    final counter = (await alice.store.loadCryptoState())!.counter;
+    await alice.service
+        .processMlsMessageBounded(message, checkCanCommit: () {});
+    expect((await alice.store.loadCryptoState())!.counter, counter);
+    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        '3');
+  }, skip: skip);
+
+  for (final ownEcho in [false, true]) {
+    test('own removal records C3 rotation (own echo: $ownEcho)', () async {
+      final bindings = NativeCryptoBindings.open(libraryPath!);
+      final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+      final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+      addTearDown(alice.service.dispose);
+      addTearDown(bob.service.dispose);
+      await _startConversation(alice, bob);
+      final setting = communityInfoRemovalSetting('conv_1');
+      expect(await alice.store.loadSetting(setting), isNull);
+      await alice.service.stageSelfUpdate('conv_1');
+      final update = await _accept(alice, [], [bob]);
+      expect(MlsCommitBundle.decode(update.payload).isUpdateOnly, isTrue);
+      expect(await alice.store.loadSetting(setting), isNull);
+
+      await alice.service.stageMembershipChange('conv_1',
+          removes: [(accountId: bob.accountId, deviceId: bob.deviceId)]);
+      final item = (await alice.store.pendingMlsMessages()).single;
+      final bundle = MlsCommitBundle.decode(item.payload);
+      expect(await alice.store.loadSetting(setting), isNull,
+          reason: 'a staged removal is not an accepted removal');
+      if (ownEcho) {
+        final message = MlsMessage(
+          id: 'mls_own_removal',
+          conversationId: 'conv_1',
+          senderAccountId: alice.accountId,
+          senderDeviceId: alice.deviceId,
+          kind: 'commit',
+          payload: bundle.commit,
+          idempotencyKey: item.idempotencyKey,
+          syncEventId: alice.nextEvent(),
+          createdAt: DateTime.now().toUtc(),
+        );
+        final before = (await alice.store.loadCryptoState())!.counter;
+        await expectLater(
+            alice.service.processMlsMessageBounded(message, checkCanCommit: () {
+              if (alice.store.nativeRemovalReached) {
+                throw StateError('wake ended');
+              }
+            }),
+            throwsStateError);
+        expect((await alice.store.loadCryptoState())!.counter, before);
+        expect(await alice.store.loadSetting(setting), isNull);
+        expect(await alice.store.pendingMlsMessages(), hasLength(1));
+        alice.store.nativeRemovalReached = false;
+        await alice.service
+            .processMlsMessageBounded(message, checkCanCommit: () {});
+      } else {
+        await alice.service.completeCommitBundle(item);
+      }
+      expect(await alice.store.loadSetting(setting), '${bundle.epoch + 1}');
+      expect(await alice.store.pendingMlsMessages(), isEmpty);
+      expect(await alice.service.groupEpoch('conv_1'),
+          (epoch: bundle.epoch + 1, pending: false));
+      // A late completion after an accepted echo must preserve the marker.
+      await alice.service.completeCommitBundle(item);
+      expect(await alice.store.loadSetting(setting), '${bundle.epoch + 1}');
+    }, skip: skip);
+  }
+
   test('a device added after creation joins and reads new messages', () async {
     final bindings = NativeCryptoBindings.open(libraryPath!);
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
@@ -205,6 +316,12 @@ void main() {
     await tablet.receive(alice, hello);
     expect((await tablet.history()).single.body, 'hi');
 
+    // Adds alone do not rotate C3 info keys.
+    expect(await alice.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        isNull);
+    expect(await bob.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        isNull);
+
     // Removing the tablet again is one more bundle.
     await alice.service.stageMembershipChange('conv_1', removes: <MlsDeviceRef>[
       (accountId: 'acct_bob', deviceId: 'dev_tablet')
@@ -214,6 +331,13 @@ void main() {
     expect(
         await alice.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
     expect(await bob.service.groupEpoch('conv_1'), (epoch: 3, pending: false));
+    // The survivor records the authenticated removal with MLS state; the
+    // removed device must never distribute a replacement key.
+    expect(await bob.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        '3');
+    expect(
+        await tablet.store.loadSetting(communityInfoRemovalSetting('conv_1')),
+        isNull);
     // The tablet applies its own removal, which drops its group (D70), and
     // can no longer send.
     expect(await tablet.service.groupEpoch('conv_1'), isNull);
@@ -492,18 +616,28 @@ Future<void> _deliverCommit(
 
 int _serverIds = 0;
 
+class _RemovalStore extends MemoryLocalStore {
+  bool nativeRemovalReached = false;
+
+  @override
+  Future<void> commitMlsTransition(MlsStateTransition transition) {
+    if (transition.infoRemovalEpoch != null) nativeRemovalReached = true;
+    return super.commitMlsTransition(transition);
+  }
+}
+
 class _Client {
   _Client(this.service, this.store, this.accountId, this.deviceId);
 
   final NativeCryptoService service;
-  final MemoryLocalStore store;
+  final _RemovalStore store;
   final String accountId;
   final String deviceId;
   int _events = 0;
 
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
-    final store = MemoryLocalStore();
+    final store = _RemovalStore();
     final service =
         TestNativeCryptoService(bindings: bindings, localStore: store);
     await service.createEnrollmentCredential(EnrollmentReservation(

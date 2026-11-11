@@ -10,6 +10,7 @@ import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart'
     show BackupHeaderInfo, DeviceListBody, DeviceListPair, OpenedBackup;
 import 'app_payload.dart';
+import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'profile_record_codec.dart' show ProfileRecordCodec;
 
 class ConversationSafetyNumber {
@@ -491,6 +492,12 @@ abstract interface class ExpiringPayloadCryptoService {
     List<String> attachmentRefs = const <String>[],
     String? draftText,
   });
+}
+
+/// C3: seals and opens community info records. Only the native service
+/// offers it, so the app never names that service directly.
+abstract interface class CommunityInfoCryptoService {
+  CommunityInfoCodec get communityInfoCodec;
 }
 
 /// W11: the service that owns the native library also hands out the profile

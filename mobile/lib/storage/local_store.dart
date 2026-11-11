@@ -363,6 +363,10 @@ class EnrollmentPromotion {
   String toString() => 'EnrollmentPromotion($kind)';
 }
 
+/// Durable C3 removal watermark, written atomically with the MLS transition.
+String communityInfoRemovalSetting(String conversationId) =>
+    'c3.removal_epoch.$conversationId';
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -378,6 +382,7 @@ class MlsStateTransition {
     this.frankReveals = const <FrankReveal>[],
     this.communityInfo = const <CommunityInfoEvent>[],
     this.approvalLeaves,
+    this.infoRemovalEpoch,
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
   });
@@ -385,6 +390,9 @@ class MlsStateTransition {
   /// The leaf verdicts of the commit or Welcome this transition applies
   /// (L1, D94), written in the same transaction.
   final ApprovalLeafChange? approvalLeaves;
+
+  /// Authenticated remote removal epoch (C3); null for adds and updates.
+  final int? infoRemovalEpoch;
 
   /// An MLS outbox item that this transition settles, removed with it
   /// (card I51: this device's commit, merged when its echo arrives).
@@ -483,6 +491,7 @@ class OutgoingApplicationStateTransition {
     required this.envelope,
     this.draftText,
     this.messageEffects = const <MessageEffect>[],
+    this.communityInfo = const <CommunityInfoEvent>[],
   });
 
   final int expectedCounter;
@@ -493,6 +502,11 @@ class OutgoingApplicationStateTransition {
 
   /// This device's own copy of what it sent, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
+
+  /// C3: this device's own info key or announcement. MLS never decrypts a
+  /// device's own application message, so without this copy the sender
+  /// would not hold its own key or pass its own announcement check.
+  final List<CommunityInfoEvent> communityInfo;
 }
 
 class PendingEnvelopeRecord {
@@ -605,6 +619,10 @@ abstract class LocalStore {
   /// oldest first, bounded per subject.
   Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
       CommunityInfoEventKind kind, String subjectKind, String subjectId);
+
+  /// Keeps events this device made itself (its own new keys), outside any
+  /// MLS commit, under the same bounds as received ones.
+  Future<void> recordOwnCommunityInfoEvents(List<CommunityInfoEvent> events);
 
   /// The record this device last accepted for a subject, or null.
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
@@ -748,11 +766,14 @@ abstract class LocalStore {
   /// Stores a local MLS state change. [resolvedMlsOutboxKey] names an MLS
   /// outbox item settled by the same change (a commit bundle the server
   /// accepted or refused, card I51); it is removed atomically.
+  /// [infoRemoval] records an authenticated own removal in that transaction,
+  /// so revocation coordinators also owe C3 key rotation after a restart.
   Future<void> commitLocalMlsState({
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   });
   Future<StoredCryptoState?> loadCryptoState();
 
@@ -1367,6 +1388,10 @@ class MemoryLocalStore implements LocalStore {
       _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
           protectedKeyIds: protectedKeyIds);
     }
+    if (transition.infoRemovalEpoch case final epoch?) {
+      _settings[communityInfoRemovalSetting(transition.conversationId)] =
+          epoch.toString();
+    }
     _applyApprovalLeaves(transition.approvalLeaves);
     _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
@@ -1398,6 +1423,18 @@ class MemoryLocalStore implements LocalStore {
       return null;
     }
     return row;
+  }
+
+  @override
+  Future<void> recordOwnCommunityInfoEvents(
+      List<CommunityInfoEvent> events) async {
+    final protectedKeyIds = {
+      for (final record in _acceptedCommunityInfo.values) record.keyId
+    };
+    for (final event in events) {
+      _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
+          protectedKeyIds: protectedKeyIds);
+    }
   }
 
   @override
@@ -1816,6 +1853,13 @@ class MemoryLocalStore implements LocalStore {
       throw const OutboxFullException();
     }
     _applyHistoryEffects(transition.messageEffects);
+    final protectedKeyIds = {
+      for (final record in _acceptedCommunityInfo.values) record.keyId
+    };
+    for (final event in transition.communityInfo) {
+      _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
+          protectedKeyIds: protectedKeyIds);
+    }
     _setCryptoState(transition.state);
     final sentText = transition.draftText;
     final draft = _drafts[transition.envelope.conversationId];
@@ -1838,10 +1882,15 @@ class MemoryLocalStore implements LocalStore {
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
     _setCryptoState(state);
+    if (infoRemoval != null) {
+      _settings[communityInfoRemovalSetting(infoRemoval.conversationId)] =
+          infoRemoval.epoch.toString();
+    }
     if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
@@ -3151,6 +3200,7 @@ class SecureLocalStore implements LocalStore {
       frankReveals: transition.frankReveals,
       communityInfo: transition.communityInfo,
       approvalLeaves: transition.approvalLeaves,
+      infoRemovalEpoch: transition.infoRemovalEpoch,
     );
   }
 
@@ -3164,6 +3214,11 @@ class SecureLocalStore implements LocalStore {
           String subjectKind,
           String subjectId) async =>
       (await _database()).readCommunityInfoEvents(kind, subjectKind, subjectId);
+
+  @override
+  Future<void> recordOwnCommunityInfoEvents(
+          List<CommunityInfoEvent> events) async =>
+      (await _database()).writeCommunityInfoEvents(events);
 
   @override
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
@@ -3409,6 +3464,7 @@ class SecureLocalStore implements LocalStore {
         maxEntries: maxPendingEnvelopes,
         draftText: transition.draftText,
         messageEffects: transition.messageEffects,
+        communityInfo: transition.communityInfo,
         recordChanges: _recordWrites(transition.state),
         leaseKey: _syncLeaseKey,
       );
@@ -3426,6 +3482,7 @@ class SecureLocalStore implements LocalStore {
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: expectedCounter, currentCursor: expectedCursor);
@@ -3438,6 +3495,7 @@ class SecureLocalStore implements LocalStore {
       recordChanges: _recordWrites(state),
       leaseKey: _syncLeaseKey,
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
+      infoRemoval: infoRemoval,
     );
   }
 

@@ -1935,6 +1935,60 @@ abstract class AppLocalizations {
   /// **'Use + to create the first one.'**
   String get communityNoChannelsHint;
 
+  /// No description provided for @communityPlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Community'**
+  String get communityPlaceholderName;
+
+  /// No description provided for @channelPlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Channel'**
+  String get channelPlaceholderName;
+
+  /// No description provided for @channelPrivatePlaceholderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Private channel'**
+  String get channelPrivatePlaceholderName;
+
+  /// No description provided for @communityInfoEditFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the info. Try again.'**
+  String get communityInfoEditFailed;
+
+  /// No description provided for @communityEditInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit community'**
+  String get communityEditInfo;
+
+  /// No description provided for @channelEditInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit channel'**
+  String get channelEditInfo;
+
+  /// No description provided for @channelTopic.
+  ///
+  /// In en, this message translates to:
+  /// **'Topic'**
+  String get channelTopic;
+
+  /// No description provided for @channelEditFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t save the channel. Try again.'**
+  String get channelEditFailed;
+
+  /// No description provided for @channelSave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save'**
+  String get channelSave;
+
   /// No description provided for @communityNotMember.
   ///
   /// In en, this message translates to:
@@ -6321,6 +6375,42 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get autoBackupPromptLater;
 
+  /// No description provided for @channelPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'Private channel'**
+  String get channelPrivate;
+
+  /// No description provided for @channelPrivateDisclosure.
+  ///
+  /// In en, this message translates to:
+  /// **'Only selected members can see this channel. The server can see who is in it.'**
+  String get channelPrivateDisclosure;
+
+  /// No description provided for @channelOpenDisclosure.
+  ///
+  /// In en, this message translates to:
+  /// **'Every community member can see this channel.'**
+  String get channelOpenDisclosure;
+
+  /// No description provided for @channelCreateFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not create the channel. Try again.'**
+  String get channelCreateFailed;
+
+  /// No description provided for @channelMembersFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The channel was created. Some members could not be added. Retry to add only those members.'**
+  String get channelMembersFailed;
+
+  /// No description provided for @channelAdminOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Only owners and admins can create channels.'**
+  String get channelAdminOnly;
+
   /// No description provided for @k1ConfirmTitle.
   ///
   /// In en, this message translates to:
@@ -6878,6 +6968,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Block screenshots and AI-assistant screen reading in chats.'**
   String get settingsScreenGuardDetail;
+
+  /// No description provided for @communityInfoTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories and icon'**
+  String get communityInfoTitle;
+
+  /// No description provided for @communityIconChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an icon'**
+  String get communityIconChoose;
+
+  /// No description provided for @communityIconRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove icon'**
+  String get communityIconRemove;
+
+  /// No description provided for @communityCategories.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories'**
+  String get communityCategories;
+
+  /// No description provided for @communityCategoryNew.
+  ///
+  /// In en, this message translates to:
+  /// **'New category'**
+  String get communityCategoryNew;
+
+  /// No description provided for @communityCategoryName.
+  ///
+  /// In en, this message translates to:
+  /// **'Category name'**
+  String get communityCategoryName;
+
+  /// No description provided for @communityCategoryRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename category'**
+  String get communityCategoryRename;
+
+  /// No description provided for @communityCategoryPlaceholder.
+  ///
+  /// In en, this message translates to:
+  /// **'Category'**
+  String get communityCategoryPlaceholder;
+
+  /// No description provided for @communityCategoryNone.
+  ///
+  /// In en, this message translates to:
+  /// **'No category'**
+  String get communityCategoryNone;
+
+  /// No description provided for @communityChannelPlaces.
+  ///
+  /// In en, this message translates to:
+  /// **'Where channels sit'**
+  String get communityChannelPlaces;
+
+  /// No description provided for @communityInfoSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save. Try again.'**
+  String get communityInfoSaveFailed;
+
+  /// No description provided for @communityInfoOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Categories and icon'**
+  String get communityInfoOpen;
 }
 
 class _AppLocalizationsDelegate

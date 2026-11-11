@@ -163,9 +163,10 @@ type Invite struct {
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
+// Community and Channel carry IDs only: names, topics and icons are the
+// apps' encrypted info records (C3, migration 0082).
 type Community struct {
 	ID        string    `json:"id"`
-	Name      string    `json:"name"`
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	// LayoutVersion, LayoutGeneration and SharedConversationID describe the
@@ -178,7 +179,6 @@ type Community struct {
 type Channel struct {
 	ID          string `json:"id"`
 	CommunityID string `json:"community_id"`
-	Name        string `json:"name"`
 	// Kind is private or announcement in a legacy community and open,
 	// announcement or private in a community with the shared-group layout.
 	Kind      string    `json:"kind"`
@@ -238,7 +238,10 @@ type MessageEnvelope struct {
 	// FrankCommit is the C6 franking commitment (32 bytes) the sender
 	// attached at send time. Opaque to the server, written once at insert,
 	// never inside CryptoMetadata (C6 condition G3).
-	FrankCommit    []byte          `json:"frank_commit,omitempty"`
+	FrankCommit []byte `json:"frank_commit,omitempty"`
+	// SealedBody is the C7 sealed body (docs/designs/C7-channel-history.md):
+	// opaque, stored in envelope_bodies, never in sync_events.
+	SealedBody     []byte          `json:"sealed_body,omitempty"`
 	AttachmentRefs json.RawMessage `json:"attachment_refs"`
 	ReplyToID      *string         `json:"reply_to_id,omitempty"`
 	ThreadRootID   *string         `json:"thread_root_id,omitempty"`

@@ -11,6 +11,7 @@ import 'package:flutter/foundation.dart'
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
+import '../crypto/community_info_codec.dart';
 import '../crypto/poll.dart';
 import '../crypto/link_preview.dart';
 import '../crypto/message_format.dart';
@@ -28,6 +29,8 @@ import '../crypto/native_crypto_bindings.dart'
         NativeCryptoException,
         idBytes;
 import 'device_lists.dart';
+import 'community_info_book.dart';
+import 'community_info_service.dart';
 import 'k1_restore.dart';
 import 'k1_second_copy.dart';
 import '../crypto/sha256.dart';
@@ -103,6 +106,7 @@ part 'app_state_k1_restore.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
 part 'app_state_l1_joins.dart';
+part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -226,6 +230,9 @@ class Ops {
 
   /// C1: invitations, join requests and community membership.
   static const membership = 'membership';
+
+  /// C3: background community info sends (keys, requests, announcements).
+  static const communityInfo = 'community_info';
   static const blocks = 'blocks';
   static const profile = 'profile';
   static const mute = 'mute';
@@ -448,6 +455,21 @@ class AppState extends ChangeNotifier
   /// (C0): that group holds every open channel, so which one a post goes to,
   /// and which posts are listed, comes from here. Set by the chat screen.
   final Map<String, String> _selectedChannels = {};
+
+  // C3 (app_state_community_info.dart).
+  CommunityInfoService? _infoService;
+  String? _infoServiceOwner;
+  Session? _infoServiceSession;
+  bool _infoRefreshRunning = false;
+  bool _infoRefreshAgain = false;
+  DateTime? _lastInfoRefresh;
+  final Map<String, bool> _infoAdminOf = {};
+  final Map<String, Future<void>> _infoPublishing = {};
+
+  /// The verified C4 role source for community info until the C4 client
+  /// wiring makes this class one; tests set it.
+  @visibleForTesting
+  VerifiedRoleSource? debugInfoRoleSource;
   Set<String> starredMessages = {};
   bool showArchivedChats = false;
 
@@ -597,6 +619,12 @@ class AppState extends ChangeNotifier
       if (record != null) {
         return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
       }
+    }
+    // No verified record: a server hint for availability only (the server
+    // checks every write). The refreshed roster is the fresher hint; the
+    // conversation's role stands in until it has loaded.
+    if (_channelCreationAccessKnown(communityId)) {
+      return mayCreateCommunityChannel(communityId);
     }
     final role = communityRole(communityId);
     return role == 'owner' || role == 'admin';
@@ -777,6 +805,11 @@ class AppState extends ChangeNotifier
   // until their first fetch resolves.
   bool conversationsLoaded = false;
   bool communitiesLoaded = false;
+  final Map<String, bool> _channelCreationAccess = {};
+  Session? _channelCreationSession;
+  int _channelCreationGeneration = 0;
+  int _communityRefreshRequest = 0;
+
   bool invitesLoaded = false;
 
   /// True when the last [refreshInvites] could not list the invites. The
@@ -2220,6 +2253,20 @@ class AppState extends ChangeNotifier
   bool _refreshOwned(Session current, int generation) =>
       !_disposed && _syncOwnerActive(current, generation);
 
+  /// Availability only: the server checks creation rights on every write.
+  /// Never use this roster hint to authenticate encrypted info records.
+  bool _channelCreationAccessKnown(String communityId) =>
+      _channelCreationSession != null &&
+      identical(session, _channelCreationSession) &&
+      _sessionGeneration == _channelCreationGeneration &&
+      _channelCreationAccess.containsKey(communityId);
+
+  bool mayCreateCommunityChannel(String communityId) =>
+      _channelCreationSession != null &&
+      identical(session, _channelCreationSession) &&
+      _sessionGeneration == _channelCreationGeneration &&
+      _channelCreationAccess[communityId] == true;
+
   /// Refreshes communities (and their channels) the account belongs to.
   /// Best-effort for the same reason as [refreshInvites].
   Future<void> refreshCommunities() async {
@@ -2229,30 +2276,51 @@ class AppState extends ChangeNotifier
       return;
     }
     final generation = _sessionGeneration;
+    final request = ++_communityRefreshRequest;
+    _channelCreationAccess.clear();
+    _channelCreationSession = current;
+    _channelCreationGeneration = generation;
+    notifyListeners();
+    bool active() =>
+        request == _communityRefreshRequest &&
+        _refreshOwned(current, generation);
     try {
       final list = await client.listCommunities(current.token);
       final channels = <String, List<Channel>>{};
+      final creationAccess = <String, bool>{};
       for (final community in list) {
-        if (!_refreshOwned(current, generation)) return;
+        if (!active()) return;
         try {
           channels[community.id] =
               await client.listChannels(current.token, community.id);
         } catch (_) {
-          if (!_refreshOwned(current, generation)) return;
+          if (!active()) return;
           channels[community.id] =
               channelsByCommunity[community.id] ?? const <Channel>[];
         }
+        if (!active()) return;
+        try {
+          final members =
+              await client.communityMembers(current.token, community.id);
+          creationAccess[community.id] = members.any((member) =>
+              member.accountId == current.accountId &&
+              (member.role == 'owner' || member.role == 'admin'));
+        } catch (_) {
+          // Unknown rights hide the entry; refresh can try again later.
+        }
       }
-      if (!_refreshOwned(current, generation)) return;
+      if (!active()) return;
       communities = list;
       channelsByCommunity = channels;
+      _channelCreationAccess.addAll(creationAccess);
     } catch (_) {
       // Keep the locally-known records if the server can't list right now.
     }
     // Nothing from a session that has since ended or been replaced.
-    if (!_refreshOwned(current, generation)) return;
+    if (!active()) return;
     communitiesLoaded = true;
     notifyListeners();
+    unawaited(refreshCommunityInfo());
   }
 
   Future<void> _refreshConversations({
@@ -2629,11 +2697,26 @@ class AppState extends ChangeNotifier
         await refreshConversations();
       }
     });
+    final made = created;
+    // C3: the name also goes into the encrypted record, under a new
+    // community key this device makes. Outside `_run`: it sends, and a send
+    // queues behind `_run` (a deadlock inside it).
+    if (error == null && made != null && made.sharedConversationId != null) {
+      unawaited(publishCommunityInfo(made.id, name: name, mint: true));
+    }
+    if (error == null && made != null) {
+      // Load the creator's roster rights too, so the first channel does not
+      // require a manual refresh of the new community.
+      unawaited(refreshCommunities());
+    }
     return error == null ? created : null;
   }
 
   /// Creates a channel and its backing conversation in one server transaction.
-  Future<void> createChannel(String communityId, String name) async {
+  Future<Channel?> createChannel(String communityId, String name,
+      {String? kind}) async {
+    ({Channel channel, bool shared})? made;
+    Channel? created;
     await _run(() async {
       final current = session;
       final client = api;
@@ -2653,8 +2736,9 @@ class AppState extends ChangeNotifier
         current.token,
         communityId,
         name,
-        kind: sharedLayout ? 'open' : 'private',
+        kind: kind ?? (sharedLayout ? 'open' : 'private'),
       );
+      created = creation.channel;
       final inSharedGroup = creation.conversation.isCommunityShared;
       // An open channel posts into the community's existing group.
       if (!inSharedGroup) {
@@ -2680,15 +2764,29 @@ class AppState extends ChangeNotifier
       if (inSharedGroup) {
         selectChannel(creation.conversation.id, creation.channel.id);
       }
+      if (creation.channel.isRouted) {
+        made = (channel: creation.channel, shared: inSharedGroup);
+      }
       await loadMessages(creation.conversation.id);
     });
+    // C3: the encrypted channel record, and for an open channel the
+    // community record that lists it. Outside `_run` (see createCommunity).
+    final routed = made;
+    if (error == null && routed != null) {
+      unawaited(() async {
+        await publishChannelInfo(routed.channel, name: name, mint: true);
+        if (routed.shared) await publishCommunityInfo(communityId);
+      }());
+    }
+    return error == null ? created : null;
   }
 
-  Future<void> addConversationMember(
+  Future<bool> addConversationMember(
     String conversationId,
     String accountId, {
     String role = 'member',
   }) async {
+    var added = false;
     await _run(() async {
       final current = session;
       final client = api;
@@ -2708,6 +2806,7 @@ class AppState extends ChangeNotifier
         accountId,
         role: role,
       );
+      added = true;
       // Their devices join the MLS group through reconcile (card I51). The
       // change is new, so an earlier one's backoff does not hold it.
       _mlsReconcileRequested = true;
@@ -2715,6 +2814,7 @@ class AppState extends ChangeNotifier
       _mlsChangeRetries.remove(conversationId);
       unawaited(_catchUpSyncEvents());
     });
+    return added;
   }
 
   /// Loads the server-recorded roster for a conversation.
@@ -2804,6 +2904,10 @@ class AppState extends ChangeNotifier
         _removalHoldsUpdated();
       }
     }
+    // C3 (D80): the info key this conversation carries rotates at once,
+    // after the hold above, so the new key is encrypted only after the
+    // removal commit.
+    await _markInfoRotation(conversationId);
     // Their devices leave the MLS group through reconcile (card I51). The
     // change is new, so an earlier one's backoff does not hold it.
     _mlsReconcileRequested = true;
@@ -4431,7 +4535,11 @@ class AppState extends ChangeNotifier
   }) {
     var queued = false;
     var held = false;
-    return _runScoped(Ops.send, () async {
+    // C3 info payloads are background work: their failures land under
+    // their own op, never in the composer's send error.
+    return _runScoped(
+        infoPayloadTypes.contains(type) ? Ops.communityInfo : Ops.send,
+        () async {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final current = session;
       final client = api;
@@ -4480,9 +4588,11 @@ class AppState extends ChangeNotifier
       // carry it; otherwise the payload has none and receivers fall back to
       // the server-stamped time.
       final retention = conversation.retentionSeconds;
-      final DateTime? senderExpiry = retention != null && retention > 0
-          ? DateTime.now().toUtc().add(Duration(seconds: retention))
-          : null;
+      // C3 info payloads never expire: a key must outlive the timer.
+      final DateTime? senderExpiry =
+          retention != null && retention > 0 && !infoPayloadTypes.contains(type)
+              ? DateTime.now().toUtc().add(Duration(seconds: retention))
+              : null;
       final Object? expiringService = mls;
       if (mls != null &&
           senderExpiry != null &&
@@ -5826,6 +5936,13 @@ class AppState extends ChangeNotifier
     }
     await _syncOwner?.request();
     _retryOwedKeyPackages();
+    // C3: keys and announcements arrive over MLS; look again at most once
+    // a minute.
+    final last = _lastInfoRefresh;
+    if (last == null ||
+        DateTime.now().difference(last) >= const Duration(minutes: 1)) {
+      unawaited(refreshCommunityInfo());
+    }
   }
 
   Future<void> _runOwnedCatchUp(Session current, int ownerGeneration) async {
@@ -6841,7 +6958,8 @@ class AppState extends ChangeNotifier
       type == 'read_receipt.updated' ||
       type == 'mls.revocation.pending' ||
       type == 'mls.revocation.completed' ||
-      type == 'device_list.updated';
+      type == 'device_list.updated' ||
+      type == 'info.updated';
 
   /// Refreshes what a run of projection events asks for, once per kind: a
   /// burst of device or membership events costs one device-list and one
@@ -6862,6 +6980,11 @@ class AppState extends ChangeNotifier
         // group change: run the membership pass now instead of waiting for
         // the fallback. IDs only; nothing local changed, so no refresh.
         _mlsReconcileRequested = true;
+        continue;
+      }
+      if (type == 'info.updated') {
+        // C3: an info record changed; fetch and judge it. IDs only.
+        unawaited(refreshCommunityInfo());
         continue;
       }
       if (type.startsWith('device.') ||
@@ -6944,6 +7067,7 @@ class AppState extends ChangeNotifier
       SyncEvent event, _SyncPageRepair repair,
       {WakeRunContext? wake, required ApiClient client}) async {
     final current = session;
+    final infoGeneration = _sessionGeneration;
     final mls = _mlsCrypto;
     if (current == null || mls == null) return null;
     // A background pass uses only the bounded inbound operations, fenced by
@@ -6982,9 +7106,12 @@ class AppState extends ChangeNotifier
         // This device's own commit, accepted but not yet completed by the
         // outbox (answer lost, or the app stopped): sync merges it, so
         // note its update path here as the outbox would have.
-        final ownPathCommit = message.kind == 'commit' &&
-            message.senderDeviceId == current.deviceId &&
-            await _queuedPathCommit(message.idempotencyKey);
+        final ownBundle = message.kind == 'commit' &&
+                message.senderDeviceId == current.deviceId
+            ? await _queuedCommitBundle(message.idempotencyKey)
+            : null;
+        final ownPathCommit = ownBundle != null &&
+            (ownBundle.isUpdateOnly || ownBundle.removed.isNotEmpty);
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
           if (await _skipWelcomeBeforeLeave(current, event, message,
@@ -7016,11 +7143,24 @@ class AppState extends ChangeNotifier
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
         }
+        if (message.kind == 'commit' &&
+            message.senderDeviceId != current.deviceId) {
+          // A remote moderator's removal owes an immediate C3 rotation.
+          // The native transition recorded it durably; foreground work
+          // places it once topology is available. Wakes only invalidate
+          // the throttle so the next foreground pass handles it.
+          _lastInfoRefresh = null;
+          if (wake == null) unawaited(refreshCommunityInfo());
+        }
         if (ownPathCommit) {
           await _noteSelfUpdate(
               current,
               (policy) => policy.recordPathCommit(
                   message.conversationId, DateTime.now()));
+        }
+        if (wake == null && ownBundle != null && ownBundle.added.isNotEmpty) {
+          unawaited(_trackBackground(() => _deliverInfoAfterAdd(
+              current, infoGeneration, message.conversationId)));
         }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
@@ -8037,6 +8177,11 @@ class AppState extends ChangeNotifier
         _mlsAcceptedUnfinished.remove(message.idempotencyKey);
         if (isBundle) {
           final bundle = MlsCommitBundle.decode(message.payload);
+          if (bundle.added.isNotEmpty &&
+              _syncOwnerActive(current, ownerGeneration)) {
+            unawaited(_trackBackground(() => _deliverInfoAfterAdd(
+                current, ownerGeneration, message.conversationId)));
+          }
           // Sends held for this removal (D68) go once reconcile confirms it.
           if (bundle.removed.isNotEmpty &&
               _removalHolds.containsKey(message.conversationId)) {
@@ -9041,21 +9186,18 @@ class AppState extends ChangeNotifier
     return _isUpdateOnlyBundle(message) ? backoff : null;
   }
 
-  /// Whether the outbox holds this device's commit bundle [idempotencyKey]
-  /// and it carries an update path (a self-update, or a removal). Never
-  /// throws: a wrong answer costs at most an early or late self-update.
-  Future<bool> _queuedPathCommit(String idempotencyKey) async {
+  /// This device's queued bundle, before sync resolves it after a lost
+  /// server response. Used for self-update tracking and C3 add-key delivery.
+  Future<MlsCommitBundle?> _queuedCommitBundle(String idempotencyKey) async {
     try {
       final queued = (await localStore.pendingMlsMessages())
           .where((item) =>
               item.kind == MlsCommitBundle.kind &&
               item.idempotencyKey == idempotencyKey)
           .firstOrNull;
-      if (queued == null) return false;
-      final bundle = MlsCommitBundle.decode(queued.payload);
-      return bundle.isUpdateOnly || bundle.removed.isNotEmpty;
+      return queued == null ? null : MlsCommitBundle.decode(queued.payload);
     } catch (_) {
-      return false;
+      return null;
     }
   }
 

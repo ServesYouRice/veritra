@@ -520,6 +520,78 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   assigned counters 24/41/0074 remain unused. Full-package follow-ups are recorded
   in the integration design; independent security review is still required.
 
+- **C3 key freshness, local schema 35 (2026-11-11):** no ABI or wire change.
+  The info key a device seals with (`CommunityInfoService.currentKey`) was
+  the one whose id first arrived here last. A retired key whose first copy
+  arrived after its replacement (a delayed message, or a past-epoch message
+  MLS still decrypts) therefore became current, and later edits were sealed
+  under a key the removed member holds. The rule is now:
+  1. Every stored `info_key` row carries `epoch`: the MLS epoch the message
+     was encrypted in, read from the PrivateMessage header **after** it
+     decrypted (the epoch picks the epoch secrets and is in the content
+     AAD, so decryption authenticates it). The server's `mls_epoch` hint is
+     never used. A device's own sent copy carries the epoch it encrypted in;
+     a key it makes carries `max(group epoch, last removal epoch)`.
+  2. A repeated row keeps its first arrival (`seq`) and the **lowest** epoch
+     seen for it, so a delayed original lowers it and a re-delivery in a
+     later epoch never raises it. Evicted keys keep the epoch with their
+     tombstone.
+  3. Only trusted rows count: in the owning group, from this account or
+     from an owner/admin under the verified role state. A key's freshness is
+     the lowest epoch of its trusted rows; a current member replaying a key
+     at an old epoch it kept secrets for cannot retire it.
+  4. A key whose freshness is below the group's last removal epoch (the
+     watermark committed with the MLS state) is retired: never current, even
+     when it is the only key held. Callers then ask, or wait for rotation.
+  5. Among the rest the freshest wins; equal epochs fall back to the key whose
+     id first arrived last (the previous rule).
+  Residuals: an owner/admin can still make any key current by sending it in a
+  fresh epoch (it is trusted to choose keys; honest code never re-sends a key
+  from before a removal it has seen). Rows stored before schema 35 have no
+  epoch and rank below every key with one and below any removal. A device
+  upgraded with a removal already recorded for a group and only such rows
+  therefore has no current key there; no admin can answer its request (their
+  keys are epoch-less too) and no rotation is due, so it stays without one
+  until the next removal rotates. There is no release: recreate such demo
+  communities. Schema 35 adds the nullable column only (idempotent
+  `ALTER TABLE`). Evidence:
+  [`C3-key-freshness-2026-11-11.md`](../testing/evidence/C3-key-freshness-2026-11-11.md).
+
+- **C3 remote-removal obligations (2026-11-11):** no ABI, schema or wire
+  change. The remote commit path uses ABI 13's authenticated removal outcome
+  and wipes its unused exporter root. Surviving devices persist the removal
+  epoch in encrypted local metadata atomically with MLS state and cursor.
+  Foreground community refresh maps that obligation to the shared or private
+  info key home. Inbound-only wakes record it without sending. Publication,
+  key answers and add delivery refuse stale keys until rotation completes;
+  a newer epoch cancels an in-flight rotation. The completion watermark is
+  separate from the native removal watermark, so a crash or overlapping
+  removal cannot acknowledge an obligation that was never completed.
+  Verified C4 role integration remains unfinished; this does not complete C3.
+
+- **C3 add-key delivery and overlapping removals (2026-11-11):** no ABI,
+  schema or wire change. After merging its accepted add bundle, the committing
+  device sends the current info key into its owning group and re-announces
+  accepted records under that key where the verified editor policy permits it.
+  Foreground sync completing an own bundle after a lost response also triggers
+  delivery. The normal send queue and removal holds apply; request/answer
+  remains the recovery path for interrupted delivery and inbound-only wakes.
+  A newer removal token cancels an older rotation before further re-sealing
+  and clears its retry delay. Production C4 role wiring remains unfinished.
+
+- **C3 senders and fetch loop (2026-11-09):** no ABI, payload or schema
+  change. The `info_key`, `info_key_request` and `info_update` types are now
+  sent: through the ordinary send path (removal holds apply), unfranked, no
+  expiry, a hidden action row, and the sender's own copy kept in the same
+  transaction (the outgoing transition gained `communityInfo`). A device's
+  own new keys are written locally outside any MLS commit. Rotation marks
+  are a setting. Design: C3, "Built 2026-11-09". The local port also fences
+  API results and sends to their session, refreshes the captured token after
+  reauthentication, checks cached keys' owning conversation, and prevents a
+  late cache read from rolling back the displayed revision. It retries
+  unqueued key requests/answers and batches the versions query beyond 200
+  channels. [Local verification and remaining work](../testing/evidence/C3-rest-2026-11-09.md).
+
 - **B6, group-call media keys: ABI 22 (2026-11-11):** one new call and one
   new signing domain, for [`B6-group-calls.md`](designs/B6-group-calls.md)
   (S2). `pm_crypto_group_b6_media_key(handle, group_id, call_id, account_id, device_id, stream)`
