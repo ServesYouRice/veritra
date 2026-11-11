@@ -1764,7 +1764,7 @@ func (s *Store) IsConversationMember(ctx context.Context, conversationID, accoun
 func cancelExpiredApprovedDeviceLinks(ctx context.Context, tx *sql.Tx, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, account_id, approved_device_id FROM device_links
-		WHERE state = ? AND revoked_at IS NULL AND approved_device_id IS NOT NULL AND expires_at <= ?
+		WHERE state = ? AND revoked_at IS NULL AND consumed_at IS NULL AND approved_device_id IS NOT NULL AND expires_at <= ?
 		ORDER BY expires_at, id LIMIT 100`, domain.DeviceLinkApproved, formatTime(now.UTC()))
 	if err != nil {
 		return err
@@ -1786,13 +1786,28 @@ func cancelExpiredApprovedDeviceLinks(ctx context.Context, tx *sql.Tx, now time.
 	rows.Close()
 	at := formatTime(now.UTC())
 	for _, e := range found {
-		if _, err := revokeDeviceTx(ctx, tx, e.accountID, e.deviceID, "device.revoked", at); err != nil && !errors.Is(err, ErrNotFound) {
+		// Claim the link first, guarded by its state: a link consumed or
+		// revoked meanwhile is left alone and its device is not touched.
+		result, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, revoked_at = ? WHERE id = ? AND state = ? AND consumed_at IS NULL AND revoked_at IS NULL`, domain.DeviceLinkRevoked, at, e.linkID, domain.DeviceLinkApproved)
+		if err != nil {
 			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			continue
+		}
+		// A device that is already revoked got its event and MLS removal then.
+		var alreadyRevoked int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM devices WHERE id = ? AND account_id = ? AND revoked_at IS NOT NULL`, e.deviceID, e.accountID).Scan(&alreadyRevoked); err != nil {
+			return err
+		}
+		if alreadyRevoked == 0 {
+			if _, err := revokeDeviceTx(ctx, tx, e.accountID, e.deviceID, "device.revoked", at); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM device_key_packages WHERE device_id = ? AND claimed_at IS NULL`, e.deviceID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE device_links SET state = ?, revoked_at = ? WHERE id = ? AND state = ?`, domain.DeviceLinkRevoked, at, e.linkID, domain.DeviceLinkApproved); err != nil {
 			return err
 		}
 	}
