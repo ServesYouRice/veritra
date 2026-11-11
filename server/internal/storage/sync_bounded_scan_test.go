@@ -126,3 +126,34 @@ func TestSyncPageUnboundedIgnoresBudget(t *testing.T) {
 		t.Fatalf("events = %v, %v", pageEventIDs(events), err)
 	}
 }
+
+// A cursor that names a row outside the device's scope (a conversation the
+// account is not in) must not take the in-scope shortcut: behind a pruned
+// prefix it stays expired, in bounded mode as in legacy mode.
+func TestSyncPageBoundedOutOfScopeCursorStaysExpired(t *testing.T) {
+	ctx := context.Background()
+	f := newSyncVisibilityFixture(t, ctx)
+	who := f.blocker
+	other, err := f.store.CreateConversation(ctx, CreateConversationInput{Kind: "group", CreatedBy: f.sender.Account.ID, MemberAccountIDs: []string{f.bystander.Account.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stranger := conversationSyncEvent(t, ctx, f.store, "conversation.updated", other.ID)
+	conversationSyncEvent(t, ctx, f.store, "conversation.updated", other.ID)
+	conversationSyncEvent(t, ctx, f.store, "conversation.updated", other.ID)
+	if inScope := testRowCount(t, ctx, f.store, `SELECT EXISTS (SELECT 1 FROM sync_events se WHERE se.id = ? AND se.conversation_id IN (SELECT conversation_id FROM memberships WHERE account_id = ?))`, stranger, who.Account.ID); inScope != 0 {
+		t.Fatal("fixture: the stranger event is in the account's scope")
+	}
+	for i := 0; i < 3; i++ {
+		conversationSyncEvent(t, ctx, f.store, "conversation.updated", f.conversation.ID)
+	}
+	pruneSyncEventsThrough(t, ctx, f.store, stranger-1)
+	if _, err := f.store.db.ExecContext(ctx, `DELETE FROM sync_prune_state`); err != nil {
+		t.Fatal(err)
+	}
+	for _, bounded := range []bool{false, true} {
+		if _, err := f.store.ListSyncPage(ctx, who.Account.ID, who.Device.ID, stranger, 100, bounded); !errors.Is(err, ErrSyncCursorExpired) {
+			t.Fatalf("bounded=%v out-of-scope cursor err = %v, want expired", bounded, err)
+		}
+	}
+}
