@@ -760,25 +760,21 @@ class AppLocalizationsSr extends AppLocalizations {
   String get searchClear => 'Обриши претрагу';
 
   @override
-  String get searchIntroTitle => 'Претрага метаподатака';
+  String get searchIntroTitle => 'Претражите људе и заједнице';
 
   @override
   String get searchIntroMessage =>
-      'Пронађите особе по тачном корисничком имену, као и заједнице и канале по називу. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
+      'Заједнице и канали се проналазе по називу на овом уређају. Особе се проналазе на серверу само по тачном корисничком имену. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
 
   @override
   String get searchNoResultsTitle => 'Нема резултата';
 
   @override
   String get searchNoResultsMessage =>
-      'Ништа се не подудара. Корисничка имена морају се тачно подударати, а садржај порука се никада не може претраживати.';
+      'Ништа се не подудара. Корисничка имена морају се тачно подударати, а могу се пронаћи само заједнице и канали чије називе овај уређај има.';
 
   @override
   String get searchNoOpenChannel => 'Још нема канала који можете да отворите';
-
-  @override
-  String get searchJoinCommunity =>
-      'Придружите се заједници да бисте је отворили';
 
   @override
   String get searchTypeConversation => 'Разговор';
@@ -5121,25 +5117,21 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get searchClear => 'Obriši pretragu';
 
   @override
-  String get searchIntroTitle => 'Pretraga metapodataka';
+  String get searchIntroTitle => 'Pretražite ljude i zajednice';
 
   @override
   String get searchIntroMessage =>
-      'Pronađite osobe po tačnom korisničkom imenu, kao i zajednice i kanale po nazivu. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
+      'Zajednice i kanali se pronalaze po nazivu na ovom uređaju. Osobe se pronalaze na serveru samo po tačnom korisničkom imenu. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
 
   @override
   String get searchNoResultsTitle => 'Nema rezultata';
 
   @override
   String get searchNoResultsMessage =>
-      'Ništa se ne podudara. Korisnička imena moraju se tačno podudarati, a sadržaj poruka se nikada ne može pretraživati.';
+      'Ništa se ne podudara. Korisnička imena moraju se tačno podudarati, a mogu se pronaći samo zajednice i kanali čije nazive ovaj uređaj ima.';
 
   @override
   String get searchNoOpenChannel => 'Još nema kanala koji možete da otvorite';
-
-  @override
-  String get searchJoinCommunity =>
-      'Pridružite se zajednici da biste je otvorili';
 
   @override
   String get searchTypeConversation => 'Razgovor';

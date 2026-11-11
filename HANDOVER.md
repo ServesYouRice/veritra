@@ -24,7 +24,7 @@ Counters: crypto ABI 22, local schema 36, server migration 0084.
 - K1: the second copy on Android and iOS; K1-7 recover-and-restore e2e.
 - B6: media transport (`livekit_client` needs licence review) and the demo factory that sets `AppState.roomSession`.
 - L2: padding (needs an ABI bump), sealed sender, own-device alert. L3: `verify-attestation.sh` and a tested confidential-VM recipe.
-- Owner decision: with `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` off (the default, and in demos), new communities show placeholder names only.
+- `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` is on by default (owner decision, 2026-11-11), demos included; `0` turns it off, and new communities then show placeholder names only.
 - STATE.md is not updated for this round. The per-task reports are not in the repo.
 
 ## Release blockers outside code

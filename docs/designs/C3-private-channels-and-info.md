@@ -380,10 +380,12 @@ its own fresh key and is not delayed by the abandoned pass's backoff.
 community channel titles. Creation answers `400 plaintext_name_refused` to a
 non-empty name; the app sends none and shows only the encrypted record or a
 placeholder. The server's name search and community names in invite previews
-are gone. Consequence: with `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` off (the
-default, and the demos), a new community has no shared group, so no info key
-home and only placeholders. Turning the layout on by default is an owner
-decision tied to the app's release (operations.md). A "Categories and icon"
+are gone. Consequence: with `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` off, a new
+community has no shared group, so no info key home and only placeholders.
+The owner turned the layout on by default (2026-11-11), demos included;
+`PRIVATE_MESSENGER_COMMUNITY_LAYOUT=0` turns it off (operations.md). The app
+searches community and channel names in its own decrypted records; the
+server's metadata search finds accounts only. A "Categories and icon"
 screen sets the community icon, creates and renames categories, and places
 channels (open: community record; private: the channel's own record); the
 community card groups channels by category. Key freshness: see docs/crypto.md

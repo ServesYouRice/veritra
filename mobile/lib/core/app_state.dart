@@ -31,6 +31,7 @@ import '../crypto/native_crypto_bindings.dart'
 import 'device_lists.dart';
 import 'community_info_book.dart';
 import 'community_info_service.dart';
+import 'community_name_search.dart';
 import 'k1_restore.dart';
 import 'k1_second_copy.dart';
 import '../crypto/sha256.dart';
@@ -3635,6 +3636,10 @@ class AppState extends ChangeNotifier
     await _recordPosting(conversationId, policy == 'admins');
   }
 
+  /// The server's metadata search: accounts by exact username or ID only
+  /// (communities and channels are searched on the device,
+  /// [searchCommunityNamesLocally]). The search screen sends only a query
+  /// that could be an account ([mayMatchAccount]).
   Future<List<MetadataSearchResult>> searchMetadata(String query) async {
     final current = session;
     final client = api;
@@ -3649,6 +3654,19 @@ class AppState extends ChangeNotifier
       throw UserFacingException(describeError(err, l10n));
     }
   }
+
+  /// Communities and channels whose encrypted names, as this device holds
+  /// them, contain [query]. Runs on the device only: the server keeps no
+  /// names (C3, migration 0082) and the query is never sent anywhere.
+  List<MetadataSearchResult> searchCommunityNamesLocally(String query) =>
+      searchCommunityNames(
+        query,
+        communities: communities,
+        channelsByCommunity: channelsByCommunity,
+        conversations: conversations,
+        communityName: communityDisplayName,
+        channelName: channelDisplayName,
+      );
 
   /// Best-effort read receipt for the newest visible message. Failures are
   /// intentionally silent; receipts must never block reading.
