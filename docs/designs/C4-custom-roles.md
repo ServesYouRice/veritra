@@ -460,3 +460,36 @@ member could act as the owner. Producers that carry a record must land with
 the two-phase receiver, and the server must stop rate-limiting record-only
 commits as self-updates (`mls_group_store.go`), and ABI 19 key packages must
 be replenished before adds into record groups.
+
+## Role command producer slice (2026-11-11)
+
+`mobile/lib/core/roles/governance_commands.dart` now builds role-only records:
+promote/demote, step down, confirm electors, change posting settings, transfer,
+open/close/cancel elections, vote and claim. Every result passes `validateCommit`
+and the canonical codec before it can be handed to a commit producer. Owner
+promotions explicitly choose electors; promotions by other admins do not.
+An ordinary transfer makes the old owner an admin with fresh seniority. A
+deciding vote changes ownership and clears the election in the same record.
+
+Opening and voting require local observations bound to the current owner and
+`ownerRev`; voting also requires the observation of this election's `opened`
+revision. They enforce the existing 30-day and 7-day waits. Observations must
+eventually be persisted atomically with accepted MLS transitions; they are
+never server timestamps. An unknown or stale observation refuses the command.
+The observation reducer starts conservatively on a join or restore without
+saved clocks, tracks authenticated owner commits and application messages,
+preserves an election's first-seen time, clears it on cancellation and resets
+the activity wait on an ownership change. Backward clock movement never moves
+the last observed activity backward.
+Commands operate on a fixed MLS account roster, not a server membership list,
+and must be rebuilt after an epoch change.
+
+This slice is exercised by pure tests and a three-device native MLS test:
+promotions, posting restrictions, an election, a non-deciding vote and a
+deciding vote converge on all devices. It does **not** enable app producers or
+receivers: the authenticated-removal prerequisite above is still unmet.
+Outstanding: C1 removal proofs and their validation, approved-leaf role
+rosters, all producer/receiver wiring, durable local activity/election clocks,
+automatic owner cancellation, UI and server succession. No new ABI, local
+schema or server migration is used by this slice (22, 38 and 0071 remain
+reserved for the remaining work). `STATE.md` and release gates are unchanged.

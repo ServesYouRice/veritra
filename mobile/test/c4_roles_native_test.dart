@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/core/roles/governance_codec.dart';
+import 'package:private_messenger/core/roles/governance_commands.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 
 import 'native_test_env.dart';
@@ -222,6 +223,68 @@ void main() {
     expect(() => alice.stageIncomingCommit(group, const [1, 2, 3]),
         failsWith(NativeCryptoError.operationFailed));
     expect(alice.discardIncomingCommit(group), isFalse);
+  }, skip: nativeCryptoSkip());
+
+  test('command records carry promotions, restrictions and majority handover',
+      () {
+    final alice = device('alice');
+    final bob = device('bob');
+    final carol = device('carol');
+    final peers = {'acct_alice': alice, 'acct_bob': bob, 'acct_carol': carol};
+    var state = threeMembers(alice, bob, carol);
+    final now = DateTime.utc(2026, 11, 11);
+
+    GovernanceCommands commands(String actor) => GovernanceCommands(
+        state: state, actor: actor, members: peers.keys.toSet());
+    GovernanceObservations observations() => GovernanceObservations(
+        owner: state.owner,
+        ownerRev: state.ownerRev,
+        lastOwnerActivity: now.subtract(ownerInactivityWait),
+        electionOpened: state.election?.opened,
+        electionSeen: now.subtract(electionWait));
+
+    void apply(String actor, GovernanceState next) {
+      final sender = peers[actor]!;
+      final staged =
+          sender.stageCommitWithRoles(group, record: encodeGovernance(next));
+      sender.mergePendingCommit(group);
+      for (final peer in peers.entries.where((p) => p.key != actor)) {
+        final review = peer.value.stageIncomingCommit(group, staged.commit);
+        expect(review.committerAccount, actor);
+        expect(review.committer.signingKey, sender.signingPublicKey());
+        expect(review.accountsBefore, peers.keys.toSet());
+        expect(review.accountsAfter, peers.keys.toSet());
+        final check = validateCommit(decodeGovernance(review.recordBefore!),
+            decodeGovernance(review.recordAfter!), actor,
+            before: review.accountsBefore!, after: review.accountsAfter!);
+        expect(check.ok, isTrue);
+        peer.value.mergeIncomingCommit(group, staged.commit);
+      }
+      for (final peer in peers.values) {
+        expect(decodeGovernance(peer.groupRoleState(group).record!), next);
+      }
+      state = next;
+    }
+
+    apply('acct_alice',
+        commands('acct_alice').setRole('acct_bob', BuiltInRole.admin));
+    apply('acct_alice',
+        commands('acct_alice').setRole('acct_carol', BuiltInRole.admin));
+    apply(
+        'acct_bob',
+        commands('acct_bob').setPosting(
+            adminsOnly: true, announcementChannels: {'channel_announcement'}));
+    apply('acct_bob', commands('acct_bob').openElection(observations(), now));
+    apply(
+        'acct_bob', commands('acct_bob').vote('acct_bob', observations(), now));
+    expect(state.owner, 'acct_alice'); // One of two is not a majority.
+    apply('acct_carol',
+        commands('acct_carol').vote('acct_bob', observations(), now));
+    expect(state.owner, 'acct_bob');
+    expect(state.election, isNull);
+    expect(state.admins['acct_alice'], state.rev);
+    expect(state.adminsOnlyPosting, isTrue);
+    expect(state.announcementChannels, {'channel_announcement'});
   }, skip: nativeCryptoSkip());
 
   test('an empty change list is only allowed with a record', () {
