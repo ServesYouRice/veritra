@@ -928,6 +928,30 @@
     }
   },
   "callNoticeFailed": "Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.",
+  "roomStart": "Grupni poziv",
+  "roomTitle": "Grupni poziv",
+  "roomJoining": "Pridružujem se…",
+  "roomConnected": "U pozivu",
+  "roomEncryptedNote": "Glas i video su šifrovani od kraja do kraja. Server ih prenosi, ali ne može da ih čuje.",
+  "roomLeave": "Napusti",
+  "roomYou": "Vi",
+  "roomMute": "Isključi zvuk",
+  "roomUnmute": "Uključi zvuk",
+  "roomShareScreen": "Podeli ekran",
+  "roomStopSharing": "Zaustavi deljenje",
+  "roomFailedFull": "Ovaj poziv je pun.",
+  "roomFailedUnavailable": "Grupni pozivi nisu podešeni na ovom serveru.",
+  "roomFailedWelcome": "Bezbedno pridruživanje nije uspelo. Pokušajte ponovo.",
+  "roomFailedOther": "Poziv nije mogao da se nastavi.",
+  "roomFailedCryptor": "Ovaj uređaj ne može da zaštiti medije poziva, pa se nije pridružio.",
+  "roomPeople": "{count, plural, one{{count} osoba} few{{count} osobe} other{{count} osoba}}",
+  "@roomPeople": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "moderationTitle": "Moderacija",
   "moderationDetail": "Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti",
   "memberModerateTooltip": "Moderiraj {username}",

@@ -805,6 +805,45 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
+    /// B6 (ABI 22): the media key `K(s,t)` of the call group's current epoch
+    /// for the sender device (found by identity, so the app never guesses a
+    /// leaf index across blank leaves) and stream slot `stream`. The exporter
+    /// secret `E` stays here; only the derived key leaves.
+    pub fn b6_media_key(
+        &self,
+        group: &MlsGroup,
+        call_id: &[u8],
+        sender_account_id: &[u8],
+        sender_device_id: &[u8],
+        stream: u8,
+    ) -> Result<tls_codec::SecretVLBytes, MlsError> {
+        let context = crate::b6::exporter_context(call_id, group.epoch().as_u64())
+            .map_err(|_| MlsError::InvalidMessage)?;
+        let identity = encode_device_identity(sender_account_id, sender_device_id)?;
+        let mut leaves = group
+            .members()
+            .filter(|member| member.credential.serialized_content() == identity)
+            .map(|member| member.index.u32());
+        let leaf_index = leaves.next().ok_or(MlsError::InvalidIdentity)?;
+        if leaves.next().is_some() {
+            return Err(MlsError::InvalidIdentity);
+        }
+        let secret = tls_codec::SecretVLBytes::new(
+            group
+                .export_secret(
+                    self.provider.crypto(),
+                    crate::b6::EXPORTER_LABEL,
+                    &context,
+                    crate::b6::KEY_BYTES,
+                )
+                .map_err(|_| MlsError::GroupOperation)?,
+        );
+        crate::b6::sender_key(secret.as_slice(), leaf_index, stream).map_err(|error| match error {
+            crate::b6::B6Error::InvalidInput => MlsError::InvalidMessage,
+            crate::b6::B6Error::Crypto => MlsError::GroupOperation,
+        })
+    }
+
     /// The conversation's safety number (v2): the group id and every member
     /// device's credential and signature key. The epoch and encryption keys
     /// are left out, so routine commits keep the number; a device that joins,
@@ -2540,6 +2579,107 @@ mod tests {
             account_id: account,
             device_id: device,
         }]
+    }
+
+    // ---- B6 (ABI 22): media keys of a call group ----
+
+    #[test]
+    fn b6_media_keys_follow_the_epoch_and_leave_with_the_removed_member() {
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
+            three_members(b"call_group_b6");
+        let call = b"call_b6";
+        // Senders by identity; leaves are alice 0, bob 1, carol 2.
+        let who = |leaf: u32| -> (&'static [u8], &'static [u8]) {
+            match leaf {
+                0 => (b"acct_alice", b"dev_alice"),
+                1 => (b"acct_bob", b"dev_bob"),
+                _ => (b"acct_carol", b"dev_carol"),
+            }
+        };
+        let key = |device: &MlsDevice, group: &MlsGroup, leaf: u32, stream: u8| {
+            let (account, dev) = who(leaf);
+            device
+                .b6_media_key(group, call, account, dev, stream)
+                .unwrap()
+                .as_slice()
+                .to_vec()
+        };
+        // Every member derives the same key for the same sender and stream,
+        // and it is the exporter run through the documented schedule.
+        let (a0, b0, c0) = (
+            key(&alice, &alice_group, 0, 0),
+            key(&bob, &bob_group, 0, 0),
+            key(&carol, &carol_group, 0, 0),
+        );
+        assert_eq!(a0, b0);
+        assert_eq!(a0, c0);
+        let exported = alice_group
+            .export_secret(
+                alice.provider.crypto(),
+                crate::b6::EXPORTER_LABEL,
+                &crate::b6::exporter_context(call, alice_group.epoch().as_u64()).unwrap(),
+                32,
+            )
+            .unwrap();
+        assert_eq!(
+            a0,
+            crate::b6::sender_key(&exported, 0, 0).unwrap().as_slice()
+        );
+        // Per sender, per stream, per call.
+        assert_ne!(a0, key(&alice, &alice_group, 1, 0));
+        assert_ne!(a0, key(&alice, &alice_group, 0, 2));
+        assert_ne!(
+            a0,
+            alice
+                .b6_media_key(&alice_group, b"call_other", b"acct_alice", b"dev_alice", 0)
+                .unwrap()
+                .as_slice()
+        );
+        // A device that is not in the group and a bad stream are refused.
+        assert!(alice
+            .b6_media_key(&alice_group, call, b"acct_zed", b"dev_zed", 0)
+            .is_err());
+        assert!(alice
+            .b6_media_key(&alice_group, call, b"acct_alice", b"dev_alice", 4)
+            .is_err());
+        // The exporter label is the only secret that matches: the C7 label gives another.
+        let c7_root = exported_root(&alice, &alice_group);
+        assert_ne!(
+            a0,
+            crate::b6::sender_key(&c7_root, 0, 0).unwrap().as_slice()
+        );
+
+        // Removing bob moves the epoch: the key changes, carol follows, and
+        // bob, who processes his own removal, can derive no key at all.
+        let staged = alice
+            .stage_membership_commit(&mut alice_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
+            .unwrap();
+        alice
+            .merge_pending_commit_with_outcome(&mut alice_group)
+            .unwrap();
+        let a1 = key(&alice, &alice_group, 0, 0);
+        assert_ne!(a0, a1);
+        carol
+            .process_commit_with_outcome(&mut carol_group, &staged.commit)
+            .unwrap();
+        assert_eq!(a1, key(&carol, &carol_group, 0, 0));
+        // Bob's key for himself is gone from the new epoch too.
+        assert!(alice
+            .b6_media_key(&alice_group, call, b"acct_bob", b"dev_bob", 0)
+            .is_err());
+        let removed = bob
+            .process_commit_with_outcome(&mut bob_group, &staged.commit)
+            .unwrap();
+        assert!(removed.removed_self);
+        // His group is gone, so the FFI's load fails and nothing is derived.
+        assert_eq!(
+            bob.load_group(b"call_group_b6").err(),
+            Some(MlsError::InvalidState)
+        );
+        // Even the stale in-memory handle cannot give the new epoch's key.
+        if let Ok(stale) = bob.b6_media_key(&bob_group, call, b"acct_alice", b"dev_alice", 0) {
+            assert_ne!(stale.as_slice(), a1.as_slice());
+        }
     }
 
     #[test]
