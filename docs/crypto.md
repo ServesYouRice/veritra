@@ -583,7 +583,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   (`{"statement": base64}`, under the leave-notice mark), settings
   `c4.leave_signed.<group>.<account>` and `c4.leave_signed_out.<group>`, and
   the server's leave-notice limit raised from one to two per hour (Go, no
-  migration). Vectors `testing/vectors/c4-leave-proof-v1.json` (Rust,
+  migration; four per hour since round 7, so a refused leave can be retried
+  at once, and the void of a cancelled leave passes the self-update
+  interval, owner decision A; members drop both proofs on any commit of the
+  leaver's approved leaf, see "Cancelled leave"). Vectors `testing/vectors/c4-leave-proof-v1.json` (Rust,
   Dart, Go). No local schema or server migration change. Deltas from the
   design: the epoch is gone from `LeaveTBS`, the statement and the payload;
   Dart accepts one approved proven leaf of the account (not every removed
@@ -3708,10 +3711,12 @@ leave. The envelope now carries the clear metadata mark `"c4_leave": true`
 exempts a marked envelope from C2, the C5 timeout and slow mode
 (`server/internal/storage/leave_notice.go`), only: in a record group (kind
 `group` outside a community, or a community's shared conversation); with no
-attachments, reply, thread or franking commitment; and at most two
-per sender account and membership per hour (the `member_leave` and, since
-ABI 24, the `member_leave_signed` after it; `leave_notice_limited`, 429
-with Retry-After counted from the oldest notice in the window). The mark is unverifiable, so receivers turn any marked
+attachments, reply, thread or franking commitment; and at most four
+per sender account and membership per hour (one leave sends two, the
+`member_leave` and, since ABI 24, the `member_leave_signed` after it, so a
+leave that did not go through can be tried again at once; four since
+round 7, two before; `leave_notice_limited`, 429 with Retry-After counted
+from the oldest notice in the window). The mark is unverifiable, so receivers turn any marked
 envelope whose payload is not a leave proof into an invalid row: a
 marked post never shows. The check runs before the payload is handled
 (review L1): a marked payload of a type this app does not know is kept
@@ -3975,14 +3980,44 @@ account's removal takes all its leaves, so requiring a statement from each
 would fail every multi-device account; one approved leaf is what
 `member_leave` already requires.
 
-**Cancelled leave** (review item 3). Before the statement exists the
-sending device writes `c4.leave_signed_out.<group>`. If the leave does not
-go through (the server refuses it, or the app stops before it), the next
-sync pass stages a self-update in that group (`_voidCancelledLeaves`, never
-while a leave of that group is in progress); the marker is cleared when a
-self-update of this device merges there, or by a Welcome. Until then the
-statement verifies, as `member_leave` would prove the leave to today's
-members.
+**Cancelled leave** (review item 3). Before the `member_leave` (since
+round 7; before, only before the signed statement) the sending device writes
+`c4.leave_signed_out.<group>`. If the leave does not go through (the server
+refuses it, or the app stops before it), the next sync pass stages a
+self-update in that group (`_voidCancelledLeaves`, never while a leave of
+that group is in progress); the marker is cleared when a self-update of
+this device merges there, or by a Welcome.
+
+*Void window* (owner decision A, 2026-11-11). The server lets that void past
+the self-update interval (`mls_self_update_limit`): an update-only commit
+from a device that sent a leave notice (the `c4_leave` mark) in that
+conversation within the last hour, after its own last self-update, is
+admitted once (`leaveVoidExempt`, `server/internal/storage/mls_group_store.go`;
+no migration). The exempt commit moves `last_self_update_at` past the
+notice, so each notice buys at most one, and notices are limited to four an
+hour. The server cannot tell a void from any other self-update, so this is
+a budget, not a check: a member can churn a few more epochs an hour by
+sending leave notices it does not follow with a leave. The app tries the
+void at once and then every 10 minutes (`AppState.leaveVoidRetry`, its own
+spacing, not the periodic policy's backoff), so the statement is void
+within seconds of the cancel on a reachable server.
+
+*Honest members drop the proofs* (review MEDIUM, round 7). A stored
+`c4.leave.<g>.<acct>` and `c4.leave_signed.<g>.<acct>` were cleared only by
+a removal, a re-add or a Welcome, so a cancelled leave left every member
+holding that account's consent to be removed for as long as it stayed. Now
+a member that merges a commit from one of that account's leaves its list
+approves, after the proof arrived, drops both (`_judgeIncomingCommit`): the
+void self-update (any commit, in fact) ends the proof on today's members,
+and the self-update's new leaf ends the statement for newcomers. A leaf its
+list does not approve may carry any account's id, so its commit voids
+nothing. The leaver therefore sends nothing until its own MLS queue for the
+group is empty (`_beforeLeavingRecordGroup` waits for a running outbox pass
+and refuses with "Try again" before any notice goes out), and while it
+leaves it stages no reconcile commit there. Residual: another device of the
+same account that commits between the notice and the server-side leave
+voids a real leave; the removal is then held until a fresh proof or a kick
+by someone who may act on the account.
 
 **ABI.** Crypto ABI 24 (the design's reserved 25, renumbered at
 integration): `pm_crypto_c4_sign_leave`, `pm_crypto_group_stage_commit_proven`,
@@ -4004,7 +4039,9 @@ decision).
 
 **Residuals.** A leaver whose leaf changes after signing (a self-update, or
 any commit of its own, between the statement and the removal) voids its own
-statement; its removal then needs the old proof on each member, as before.
+statement, and since round 7 the members' `member_leave` proof with it, so
+its removal is held until a fresh leave; the leaver therefore sends nothing
+while its MLS queue for the group holds work (see "Cancelled leave").
 A newcomer whose list cannot approve the leaver's leaf (a stale pin) holds
 the removal until it can. The statement count leaks through the commit's
 length (above).

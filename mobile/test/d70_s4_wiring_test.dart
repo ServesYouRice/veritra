@@ -6,7 +6,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/errors.dart';
+import 'package:private_messenger/core/mls_self_update_policy.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart';
+import 'package:private_messenger/core/roles/governance_commands.dart';
+import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
@@ -482,6 +486,64 @@ void main() {
     harness.dispose();
   });
 
+  // Review MEDIUM (round 7): members drop a leave proof on the leaver's
+  // next commit, so a commit of the leaver's still queued when it sends
+  // member_leave would void a real leave. The leaver sends nothing until
+  // its MLS queue for that group is empty.
+  test('a governing leaver with MLS work queued sends no leave proof',
+      () async {
+    final store = _QueueStore();
+    final api = _ScriptedApi();
+    final harness = await _Harness.start(api,
+        store: store, selfUpdates: true, governing: true);
+    final crypto = harness.crypto as _LeavingAdminCrypto;
+    await harness.waitFor(() => harness.state.lastSyncedAt != null);
+    await harness.settle();
+    store.queued = PendingMlsMessage(
+      idempotencyKey: 'commit_waiting',
+      conversationId: 'conv_1',
+      kind: 'mls_commit_bundle',
+      payload: const <int>[1],
+      attemptCount: 1,
+      nextAttemptAt: DateTime.now().toUtc().add(const Duration(hours: 1)),
+      failureClass: 'retryable:503',
+    );
+    expect(await harness.state.leaveConversation('conv_1'), isFalse);
+    expect(harness.state.errorFor(Ops.members),
+        'Could not tell the group you are leaving. Try again.');
+    expect(crypto.leaveProofsSent, isEmpty,
+        reason: 'no proof goes out ahead of the queued commit');
+    expect(api.left, isEmpty);
+    // Once the queue is empty the proof goes out.
+    store.queued = null;
+    await harness.state.leaveConversation('conv_1');
+    expect(crypto.leaveProofsSent, contains(AppPayloadType.memberLeave));
+    harness.dispose();
+  });
+
+  // The void has its own spacing: a backoff an unrelated periodic
+  // self-update left behind does not hold it back (owner decision A: the
+  // server lets the void past the interval).
+  test('a cancelled leave is voided at once despite a periodic backoff',
+      () async {
+    final api = _ScriptedApi()..refuseLeave = true;
+    final store = MemoryLocalStore();
+    final policy = MlsSelfUpdatePolicy(accountId: 'acct_me', deviceId: 'dev_me')
+      ..recordBackoff('conv_1', DateTime.now(), const Duration(hours: 6));
+    await store.saveSetting(
+        '${MlsSelfUpdatePolicy.settingName}:dev_me', policy.encode());
+    final harness = await _Harness.start(api, store: store, selfUpdates: true);
+    final crypto = harness.crypto as _SelfUpdatingCrypto;
+    await harness.waitFor(() => harness.state.lastSyncedAt != null);
+    await harness.settle();
+    expect(crypto.staged, isEmpty, reason: 'the periodic backoff holds');
+    await harness.store
+        .saveSetting(governanceLeaveSignedOutSetting('conv_1'), '1');
+    expect(await harness.state.leaveConversation('conv_1'), isFalse);
+    await harness.waitFor(() => crypto.staged.contains('conv_1'));
+    harness.dispose();
+  });
+
   test('a leave the server took needs no void', () async {
     final api = _ScriptedApi();
     final harness = await _Harness.start(api, selfUpdates: true);
@@ -675,11 +737,15 @@ class _Harness {
   static Future<_Harness> start(_ScriptedApi api,
       {void Function(_FakeMlsCrypto crypto)? configure,
       MemoryLocalStore? store,
-      bool selfUpdates = false}) async {
+      bool selfUpdates = false,
+      bool governing = false}) async {
     final local = store ?? MemoryLocalStore();
     await local.saveSession(_session);
-    final crypto =
-        selfUpdates ? _SelfUpdatingCrypto(local) : _FakeMlsCrypto(local);
+    final crypto = governing
+        ? _LeavingAdminCrypto(local)
+        : selfUpdates
+            ? _SelfUpdatingCrypto(local)
+            : _FakeMlsCrypto(local);
     configure?.call(crypto);
     final state = AppState(
       apiClientFactory: (_) => api,
@@ -970,6 +1036,61 @@ class _SelfUpdatingCrypto extends _FakeMlsCrypto
   @override
   Future<void> stageSelfUpdate(String conversationId) async =>
       staged.add(conversationId);
+}
+
+/// An admin of conv_1's record (its leave needs a proof) whose leave proofs
+/// are recorded, then refused (the test needs only the attempt).
+class _LeavingAdminCrypto extends _SelfUpdatingCrypto
+    implements RoleCommandCryptoService {
+  _LeavingAdminCrypto(super.store);
+
+  final List<AppPayloadType> leaveProofsSent = <AppPayloadType>[];
+
+  @override
+  Future<GovernanceView?> governanceView(String groupId) async =>
+      GovernanceView(
+        record: GovernanceState(
+          rev: 2,
+          owner: 'acct_owner',
+          ownerRev: 1,
+          admins: const {'acct_me': 1},
+        ),
+        roster: const {'acct_owner', 'acct_me'},
+        observations: null,
+      );
+
+  @override
+  Future<void> stageRoleChange(
+    String groupId,
+    GovernanceState Function(GovernanceCommands commands,
+            GovernanceObservations? observed, DateTime now)
+        build,
+  ) async =>
+      throw UnimplementedError('stageRoleChange');
+
+  @override
+  Future<MessageEnvelope> encryptPayload(
+    String conversationId,
+    AppPayloadType type,
+    Map<String, Object?> body, {
+    List<String> attachmentRefs = const <String>[],
+    String? draftText,
+  }) async {
+    leaveProofsSent.add(type);
+    throw StateError('not sent in this test');
+  }
+}
+
+/// A store that reports [queued] as an MLS outbox item not yet due.
+class _QueueStore extends MemoryLocalStore {
+  PendingMlsMessage? queued;
+
+  @override
+  Future<List<PendingMlsMessage>> pendingMlsMessages() async =>
+      <PendingMlsMessage>[
+        ...await super.pendingMlsMessages(),
+        if (queued != null) queued!,
+      ];
 }
 
 class _QuietSync implements SyncService {
