@@ -10,6 +10,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/sync/conversation_pause.dart';
 import 'package:private_messenger/sync/sync_recovery.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -738,6 +739,84 @@ void main() {
       harness.dispose();
     });
   });
+
+  group('a held C4 commit (docs/crypto.md, held commits)', () {
+    test('pauses its conversation as held and replays by itself when due',
+        () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[
+          _mlsEvent(4, 'mls_held'),
+          _envelopeEvent(5, 'msg_ok', conversationId: 'conv_2'),
+          _envelopeEvent(6, 'msg_after'),
+        ];
+      final store = _AgedPauseStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.heldMls.add('mls_held');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+      final pause = (await store.loadConversationPause('conv_1'))!;
+      expect(pause.kind, SyncFailureKind.governanceHeld);
+      expect(pause.held, isTrue);
+      expect(pause.generation, 1);
+      expect(harness.state.syncRecovery, isNull);
+      expect(harness.crypto.order, <String>['msg_ok']);
+
+      // Before its backoff runs out, a foreground pass leaves it alone.
+      harness.crypto.heldMls.clear();
+      api.events = <SyncEvent>[
+        ...api.events,
+        _envelopeEvent(7, 'msg_other', conversationId: 'conv_2'),
+      ];
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() async => await store.loadSyncCursor() == 7);
+      await harness.settle();
+      expect((await store.loadConversationPause('conv_1'))!.generation, 1);
+      expect(harness.crypto.order, <String>['msg_ok', 'msg_other']);
+
+      // Once it is due, the next pass replays it with no user action, in
+      // order, and the pause lifts.
+      store.age = const Duration(minutes: 2);
+      api.events = <SyncEvent>[
+        ...api.events,
+        _envelopeEvent(8, 'msg_more', conversationId: 'conv_2'),
+      ];
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness
+          .waitFor(() => !harness.state.conversationSyncPaused('conv_1'));
+      expect(await store.loadConversationPause('conv_1'), isNull);
+      expect(harness.crypto.order,
+          containsAllInOrder(<String>['mls_held', 'msg_after']));
+      expect(await store.hasProcessedMlsMessage('mls:4:mls_held'), isTrue);
+      expect(harness.state.syncRecovery, isNull);
+      harness.dispose();
+    });
+
+    test('a due replay that is still held stays held, one generation on',
+        () async {
+      final api = _ScriptedApi()
+        ..conversationRoute = true
+        ..events = <SyncEvent>[_mlsEvent(4, 'mls_held')];
+      final store = _AgedPauseStore();
+      final harness = await _Harness.start(api, store: store);
+      harness.crypto.heldMls.add('mls_held');
+      await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+      await harness
+          .waitFor(() => harness.state.conversationSyncPaused('conv_1'));
+
+      store.age = const Duration(minutes: 2);
+      harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+      await harness.waitFor(() async =>
+          (await store.loadConversationPause('conv_1'))?.generation == 2);
+      final pause = (await store.loadConversationPause('conv_1'))!;
+      expect(pause.kind, SyncFailureKind.governanceHeld);
+      expect(pause.failedEventId, 4);
+      expect(harness.crypto.order, isEmpty);
+      expect(harness.state.syncRecovery, isNull);
+      harness.dispose();
+    });
+  });
 }
 
 SyncEvent _projectionEvent(int id, String type,
@@ -846,6 +925,20 @@ class _Harness {
   }
 
   void dispose() => state.dispose();
+}
+
+/// A memory store whose pauses read as recorded [age] earlier, so a held
+/// commit's backoff can run out without waiting.
+class _AgedPauseStore extends MemoryLocalStore {
+  Duration age = Duration.zero;
+
+  ConversationPause _aged(ConversationPause pause) =>
+      pause.copyWith(recordedAt: pause.recordedAt.subtract(age));
+
+  @override
+  Future<List<ConversationPause>> loadConversationPauses() async => [
+        for (final pause in await super.loadConversationPauses()) _aged(pause),
+      ];
 }
 
 /// EBUSY: a storage error that passes by itself.
@@ -1133,12 +1226,18 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   final List<int> cursorAtApply = <int>[];
   final Set<String> rejectedMls = <String>{};
 
+  /// C4 commits that wait for evidence (held, never refused).
+  final Set<String> heldMls = <String>{};
+
   @override
   Future<void> activateSession(Session session) async {}
 
   @override
   Future<void> processMlsMessage(MlsMessage message) async {
     if (rejectedMls.contains(message.id)) throw StateError('commit rejected');
+    if (heldMls.contains(message.id)) {
+      throw const GovernanceHeldException('removal_unproven');
+    }
     order.add(message.id);
     await store.commitSyncEvent(SyncEventCommit(
       eventKey: 'mls:${message.syncEventId}:${message.id}',
