@@ -126,8 +126,10 @@ func TestCommunityLayoutHTTPRoutesPostsThroughTheSharedGroup(t *testing.T) {
 	}
 }
 
-func TestCommunityLayoutIsOffByDefault(t *testing.T) {
-	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+// The switch is on by default (config.Load); switched off, new communities
+// keep the legacy one-conversation-per-channel layout.
+func TestCommunityLayoutSwitchedOffKeepsTheLegacyLayout(t *testing.T) {
+	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, func(c *config.Config) { c.CommunityLayout = false })
 	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, body)

@@ -763,11 +763,16 @@ class MetadataSearchResult {
     required this.type,
     required this.id,
     required this.label,
+    this.detail,
   });
 
   final String type;
   final String id;
   final String label;
+
+  /// A second line for a local hit (a channel's community name); never
+  /// from the server.
+  final String? detail;
 
   factory MetadataSearchResult.fromJson(Map<String, Object?> json) {
     return MetadataSearchResult(

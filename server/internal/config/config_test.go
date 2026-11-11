@@ -57,6 +57,31 @@ func TestLoadScopedSyncRefusesUnclearValues(t *testing.T) {
 	}
 }
 
+func TestLoadCommunityLayoutDefaultsOn(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{{"", true}, {"1", true}, {"true", true}, {"0", false}, {"false", false}, {"FALSE", false}} {
+		t.Setenv("PRIVATE_MESSENGER_COMMUNITY_LAYOUT", tc.value)
+		cfg, err := Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.CommunityLayout != tc.want {
+			t.Fatalf("COMMUNITY_LAYOUT=%q: CommunityLayout=%v want %v", tc.value, cfg.CommunityLayout, tc.want)
+		}
+	}
+}
+
+func TestLoadCommunityLayoutRefusesUnclearValues(t *testing.T) {
+	for _, raw := range []string{"off", "no", "disabled", "garbage"} {
+		t.Setenv("PRIVATE_MESSENGER_COMMUNITY_LAYOUT", raw)
+		if _, err := Load(); err == nil {
+			t.Fatalf("unclear COMMUNITY_LAYOUT value accepted: %q", raw)
+		}
+	}
+}
+
 func TestLoadPasswordCostRange(t *testing.T) {
 	t.Setenv("PRIVATE_MESSENGER_BCRYPT_COST", "13")
 	cfg, err := Load()

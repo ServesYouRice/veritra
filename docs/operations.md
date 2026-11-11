@@ -978,9 +978,10 @@ behind retention it answers 409 `conversation_recovery_required` and only that
 conversation pauses. The routes are read-only, member-checked, and expose
 nothing the legacy stream does not.
 
-**Community shared-group layout (C0, off by default).**
-`PRIVATE_MESSENGER_COMMUNITY_LAYOUT=1` makes each community created from then
-on use one shared MLS conversation for its open and announcement channels and
+**Community shared-group layout (C0, on by default).**
+`PRIVATE_MESSENGER_COMMUNITY_LAYOUT` (on unless set to `0` or `false`; any
+other value but `1` or `true` is refused at start) makes each community
+created from then on use one shared MLS conversation for its open and announcement channels and
 one conversation per private channel (migration 0049). Existing communities
 stay in the legacy one-conversation-per-channel layout; nothing is converted.
 A post in the shared conversation must name an open or announcement channel of
@@ -989,8 +990,11 @@ that community in its clear envelope metadata (`channel_id`,
 announcement channel from members and keep a post in its channel; the same
 channel id is inside the encrypted payload, which the receiving app checks.
 The server therefore sees which channel a post is in and who is in each
-private channel. Leave the switch off until the app that ships with it is
-released; an older app cannot open a community in the new layout.
+private channel. The owner turned it on by default (2026-11-11): C3 keeps
+community and channel names only in encrypted records whose key lives in the
+shared group, so with the switch off a new community shows placeholder names
+only. An older app cannot open a community in the new layout; set
+`PRIVATE_MESSENGER_COMMUNITY_LAYOUT=0` while such apps must still be served.
 
 **Sync cursors after retention.** `PRIVATE_MESSENGER_SYNC_EVENT_RETENTION_DAYS`
 (30 by default) also limits how long a device can be away. Pruning records

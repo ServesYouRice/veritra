@@ -27,9 +27,11 @@ type Config struct {
 	ScopedSync bool
 	// CommunityLayout makes new communities use the C0 shared-group layout:
 	// one shared conversation for open channels and one conversation per
-	// private channel. Existing communities stay in the legacy layout. Off by
-	// default until the app, scoped sync and the layout control record are
-	// ready (C1 prerequisite 2).
+	// private channel. Existing communities stay in the legacy layout. On by
+	// default (owner decision, 2026-11-11): C3 keeps community and channel
+	// names only in encrypted records whose key lives in the shared group, so
+	// a legacy community shows placeholders.
+	// PRIVATE_MESSENGER_COMMUNITY_LAYOUT=0 (or false) turns it off.
 	CommunityLayout bool
 	// C7History turns on C7 step 3 (docs/designs/C7-channel-history.md):
 	// sealed bodies are required in community conversations and the legacy
@@ -124,8 +126,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	if err := checkSwitch("PRIVATE_MESSENGER_SCOPED_SYNC"); err != nil {
-		return Config{}, err
+	for _, key := range []string{"PRIVATE_MESSENGER_SCOPED_SYNC", "PRIVATE_MESSENGER_COMMUNITY_LAYOUT"} {
+		if err := checkSwitch(key); err != nil {
+			return Config{}, err
+		}
 	}
 	passwordCost, err := parsePasswordCost(os.Getenv("PRIVATE_MESSENGER_BCRYPT_COST"))
 	if err != nil {
@@ -154,7 +158,7 @@ func Load() (Config, error) {
 		SetupToken:       secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
 		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
 		ScopedSync:       !envOff("PRIVATE_MESSENGER_SCOPED_SYNC"),
-		CommunityLayout:  getenv("PRIVATE_MESSENGER_COMMUNITY_LAYOUT", "") == "1",
+		CommunityLayout:  !envOff("PRIVATE_MESSENGER_COMMUNITY_LAYOUT"),
 		C7History:        getenv("PRIVATE_MESSENGER_C7_HISTORY", "") == "1",
 		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
 		TrustedProxies:   trustedProxies,
