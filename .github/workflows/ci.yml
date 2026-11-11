@@ -386,6 +386,7 @@ jobs:
           python3 scripts/check-go-toolchain_test.py
           python3 scripts/check-gradle-inputs_test.py
           python3 scripts/release-image_test.py
+          python3 scripts/verify-attestation_test.py
 
   vulnerabilities:
     runs-on: ubuntu-latest

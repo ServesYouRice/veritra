@@ -6444,6 +6444,13 @@ class AppState extends ChangeNotifier
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        try {
+          await _sendOwnDeviceAlerts(current, ownerGeneration);
+        } catch (err) {
+          // L2-5: an alert is retried on the next pass; it never blocks sync.
+          if (err is ApiException && err.statusCode == 401) rethrow;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         // Caught up: expired key packages may go (D70 S4).
         await _maybePruneKeyPackages();
         if (!_syncOwnerActive(current, ownerGeneration)) return;

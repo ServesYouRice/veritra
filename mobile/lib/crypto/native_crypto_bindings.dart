@@ -164,6 +164,22 @@ typedef _DecryptNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _DecryptDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _DecryptSealedNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _DecryptSealedDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _PaddedSizeNative = Int32 Function(Uint64, Pointer<Uint64>);
+typedef _PaddedSizeDart = int Function(int, Pointer<Uint64>);
 typedef _C7CommitNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
 typedef _C7CommitDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
@@ -552,6 +568,12 @@ class NativeCryptoBindings {
             _HandleTwoSlicesOutputDart>('pm_crypto_group_encrypt'),
         _groupDecrypt = library.lookupFunction<_DecryptNative, _DecryptDart>(
             'pm_crypto_group_decrypt'),
+        _groupDecryptSealed =
+            library.lookupFunction<_DecryptSealedNative, _DecryptSealedDart>(
+                'pm_crypto_group_decrypt_sealed'),
+        _l2PaddedSize =
+            library.lookupFunction<_PaddedSizeNative, _PaddedSizeDart>(
+                'pm_crypto_l2_padded_size'),
         _c7ProcessCommit =
             library.lookupFunction<_C7CommitNative, _C7CommitDart>(
                 'pm_crypto_group_c7_process_commit'),
@@ -570,7 +592,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 22) {
+    if (_abiVersion() != 23) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -1029,6 +1051,23 @@ class NativeCryptoBindings {
     return _secretOutput(opened, sealed.length - 4 - 32 - 16);
   }
 
+  /// The L2-1 size bucket (ABI 23, `docs/crypto.md` "L2 padding") for a
+  /// blob of [length] bytes, or null above the 8 MiB cap. Key packages and
+  /// Welcomes are padded to it inside the core; this is the shared rule,
+  /// exported for the vectors.
+  int? l2PaddedSize(int length) {
+    if (length < 0) throw ArgumentError.value(length, 'length');
+    final out = calloc<Uint64>();
+    try {
+      final code = _l2PaddedSize(length, out);
+      if (code == -2) return null;
+      _check(code);
+      return out.value;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
   /// The C6 franking commitment over the canonical payload bytes [payload]
   /// (ABI 12, `docs/crypto.md` "Franking v1"). [key] is the 32-byte `kf`.
   Uint8List frankCommit({
@@ -1245,6 +1284,8 @@ class NativeCryptoBindings {
   final _GroupEpochDart _groupEpoch;
   final _HandleTwoSlicesOutputDart _groupEncrypt;
   final _DecryptDart _groupDecrypt;
+  final _DecryptSealedDart _groupDecryptSealed;
+  final _PaddedSizeDart _l2PaddedSize;
   final _C7CommitDart _c7ProcessCommit;
   final _C7MergeDart _c7MergePending;
   final _C7DecryptDart _c7GroupDecrypt;
@@ -2161,6 +2202,42 @@ class NativeCryptoDevice implements Finalizable {
         ],
         (slices) => _bindings._output((out) => _bindings._groupDecrypt(
             _liveHandle, slices[0], slices[1], slices[2], slices[3], out)));
+  }
+
+  /// L2-3 (ABI 23, sealed sender): decrypts an application message whose
+  /// sender the transport does not name, and returns the sender MLS
+  /// authenticated. Nothing the server says about the sender is used.
+  /// Throws [NativeCryptoError.senderRemoved] for a past-epoch message from
+  /// a sender who has left; the ratchet has advanced then. Not used by the
+  /// app yet: sealed delivery waits for its credential decision.
+  ({List<int> plaintext, String accountId, String deviceId}) decryptSealed(
+      String groupId, List<int> ciphertext) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(ciphertext, 1024 * 1024 + 4096);
+    return _bindings._withByteLists([groupId.codeUnits, ciphertext], (slices) {
+      final plaintext = calloc<_PmOwnedBuffer>();
+      final account = calloc<_PmOwnedBuffer>();
+      final device = calloc<_PmOwnedBuffer>();
+      try {
+        _bindings._check(_bindings._groupDecryptSealed(
+            _liveHandle, slices[0], slices[1], plaintext, account, device));
+        final accountBytes = _bindings._take(account.ref, maximum: 128);
+        final deviceBytes = _bindings._take(device.ref, maximum: 128);
+        final plaintextBytes = _bindings._take(plaintext.ref);
+        return (
+          plaintext: plaintextBytes,
+          accountId: utf8.decode(accountBytes),
+          deviceId: utf8.decode(deviceBytes),
+        );
+      } finally {
+        if (plaintext.ref.data != nullptr) _bindings._free(plaintext.ref);
+        if (account.ref.data != nullptr) _bindings._free(account.ref);
+        if (device.ref.data != nullptr) _bindings._free(device.ref);
+        calloc.free(plaintext);
+        calloc.free(account);
+        calloc.free(device);
+      }
+    });
   }
 
   /// [processCommit] that also reports what the commit did, from MLS itself

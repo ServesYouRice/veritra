@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 22 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 23 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 22. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 23. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -366,6 +366,122 @@ is spent on a message that cannot be sent. A test encrypts exactly the cap
 and checks that a full request body stays within 1 MiB. The server limit is
 not raised; if it changes, change the derivation with it.
 
+## L2 padding (ABI 23)
+
+Design: [`L2-server-learns-less.md`](designs/L2-server-learns-less.md),
+step L2-1, defaults accepted (D106). What each uploaded blob does now:
+
+| Blob | Size the server sees | Where the padding is |
+| --- | --- | --- |
+| Application message | 256-byte multiple | `VAP1` (256-byte buckets) inside an MLS `PrivateMessage`, itself padded to 256 by MLS |
+| Commit | 256-byte multiple | Groups use OpenMLS's default pure-ciphertext wire format, so every commit is a `PrivateMessage` padded by `padding_size(256)`. The design's guess (65 %) that commits went out as `PublicMessage` was wrong; a Rust test pins `PrivateMessage` for add and remove commits |
+| Welcome | L2 bucket (below) | **New.** A pad extension in the GroupInfo, which is encrypted and signed |
+| Key package | L2 bucket | **New.** A pad extension in the signed key package |
+| K1 backup, K2 history transfer | Their own buckets | Already padded (`history.rs`, `padded_size`) |
+| `history_sync` (C7) | Exact | **Not padded, on purpose.** The server tells a `history_sync` body from a channel post by its exact size (`c7SyncBodySize`, `server/internal/storage/c7_body_store.go`) to exempt it from C2 and slow mode. Bucketing it would remove that exemption. This is a conflict between L2-1 and the C7 design; it needs a C7 decision (for example, a size rule over buckets plus a client-side check), not a quiet change here |
+| Attachments | Manifest v2 buckets | Unchanged (D60-D63) |
+
+**The bucket rule.** For a blob of `n` bytes: the next multiple of 256 (at
+least 256) while that is at most 4096; above, the next power of two, up to
+8 MiB (its base64 still fits the 12 MiB commit-bundle route with the commit
+beside it). A blob above 8 MiB is not padded. `pm_crypto_l2_padded_size`
+exports the rule; `testing/vectors/l2-padding-v1.json` holds the edges
+(0, 255, 256, 4096, 4097, the cap and above) and one padded key package,
+checked by Rust (`crypto/rust/src/l2_tests.rs`), Go
+(`server/internal/mlswire/l2_padding_test.go`, which re-states the rule and
+runs the structural key-package check on the padded package) and Dart
+(`mobile/test/l2_padding_native_test.dart`, through FFI).
+
+**The pad.** One MLS extension of type `0xF0A2` (private use; C4 uses
+`0xF0C4`) whose data is zero bytes. RFC 9420 requires a key package's
+extensions to be listed in its leaf's capabilities, so every leaf now lists
+`0xF0A2` next to `0xF0C4` (`c4::leaf_capabilities`). Nothing requires the
+extension of other leaves or of the group context. A pad whose data is not
+all zero, or longer than 8 MiB, is refused: in a key package being added
+(sender side) or in a received commit's Add (`inspect_commit`), and in a
+Welcome's GroupInfo at join. An outer pad the server could strip, or one
+outside the MLS structure, would not help: the server can parse the MLS
+vector lengths.
+
+**Key packages.** The unpadded size depends only on the credential, so
+`create_key_package` first builds a throwaway package with the same
+credential and fresh keys in an in-memory provider that is never stored,
+then computes the pad that lands exactly on a bucket (the first reachable
+one, since a length prefix step can skip a bucket by one or two bytes).
+
+**Welcomes.** The GroupInfo's size is known only after the commit is built.
+`stage_commit_with_record` (every app path that adds devices) stages the
+commit with a 64-byte pad, measures the Welcome, clears the staged commit
+and stages it again with the pad that reaches the bucket; a third stage
+happens only when a vector prefix crosses 16 KiB, and a bucket a prefix
+step jumps over is replaced by the next one. Building writes nothing;
+each discarded stage consumes one handshake ratchet generation, which
+receivers skip as they skip a lost message (well within OpenMLS's
+forward distance). Add-only commits cost about 7 ms to stage at 1,000
+leaves (C0), so the extra stage is small. If padding cannot reach a bucket
+after six stages, which no tested size does, the commit goes with the
+64-byte pad: padding never blocks a membership change. The deprecated
+`pm_crypto_group_add_member` (tests only) is not padded.
+
+**What it buys.** Sizes of key packages and Welcomes no longer show
+credential lengths, the C4 record size or the exact tree size. The server
+still learns the roster from the commit bundle's `added` and `removed`
+lists (D28), and the count of Welcome recipients from the Welcome's
+per-recipient secrets, so against the server the Welcome pad mainly hides
+the record and credential contents' sizes; against a network observer it
+hides the tree size too.
+
+**Compatibility.** Tested: an ABI 23 core adds unpadded key packages and
+joins unpadded Welcomes
+(`unpadded_packages_are_still_added_and_bad_pads_refused`). Expected but
+**not tested** against an ABI 22 build: an ABI 22 core (the same OpenMLS
+0.9.2) accepts a padded key package, because the package's own leaf lists
+`0xF0A2` in its capabilities, and a padded Welcome, because OpenMLS keeps an
+unknown GroupInfo extension without acting on it. This departs from the
+design's test plan line "an older library refuses a padded blob (fail
+closed)": padding is meant to need no lockstep upgrade, and the reviewer
+has to accept that or ask for the cross-version test (build origin/main's
+core and feed it this branch's blobs). The only new receive rule is the
+malformed-pad refusal, which no honest client of either version triggers.
+The app still pins the exact ABI (23), as for every bump.
+
+## Sealed sender boundary (ABI 23, L2-3)
+
+`pm_crypto_group_decrypt_sealed` decrypts an application message and
+returns the sender MLS authenticated (account and device ids), comparing
+nothing the server sent: D25's binding becomes "MLS says" for this call.
+A past-epoch message counts only while its sender is still a member
+(`PM_CRYPTO_SENDER_REMOVED`), as in `pm_crypto_group_decrypt`, which keeps
+its D25 check unchanged. Bound in Dart as `NativeCryptoDevice.decryptSealed`
+and tested in Rust and Dart; **nothing in the app or server uses it yet.**
+It is in ABI 23 so that sealed delivery needs no further ABI bump.
+
+The rest of L2-3 is not built. Two facts found while building ABI 23 stop
+it:
+
+1. **Every message is reportable.** Since C6 steps 2 and 3 every message
+   type the app sends is franked, and the design keeps conversations with
+   reporting on identified (franking attribution relies on the
+   authenticated sender row). As built, sealed sender would therefore apply
+   to no message. Either sealed messages go unfranked (unreportable), or
+   L2-3 waits for asymmetric franking, its own crypto package.
+2. **The credential cannot be a Rust crate alone.** The server is pure Go,
+   so whatever proves "a current member of conversation X" must verify in
+   Go. The options, for the owner (D106 allowed one reviewed crate, not a
+   Go module as well):
+   - **A. Per-epoch token from the MLS exporter.** Each epoch's committer
+     registers a verifier (a hash of an exporter-derived key) in the D28
+     bundle; a sender shows the key on an unauthenticated connection. No
+     new dependency on either side. Weaker than the design: one token per
+     conversation and epoch, so per-member rationing becomes per-epoch and
+     per-address limits, and a malicious committer can register a bad
+     verifier (the fallback is to send identified).
+   - **B. Privacy Pass (VOPRF, RFC 9497).** Per-member tokens, unlinkable.
+     Needs a reviewed library in Rust and in Go.
+   - **C. Blind RSA (RFC 9474).** Verification is stdlib RSA-PSS in Go, but
+     issuance needs a constant-time private RSA operation, which in
+     practice means a Go dependency, plus a Rust one for blinding.
+
 ## Encrypted backup file (VBK2)
 
 The encrypted backup (I45) the device uploads is one file, written by
@@ -482,6 +598,42 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   MLS roster, and the server's community inbox lists only members of the
   reported conversation. No wire, ABI, local schema or migration change.
   Rules: C6 design, "Private channels".
+
+- **L2-5 own-device alert (2026-11-11):** the hidden v2 payload
+  `device_list_alert` (registry in "Application payload v2" §4). No ABI,
+  local schema or server migration change; the receiver's alerted head is a
+  local setting (`l2.alert_head.<account>`, value
+  `<head>:<list id>:<alerting device>`), the
+  sender's last alert per chat `l2.alert_sent.<conversation>`. The design
+  said a different list id becomes `conflict`; it is held as `checking`
+  instead, since a chain of another genesis is never a sticky conflict
+  (owner decision 2026-11-08). Residuals: the server can drop the alert;
+  an approved device of an account can hold that account's leaves in its
+  chats as `checking` by alerting a head never published, until a pin shows
+  that device removed (the alert then stops counting; the head carries no
+  signature, so a receiver cannot check it alone); one alert is kept per
+  account, so while a rogue alert holds it an honest alert at the same or a
+  lower head is dropped, and none is left once the rogue device is
+  removed; first contact is unchanged. Tests:
+  `mobile/test/l1_native_gate_test.dart` (alert, forged alert, hold and
+  release), `mobile/test/l2_device_list_alert_payload_test.dart`. Needs the
+  independent review.
+
+- **L2-1 padding and the sealed-sender boundary: ABI 23 (2026-11-11):**
+  key packages carry a zero-byte pad extension `0xF0A2` that brings them
+  to a size bucket, and every staged commit that adds devices pads its
+  Welcome the same way inside the encrypted GroupInfo; every leaf lists
+  `0xF0A2` in its capabilities; a malformed pad is refused in added key
+  packages, received Adds and Welcomes. New exports
+  `pm_crypto_l2_padded_size` (the bucket rule) and
+  `pm_crypto_group_decrypt_sealed` (returns the MLS-authenticated sender;
+  not used by the app or server yet). `pm_crypto_group_decrypt` and every
+  other signature are unchanged. Header, Dart binding (`!= 23`) and
+  `scripts/verify-mobile-crypto.sh` updated; vector
+  `testing/vectors/l2-padding-v1.json` (Rust, Go, Dart). ABI 23 accepts
+  ABI 22 blobs (tested); the reverse is expected, not tested. No local schema or server migration.
+  Rules: "L2 padding" and "Sealed sender boundary" above. Needs the
+  independent review (G25), the two-stage Welcome build in particular.
 
 - **C4 app wiring and removal proofs (2026-11-11):** groups and community
   shared groups are created with the genesis role record; every commit
@@ -2394,6 +2546,7 @@ input can differ.
 | `history_sync_request` | 2, hidden | `for_epoch` (u64): the membership commit whose history_sync the sender lacks | A newcomer; group-level only, two-part only | C7 decision 5. Never franked |
 | `report_key` | 2, hidden | `key`: canonical base64 of 32 bytes, the sender's own report public key; no other field | Any member (the key is the MLS sender's own); who moderates is judged when a report is sealed, against the C4 record | C6: kept as setting `c6.report_key.<group>.<sender account>` only in a group whose MLS state holds a C4 record and only from an L1-approved leaf; latest wins. Never franked, never expires, never reportable |
 | `report_key_request` | 2, hidden | `accounts`: 1 to 64 distinct account ids (1 to 128 characters); no other field | Any member | C6: kept as setting `c6.report_key_request.<group>` (the sync event id) only when it names the receiver's account, under the same group and leaf rules; each named moderator's app announces again, at most once per 5 minutes per group. Sent by a member's background pass when it lacks some moderators' announcements (a new set at once, the same set weekly), never by the report flow. Never franked |
+| `device_list_alert` | 2, hidden | Exactly `account_id` (1 to 128 chars), `head_version` (int ≥ 1), `list_id` (64 lowercase hex): the sender's own pinned list head | An approved device of `account_id` itself (it must equal the MLS-authenticated sender's account; any other alert is a hidden row with no effect) | L2-5: sent, identified and never franked, when this device judges a leaf of its own account unapproved; goes out past the sender's own approval hold, once per conversation and own head. Receivers keep the highest head per account (with its list id), refetch the list past the rate limit and judge again; while their pin is older than that head or of another list id, and does not show the alerting device removed, every leaf of the account is `checking` (held, not sticky) |
 
 In a C0-layout conversation a two-part message with no `channel_id` must be
 `history_sync` or `history_sync_request`, and those two never carry one;

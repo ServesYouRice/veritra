@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -479,6 +480,152 @@ void main() {
     await expectLater(
         bob.send('x'), throwsA(isA<ConversationApprovalHeldException>()));
     expect(await bob.store.loadApprovalLeaves('conv_1'), hasLength(2));
+  }, skip: skip);
+
+  // L2-5 (D94): the own-device alert.
+  DeviceListPin pin(String accountId, int version,
+          {int listId = 0xab,
+          List<DeviceListKeyRow> keys = const <DeviceListKeyRow>[]}) =>
+      DeviceListPin(
+        accountId: accountId,
+        version: version,
+        listHash: List<int>.filled(32, 1),
+        listId: List<int>.filled(32, listId),
+        headStatement: const <int>[1],
+        conflict: false,
+        checkedAt: 0,
+        keys: keys,
+      );
+
+  Future<MessageEnvelope> alert(_Client from, Map<String, Object?> body) async {
+    final envelope = await from.service
+        .encryptPayload('conv_1', AppPayloadType.deviceListAlert, body);
+    await from.store.removePendingEnvelope(envelope.idempotencyKey);
+    return envelope;
+  }
+
+  test(
+      'a device that finds an unapproved leaf of its own account alerts the '
+      'group once per head, past its own hold', () async {
+    final alice = await client('acct_alice', 'dev_alice');
+    // A device the server slipped into acct_alice; bob's stale pin lists it.
+    final ghost = await client('acct_alice', 'dev_ghost');
+    final bob = await client('acct_bob', 'dev_bob');
+    await bob.trust(alice);
+    await bob.trust(ghost);
+    await alice.trust(bob);
+    await bob.service.initializeConversation(
+        'conv_1', [await alice.keyPackage(), await ghost.keyPackage()]);
+    await _accept(bob, [alice, ghost], const []);
+    expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+
+    // Alice's own list does not have dev_ghost: held, and an alert is owed.
+    expect(await alice.service.refreshApprovalHold('conv_1'), isTrue);
+    expect(
+        await alice.store
+            .saveDeviceListPin(pin('acct_alice', 3), expectedVersion: null),
+        isTrue);
+    final due = await alice.service.ownDeviceAlertsDue();
+    expect(due, hasLength(1));
+    expect(due.single.conversationId, 'conv_1');
+    expect(due.single.body, {
+      'account_id': 'acct_alice',
+      'head_version': 3,
+      'list_id': 'ab' * 32,
+    });
+    await expectLater(
+        alice.send('held'), throwsA(isA<ConversationApprovalHeldException>()));
+
+    // A forged alert (about another account) changes nothing at bob. Sent
+    // first: once bob holds acct_alice's leaves, ghost's messages hide.
+    final forged = await alert(ghost, <String, Object?>{
+      'account_id': 'acct_bob',
+      'head_version': 9,
+      'list_id': 'cd' * 32,
+    });
+    await bob.receive(ghost, forged);
+    expect(
+        await bob.store
+            .loadSetting(NativeCryptoService.alertHeadSetting('acct_bob')),
+        isNull);
+    expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+
+    // The alert itself goes out although the chat is held.
+    final sent = await alert(alice, due.single.body);
+    await alice.service.markOwnDeviceAlertSent('conv_1', 3);
+    expect(await alice.service.ownDeviceAlertsDue(), isEmpty);
+    // Judged again at the same head: still not owed again.
+    expect(await alice.service.refreshApprovalHold('conv_1'), isTrue);
+    expect(await alice.service.ownDeviceAlertsDue(), isEmpty);
+
+    // Bob's pin of acct_alice is behind the alerted head: every leaf of
+    // acct_alice is "checking" and the chat is held, nothing shown.
+    expect(await bob.receive(alice, sent), isNull);
+    expect(
+        await bob.store
+            .loadSetting(NativeCryptoService.alertHeadSetting('acct_alice')),
+        '3:${'ab' * 32}:dev_alice');
+    expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
+    final leaves = await bob.store.loadApprovalLeaves('conv_1');
+    for (final leaf in leaves) {
+      final account = String.fromCharCodes(leaf.accountId);
+      expect(leaf.verdict,
+          account == 'acct_alice' ? LeafVerdict.checking : LeafVerdict.approved,
+          reason: String.fromCharCodes(leaf.deviceId));
+    }
+    expect((await bob.history()).where((m) => m.body != null), isEmpty);
+
+    // A pin at that head of another list (another genesis) still holds.
+    expect(
+        await bob.store.saveDeviceListPin(pin('acct_alice', 3, listId: 0xcd),
+            expectedVersion: null),
+        isTrue);
+    expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
+
+    // Once bob's pin is the alerted list at that head, the list alone
+    // decides again.
+    expect(
+        await bob.store
+            .saveDeviceListPin(pin('acct_alice', 3), expectedVersion: 3),
+        isTrue);
+    expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+
+    // A rogue device of acct_alice alerting a head never published holds
+    // the account's leaves only until a pin shows that device removed.
+    await bob.receive(
+        ghost,
+        await alert(ghost, <String, Object?>{
+          'account_id': 'acct_alice',
+          'head_version': 9,
+          'list_id': 'ab' * 32,
+        }));
+    expect(
+        await bob.store
+            .loadSetting(NativeCryptoService.alertHeadSetting('acct_alice')),
+        '9:${'ab' * 32}:dev_ghost');
+    expect(await bob.service.refreshApprovalHold('conv_1'), isTrue);
+    expect(
+        await bob.store.saveDeviceListPin(
+            pin('acct_alice', 4, keys: [
+              DeviceListKeyRow(
+                  deviceId: utf8.encode('dev_ghost'),
+                  signingKey: List<int>.filled(32, 7),
+                  addedVersion: 1,
+                  removedVersion: 4),
+            ]),
+            expectedVersion: 3),
+        isTrue);
+    expect(await bob.service.refreshApprovalHold('conv_1'), isFalse);
+
+    // A new own head makes the alert due again.
+    expect(
+        await alice.store
+            .saveDeviceListPin(pin('acct_alice', 4), expectedVersion: 3),
+        isTrue);
+    expect(await alice.service.refreshApprovalHold('conv_1'), isTrue);
+    expect(
+        (await alice.service.ownDeviceAlertsDue()).single.body['head_version'],
+        4);
   }, skip: skip);
 }
 

@@ -150,6 +150,8 @@ void main() {
         // C6: moderator report key announcements and requests.
         'reportKey',
         'reportKeyRequest',
+        // L2-5: an own-device alert is never reportable.
+        'deviceListAlert',
       });
       // The policy matches decoded payloads by AppPayloadType.name, so every
       // entry must name a real type, and every C7 type must be exempt.
