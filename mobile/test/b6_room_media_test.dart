@@ -14,34 +14,6 @@ import 'b6_room_fakes.dart';
 // provider: fail-closed publish order, receive binding by sealed
 // announcements only, and the factory's fail-closed open.
 
-class FakeKeyProvider implements rtc.KeyProvider {
-  final Map<String, Uint8List> keys = {};
-  bool refuse = false;
-  bool disposed = false;
-  final List<String> log;
-  FakeKeyProvider(this.log);
-
-  @override
-  String get id => 'kp';
-
-  @override
-  Future<bool> setKey(
-      {required String participantId,
-      required int index,
-      required Uint8List key}) async {
-    if (refuse) return false;
-    keys['$participantId@$index'] = Uint8List.fromList(key);
-    log.add('key $participantId@$index');
-    return true;
-  }
-
-  @override
-  Future<void> dispose() async => disposed = true;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
 class FakeCryptor implements RoomFrameCryptor {
   FakeCryptor(this.participantId, this.log, {this.failEnable = false});
   final String participantId;

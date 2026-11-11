@@ -206,9 +206,15 @@ class NativeCryptoService
   final Map<String, List<ApprovalLeaf>> _verdictCache =
       <String, List<ApprovalLeaf>>{};
 
+  /// Verdict writes per conversation, so a load that a write overtook is
+  /// not cached (it would hold the rows from before that write).
+  final Map<String, int> _verdictWrites = <String, int>{};
+
   Future<void> _warmVerdicts(String conversationId) async {
+    final writes = _verdictWrites[conversationId] ?? 0;
     try {
       final rows = await localStore.loadApprovalLeaves(conversationId);
+      if ((_verdictWrites[conversationId] ?? 0) != writes) return;
       _verdictCache.putIfAbsent(conversationId, () => rows);
     } on Object {
       // Asked again on the next call.
@@ -216,6 +222,8 @@ class NativeCryptoService
   }
 
   void _rememberVerdicts(ApprovalLeafChange change) {
+    _verdictWrites.update(change.conversationId, (n) => n + 1,
+        ifAbsent: () => 1);
     if (change.replaceAll) {
       _verdictCache[change.conversationId] =
           List<ApprovalLeaf>.of(change.leaves);
@@ -4542,7 +4550,10 @@ class NativeCryptoService
           return verdicts;
         },
         load: (conversationId) async {
-          await _warmVerdicts(conversationId);
+          // A load a verdict write overtook caches nothing; try again.
+          for (var i = 0; i < 3 && _verdictCache[conversationId] == null; i++) {
+            await _warmVerdicts(conversationId);
+          }
           return _verdictCache[conversationId];
         },
       );

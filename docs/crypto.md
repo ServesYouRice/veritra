@@ -1925,8 +1925,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     revocation or a device whose account left (removals take the epoch
     first), then 429 `mls_self_update_limit` with `Retry-After` when the
     same device made one in the conversation within
-    `PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES` (default 60). The
-    time is kept on the device's roster row. The route stays under the
+    `PRIVATE_MESSENGER_LIMIT_MLS_SELF_UPDATE_MINUTES` (default 60), unless
+    the device sent a C4 leave notice there within the last hour and after
+    its last self-update (the void of a cancelled leave, once per notice;
+    "Cancelled leave"). The time is kept on the device's roster row. The route stays under the
     D39 request budgets and the delivery write budget. A Welcome needs an
     Added device and a revocation a Removed one, so neither can ride on
     an update-only bundle; every other check is unchanged.

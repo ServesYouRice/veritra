@@ -9631,10 +9631,6 @@ class AppState extends ChangeNotifier
     return blocksLoaded && peer != null && !isBlocked(peer);
   }
 
-  /// Whether MLS work for [conversationId] must wait: control messages
-  /// queued ahead of it, or a pause of the conversation itself (C1 P1),
-  /// which keeps reconcile, revocation commits and self-updates away from
-  /// its group.
   /// Sends what the MLS outbox holds and waits for it, including a pass
   /// that was already running (a second flush only asks it to go again).
   Future<void> _settleMlsOutbox() async {
@@ -9643,6 +9639,10 @@ class AppState extends ChangeNotifier
     if (running != null) await running.future;
   }
 
+  /// Whether MLS work for [conversationId] must wait: control messages
+  /// queued ahead of it, or a pause of the conversation itself (C1 P1),
+  /// which keeps reconcile, revocation commits and self-updates away from
+  /// its group.
   Future<bool> _hasPendingMlsWork(String conversationId) async =>
       conversationSyncPaused(conversationId) ||
       (await localStore.pendingMlsMessages())

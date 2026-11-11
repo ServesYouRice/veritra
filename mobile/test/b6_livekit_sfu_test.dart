@@ -8,7 +8,6 @@ import 'package:private_messenger/calls/room/room_media.dart';
 import 'package:private_messenger/calls/room/webrtc_frame_keys.dart';
 
 import 'b6_room_fakes.dart';
-import 'b6_room_media_test.dart' show FakeKeyProvider;
 
 // B6 review HIGH and MEDIUM (round 7): the LiveKit adapter keeps media fail
 // closed around LiveKit's own reconnect, republish and track start, driven
@@ -131,6 +130,16 @@ class FakeRoom implements LiveKitRoomDriver {
   }
 }
 
+/// Waits until [done] holds, up to [limit] (real time: the adapter polls
+/// with timers), so a loaded machine does not fail the test.
+Future<void> eventually(bool Function() done,
+    {Duration limit = const Duration(seconds: 5)}) async {
+  final waited = Stopwatch()..start();
+  while (!done() && waited.elapsed < limit) {
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+  }
+}
+
 Future<void> microtasks() async {
   for (var i = 0; i < 20; i++) {
     await Future<void>.value();
@@ -224,7 +233,9 @@ void main() {
     await microtasks();
     // LiveKit's start has run and enabled it; the adapter has not handed it
     // over yet.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(media.isActive, isTrue);
+    expect(events.whereType<SfuTrackSubscribed>(), isEmpty);
+    await eventually(() => events.whereType<SfuTrackSubscribed>().isNotEmpty);
     expect(events.whereType<SfuTrackSubscribed>(), hasLength(1));
     expect(media.enabled, isFalse,
         reason: 'disabled again after LiveKit started it');
@@ -239,7 +250,7 @@ void main() {
       () async {
     final media = FakeRemoteMedia('TR_b', 'sfu_b');
     room.subscribe(media, starts: false);
-    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await eventually(() => media.unsubscribed);
     expect(media.unsubscribed, isTrue);
     expect(events.whereType<SfuTrackSubscribed>(), isEmpty);
     expect(media.enabled, isFalse);

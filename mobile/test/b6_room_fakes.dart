@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:private_messenger/calls/room/room_engine.dart';
 import 'package:private_messenger/calls/room/room_ports.dart';
 
@@ -415,4 +416,33 @@ class Device {
   final FakeKeys keys;
   late final FakeApi api;
   late final RoomEngine engine;
+}
+
+/// The frame cryptor's key provider, recording every key it is given.
+class FakeKeyProvider implements rtc.KeyProvider {
+  final Map<String, Uint8List> keys = {};
+  bool refuse = false;
+  bool disposed = false;
+  final List<String> log;
+  FakeKeyProvider(this.log);
+
+  @override
+  String get id => 'kp';
+
+  @override
+  Future<bool> setKey(
+      {required String participantId,
+      required int index,
+      required Uint8List key}) async {
+    if (refuse) return false;
+    keys['$participantId@$index'] = Uint8List.fromList(key);
+    log.add('key $participantId@$index');
+    return true;
+  }
+
+  @override
+  Future<void> dispose() async => disposed = true;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
