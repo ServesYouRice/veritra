@@ -81,6 +81,8 @@
     "invalid_max_uses": "invalidRequest",
     "invalid_member": "invalidRequest",
     "invalid_name": "invalidRequest",
+    "invalid_nonce": "invalidRequest",
+    "attestation_unavailable": "unavailable",
     "invalid_passkey": "invalidRequest",
     "invalid_posting_policy": "invalidRequest",
     "invalid_profile": "invalidRequest",
