@@ -437,12 +437,17 @@ key that matches.
   (never on a background wake) and right after the key is created or
   published.
 - **Newcomers.** MLS gives a newcomer no messages from before its join, so
-  it has no announcements. When it prepares a report and a verified
-  moderator's listed key has no matching announcement, its app sends a
-  hidden `report_key_request` naming those accounts (at most once per
-  10 minutes per group); each named moderator's app answers with
-  `report_key` on its next foreground pass. The report itself goes to the
-  moderators already confirmed, or waits (the reporter tries again).
+  it has no announcements. On a foreground pass, every member's app checks
+  each community with a verified record: when it holds no announcement for
+  some of the record's moderators, it sends a hidden `report_key_request`
+  naming those accounts (sorted, at most 64), at once for a new set of
+  missing accounts and otherwise at most once a week
+  (`ReportKeyAnnouncer.askMissing`). Each named moderator's app answers with
+  `report_key` on its next foreground pass. The report flow itself sends
+  nothing to the group: a request made when someone opens the report
+  screen would tell every member, the reported one included, that this
+  account is about to report. A report goes to the moderators already
+  confirmed, or waits (the reporter tries again).
 - **Channel.** The shared group needs a channel id on every payload. A
   report key payload rides in an open channel, or in an announcement channel
   when the sender is an owner or admin under the record (the server refuses
@@ -459,6 +464,10 @@ Residuals:
   after a report was filed never gets that report. No re-send is built.
 - A moderator who is offline for long leaves newcomers' reports with fewer
   copies until it comes back; it could not read them earlier anyway.
+- A moderator who never published a key never answers, so members ask for
+  it again once a week (a small hidden message per member per week).
+- The server sees the timing of these hidden envelopes, as of any message,
+  but they are sent on the background pass, not when someone reports.
 - The announcement is as trustworthy as the account's MLS leaf: a device
   the L1 list approves for that account speaks for it, as for its messages.
 

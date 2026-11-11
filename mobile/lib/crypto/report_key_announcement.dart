@@ -17,7 +17,9 @@ import 'app_payload.dart';
 ///
 /// A device that lacks a moderator's announcement (it joined after it was
 /// sent) asks with `report_key_request`, naming the accounts it lacks; each
-/// named account's app announces again.
+/// named account's app announces again. The request is sent by the app's
+/// foreground pass for every community, never by the report flow, so it
+/// tells the group nothing about whether this account is about to report.
 ///
 /// Both are hidden, never franked and never reportable. They are kept as
 /// settings committed with the MLS state, keyed by the record group (the
@@ -31,8 +33,10 @@ const int maxReportKeyRequestAccounts = 64;
 /// of requests costs each moderator one message.
 const Duration reportKeyAnswerSpacing = Duration(minutes: 5);
 
-/// Wait between two requests from this device for one group.
-const Duration reportKeyRequestSpacing = Duration(minutes: 10);
+/// How long this device waits before asking one group again for the same
+/// missing accounts (a moderator who never published a key never answers).
+/// A changed set is asked for at once.
+const Duration reportKeyReaskInterval = Duration(days: 7);
 
 /// `{"key": base64}`: the sender's own 32-byte report public key, canonical
 /// base64.
@@ -85,10 +89,53 @@ String reportKeyRequestSetting(String recordGroupId) =>
 String reportKeySentSetting(String recordGroupId) =>
     'c6.report_key_sent.$recordGroupId';
 
-/// When this device last asked [recordGroupId] for keys (local only), in
-/// epoch milliseconds.
+/// What this device last asked [recordGroupId] for (local only): see
+/// [ReportKeyAsked].
 String reportKeyAskedSetting(String recordGroupId) =>
     'c6.report_key_asked.$recordGroupId';
+
+/// The record of this device's last `report_key_request` in one group.
+class ReportKeyAsked {
+  const ReportKeyAsked({required this.accounts, required this.atMs});
+
+  /// The accounts named, sorted.
+  final List<String> accounts;
+  final int atMs;
+
+  String encode() =>
+      jsonEncode(<String, Object?>{'accounts': accounts, 'at': atMs});
+
+  static ReportKeyAsked? decode(String? raw) {
+    if (raw == null) return null;
+    try {
+      final map = jsonDecode(raw);
+      if (map is! Map) return null;
+      final accounts = map['accounts'], at = map['at'];
+      if (accounts is! List || at is! int) return null;
+      return ReportKeyAsked(accounts: accounts.cast<String>(), atMs: at);
+    } catch (_) {
+      return null;
+    }
+  }
+}
+
+/// Whether this device should ask for [missing] (sorted) now: it never
+/// asked, the missing set changed, or [reportKeyReaskInterval] passed.
+bool reportKeyRequestDue({
+  required List<String> missing,
+  required ReportKeyAsked? asked,
+  required DateTime now,
+}) {
+  if (missing.isEmpty) return false;
+  if (asked == null) return true;
+  if (asked.accounts.length != missing.length ||
+      !Iterable<int>.generate(missing.length)
+          .every((i) => asked.accounts[i] == missing[i])) {
+    return true;
+  }
+  final elapsed = now.toUtc().millisecondsSinceEpoch - asked.atMs;
+  return elapsed < 0 || elapsed >= reportKeyReaskInterval.inMilliseconds;
+}
 
 /// The record of this device's last `report_key` in one group: which key,
 /// when, and which request it answered (if any).

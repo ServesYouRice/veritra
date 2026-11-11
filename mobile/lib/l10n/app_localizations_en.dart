@@ -3611,7 +3611,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportModeratorKeysPending =>
-      'No moderator\'s key has reached this device yet. Their apps were asked to send it. Try again in a few minutes.';
+      'No moderator\'s key has reached this device yet. Keys arrive through the community. Try again later.';
 
   @override
   String c6ReportModeratorCount(int count) {
@@ -3620,7 +3620,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String c6ReportModeratorsUnconfirmed(int count) {
-    return 'Moderators whose key has not reached this device yet, and who get no copy: $count. Their apps were asked to send it.';
+    return 'Moderators whose key has not reached this device yet, and who get no copy: $count';
   }
 
   @override

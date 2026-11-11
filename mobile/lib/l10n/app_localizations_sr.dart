@@ -3625,7 +3625,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportModeratorKeysPending =>
-      'Кључ ниједног модератора још није стигао на овај уређај. Њихове апликације су замољене да га пошаљу. Покушај поново за неколико минута.';
+      'Кључ ниједног модератора још није стигао на овај уређај. Кључеви стижу преко заједнице. Покушај поново касније.';
 
   @override
   String c6ReportModeratorCount(int count) {
@@ -3634,7 +3634,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String c6ReportModeratorsUnconfirmed(int count) {
-    return 'Модератора чији кључ још није стигао на овај уређај и који не добијају копију: $count. Њихове апликације су замољене да га пошаљу.';
+    return 'Модератора чији кључ још није стигао на овај уређај и који не добијају копију: $count';
   }
 
   @override
@@ -8000,7 +8000,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportModeratorKeysPending =>
-      'Ključ nijednog moderatora još nije stigao na ovaj uređaj. Njihove aplikacije su zamoljene da ga pošalju. Pokušaj ponovo za nekoliko minuta.';
+      'Ključ nijednog moderatora još nije stigao na ovaj uređaj. Ključevi stižu preko zajednice. Pokušaj ponovo kasnije.';
 
   @override
   String c6ReportModeratorCount(int count) {
@@ -8009,7 +8009,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String c6ReportModeratorsUnconfirmed(int count) {
-    return 'Moderatora čiji ključ još nije stigao na ovaj uređaj i koji ne dobijaju kopiju: $count. Njihove aplikacije su zamoljene da ga pošalju.';
+    return 'Moderatora čiji ključ još nije stigao na ovaj uređaj i koji ne dobijaju kopiju: $count';
   }
 
   @override

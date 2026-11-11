@@ -5940,7 +5940,7 @@ abstract class AppLocalizations {
   /// C6 reports: no moderator key is authenticated over MLS yet.
   ///
   /// In en, this message translates to:
-  /// **'No moderator\'s key has reached this device yet. Their apps were asked to send it. Try again in a few minutes.'**
+  /// **'No moderator\'s key has reached this device yet. Keys arrive through the community. Try again later.'**
   String get c6ReportModeratorKeysPending;
 
   /// C6 reports.
@@ -5952,7 +5952,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Moderators whose key has not reached this device yet, and who get no copy: {count}. Their apps were asked to send it.'**
+  /// **'Moderators whose key has not reached this device yet, and who get no copy: {count}'**
   String c6ReportModeratorsUnconfirmed(int count);
 
   /// C6 reports.

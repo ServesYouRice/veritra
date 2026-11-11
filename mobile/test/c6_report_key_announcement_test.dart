@@ -217,6 +217,24 @@ void main() {
       expect(due('11', reportKeyAnswerSpacing), isTrue);
     });
 
+    test('a request is due when never asked, the set changed, or a week passed',
+        () {
+      final asked = ReportKeyAsked(accounts: const ['a', 'b'], atMs: at);
+      bool due(List<String> missing, Duration later) => reportKeyRequestDue(
+          missing: missing, asked: asked, now: now.add(later));
+      expect(reportKeyRequestDue(missing: const ['a'], asked: null, now: now),
+          isTrue);
+      expect(due(const [], Duration.zero), isFalse);
+      expect(due(const ['a', 'b'], const Duration(days: 1)), isFalse);
+      expect(due(const ['a'], Duration.zero), isTrue);
+      expect(due(const ['a', 'c'], Duration.zero), isTrue);
+      expect(due(const ['a', 'b'], reportKeyReaskInterval), isTrue);
+      final back = ReportKeyAsked.decode(asked.encode())!;
+      expect(back.accounts, ['a', 'b']);
+      expect(back.atMs, at);
+      expect(ReportKeyAsked.decode('{}'), isNull);
+    });
+
     test('the sent record survives encoding', () {
       final sent = ReportKeySent(key: _key(), atMs: at, answered: '7');
       final back = ReportKeySent.decode(sent.encode())!;

@@ -178,11 +178,7 @@ void main() {
   late Uint8List commit;
 
   ReportModerators? moderators;
-
-  /// Each request as `group|account,account`.
-  final requests = <String>[];
   var seedChanges = 0;
-  var now = DateTime.utc(2026, 11, 11, 12);
 
   ReportsService serviceFor(String account) => ReportsService(
         api: server,
@@ -193,12 +189,7 @@ void main() {
         store: store,
         seeds: seeds,
         moderatorsOf: (conversationId) => moderators,
-        requestModeratorKeys: (group, accounts) async {
-          requests.add('$group|${accounts.join(',')}');
-          return true;
-        },
         onSeedChanged: () => seedChanges++,
-        clock: () => now,
       );
 
   /// Each moderator's own seed store, as each would hold on its own device.
@@ -256,10 +247,8 @@ void main() {
 
   setUp(() async {
     moderators = null;
-    requests.clear();
     seedChanges = 0;
     moderatorSeeds.clear();
-    now = DateTime.utc(2026, 11, 11, 12);
     // The tests that need the native seal fail on `crypto` when the library
     // is required and missing; the model and store tests run without it.
     if (nativeCryptoLibraryPath == null) return;
@@ -563,19 +552,17 @@ void main() {
     moderators = verified({_moderator, _moderator2, _reporterAccount});
     final reporter = serviceFor(_reporterAccount);
 
-    // Nothing announced yet: nothing can be sealed, and the moderators are
-    // asked, once.
+    // Nothing announced yet: nothing can be sealed. (Preparing and filing
+    // send nothing to the group; the app's background pass asks for keys.)
     await expectLater(
         reporter.prepare(_conversation),
         throwsA(isA<ReportFailureException>().having(
             (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
-    expect(requests, ['$_sharedGroup|$_moderator,$_moderator2']);
     await expectLater(
         reporter.file(
             conversationId: _conversation, messageKey: '$_sender:$_action'),
         throwsA(isA<ReportFailureException>().having(
             (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
-    expect(requests, hasLength(1), reason: 'requests are spaced');
     expect(server.copies, isEmpty);
 
     // The first moderator announced its key. For the second, the device
@@ -595,12 +582,10 @@ void main() {
     await reporter.pinKeys(plan);
     expect(await store.loadReportKeyPins(_origin), isEmpty,
         reason: 'moderator keys are never pinned');
-    now = now.add(reportKeyRequestSpacing);
     await reporter.file(
         conversationId: _conversation, messageKey: '$_sender:$_action');
     expect(server.copies.map((c) => c.inboxId),
         [communityModeratorInboxId(_community, _moderator)]);
-    expect(requests.last, '$_sharedGroup|$_moderator2');
 
     // The moderator opens it with its own seed.
     final inbox = moderatorInbox(_moderator);
@@ -641,7 +626,6 @@ void main() {
     final second = server.copies.last.reportId;
     expect(second, isNot(first));
     expect(inboxesOf(second), {mod1});
-    expect(requests, isEmpty, reason: 'a demoted account is never asked');
     final demoted = moderatorInbox(_moderator2);
     expect((await demoted.list()).map((c) => c.reportId), [first]);
 

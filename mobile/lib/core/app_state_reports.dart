@@ -36,13 +36,6 @@ extension ReportActions on AppState {
       store: localStore,
       seeds: reportSeedStore,
       moderatorsOf: reportModeratorsFor,
-      requestModeratorKeys: (group, accounts) async {
-        final channel = _reportKeyChannelFor(group);
-        if (channel == null || !_sameSession(current)) return false;
-        return _sendPayload(group, AppPayloadType.reportKeyRequest,
-            <String, Object?>{'accounts': accounts},
-            channelId: channel);
-      },
       onSeedChanged: () {
         _reportKeyMemo = null;
         _reportKeyUnlisted.clear();
@@ -138,14 +131,17 @@ extension ReportActions on AppState {
     return key.isEmpty ? null : key;
   }
 
-  /// C6: announces this device's report key (`report_key`) in the shared
-  /// group of each community whose verified record ranks this account
-  /// moderator or above, when it is due: never announced there, or a
-  /// request naming this account arrived (spaced; [ReportKeyAnnouncer]
-  /// holds the rules). Only where the server lists this
-  /// device's key as this account's moderator inbox: a key another device
-  /// replaced is never announced back, so two devices cannot take turns.
-  /// Foreground only; never throws.
+  /// C6 background pass (foreground sync only; never throws), with the
+  /// rules in [ReportKeyAnnouncer]:
+  ///
+  /// - In every community with a verified record, asks (`report_key_request`)
+  ///   for the announcements of the record's moderators that this device
+  ///   lacks. It runs whether or not anyone reports, so the group never
+  ///   learns that this account is about to report.
+  /// - Where the record ranks this account moderator or above, announces
+  ///   this device's report key (`report_key`) when due, and only where the
+  ///   server lists this device's key as this account's moderator inbox: a
+  ///   key another device replaced is never announced back.
   Future<void> _announceReportKeys() async {
     final current = session;
     final accountId = current?.accountId;
@@ -159,34 +155,50 @@ extension ReportActions on AppState {
     }
     _reportKeyAnnouncing = true;
     try {
-      final moderated = <(String, String)>[
-        for (final community in communities)
-          if (community.sharedConversationId case final shared?)
-            if (moderatesCommunity(community.id)) (community.id, shared),
-      ];
-      if (moderated.isEmpty) return;
-      final key = await _ownReportKey(current, accountId);
-      if (key == null) return;
-      await ReportKeyAnnouncer(
+      Future<bool> sendIn(
+          String group, AppPayloadType type, Map<String, Object?> body) async {
+        final channel = _reportKeyChannelFor(group);
+        if (channel == null || !_sameSession(current)) return false;
+        return _sendPayload(group, type, body, channelId: channel);
+      }
+
+      final announcer = ReportKeyAnnouncer(
         store: localStore,
         listedKey: (communityId) async =>
             (await client.getOwnModeratorReportKey(current.token, communityId))
                 ?.publicKey,
-        send: (group, key) async {
-          final channel = _reportKeyChannelFor(group);
-          if (channel == null || !_sameSession(current)) return false;
-          return _sendPayload(
-              group, AppPayloadType.reportKey, <String, Object?>{'key': key},
-              channelId: channel);
-        },
-      ).run(
+        send: (group, key) => sendIn(
+            group, AppPayloadType.reportKey, <String, Object?>{'key': key}),
+        sendRequest: (group, accounts) => sendIn(
+            group,
+            AppPayloadType.reportKeyRequest,
+            <String, Object?>{'accounts': accounts}),
+      );
+      final moderated = <(String, String)>[];
+      for (final community in communities) {
+        final shared = community.sharedConversationId;
+        if (shared == null) continue;
+        if (!_sameSession(current)) return;
+        final moderators = reportModeratorsFor(shared);
+        if (moderators == null) continue;
+        await announcer.askMissing(
+            group: moderators.recordGroupId,
+            moderators: moderators.accounts.difference({accountId}));
+        if (moderators.accounts.contains(accountId)) {
+          moderated.add((community.id, moderators.recordGroupId));
+        }
+      }
+      if (moderated.isEmpty || !_sameSession(current)) return;
+      final key = await _ownReportKey(current, accountId);
+      if (key == null) return;
+      await announcer.run(
         key: key,
         moderated: moderated,
         unlisted: _reportKeyUnlisted,
         active: () => _sameSession(current),
       );
     } catch (err) {
-      developer.log('c6_report_key_announce_failed ${err.runtimeType}',
+      developer.log('c6_report_key_pass_failed ${err.runtimeType}',
           name: 'veritra.sync');
     } finally {
       _reportKeyAnnouncing = false;

@@ -468,7 +468,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   transaction as the MLS state: `c6.report_key.<group>.<account>` (the key
   the MLS sender announced; the latest in MLS order wins) and
   `c6.report_key_request.<group>` (the sync event id of the latest request
-  naming this account). A reporter seals a community report only to a
+  naming this account). Requests are sent by a background pass for every
+  community, never by the report flow, so they do not reveal a report
+  about to be filed. A reporter seals a community report only to a
   verified moderator (C4 record) whose server-listed key equals that
   account's announced key; the manual pin is gone for moderators (owner
   keys keep D95's pin). Rules: C6 design, "Moderator keys over MLS"; §4
@@ -2377,7 +2379,7 @@ input can differ.
 | `history_sync` | 2, hidden | `for_epoch` (u64), `channels`: `[[channel_id, base64(key_c)], ...]`, 1 to 508 entries, ids sorted bytewise and distinct, keys 32 bytes | Any member; group-level only (no `channel_id`), two-part only | C7 decision 5: body0 of the history_sync body; its slots follow body0 in the sealed body. Never franked |
 | `history_sync_request` | 2, hidden | `for_epoch` (u64): the membership commit whose history_sync the sender lacks | A newcomer; group-level only, two-part only | C7 decision 5. Never franked |
 | `report_key` | 2, hidden | `key`: canonical base64 of 32 bytes, the sender's own report public key; no other field | Any member (the key is the MLS sender's own); who moderates is judged when a report is sealed, against the C4 record | C6: kept as setting `c6.report_key.<group>.<sender account>` only in a group whose MLS state holds a C4 record and only from an L1-approved leaf; latest wins. Never franked, never expires, never reportable |
-| `report_key_request` | 2, hidden | `accounts`: 1 to 64 distinct account ids (1 to 128 characters); no other field | Any member | C6: kept as setting `c6.report_key_request.<group>` (the sync event id) only when it names the receiver's account, under the same group and leaf rules; each named moderator's app announces again, at most once per 5 minutes per group. Never franked |
+| `report_key_request` | 2, hidden | `accounts`: 1 to 64 distinct account ids (1 to 128 characters); no other field | Any member | C6: kept as setting `c6.report_key_request.<group>` (the sync event id) only when it names the receiver's account, under the same group and leaf rules; each named moderator's app announces again, at most once per 5 minutes per group. Sent by a member's background pass when it lacks some moderators' announcements (a new set at once, the same set weekly), never by the report flow. Never franked |
 
 In a C0-layout conversation a two-part message with no `channel_id` must be
 `history_sync` or `history_sync_request`, and those two never carry one;

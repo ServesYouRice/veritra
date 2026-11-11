@@ -9,6 +9,7 @@ import '../crypto/report_key_announcement.dart';
 import '../crypto/report_key_pins.dart';
 import '../storage/local_store.dart';
 import 'api_client.dart';
+import 'report_key_announcer.dart' show ReportKeyAnnouncer;
 import 'report_models.dart';
 import 'report_seed_store.dart';
 
@@ -31,7 +32,7 @@ enum ReportFailure {
 
   /// Moderators the verified record names have published keys, but none of
   /// those keys has been announced to this device over MLS yet, so nothing
-  /// can be sealed. Their apps were asked to announce them again.
+  /// can be sealed. The app's foreground pass asks for them.
   moderatorKeysPending,
 
   /// This device kept no franking proof for the message: it is unfranked,
@@ -71,8 +72,7 @@ class ReportPlan {
   final ReportKeyCheck check;
 
   /// Community only: verified moderators whose listed key no MLS
-  /// announcement on this device matches. They get no copy; their apps
-  /// were asked to announce it.
+  /// announcement on this device matches. They get no copy.
   final List<String> unconfirmed;
 
   bool get isCommunity => inbox.kind == reportInboxCommunity;
@@ -209,12 +209,9 @@ class ReportsService {
     required this.seeds,
     this.moderatorsOf,
     this.communityId,
-    this.requestModeratorKeys,
     this.onSeedChanged,
-    DateTime Function()? clock,
     Random? random,
   })  : pins = ReportKeyPins(store, api.baseUrl),
-        _clock = clock ?? DateTime.now,
         _random = random ?? Random.secure();
 
   final ApiClient api;
@@ -225,12 +222,6 @@ class ReportsService {
   final ReportSeedStore seeds;
   final ReportKeyPins pins;
   final Random _random;
-  final DateTime Function() _clock;
-
-  /// Sends a `report_key_request` naming [accounts] into [recordGroupId].
-  /// False when nothing was queued.
-  final Future<bool> Function(String recordGroupId, List<String> accounts)?
-      requestModeratorKeys;
 
   /// Called after this device's report seed was made or published: the
   /// app announces the key again where this account moderates.
@@ -255,9 +246,7 @@ class ReportsService {
         seeds: seeds,
         moderatorsOf: moderatorsOf,
         communityId: id,
-        requestModeratorKeys: requestModeratorKeys,
         onSeedChanged: onSeedChanged,
-        clock: _clock,
         random: _random,
       );
 
@@ -273,6 +262,11 @@ class ReportsService {
   ///   server that lists another account, or another key, gets no copy. A
   ///   moderator the record no longer names gets none either, whatever the
   ///   server still lists.
+  ///
+  /// Read-only: preparing or filing a report sends nothing to the group, so
+  /// no member can tell that this account is about to report. Missing
+  /// announcements are asked for by the app's foreground pass, whether or
+  /// not anyone reports ([ReportKeyAnnouncer.askMissing]).
   Future<_SealTargets> _sealTo(String conversationId, ReportInbox inbox) async {
     final all = _recipients(inbox);
     if (inbox.kind != reportInboxCommunity) {
@@ -311,36 +305,8 @@ class ReportsService {
     );
   }
 
-  /// Asks the moderators in [targets] that MLS has not confirmed to
-  /// announce their keys again, at most once per [reportKeyRequestSpacing]
-  /// per group. Never throws: a report must not fail on the request.
-  Future<void> _askForKeys(_SealTargets targets) async {
-    final group = targets.recordGroupId;
-    final send = requestModeratorKeys;
-    if (group == null || send == null || targets.unconfirmed.isEmpty) return;
-    try {
-      final now = _clock().toUtc().millisecondsSinceEpoch;
-      final asked = int.tryParse(
-          await store.loadSetting(reportKeyAskedSetting(group)) ?? '');
-      if (asked != null &&
-          now >= asked &&
-          now - asked < reportKeyRequestSpacing.inMilliseconds) {
-        return;
-      }
-      final accounts = (targets.unconfirmed.toSet().toList()..sort())
-          .take(maxReportKeyRequestAccounts)
-          .toList();
-      if (await send(group, accounts)) {
-        await store.saveSetting(reportKeyAskedSetting(group), now.toString());
-      }
-    } catch (_) {
-      // Asked again on the next attempt.
-    }
-  }
-
-  /// Asks for missing moderator keys, then refuses an empty seal.
-  Future<void> _requireTargets(_SealTargets targets) async {
-    await _askForKeys(targets);
+  /// Refuses an empty seal.
+  void _requireTargets(_SealTargets targets) {
     if (targets.recipients.isNotEmpty) return;
     throw ReportFailureException(targets.unconfirmed.isEmpty
         ? ReportFailure.noRecipients
@@ -363,7 +329,7 @@ class ReportsService {
   Future<ReportPlan> prepare(String conversationId) async {
     final inbox = await api.getReportInbox(token, conversationId);
     final targets = await _sealTo(conversationId, inbox);
-    await _requireTargets(targets);
+    _requireTargets(targets);
     return ReportPlan(
       conversationId: conversationId,
       inbox: inbox,
@@ -402,7 +368,7 @@ class ReportsService {
     }
     final inbox = await api.getReportInbox(token, conversationId);
     final targets = await _sealTo(conversationId, inbox);
-    await _requireTargets(targets);
+    _requireTargets(targets);
     final recipients = targets.recipients;
     if (!targets.check.allPinned) {
       throw const ReportFailureException(ReportFailure.keysNotPinned);
