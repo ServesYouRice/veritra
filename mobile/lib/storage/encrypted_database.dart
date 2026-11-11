@@ -640,7 +640,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 34;
+  static const currentSchemaVersion = 35;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -1017,6 +1017,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // profile keys, accepted profiles and small profile state. New
             // tables only; `_createProfiles` is the whole step.
             if (from < 34) await _createProfiles();
+            // C3 key freshness (schema 35): the authenticated MLS epoch of
+            // each info row. Idempotent: a store from before schema 31 got
+            // the column with the table above.
+            if (from < 35) await _addCommunityInfoEpoch();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');

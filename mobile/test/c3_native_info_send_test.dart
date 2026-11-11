@@ -239,12 +239,32 @@ void main() {
 
     // Bob, in a community conversation, keeps it with no reveal.
     await alice.store.removePendingEnvelope(sent.idempotencyKey);
+    final epoch = (await alice.service.groupEpoch('conv_p'))!.epoch;
+    expect(epoch, greaterThan(0));
+    expect(own.single.epoch, epoch);
+    final delivered = bob.envelopeFrom(alice, sent);
+    // The server's `mls_epoch` hint is not authenticated and is ignored: the
+    // epoch comes from the decrypted message's own header.
     await bob.service.processApplicationMessage(
-        bob.envelopeFrom(alice, sent), bob.nextEvent());
+        ReceivedMessageEnvelope(
+          id: delivered.id,
+          conversationId: delivered.conversationId,
+          senderAccountId: delivered.senderAccountId,
+          senderDeviceId: delivered.senderDeviceId,
+          idempotencyKey: delivered.idempotencyKey,
+          ciphertext: delivered.ciphertext,
+          cryptoProtocol: delivered.cryptoProtocol,
+          frankCommit: delivered.frankCommit,
+          createdAt: delivered.createdAt,
+          cryptoMetadata: <String, Object?>{'mls_epoch': epoch + 40},
+        ),
+        bob.nextEvent());
     final got = await bob.store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, 'channel', _channel);
     expect(got.single.key, _key);
     expect(got.single.senderAccountId, 'acct_alice');
+    expect(got.single.epoch, epoch);
+    expect(mlsMessageEpoch(sent.ciphertext, 'conv_p'), epoch);
     final bobRow = (await bob.store.loadMessages('conv_p')).single;
     expect(bobRow.kind, 'action');
     expect(await bob.store.loadFrankReveal(bobRow.key), isNull);

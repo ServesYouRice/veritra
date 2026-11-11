@@ -126,6 +126,10 @@ class _Device {
 
 class _Net {
   final devices = <_Device>[];
+
+  /// Each conversation's current MLS epoch: what a send is encrypted in and
+  /// what a receiver authenticates on decryption.
+  final epochs = <String, int>{};
   var held = false;
   var refuse = false;
   AppPayloadType? refuseType;
@@ -135,8 +139,11 @@ class _Net {
           Map<String, Object?> body) =>
       deliverAs(from, 'dev_${from.name}', conversation, type, body);
 
+  /// [epoch] overrides the conversation's current one: a message delivered
+  /// late keeps the epoch it was encrypted in.
   Future<bool> deliverAs(_Device from, String device, String conversation,
-      AppPayloadType type, Map<String, Object?> body) async {
+      AppPayloadType type, Map<String, Object?> body,
+      {int? epoch}) async {
     if (held ||
         refuse ||
         refuseType == type ||
@@ -145,12 +152,14 @@ class _Net {
     }
     from.sent.add((conversation, type, body));
     final payload = DecryptedAppPayload(type: type, actionId: 'a', body: body);
+    final at = epoch ?? epochs[conversation] ?? 0;
     // The sender keeps its own copy (outgoing transition).
     await from.store.recordOwnCommunityInfoEvents([
       communityInfoEventFor(payload,
           conversationId: conversation,
           senderAccountId: 'acct_${from.name}',
-          senderDeviceId: device)
+          senderDeviceId: device,
+          epoch: at)
     ]);
     for (final d in devices) {
       if (d == from || !d.members.contains(conversation)) continue;
@@ -158,7 +167,8 @@ class _Net {
         communityInfoEventFor(payload,
             conversationId: conversation,
             senderAccountId: 'acct_${from.name}',
-            senderDeviceId: device)
+            senderDeviceId: device,
+            epoch: at)
       ]);
     }
     await afterDeliver?.call(type);
@@ -205,9 +215,20 @@ void main() {
       deviceId: 'dev_$name',
       answerDelay: answerDelay ?? () => Duration.zero,
       clock: () => now,
+      epochOf: (conversation) async => net.epochs[conversation] ?? 0,
     );
     net.devices.add(d);
     return d;
+  }
+
+  // A merged removal commit: the group moves to [epoch] and the device's
+  // removal watermark (written with the MLS state) records it.
+  Future<void> removedAt(
+      LocalStore store, String conversation, int epoch) async {
+    if ((net.epochs[conversation] ?? 0) < epoch)
+      net.epochs[conversation] = epoch;
+    await store.saveSetting(
+        communityInfoRemovalSetting(conversation), '$epoch');
   }
 
   setUp(() {
@@ -253,8 +274,7 @@ void main() {
       final home = admin.service.homeOf(subject)!;
       // Written by the committed MLS removal, without a local remove request
       // or a pending-changes response.
-      await admin.store
-          .saveSetting(communityInfoRemovalSetting(home.conversationId), '2');
+      await removedAt(admin.store, home.conversationId, 2);
       final restarted = device('admin', {_shared, _privateConv},
           admin: true, store: admin.store);
       await expectLater(restarted.service.publish(subject, record),
@@ -291,8 +311,7 @@ void main() {
             privatePlace: const InfoPrivatePlace(position: 0)),
         mint: true);
     final oldPrivate = server.records[private.key]!.keyId;
-    await admin.store
-        .saveSetting(communityInfoRemovalSetting(_privateConv), '2');
+    await removedAt(admin.store, _privateConv, 2);
     await admin.service
         .observeRemoval(admin.service.homeOf(community)!, _community);
     expect(await admin.service.runRotations((_, __) => [community]), 1);
@@ -307,14 +326,13 @@ void main() {
     final admin = device('admin', {_shared}, admin: true);
     await admin.service.publish(community, (r) => named('Club', r), mint: true);
     final home = admin.service.homeOf(community)!;
-    await admin.store.saveSetting(communityInfoRemovalSetting(_shared), '2');
+    await removedAt(admin.store, _shared, 2);
     await admin.service.observeRemoval(home, _community);
     var delivered = false;
     net.afterDeliver = (type) async {
       if (type == AppPayloadType.infoKey && !delivered) {
         delivered = true;
-        await admin.store
-            .saveSetting(communityInfoRemovalSetting(_shared), '3');
+        await removedAt(admin.store, _shared, 3);
       }
     };
     expect(await admin.service.runRotations((_, __) => [community]), 0);
@@ -333,7 +351,7 @@ void main() {
     final admin = device('admin', {_shared}, admin: true);
     await admin.service.publish(community, (r) => named('Club', r), mint: true);
     final home = admin.service.homeOf(community)!;
-    await admin.store.saveSetting(communityInfoRemovalSetting(_shared), '2');
+    await removedAt(admin.store, _shared, 2);
     final member = device('admin', {_shared}, store: admin.store);
     await member.service.observeRemoval(home, _community);
     expect(await member.service.runRotations((_, __) => [community]), 0);
@@ -1208,6 +1226,109 @@ void main() {
             .where((k) => k.senderAccountId == 'acct_member'),
         isEmpty);
     expect(server.records['community|$_community']!.version, 1);
+  }, skip: skip);
+
+  // Freshness is the authenticated MLS epoch a key was sent in (docs/crypto.md,
+  // C3 key freshness), never the order this device first saw it.
+  Future<
+      ({
+        _Device admin,
+        _Device member,
+        InfoKeyHome home,
+        CommunityInfoEvent retired
+      })> rotatedPastDelayedKey({bool rotate = true}) async {
+    net.epochs[_shared] = 1;
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    final retired = (await admin.service.currentKey(home, _community))!;
+    expect(retired.epoch, 1);
+    // The member was in the group, but the message carrying K1 is delayed
+    // (the server held it, or it sat behind a paused conversation).
+    final member = device('member', {_shared});
+    // A removal commit moves the group to epoch 2; both devices merged it.
+    net.epochs[_shared] = 2;
+    for (final d in [admin, member]) {
+      await removedAt(d.store, _shared, 2);
+    }
+    if (rotate) {
+      await admin.service.observeRemoval(home, _community);
+      expect(await admin.service.runRotations((_, __) => [community]), 1);
+    }
+    return (admin: admin, member: member, home: home, retired: retired);
+  }
+
+  test('a retired key first delivered after its replacement never wins',
+      () async {
+    final (:admin, :member, :home, :retired) = await rotatedPastDelayedKey();
+    final fresh = (await member.service.currentKey(home, _community))!;
+    expect(fresh.keyId, isNot(retired.keyId));
+    expect(fresh.epoch, 2);
+    // The delayed original finally arrives, from the authenticated owner, in
+    // the epoch it was encrypted in. First local arrival would make it win.
+    await net.deliverAs(
+        admin,
+        'dev_admin',
+        _shared,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: infoKindCommunity,
+            subjectId: _community,
+            key: retired.key!),
+        epoch: 1);
+    expect((await member.service.currentKey(home, _community))!.keyId,
+        fresh.keyId);
+    expect(
+        (await admin.service.currentKey(home, _community))!.keyId, fresh.keyId);
+  }, skip: skip);
+
+  test('a key from before the last removal is never current, even alone',
+      () async {
+    final (:admin, :member, :home, :retired) =
+        await rotatedPastDelayedKey(rotate: false);
+    await net.deliverAs(
+        admin,
+        'dev_admin',
+        _shared,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: infoKindCommunity,
+            subjectId: _community,
+            key: retired.key!),
+        epoch: 1);
+    // The removed member knows K1: fail closed until a rotated key arrives.
+    expect(await member.service.currentKey(home, _community), isNull);
+    expect(await admin.service.currentKey(home, _community), isNull);
+  }, skip: skip);
+
+  test('an untrusted copy at an old epoch cannot retire the current key',
+      () async {
+    final (:admin, :member, :home, :retired) = await rotatedPastDelayedKey();
+    final fresh = (await member.service.currentKey(home, _community))!;
+    // A member who kept epoch-1 secrets re-sends K2 there, and K1 at the
+    // current epoch. Only owner/admin deliveries count.
+    await net.deliverAs(
+        member,
+        'dev_member',
+        _shared,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: infoKindCommunity,
+            subjectId: _community,
+            key: fresh.key!),
+        epoch: 1);
+    await net.deliverAs(
+        member,
+        'dev_member',
+        _shared,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: infoKindCommunity,
+            subjectId: _community,
+            key: retired.key!),
+        epoch: 3);
+    expect(
+        (await admin.service.currentKey(home, _community))!.keyId, fresh.keyId);
   }, skip: skip);
 
   test('an old key delivered again never becomes current', () async {

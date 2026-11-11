@@ -264,8 +264,10 @@ big community", not "an icon"; a tiny icon may stay in the small one.
     every record under that key it accepted: a joiner never saw the
     announcements made before it came.
   - A device makes a new key only when the keyed subject is created, or in
-    a rotation; otherwise it asks. The current key is the one whose id
-    first arrived last, so an old key delivered again never wins.
+    a rotation; otherwise it asks. The current key is chosen by the
+    authenticated MLS epoch it was sent in, never by local arrival order
+    (docs/crypto.md, change log "C3 key freshness"); a key from before the
+    group's last removal is never current.
   - Rotation (D80): every removal, kick or ban marks the key the
     conversation carries as due, kept across restarts (a setting with a
     token per mark, changed under a lock, so a mark made during a pass

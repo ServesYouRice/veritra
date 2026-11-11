@@ -120,6 +120,7 @@ class CommunityInfoService {
     required this.accountId,
     required this.deviceId,
     this.onChanged,
+    this.epochOf,
     DateTime Function()? clock,
     Duration Function()? answerDelay,
     String settingPrefix = 'c3',
@@ -136,6 +137,10 @@ class CommunityInfoService {
   final String accountId;
   final String deviceId;
   final void Function()? onChanged;
+
+  /// The local MLS epoch of a conversation's group, or null when unknown.
+  /// A key this device makes is stamped with it (see [currentKey]).
+  final Future<int?> Function(String conversationId)? epochOf;
   final DateTime Function() _clock;
   final Duration Function() _answerDelay;
   final String _rotationSetting;
@@ -184,36 +189,56 @@ class CommunityInfoService {
         conversationId: shared);
   }
 
-  /// The key to seal with: of the keys in the owning group from this
-  /// account or from an owner or admin under the verified role state, the
-  /// one whose id FIRST arrived last. A later re-delivery of an old key (an
-  /// admin answering with a key from before a rotation) never makes it
-  /// current again.
+  /// The key to seal with (docs/crypto.md, "C3 key freshness").
+  ///
+  /// Only keys in the owning group from this account, or from an owner or
+  /// admin under the verified role state, count ("trusted"). A key's
+  /// freshness is the LOWEST authenticated MLS epoch any trusted copy of it
+  /// was sent in: a delayed original lowers it, and a later re-delivery (an
+  /// admin answering with a key from before a rotation) never raises it.
+  ///
+  /// - A key fresher than none of the group's last removal is retired: the
+  ///   removed member may hold it. With no other key the answer is null, so
+  ///   the caller asks or waits for the rotation (fail closed).
+  /// - Otherwise the freshest key wins; equal epochs fall back to the key
+  ///   whose id first arrived last.
+  ///
+  /// First local arrival alone is not enough: a retired key whose first copy
+  /// arrives after its replacement would win.
   Future<CommunityInfoEvent?> currentKey(
       InfoKeyHome home, String communityId) async {
     final policy = policyFor(communityId);
     final keys = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    bool trusted(CommunityInfoEvent k) =>
+        k.conversationId == home.conversationId &&
+        k.keyId != null &&
+        (k.senderAccountId == accountId ||
+            policy.mayEdit(k.senderAccountId, infoKindCommunity));
+    // Rows from before schema 35 carry no epoch: they rank below every key
+    // with one, and below any removal.
+    const unknown = -1;
     final firstSeen = <String, int>{};
-    for (final k in keys) {
-      if (k.conversationId != home.conversationId) continue;
-      final id = k.keyId;
-      if (id == null) continue;
+    final freshness = <String, int>{};
+    for (final k in keys.where(trusted)) {
+      final id = k.keyId!;
       final seq = k.seq ?? 0;
-      final held = firstSeen[id];
-      if (held == null || seq < held) firstSeen[id] = seq;
+      final epoch = k.epoch ?? unknown;
+      if (seq < (firstSeen[id] ?? seq + 1)) firstSeen[id] = seq;
+      if (epoch < (freshness[id] ?? epoch + 1)) freshness[id] = epoch;
     }
+    final removal = await _removalEpoch(home);
     CommunityInfoEvent? best;
+    var bestEpoch = unknown - 1;
     var bestSeq = -1;
     for (final k in keys) {
-      if (k.conversationId != home.conversationId || k.key == null) continue;
-      if (k.senderAccountId != accountId &&
-          !policy.mayEdit(k.senderAccountId, infoKindCommunity)) {
-        continue;
-      }
-      final first = firstSeen[k.keyId] ?? 0;
-      if (first > bestSeq) {
+      if (k.key == null || !trusted(k)) continue;
+      final epoch = freshness[k.keyId]!;
+      if (removal > 0 && epoch < removal) continue;
+      final first = firstSeen[k.keyId]!;
+      if (epoch > bestEpoch || (epoch == bestEpoch && first > bestSeq)) {
         best = k;
+        bestEpoch = epoch;
         bestSeq = first;
       }
     }
@@ -235,6 +260,10 @@ class CommunityInfoService {
   /// Makes a fresh key for [home] and keeps it locally. Others get it by
   /// asking; [rotate] also sends it at once.
   Future<CommunityInfoEvent> newKey(InfoKeyHome home) async {
+    // Made now, after every removal this device has seen in the group: its
+    // freshness is the group's epoch, and never below that removal's.
+    final epoch = max(await epochOf?.call(home.conversationId) ?? 0,
+        await _removalEpoch(home));
     final key = codec.newKey();
     final event = CommunityInfoEvent(
       kind: CommunityInfoEventKind.key,
@@ -245,6 +274,7 @@ class CommunityInfoService {
       senderDeviceId: deviceId,
       keyId: ProfileRecordCodec.keyId(key),
       key: key,
+      epoch: epoch,
     );
     await store.recordOwnCommunityInfoEvents([event]);
     return event;

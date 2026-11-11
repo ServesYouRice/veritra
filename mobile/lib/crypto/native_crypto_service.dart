@@ -1971,6 +1971,7 @@ class NativeCryptoService
                         conversationId: conversationId,
                         senderAccountId: _accountId!,
                         senderDeviceId: deviceId,
+                        epoch: epoch,
                       ),
                     ]
                   : const <CommunityInfoEvent>[],
@@ -2216,6 +2217,12 @@ class NativeCryptoService
                           conversationId: envelope.conversationId,
                           senderAccountId: envelope.senderAccountId,
                           senderDeviceId: envelope.senderDeviceId,
+                          // From the message's own header, never the
+                          // server's `mls_epoch` metadata: decryption
+                          // succeeded, so this epoch is authenticated (it
+                          // selects the epoch secrets and is in the AAD).
+                          epoch: mlsMessageEpoch(
+                              envelope.ciphertext, envelope.conversationId),
                         ),
                       ];
                 reveal = null;
@@ -3644,12 +3651,14 @@ List<MessageEffect> messageEffectsFor(
 
 /// The stored form of a received C3 payload ([infoPayloadTypes]), tied to
 /// the MLS-authenticated sender and the conversation it arrived in. The body
-/// was validated by [AppPayloadCodec].
+/// was validated by [AppPayloadCodec]. [epoch] is the MLS epoch the message
+/// was encrypted in, which only a successful decryption authenticates.
 CommunityInfoEvent communityInfoEventFor(
   DecryptedAppPayload payload, {
   required String conversationId,
   required String senderAccountId,
   required String senderDeviceId,
+  required int? epoch,
 }) {
   final body = payload.body;
   final kind = switch (payload.type) {
@@ -3674,6 +3683,7 @@ CommunityInfoEvent communityInfoEventFor(
     recordSha256: kind == CommunityInfoEventKind.update
         ? body['record_sha256'] as String
         : null,
+    epoch: epoch,
   );
 }
 

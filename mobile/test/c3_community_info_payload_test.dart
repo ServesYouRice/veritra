@@ -41,7 +41,8 @@ CommunityInfoEvent _event(CommunityInfoEventKind kind,
         {int n = 0,
         String? subject,
         String conversation = 'conv_shared',
-        String sender = 'acct_alice'}) =>
+        String sender = 'acct_alice',
+        int? epoch}) =>
     CommunityInfoEvent(
       kind: kind,
       subjectKind: 'community',
@@ -55,6 +56,7 @@ CommunityInfoEvent _event(CommunityInfoEventKind kind,
       key: kind == CommunityInfoEventKind.key ? List<int>.filled(32, n) : null,
       revision: kind == CommunityInfoEventKind.update ? n + 1 : null,
       recordSha256: kind == CommunityInfoEventKind.update ? _digest : null,
+      epoch: epoch,
     );
 
 void main() {
@@ -169,8 +171,10 @@ void main() {
         conversationId: 'conv_private',
         senderAccountId: 'acct_alice',
         senderDeviceId: 'dev_alice',
+        epoch: 4,
       );
       expect(event.kind, CommunityInfoEventKind.key);
+      expect(event.epoch, 4);
       expect(event.subjectKind, 'channel');
       expect(event.subjectId, _channel);
       expect(event.conversationId, 'conv_private');
@@ -260,6 +264,43 @@ void main() {
             await store.loadCommunityInfoEvents(
                 CommunityInfoEventKind.key, 'community', _id('comm', 9)),
             isEmpty);
+      });
+
+      test('a repeated key keeps its first arrival and its lowest epoch',
+          () async {
+        await commit([_event(CommunityInfoEventKind.key, n: 1, epoch: 5)]);
+        final first = (await keys()).single.seq;
+        // A re-delivery in a later epoch never makes the key look newer.
+        await commit([_event(CommunityInfoEventKind.key, n: 1, epoch: 9)]);
+        expect((await keys()).single.epoch, 5);
+        // A delayed copy of the original lowers it; an unknown one does not.
+        await commit([_event(CommunityInfoEventKind.key, n: 1, epoch: 2)]);
+        await commit([_event(CommunityInfoEventKind.key, n: 1)]);
+        final held = (await keys()).single;
+        expect(held.epoch, 2);
+        expect(held.seq, first);
+        // Announcements keep the epoch they first arrived with.
+        await commit([_event(CommunityInfoEventKind.update, n: 1, epoch: 7)]);
+        await commit([_event(CommunityInfoEventKind.update, n: 1, epoch: 1)]);
+        expect(
+            (await store.loadCommunityInfoEvents(
+                    CommunityInfoEventKind.update, 'community', _community))
+                .single
+                .epoch,
+            7);
+      });
+
+      test('an evicted key keeps its epoch for ordering', () async {
+        await commit([_event(CommunityInfoEventKind.key, n: 1, epoch: 3)]);
+        for (var n = 2; n <= 8; n++) {
+          await commit([_event(CommunityInfoEventKind.key, n: n, epoch: 4)]);
+        }
+        await commit([_event(CommunityInfoEventKind.key, n: 1, epoch: 6)]);
+        final tombstone = (await store.loadCommunityInfoEvents(
+                CommunityInfoEventKind.key, 'community', _community))
+            .first;
+        expect(tombstone.key, isNull);
+        expect(tombstone.epoch, 3);
       });
 
       test('at most four keys per sender and group: the oldest go', () async {
@@ -419,6 +460,56 @@ void main() {
       await db.close();
       await dir.delete(recursive: true);
     }
+  });
+
+  test('schema 34 upgrades to 35 with an epoch column, old rows unknown',
+      () async {
+    final dir = await Directory.systemTemp.createTemp('veritra-c3-schema34-');
+    addTearDown(() => dir.delete(recursive: true));
+    final file = File('${dir.path}/schema34.db');
+    var db = EncryptedLocalDatabase(NativeDatabase(file));
+    await db.customSelect('SELECT 1').get();
+    // Rebuild the schema-31..34 table: no epoch column, one stored key.
+    await stripCommunityInfoSchema(db);
+    await db.customStatement('CREATE TABLE local_info_events ('
+        'seq INTEGER PRIMARY KEY AUTOINCREMENT, ident TEXT NOT NULL UNIQUE,'
+        "kind TEXT NOT NULL CHECK(kind IN ('key','keyRequest','update')),"
+        'subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,'
+        'conversation_id TEXT NOT NULL, sender_account_id TEXT NOT NULL,'
+        'sender_device_id TEXT NOT NULL, key_id TEXT,'
+        'info_key BLOB CHECK(info_key IS NULL OR length(info_key)=32),'
+        'revision INTEGER, record_sha256 TEXT)');
+    await db.customStatement('CREATE TABLE local_info_records ('
+        'subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,'
+        'revision INTEGER NOT NULL CHECK(revision>=1),'
+        'key_id TEXT NOT NULL CHECK(length(key_id)=32), blob BLOB NOT NULL,'
+        'PRIMARY KEY(subject_kind, subject_id))');
+    final old = _event(CommunityInfoEventKind.key, n: 1);
+    await db.customStatement(
+        'INSERT INTO local_info_events (ident, kind, subject_kind, subject_id, '
+        'conversation_id, sender_account_id, sender_device_id, key_id, '
+        "info_key) VALUES (?, 'key', 'community', ?, 'conv_shared', "
+        "'acct_alice', 'dev_acct_alice', ?, ?)",
+        [old.ident, _community, old.keyId, Uint8List.fromList(old.key!)]);
+    await db.customStatement('PRAGMA user_version = 34');
+    await db.close();
+    db = EncryptedLocalDatabase(NativeDatabase(file));
+    addTearDown(db.close);
+    final version = (await db.customSelect('PRAGMA user_version').getSingle())
+        .read<int>('user_version');
+    expect(version, EncryptedLocalDatabase.currentSchemaVersion);
+    final rows = await db.readCommunityInfoEvents(
+        CommunityInfoEventKind.key, 'community', _community);
+    expect(rows.single.epoch, isNull);
+    // The first copy with an epoch sets it.
+    await db.writeCommunityInfoEvents(
+        [_event(CommunityInfoEventKind.key, n: 1, epoch: 4)]);
+    expect(
+        (await db.readCommunityInfoEvents(
+                CommunityInfoEventKind.key, 'community', _community))
+            .single
+            .epoch,
+        4);
   });
 
   test('schema 26 upgrades to the current schema with the C3 tables', () async {

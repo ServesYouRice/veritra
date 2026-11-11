@@ -457,6 +457,39 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C3 key freshness, local schema 35 (2026-11-11):** no ABI or wire change.
+  The info key a device seals with (`CommunityInfoService.currentKey`) was
+  the one whose id first arrived here last. A retired key whose first copy
+  arrived after its replacement (a delayed message, or a past-epoch message
+  MLS still decrypts) therefore became current, and later edits were sealed
+  under a key the removed member holds. The rule is now:
+  1. Every stored `info_key` row carries `epoch`: the MLS epoch the message
+     was encrypted in, read from the PrivateMessage header **after** it
+     decrypted (the epoch picks the epoch secrets and is in the content
+     AAD, so decryption authenticates it). The server's `mls_epoch` hint is
+     never used. A device's own sent copy carries the epoch it encrypted in;
+     a key it makes carries `max(group epoch, last removal epoch)`.
+  2. A repeated row keeps its first arrival (`seq`) and the **lowest** epoch
+     seen for it, so a delayed original lowers it and a re-delivery in a
+     later epoch never raises it. Evicted keys keep the epoch with their
+     tombstone.
+  3. Only trusted rows count: in the owning group, from this account or
+     from an owner/admin under the verified role state. A key's freshness is
+     the lowest epoch of its trusted rows; a current member replaying a key
+     at an old epoch it kept secrets for cannot retire it.
+  4. A key whose freshness is below the group's last removal epoch (the
+     watermark committed with the MLS state) is retired: never current, even
+     when it is the only key held. Callers then ask, or wait for rotation.
+  5. Among the rest the freshest wins; equal epochs fall back to the key whose
+     id first arrived last (the previous rule).
+  Residuals: an owner/admin can still make any key current by sending it in a
+  fresh epoch (it is trusted to choose keys; honest code never re-sends a key
+  from before a removal it has seen). Rows stored before schema 35 have no
+  epoch and rank below every key with one and below any removal; a device
+  upgraded mid-rotation may ask for a key again. Schema 35 adds the nullable
+  column only (idempotent `ALTER TABLE`). Evidence:
+  [`C3-key-freshness-2026-11-11.md`](../testing/evidence/C3-key-freshness-2026-11-11.md).
+
 - **C3 remote-removal obligations (2026-11-11):** no ABI, schema or wire
   change. The remote commit path uses ABI 13's authenticated removal outcome
   and wipes its unused exporter root. Surviving devices persist the removal

@@ -1,6 +1,7 @@
 part of 'encrypted_database.dart';
 
-// Local schema 31 (C3, docs/designs/C3-private-channels-and-info.md): what a
+// Local schema 31 (C3, docs/designs/C3-private-channels-and-info.md; schema
+// 35 adds `epoch` for the key-freshness rule in docs/crypto.md): what a
 // device received about community info over MLS. Three kinds of row share one
 // table: an info key (`info_key`), an announcement of an accepted record
 // (`info_update`) and a request for a key (`info_key_request`); plus the cache
@@ -44,6 +45,7 @@ class CommunityInfoEvent {
     this.revision,
     this.recordSha256,
     this.seq,
+    this.epoch,
   }) : key = key == null ? null : List<int>.unmodifiable(key);
 
   final CommunityInfoEventKind kind;
@@ -66,7 +68,17 @@ class CommunityInfoEvent {
   /// rows have larger numbers.
   final int? seq;
 
-  CommunityInfoEvent _withSeq(int value, {bool evictKey = false}) =>
+  /// The MLS epoch the payload was encrypted in, authenticated by its
+  /// successful decryption (the epoch is in the content AAD). For this
+  /// device's own new key: the epoch it was made in, never below a removal
+  /// it had seen. A repeat of a key row keeps the lowest epoch seen for it:
+  /// a later re-delivery never makes an old key look newer. Null for rows
+  /// stored before schema 35 (ranked oldest). Kept after key bytes are
+  /// evicted.
+  final int? epoch;
+
+  CommunityInfoEvent _withSeq(int value,
+          {bool evictKey = false, int? lowerEpoch}) =>
       CommunityInfoEvent(
         kind: kind,
         subjectKind: subjectKind,
@@ -79,6 +91,7 @@ class CommunityInfoEvent {
         revision: revision,
         recordSha256: recordSha256,
         seq: value,
+        epoch: lowestEpoch(epoch, lowerEpoch),
       );
 
   /// The row's identity: a repeat of the same key, announcement or request
@@ -162,7 +175,17 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
   if (rows.any((r) => r.ident == event.ident)) {
     // A repeated key request is a new request (a device asking again after
     // missing a rotation): it moves to the end. Keys and announcements keep
-    // their first arrival.
+    // their first arrival; a key keeps the lowest epoch it was seen in (a
+    // delayed copy of the original lowers it, a re-delivery never raises it).
+    if (event.kind == CommunityInfoEventKind.key) {
+      return [
+        for (final row in rows)
+          row.ident == event.ident
+              ? row._withSeq(row.seq!,
+                  evictKey: row.key == null, lowerEpoch: event.epoch)
+              : row,
+      ];
+    }
     if (event.kind != CommunityInfoEventKind.keyRequest) return rows;
     rows = rows.where((r) => r.ident != event.ident).toList();
   }
@@ -191,6 +214,19 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
   ];
 }
 
+/// The lower of two epochs; a known one wins over an unknown one.
+int? lowestEpoch(int? a, int? b) =>
+    a == null ? b : (b == null ? a : (a < b ? a : b));
+
+/// The upsert tail for a repeated key or announcement: only a key's epoch
+/// may change, and only downwards.
+const String _lowerEpochOnRepeat =
+    ' ON CONFLICT(ident) DO UPDATE SET epoch = CASE '
+    "WHEN local_info_events.kind != 'key' OR excluded.epoch IS NULL "
+    'THEN local_info_events.epoch '
+    'WHEN local_info_events.epoch IS NULL THEN excluded.epoch '
+    'ELSE min(local_info_events.epoch, excluded.epoch) END';
+
 /// Rows eviction may take: never a key an accepted record uses.
 const String _unprotected =
     "(kind != 'key' OR info_key IS NOT NULL) AND NOT (kind = 'key' AND key_id IN "
@@ -209,7 +245,7 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
         'conversation_id TEXT NOT NULL, sender_account_id TEXT NOT NULL,'
         'sender_device_id TEXT NOT NULL,'
         'key_id TEXT, info_key BLOB CHECK(info_key IS NULL OR length(info_key)=32),'
-        'revision INTEGER, record_sha256 TEXT)');
+        'revision INTEGER, record_sha256 TEXT, epoch INTEGER)');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS local_info_events_subject ON local_info_events '
         '(subject_kind, subject_id, kind, seq)');
@@ -221,6 +257,20 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
         'PRIMARY KEY(subject_kind, subject_id))');
   }
 
+  /// Schema 35: the authenticated MLS epoch of each info row (key
+  /// freshness, docs/crypto.md). Rows from before have none; they rank
+  /// oldest.
+  /// Idempotent, so a fixture that relabels a current file as older (or a
+  /// retried upgrade) does not fail on the existing column.
+  Future<void> _addCommunityInfoEpoch() async {
+    final columns = await customSelect(
+            "SELECT name FROM pragma_table_info('local_info_events')")
+        .get();
+    if (columns.any((row) => row.read<String>('name') == 'epoch')) return;
+    await customStatement(
+        'ALTER TABLE local_info_events ADD COLUMN epoch INTEGER');
+  }
+
   /// Stores [events] inside the caller's transaction (the MLS commit that
   /// consumed them). An event that is not storable is skipped, never thrown
   /// on, so a bad payload cannot roll back the ratchet.
@@ -228,11 +278,14 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
       List<CommunityInfoEvent> events) async {
     for (final event in events) {
       if (!event.isStorable) continue;
+      // A repeated key keeps its first arrival (seq) and the lowest epoch
+      // seen for it; any other repeat changes nothing.
       await customStatement(
-          '${event.kind == CommunityInfoEventKind.keyRequest ? 'INSERT OR REPLACE' : 'INSERT OR IGNORE'} INTO local_info_events '
+          '${event.kind == CommunityInfoEventKind.keyRequest ? 'INSERT OR REPLACE' : 'INSERT'} INTO local_info_events '
           '(ident, kind, subject_kind, subject_id, conversation_id, '
           'sender_account_id, sender_device_id, key_id, info_key, revision, '
-          'record_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'record_sha256, epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+          '${event.kind == CommunityInfoEventKind.keyRequest ? '' : _lowerEpochOnRepeat}',
           <Object?>[
             event.ident,
             event.kind.name,
@@ -245,6 +298,7 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
             event.key == null ? null : Uint8List.fromList(event.key!),
             event.revision,
             event.recordSha256,
+            event.epoch,
           ]);
       await customStatement(
           '${event.kind == CommunityInfoEventKind.key ? 'UPDATE local_info_events SET info_key = NULL' : 'DELETE FROM local_info_events'} WHERE kind = ?1 AND subject_kind = ?2 '
@@ -290,6 +344,7 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
           revision: row.readNullable<int>('revision'),
           recordSha256: row.readNullable<String>('record_sha256'),
           seq: row.read<int>('seq'),
+          epoch: row.readNullable<int>('epoch'),
         ),
     ];
   }

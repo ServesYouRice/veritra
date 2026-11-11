@@ -44,6 +44,8 @@ extension CommunityInfoActions on AppState {
     _infoPublishing.clear();
     final generation = _sessionGeneration;
     bool active() => !_disposed && _syncOwnerActive(current, generation);
+    final Object service = cryptoService;
+    final mls = service is MlsConversationCryptoService ? service : null;
     return _infoService = CommunityInfoService(
       store: localStore,
       api: _AppInfoApi(client, current.token, active),
@@ -62,6 +64,16 @@ extension CommunityInfoActions on AppState {
       onChanged: () {
         if (active()) notifyListeners();
       },
+      // A new info key is stamped with the group's epoch (key freshness).
+      epochOf: mls == null
+          ? null
+          : (conversationId) async {
+              try {
+                return (await mls.groupEpoch(conversationId))?.epoch;
+              } catch (_) {
+                return null;
+              }
+            },
     );
   }
 
