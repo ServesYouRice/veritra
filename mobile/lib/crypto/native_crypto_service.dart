@@ -2193,10 +2193,10 @@ class NativeCryptoService
           // missing, swapped or damaged body is an invalid row; the MLS
           // state and the cursor commit with it (P1), so a server that
           // strips a body cannot stop the conversation.
-          final reference = c7CommunityKind(
-                  _authority?.conversationKind(envelope.conversationId))
-              ? parseC7Reference(plaintext)
-              : null;
+          // Parsed whatever the conversation's cached kind: the magic and
+          // the exact 68 bytes never match a VAP1, MLS authenticated them,
+          // and a list that has not caught up must not lose the message.
+          final reference = parseC7Reference(plaintext);
           if (reference != null) {
             final metadata = envelope.cryptoMetadata;
             final routeChannel =

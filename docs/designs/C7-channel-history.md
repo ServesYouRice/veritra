@@ -943,7 +943,10 @@ generation keys and records (create, switch, move), the ordering table in
 the receive path, rekey at removal merge, `history_sync` and its request,
 `keyless`/`unsure`, the re-add wipe, targeted-action sealing, the newcomer's
 backward walk, two-pass import and prefetch, the private group's
-`channel_id`, the receiver rule that a group-level message is one of the two
+`channel_id` on sends (until it is sent, with the flag on every honest
+private-channel post is group-level on the server, so slow mode and an
+admins-only posting policy are skipped for all of them; keep the flag off),
+the receiver rule that a group-level message is one of the two
 hidden types, local schema for C7 state, and every step-5 flow and test.
 
 ## Open questions for the owner
