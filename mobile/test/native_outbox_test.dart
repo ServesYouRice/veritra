@@ -410,7 +410,7 @@ void main() {
           echo, (await harness.aliceStore.loadSyncCursor()) + 1);
       expect(await harness.aliceStore.loadPins(_conversation), isEmpty);
       expect(
-          (jsonDecode(utf8.decode(await harness.aliceStore.exportBackup()))
+          (jsonDecode(utf8.decode(await harness.aliceStore.exportHistorySnapshot()))
               as Map)['pending_pins'],
           isNull);
       authority.role = 'admin';

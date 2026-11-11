@@ -721,8 +721,7 @@ func TestBlobUsageCountersMatchRowSums(t *testing.T) {
 		}
 	}
 	checkBlobUsageMatches(t, store, "create attachments")
-	recoveryHash := make([]byte, 32)
-	if err := store.CreateBackupBlob(ctx, ds.Accounts[2], ds.Devices[2], "blob_backup_q", fmt.Sprintf("%064x", 9), 777, []byte(`{"state_counter":1}`), recoveryHash); err != nil {
+	if err := insertLegacyBackup(ctx, store, ds.Accounts[2], ds.Devices[2], "blob_backup_q", fmt.Sprintf("%064x", 9), 777, []byte(`{"state_counter":1}`)); err != nil {
 		t.Fatal(err)
 	}
 	checkBlobUsageMatches(t, store, "create backup")

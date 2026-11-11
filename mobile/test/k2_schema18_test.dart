@@ -13,7 +13,7 @@ import 'schema_fixtures.dart';
 
 /// K2 local schema 18 (docs/designs/K2-native-state-migration.md, "Atomic
 /// persistence and upgrade rules"): the enrollment promotion ledger and the
-/// history transfer progress. Review finding 4 on schema 17: a restore can
+/// history transfer progress. Review finding 4 on schema 17: an identity change can
 /// reactivate a frozen pre-join identity, so the ledger, not an empty MLS
 /// state, decides whether an identity was already promoted.
 
@@ -50,6 +50,13 @@ const _newSession = Session(
   deviceId: 'dev_new',
   username: 'alice',
   deviceSecret: 'secret_new',
+);
+
+/// A stored session that is signed out and has no device.
+const _signedOutSession = Session(
+  baseUrl: _origin,
+  token: '',
+  accountId: 'acct_me',
 );
 
 const _otherSession = Session(
@@ -430,8 +437,7 @@ void main() {
         final file = await _tempFile();
         final db = _FailAt(NativeDatabase(file), stage.value, armed: false);
         addTearDown(db.close);
-        await db.writeSessionJson(_sessionJson(
-            restoredAccountSession(baseUrl: _origin, accountId: 'acct_me')));
+        await db.writeSessionJson(_sessionJson(_signedOutSession));
         await db.writePendingEnrollment(_row(_pendingLink()));
         final request = EnrollmentPromotionRequest(
           kind: PendingEnrollment.kindDeviceLinkV3,
@@ -610,9 +616,7 @@ void main() {
       }
 
       test('promotes the frozen identity in one step', () async {
-        await store.saveSession(
-            restoredAccountSession(baseUrl: _origin, accountId: 'acct_me'));
-        await store.saveDraft('conv_1', 'restored draft');
+        await store.saveSession(_signedOutSession);
         await promoted(transfer: _incoming());
 
         final session = (await store.loadSession())!;
@@ -637,8 +641,6 @@ void main() {
             isTrue);
         expect((await store.loadHistoryTransfer(_origin, 'link_1'))?.stage,
             HistoryTransferStage.awaitingHandoff);
-        // The restored account's local data stays: no identity reset.
-        expect((await store.loadDrafts())['conv_1']?.text, 'restored draft');
       });
 
       test('a retry after a lost outcome never reopens the frozen state',
@@ -668,10 +670,6 @@ void main() {
       // Finding 4: each path that empties the MLS state but keeps the
       // identity promoted.
       final emptiers = <String, Future<void> Function(LocalStore)>{
-        'a backup restore': (s) async {
-          final backup = await s.exportBackup();
-          await s.restoreBackup(backup);
-        },
         'an identity change and back': (s) async {
           await s.saveSession(_otherSession);
           await s.saveSession(_newSession);
@@ -996,7 +994,7 @@ void main() {
         });
       });
 
-      test('neither a backup nor a history snapshot carries them', () async {
+      test('a history snapshot does not carry them', () async {
         await store.saveSnapshot(const <Conversation>[],
             const <String, List<ReceivedMessageEnvelope>>{}, 0);
         await promoted(
@@ -1005,7 +1003,6 @@ void main() {
                 handoff: _handoff,
                 transferId: _transferId,
                 path: '/private/SENTINEL-k2s18.part'));
-        final backup = await store.exportBackup();
         final history = await store.exportHistorySnapshot();
         for (final forbidden in <List<int>>[
           utf8.encode(_claimToken),
@@ -1016,7 +1013,6 @@ void main() {
           utf8.encode('link_1'),
           utf8.encode(_transferId),
         ]) {
-          expect(_contains(backup, forbidden), isFalse);
           expect(_contains(history, forbidden), isFalse);
         }
       });

@@ -3894,6 +3894,10 @@ class AppLocalizationsSr extends AppLocalizations {
   String get k1RestoreEmpty => 'Није пронађена копија са другог уређаја.';
 
   @override
+  String get k1RestoreLegacyRefused =>
+      'Копије у старом формату (направљене пре аутоматских копија) више се не могу вратити. Нису мењане, али их апликација не отвара.';
+
+  @override
   String get k1RestoreLoadFailed => 'Списак резервних копија није учитан.';
 
   @override
@@ -8053,6 +8057,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get k1RestoreEmpty => 'Nije pronađena kopija sa drugog uređaja.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Kopije u starom formatu (napravljene pre automatskih kopija) više se ne mogu vratiti. Nisu menjane, ali ih aplikacija ne otvara.';
 
   @override
   String get k1RestoreLoadFailed => 'Spisak rezervnih kopija nije učitan.';

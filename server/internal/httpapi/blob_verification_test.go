@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -123,72 +122,6 @@ func TestLegacyAttachmentIsVerifiedInFullThenGetsARecord(t *testing.T) {
 	flipBlobByte(t, path, 2*chunk+1)
 	if rec := getBlob(handler, url, token, "bytes=0-99"); rec.Code != http.StatusPartialContent || !bytes.Equal(rec.Body.Bytes(), payload[:100]) {
 		t.Fatalf("range after record stored: status=%d", rec.Code)
-	}
-}
-
-// Recovery: an aborted transfer records only the verified bytes it handed
-// off, and resuming at the bad chunk gets a clean blob_integrity_failed.
-func TestRecoveryStopsAtABadChunk(t *testing.T) {
-	handler, token, dbPath := newTestHandlerWithOwner(t)
-	payload := blobTestPayload(3*chunk + 10)
-	recoveryToken := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
-	status, response := doRaw(t, handler, http.MethodPost, "/api/v1/backups", token, payload, map[string]string{
-		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
-		"X-Recovery-Token":              recoveryToken,
-	})
-	if status != http.StatusCreated {
-		t.Fatalf("backup status=%d body=%s", status, response)
-	}
-	var backup struct {
-		StorageKey string `json:"storage_key"`
-	}
-	if err := json.Unmarshal(response, &backup); err != nil {
-		t.Fatal(err)
-	}
-	flipBlobByte(t, filepath.Join(filepath.Dir(dbPath), "blobs", backup.StorageKey), 2*chunk+3)
-
-	server := httptest.NewServer(handler)
-	defer server.Close()
-	request, err := http.NewRequest(http.MethodGet, server.URL+"/api/v1/recovery", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.Header.Set("X-Recovery-Token", recoveryToken)
-	resp, err := server.Client().Do(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, readErr := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || readErr == nil || len(body) > 2*chunk || !bytes.Equal(body, payload[:len(body)]) {
-		t.Fatalf("aborted recovery: status=%d read=%d err=%v", resp.StatusCode, len(body), readErr)
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var next int64
-	var lease sql.NullString
-	if err := db.QueryRow(`SELECT recovery_next_offset, recovery_lease_id FROM backup_blobs WHERE storage_key = ?`, backup.StorageKey).Scan(&next, &lease); err != nil {
-		t.Fatal(err)
-	}
-	if next != 2*chunk || lease.Valid {
-		t.Fatalf("recorded progress = %d (lease held %v), want %d", next, lease.Valid, 2*chunk)
-	}
-	status, response = doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, map[string]string{
-		"X-Recovery-Token": recoveryToken, "Range": fmt.Sprintf("bytes=%d-", 2*chunk),
-	})
-	if status != http.StatusInternalServerError || !bytes.Contains(response, []byte("blob_integrity_failed")) {
-		t.Fatalf("resume at bad chunk: status=%d body=%q", status, response)
-	}
-	status, response = doRaw(t, handler, http.MethodGet, "/api/v1/recovery", "", nil, map[string]string{
-		"X-Recovery-Token": recoveryToken, "Range": fmt.Sprintf("bytes=%d-%d", chunk, 2*chunk-1),
-	})
-	if status != http.StatusPartialContent || !bytes.Equal(response, payload[chunk:2*chunk]) {
-		t.Fatalf("resume of intact range: status=%d len=%d", status, len(response))
 	}
 }
 

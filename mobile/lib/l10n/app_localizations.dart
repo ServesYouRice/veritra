@@ -6381,6 +6381,12 @@ abstract class AppLocalizations {
   /// **'No backup from another device was found.'**
   String get k1RestoreEmpty;
 
+  /// No description provided for @k1RestoreLegacyRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.'**
+  String get k1RestoreLegacyRefused;
+
   /// No description provided for @k1RestoreLoadFailed.
   ///
   /// In en, this message translates to:

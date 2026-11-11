@@ -54,7 +54,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'device_id_required': ApiErrorKind.authentication,
   'device_session_required': ApiErrorKind.authentication,
   'claim_token_required': ApiErrorKind.authentication,
-  'recovery_token_required': ApiErrorKind.authentication,
   'invalid_identity': ApiErrorKind.authentication,
   // B6 group-call rooms.
   'rooms_unavailable': ApiErrorKind.unavailable,
@@ -92,7 +91,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'mls_group_legacy': ApiErrorKind.conflict,
   'mls_commit_bundle_required': ApiErrorKind.conflict,
   'mls_change_pending': ApiErrorKind.conflict,
-  'recovery_transfer_in_progress': ApiErrorKind.conflict,
   'transcript_mismatch': ApiErrorKind.conflict,
   // L1-3: an approval sent before the source revealed its random.
   'reveal_required': ApiErrorKind.conflict,
@@ -136,7 +134,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_nonce': ApiErrorKind.invalidRequest,
   'attestation_unavailable': ApiErrorKind.unavailable,
   'invalid_push_subscription': ApiErrorKind.invalidRequest,
-  'invalid_recovery_range': ApiErrorKind.invalidRequest,
   'multiple_ranges_not_supported': ApiErrorKind.invalidRequest,
   'invalid_retention_seconds': ApiErrorKind.invalidRequest,
   'invalid_role': ApiErrorKind.invalidRequest,
@@ -157,6 +154,9 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'passkeys_list_failed': ApiErrorKind.server,
   // K0 account recovery.
   'recovery_not_configured': ApiErrorKind.unavailable,
+  // Retired routes (K1-6): old formats answer 410 with these codes.
+  'backup_format_retired': ApiErrorKind.notFound,
+  'recovery_route_retired': ApiErrorKind.notFound,
   'recovery_backoff': ApiErrorKind.rateLimited,
   'recovery_claim_failed': ApiErrorKind.server,
   'recovery_cancelled': ApiErrorKind.notFound,
@@ -402,8 +402,6 @@ class ApiException implements Exception {
         return l10n.apiErrorIdempotencyConflict;
       case 'message_expired':
         return l10n.apiErrorMessageExpired;
-      case 'recovery_transfer_in_progress':
-        return l10n.apiErrorRecoveryInProgress;
       case 'recovery_not_configured':
         return l10n.apiErrorRecoveryNotConfigured;
       case 'recovery_backoff':

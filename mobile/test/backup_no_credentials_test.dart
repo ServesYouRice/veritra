@@ -130,178 +130,23 @@ void main() {
       ciphertext: utf8.encode('plain-outbox-SENTINEL'),
       cryptoProtocol: 'mls10-openmls-v1',
     ));
-    return store.exportBackup();
-  }
-
-  /// A version 5 backup as the previous build wrote it: the full session,
-  /// the MLS state and its key, the outboxes and the cursor.
-  List<int> legacyV5(List<int> current) {
-    final root =
-        Map<String, Object?>.from(jsonDecode(utf8.decode(current)) as Map);
-    root
-      ..['version'] = 5
-      ..remove('account')
-      ..['account_id'] = _session.accountId
-      ..['device_id'] = _deviceId
-      ..['session'] = <String, Object?>{
-        'base_url': _session.baseUrl,
-        'token': _token,
-        'account_id': _session.accountId,
-        'device_id': _deviceId,
-        'username': 'alice',
-        'device_secret': _secret,
-      }
-      ..['cursor'] = 42
-      ..['outbox'] = <Object?>[
-        MessageEnvelope(
-          conversationId: 'conv_1',
-          idempotencyKey: 'plain_old',
-          ciphertext: const <int>[1, 2, 3],
-          cryptoProtocol: 'mls10-openmls-v1',
-        ).toJson(),
-      ]
-      ..['mls_outbox'] = <Object?>[
-        <String, Object?>{
-          'idempotency_key': 'mls_old',
-          'conversation_id': 'conv_1',
-          'kind': 'commit',
-          'payload': base64Encode(<int>[9, 9]),
-          'terminal': true,
-        },
-      ]
-      ..['pending_pins'] = <Object?>[]
-      ..['crypto_state'] = <String, Object?>{
-        'counter': 7,
-        'state_key': base64Encode(_stateKey),
-        'sealed_state': base64Encode(_sealed),
-      };
-    return utf8.encode(jsonEncode(root));
-  }
-
-  Future<void> expectRestoredWithoutDevice(LocalStore target) async {
-    final restored = await target.loadSession();
-    expect(restored, isNotNull);
-    expect(isRestoredAccountSession(restored!), isTrue);
-    expect(restored.baseUrl, _session.baseUrl);
-    expect(restored.accountId, 'acct_1');
-    expect(restored.username, 'alice');
-    expect(restored.token, isEmpty);
-    expect(restored.deviceId, isNull);
-    expect(restored.deviceSecret, isNull);
-    expect(await target.loadCryptoState(), isNull);
-    expect(await target.loadSyncCursor(), 0);
-    expect(await target.pendingMlsMessages(), isEmpty);
-    expect(await target.pendingEnvelopeRecords(), isEmpty);
-    expect((await target.loadMessages('conv_1')).single.body, 'hello');
-    expect((await target.loadSnapshot())?.conversations.single.id, 'conv_1');
+    return store.exportHistorySnapshot();
   }
 
   for (final memory in <bool>[true, false]) {
     final label = memory ? 'memory store' : 'encrypted store';
 
-    test('the backup plaintext holds no credential or MLS state ($label)',
+    test('the history snapshot holds no credential or MLS state ($label)',
         () async {
       final backup =
           await seededBackup(memory ? MemoryLocalStore() : createStore());
       final text = utf8.decode(backup);
-      for (final needle in _forbidden()) {
+      // The snapshot names its source device by design (K2); no secret.
+      for (final needle in _forbidden().where((n) => n != _deviceId)) {
         expect(text, isNot(contains(needle)), reason: needle);
       }
-      expect(text, isNot(contains('SENTINEL')));
-      final root = Map<String, Object?>.from(jsonDecode(text) as Map);
-      expect(root['version'], 6);
-      expect(root['account'], <String, Object?>{
-        'base_url': 'https://chat.example.org',
-        'account_id': 'acct_1',
-        'username': 'alice',
-        'role': 'member',
-      });
-    });
-
-    test('a restore keeps history and leaves no device ($label)', () async {
-      final backup =
-          await seededBackup(memory ? MemoryLocalStore() : createStore());
-      final target =
-          memory ? MemoryLocalStore() : createStore(namespace: 'restored');
-      await target.restoreBackup(backup);
-      await expectRestoredWithoutDevice(target);
-    });
-
-    test(
-        'an old backup restores its history and drops its credentials '
-        '($label)', () async {
-      final backup = legacyV5(
-          await seededBackup(memory ? MemoryLocalStore() : createStore()));
-      final target =
-          memory ? MemoryLocalStore() : createStore(namespace: 'legacy');
-      await target.restoreBackup(backup);
-      await expectRestoredWithoutDevice(target);
-    });
-
-    test('an old backup bound to another device is refused ($label)', () async {
-      final root = Map<String, Object?>.from(jsonDecode(utf8.decode(legacyV5(
-              await seededBackup(memory ? MemoryLocalStore() : createStore()))))
-          as Map)
-        ..['device_id'] = 'dev_other';
-      final target =
-          memory ? MemoryLocalStore() : createStore(namespace: 'bound');
-      await expectLater(target.restoreBackup(utf8.encode(jsonEncode(root))),
-          throwsFormatException);
-      expect(await target.loadSession(), isNull);
-    });
-
-    test(
-        'a restored account is marked as one, so a second restore is '
-        'refused ($label)', () async {
-      final backup =
-          await seededBackup(memory ? MemoryLocalStore() : createStore());
-      final target =
-          memory ? MemoryLocalStore() : createStore(namespace: 'twice');
-      await target.restoreBackup(backup);
-      // BackupService.recover refuses a device holding this session.
-      expect(isRestoredAccountSession((await target.loadSession())!), isTrue);
-      // A device signed out with its identity kept is not a restored one.
-      expect(
-          isRestoredAccountSession(const Session(
-              baseUrl: 'https://chat.example.org',
-              token: '',
-              accountId: 'acct_1',
-              deviceId: 'dev_1',
-              deviceSecret: 's')),
-          isFalse);
-    });
-
-    test(
-        'a device of the same account keeps the restored history; '
-        'another account drops it ($label)', () async {
-      final backup =
-          await seededBackup(memory ? MemoryLocalStore() : createStore());
-      final target =
-          memory ? MemoryLocalStore() : createStore(namespace: 'enrolled');
-      await target.restoreBackup(backup);
-      const linked = Session(
-        baseUrl: 'https://chat.example.org',
-        token: 'new-token',
-        accountId: 'acct_1',
-        deviceId: 'dev_new',
-        deviceSecret: 'new-secret',
-      );
-      await target.saveSession(linked);
-      expect((await target.loadMessages('conv_1')).single.body, 'hello');
-      expect(await target.loadCryptoState(), isNull);
-      expect(await target.loadSyncCursor(), 0);
-
-      final other =
-          memory ? MemoryLocalStore() : createStore(namespace: 'other');
-      await other.restoreBackup(backup);
-      await other.saveSession(const Session(
-        baseUrl: 'https://chat.example.org',
-        token: 'other-token',
-        accountId: 'acct_2',
-        deviceId: 'dev_x',
-        deviceSecret: 'x',
-      ));
-      expect(await other.loadMessages('conv_1'), isEmpty);
+      expect(text, isNot(contains('mls-outbox-SENTINEL')));
+      expect(text, isNot(contains('plain-outbox-SENTINEL')));
     });
   }
 }

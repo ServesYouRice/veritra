@@ -1090,6 +1090,7 @@
   "k1RestoreIntro": "Izaberite kopiju koju je napravio neki drugi vaš uređaj i unesite ključ za oporavak. Istorija se spaja sa ovom; poruke koje već postoje ostaju.",
   "k1RestoreLoading": "Tražim rezervne kopije…",
   "k1RestoreEmpty": "Nije pronađena kopija sa drugog uređaja.",
+  "k1RestoreLegacyRefused": "Kopije u starom formatu (napravljene pre automatskih kopija) više se ne mogu vratiti. Nisu menjane, ali ih aplikacija ne otvara.",
   "k1RestoreLoadFailed": "Spisak rezervnih kopija nije učitan.",
   "k1RestoreEntry": "{device} · {date}",
   "k1RestoreEntryPrevious": "{device} · {date} (prethodna kopija)",

@@ -92,9 +92,6 @@ enum SyncRecoveryChoice {
   /// device.
   relink,
 
-  /// Restore an encrypted backup taken before the failure.
-  restoreBackup,
-
   /// Leave the conversation the failure names (D70 record limit), then
   /// apply events again. Its events are no longer sent, so none is skipped
   /// on this device's word.
@@ -137,12 +134,10 @@ class SyncRecovery {
       case SyncFailureKind.cryptoUnavailable:
         return const <SyncRecoveryChoice>[
           SyncRecoveryChoice.retry,
-          SyncRecoveryChoice.restoreBackup,
           SyncRecoveryChoice.relink,
         ];
       case SyncFailureKind.cursorExpired:
         return const <SyncRecoveryChoice>[
-          SyncRecoveryChoice.restoreBackup,
           SyncRecoveryChoice.relink,
         ];
       case SyncFailureKind.localStorage:

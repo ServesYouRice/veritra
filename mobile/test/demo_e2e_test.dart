@@ -8,7 +8,6 @@ import 'package:private_messenger/core/attachments.dart';
 import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
-import 'package:private_messenger/crypto/backup_service.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
@@ -271,34 +270,17 @@ void main() {
     await offline.waitUntil(() async => offline.state.pendingFor(conv).isEmpty,
         timeout: const Duration(seconds: 90));
 
-    // Encrypted backup (card I45, D71, D73): the owner backs up and a fresh
-    // device restores it. The backup holds no sign-in and no MLS state, so
-    // the original device keeps working and the restored one joins the
-    // account as a new device, by a link from the original, keeping the
-    // restored history.
-    final code = await owner.state.createBackup();
-    owner.expectOk();
-    expect(owner.state.errorFor(Ops.backup), isNull,
-        reason: owner.state.errorFor(Ops.backup));
-    expect(code, isNotNull);
+    // VBK2 backups are retired (K1-6). A fresh device joins by a link from
+    // the original, and K2 sends it the history. The K1 back up, lose every
+    // device, recover and restore path is exercised by K1-7.
     final ownerAccountId = owner.accountId;
     final replacement = _DemoClient(bindings, baseUrl);
     addTearDown(replacement.dispose);
-    expect(await replacement.state.restoreFromBackup(code!), isFalse);
-    expect(replacement.state.errorFor(Ops.restore), contains('link'));
-    expect(replacement.state.session, isNull);
-    expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
-        contains('hi owner'));
-    expect(await replacement.store.loadCryptoState(), isNull);
     // A password alone does not sign in a device the server does not know.
     await replacement.state.login(baseUrl, 'owner', 'owner-password-123');
     expect(replacement.state.session, isNull);
-    // The code is used up.
-    final again = _DemoClient(bindings, baseUrl);
-    addTearDown(again.dispose);
-    expect(await again.state.restoreFromBackup(code), isFalse);
-
-    // The original device links the restored one.
+    expect(await replacement.store.loadCryptoState(), isNull);
+    // The original device links the new one.
     expect(await owner.state.reauthenticate('owner-password-123'), isTrue,
         reason: owner.state.error);
     await owner.state.createDeviceLink();
@@ -340,7 +322,7 @@ void main() {
     });
     expect(replacement.state.historyTransferStatus, isNull);
     expect(owner.state.historyTransferStatus, isNull);
-    // The restored history is still there, and new messages arrive once
+    // The history arrived by the K2 transfer, and new messages arrive once
     // the groups add the new device.
     expect((await replacement.store.loadMessages(conv)).map((m) => m.body),
         contains('hi owner'));
@@ -433,7 +415,6 @@ class _Server {
 class _DemoClient {
   _DemoClient(this.bindings, this.baseUrl, {MemoryLocalStore? store})
       : store = store ?? MemoryLocalStore() {
-    final backups = Directory.systemTemp.createTempSync('veritra-e2e-backup-');
     final attachments =
         Directory.systemTemp.createTempSync('veritra-e2e-attachments-');
     state = AppState(
@@ -442,11 +423,6 @@ class _DemoClient {
       cryptoService:
           NativeCryptoService(bindings: bindings, localStore: this.store),
       localStore: this.store,
-      backupService: BackupService(
-        bindings: bindings,
-        localStore: this.store,
-        directoryProvider: () async => backups,
-      ),
       attachmentService: AttachmentCryptoService(
         bindings,
         directoryProvider: () async => attachments,

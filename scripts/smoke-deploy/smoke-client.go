@@ -87,8 +87,6 @@ type state struct {
 	AttachmentID     string `json:"attachment_id"`
 	AttachmentSHA256 string `json:"attachment_sha256"`
 	AttachmentSize   int64  `json:"attachment_size"`
-	BackupSHA256     string `json:"backup_sha256"`
-	BackupSize       int64  `json:"backup_size"`
 }
 
 const (
@@ -153,8 +151,7 @@ func waitReady(args []string) error {
 }
 
 // runSmoke is the first-run smoke: startup, owner setup, login, attachment
-// upload and download, a near-cap encrypted backup through the proxy with a
-// recovery download, the WebSocket upgrade with Origin checks, a Web Push
+// upload and download, the retired backup routes (410), the WebSocket upgrade with Origin checks, a Web Push
 // test wake and TURN credential issuance.
 func runSmoke(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
@@ -168,7 +165,6 @@ func runSmoke(args []string) error {
 	turnURLs := fs.String("turn-urls", "", "comma-separated TURN URLs the server should offer")
 	vapidPublic := fs.String("vapid-public", "", "VAPID public key the server should offer")
 	attachmentMiB := fs.Int("attachment-mib", 8, "attachment size in MiB (server cap 50)")
-	backupMiB := fs.Int("backup-mib", 96, "encrypted backup size in MiB (server cap 100)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -285,28 +281,12 @@ func runSmoke(args []string) error {
 	}
 	pass(fmt.Sprintf("attachment upload and download (%d MiB, sha256 and range checked)", *attachmentMiB))
 
-	recoveryToken := make([]byte, 32)
-	if _, err := rand.Read(recoveryToken); err != nil {
+	// VBK2 uploads and the recovery-token route are retired (K1-6): old
+	// clients get a typed 410 through the proxy, and nothing is stored.
+	if err := c.retiredBackupChecks(); err != nil {
 		return err
 	}
-	recovery := b64url(recoveryToken)
-	sensitive = append(sensitive, [2]string{"recovery token", recovery})
-	backup, err := c.uploadBlob("/api/v1/backups", int64(*backupMiB)<<20, map[string]string{
-		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     backupMetadata,
-		"X-Recovery-Token":              recovery,
-	})
-	if err != nil {
-		return err
-	}
-	st.BackupSHA256, st.BackupSize = backup.SHA256, backup.Size
-	sensitive = append(sensitive, [2]string{"backup ciphertext prefix", backup.prefix})
-	recoveryClient := *c
-	recoveryClient.token = ""
-	if err := recoveryClient.download("/api/v1/recovery", map[string]string{"X-Recovery-Token": recovery}, st.BackupSHA256, st.BackupSize); err != nil {
-		return fmt.Errorf("recovery download: %w", err)
-	}
-	pass(fmt.Sprintf("encrypted backup upload (%d MiB) and recovery download through the proxy", *backupMiB))
+	pass("retired backup routes answer a typed 410 through the proxy")
 
 	if err := c.websocketChecks(); err != nil {
 		return err
@@ -382,28 +362,7 @@ func verifyRestored(args []string) error {
 	if err := c.download("/api/v1/attachments/"+st.AttachmentID, nil, st.AttachmentSHA256, st.AttachmentSize); err != nil {
 		return fmt.Errorf("restored attachment: %w", err)
 	}
-	var backups struct {
-		Backups []struct {
-			ID     string `json:"id"`
-			SHA256 string `json:"ciphertext_sha256"`
-		} `json:"backups"`
-	}
-	if err := c.json("GET", "/api/v1/backups", nil, nil, http.StatusOK, &backups); err != nil {
-		return err
-	}
-	backupID := ""
-	for _, b := range backups.Backups {
-		if strings.EqualFold(b.SHA256, st.BackupSHA256) {
-			backupID = b.ID
-		}
-	}
-	if backupID == "" {
-		return errors.New("restored instance lost the encrypted backup record")
-	}
-	if err := c.download("/api/v1/backups/"+backupID, nil, st.BackupSHA256, st.BackupSize); err != nil {
-		return fmt.Errorf("restored encrypted backup: %w", err)
-	}
-	pass("kept data: attachment and encrypted backup blobs intact")
+	pass("kept data: attachment blob intact")
 	fresh, err := c.uploadAttachment(st.ConversationID, 1<<20)
 	if err != nil {
 		return fmt.Errorf("write on the restored instance: %w", err)
@@ -798,6 +757,33 @@ type uploaded struct {
 	SHA256 string
 	Size   int64
 	prefix string // base64 of the first bytes, for the log check
+}
+
+// retiredBackupChecks proves the retired routes: a VBK2 upload and a
+// recovery-token download both answer 410 with a typed code.
+func (c *client) retiredBackupChecks() error {
+	upload, err := c.request("POST", "/api/v1/backups", strings.NewReader("x"), map[string]string{
+		"Content-Type": "application/octet-stream", "X-Private-Messenger-Encrypted": "1",
+		"X-Key-Derivation-Metadata": backupMetadata,
+	})
+	if err != nil {
+		return fmt.Errorf("retired backup upload: %w", err)
+	}
+	raw, _ := io.ReadAll(io.LimitReader(upload.Body, 1<<20))
+	upload.Body.Close()
+	if upload.StatusCode != http.StatusGone || errorCode(raw) != "backup_format_retired" {
+		return fmt.Errorf("retired backup upload: status %d (%s), want 410 backup_format_retired", upload.StatusCode, errorCode(raw))
+	}
+	recovery, err := c.request("GET", "/api/v1/recovery", nil, nil)
+	if err != nil {
+		return fmt.Errorf("retired recovery route: %w", err)
+	}
+	raw, _ = io.ReadAll(io.LimitReader(recovery.Body, 1<<20))
+	recovery.Body.Close()
+	if recovery.StatusCode != http.StatusGone || errorCode(raw) != "recovery_route_retired" {
+		return fmt.Errorf("retired recovery route: status %d (%s), want 410 recovery_route_retired", recovery.StatusCode, errorCode(raw))
+	}
+	return nil
 }
 
 func (c *client) uploadAttachment(conversationID string, size int64) (uploaded, error) {

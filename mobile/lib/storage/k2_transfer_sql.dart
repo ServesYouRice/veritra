@@ -143,23 +143,19 @@ String _canonicalOrigin(String raw) {
 /// transaction, as saving a session of another identity drops it. Throws
 /// [EnrollmentPromotionRefused] when another identity is signed in.
 ///
-/// Kept, never replaced: no session; a restored account (no device) of the
-/// same server and account, whose history stays; and a session of the
-/// pending identity itself (an older build saved it before its MLS state).
-/// Same rules as `_identityChanged` in local_store.dart.
+/// Kept, never replaced: no session, and a session of the pending identity
+/// itself (an older build saved it before its MLS state). A signed-out
+/// account with no device (what a retired legacy restore left, K1-6) is
+/// replaced like any other identity: its state is dropped, never mixed.
 bool promotionReplacesSignedOutIdentity({
   required EnrollmentPromotionRequest request,
   required Map<String, Object?>? existingSession,
 }) {
   final previous = _storedSessionIdentity(existingSession);
   if (previous == null) return false;
-  final restoredAccount = previous.token.isEmpty &&
-      previous.deviceId.isEmpty &&
-      previous.accountId.isNotEmpty;
   final sameAccount = previous.origin == request.origin &&
       previous.accountId == request.accountId;
-  if (sameAccount &&
-      (restoredAccount || previous.deviceId == request.deviceId)) {
+  if (sameAccount && previous.deviceId == request.deviceId) {
     return false;
   }
   if (previous.token.isNotEmpty) {
