@@ -39,6 +39,10 @@ enum AppPayloadType {
   /// C3: announces an accepted info record by its SHA-256, so receivers can
   /// tell an allowed editor's record from a server-substituted one.
   infoUpdate,
+
+  /// W11: hidden profile key messages (account and group).
+  profileKey,
+  groupProfileKey,
 }
 
 /// C3 types (docs/designs/C3-private-channels-and-info.md). They change state
@@ -59,6 +63,8 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.infoKey => 'info_key',
         AppPayloadType.infoKeyRequest => 'info_key_request',
         AppPayloadType.infoUpdate => 'info_update',
+        AppPayloadType.profileKey => 'profile_key',
+        AppPayloadType.groupProfileKey => 'group_profile_key',
         _ => name,
       };
 
@@ -68,7 +74,9 @@ extension AppPayloadTypeWire on AppPayloadType {
       this == AppPayloadType.pin ||
       this == AppPayloadType.pollVote ||
       this == AppPayloadType.pollClose ||
-      infoPayloadTypes.contains(this);
+      infoPayloadTypes.contains(this) ||
+      this == AppPayloadType.profileKey ||
+      this == AppPayloadType.groupProfileKey;
 }
 
 class DecryptedAppPayload {
@@ -216,6 +224,8 @@ class AppPayloadCodec {
             type == AppPayloadType.pollVote ||
             type == AppPayloadType.pollClose ||
             infoPayloadTypes.contains(type) ||
+            type == AppPayloadType.profileKey ||
+            type == AppPayloadType.groupProfileKey ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -507,6 +517,11 @@ class AppPayloadCodec {
       AppPayloadType.infoKeyRequest =>
         version >= 2 && isValidInfoKeyRequestBody(body),
       AppPayloadType.infoUpdate => version >= 2 && isValidInfoUpdateBody(body),
+      // The key fields are checked where the key is used, so a malformed key
+      // is dropped alone and its message still counts as an action.
+      AppPayloadType.profileKey ||
+      AppPayloadType.groupProfileKey =>
+        version >= 2,
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,

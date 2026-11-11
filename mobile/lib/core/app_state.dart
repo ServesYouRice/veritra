@@ -76,6 +76,10 @@ import '../storage/encrypted_database.dart'
         localStorageErrorCode;
 import 'models.dart';
 import 'passkeys.dart';
+import 'profile_models.dart';
+import 'profile_service.dart';
+import '../crypto/profile_record_codec.dart'
+    show ProfileRecordException, ProfilePhoto;
 import 'receipts_state.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
@@ -96,6 +100,7 @@ part 'app_state_k1_backup.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
 part 'app_state_community_info.dart';
+part 'app_state_profiles.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -224,6 +229,7 @@ class Ops {
   /// C3: background community info sends (keys, requests, announcements).
   static const communityInfo = 'community_info';
   static const blocks = 'blocks';
+  static const profile = 'profile';
   static const mute = 'mute';
 
   /// K0: setting the recovery key (R3), and a recovery claim or its cancel
@@ -703,6 +709,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Server-recorded membership per conversation. Populated on demand by the
   /// details screen; never presented as the MLS roster.
+  /// W11: encrypted display names and photos. Null in a build without the
+  /// native library, and until a session has started.
+  ProfileService? profiles;
+  Timer? _profileTimer;
+
+  /// Whether `conversations` came from the server this session. Before that
+  /// it may be empty only because nothing was read yet.
+  bool _conversationsFromServer = false;
+
   Map<String, List<ConversationMember>> membersByConversation =
       <String, List<ConversationMember>>{};
   List<BlockedAccount> blockedAccounts = <BlockedAccount>[];
@@ -2169,6 +2184,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
     if (!_refreshOwned(current, generation)) return;
     conversations = list;
+    _conversationsFromServer = true;
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
     linkPreviewMode = linkPreviewModeFromName(previewMode);
@@ -2368,10 +2384,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null) {
         return;
       }
+      // W11: a new group's name goes into its encrypted profile, not into
+      // the server's plaintext `title` column.
+      final groupName =
+          kind == 'group' && profiles != null ? title?.trim() : null;
+      final encryptedName = groupName != null && groupName.isNotEmpty;
       created = await client.createConversationDetailed(
         current.token,
         kind: kind,
-        title: title,
+        title: encryptedName ? null : title,
         communityId: communityId,
         channelId: channelId,
         memberAccountIds: memberAccountIds,
@@ -2397,6 +2418,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         ...conversations.where((item) => item.id != conversation.id),
       ];
       if (conversation.isDm) await _acceptConversation(conversation);
+      if (encryptedName && conversation.isGroup) {
+        // Not awaited: the name appears when the upload is accepted, and a
+        // key message that cannot be queued yet is retried by the service.
+        unawaited(profiles!
+            .saveGroupProfile(conversation.id, name: groupName)
+            .catchError((Object _) {}));
+      }
       selectedConversationId = conversation.id;
       messagesByConversation.putIfAbsent(
           conversation.id, () => <ReceivedMessageEnvelope>[]);
@@ -2723,6 +2751,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     conversations = conversations
         .where((conversation) => conversation.id != conversationId)
         .toList(growable: false);
+    _profileConversationLeft(conversationId);
     // Sends held for a removal there (D68) end: the conversation is gone.
     if (_removalHolds.remove(conversationId) != null) {
       await _saveRemovalHolds();
@@ -3102,6 +3131,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         block,
         ...blockedAccounts.where((item) => item.accountId != accountId),
       ];
+      _profileAccountBlocked(accountId);
       // Blocking hides the peer's future messages server-side, so the
       // conversation list and unread counts change immediately.
       await _refreshConversations(notify: false);
@@ -4304,6 +4334,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // W11: this account's profile key (and the group's, once a commit has
+      // added devices) rides along with a post.
+      final sent = mls == null
+          ? body
+          : await _withProfileSidecars(conversation.id, type, body);
+      final carriesKeys = !identical(sent, body);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final MessageEnvelope encrypted;
       // The sender's own expiry goes inside the encrypted payload (TASK-106)
       // when the conversation has a disappearing timer and the service can
@@ -4320,7 +4357,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           senderExpiry != null &&
           expiringService is ExpiringPayloadCryptoService) {
         encrypted = await expiringService.encryptExpiringPayload(
-            conversation.id, type, body,
+            conversation.id, type, sent,
             expiresAt: senderExpiry,
             channelId: route?.channelId,
             layoutGeneration: route?.generation,
@@ -4332,13 +4369,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           throw StateError('this crypto service cannot post into a channel');
         }
         encrypted = await service.encryptChannelPayload(
-            conversation.id, type, body,
+            conversation.id, type, sent,
             channelId: route.channelId,
             layoutGeneration: route.generation,
             attachmentRefs: attachmentRefs,
             draftText: draftText);
       } else if (mls != null) {
-        encrypted = await mls.encryptPayload(conversation.id, type, body,
+        encrypted = await mls.encryptPayload(conversation.id, type, sent,
             attachmentRefs: attachmentRefs, draftText: draftText);
       } else if (type == AppPayloadType.text) {
         encrypted = await cryptoService.encrypt(
@@ -4349,6 +4386,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       await localStore.enqueueEnvelope(encrypted, draftText: draftText);
       queued = true;
+      if (carriesKeys) {
+        unawaited(
+            profiles?.sidecarsSent(conversation.id).catchError((Object _) {}));
+      }
       if (mls != null) await refreshHistory(conversation.id);
       final record = (await localStore.pendingEnvelopeRecords())
           .where((item) =>
@@ -4864,6 +4905,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(refreshCommunities());
     unawaited(refreshBlocks());
     unawaited(refreshReadReceiptsSetting());
+    unawaited(_startProfiles(current));
     unawaited(_startPush());
   }
 
@@ -6462,6 +6504,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// drained.
   void _enterDamagedStorageRecovery() {
     _sessionGeneration++;
+    _stopProfiles();
     _removalHolds.clear();
     _removalHoldsLoaded = null;
     _removalHoldsSettled();
@@ -6566,6 +6609,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final receipts = <String>{};
     for (final event in events) {
       final type = event.type;
+      _profileSyncEvent(event);
       if (_isMemberLinkedNotice(type)) {
         // A co-member linked a device and this device may coordinate the
         // group change: run the membership pass now instead of waiting for
@@ -6940,6 +6984,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _history.addAll(histories);
       notifyListeners();
       unawaited(_scheduleExpiryPurge());
+      // A key may have come with these messages (W11).
+      unawaited(profiles?.onKeysMayHaveArrived().catchError((Object _) {}));
       onMessagesPublished?.call(List<ReceivedMessageEnvelope>.of(received));
     }
     received.clear();
@@ -7014,6 +7060,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // (with rk_pub) back into a store this is about to wipe.
     _k1State = null;
     _stopK1Backups();
+    _stopProfiles();
     _syncStartFailed = null;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
@@ -7098,6 +7145,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // backup state survives in memory or is written back after a wipe.
     _k1State = null;
     _stopK1Backups();
+    _conversationsFromServer = false;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
     _keyPackageRetryAt = null;
@@ -8988,6 +9036,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     _stopK1Backups();
     _orphanSweeper?.stop();
     _orphanSweeper = null;
+    _stopProfiles();
     _resetDeviceLinkState();
     _receiptsRefreshTimer?.cancel();
     typing.dispose();

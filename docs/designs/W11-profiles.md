@@ -1,6 +1,9 @@
 # W11: encrypted profiles (design)
 
-**Status: proposed, not yet built.**
+**Status: built.** The server and the record codec shipped first (#150);
+the key messages and sidecars, local storage (schema 34, provisional), key
+delivery, lazy rotation, the editors and the display followed. What is left is
+listed under [Built and not built](#built-and-not-built).
 
 - **Package:** W11 in the `STATE.md` build plan (route "Opus designs").
 - **Done when:** "A display name and photo for people, a name and photo
@@ -570,6 +573,46 @@ there is no route to change it.
      and the group profile still opens.
    - **Group removal:** a member removed from a group cannot fetch the
      group profile, and cannot read it after the next admin edit.
+
+## Built and not built
+
+Built (mobile): `profile_key` and `group_profile_key` as types and as sidecars
+on `text`, `reply`, `attachmentManifest` and `poll`; local tables
+`local_profile_keys`, `local_profiles`, `local_profile_state`; the key cap and
+eviction; fetch on key arrival, on `profile.updated` and on the 24-hour check;
+the junk-key drop; lazy rotation by block, by a shrinking audience and by a
+group removal; the photo pipeline; the account and group editors; the shared
+name and photo in the chat list, the chat, search, the member list and the
+typing line; English, Serbian and Serbian Latin strings.
+
+Deviations and what is left:
+
+- **Join key (A.2):** the account key goes into a conversation new to this
+  device once, from the account's lowest-id device, and in every post's
+  sidecar. There is no Welcome-time hook.
+- **Group key by the adder (B.2):** a roster event flags the next post of each
+  member that holds the key to carry `group_profile_key` (S13). The adder does
+  not send an extra message.
+- **Newly linked device:** it learns the key from any key message or sidecar;
+  the existing device does not send one on link.
+- **Backups (D27):** profile keys, the audience and the cached records are not
+  in the backup plaintext yet (needs the W7 §8 backup bump).
+- **Legacy titles:** the migration of an existing server title into the
+  encrypted record (and `DELETE /conversations/{id}/title`) is not wired. A
+  group with a title and no encrypted record keeps showing the server title.
+- **Junk group keys:** a held key whose id is not the served `key_id` is
+  dropped on key arrival. A key whose id *is* the served id is never deleted,
+  even if the blob fails to open (ids are derived from the key, so a bad blob
+  is the server's or a writer's fault).
+- **Sidecar flag timing (S13):** the flag is set on a roster event, which can
+  come before the MLS add commit; a post in the old epoch may use it up.
+  Setting it when the commit is merged is left.
+- **Block on another device:** a block made on a second device does not yet
+  mark this device's rotation due.
+- **Shrinking audience:** rosters reload only on the 24-hour check (40 per
+  run), so a departure is noticed late; a debounced reload after sync is left.
+- **Role rule:** the editor is open to every member (D59). The admin
+  restriction waits for C4's settings record.
 
 ## Risks and residuals
 

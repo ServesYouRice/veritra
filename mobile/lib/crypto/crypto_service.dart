@@ -9,6 +9,7 @@ import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart' show DeviceListBody, DeviceListPair;
 import 'app_payload.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
+import 'profile_record_codec.dart' show ProfileRecordCodec;
 
 class ConversationSafetyNumber {
   const ConversationSafetyNumber({
@@ -466,6 +467,13 @@ abstract interface class ExpiringPayloadCryptoService {
 /// offers it, so the app never names that service directly.
 abstract interface class CommunityInfoCryptoService {
   CommunityInfoCodec get communityInfoCodec;
+}
+
+/// W11: the service that owns the native library also hands out the profile
+/// record codec, which seals records with the library's chunk AEAD. A build
+/// without it has no profiles.
+abstract interface class ProfileCodecSource {
+  ProfileRecordCodec get profileCodec;
 }
 
 abstract interface class ConversationAuthorityConsumer {
