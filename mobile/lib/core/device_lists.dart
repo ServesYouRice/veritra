@@ -98,8 +98,12 @@ class DeviceListStatus {
   final DeviceListPin? pin;
 }
 
-/// The longest chain fetched in one refresh (the Rust chain check's cap).
-const int deviceListMaxChain = 256;
+/// The longest chain fetched in one refresh, independent of the native
+/// batch size. The native step verifier also caps accumulated key history.
+const int deviceListMaxChain = 4096;
+
+/// The Rust chain check's cap; longer chains continue with native steps.
+const int _deviceListNativeBatch = 256;
 
 class DeviceListPins {
   DeviceListPins({
@@ -216,6 +220,22 @@ class DeviceListPins {
         ],
       );
 
+  DeviceListPin _verifyChain(String accountId, List<List<int>> statements) {
+    if (statements.isEmpty || statements.length > deviceListMaxChain) {
+      throw const FormatException('invalid device list chain length');
+    }
+    final batchLength = statements.length < _deviceListNativeBatch
+        ? statements.length
+        : _deviceListNativeBatch;
+    final chain =
+        verifier.checkChain(accountId, statements.sublist(0, batchLength));
+    var pin = _pinFrom(accountId, chain, statements[batchLength - 1]);
+    for (final statement in statements.skip(batchLength)) {
+      pin = _step(accountId, pin, statement);
+    }
+    return pin;
+  }
+
   /// Trust on first use: the whole chain from version 1, verified in Rust.
   Future<DeviceListStatus> _firstSight(String accountId) async {
     final statements = await _fetchFrom(accountId, 0);
@@ -225,9 +245,8 @@ class DeviceListPins {
     if (statements.isEmpty) {
       return const DeviceListStatus(DeviceListState.empty, null);
     }
-    final chain = verifier
-        .checkChain(accountId, [for (final item in statements) item.statement]);
-    final pin = _pinFrom(accountId, chain, statements.last.statement);
+    final pin = _verifyChain(
+        accountId, [for (final item in statements) item.statement]);
     if (!await store.saveDeviceListPin(pin, expectedVersion: null)) {
       // Another refresh pinned it meanwhile: take what is stored.
       final stored = await store.loadDeviceListPin(accountId);
@@ -268,8 +287,7 @@ class DeviceListPins {
     if (statements.isEmpty || !_same(statements.last, expectedHead)) {
       throw const FormatException('the chain does not end in the head');
     }
-    final chain = verifier.checkChain(accountId, statements);
-    final pin = _pinFrom(accountId, chain, statements.last);
+    final pin = _verifyChain(accountId, statements);
     final stored = await store.loadDeviceListPin(accountId);
     if (!await store.saveDeviceListPin(pin, expectedVersion: stored?.version)) {
       throw StateError('device list pin changed meanwhile');
@@ -390,10 +408,10 @@ class DeviceListPins {
     if (whole == null || whole.length < pin.version) {
       return DeviceListStatus(DeviceListState.ok, pin);
     }
-    final DeviceListChainResult chain;
+    final DeviceListPin chain;
     try {
-      chain = verifier
-          .checkChain(accountId, [for (final item in whole) item.statement]);
+      chain =
+          _verifyChain(accountId, [for (final item in whole) item.statement]);
     } on NativeCryptoException {
       return DeviceListStatus(DeviceListState.ok, pin);
     }

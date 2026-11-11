@@ -40,17 +40,22 @@ class _Server implements DeviceListSource {
   bool unknown = false;
   bool fail = false;
   int fetches = 0;
+  int pageSize = 64;
+  int? failAfter;
 
   @override
   Future<DeviceListPage?> fetchDeviceList(String accountId,
       {required int after}) async {
     fetches++;
     if (fail) throw const SocketException('down');
+    if (failAfter != null && after >= failAfter!) {
+      throw const SocketException('interrupted');
+    }
     if (unknown) return null;
-    final rest = chain.skip(after).toList();
+    final rest = chain.skip(after).take(pageSize).toList();
     return DeviceListPage(
       headVersion: chain.length,
-      more: false,
+      more: after + rest.length < chain.length,
       statements: [
         for (var i = 0; i < rest.length; i++)
           (version: after + i + 1, statement: rest[i]),
@@ -157,6 +162,161 @@ void main() {
       aliceKey: aliceKey,
     );
   }
+
+  /// Crosses the native batch boundary, including an add and a removal
+  /// after that boundary. Recovery-key rotations need no new device ids.
+  ({List<Uint8List> chain, Uint8List fork, Uint8List replay}) longChain() {
+    final alice = bindings.createDevice('acct_long', 'dev_alice');
+    final bob = bindings.createDevice('acct_long', 'dev_bob');
+    final carol = bindings.createDevice('acct_long', 'dev_carol');
+    addTearDown(alice.close);
+    addTearDown(bob.close);
+    addTearDown(carol.close);
+    final alicePair =
+        DeviceListPair(idBytes('dev_alice'), alice.signingPublicKey());
+    final bobPair = DeviceListPair(idBytes('dev_bob'), bob.signingPublicKey());
+    final chain = <Uint8List>[];
+    DeviceListSummary? previous;
+    Uint8List? fork;
+    for (var version = 1; version <= 300; version++) {
+      final change = switch (version) {
+        1 => DeviceListChange.genesis,
+        257 => DeviceListChange.add,
+        258 => DeviceListChange.remove,
+        _ => DeviceListChange.recoveryKey,
+      };
+      final entries = [alicePair, if (version == 257) bobPair];
+      final recoveryKey = version == 1 || (version.isOdd && version != 257)
+          ? null
+          : bob.signingPublicKey();
+      Uint8List sign(List<int>? key) => alice.signDeviceList(
+            DeviceListBody(
+              accountId: idBytes('acct_long'),
+              version: version,
+              prevHash: previous?.listHash ?? DeviceListBody.zeroHash,
+              createdAtMs: version,
+              change: change,
+              entries: entries,
+              recoveryKey: key,
+            ),
+            idBytes('dev_alice'),
+          );
+      final statement = sign(recoveryKey);
+      if (version == 300) fork = sign(carol.signingPublicKey());
+      previous = bindings.checkDeviceListStep(
+        expectedAccountId: idBytes('acct_long'),
+        prev: chain.lastOrNull,
+        statement: statement,
+        history: [alicePair, if (version > 257) bobPair],
+      );
+      chain.add(statement);
+    }
+    final replay = alice.signDeviceList(
+      DeviceListBody(
+        accountId: idBytes('acct_long'),
+        version: 301,
+        prevHash: previous!.listHash,
+        createdAtMs: 301,
+        change: DeviceListChange.add,
+        entries: [alicePair, bobPair],
+        recoveryKey: previous.recoveryKey,
+      ),
+      idBytes('dev_alice'),
+    );
+    return (chain: chain, fork: fork!, replay: replay);
+  }
+
+  group('long chains', () {
+    test('a removed pair cannot return after the native batch boundary',
+        () async {
+      final full = longChain();
+      server.chain = [...full.chain, full.replay];
+      expect(
+          (await pins.refresh('acct_long')).state, DeviceListState.unavailable);
+      expect(await store.loadDeviceListPin('acct_long'), isNull);
+    });
+
+    test('the download limit still bounds network work and pins nothing',
+        () async {
+      final genesis = statements(0).first;
+      server.chain = List.filled(deviceListMaxChain + 1, genesis);
+      expect(
+          (await pins.refresh(account(0))).state, DeviceListState.unavailable);
+      expect(await store.loadDeviceListPin(account(0)), isNull);
+      expect(server.fetches, deviceListMaxChain ~/ server.pageSize + 1);
+      await expectLater(
+        pins.pinChain(account(0), server.chain, expectedHead: genesis),
+        throwsFormatException,
+      );
+      expect(await store.loadDeviceListPin(account(0)), isNull);
+    });
+
+    test('first sight verifies every page and preserves removed history',
+        () async {
+      server.chain = longChain().chain;
+      final status = await pins.refresh('acct_long');
+      expect(status.state, DeviceListState.ok);
+      expect(status.pin!.version, 300);
+      expect(server.fetches, 5);
+      final removed = status.pin!.keys
+          .singleWhere((key) => utf8.decode(key.deviceId) == 'dev_bob');
+      expect(removed.addedVersion, 257);
+      expect(removed.removedVersion, 258);
+      expect(await pins.approvedKey('acct_long', 'dev_bob'), isNull);
+    });
+
+    test('a pinned account catches up across the old limit', () async {
+      final full = longChain().chain;
+      server.chain = full.sublist(0, 1);
+      await pins.refresh('acct_long');
+      later();
+      server.chain = full;
+      expect((await pins.refresh('acct_long')).pin!.version, 300);
+    });
+
+    test('a bad signature beyond the native batch pins nothing', () async {
+      server.chain = longChain().chain;
+      server.chain.last[server.chain.last.length - 1] ^= 1;
+      expect(
+          (await pins.refresh('acct_long')).state, DeviceListState.unavailable);
+      expect(await store.loadDeviceListPin('acct_long'), isNull);
+    });
+
+    test('an interrupted download preserves the durable pin and retries',
+        () async {
+      final full = longChain().chain;
+      server.chain = full.sublist(0, 1);
+      await pins.refresh('acct_long');
+      server.chain = full;
+      server.failAfter = 128;
+      later();
+      expect((await pins.refresh('acct_long')).pin!.version, 1);
+      expect((await store.loadDeviceListPin('acct_long'))!.version, 1);
+      server.failAfter = null;
+      later();
+      expect((await pins.refresh('acct_long')).pin!.version, 300);
+    });
+
+    test('a long valid fork is detected against the pinned genesis', () async {
+      final full = longChain();
+      server.chain = full.chain;
+      await pins.refresh('acct_long');
+      server.chain = [...full.chain.take(299), full.fork];
+      later();
+      final status = await pins.refresh('acct_long');
+      expect(status.state, DeviceListState.conflict);
+      expect(status.pin!.conflict, isTrue);
+    });
+
+    test('authenticated chain import crosses the native batch boundary',
+        () async {
+      final full = longChain().chain;
+      final pin =
+          await pins.pinChain('acct_long', full, expectedHead: full.last);
+      expect(pin.version, 300);
+      expect((await store.loadDeviceListPin('acct_long'))!.version, 300);
+    });
+  }, skip: skip);
 
   group('refresh', () {
     test('first sight pins the whole chain with every pair it listed',
