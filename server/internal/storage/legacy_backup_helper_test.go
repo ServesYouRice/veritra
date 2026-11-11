@@ -2,12 +2,12 @@ package storage
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 	"time"
-	"context"
-	"encoding/json"
 
 	"private-messenger/server/internal/domain"
 )

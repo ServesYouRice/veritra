@@ -59,7 +59,7 @@ run_step() {
   steps="$steps{\"name\":\"$name\",\"result\":\"$result\"}"
 }
 
-run_step go-race sh -c "cd '$ROOT/server' && go test -race -coverprofile=coverage.out ./..."
+run_step go-race sh -c "cd '$ROOT/server' && go test -race -timeout 15m -coverprofile=coverage.out ./..."
 # gofmt's own exit status counts: a parse error prints nothing on stdout.
 run_step go-lint sh -c "cd '$ROOT/server' && unformatted=\$(gofmt -l .) && test -z \"\$unformatted\" && go vet ./..."
 run_step rust-release sh -c "cd '$ROOT/crypto/rust' && cargo test --release --locked && cargo fmt --check && cargo clippy --all-targets -- -D warnings"

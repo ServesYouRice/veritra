@@ -2,7 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $GoVersion = (Get-Content -Raw (Join-Path $Root ".go-version")).Trim()
-$GoImage = "golang:${GoVersion}@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82"
+$GoImage = "golang:${GoVersion}@sha256:7af425da11f4fc1a9308eb704369e3f6d1c44e35bac0f874a59ade3f20fdc07e"
 
 # An unset PRIVATE_MESSENGER_ENV means production, so the local server says
 # development explicitly (tokenless loopback setup, no proxy requirement).

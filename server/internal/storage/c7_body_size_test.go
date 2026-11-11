@@ -29,13 +29,27 @@ func TestC7BodySizeRule(t *testing.T) {
 	if len(vector.Outputs.Lengths) == 0 {
 		t.Fatal("vector has no lengths")
 	}
+	// The crypto library seals up to 508 channels; the server caps N at the
+	// C3 channel limit (c7MaxSyncChannels, design: "N from 1 to C3's limit"),
+	// so vector entries above it must be refused by both rules.
+	sawOverCap := false
 	for _, l := range vector.Outputs.Lengths {
+		if l.Channels > c7MaxSyncChannels {
+			sawOverCap = true
+			if C7BodySizeValid(l.HistorySyncBody, true) || c7SyncBodySize(l.HistorySyncBody) {
+				t.Fatalf("history_sync body for %d channels (over the %d cap) accepted", l.Channels, c7MaxSyncChannels)
+			}
+			continue
+		}
 		if !C7BodySizeValid(l.HistorySyncBody, true) {
 			t.Fatalf("history_sync body for %d channels refused at group level", l.Channels)
 		}
 		if !c7SyncBodySize(l.HistorySyncBody) || c7SyncBodySize(l.HistorySyncBody+1) {
 			t.Fatalf("history_sync size rule wrong for %d channels", l.Channels)
 		}
+	}
+	if !sawOverCap {
+		t.Fatalf("vector has no entry above the %d-channel cap", c7MaxSyncChannels)
 	}
 	// The vector seals a short 32-byte plaintext (156 bytes): the framing is
 	// 124 bytes, as the rule assumes; real bodies pad VAP1 to 256-byte blocks.

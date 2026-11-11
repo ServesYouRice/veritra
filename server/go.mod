@@ -1,6 +1,6 @@
 module private-messenger/server
 
-go 1.26.10
+go 1.26.11
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
