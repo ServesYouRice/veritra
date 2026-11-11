@@ -2,7 +2,6 @@ package httpapi_test
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +14,9 @@ import (
 // with many small ranges would otherwise make the server seek and re-verify
 // chunks once per range (VAL-228); a single range keeps working.
 func TestBlobDownloadRejectsMultiRange(t *testing.T) {
-	handler, ownerToken, _ := newTestHandlerWithOwner(t)
+	f := newRecoveryFixture(t, recoveryTestOrigin)
+	f.setRK(f.ownerToken)
+	handler, ownerToken := f.handler, f.ownerToken
 	conversationID := createConversation(t, handler, ownerToken)
 	payload := []byte("encrypted attachment payload")
 
@@ -34,11 +35,7 @@ func TestBlobDownloadRejectsMultiRange(t *testing.T) {
 	}
 
 	backupPayload := []byte("encrypted backup blob payload")
-	status, response = doRaw(t, handler, http.MethodPost, "/api/v1/backups", ownerToken, backupPayload, map[string]string{
-		"X-Private-Messenger-Encrypted": "1",
-		"X-Key-Derivation-Metadata":     `{"version":1,"algorithm":"AES-256-GCM-chunked","chunk_size":1048576,"state_counter":1}`,
-		"X-Recovery-Token":              base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{2}, 32)),
-	})
+	status, response = f.postK1(ownerToken, k1Metadata(f.accountRKID(), 1), backupPayload, nil)
 	if status != http.StatusCreated {
 		t.Fatalf("backup upload status=%d body=%s", status, response)
 	}

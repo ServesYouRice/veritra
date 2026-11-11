@@ -109,6 +109,11 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
                   ),
               ],
             ),
+          if (!_loading && widget.state.k1LegacyBackupsRefused) ...<Widget>[
+            const SizedBox(height: BoneSpacing.md),
+            Text(l10n.k1RestoreLegacyRefused,
+                key: const ValueKey<String>('k1-restore-legacy-refused')),
+          ],
         ],
       ),
     );

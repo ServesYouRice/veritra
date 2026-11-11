@@ -41,20 +41,6 @@ class _AccountRecoveryStartScreenState
   void initState() {
     super.initState();
     _server.text = widget.initialServer;
-    unawaited(_prefillFromRestore());
-  }
-
-  /// A restored backup names its account: recovery continues that account
-  /// so its history is kept (design, client flow step 1).
-  Future<void> _prefillFromRestore() async {
-    final restored = await widget.state.restoredAccountForRecovery();
-    if (!mounted || restored == null) return;
-    setState(() {
-      if (_server.text.trim().isEmpty) _server.text = restored.baseUrl;
-      if (_username.text.trim().isEmpty) {
-        _username.text = restored.username ?? '';
-      }
-    });
   }
 
   @override

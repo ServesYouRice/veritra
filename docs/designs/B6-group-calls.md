@@ -1,6 +1,6 @@
 # B6: group calls and voice rooms
 
-**Status: proposed, not yet built.** Revision 2 (2026-11-07). Revision 1
+**Status: S2 to S6 built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7 and the media transport are not. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
 had one independent review (key schedule, frame encryption, threats); its
 five blocking points are fixed here. Needs the independent crypto review
 before S2 lands.
@@ -11,8 +11,8 @@ before S2 lands.
   read them."
 - **Owner approval:** one new server-side component (the SFU, O1) and
   possibly one Flutter client package for it. Neither is covered by D89.
-- **Counters:** one server migration (S3) and one crypto ABI bump (S2), both
-  numbers reserved by the coordinator at build time. No local schema change
+- **Counters:** crypto ABI 22 (S2, used), server migration 0080 (S3, used), no local
+  schema change. No local schema change
   (call state lives in memory only). No W7 payload type.
 
 ## Summary
@@ -378,3 +378,59 @@ O1; S5 after S2 and S3; S6 after S5.
   costs one commit per join).
 - **O8. Who can open a room.** **Anyone who may post in that conversation
   or channel** (C2 and C4 rules apply).
+
+## Build status (2026-11-11)
+
+Built: S2 (crypto ABI 22: `pm_crypto_group_b6_media_key`, join sign domain,
+vector `testing/vectors/b6-media-v1.json` checked by Rust, Go and Dart); S3
+(migration 0080, `/api/v1/rooms` join, offer, commit, commits, state, leave
+and webhook, `RoomMedia` with a LiveKit implementation that signs tokens and
+checks webhooks without a new dependency, config, retention sweep, caps);
+S4 as an example only (`deploy/livekit/livekit.example.yaml`,
+`docs/operations.md`; nothing in the default stack); S5 (`mobile/lib/calls/
+room/`: the engine, the native MLS adapter, the API client; fakes-based and
+real-MLS tests); S6 (`features/calls/room_screen.dart`, strings in English
+and Serbian, a group-call button shown only when the demo host sets
+`AppState.roomSession`).
+
+Choices and deviations from the text above:
+
+- **Server-issued call group id.** The server picks the random 32-byte group
+  id when it creates the room and returns it on join; the first device
+  creates the MLS group with it. Joins still sign the group id and a nonce,
+  so nothing depends on who chose the id.
+- **Join offers go through the server.** A joiner posts its call-only
+  KeyPackage and signature (`POST /rooms/{id}/offer`, nonce issued by the
+  join route, single use); members read them from the room state. The server
+  cannot check the signature; every member does.
+- **Leave notice.** A leave is the server's notice (leave route, SFU
+  webhook, or a 12-hour stale seat); the signed "leaving" MLS message is not
+  built. A false notice can only cut someone off.
+- **Receivers check an Add by identity and signing key against the parent
+  group plus a valid signed offer on the server's list, not by KeyPackage
+  hash** (the core does not return it yet). The committer checks the whole
+  signature. A KeyPackage reused in one call is refused.
+- **Media key by identity.** The core finds the sender's leaf from its
+  account and device id, so the app never guesses a leaf index.
+- **Call-only KeyPackage** lives in the device's provider storage until the
+  next prune (it is not in the uploaded pool).
+
+Review fixes (2026-11-11): the engine drops only a group it created or
+joined (the group id is the server's word, and the core's `delete_group`
+must never run on it), refuses a group id that is not 32 bytes, and the
+committer refuses an expired offer (receivers keep 120 s of slack). The
+server refuses room reads, offers and commits from a seat whose account is
+no longer a member of the conversation; leaving stays open.
+
+Not built: the media transport (the SFU client, mute and screen share
+controls behind `RoomMediaControls`, and the frame cryptor key provider
+behind `FrameKeySink`; needs the `livekit_client` package and a licence
+review); the production factory that sets `AppState.roomSession` in
+`main_demo.dart`; the call-group context extension binding `call_id` (core
+change); S1 spike and S7 evidence; Android foreground services and iOS
+broadcast extension. **Before the factory is wired:** a call group must
+stay out of sealed state (D70), K1 backups and K2 transfers. Today it sits
+in the same device provider as the conversations, so the next
+`seal_changes` while a call is open would write it; the core needs to keep
+call groups out of seals (or hold them in a separate handle) first. Needs
+the independent crypto review before S2 lands.

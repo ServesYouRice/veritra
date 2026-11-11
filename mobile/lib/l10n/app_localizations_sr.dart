@@ -3319,6 +3319,70 @@ class AppLocalizationsSr extends AppLocalizations {
       'Позив није успео да се повеже. За позиве је потребна подешена релејна (TURN) услуга сервера.';
 
   @override
+  String get roomStart => 'Групни позив';
+
+  @override
+  String get roomTitle => 'Групни позив';
+
+  @override
+  String get roomJoining => 'Придружујем се…';
+
+  @override
+  String get roomConnected => 'У позиву';
+
+  @override
+  String get roomEncryptedNote =>
+      'Глас и видео су шифровани од краја до краја. Сервер их преноси, али не може да их чује.';
+
+  @override
+  String get roomLeave => 'Напусти';
+
+  @override
+  String get roomYou => 'Ви';
+
+  @override
+  String get roomMute => 'Искључи звук';
+
+  @override
+  String get roomUnmute => 'Укључи звук';
+
+  @override
+  String get roomShareScreen => 'Подели екран';
+
+  @override
+  String get roomStopSharing => 'Заустави дељење';
+
+  @override
+  String get roomFailedFull => 'Овај позив је пун.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Групни позиви нису подешени на овом серверу.';
+
+  @override
+  String get roomFailedWelcome =>
+      'Безбедно придруживање није успело. Покушајте поново.';
+
+  @override
+  String get roomFailedOther => 'Позив није могао да се настави.';
+
+  @override
+  String get roomFailedCryptor =>
+      'Овај уређај не може да заштити медије позива, па се није придружио.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count особа',
+      few: '$count особе',
+      one: '$count особа',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get moderationTitle => 'Модерација';
 
   @override
@@ -3766,6 +3830,43 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupPromptLater => 'Не сада';
 
   @override
+  String get k1ConfirmTitle => 'Проверите кључ за опоравак';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Унесите га још једном да будете сигурни да га имате. Никад не напушта овај уређај.';
+
+  @override
+  String get k1ConfirmOk => 'То је ваш кључ за опоравак.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Не поклапа се. Ако сте изгубили кључ, направите нови у подешавањима кључа за опоравак.';
+
+  @override
+  String get k1SecondCopyChoose => 'Чувај другу копију у фасцикли';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Друга копија: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Иста закључана копија, сачувана где изаберете. Отвара је само кључ за опоравак.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Последње копирање у ову фасциклу није успело. Проверите фасциклу.';
+
+  @override
+  String get k1SecondCopyOff => 'Заустави другу копију';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Друга копија у фасцикли је доступна на рачунару. Телефони чувају копију само на серверу.';
+
+  @override
   String get recoveryFollowUpRestoreDetail =>
       'Пре него што замените кључ за опоравак, можете вратити историју из копија које су направили ваши изгубљени уређаји. Оне се отварају вашим старим кључем, који за њих престаје да важи кад га замените.';
 
@@ -3791,6 +3892,10 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get k1RestoreEmpty => 'Није пронађена копија са другог уређаја.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Копије у старом формату (направљене пре аутоматских копија) више се не могу вратити. Нису мењане, али их апликација не отвара.';
 
   @override
   String get k1RestoreLoadFailed => 'Списак резервних копија није учитан.';
@@ -7378,6 +7483,70 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.';
 
   @override
+  String get roomStart => 'Grupni poziv';
+
+  @override
+  String get roomTitle => 'Grupni poziv';
+
+  @override
+  String get roomJoining => 'Pridružujem se…';
+
+  @override
+  String get roomConnected => 'U pozivu';
+
+  @override
+  String get roomEncryptedNote =>
+      'Glas i video su šifrovani od kraja do kraja. Server ih prenosi, ali ne može da ih čuje.';
+
+  @override
+  String get roomLeave => 'Napusti';
+
+  @override
+  String get roomYou => 'Vi';
+
+  @override
+  String get roomMute => 'Isključi zvuk';
+
+  @override
+  String get roomUnmute => 'Uključi zvuk';
+
+  @override
+  String get roomShareScreen => 'Podeli ekran';
+
+  @override
+  String get roomStopSharing => 'Zaustavi deljenje';
+
+  @override
+  String get roomFailedFull => 'Ovaj poziv je pun.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Grupni pozivi nisu podešeni na ovom serveru.';
+
+  @override
+  String get roomFailedWelcome =>
+      'Bezbedno pridruživanje nije uspelo. Pokušajte ponovo.';
+
+  @override
+  String get roomFailedOther => 'Poziv nije mogao da se nastavi.';
+
+  @override
+  String get roomFailedCryptor =>
+      'Ovaj uređaj ne može da zaštiti medije poziva, pa se nije pridružio.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count osoba',
+      few: '$count osobe',
+      one: '$count osoba',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get moderationTitle => 'Moderacija';
 
   @override
@@ -7826,6 +7995,43 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get autoBackupPromptLater => 'Ne sada';
 
   @override
+  String get k1ConfirmTitle => 'Proverite ključ za oporavak';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Unesite ga još jednom da budete sigurni da ga imate. Nikad ne napušta ovaj uređaj.';
+
+  @override
+  String get k1ConfirmOk => 'To je vaš ključ za oporavak.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Ne poklapa se. Ako ste izgubili ključ, napravite novi u podešavanjima ključa za oporavak.';
+
+  @override
+  String get k1SecondCopyChoose => 'Čuvaj drugu kopiju u fascikli';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Druga kopija: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Ista zaključana kopija, sačuvana gde izaberete. Otvara je samo ključ za oporavak.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Poslednje kopiranje u ovu fasciklu nije uspelo. Proverite fasciklu.';
+
+  @override
+  String get k1SecondCopyOff => 'Zaustavi drugu kopiju';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Druga kopija u fascikli je dostupna na računaru. Telefoni čuvaju kopiju samo na serveru.';
+
+  @override
   String get recoveryFollowUpRestoreDetail =>
       'Pre nego što zamenite ključ za oporavak, možete vratiti istoriju iz kopija koje su napravili vaši izgubljeni uređaji. One se otvaraju vašim starim ključem, koji za njih prestaje da važi kad ga zamenite.';
 
@@ -7851,6 +8057,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get k1RestoreEmpty => 'Nije pronađena kopija sa drugog uređaja.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Kopije u starom formatu (napravljene pre automatskih kopija) više se ne mogu vratiti. Nisu menjane, ali ih aplikacija ne otvara.';
 
   @override
   String get k1RestoreLoadFailed => 'Spisak rezervnih kopija nije učitan.';

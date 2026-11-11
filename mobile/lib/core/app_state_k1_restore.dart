@@ -26,6 +26,9 @@ extension K1RestoreActions on AppState {
     try {
       final rows = await client.listBackups(current.token);
       if (!identical(session, current)) return null;
+      // VBK2 copies (no K1 kind) are retired and never opened (K1-6); the
+      // screen only says so.
+      k1LegacyBackupsRefused = rows.any((row) => row['kind'] != 1);
       return k1RestoreCandidates(
         rows.map(K1BackupEntry.tryParse).whereType<K1BackupEntry>(),
         current.deviceId!,

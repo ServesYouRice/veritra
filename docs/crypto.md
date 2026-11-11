@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 20 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 22 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 21. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 22. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -509,6 +509,35 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   assigned counters 24/41/0074 remain unused. Full-package follow-ups are recorded
   in the integration design; independent security review is still required.
 
+- **B6, group-call media keys: ABI 22 (2026-11-11):** one new call and one
+  new signing domain, for [`B6-group-calls.md`](designs/B6-group-calls.md)
+  (S2). `pm_crypto_group_b6_media_key(handle, group_id, call_id, account_id, device_id, stream)`
+  returns (the sender leaf is found from its identity; a device in no leaf or in two refuses) `K(s,t) = HKDF-SHA256(salt "veritra-b6-sender-v1", ikm =
+  MLS-Exporter("veritra-b6-media-v1", lp(call_id) | u64(epoch), 32),
+  info = u32(leaf) | u8(stream))` for the group's current epoch (stream 0
+  voice, 1 camera, 2 screen, 3 screen audio). The exporter secret never
+  leaves the core. **This is the one exception to C7's rule that no
+  stand-alone exporter output leaves the core**: the keys must reach
+  libwebrtc's frame cryptor. Only `K(s,t)` leaves, for the one label, and a
+  leaf that is not in the group is refused. `pm_crypto_c7_sign` and `_verify`
+  also accept the domain `veritra-b6-join-v1` (message
+  `lp(group_id) | lp(nonce) | u64(expires_at) | sha256(key_package)`); no
+  signing domain is a prefix of another (tested), so a join signature is never
+  a valid MLS, C7, invite or L1 signature. Vector
+  `testing/vectors/b6-media-v1.json`, checked by Rust and Go
+  (`server/internal/b6vector`); the Dart check and binding come with S5. The
+  number is the next free one above integ (renumbered from the first assignment, 28). Needs the independent
+  crypto review before release (design S2). Not built yet: the call-group
+  context extension check. **For the reviewer:** the core does not know
+  which groups are call groups, so the call accepts any stored group id,
+  a persistent conversation group included. The label keeps the output
+  separate from every other exporter value, but the exception is wider than
+  "call groups only" until the context extension marks call groups and the
+  call refuses the rest. A call group also lives in the same device
+  provider as the conversations, so a seal while a call is open would write
+  it into sealed state (D70); the app must not wire rooms to the messaging
+  device until the core keeps call groups out of seals (design, "Not
+  built").
 - **C3, encrypted community info: records, payloads, local schema 31
   (2026-11-08):** no ABI change. Design
   [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),

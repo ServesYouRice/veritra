@@ -92,7 +92,7 @@ func TestDatabaseFileValidationAndReferencesOnAHealthyDatabase(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
 	owner := createTestOwner(t, ctx, store)
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "blob_healthy_backup", "00000000000000000000000000000000000000000000000000000000000000aa", 5, []byte(`{"state_counter":1}`), make([]byte, 32)); err != nil {
+	if err := insertLegacyBackup(ctx, store, owner.Account.ID, owner.Device.ID, "blob_healthy_backup", "00000000000000000000000000000000000000000000000000000000000000aa", 5, []byte(`{"state_counter":1}`)); err != nil {
 		t.Fatal(err)
 	}
 	copyPath := filepath.Join(t.TempDir(), "copy.db")

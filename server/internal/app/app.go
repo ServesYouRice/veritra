@@ -30,6 +30,7 @@ import (
 	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/storage"
 	"private-messenger/server/internal/uploads"
+	"private-messenger/server/internal/webrtc"
 	"private-messenger/server/migrations"
 )
 
@@ -230,7 +231,7 @@ func (a *App) Handler() http.Handler {
 	if a.Config.APNsTeamID != "" {
 		pushProviders = append(pushProviders, "apns")
 	}
-	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
+	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, RoomMedia: roomMedia(a.Config), Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
 		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load, MaxAttachmentBytes: a.Store.Limits().AttachmentBytes,
 		ScopedSync: a.Config.ScopedSync, PublicOrigin: a.Config.PublicOrigin, RecoveryActiveWindow: a.Config.RecoveryActiveWindow, RecoveryWait: a.Config.RecoveryWait}
 	if a.Config.Attestation != "" {
@@ -436,6 +437,9 @@ func (a *App) runRetentionSweeper(ctx context.Context) {
 		a.reconcileBlobDeletions(ctx)
 		a.drainRetention(ctx, "call_sessions", func() (int64, error) {
 			return a.Store.PruneCallSessions(ctx, time.Now().UTC())
+		})
+		a.drainRetention(ctx, "call_rooms", func() (int64, error) {
+			return a.Store.PruneRooms(ctx, time.Now().UTC(), 12*time.Hour)
 		})
 		a.drainRetention(ctx, "operational_rows", func() (int64, error) {
 			return a.Store.PruneOperationalRows(ctx, time.Now().UTC())
@@ -1575,4 +1579,12 @@ func (rl *rateLimiter) stats() (entries int, evictions int64) {
 	entries = len(rl.buckets) + len(rl.accountBuckets)
 	rl.mu.Unlock()
 	return entries, rl.evictions.Load()
+}
+
+// roomMedia is the B6 SFU seam: nil (rooms off) unless the SFU is configured.
+func roomMedia(cfg config.Config) webrtc.RoomMedia {
+	if cfg.SFUURL == "" {
+		return nil
+	}
+	return webrtc.LiveKit{PublicURL: cfg.SFUURL, APIKey: cfg.SFUAPIKey, APISecret: cfg.SFUAPISecret}
 }

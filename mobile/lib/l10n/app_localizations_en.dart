@@ -3307,6 +3307,68 @@ class AppLocalizationsEn extends AppLocalizations {
       'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.';
 
   @override
+  String get roomStart => 'Group call';
+
+  @override
+  String get roomTitle => 'Group call';
+
+  @override
+  String get roomJoining => 'Joining…';
+
+  @override
+  String get roomConnected => 'In the call';
+
+  @override
+  String get roomEncryptedNote =>
+      'Voice and video are end-to-end encrypted. The server passes them on but cannot listen.';
+
+  @override
+  String get roomLeave => 'Leave';
+
+  @override
+  String get roomYou => 'You';
+
+  @override
+  String get roomMute => 'Mute';
+
+  @override
+  String get roomUnmute => 'Unmute';
+
+  @override
+  String get roomShareScreen => 'Share screen';
+
+  @override
+  String get roomStopSharing => 'Stop sharing';
+
+  @override
+  String get roomFailedFull => 'This call is full.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Group calls are not set up on this server.';
+
+  @override
+  String get roomFailedWelcome => 'Joining safely was not possible. Try again.';
+
+  @override
+  String get roomFailedOther => 'The call could not continue.';
+
+  @override
+  String get roomFailedCryptor =>
+      'This device cannot protect call media, so it did not join.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count people',
+      one: '1 person',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get moderationTitle => 'Moderation';
 
   @override
@@ -3752,6 +3814,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoBackupPromptLater => 'Not now';
 
   @override
+  String get k1ConfirmTitle => 'Check your recovery key';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Type it once more to be sure you still have it. It never leaves this device.';
+
+  @override
+  String get k1ConfirmOk => 'That is your recovery key.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'That does not match. If you lost your key, make a new one in Recovery key settings.';
+
+  @override
+  String get k1SecondCopyChoose => 'Keep a second copy in a folder';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Second copy: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'The same locked backup, saved where you choose. Only your recovery key opens it.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'The last copy to this folder failed. Check the folder.';
+
+  @override
+  String get k1SecondCopyOff => 'Stop the second copy';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'A second copy in a folder is available on desktop. Phones keep the backup on the server only.';
+
+  @override
   String get recoveryFollowUpRestoreDetail =>
       'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.';
 
@@ -3777,6 +3876,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get k1RestoreEmpty => 'No backup from another device was found.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.';
 
   @override
   String get k1RestoreLoadFailed => 'The list of backups could not be loaded.';

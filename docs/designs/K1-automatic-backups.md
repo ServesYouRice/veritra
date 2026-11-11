@@ -339,9 +339,26 @@ Where the build differs from the text above, and why:
   now restore (or a warned skip), new recovery key, new password; the step
   is persisted. The old "start from the restored session" entry and the
   banner restore action stay until VBK2 is retired (K1-6).
-- **Still to do:** the confirmation schedule and the second
-  copy (K1-5), background runs and retiring VBK2 and the recovery-token
-  route (K1-6, after K1-4, so a restore path always exists).
+- **Confirmation and second copy (K1-5, built).** The device state keeps
+  `confirm_due_at`, a confirmed count and the misses. Due 3 days after the
+  key is stored, then 14 days after the first confirmation, then every 90;
+  "Not now" waits 7 days; three misses keep a Settings badge. The check is
+  local (derive `rk_pub`, compare with the stored one). The second copy is the
+  same ciphertext written as `veritra-backup-<account>-<device>.vhc` through
+  a temporary file and rename into a folder picked on Windows, Linux and
+  macOS; its failure is a warning of its own and never fails the backup.
+  Not built: Android (picked document tree, native channel) and the iOS
+  manual export; phones say the second copy is a desktop feature.
+- **K1-6 (built): VBK2 and the token route retired.** Owner question 1
+  (D91): no compatibility path. `POST /backups` without a K1 `kind` and
+  `GET /recovery` answer 410 `backup_format_retired` and
+  `recovery_route_retired`; migration 0081 clears every stored capability
+  (columns stay, unused). The client lost `BackupService`, the manual backup
+  screen, the connect-screen restore, the sync-recovery restore choice and
+  format-6 `exportBackup`/`restoreBackup`. Old VBK2 copies stay on the server
+  until deleted and are refused with a note on the restore screen. K0-R's
+  "restored session" entry and the banner restore action are gone.
+  Phone background runs stay out (owner decision: backup on app open).
 
 ## Threats
 

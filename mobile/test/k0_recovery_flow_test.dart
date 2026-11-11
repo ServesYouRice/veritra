@@ -239,24 +239,6 @@ void main() {
       });
     });
 
-    test('a restored backup of another account stops before the claim',
-        () async {
-      await store.saveSession(restoredAccountSession(
-          baseUrl: k0Origin, accountId: 'acct_other', username: 'alice'));
-      expect(
-          await state.startAccountRecovery(
-              baseUrl: k0Origin,
-              username: 'alice',
-              password: 'pw',
-              recoveryKey: k0Display),
-          isFalse);
-      expect(
-          state.errorFor(Ops.accountRecovery), l10n.recoveryBackupOtherAccount);
-      expect(crypto.enrollments, 0);
-      expect(server.claims, isEmpty);
-      expect(crypto.handedOut.single, everyElement(0));
-    });
-
     test('a refused claim says so and drops the new identity', () async {
       server.claimFailure = k0Error(401, 'invalid_credentials');
       expect(
@@ -327,8 +309,8 @@ void main() {
     });
 
     test('completion enrolls this device with the claimed identity', () async {
-      await store.saveSession(restoredAccountSession(
-          baseUrl: k0Origin, accountId: 'acct_me', username: 'alice'));
+      await store.saveSession(Session(
+          baseUrl: k0Origin, token: '', accountId: 'acct_me', username: 'alice'));
       await claim();
       server.statusAnswers.add(const AccountRecoveryStatus(
         phase: AccountRecoveryPhase.completed,
@@ -517,8 +499,8 @@ void main() {
     }
 
     test('completion promotes in one step with a ledger row', () async {
-      await store.saveSession(restoredAccountSession(
-          baseUrl: k0Origin, accountId: 'acct_me', username: 'alice'));
+      await store.saveSession(Session(
+          baseUrl: k0Origin, token: '', accountId: 'acct_me', username: 'alice'));
       await completeRecovery();
       expect(promoting.promotions, [EnrollmentPromotionOutcome.promoted]);
       expect(promoting.activated, isEmpty);

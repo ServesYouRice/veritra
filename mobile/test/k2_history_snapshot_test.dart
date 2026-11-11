@@ -338,8 +338,8 @@ void main() {
             idempotencyKey: 'pending-private',
             ciphertext: [1, 2, 3],
             cryptoProtocol: 'mls10-openmls-v1'));
-        final before =
-            jsonDecode(utf8.decode(await store.exportBackup())) as Map;
+        final sessionBefore = (await store.loadSession())!;
+        final cryptoBefore = (await store.loadCryptoState())!;
         final bytes = snapshot([
           message('old', body: 'old searchable words', serverId: 'server-old')
         ]).encode();
@@ -353,19 +353,22 @@ void main() {
             (await store.loadHistoryNamespace())
                 .provenance[row.key]!['source_device_id'],
             source);
-        final after =
-            jsonDecode(utf8.decode(await store.exportBackup())) as Map;
-        for (final name in [
-          'session',
-          'cursor',
-          'outbox',
-          'mls_outbox',
-          'crypto_state',
-          'conversations',
-          'messages'
-        ]) {
-          expect(after[name], before[name], reason: name);
-        }
+        final sessionAfter = (await store.loadSession())!;
+        expect([
+          sessionAfter.baseUrl,
+          sessionAfter.token,
+          sessionAfter.accountId,
+          sessionAfter.deviceId
+        ], [
+          sessionBefore.baseUrl,
+          sessionBefore.token,
+          sessionBefore.accountId,
+          sessionBefore.deviceId
+        ]);
+        expect(await store.loadSyncCursor(), 73);
+        expect((await store.loadCryptoState())!.counter, cryptoBefore.counter);
+        expect((await store.loadCryptoState())!.sealedState,
+            cryptoBefore.sealedState);
         expect((await store.loadDrafts())['conv']!.text, 'private draft');
         expect(await store.loadSetting('requests.alice'), 'receiver choice');
         await store.importHistorySnapshot(bytes, context());
@@ -478,16 +481,12 @@ void main() {
         expect((await store.loadConversationPrefs()).single.archivedAt, isNull);
       });
 
-      test(
-          'backup5 preserves mixed provenance and ledger; legacy restore clears namespace',
+      test('mixed provenance and the import ledger are kept; export counts up',
           () async {
         final bytes = snapshot([message('imported')]).encode();
         await store.importHistorySnapshot(bytes, context());
         await insert(store, 'direct');
-        final backup = await store.exportBackup();
-        await store.restoreBackup(backup);
-        await _reenroll(store);
-        var ns = await store.loadHistoryNamespace();
+        final ns = await store.loadHistoryNamespace();
         expect(ns.provenance.keys, {'source:imported'});
         expect(ns.imports, hasLength(1));
         await store.importHistorySnapshot(bytes, context());
@@ -500,28 +499,6 @@ void main() {
         final again =
             HistorySnapshot.decode(await store.exportHistorySnapshot());
         expect(again.counter, 2);
-        final legacy = jsonDecode(utf8.decode(await store.exportBackup()))
-            as Map<String, dynamic>;
-        legacy['version'] = 4;
-        legacy.remove('history_namespace');
-        // Versions 1 to 5 carried the device's session, bound to it.
-        legacy
-          ..['session'] = <String, Object?>{
-            'base_url': origin,
-            'token': 'receiver-token',
-            'account_id': 'alice',
-            'device_id': 'receiver',
-          }
-          ..['account_id'] = 'alice'
-          ..['device_id'] = 'receiver';
-        await store.restoreBackup(utf8.encode(jsonEncode(legacy)));
-        await _reenroll(store);
-        ns = await store.loadHistoryNamespace();
-        expect(ns.imports, isEmpty);
-        expect(ns.provenance, isEmpty);
-        expect(ns.conversations, isEmpty);
-        // A restore makes a new device (D73): its export counter starts over.
-        expect(ns.counter, 0);
       });
 
       test('server ID conflicts fail even when target already exists',
@@ -572,7 +549,7 @@ void main() {
       });
 
       test(
-          'authenticated absent-target edits/deletes survive restart and dominate later imports/direct originals',
+          'authenticated absent-target edits/deletes dominate later imports/direct originals',
           () async {
         await applyEffects(store, [
           EditMessageEffect(
@@ -598,9 +575,6 @@ void main() {
               at: now + 4,
               conversationId: 'different-conversation'),
         ]);
-        final backup = await store.exportBackup();
-        await store.restoreBackup(backup);
-        await _reenroll(store);
         expect((await store.loadHistoryNamespace()).deferred, hasLength(4));
         expect(utf8.decode(await store.exportHistorySnapshot()),
             isNot(contains('new authenticated edit')));
@@ -716,14 +690,10 @@ void main() {
         expect(row.body, 'authenticated direct body');
         expect(await store.loadStarred(), isEmpty);
         expect(await store.loadReactions('conv'), isEmpty);
-        var ns = await store.loadHistoryNamespace();
+        final ns = await store.loadHistoryNamespace();
         expect(ns.quarantine, hasLength(1));
         expect(ns.provenance.containsKey(row.key), false);
         expect(await store.searchMessages('conflicting'), isEmpty);
-        await store.restoreBackup(await store.exportBackup());
-        await _reenroll(store);
-        ns = await store.loadHistoryNamespace();
-        expect(ns.quarantine, hasLength(1));
         expect(utf8.decode(await store.exportHistorySnapshot()),
             isNot(contains('copied conflicting body')));
       });
@@ -865,19 +835,4 @@ class _QuietSync implements SyncService {
   Future<void> connect() async {}
   @override
   Future<void> dispose() async {}
-}
-
-/// A restore leaves no device or MLS state (D71, D73); these tests go on
-/// as the same receiving device, enrolled again.
-Future<void> _reenroll(LocalStore store) async {
-  await store.saveSession(const Session(
-      baseUrl: origin,
-      token: 'receiver-token',
-      accountId: 'alice',
-      deviceId: 'receiver',
-      deviceSecret: 'receiver-secret'));
-  await store.saveCryptoState(
-      StoredCryptoState(
-          counter: 1, stateKey: List.filled(32, 7), sealedState: [8]),
-      0);
 }

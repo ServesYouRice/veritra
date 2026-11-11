@@ -111,7 +111,7 @@ func TestK1UploadChecksKeyCounterAndDevice(t *testing.T) {
 		t.Fatalf("unknown device: err = %v, want %v", err, ErrForbidden)
 	}
 	// Legacy uploads still read their own counter, never a K1 one.
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, dev, "legacy_after_k1", strings.Repeat("c", 64), 10, json.RawMessage(`{"state_counter":1}`), bytes.Repeat([]byte{1}, 32)); err != nil {
+	if err := insertLegacyBackup(ctx, store, owner.Account.ID, dev, "legacy_after_k1", strings.Repeat("c", 64), 10, json.RawMessage(`{"state_counter":1}`)); err != nil {
 		t.Fatalf("legacy upload next to K1 copies: %v", err)
 	}
 }

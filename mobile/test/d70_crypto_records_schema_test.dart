@@ -170,8 +170,6 @@ void main() {
             sealedState: [1]
           ),
           cursor: 0),
-      'backup restore': (db) => db.restoreBackupState(
-          sessionJson: _sessionJson, conversations: [], envelopes: []),
       'clearAll (LocalStore.clear: sign-out without a kept device)': (db) =>
           db.clearAll(),
     };
@@ -233,13 +231,6 @@ void main() {
           token: 't',
           accountId: 'acct_b',
           deviceId: 'dev_b'));
-      expect(await store.loadCryptoRecords(), isEmpty);
-    });
-
-    test('backup restore', () async {
-      final store = await seeded();
-      final backup = await store.exportBackup();
-      await store.restoreBackup(backup);
       expect(await store.loadCryptoRecords(), isEmpty);
     });
 

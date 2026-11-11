@@ -5451,6 +5451,108 @@ abstract class AppLocalizations {
   /// **'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.'**
   String get callNoticeFailed;
 
+  /// No description provided for @roomStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Group call'**
+  String get roomStart;
+
+  /// No description provided for @roomTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Group call'**
+  String get roomTitle;
+
+  /// No description provided for @roomJoining.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining…'**
+  String get roomJoining;
+
+  /// No description provided for @roomConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'In the call'**
+  String get roomConnected;
+
+  /// No description provided for @roomEncryptedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice and video are end-to-end encrypted. The server passes them on but cannot listen.'**
+  String get roomEncryptedNote;
+
+  /// No description provided for @roomLeave.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get roomLeave;
+
+  /// No description provided for @roomYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get roomYou;
+
+  /// No description provided for @roomMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get roomMute;
+
+  /// No description provided for @roomUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get roomUnmute;
+
+  /// No description provided for @roomShareScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Share screen'**
+  String get roomShareScreen;
+
+  /// No description provided for @roomStopSharing.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop sharing'**
+  String get roomStopSharing;
+
+  /// No description provided for @roomFailedFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This call is full.'**
+  String get roomFailedFull;
+
+  /// No description provided for @roomFailedUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Group calls are not set up on this server.'**
+  String get roomFailedUnavailable;
+
+  /// No description provided for @roomFailedWelcome.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining safely was not possible. Try again.'**
+  String get roomFailedWelcome;
+
+  /// No description provided for @roomFailedOther.
+  ///
+  /// In en, this message translates to:
+  /// **'The call could not continue.'**
+  String get roomFailedOther;
+
+  /// No description provided for @roomFailedCryptor.
+  ///
+  /// In en, this message translates to:
+  /// **'This device cannot protect call media, so it did not join.'**
+  String get roomFailedCryptor;
+
+  /// No description provided for @roomPeople.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 person} other{{count} people}}'**
+  String roomPeople(int count);
+
   /// No description provided for @moderationTitle.
   ///
   /// In en, this message translates to:
@@ -6171,6 +6273,66 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get autoBackupPromptLater;
 
+  /// No description provided for @k1ConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Check your recovery key'**
+  String get k1ConfirmTitle;
+
+  /// No description provided for @k1ConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Type it once more to be sure you still have it. It never leaves this device.'**
+  String get k1ConfirmDetail;
+
+  /// No description provided for @k1ConfirmOk.
+  ///
+  /// In en, this message translates to:
+  /// **'That is your recovery key.'**
+  String get k1ConfirmOk;
+
+  /// No description provided for @k1ConfirmMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'That does not match. If you lost your key, make a new one in Recovery key settings.'**
+  String get k1ConfirmMismatch;
+
+  /// No description provided for @k1SecondCopyChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep a second copy in a folder'**
+  String get k1SecondCopyChoose;
+
+  /// No description provided for @k1SecondCopyFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Second copy: {folder}'**
+  String k1SecondCopyFolder(String folder);
+
+  /// No description provided for @k1SecondCopyDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'The same locked backup, saved where you choose. Only your recovery key opens it.'**
+  String get k1SecondCopyDetail;
+
+  /// No description provided for @k1SecondCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The last copy to this folder failed. Check the folder.'**
+  String get k1SecondCopyFailed;
+
+  /// No description provided for @k1SecondCopyOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the second copy'**
+  String get k1SecondCopyOff;
+
+  /// No description provided for @k1SecondCopyPhone.
+  ///
+  /// In en, this message translates to:
+  /// **'A second copy in a folder is available on desktop. Phones keep the backup on the server only.'**
+  String get k1SecondCopyPhone;
+
   /// No description provided for @recoveryFollowUpRestoreDetail.
   ///
   /// In en, this message translates to:
@@ -6218,6 +6380,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No backup from another device was found.'**
   String get k1RestoreEmpty;
+
+  /// No description provided for @k1RestoreLegacyRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.'**
+  String get k1RestoreLegacyRefused;
 
   /// No description provided for @k1RestoreLoadFailed.
   ///

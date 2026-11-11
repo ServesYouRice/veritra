@@ -52,6 +52,7 @@ extension K1BackupActions on AppState {
     final view = k1BackupView;
     return view == K1BackupView.noKey ||
         view == K1BackupView.needsKeyHere ||
+        k1ConfirmBadge ||
         k1BackupStale;
   }
 
@@ -98,6 +99,71 @@ extension K1BackupActions on AppState {
     }
     unawaited(runK1BackupIfDue());
     return true;
+  }
+
+  /// Whether the user is asked to type the recovery key again (K1-5).
+  bool get k1ConfirmDue =>
+      k1BackupView == K1BackupView.on &&
+      (_k1StateForSession()?.confirmDue(k1Clock()) ?? false);
+
+  /// The Settings badge: the confirmation was missed three times.
+  bool get k1ConfirmBadge =>
+      k1BackupView == K1BackupView.on &&
+      (_k1StateForSession()?.confirmBadge ?? false);
+
+  /// The user typed the key to confirm it. Local only: the key's public half
+  /// is derived and compared with the stored one. A match schedules the next
+  /// ask; anything else (also a key that is not even valid) returns false
+  /// and never says which characters were wrong.
+  Future<bool> confirmK1Key(String typed) async {
+    final state = _k1StateForSession();
+    if (state == null || !state.hasKey || !k1BackupSupported) return false;
+    final crypto = _recoveryCrypto;
+    Uint8List? entropy;
+    try {
+      entropy =
+          await crypto.decodeRecoveryKey(normalizeRecoveryKeyInput(typed));
+      final values = await crypto.deriveRecoveryKey(entropy);
+      try {
+        if (!identical(_k1StateForSession(), state) ||
+            !state.hasKey ||
+            !_constantTimeBytesEqual(values.rkPub, state.rkPub!)) {
+          return false;
+        }
+      } finally {
+        values.rkPub.fillRange(0, values.rkPub.length, 0);
+      }
+    } catch (_) {
+      return false;
+    } finally {
+      entropy?.fillRange(0, entropy.length, 0);
+    }
+    state.recordConfirmed(k1Clock());
+    await _saveK1State(state);
+    notifyListeners();
+    return true;
+  }
+
+  /// "Not now" on the confirmation: ask again in 7 days.
+  Future<void> postponeK1Confirm() async {
+    final state = _k1StateForSession();
+    if (state == null) return;
+    state.postponeConfirm(k1Clock());
+    await _saveK1State(state);
+    notifyListeners();
+  }
+
+  /// Sets (or with null clears) the folder of the second copy, and writes
+  /// the first copy with the next run.
+  Future<void> setK1SecondCopyFolder(String? folder) async {
+    final state = _k1StateForSession();
+    if (state == null) return;
+    state.secondCopyPath = folder;
+    state.secondCopyAt = null;
+    state.secondCopyFailed = false;
+    await _saveK1State(state);
+    notifyListeners();
+    if (folder != null) unawaited(runK1BackupIfDue(force: true));
   }
 
   /// Runs a backup when one is due (a day since the last good copy, no
@@ -221,6 +287,9 @@ extension K1BackupActions on AppState {
       for (var attempt = 0;; attempt++) {
         final error =
             await _k1Upload(client, current, key, state.counter, ciphertext!);
+        if (error == null) {
+          await _k1WriteSecondCopy(state, current, ciphertext);
+        }
         if (error != _k1CounterStale) return error as K1BackupError?;
         if (attempt > 0) return K1BackupError.failed;
         // This device's counter fell behind the server's high-water mark
@@ -279,6 +348,26 @@ extension K1BackupActions on AppState {
       }
       return K1BackupError.failed;
     }
+  }
+
+  /// Step 5 of a run: the same ciphertext into the folder the user picked.
+  /// Never throws and never fails the backup.
+  Future<void> _k1WriteSecondCopy(
+      K1BackupState state, Session current, Uint8List ciphertext) async {
+    final folder = state.secondCopyPath;
+    if (folder == null) return;
+    var failed = false;
+    try {
+      await k1SecondCopyWriter.write(
+          folder: folder,
+          accountId: current.accountId!,
+          deviceId: current.deviceId!,
+          ciphertext: ciphertext);
+      state.secondCopyAt = k1Clock();
+    } catch (_) {
+      failed = true;
+    }
+    state.secondCopyFailed = failed;
   }
 
   K1BackupState? _k1StateForSession() {

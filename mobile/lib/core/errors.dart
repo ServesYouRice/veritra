@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:flutter/foundation.dart' show kDebugMode;
 
 import 'api_client.dart';
-import '../crypto/backup_service.dart';
 import '../crypto/crypto_service.dart'
     show
         ConversationApprovalHeldException,
@@ -94,9 +93,6 @@ String describeError(
   final strings = l10n ?? englishL10n;
   if (error is OutboxFullException) {
     return strings.errorOutboxFull;
-  }
-  if (error is BackupException) {
-    return error.localizedMessage(strings);
   }
   if (error is ConversationPausedException) {
     return strings.errorConversationPausedDetail;

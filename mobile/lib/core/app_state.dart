@@ -29,10 +29,10 @@ import '../crypto/native_crypto_bindings.dart'
         idBytes;
 import 'device_lists.dart';
 import 'k1_restore.dart';
+import 'k1_second_copy.dart';
 import '../crypto/sha256.dart';
 import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
-import '../crypto/backup_service.dart';
 import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
 import 'mls_self_update_policy.dart';
@@ -48,6 +48,7 @@ import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
 import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
+import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
 import 'roles/governance.dart';
 import 'roles/posting_verdict.dart';
@@ -220,8 +221,6 @@ class Ops {
   static const send = 'send';
   static const attachment = 'attachment';
   static const pushTest = 'push_test';
-  static const backup = 'backup';
-  static const restore = 'restore';
   static const members = 'members';
 
   /// C1: invitations, join requests and community membership.
@@ -276,7 +275,6 @@ class AppState extends ChangeNotifier
     required this.localStore,
     required this.syncServiceFactory,
     MobilePushService? pushService,
-    this.backupService,
     this.attachmentService,
     this.config = ClientConfig.production,
     ReceiptPreferences? receiptPreferences,
@@ -344,15 +342,15 @@ class AppState extends ChangeNotifier
   /// devices are added to no chat until the user reviews them once.
   bool ownDeviceListMissing = false;
 
+  /// The last restore list held old-format (VBK2) copies, which are never
+  /// opened (K1-6). Only the screen's note reads it.
+  bool k1LegacyBackupsRefused = false;
+
   /// Delivery and read cursors of the other members (W5).
   final ReceiptsState receipts = ReceiptsState();
 
   /// Who is typing (W5). Ephemeral, memory only.
   final TypingState typing = TypingState();
-
-  /// Encrypted backup and restore (card I45). Null in builds without the
-  /// MLS service, where there is nothing to back up.
-  final BackupService? backupService;
 
   /// Where an instance owner's report-key seed is kept (C6, D95). Memory only
   /// unless the build passes protected storage.
@@ -744,6 +742,10 @@ class AppState extends ChangeNotifier
   bool _k1RerunRequested = false;
   Timer? _k1Timer;
 
+  /// Where the second copy goes (K1-5); tests replace it.
+  @visibleForTesting
+  K1SecondCopyWriter k1SecondCopyWriter = const FileK1SecondCopyWriter();
+
   /// The clock K1 schedules read; tests move it.
   @visibleForTesting
   DateTime Function() k1Clock = () => DateTime.now().toUtc();
@@ -988,6 +990,12 @@ class AppState extends ChangeNotifier
   final ValueNotifier<CallController?> callController =
       ValueNotifier<CallController?>(null);
 
+  /// The group-call room engine (B6), set by the demo host like
+  /// [callController]; null otherwise, so release builds show no group-call
+  /// controls. The factory builds the engine for one conversation.
+  final ValueNotifier<RoomSession?> roomSession =
+      ValueNotifier<RoomSession?>(null);
+
   @override
   void notifyListeners() {
     if (!_disposed) super.notifyListeners();
@@ -1031,98 +1039,6 @@ class AppState extends ChangeNotifier
   /// Adding members and linking devices work in every build since card I51:
   /// group devices add new member devices to the MLS group themselves.
   bool get membershipChangesAvailable => true;
-
-  /// Backups need the MLS service and a backup service (card I45).
-  bool get backupAvailable => backupService != null && _mlsCrypto != null;
-
-  /// When this device last made a backup, once loaded.
-  DateTime? lastBackupAt;
-
-  Future<void> refreshBackupStatus() async {
-    if (!backupAvailable || session == null) return;
-    lastBackupAt = await localStore.loadLastBackupAt();
-    notifyListeners();
-  }
-
-  /// Makes an encrypted backup of this device, uploads it, and returns the
-  /// recovery code, or null on failure (see [errorFor] with [Ops.backup]).
-  /// The code is shown once and never stored; a new backup replaces the
-  /// previous one and its code.
-  Future<String?> createBackup() async {
-    String? code;
-    await _runScoped(Ops.backup, () async {
-      final current = session;
-      final client = api;
-      final service = backupService;
-      if (current == null || client == null || service == null) return;
-      try {
-        code = await service.createAndUpload(client, current.token);
-      } on ApiException catch (error) {
-        if (error.statusCode == 401) rethrow;
-        throw BackupException(error.statusCode == 507
-            ? BackupFailureKind.tooLarge
-            : error.statusCode >= 500
-                ? BackupFailureKind.network
-                : BackupFailureKind.storage);
-      } on SocketException {
-        throw const BackupException(BackupFailureKind.network);
-      } on TimeoutException {
-        throw const BackupException(BackupFailureKind.network);
-      }
-      final now = DateTime.now().toUtc();
-      await localStore.saveLastBackupAt(now);
-      lastBackupAt = now;
-    });
-    return code;
-  }
-
-  /// Restores a backup onto this empty device (card I45). Returns false with
-  /// a typed error under [Ops.restore]; an interrupted download continues on
-  /// the next attempt.
-  ///
-  /// A backup carries no token, device secret or MLS state (D71, D73), so a
-  /// restore never signs in: it leaves the account's history and settings
-  /// on this device, signed out and with no device yet, and reports under
-  /// [Ops.restore] how to finish. The device then joins the account as a
-  /// new one (today by a device link, which keeps the restored history),
-  /// with fresh MLS state, cursor 0 and new key packages, and its groups
-  /// add it like any freshly linked device. There is no restored session a
-  /// server could reject, so D66's failed-restore case cannot arise; true
-  /// is kept for a session that is somehow up after the restore.
-  Future<bool> restoreFromBackup(String recoveryCode) {
-    return _runScoped(Ops.restore, () async {
-      final service = backupService;
-      if (service == null) {
-        throw const BackupException(BackupFailureKind.storage);
-      }
-      if (session != null) {
-        throw const BackupException(BackupFailureKind.deviceNotEmpty);
-      }
-      await service.recover(recoveryCode);
-      await _tryRestoreSession();
-      // _tryRestoreSession handles its own failures without throwing: the
-      // recovery screen, a session the server rejected, nothing stored.
-      // The recovery screen and nothing stored mean the restore did not
-      // finish; their screen and message stay as they are.
-      if (session != null && lifecycle == SessionLifecycle.ready) return;
-      if (lifecycle != SessionLifecycle.recoveryRequired) {
-        Session? stored;
-        try {
-          stored = await localStore.loadSession();
-        } catch (_) {
-          // Reported as a storage failure below.
-        }
-        if (stored != null && isRestoredAccountSession(stored)) {
-          // The history is on this device; it still has to join the
-          // account as a new device (D71, D73).
-          throw UserFacingException(l10n.backupRestoredLinkToFinish);
-        }
-      }
-      // The local store or keystore failed (the recovery screen says how),
-      // or the restored session did not reach the store.
-      throw const BackupException(BackupFailureKind.storage);
-    });
-  }
 
   /// Reply, edit, delete and reactions need the MLS service (D22).
   bool get messageActionsAvailable => _mlsCrypto != null;
