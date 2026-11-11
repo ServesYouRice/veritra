@@ -16,7 +16,7 @@ Tick a task when it is done and verified; note anything left open under it.
   - Built with L1-3 (D100 A): device link v4, source commitment before the claim, reveal after it, SAS over the revealed random. ABI 18, migration 0060.
 - [x] 11 `TASK-011` Dispatch push bridge events to Flutter on the main thread
 - [x] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
-  - Blocked: the native endpoint record and method-channel calls (`pendingEndpoint`/`acknowledgeEndpoint`) do not exist yet; server side done.
+  - Fixed (d4d5632, merged): native pending record plus pendingEndpoint/acknowledgeEndpoint; push_state_test and push_service_test pass. Kotlin wake-tests not run locally.
 - [x] 13 `TASK-013` Invalidate pending push registration callbacks on unregister
 - [x] 14 `TASK-014` Disable automatic redirects on all ApiClient requests so custom secret headers are never forwarded
 - [x] 15 `TASK-015` Add an injectable WebRTC seam and test harness for NativeCallService, and release media on failed call setup
@@ -223,8 +223,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 198 `TASK-198` Reject community member management across account blocks
 - [x] 199 `TASK-199` Tie-break the unread-count bound on (created_at, id)
 - [x] 200 `TASK-200` Make conversation-list pagination use an immutable keyset cursor
-- [ ] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
-  - Blocked on owner question Q-002 (remedy and window). Characterization test added; the orphan can still sign in with password + its device secret. Only revoke-at-expiry (sweeper, MLS revocations) or creating the device at consume meets VAL-253.
+- [x] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
+  - Fixed (D100/D114 remedy d): PruneOperationalRows cancels approved links that expired unconsumed, revoking the device, its key packages and MLS membership; test TestApprovedDeviceLinkNearExpiryDoesNotOrphanDevice.
 - [x] 202 `TASK-202` Scope device-less push subscriptions with a NULL-safe device match
 - [x] 203 `TASK-203` Disable a push target only if it still matches the failed registration
 - [x] 204 `TASK-204` Enforce state_counter monotonicity and capability rotation for device-less backups
