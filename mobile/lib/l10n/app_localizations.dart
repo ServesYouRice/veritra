@@ -3237,6 +3237,12 @@ abstract class AppLocalizations {
   /// **'A message from a device that isn\'t approved was hidden.'**
   String get chatMessageUnapprovedDevice;
 
+  /// No description provided for @chatKeyRenewalNoAdmin.
+  ///
+  /// In en, this message translates to:
+  /// **'No admin or moderator in this channel can renew its key; ask one to join.'**
+  String get chatKeyRenewalNoAdmin;
+
   /// No description provided for @chatDevicesNotJoined.
   ///
   /// In en, this message translates to:

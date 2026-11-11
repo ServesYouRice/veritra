@@ -577,7 +577,7 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "mls_change_pending")
 	case errors.Is(err, storage.ErrMLSNotInGroup):
 		writeError(w, http.StatusForbidden, "mls_not_in_group")
-	case errors.Is(err, storage.ErrInvalidChannelRoute):
+	case errors.Is(err, storage.ErrInvalidChannelRoute), errors.Is(err, storage.ErrInvalidEpochMetadata):
 		writeError(w, http.StatusBadRequest, "invalid_crypto_metadata")
 	case errors.Is(err, storage.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid_input")

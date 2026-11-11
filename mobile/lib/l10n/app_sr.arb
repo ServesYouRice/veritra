@@ -557,6 +557,7 @@
   "chatMessageInvalid": "Једна порука није могла да се прочита",
   "chatMessageUndecryptable": "Ова порука није могла да се откључа",
   "chatMessageUnapprovedDevice": "Сакривена је порука са уређаја који није одобрен.",
+  "chatKeyRenewalNoAdmin": "Ниједан администратор ни модератор у овом каналу не може да обнови његов кључ; замолите неког од њих да се придружи.",
   "chatDevicesNotJoined": "Неки уређаји корисника {name} се још нису придружили.",
   "chatMessageWelcomeUnavailable": "Придруживање овом ћаскању није успело. Замолите члана да вас поново дода.",
   "chatReactionCount": "{reaction} {count}",

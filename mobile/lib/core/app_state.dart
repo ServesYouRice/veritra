@@ -501,6 +501,10 @@ class AppState extends ChangeNotifier
   final Map<String, bool> _infoAdminOf = {};
   final Map<String, Future<void>> _infoPublishing = {};
 
+  /// Private channels' conversations with a key renewal that no member can
+  /// run: no verified owner or admin is in the channel (C3, D115).
+  Set<String> _infoRenewalStuck = const <String>{};
+
   /// Wakes the info pass when a deferred remote-removal rotation's turn
   /// comes (C3, "Remote removals: who rotates"). Foreground only.
   Timer? _infoRotationTimer;
@@ -4370,6 +4374,14 @@ class AppState extends ChangeNotifier
   /// (D68). The composer offers no second send meanwhile.
   bool sendHeldForRemoval(String conversationId) =>
       _removalHolds.containsKey(conversationId);
+
+  /// Marks [conversationId] as a private channel whose key renewal has no
+  /// admin to run it (C3, D115), for widget tests.
+  @visibleForTesting
+  void debugKeyRenewalStuck(Set<String> conversationIds) {
+    _infoRenewalStuck = Set<String>.of(conversationIds);
+    notifyListeners();
+  }
 
   /// Holds sends to [conversationId] as a removal would, for widget tests.
   @visibleForTesting
