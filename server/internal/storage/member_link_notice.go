@@ -6,10 +6,12 @@ import (
 )
 
 // MemberLinkEventType is the sync event that tells the coordinator of a group
-// that a co-member linked a device. It carries IDs only (the new device and
-// its account) and names no conversation: the coordinator learns nothing it
-// does not already read from the pending-change list, and its client simply
-// runs a membership pass.
+// that a co-member has a new device to add: one a link approval created, or
+// the one a K0-R recovery enrolled, once its change-4 device-list version
+// lands. It carries IDs only (the new device and its account) and names no
+// conversation: the coordinator learns nothing it does not already read from
+// the pending-change list and the account's device list, and its client
+// simply runs a membership pass. The two cases look the same.
 const MemberLinkEventType = "device.member_linked"
 
 // maxMemberLinkNotices bounds the accounts told by one link. A coordinator
@@ -26,11 +28,11 @@ type MemberLinkNotice struct {
 	LinkedAccountID string
 }
 
-// insertMemberLinkNotices records, in the link's own transaction, one event
-// for each other account whose device is the coordinator (lowest live MLS
-// device id, as in ListMLSPendingChangesRead) of an MLS group the linking
-// account belongs to. The linking account's own devices already get
-// device.updated.
+// insertMemberLinkNotices records, in the link's (or the recovery version's)
+// own transaction, one event for each other account whose device is the
+// coordinator (lowest live MLS device id, as in ListMLSPendingChangesRead) of
+// an MLS group the linking account belongs to. The linking account's own
+// devices already get device.updated or device_list.updated.
 func insertMemberLinkNotices(ctx context.Context, tx *sql.Tx, accountID, deviceID, now string) ([]MemberLinkNotice, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT DISTINCT cd.account_id
