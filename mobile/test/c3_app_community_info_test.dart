@@ -128,6 +128,26 @@ class _Api extends ApiClient {
   }
 }
 
+class _RosterApi extends _Api {
+  String role = 'member';
+  int rosterReads = 0;
+
+  @override
+  Future<List<ConversationMember>> communityMembers(
+      String token, String communityId) async {
+    rosterReads++;
+    return [ConversationMember(accountId: 'alice', role: role)];
+  }
+
+  @override
+  Future<List<({String kind, String id, int version, String keyId})>>
+      infoVersions(String token,
+              {List<String> communityIds = const [],
+              List<String> categoryIds = const [],
+              List<String> channelIds = const []}) async =>
+          [];
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -172,6 +192,45 @@ void main() {
     // A refresh is a quiet no-op.
     await state.refreshCommunityInfo();
   });
+
+  test('promotion during a session enables a retained rotation', () async {
+    final bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final api = _RosterApi();
+    final store = MemoryLocalStore();
+    final state = AppState(
+        apiClientFactory: (_) => api,
+        syncServiceFactory: (_, __) => _QuietSync(),
+        localStore: store,
+        cryptoService: _InfoCrypto(bindings));
+    addTearDown(state.dispose);
+    state.session = _session;
+    state.api = api;
+    final id = 'comm_${'1' * 32}';
+    state.communities = [
+      Community(id: id, name: 'Club', sharedConversationId: 'conv_shared'),
+    ];
+    state.communitiesLoaded = true;
+    expect(
+        await state.publishCommunityInfo(id, name: 'Club', mint: true), isTrue);
+    await store.saveSetting(
+        'c3.rotation_due.alice', '{"community|$id":{"c":"$id","t":"pending"}}');
+    await state.refreshCommunityInfo();
+    expect(
+        (await store.loadCommunityInfoEvents(
+            CommunityInfoEventKind.key, 'community', id)),
+        hasLength(1));
+    api.role = 'owner';
+    await state.refreshCommunityInfo();
+    expect(api.rosterReads, 2);
+    // Rotation starts after promotion. Sending remains unavailable in this
+    // fixture, so the new key and pending mark stay for a later retry.
+    expect(
+        (await store.loadCommunityInfoEvents(
+            CommunityInfoEventKind.key, 'community', id)),
+        hasLength(2));
+    expect(
+        await store.loadSetting('c3.rotation_due.alice'), contains('pending'));
+  }, skip: nativeCryptoSkip());
 
   test('explicit private creation uses its own conversation and info key',
       () async {

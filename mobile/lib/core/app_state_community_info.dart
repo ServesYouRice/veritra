@@ -336,18 +336,18 @@ extension CommunityInfoActions on AppState {
 
   Future<void> _refreshOneCommunity(CommunityInfoService service,
       ApiClient client, Session current, Community community) async {
-    // Who answers key requests and rotates: owners and admins by the
-    // server's word, read once per session.
-    if (!_infoAdminOf.containsKey(community.id)) {
-      try {
-        final members =
-            await client.communityMembers(current.token, community.id);
-        _infoAdminOf[community.id] = members.any((m) =>
-            m.accountId == current.accountId &&
-            (m.role == 'owner' || m.role == 'admin'));
-      } catch (err) {
-        if (err is ApiException && err.statusCode == 401) rethrow;
-      }
+    // Refresh availability each pass: roles can change during a session.
+    // A failed read leaves the role unknown instead of reusing old authority.
+    _infoAdminOf.remove(community.id);
+    try {
+      final members =
+          await client.communityMembers(current.token, community.id);
+      if (!_sameSession(current)) return;
+      _infoAdminOf[community.id] = members.any((m) =>
+          m.accountId == current.accountId &&
+          (m.role == 'owner' || m.role == 'admin'));
+    } catch (err) {
+      if (err is ApiException && err.statusCode == 401) rethrow;
     }
     // One versions call; only subjects above what this device accepted are
     // fetched.

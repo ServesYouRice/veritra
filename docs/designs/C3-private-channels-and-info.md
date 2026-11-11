@@ -330,6 +330,14 @@ source. Creation/member-selection is covered by widget tests and a native
 record-codec integration test in `c3_app_community_info_test.dart`. Neither
 reserved counter is consumed by this slice.
 
+**Review hardening (2026-11-10):** rotation refreshes and authenticates each
+record before taking its content snapshot, then requires that same revision
+at upload (including conflict retries). Unreadable existing records keep the
+rotation pending. Non-admin devices retain their marks for a later promotion;
+admin availability is refreshed every pass. Key replies announce only records
+under the key actually delivered. These fixes do not complete the missing C3
+integration below. Evidence: `testing/evidence/C3-review-2026-11-10.md`.
+
 **Still left:** channel conversion UI;
 icons and the category screens; hiding "New channel" from
 moderators (the community card does not know the viewer's role; the

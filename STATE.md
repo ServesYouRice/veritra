@@ -7,6 +7,12 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-09.**
 
+2026-11-10 C3 review: fixed stale-record overwrites during key rotation,
+incomplete rotation completion, wrong-key announcements and stale admin
+availability. C3 remains incomplete; production role wiring, remote-removal
+rotation and plaintext-name removal still block completion. See
+[`review evidence`](testing/evidence/C3-review-2026-11-10.md).
+
 2026-11-09 C3 review: sender/fetch/UI slice ported, but C3 remains partial.
 Verified C4 role wiring, remote-removal rotation, private-channel lifecycle
 screens and plaintext-name removal are still missing. Review fixes protect

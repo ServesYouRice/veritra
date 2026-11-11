@@ -282,6 +282,7 @@ class CommunityInfoService {
     int attempts = 3,
     bool mint = false,
     CommunityInfoEvent? withKey,
+    int? expectedRevision,
   }) async {
     final home = homeOf(subject);
     if (home == null) throw StateError('C3 is not active here');
@@ -303,6 +304,11 @@ class CommunityInfoService {
           subjectId: subject.id,
           communityId: subject.communityId);
       final version = served?.version ?? 0;
+      // Rotation preserves content; it must never re-publish an older
+      // snapshot over an edit made by another device.
+      if (expectedRevision != null && version != expectedRevision) {
+        throw const InfoVersionConflict();
+      }
       // A server serving less than this device already accepted would make
       // the edit invisible to others (they keep the newer one): refuse.
       if (accepted != null && version < accepted.revision) {
@@ -589,7 +595,7 @@ class CommunityInfoService {
       }
       final accepted =
           await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
-      if (accepted == null) continue;
+      if (accepted == null || accepted.keyId != key.keyId) continue;
       if (!await _announce(
           subject, home, accepted.revision, accepted.keyId, accepted.blob)) {
         return 0;
@@ -686,8 +692,8 @@ class CommunityInfoService {
   ///
   /// - A mark whose group or community this device cannot place yet stays.
   /// - A group still holding sends for the removal is skipped and stays.
-  /// - Only owners and admins (server's word) rotate; a moderator's own mark
-  ///   is dropped on its device (owner question: who rotates then).
+  /// - Only owners and admins (server's word) rotate; other devices keep
+  ///   the mark in case this account is promoted later.
   /// - A retry reuses the key it already made and sent; failures back off.
   Future<int> runRotations(
           List<InfoSubject> Function(InfoKeyHome home, String communityId)
@@ -724,22 +730,27 @@ class CommunityInfoService {
                 conversationId: conversation);
       }
       if (home == null || topology.sendHeld(home.conversationId)) continue;
-      // Unknown (the member list failed to load) keeps the mark; only a
-      // known non-admin drops it.
+      // An unknown role or a non-admin keeps the mark. A later promotion
+      // must not allow edits under a key still known to a removed member.
       final admin = topology.serverSaysAdmin(communityId);
-      if (admin == null) continue;
-      if (!admin) {
-        await _updateMark(id, token, (_) => null);
-        continue;
-      }
+      if (admin != true) continue;
       final wait = _backoff[id];
       if (wait != null && _clock().isBefore(wait.next)) continue;
       try {
         // Remember what the records say before the key changes.
         final records = <InfoSubject, CommunityInfoRecord>{};
         for (final subject in subjectsUnder(home, communityId)) {
-          if (!_shown.containsKey(subject.key)) await loadAccepted(subject);
+          final verdict = await refresh(subject);
+          // An existing record whose latest contents cannot be verified
+          // must stay pending, rather than being skipped or overwritten
+          // with an older cached record.
+          if (verdict is InfoNeedsKey ||
+              (verdict is InfoKept &&
+                  verdict.reason != InfoKeptReason.notNewer)) {
+            throw const InfoKeyMissing();
+          }
           final shown = _shown[subject.key];
+          if (verdict != null && shown == null) throw const InfoKeyMissing();
           if (shown != null) records[subject] = shown;
         }
         // The key this mark already made, if any; otherwise a new one.
@@ -766,7 +777,7 @@ class CommunityInfoService {
         for (final record in records.entries) {
           await _publish(
               record.key, (revision) => _copy(record.value, revision),
-              withKey: fresh);
+              withKey: fresh, expectedRevision: record.value.revision);
         }
         await _updateMark(id, token, (_) => null);
         _backoff.remove(id);

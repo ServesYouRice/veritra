@@ -368,6 +368,10 @@ void main() {
             subjectKind: infoKindCommunity,
             subjectId: _community,
             key: fresh)['key']);
+    // The cached record still uses the old key. Do not advertise it as
+    // part of this answer: the joiner only received the new key.
+    expect(admin.sent.where((s) => s.$2 == AppPayloadType.infoUpdate),
+        hasLength(1));
   }, skip: skip);
 
   test('a private channel key never goes into the shared group', () async {
@@ -523,6 +527,138 @@ void main() {
           CommunityInfoEventKind.key, infoKindChannel, _private);
       expect(keys.map((k) => k.keyId), isNot(contains(freshKey.keyId)));
     }
+  }, skip: skip);
+
+  test('rotation refreshes a newer remote edit before re-sealing', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service
+        .publish(community, (r) => named('Before', r), mint: true);
+    final other = device('admin', {_shared}, admin: true);
+    final home = admin.service.homeOf(community)!;
+    await net.deliverAs(
+        other,
+        'dev_laptop',
+        _shared,
+        AppPayloadType.infoKeyRequest,
+        infoKeyRequestBody(
+            subjectKind: infoKindCommunity, subjectId: _community));
+    await admin.service.answerRequests(home, _community);
+    await other.service.refresh(community);
+    await other.service.publish(community, (r) => named('Remote edit', r));
+    expect(admin.service.shown(infoKindCommunity, _community)?.revision, 1);
+    await admin.service.markRotationDue(home, _community);
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    expect(admin.service.shown(infoKindCommunity, _community)?.name,
+        'Remote edit');
+    expect(server.records[community.key]?.version, 3);
+  }, skip: skip);
+
+  for (final duringPut in [false, true]) {
+    test(
+        'rotation never overwrites an edit racing its ${duringPut ? 'PUT' : 'GET'}',
+        () async {
+      final admin = device('admin', {_shared}, admin: true);
+      await admin.service
+          .publish(community, (r) => named('Before', r), mint: true);
+      final other = device('admin', {_shared}, admin: true);
+      final home = admin.service.homeOf(community)!;
+      await net.deliverAs(
+          other,
+          'dev_laptop',
+          _shared,
+          AppPayloadType.infoKeyRequest,
+          infoKeyRequestBody(
+              subjectKind: infoKindCommunity, subjectId: _community));
+      await admin.service.answerRequests(home, _community);
+      await other.service.refresh(community);
+      await admin.service.markRotationDue(home, _community);
+      Future<void> remoteEdit() async {
+        await other.service.publish(community, (r) => named('Racing edit', r));
+      }
+
+      if (duringPut) {
+        // Force an actual If-Match failure after reading the snapshot version.
+        server.beforePut = remoteEdit;
+      } else {
+        // First GET refreshes the snapshot; the next GET races a remote edit.
+        server.beforeGet = () async {
+          server.beforeGet = remoteEdit;
+        };
+      }
+      expect(await admin.service.runRotations((_, __) => [community]), 0);
+      expect(server.records[community.key]?.version, 2);
+      expect(await admin.service.dueRotations(), {'community|$_community'});
+      now = now.add(const Duration(minutes: 2));
+      expect(await admin.service.runRotations((_, __) => [community]), 1);
+      expect(admin.service.shown(infoKindCommunity, _community)?.name,
+          'Racing edit');
+    }, skip: skip);
+  }
+
+  test('rotation retains its mark when a newer record cannot be verified',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service
+        .publish(community, (r) => named('Before', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    final old = server.records[community.key]!;
+    server.records[community.key] = ServedCommunityInfo(
+        subjectKind: old.subjectKind,
+        subjectId: old.subjectId,
+        version: 2,
+        keyId: old.keyId,
+        blob: old.blob);
+    await admin.service.markRotationDue(home, _community);
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    expect(server.puts, 1);
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+    expect(admin.sent.where((s) => s.$2 == AppPayloadType.infoKey), isEmpty);
+  }, skip: skip);
+
+  test('rotation does not skip an existing record missing from its cache',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final other = device('admin', {_shared}, admin: true);
+    final home = other.service.homeOf(community)!;
+    await other.service.markRotationDue(home, _community);
+    expect(await other.service.runRotations((_, __) => [community]), 0);
+    expect(await other.service.dueRotations(), {'community|$_community'});
+    expect(server.puts, 1);
+    expect(other.sent.where((s) => s.$2 == AppPayloadType.infoKey), isEmpty);
+  }, skip: skip);
+
+  test('rotation retains a cached record whose key cannot be loaded', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final other = device('admin', {_shared}, admin: true);
+    await other.store.saveAcceptedCommunityInfo((await admin.store
+        .loadAcceptedCommunityInfo(infoKindCommunity, _community))!);
+    final home = other.service.homeOf(community)!;
+    await other.service.markRotationDue(home, _community);
+    expect(await other.service.runRotations((_, __) => [community]), 0);
+    expect(await other.service.dueRotations(), {'community|$_community'});
+    expect(server.puts, 1);
+    expect(other.service.shown(infoKindCommunity, _community), isNull);
+  }, skip: skip);
+
+  test('a real If-Match conflict retries without dropping the edit', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    server.beforePut = () async {
+      final old = server.records[community.key]!;
+      server.records[community.key] = ServedCommunityInfo(
+          subjectKind: old.subjectKind,
+          subjectId: old.subjectId,
+          version: 2,
+          keyId: old.keyId,
+          blob: old.blob);
+    };
+    await admin.service.publish(community, (r) => named('Retried edit', r));
+    expect(server.records[community.key]?.version, 3);
+    expect(server.puts, 2);
+    expect(admin.service.shown(infoKindCommunity, _community)?.name,
+        'Retried edit');
   }, skip: skip);
 
   test('edits wait for removal holds and pending rotations', () async {
@@ -784,7 +920,7 @@ void main() {
     expect(await laptop.service.refresh(community), isA<InfoAccepted>());
   }, skip: skip);
 
-  test('an unknown admin flag keeps a rotation due; only "not admin" drops it',
+  test('unknown and non-admin roles keep rotations due for later promotion',
       () async {
     final admin = device('admin', {_shared}, admin: true);
     await admin.service.publish(community, (r) => named('Club', r), mint: true);
@@ -799,6 +935,9 @@ void main() {
     await admin.service.markRotationDue(home, _community);
     topology.admin = false;
     expect(await admin.service.runRotations((_, __) => [community]), 0);
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+    topology.admin = true;
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
     expect(await admin.service.dueRotations(), isEmpty);
   }, skip: skip);
 
