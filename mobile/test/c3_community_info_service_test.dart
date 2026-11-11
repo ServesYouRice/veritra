@@ -183,6 +183,10 @@ void unawaitedMark(CommunityInfoService service, InfoKeyHome home) {
 
 DateTime now = DateTime.utc(2026, 11, 9, 12);
 
+/// Moves the clock past every deferred remote-removal turn (at most
+/// base + 8 slots + jitter, about 4.5 minutes).
+void pastTurn() => now = now.add(const Duration(minutes: 10));
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final skip = nativeCryptoSkip();
@@ -200,19 +204,24 @@ void main() {
   _Device device(String name, Set<String> members,
       {bool admin = false,
       GovernanceState? verified,
+      bool noRecord = false,
+      String? deviceId,
       LocalStore? store,
       Duration Function()? answerDelay}) {
     final d = _Device(name, store ?? MemoryLocalStore(), members);
     d.service = CommunityInfoService(
       store: d.store,
       api: server,
-      send: (c, t, b) => net.deliver(d, c, t, b),
+      send: (c, t, b) => deviceId == null
+          ? net.deliver(d, c, t, b)
+          : net.deliverAs(d, deviceId, c, t, b),
       topology: _Topology(admin, net),
       codec: CommunityInfoCodec(bindings,
           random: Random(name.hashCode + net.devices.length)),
       policyFor: (_) => GovernanceInfoEditPolicy(verified ?? roles),
+      verifiedRolesOf: noRecord ? null : (_) => verified ?? roles,
       accountId: 'acct_$name',
-      deviceId: 'dev_$name',
+      deviceId: deviceId ?? 'dev_$name',
       answerDelay: answerDelay ?? () => Duration.zero,
       clock: () => now,
       epochOf: (conversation) async => net.epochs[conversation] ?? 0,
@@ -281,6 +290,9 @@ void main() {
           throwsA(isA<InfoRotationPending>()));
       expect(server.puts, 1);
       await restarted.service.observeRemoval(home, _community);
+      // A removal this device did not make waits its turn first.
+      expect(await restarted.service.runRotations((_, __) => [subject]), 0);
+      pastTurn();
       expect(await restarted.service.runRotations((_, __) => [subject]), 1);
       expect(server.records[subject.key]!.keyId, isNot(old));
       expect(restarted.sent.every((e) => e.$1 == home.conversationId), isTrue);
@@ -314,9 +326,11 @@ void main() {
     await removedAt(admin.store, _privateConv, 2);
     await admin.service
         .observeRemoval(admin.service.homeOf(community)!, _community);
+    pastTurn();
     expect(await admin.service.runRotations((_, __) => [community]), 1);
     await admin.service
         .observeRemoval(admin.service.homeOf(private)!, _community);
+    pastTurn();
     expect(await admin.service.runRotations((_, __) => [private]), 1);
     expect(server.records[private.key]!.keyId, isNot(oldPrivate));
   }, skip: skip);
@@ -335,9 +349,11 @@ void main() {
         await removedAt(admin.store, _shared, 3);
       }
     };
+    pastTurn();
     expect(await admin.service.runRotations((_, __) => [community]), 0);
     expect(server.puts, 1);
     await admin.service.observeRemoval(home, _community);
+    pastTurn();
     expect(await admin.service.runRotations((_, __) => [community]), 1);
     final keys =
         admin.sent.where((e) => e.$2 == AppPayloadType.infoKey).toList();
@@ -352,8 +368,18 @@ void main() {
     await admin.service.publish(community, (r) => named('Club', r), mint: true);
     final home = admin.service.homeOf(community)!;
     await removedAt(admin.store, _shared, 2);
-    final member = device('admin', {_shared}, store: admin.store);
+    // The same account and store, while the verified record made it a
+    // plain member (the server's word "admin" does not count).
+    final member = device('admin', {_shared},
+        admin: true,
+        store: admin.store,
+        verified: GovernanceState(
+            rev: 2,
+            owner: 'acct_other',
+            ownerRev: 2,
+            joined: const {'acct_admin': 0, 'acct_other': 1}));
     await member.service.observeRemoval(home, _community);
+    pastTurn();
     expect(await member.service.runRotations((_, __) => [community]), 0);
     expect(await member.service.dueRotations(), {community.key});
     await expectLater(
@@ -362,6 +388,7 @@ void main() {
     final promoted =
         device('admin', {_shared}, admin: true, store: admin.store);
     await promoted.service.observeRemoval(home, _community);
+    pastTurn();
     expect(await promoted.service.runRotations((_, __) => [community]), 1);
   }, skip: skip);
 
@@ -1253,6 +1280,7 @@ void main() {
     }
     if (rotate) {
       await admin.service.observeRemoval(home, _community);
+      pastTurn();
       expect(await admin.service.runRotations((_, __) => [community]), 1);
     }
     return (admin: admin, member: member, home: home, retired: retired);
@@ -1509,9 +1537,10 @@ void main() {
     expect(await laptop.service.refresh(community), isA<InfoAccepted>());
   }, skip: skip);
 
-  test('unknown and non-admin roles keep rotations due for later promotion',
-      () async {
-    final admin = device('admin', {_shared}, admin: true);
+  test(
+      'without a verified record, unknown and non-admin server roles keep '
+      'rotations due for later promotion', () async {
+    final admin = device('admin', {_shared}, admin: true, noRecord: true);
     await admin.service.publish(community, (r) => named('Club', r), mint: true);
     final home = admin.service.homeOf(community)!;
     final topology = admin.service.topology as _Topology;
@@ -1637,4 +1666,297 @@ void main() {
           isA<DecodedAppPayload>());
     }
   });
+
+  // C3 remote removals: who rotates, and only once (design "Remote
+  // removals: who rotates"). An owner, two admins, a moderator and a member.
+  final staff = GovernanceState(
+    rev: 3,
+    owner: 'acct_admin',
+    ownerRev: 3,
+    admins: const {'acct_second': 2, 'acct_third': 3},
+    moderators: const {'acct_mod'},
+    joined: const {
+      'acct_admin': 0,
+      'acct_second': 1,
+      'acct_third': 1,
+      'acct_mod': 1,
+      'acct_member': 1,
+    },
+  );
+
+  /// Every [names] device in the shared group holds the community record
+  /// under the owner's key; then a removal (not made by any of them) moves
+  /// the group to epoch 2 and each one observes it.
+  Future<Map<String, _Device>> staffAfterRemoval(List<String> names) async {
+    final devices = <String, _Device>{
+      for (final name in names)
+        name: device(name, {_shared}, admin: true, verified: staff),
+    };
+    final owner = devices['admin']!;
+    await owner.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = owner.service.homeOf(community)!;
+    final key = (await owner.service.currentKey(home, _community))!;
+    await net.deliver(
+        owner,
+        _shared,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'community', subjectId: _community, key: key.key!));
+    for (final d in devices.values) {
+      await d.service.refresh(community);
+      expect(d.service.shown(infoKindCommunity, _community)?.name, 'Club');
+      await removedAt(d.store, _shared, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    return devices;
+  }
+
+  int rankOf(String account) => remoteRotationRank(
+      rotators: verifiedRotators(staff),
+      accountId: account,
+      home: const InfoKeyHome(
+          keySubjectKind: infoKindCommunity,
+          keySubjectId: 'comm_00000000000000000000000000000001',
+          conversationId: _shared),
+      epoch: 2);
+
+  int keysSent(_Device d) =>
+      d.sent.where((e) => e.$2 == AppPayloadType.infoKey).length;
+
+  test(
+      'two admins observe a removal: the first in turn rotates, the other '
+      'adopts its key without a second key or upload', () async {
+    final devices = await staffAfterRemoval(['admin', 'second']);
+    final ordered = devices.values.toList()
+      ..sort((a, b) =>
+          rankOf(a.service.accountId).compareTo(rankOf(b.service.accountId)));
+    final first = ordered[0];
+    final later = ordered[1];
+    final sentBefore = keysSent(later);
+    // Past rank 0's turn (base + jitter) but before rank 1's (base + slot).
+    now = now.add(remoteRotationBase + remoteRotationJitter);
+    expect(await later.service.runRotations((_, __) => [community]), 0);
+    expect(await first.service.runRotations((_, __) => [community]), 1);
+    final puts = server.puts;
+    final rotated = server.records[community.key]!.keyId;
+    // The other admin has not reached its turn, yet the delivered key ends
+    // its obligation: no key of its own, no upload.
+    expect(await later.service.runRotations((_, __) => [community]), 1);
+    expect(keysSent(later), sentBefore);
+    expect(server.puts, puts);
+    expect(await later.service.dueRotations(), isEmpty);
+    expect(await later.service.nextDeferredRotation(), isNull);
+    // It edits again, under the rotated key.
+    await later.service.publish(community, (r) => named('Edited', r));
+    expect(server.records[community.key]!.keyId, rotated);
+  }, skip: skip);
+
+  test(
+      'a moderator removes from a private channel: one admin rotates its '
+      'key, the other adopts it', () async {
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final devices = <String, _Device>{
+      for (final name in ['admin', 'second', 'mod'])
+        name: device(name, {_privateConv}, admin: true, verified: staff),
+    };
+    final owner = devices['admin']!;
+    await owner.service.publish(
+        private,
+        (r) => CommunityInfoRecord(
+            kind: infoKindChannel,
+            subjectId: _private,
+            revision: r,
+            name: 'Secret',
+            privatePlace: const InfoPrivatePlace(position: 0)),
+        mint: true);
+    final home = owner.service.homeOf(private)!;
+    expect(home.conversationId, _privateConv);
+    final key = (await owner.service.currentKey(home, _community))!;
+    await net.deliver(
+        owner,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    // The moderator's removal commit, merged everywhere.
+    for (final d in devices.values) {
+      await d.service.refresh(private);
+      expect(d.service.shown(infoKindChannel, _private)?.name, 'Secret');
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    int rank(_Device d) => remoteRotationRank(
+        rotators: verifiedRotators(staff),
+        accountId: d.service.accountId,
+        home: home,
+        epoch: 2);
+    final admins = [devices['admin']!, devices['second']!]
+      ..sort((a, b) => rank(a).compareTo(rank(b)));
+    final before = {for (final d in devices.values) d: keysSent(d)};
+    final old = server.records[private.key]!.keyId;
+    now = now.add(remoteRotationBase + remoteRotationJitter);
+    expect(await devices['mod']!.service.runRotations((_, __) => [private]), 0);
+    expect(await admins[1].service.runRotations((_, __) => [private]), 0);
+    expect(await admins[0].service.runRotations((_, __) => [private]), 1);
+    final rotated = server.records[private.key]!.keyId;
+    expect(rotated, isNot(old));
+    final puts = server.puts;
+    expect(await admins[1].service.runRotations((_, __) => [private]), 1);
+    expect(await devices['mod']!.service.runRotations((_, __) => [private]), 1);
+    expect(server.puts, puts);
+    expect(keysSent(admins[0]), before[admins[0]]! + 1);
+    expect(keysSent(admins[1]), before[admins[1]]);
+    expect(keysSent(devices['mod']!), before[devices['mod']!]);
+    // Every key went only into the private channel's own group.
+    for (final d in devices.values) {
+      expect(
+          d.sent
+              .where((e) => e.$2 == AppPayloadType.infoKey)
+              .every((e) => e.$1 == _privateConv),
+          isTrue);
+    }
+  }, skip: skip);
+
+  test('with the first admin offline, the next one rotates after its turn',
+      () async {
+    final devices = await staffAfterRemoval(['admin', 'second', 'third']);
+    final ordered = devices.values.toList()
+      ..sort((a, b) =>
+          rankOf(a.service.accountId).compareTo(rankOf(b.service.accountId)));
+    final next = ordered[1];
+    final nextBefore = keysSent(next);
+    final turn = await next.service.nextDeferredRotation();
+    expect(turn, isNotNull);
+    expect(turn!.isBefore(now.add(remoteRotationBase + remoteRotationSlot)),
+        isFalse);
+    now = now.add(remoteRotationBase + remoteRotationJitter);
+    expect(await next.service.runRotations((_, __) => [community]), 0);
+    now = turn.add(const Duration(seconds: 1));
+    final old = server.records[community.key]!.keyId;
+    expect(await next.service.runRotations((_, __) => [community]), 1);
+    expect(keysSent(next), nextBefore + 1);
+    expect(server.records[community.key]!.keyId, isNot(old));
+    // The third admin, later still, adopts what the second sent.
+    final last = ordered[2];
+    final before = keysSent(last);
+    pastTurn();
+    expect(await last.service.runRotations((_, __) => [community]), 1);
+    expect(keysSent(last), before);
+  }, skip: skip);
+
+  test('the removing admin rotates at once; the commit epoch keeps it so',
+      () async {
+    final admin = device('admin', {_shared}, admin: true, verified: staff);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    // Its own kick marks the key before the commit is merged...
+    await admin.service.markRotationDue(home, _community);
+    // ...and the merged commit's epoch, observed later, does not defer it.
+    await removedAt(admin.store, _shared, 2);
+    await admin.service.observeRemoval(home, _community);
+    expect(await admin.service.nextDeferredRotation(), isNull);
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+  }, skip: skip);
+
+  test('a restart inside the wait keeps the mark and catches up first',
+      () async {
+    final admin = device('admin', {_shared}, admin: true, verified: staff);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await removedAt(admin.store, _shared, 2);
+    await admin.service.observeRemoval(home, _community);
+    now = now.add(const Duration(seconds: 5));
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    // Closed for an hour, then restarted: the turn the observation set has
+    // long passed, but the wait counts again from the start, so what other
+    // admins sent meanwhile is fetched before this device decides.
+    now = now.add(const Duration(hours: 1));
+    final restarted = device('admin', {_shared},
+        admin: true, verified: staff, store: admin.store);
+    expect(await restarted.service.runRotations((_, __) => [community]), 0);
+    expect(await restarted.service.dueRotations(), {community.key});
+    final turn = (await restarted.service.nextDeferredRotation())!;
+    expect(turn.isAfter(now), isTrue);
+    now = turn.add(const Duration(seconds: 1));
+    expect(await restarted.service.runRotations((_, __) => [community]), 1);
+    expect(keysSent(restarted), 1);
+    // Another restart neither repeats nor resurrects it.
+    final again = device('admin', {_shared},
+        admin: true, verified: staff, store: admin.store);
+    await again.service.observeRemoval(home, _community);
+    pastTurn();
+    expect(await again.service.runRotations((_, __) => [community]), 0);
+    expect(await again.service.dueRotations(), isEmpty);
+    expect(keysSent(again), 0);
+  }, skip: skip);
+
+  test('a key made but never sent before a crash does not end the obligation',
+      () async {
+    final devices = await staffAfterRemoval(['admin', 'member']);
+    final admin = devices['admin']!;
+    final member = devices['member']!;
+    final home = admin.service.homeOf(community)!;
+    // The crash: a fresh key stored locally, its mark never updated, nothing
+    // sent.
+    final unsent = await admin.service.newKey(home);
+    expect((await admin.service.currentKey(home, _community))!.keyId,
+        unsent.keyId);
+    final restarted = device('admin', {_shared},
+        admin: true, verified: staff, store: admin.store);
+    pastTurn();
+    expect(await restarted.service.runRotations((_, __) => [community]), 1);
+    expect(keysSent(restarted), 1);
+    final sentKey = restarted.sent
+        .lastWhere((e) => e.$2 == AppPayloadType.infoKey)
+        .$3['key_id'];
+    expect(server.records[community.key]!.keyId, sentKey);
+    final current = (await member.service.currentKey(home, _community))!;
+    expect(current.keyId, sentKey);
+    expect(await member.service.runRotations((_, __) => [community]), 1);
+    // The orphan never wins on the admin either: its later edits are sealed
+    // under the key the others hold.
+    expect(
+        (await restarted.service.currentKey(home, _community))!.keyId, sentKey);
+    await restarted.service.publish(community, (r) => named('After', r));
+    expect(server.records[community.key]!.keyId, sentKey);
+    expect(await member.service.refresh(community), isA<InfoAccepted>());
+    expect(member.service.shown(infoKindCommunity, _community)?.name, 'After');
+  }, skip: skip);
+
+  test(
+      'a moderator never rotates, even when the server says admin, and '
+      'completes only on an owner or admin key', () async {
+    final devices = await staffAfterRemoval(['admin', 'mod', 'member']);
+    final mod = devices['mod']!;
+    final member = devices['member']!;
+    final home = mod.service.homeOf(community)!;
+    // The moderator's own kick does not let it rotate either.
+    await mod.service.markRotationDue(home, _community);
+    pastTurn();
+    expect(await mod.service.runRotations((_, __) => [community]), 0);
+    expect(keysSent(mod), 0);
+    expect(await mod.service.dueRotations(), {community.key});
+    expect(await mod.service.nextDeferredRotation(), isNull);
+    // A key a moderator sends after the removal ends nobody's obligation.
+    await net.deliver(
+        mod,
+        _shared,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'community',
+            subjectId: _community,
+            key: mod.service.codec.newKey()));
+    expect(await member.service.runRotations((_, __) => [community]), 0);
+    expect(await member.service.dueRotations(), {community.key});
+    await expectLater(
+        member.service.publish(community, (r) => named('Edit', r)),
+        throwsA(isA<InfoRotationPending>()));
+    // The owner rotates; both then complete without a key of their own.
+    expect(await devices['admin']!.service.runRotations((_, __) => [community]),
+        1);
+    expect(await mod.service.runRotations((_, __) => [community]), 1);
+    expect(await member.service.runRotations((_, __) => [community]), 1);
+    expect(keysSent(mod), 1);
+    expect(keysSent(member), 0);
+  }, skip: skip);
 }

@@ -482,6 +482,10 @@ class AppState extends ChangeNotifier
   final Map<String, bool> _infoAdminOf = {};
   final Map<String, Future<void>> _infoPublishing = {};
 
+  /// Wakes the info pass when a deferred remote-removal rotation's turn
+  /// comes (C3, "Remote removals: who rotates"). Foreground only.
+  Timer? _infoRotationTimer;
+
   /// The verified C4 role source for community info until the C4 client
   /// wiring makes this class one; tests set it.
   @visibleForTesting
@@ -9686,6 +9690,8 @@ class AppState extends ChangeNotifier
   void dispose() {
     _disposed = true;
     _cancelOwnerCancelTimers();
+    _infoRotationTimer?.cancel();
+    _infoRotationTimer = null;
     unawaited(screenGuard.setSecure(false));
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
