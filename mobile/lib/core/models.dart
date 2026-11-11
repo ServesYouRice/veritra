@@ -90,6 +90,7 @@ class Conversation {
     this.peerAccountId,
     this.peerUsername,
     this.createdBy,
+    this.postingRestricted = false,
     this.existedOnServer = false,
   });
 
@@ -113,6 +114,8 @@ class Conversation {
   final String? peerUsername;
   // Account that started the conversation; decides whether a DM is a request.
   final String? createdBy;
+  // C2: true when only owners and admins may post in this conversation.
+  final bool postingRestricted;
   // Set only on the answer to creating a conversation: the server returned a
   // DM the pair already had (200, not 201; D67), so its MLS group may exist
   // and this device must not build another. Never stored or sent.
@@ -145,10 +148,11 @@ class Conversation {
       peerAccountId: _nonEmpty(json['peer_account_id']),
       peerUsername: _nonEmpty(json['peer_username']),
       createdBy: _nonEmpty(json['created_by']),
+      postingRestricted: json['posting_restricted'] == true,
     );
   }
 
-  Conversation copyWith({int? unreadCount}) {
+  Conversation copyWith({int? unreadCount, bool? postingRestricted}) {
     return Conversation(
       id: id,
       kind: kind,
@@ -163,6 +167,7 @@ class Conversation {
       peerAccountId: peerAccountId,
       peerUsername: peerUsername,
       createdBy: createdBy,
+      postingRestricted: postingRestricted ?? this.postingRestricted,
     );
   }
 
@@ -182,6 +187,7 @@ class Conversation {
         if (peerAccountId != null) 'peer_account_id': peerAccountId,
         if (peerUsername != null) 'peer_username': peerUsername,
         if (createdBy != null) 'created_by': createdBy,
+        if (postingRestricted) 'posting_restricted': true,
       };
 }
 
@@ -242,12 +248,14 @@ class Community {
   Community({
     required this.id,
     required this.name,
+    this.createdBy,
     this.createdAt,
     this.sharedConversationId,
   });
 
   final String id;
   final String name;
+  final String? createdBy;
   final DateTime? createdAt;
 
   /// The shared group of a community with the C0 layout; null for a legacy
@@ -258,6 +266,7 @@ class Community {
     return Community(
       id: json['id'] as String,
       name: json['name'] as String,
+      createdBy: json['created_by'] as String?,
       createdAt: _parseOptionalTime(json['created_at']),
       sharedConversationId: json['shared_conversation_id'] as String?,
     );

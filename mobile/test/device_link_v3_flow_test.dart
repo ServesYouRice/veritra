@@ -75,7 +75,7 @@ class _LinkServer {
       transport: TransportPolicy.production);
 }
 
-class _LinkApi extends ApiClient {
+class _LinkApi extends ApiClient with LegacySyncPageFake {
   _LinkApi(this.server) : super(baseUrl: _origin);
 
   final _LinkServer server;

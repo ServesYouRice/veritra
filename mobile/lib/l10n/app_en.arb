@@ -684,6 +684,8 @@
   "chatSendingFile": "Sending file",
   "chatAttachFile": "Attach a file",
   "chatComposerHint": "Message",
+  "chatPostingRestricted": "Only admins can post",
+  "@chatPostingRestricted": {"description": "Hint shown in chat composer when posting is restricted to admins."},
   "chatComposerCounter": "{length} / {max}",
   "@chatComposerCounter": {"placeholders": {"length": {"type": "int", "format": "decimalPattern"}, "max": {"type": "int", "format": "decimalPattern"}}},
   "chatPausedNotice": "Sending is paused here: the server rejected an encryption update for this conversation. Other conversations still work.",
@@ -1384,5 +1386,18 @@
   "accountsErrorRegistry": "The account list could not be saved.",
   "accountsErrorRemove": "The account could not be removed. Try again.",
   "accountsDuplicate": "This device already has that account, so the extra sign-in was removed. Remove this device's extra entry from the account's device list.",
-  "accountsBack": "Back to my accounts"
+  "accountsBack": "Back to my accounts",
+
+  "settingsSectionUpdates": "Updates",
+  "settingsAutoUpdateCheck": "Check for updates automatically",
+  "settingsAutoUpdateCheckDetail": "Check for genuine new versions on launch",
+  "settingsCheckForUpdates": "Check for updates",
+  "settingsCheckingForUpdates": "Checking for updates…",
+  "settingsUpdateUpToDate": "Veritra is up to date",
+  "settingsUpdateAvailable": "Version {version} is available",
+  "@settingsUpdateAvailable": {"placeholders": {"version": {"type": "String"}}},
+  "settingsUpdateError": "Could not check for updates",
+  "settingsUpdateDisabled": "Automatic update checks are turned off",
+  "settingsScreenGuard": "Screen guard",
+  "settingsScreenGuardDetail": "Block screenshots and AI-assistant screen reading in chats."
 }

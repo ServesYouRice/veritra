@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../core/models.dart';
+import '../core/roles/governance.dart' show GovernanceState;
 import '../storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
@@ -33,6 +34,10 @@ abstract class CryptoService {
   Future<MessageEnvelope> encrypt(String conversationId, String plaintext);
   // The v2 link derivation was retired with ABI 18 (L1-3): device links run
   // on K2TransferCryptoService, whose SAS needs the source's committed random.
+
+  /// The verified role record for [conversationId], if this service holds one
+  /// (C4, ABI 20). Returns null without a record or when not supported.
+  GovernanceState? governanceOf(String conversationId) => null;
 }
 
 abstract class MlsConversationCryptoService implements CryptoService {
@@ -586,4 +591,7 @@ class UnavailableCryptoService
       String conversationId, String plaintext) async {
     throw StateError('Production MLS/OpenMLS encryption is not integrated');
   }
+
+  @override
+  GovernanceState? governanceOf(String conversationId) => null;
 }

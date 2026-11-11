@@ -339,3 +339,28 @@ func TestTURNURLsUseTheRFC7065Form(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadAttestationIsOffByDefaultAndStrict(t *testing.T) {
+	cfg, err := Load()
+	if err != nil || cfg.Attestation != "" {
+		t.Fatalf("default attestation = %q, err = %v", cfg.Attestation, err)
+	}
+	t.Setenv("PRIVATE_MESSENGER_ATTESTATION", "none")
+	if cfg, err := Load(); err != nil || cfg.Attestation != "" {
+		t.Fatalf("none = %q, err = %v", cfg.Attestation, err)
+	}
+	for _, raw := range []string{"on", "sev-snp", "true"} {
+		t.Setenv("PRIVATE_MESSENGER_ATTESTATION", raw)
+		if _, err := Load(); err == nil {
+			t.Fatalf("attestation value %q accepted", raw)
+		}
+	}
+	t.Setenv("PRIVATE_MESSENGER_ATTESTATION", "configfs-tsm")
+	if _, err := Load(); err == nil {
+		t.Fatal("configfs-tsm accepted without a TLS certificate")
+	}
+	t.Setenv("PRIVATE_MESSENGER_ATTESTATION_TLS_CERT", "/x/cert.pem")
+	if cfg, err := Load(); err != nil || cfg.Attestation != "configfs-tsm" {
+		t.Fatalf("configfs-tsm = %q, err = %v", cfg.Attestation, err)
+	}
+}

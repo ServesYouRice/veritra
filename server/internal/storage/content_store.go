@@ -484,7 +484,7 @@ func (s *Store) PushTargetsForConversation(ctx context.Context, conversationID, 
 		SELECT ps.id, ps.provider, ps.endpoint, COALESCE(ps.public_key, ''), COALESCE(ps.auth_secret, ''),ps.notification_mode
 		FROM push_subscriptions ps
 		JOIN memberships m ON m.account_id = ps.account_id
-		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider IN ('webpush', 'fcm', 'apns') AND ps.disabled_at IS NULL
+		WHERE m.conversation_id = ? AND ps.account_id <> ? AND ps.provider IN ('webpush', 'fcm', 'apns', 'unifiedpush') AND ps.disabled_at IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM account_blocks b WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?)
 		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (SELECT 1 FROM conversation_notification_preferences p WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))))
 		ORDER BY ps.id
@@ -845,6 +845,9 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 		return 0, err
 	}
 	if err := retireHistoryTransfers(ctx, tx, `link_id IN (SELECT link_id FROM device_history_transfers WHERE state='active' AND expires_at<=? ORDER BY expires_at LIMIT 500)`, "expired", formatTime(now.UTC())); err != nil {
+		return 0, err
+	}
+	if err := cancelExpiredApprovedDeviceLinks(ctx, tx, now); err != nil {
 		return 0, err
 	}
 	cutoff := formatTime(now.UTC().Add(-OperationalRowRetention))

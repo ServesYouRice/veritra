@@ -559,6 +559,7 @@
   "chatSendingFile": "Слање датотеке",
   "chatAttachFile": "Приложи датотеку",
   "chatComposerHint": "Порука",
+  "chatPostingRestricted": "Само администратори могу да објављују",
   "chatComposerCounter": "{length} / {max}",
   "chatPausedNotice": "Слање је овде паузирано: сервер је одбио ажурирање шифровања за овај разговор. Остали разговори и даље раде.",
   "chatSyncPausedNotice": "Поруке у овом разговору су паузиране: ажурирање шифровања није могло да се примени. Ниједна порука није прескочена, а остали разговори и даље раде.",
@@ -1125,5 +1126,18 @@
   "accountsErrorRegistry": "Списак налога није могао да се сачува.",
   "accountsErrorRemove": "Налог није могао да се уклони. Покушајте поново.",
   "accountsDuplicate": "Овај уређај већ има тај налог, па је додатна пријава уклоњена. Уклоните вишак уређаја са листе уређаја налога.",
-  "accountsBack": "Назад на моје налоге"
+  "accountsBack": "Назад на моје налоге",
+
+  "settingsSectionUpdates": "Ажурирања",
+  "settingsAutoUpdateCheck": "Аутоматски проверавај ажурирања",
+  "settingsAutoUpdateCheckDetail": "Проверавај нове верзије при покретању",
+  "settingsCheckForUpdates": "Провери ажурирања",
+  "settingsCheckingForUpdates": "Провера ажурирања…",
+  "settingsUpdateUpToDate": "Veritra је ажурирана",
+  "settingsUpdateAvailable": "Верзија {version} је доступна",
+  "@settingsUpdateAvailable": {"placeholders": {"version": {"type": "String"}}},
+  "settingsUpdateError": "Провера ажурирања није успела",
+  "settingsUpdateDisabled": "Аутоматска провера ажурирања је искључена",
+  "settingsScreenGuard": "Заштита екрана",
+  "settingsScreenGuardDetail": "Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима."
 }

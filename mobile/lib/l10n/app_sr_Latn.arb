@@ -526,6 +526,7 @@
   "chatSendingFile": "Slanje datoteke",
   "chatAttachFile": "Priloži datoteku",
   "chatComposerHint": "Poruka",
+  "chatPostingRestricted": "Samo administratori mogu da objavljuju",
   "chatComposerCounter": "{length} / {max}",
   "chatPausedNotice": "Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.",
   "chatSyncPausedNotice": "Poruke u ovom razgovoru su pauzirane: ažuriranje šifrovanja nije moglo da se primeni. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.",
@@ -1147,5 +1148,23 @@
   "accountsErrorRegistry": "Spisak naloga nije mogao da se sačuva.",
   "accountsErrorRemove": "Nalog nije mogao da se ukloni. Pokušajte ponovo.",
   "accountsDuplicate": "Ovaj uređaj već ima taj nalog, pa je dodatna prijava uklonjena. Uklonite višak uređaja sa liste uređaja naloga.",
-  "accountsBack": "Nazad na moje naloge"
+  "accountsBack": "Nazad na moje naloge",
+  "settingsSectionUpdates": "Ažuriranja",
+  "settingsAutoUpdateCheck": "Automatski proveravaj ažuriranja",
+  "settingsAutoUpdateCheckDetail": "Proveravaj nove verzije pri pokretanju",
+  "settingsCheckForUpdates": "Proveri ažuriranja",
+  "settingsCheckingForUpdates": "Provera ažuriranja…",
+  "settingsUpdateUpToDate": "Veritra je ažurirana",
+  "settingsUpdateAvailable": "Verzija {version} je dostupna",
+  "@settingsUpdateAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUpdateError": "Provera ažuriranja nije uspela",
+  "settingsUpdateDisabled": "Automatska provera ažuriranja je isključena",
+  "settingsScreenGuard": "Zaštita ekrana",
+  "settingsScreenGuardDetail": "Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima."
 }

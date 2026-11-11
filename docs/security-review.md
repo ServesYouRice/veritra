@@ -92,7 +92,7 @@ federation, post-quantum protection, and hidden metadata are not claimed.
 ./scripts/license-check.sh
 ./scripts/audit-rust.sh
 ./scripts/build-mobile-crypto.sh android
-cd mobile && flutter analyze && flutter test && flutter build apk --release
+cd mobile && flutter analyze && flutter test && flutter build apk --release --flavor play
 ```
 
 On macOS, also run `./scripts/build-mobile-crypto.sh ios`, an unsigned release
@@ -147,7 +147,7 @@ owner pins the certificate of the key that signs the G24 release APK once,
 before the candidate is frozen:
 
 1. Read its SHA-256 from a signed APK with
-   `apksigner verify --print-certs app-release.apk` ("Signer #1 certificate
+   `apksigner verify --print-certs app-play-release.apk` ("Signer #1 certificate
    SHA-256 digest"), or from the keystore with
    `keytool -list -v -keystore release.jks -alias <alias>` (the `SHA256:`
    line, with the colons removed and the letters lower-cased).

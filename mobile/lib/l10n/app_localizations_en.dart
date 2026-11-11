@@ -1958,6 +1958,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatComposerHint => 'Message';
 
   @override
+  String get chatPostingRestricted => 'Only admins can post';
+
+  @override
   String chatComposerCounter(int length, int max) {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -3933,4 +3936,41 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get accountsBack => 'Back to my accounts';
+
+  @override
+  String get settingsSectionUpdates => 'Updates';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Check for updates automatically';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Check for genuine new versions on launch';
+
+  @override
+  String get settingsCheckForUpdates => 'Check for updates';
+
+  @override
+  String get settingsCheckingForUpdates => 'Checking for updates…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra is up to date';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Version $version is available';
+  }
+
+  @override
+  String get settingsUpdateError => 'Could not check for updates';
+
+  @override
+  String get settingsUpdateDisabled => 'Automatic update checks are turned off';
+
+  @override
+  String get settingsScreenGuard => 'Screen guard';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Block screenshots and AI-assistant screen reading in chats.';
 }

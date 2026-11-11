@@ -47,6 +47,8 @@ import '../sync/sync_service.dart';
 import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
 import 'api_client.dart';
+import 'roles/governance.dart';
+import 'roles/posting_verdict.dart';
 import 'attachments.dart';
 import 'client_config.dart';
 import 'device_link_v3_models.dart';
@@ -82,10 +84,12 @@ import 'typing_state.dart';
 import '../l10n/l10n.dart';
 import 'account_recovery.dart';
 import 'k1_backup.dart';
+import 'screen_guard.dart';
 
 export 'account_recovery.dart';
 export 'membership_invite_link.dart';
 export 'membership_models.dart';
+export 'screen_guard.dart';
 
 part 'app_state_membership.dart';
 part 'app_state_reports.dart';
@@ -261,7 +265,8 @@ int passFetchedFloor({
 }) =>
     fetchedGeneration == sessionGeneration ? fetchedThrough : 0;
 
-class AppState extends ChangeNotifier implements ConversationAuthority {
+class AppState extends ChangeNotifier
+    implements ConversationAuthority, VerifiedRoleSource {
   AppState({
     required this.apiClientFactory,
     required this.cryptoService,
@@ -276,6 +281,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     this.passkeyClient = const UnsupportedPasskeyClient(),
     PasskeyPlatform? passkeyPlatform,
     List<String>? passkeyAppleDomains,
+    ScreenGuard? screenGuard,
   })  : reportSeedStore = reportSeedStore ?? MemoryReportSeedStore(),
         passkeyPlatform =
             passkeyPlatform ?? passkeyPlatformOf(defaultTargetPlatform),
@@ -283,7 +289,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
             parsePasskeyDomains(passkeyAppleDomainsDefine),
         pushService = pushService ?? DisabledMobilePushService(),
         receiptPreferences = receiptPreferences ??
-            ReceiptPreferences(MemoryReceiptPreferenceStore()) {
+            ReceiptPreferences(MemoryReceiptPreferenceStore()),
+        screenGuard = screenGuard ?? const PlatformScreenGuard() {
     composerDrafts.onChanged = _draftChanged;
     if (cryptoService case final ConversationAuthorityConsumer consumer) {
       consumer.conversationAuthority = this;
@@ -309,6 +316,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// unsupported one.
   final PasskeyClient passkeyClient;
   final PasskeyPlatform passkeyPlatform;
+
+  /// Screen guard service (e.g. Android FLAG_SECURE).
+  final ScreenGuard screenGuard;
 
   /// Hostnames compiled into the build's associated domains (iOS, macOS).
   final List<String> passkeyAppleDomains;
@@ -432,6 +442,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Map<String, HistoryConversation> _copiedHistory = {};
   bool mentionsInMutedChats = true;
 
+  /// Whether Android FLAG_SECURE protects chats against AI-assistant screen
+  /// reading and screenshots. Stored under `screen_guard_chats`. Defaults to true.
+  bool screenGuardChats = true;
+
+  int _activeChatViews = 0;
+
+  /// Whether the screen guard is currently active (setting enabled and at least
+  /// one chat view active).
+  bool get isScreenGuardActive => screenGuardChats && _activeChatViews > 0;
+
+  @visibleForTesting
+  int get activeChatViewsForTesting => _activeChatViews;
+
   /// Which links this device may fetch to build a preview for a message it
   /// sends (B2). Receivers never fetch. Stored under `b2.link_preview`.
   LinkPreviewMode linkPreviewMode = LinkPreviewMode.allowListed;
@@ -441,11 +464,130 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       LinkPreviewService(thumbnailEncoder: encodePngThumbnail);
   final Set<String> _previewPending = <String>{};
   @override
-  String? roleOf(String conversationId, String accountId) =>
-      membersFor(conversationId)
-          .where((m) => m.accountId == accountId)
-          .firstOrNull
-          ?.role;
+  String? roleOf(String conversationId, String accountId) {
+    final memberRole = membersFor(conversationId)
+        .where((m) => m.accountId == accountId)
+        .firstOrNull
+        ?.role;
+    if (memberRole != null) return memberRole;
+    final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conv != null) {
+      if (conv.createdBy != null && conv.createdBy == accountId) return 'owner';
+      if (conv.communityId != null) {
+        final comm =
+            communities.where((c) => c.id == conv.communityId).firstOrNull;
+        if (comm?.createdBy != null && comm!.createdBy == accountId) {
+          return 'owner';
+        }
+      }
+      if (accountId == session?.accountId) {
+        if (conv.currentRole != null) return conv.currentRole;
+        if (conv.communityId != null) {
+          final commRole = communityRole(conv.communityId!);
+          if (commRole != null) return commRole;
+        }
+      }
+    }
+    return null;
+  }
+
+  @visibleForTesting
+  GovernanceState? Function(String conversationId)?
+      governanceOverrideForTesting;
+
+  @override
+  GovernanceState? governanceOf(String conversationId) {
+    if (governanceOverrideForTesting != null) {
+      final override = governanceOverrideForTesting!(conversationId);
+      if (override != null) return override;
+    }
+    try {
+      return cryptoService.governanceOf(conversationId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Channel? _findChannel(String? channelId) {
+    if (channelId == null) return null;
+    for (final list in channelsByCommunity.values) {
+      for (final ch in list) {
+        if (ch.id == channelId) return ch;
+      }
+    }
+    return null;
+  }
+
+  @override
+  bool serverRestrictsPosting(String conversationId, String? channelId) {
+    final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conv != null && conv.postingRestricted) return true;
+    final chId = channelId ?? conv?.channelId;
+    if (chId != null) {
+      final ch = _findChannel(chId);
+      if (ch != null && ch.kind == 'announcement') return true;
+    }
+    return false;
+  }
+
+  /// C2: reports whether the signed-in user may post in [conversationId]
+  /// (and optional [channelId]). When posting is restricted (announcement
+  /// channel or admin-only posting), only owners and admins may post.
+  bool mayPost(String conversationId, {String? channelId}) {
+    final localAccount = session?.accountId;
+    if (localAccount == null) return true;
+    final record = governanceOf(conversationId);
+    final serverRestricted = serverRestrictsPosting(conversationId, channelId);
+    final restricted = (record?.isRestricted(channelId: channelId) ?? false) ||
+        serverRestricted;
+    if (!restricted) return true;
+
+    // Restricted: only owner and admin may post.
+    if (record != null) {
+      return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
+    }
+    final role = roleOf(conversationId, localAccount);
+    return role == 'owner' || role == 'admin';
+  }
+
+  /// The local account's role in [communityId].
+  String? communityRole(String communityId) {
+    final community = communities.where((c) => c.id == communityId).firstOrNull;
+    if (community != null &&
+        community.createdBy != null &&
+        community.createdBy == session?.accountId) {
+      return 'owner';
+    }
+    if (community?.sharedConversationId != null) {
+      final shared = conversations
+          .where((c) => c.id == community!.sharedConversationId)
+          .firstOrNull;
+      if (shared?.currentRole != null) return shared!.currentRole;
+    }
+    for (final c in conversations) {
+      if (c.communityId == communityId && c.currentRole != null) {
+        return c.currentRole;
+      }
+    }
+    return null;
+  }
+
+  /// Reports whether the signed-in user may create channels in [communityId].
+  /// Only owners and admins may create channels (owner decision).
+  bool canCreateChannel(String communityId) {
+    final localAccount = session?.accountId;
+    if (localAccount == null) return false;
+    final community = communities.where((c) => c.id == communityId).firstOrNull;
+    if (community?.sharedConversationId != null) {
+      final record = governanceOf(community!.sharedConversationId!);
+      if (record != null) {
+        return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
+      }
+    }
+    final role = communityRole(communityId);
+    return role == 'owner' || role == 'admin';
+  }
+
   @override
   Set<String> memberAccounts(String conversationId) =>
       membersFor(conversationId).map((m) => m.accountId).toSet();
@@ -477,6 +619,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     mentionsInMutedChats = value;
     await localStore.saveSetting('w8.mentions_muted', '$value');
     notifyListeners();
+  }
+
+  Future<void> setScreenGuardChats(bool value) async {
+    screenGuardChats = value;
+    await localStore.saveSetting('screen_guard_chats', '$value');
+    _updateScreenGuard();
+    notifyListeners();
+  }
+
+  void enterChatView() {
+    _activeChatViews++;
+    _updateScreenGuard();
+  }
+
+  void leaveChatView() {
+    if (_activeChatViews > 0) {
+      _activeChatViews--;
+      _updateScreenGuard();
+    }
+  }
+
+  void _updateScreenGuard() {
+    unawaited(screenGuard.setSecure(isScreenGuardActive));
   }
 
   Future<void> setLinkPreviewMode(LinkPreviewMode mode) async {
@@ -1725,6 +1890,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
           await localStore.loadSetting('b2.link_preview'));
+      screenGuardChats =
+          await localStore.loadSetting('screen_guard_chats') != 'false';
+      _updateScreenGuard();
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -2159,11 +2327,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final List<LocalConversationPref> prefs;
     final String? mentionsMuted;
     final String? previewMode;
+    final String? screenGuardPref;
     try {
       list = await client.conversations(current.token);
       prefs = await localStore.loadConversationPrefs();
       mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
       previewMode = await localStore.loadSetting('b2.link_preview');
+      screenGuardPref = await localStore.loadSetting('screen_guard_chats');
     } catch (_) {
       if (!_refreshOwned(current, generation)) return;
       rethrow;
@@ -2174,6 +2344,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
     linkPreviewMode = linkPreviewModeFromName(previewMode);
+    screenGuardChats = screenGuardPref != 'false';
+    _updateScreenGuard();
     await _loadRequestState(grandfather: false);
     if (!_refreshOwned(current, generation)) return;
     // The server's list is the truth: a conversation no longer in it (an
@@ -2494,6 +2666,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       created = await client.createCommunity(current.token, name);
+      if (created!.createdBy == null) {
+        created = Community(
+          id: created!.id,
+          name: created!.name,
+          createdBy: current.accountId,
+          createdAt: created!.createdAt,
+          sharedConversationId: created!.sharedConversationId,
+        );
+      }
       communities = <Community>[created!, ...communities];
       // A community with the C0 layout starts with its shared group, which
       // this device creates now; channels in it need no group of their own.
@@ -2513,6 +2694,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final client = api;
       if (current == null || client == null) {
         return;
+      }
+      if (!canCreateChannel(communityId)) {
+        throw ApiException(403,
+            '{"error":"forbidden","message":"Only admins can create channels"}');
       }
       final sharedLayout = communities
               .where((community) => community.id == communityId)
@@ -3308,6 +3493,30 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       conversations =
           conversations.map((c) => c.id == updated.id ? updated : c).toList();
+      notifyListeners();
+    });
+  }
+
+  Future<void> setPostingPolicy(String conversationId, String policy) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      final updated = await client.setPostingPolicy(
+        current.token,
+        conversationId,
+        policy,
+      );
+      conversations = [
+        for (final c in conversations)
+          if (c.id == updated.id)
+            c.copyWith(postingRestricted: updated.postingRestricted)
+          else
+            c,
+      ];
+      notifyListeners();
     });
   }
 
@@ -3798,6 +4007,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     if (service == null || _mlsCrypto == null) return false;
     if (current == null || client == null) return false;
+    if (!mayPost(conversationId, channelId: channelId)) {
+      _opErrors[Ops.attachment] = 'Only admins can post';
+      notifyListeners();
+      return false;
+    }
     final ownerGeneration = _sessionGeneration;
     _busyOps.add(Ops.attachment);
     _opErrors.remove(Ops.attachment);
@@ -3984,6 +4198,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final route = _channelRouteFor(
         conversationId, channelId ?? _selectedChannels[conversationId]);
     if (route == null && _isSharedGroup(conversationId)) return false;
+    final routeChannelId = channelId ?? _selectedChannels[conversationId];
+    if (restrictedPostTypes.contains(type) &&
+        !mayPost(conversationId, channelId: routeChannelId)) {
+      _opErrors[Ops.send] = 'Only admins can post';
+      notifyListeners();
+      return false;
+    }
     // Every send takes its place in its conversation's line, and the next
     // one waits until this one is queued, refused or given up: a send held
     // inside the session queue cannot be overtaken by a later one.
@@ -5120,9 +5341,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         event.instance == _pushInstance) {
       // A UnifiedPush failure means no distributor answered; anything else
       // is a provider refusal. Neither carries platform error text.
-      _setPushState(event.provider == 'webpush'
-          ? PushState.noDistributor
-          : PushState.registrationFailed);
+      _setPushState(
+          event.provider == 'webpush' || event.provider == 'unifiedpush'
+              ? PushState.noDistributor
+              : PushState.registrationFailed);
     } else if (event is PushUnregisteredEvent &&
         event.instance == _pushInstance) {
       final id = _pushSubscriptionId;
@@ -5156,16 +5378,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       // Every rotation carries the mode again: the server resets a
       // subscription registered without it back to the generic mode.
       final mode = phoneNoticesAllowed ? 'local_decrypt_v1' : null;
-      final subscriptionId = event.provider == 'webpush'
-          ? await client.registerWebPush(current.token,
-              endpoint: event.endpoint,
-              publicKey: event.publicKey,
-              authSecret: event.authSecret,
-              notificationMode: mode)
-          : await client.registerNativePush(current.token,
-              provider: event.provider,
-              deviceToken: event.endpoint,
-              notificationMode: mode);
+      final subscriptionId =
+          (event.provider == 'webpush' || event.provider == 'unifiedpush')
+              ? await client.registerWebPush(current.token,
+                  provider: event.provider,
+                  endpoint: event.endpoint,
+                  publicKey: event.publicKey,
+                  authSecret: event.authSecret,
+                  notificationMode: mode)
+              : await client.registerNativePush(current.token,
+                  provider: event.provider,
+                  deviceToken: event.endpoint,
+                  notificationMode: mode);
       if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
         // A server registration can commit after teardown started. Use a
         // fresh transport when the old runtime has already closed its own.
@@ -5320,6 +5544,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
           await localStore.loadSetting('b2.link_preview'));
+      screenGuardChats =
+          await localStore.loadSetting('screen_guard_chats') != 'false';
+      _updateScreenGuard();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
         conversations = cached.conversations;
@@ -5736,15 +5963,46 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           return;
         }
         await wake?.check();
-        final events = await client.syncEvents(
+        final pageStartCursor = pageCursor;
+        final syncPage = await client.syncEventsPage(
           current.token,
           after: pageCursor,
           limit: pageSize,
         );
+        final events = syncPage.events;
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) {
           return;
         }
-        if (events.isEmpty) break;
+        // Moves the persisted cursor to the scan position the server
+        // reported (TASK-209, D92): the hidden run behind the last event is
+        // crossed once, not on every poll. Only once the page is fully
+        // applied: the stored cursor must equal the page's last event (or
+        // the cursor the page started at, when it is empty), so nothing a
+        // failed or held-back event left behind is passed. Never moves back.
+        Future<void> advanceToScan(int appliedThrough) async {
+          final scanned = syncPage.scannedThrough;
+          if (scanned == null) return;
+          final stored = await localStore.loadSyncCursor();
+          if (stored != appliedThrough || scanned <= stored) return;
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          wake?.checkCanCommit();
+          await localStore.saveSyncCursor(scanned);
+          if (_syncFetchedGeneration == ownerGeneration) {
+            _syncFetchedThrough = max(_syncFetchedThrough, scanned);
+          }
+        }
+
+        if (events.isEmpty) {
+          await advanceToScan(pageStartCursor);
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          if (!syncPage.truncated) break;
+          pageCursor = await localStore.loadSyncCursor();
+          if (pageCursor <= pageStartCursor) {
+            developer.log('sync_scan_did_not_advance', name: 'veritra.sync');
+            break;
+          }
+          continue;
+        }
         var returnedCursor = pageCursor;
         for (final event in events) {
           if (event.id <= returnedCursor) {
@@ -5882,7 +6140,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           rethrow;
         }
         await _publishReceived(received, current, ownerGeneration);
+        await advanceToScan(events.last.id);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         pageCursor = await localStore.loadSyncCursor();
+        if (syncPage.truncated) {
+          // The server's scan budget ended this page early, so a short page
+          // is not the end. The cursor must have moved forward, or the same
+          // page would be asked for again.
+          if (pageCursor <= pageStartCursor) {
+            developer.log('sync_scan_did_not_advance', name: 'veritra.sync');
+            break;
+          }
+          continue;
+        }
         if (events.length < pageSize) break;
       }
       // Every event up to the end of the stream is applied.
@@ -6658,6 +6928,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } else if (type.startsWith('membership.')) {
           membersByConversation = {};
         }
+        if (type == 'conversation.posting_policy.updated' &&
+            event.payload is Map) {
+          try {
+            final updated = Conversation.fromJson(
+                Map<String, Object?>.from(event.payload as Map));
+            conversations = <Conversation>[
+              for (final c in conversations)
+                if (c.id == updated.id)
+                  c.copyWith(postingRestricted: updated.postingRestricted)
+                else
+                  c,
+            ];
+          } catch (_) {}
+        }
         conversationList = true;
       } else if (type.startsWith('reaction.') ||
           type == 'read_receipt.updated') {
@@ -7175,6 +7459,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       capture.noticeCaptureEnabled = false;
     }
     _cancelDraftTimers();
+    _activeChatViews = 0;
+    _updateScreenGuard();
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
@@ -9082,6 +9368,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   @override
   void dispose() {
     _disposed = true;
+    unawaited(screenGuard.setSecure(false));
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
     _stopK1Backups();

@@ -133,29 +133,42 @@ jobs:
       - run: dart format --set-exit-if-changed .
         working-directory: mobile
       - name: Build Android release APK without signing
-        run: flutter build apk --release
+        run: flutter build apk --release --flavor play
         working-directory: mobile
+      - name: Build F-Droid release APK without signing
+        run: flutter build apk --release --flavor fdroid
+        working-directory: mobile
+      - name: Verify F-Droid excludes Firebase and Google Play services
+        run: |
+          ./gradlew :app:dependencies --configuration fdroidReleaseRuntimeClasspath > fdroid-dependencies.txt
+          if grep -Eq 'com.google.firebase:|com.google.android.gms:' fdroid-dependencies.txt; then
+            cat fdroid-dependencies.txt
+            exit 1
+          fi
+        working-directory: mobile/android
       - name: Verify Android ABI packaging
         run: |
-          unzip -l mobile/build/app/outputs/flutter-apk/app-release.apk | grep -q 'lib/arm64-v8a/libprivate_messenger_crypto.so'
-          unzip -l mobile/build/app/outputs/flutter-apk/app-release.apk | grep -q 'lib/armeabi-v7a/libprivate_messenger_crypto.so'
-          unzip -l mobile/build/app/outputs/flutter-apk/app-release.apk | grep -q 'lib/x86_64/libprivate_messenger_crypto.so'
+          for flavor in play fdroid; do
+            unzip -l mobile/build/app/outputs/flutter-apk/app-$flavor-release.apk | grep -q 'lib/arm64-v8a/libprivate_messenger_crypto.so'
+            unzip -l mobile/build/app/outputs/flutter-apk/app-$flavor-release.apk | grep -q 'lib/armeabi-v7a/libprivate_messenger_crypto.so'
+            unzip -l mobile/build/app/outputs/flutter-apk/app-$flavor-release.apk | grep -q 'lib/x86_64/libprivate_messenger_crypto.so'
+          done
           test -s mobile/android/app/src/main/assets/veritra-crypto/cargo-metadata.json
       # An installable demo build for emulator and device testing (D10, D11).
       # Debug-signed, so it installs without a release key; never a release.
       - name: Build the Android demo APK
-        run: flutter build apk --debug --target-platform android-arm64,android-x64 -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
+        run: flutter build apk --debug --flavor play --target-platform android-arm64,android-x64 -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
         working-directory: mobile
       # Its output is typed emulator-debug evidence. check-release-evidence.py
       # never accepts it as an Android signed-release.
       - name: Record the demo APK as emulator-debug evidence
-        run: python3 scripts/write-release-evidence.py --android-emulator-record mobile/build/app/outputs/flutter-apk/app-debug.apk > mobile/build/app/outputs/flutter-apk/app-debug.evidence.json
+        run: python3 scripts/write-release-evidence.py --android-emulator-record mobile/build/app/outputs/flutter-apk/app-play-debug.apk > mobile/build/app/outputs/flutter-apk/app-play-debug.evidence.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: veritra-demo-android-${{ github.run_id }}
           path: |
-            mobile/build/app/outputs/flutter-apk/app-debug.apk
-            mobile/build/app/outputs/flutter-apk/app-debug.evidence.json
+            mobile/build/app/outputs/flutter-apk/app-play-debug.apk
+            mobile/build/app/outputs/flutter-apk/app-play-debug.evidence.json
           if-no-files-found: error
           retention-days: 14
 

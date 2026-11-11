@@ -53,7 +53,7 @@ class FakePasskeys implements PasskeyClient {
   }
 }
 
-class PkApi extends ApiClient {
+class PkApi extends ApiClient with LegacySyncPageFake {
   PkApi() : super(baseUrl: pkOrigin);
 
   static TestOnlyCryptoService crypto() => TestOnlyCryptoService();

@@ -12,4 +12,10 @@ func TestRolePermissions(t *testing.T) {
 	if !CanManageMembers(RoleModerator) {
 		t.Fatal("moderator should manage members in the simple v1 model")
 	}
+	if !CanCreateChannels(RoleOwner) || !CanCreateChannels(RoleAdmin) {
+		t.Fatal("owner and admin should be allowed to create channels")
+	}
+	if CanCreateChannels(RoleModerator) || CanCreateChannels(RoleMember) {
+		t.Fatal("moderator and member must not create channels (owner decision)")
+	}
 }

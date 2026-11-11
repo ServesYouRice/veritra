@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/admission"
+	"private-messenger/server/internal/attest"
 	"private-messenger/server/internal/backupstatus"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
@@ -173,6 +174,18 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 		}
 		providers["apns"] = provider
 	}
+	upProvider, err := push.NewUnifiedPushProvider(push.UnifiedPushConfig{
+		VAPID: push.WebPushConfig{
+			Subscriber: cfg.VAPIDSubscriber,
+			PublicKey:  cfg.VAPIDPublicKey,
+			PrivateKey: cfg.VAPIDPrivateKey,
+		},
+	})
+	if err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("configure unified push: %w", err)
+	}
+	providers["unifiedpush"] = upProvider
 	pushProvider := push.NewRouter(providers)
 	hub := realtime.NewHubWithLimits(realtime.HubLimits{PerIPv6Prefix: cfg.Limits.WithDefaults().SocketsPerIPv6Prefix})
 	metrics := newHTTPMetrics()
@@ -206,10 +219,11 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger) (*App, err
 
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
-	pushProviders := make([]string, 0, 3)
+	pushProviders := make([]string, 0, 4)
 	if a.Config.VAPIDPublicKey != "" {
 		pushProviders = append(pushProviders, "webpush")
 	}
+	pushProviders = append(pushProviders, "unifiedpush")
 	if a.Config.FCMProjectID != "" {
 		pushProviders = append(pushProviders, "fcm")
 	}
@@ -219,6 +233,19 @@ func (a *App) Handler() http.Handler {
 	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
 		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load, MaxAttachmentBytes: a.Store.Limits().AttachmentBytes,
 		ScopedSync: a.Config.ScopedSync, PublicOrigin: a.Config.PublicOrigin, RecoveryActiveWindow: a.Config.RecoveryActiveWindow, RecoveryWait: a.Config.RecoveryWait}
+	if a.Config.Attestation != "" {
+		provider, err := attest.New(a.Config.Attestation)
+		if err == nil {
+			api.TLSKeyHash, err = attest.TLSKeyHashFromCertFile(a.Config.AttestationTLSCert)
+		}
+		if err != nil {
+			// Off is the safe state: no route, no report.
+			a.Log.Error("attestation_setup_failed", "err", err)
+		} else {
+			api.Attest = provider
+			api.ClaimedBuild = httpapi.ClaimedBuild{Version: a.Config.BuildVersion, Commit: a.Config.BuildCommit, ImageDigest: a.Config.ImageDigest}
+		}
+	}
 	if passkeys, err := httpapi.NewPasskeyService(a.Config.Passkeys); err != nil {
 		a.Log.Error("passkeys_setup_failed", "err", err)
 	} else {
@@ -968,7 +995,7 @@ func newHTTPMetrics() *httpMetrics {
 	return metrics
 }
 
-var pushMetricProviders = [...]string{"apns", "fcm", "webpush"}
+var pushMetricProviders = [...]string{"apns", "fcm", "webpush", "unifiedpush"}
 
 func (m *httpMetrics) record(pattern string, status int, elapsed time.Duration) {
 	m.total.Add(1)

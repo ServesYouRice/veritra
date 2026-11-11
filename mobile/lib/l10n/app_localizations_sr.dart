@@ -1972,6 +1972,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatComposerHint => 'Порука';
 
   @override
+  String get chatPostingRestricted => 'Само администратори могу да објављују';
+
+  @override
   String chatComposerCounter(int length, int max) {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -3948,6 +3951,44 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get accountsBack => 'Назад на моје налоге';
+
+  @override
+  String get settingsSectionUpdates => 'Ажурирања';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Аутоматски проверавај ажурирања';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Проверавај нове верзије при покретању';
+
+  @override
+  String get settingsCheckForUpdates => 'Провери ажурирања';
+
+  @override
+  String get settingsCheckingForUpdates => 'Провера ажурирања…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra је ажурирана';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Верзија $version је доступна';
+  }
+
+  @override
+  String get settingsUpdateError => 'Провера ажурирања није успела';
+
+  @override
+  String get settingsUpdateDisabled =>
+      'Аутоматска провера ажурирања је искључена';
+
+  @override
+  String get settingsScreenGuard => 'Заштита екрана';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -5916,6 +5957,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatComposerHint => 'Poruka';
+
+  @override
+  String get chatPostingRestricted => 'Samo administratori mogu da objavljuju';
 
   @override
   String chatComposerCounter(int length, int max) {
@@ -7899,4 +7943,42 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get accountsBack => 'Nazad na moje naloge';
+
+  @override
+  String get settingsSectionUpdates => 'Ažuriranja';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Automatski proveravaj ažuriranja';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Proveravaj nove verzije pri pokretanju';
+
+  @override
+  String get settingsCheckForUpdates => 'Proveri ažuriranja';
+
+  @override
+  String get settingsCheckingForUpdates => 'Provera ažuriranja…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra je ažurirana';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Verzija $version je dostupna';
+  }
+
+  @override
+  String get settingsUpdateError => 'Provera ažuriranja nije uspela';
+
+  @override
+  String get settingsUpdateDisabled =>
+      'Automatska provera ažuriranja je isključena';
+
+  @override
+  String get settingsScreenGuard => 'Zaštita ekrana';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.';
 }

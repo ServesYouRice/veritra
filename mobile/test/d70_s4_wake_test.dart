@@ -88,7 +88,7 @@ class _FakeBridge extends PlatformWakeWorkerBridge {
       WakeNoticeResult.shown;
 }
 
-class _FakeApi extends ApiClient {
+class _FakeApi extends ApiClient with LegacySyncPageFake {
   _FakeApi() : super(baseUrl: _origin);
   final List<SyncEvent> events = [];
 

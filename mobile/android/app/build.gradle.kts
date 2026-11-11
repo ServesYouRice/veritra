@@ -49,6 +49,16 @@ android {
         buildConfigField("boolean", "VERITRA_PHONE_NOTICES", phoneNoticesBuild.toString())
     }
 
+    flavorDimensions += "distribution"
+    productFlavors {
+        create("play") {
+            dimension = "distribution"
+        }
+        create("fdroid") {
+            dimension = "distribution"
+        }
+    }
+
     buildTypes {
         release {
             // Release artifacts are intentionally unsigned until an operator
@@ -77,7 +87,7 @@ flutter {
 
 dependencies {
     implementation("org.unifiedpush.android:connector:3.3.3")
-    implementation("com.google.firebase:firebase-messaging:25.0.1")
+    "playImplementation"("com.google.firebase:firebase-messaging:25.0.1")
 }
 
 configurations.configureEach {

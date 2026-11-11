@@ -70,7 +70,7 @@ MlsRevocation _revocation(String conversationId) => MlsRevocation(
     commitMessageId: null,
     requestedAt: DateTime.utc(2026, 10, 31));
 
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: _origin);
   final List<String> claims = [];
 

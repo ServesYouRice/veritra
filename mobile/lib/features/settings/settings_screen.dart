@@ -11,6 +11,7 @@ import 'auto_backup_screen.dart';
 import 'backup_screen.dart';
 import '../../core/models.dart';
 import '../../desktop/message_notifications.dart';
+import '../../desktop/update_service.dart';
 import '../../ui/about.dart';
 import '../../ui/appearance.dart';
 import 'link_preview_tile.dart';
@@ -50,6 +51,7 @@ class SettingsScreen extends StatelessWidget {
         final isAdmin = session?.role == 'owner' || session?.role == 'admin';
         final appearance = AppearanceScope.maybeOf(context);
         final notifications = NotificationSettingsScope.maybeOf(context);
+        final updates = UpdateSettingsScope.maybeOf(context);
         final l10n = context.l10n;
         return Scaffold(
           appBar: LargeTitleBar(
@@ -308,7 +310,8 @@ class SettingsScreen extends StatelessWidget {
                       onTap: state.requestNotificationPermission,
                     ),
                   if (defaultTargetPlatform == TargetPlatform.android &&
-                      state.pushProviders.contains('webpush'))
+                      (state.pushProviders.contains('webpush') ||
+                          state.pushProviders.contains('unifiedpush')))
                     ListTile(
                       enabled: state.pushConfigured && !state.busy,
                       leading: const Icon(Icons.hub_outlined),
@@ -417,11 +420,54 @@ class SettingsScreen extends StatelessWidget {
                   LinkPreviewTile(
                       mode: state.linkPreviewMode,
                       onChanged: state.setLinkPreviewMode),
+                  if (defaultTargetPlatform == TargetPlatform.android)
+                    SwitchListTile(
+                      key: const ValueKey<String>('settings-screen-guard'),
+                      secondary: const Icon(Icons.shield_outlined),
+                      title: Text(l10n.settingsScreenGuard),
+                      subtitle: Text(l10n.settingsScreenGuardDetail),
+                      value: state.screenGuardChats,
+                      onChanged: state.setScreenGuardChats,
+                    ),
                 ],
               ),
               if (appearance != null) ...<Widget>[
                 SectionHeader(l10n.settingsSectionAppearance),
                 _AppearanceRow(controller: appearance),
+              ],
+              if (updates != null) ...<Widget>[
+                SectionHeader(l10n.settingsSectionUpdates),
+                AnimatedBuilder(
+                  animation:
+                      Listenable.merge([updates.settings, updates.service]),
+                  builder: (context, _) => TileGroup(
+                    children: <Widget>[
+                      SwitchListTile(
+                        key: const ValueKey<String>(
+                            'settings-auto-update-check'),
+                        secondary: const Icon(Icons.system_update_outlined),
+                        title: Text(l10n.settingsAutoUpdateCheck),
+                        subtitle: Text(l10n.settingsAutoUpdateCheckDetail),
+                        value: updates.settings.autoCheckEnabled,
+                        onChanged: (value) =>
+                            updates.settings.setAutoCheckEnabled(value),
+                      ),
+                      ListTile(
+                        key: const ValueKey<String>(
+                            'settings-check-for-updates'),
+                        leading: const Icon(Icons.refresh_outlined),
+                        title: Text(l10n.settingsCheckForUpdates),
+                        subtitle: Text(
+                          _updateStatusText(context, updates.service.status),
+                        ),
+                        onTap: updates.service.isChecking
+                            ? null
+                            : () =>
+                                updates.service.checkForUpdates(force: true),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               SectionHeader(l10n.settingsSectionAbout),
               TileGroup(
@@ -476,6 +522,24 @@ class SettingsScreen extends StatelessWidget {
         );
       },
     );
+  }
+
+  static String _updateStatusText(BuildContext context, UpdateStatus status) {
+    final l10n = context.l10n;
+    switch (status.kind) {
+      case UpdateStatusKind.idle:
+        return l10n.settingsCheckForUpdates;
+      case UpdateStatusKind.checking:
+        return l10n.settingsCheckingForUpdates;
+      case UpdateStatusKind.updateAvailable:
+        return l10n.settingsUpdateAvailable(status.update!.version);
+      case UpdateStatusKind.upToDate:
+        return l10n.settingsUpdateUpToDate;
+      case UpdateStatusKind.disabled:
+        return l10n.settingsUpdateDisabled;
+      case UpdateStatusKind.error:
+        return l10n.settingsUpdateError;
+    }
   }
 
   String _recoveryKeySubtitle(BuildContext context) {
@@ -1042,6 +1106,7 @@ String _providerName(String provider) {
     case 'apns':
       return 'Apple Push Notification service';
     case 'webpush':
+    case 'unifiedpush':
       return 'UnifiedPush';
   }
   return provider;

@@ -1156,3 +1156,92 @@ fn a_record_that_holds_a_seed_restores_only_under_its_own_key() {
         .is_err());
     assert!(restore(&table, "recovered").is_ok());
 }
+
+/// Steady use must not grow a group record without bound (check 37): many
+/// self-updates and messages leave the record about as large as it started.
+#[test]
+fn a_long_lived_group_record_stays_bounded() {
+    let ((mut alice, mut alice_table, mut alice_group), (mut bob, mut bob_table, mut bob_group)) =
+        pair(b"conv_long");
+    let size = |device: &MlsDevice| -> (usize, usize) {
+        let records = device
+            .provider
+            .storage()
+            .owner_records(&RecordKey::group(b"conv_long"))
+            .unwrap()
+            .unwrap();
+        (
+            records.len(),
+            records.iter().map(|(k, v)| k.len() + v.len()).sum(),
+        )
+    };
+    let mut early = (0, 0);
+    for round in 0..120 {
+        let commit = alice.self_update(&mut alice_group).unwrap();
+        alice.merge_pending_commit(&mut alice_group).unwrap();
+        bob.process_commit(&mut bob_group, &commit).unwrap();
+        for _ in 0..3 {
+            let message = alice.encrypt(&mut alice_group, b"hello").unwrap();
+            bob.decrypt(&mut bob_group, &message, b"acct_alice", b"dev_alice")
+                .unwrap();
+        }
+        alice_table.commit(&mut alice, &KEY);
+        bob_table.commit(&mut bob, &KEY);
+        if round == 20 {
+            early = size(&alice);
+        }
+    }
+    let late = size(&alice);
+    eprintln!("early {early:?} late {late:?} bob {:?}", size(&bob));
+    assert!(late.0 <= early.0 + 2, "values grew: {early:?} -> {late:?}");
+    assert!(
+        late.1 <= early.1 + early.1 / 4,
+        "bytes grew: {early:?} -> {late:?}"
+    );
+}
+
+/// Check 37: a group over its cap blocks every seal until the user leaves it,
+/// and leaving frees the device. The other groups keep their changes, nothing
+/// is re-linked, and the next seal succeeds at the same generation.
+#[test]
+fn leaving_an_oversized_group_unblocks_every_other_seal() {
+    let mut alice = device("alice");
+    let mut table = SealedTable::start(&mut alice, &KEY);
+    let mut huge = alice.create_group(b"conv_huge").unwrap();
+    let mut small = alice.create_group(b"conv_small").unwrap();
+    table.commit(&mut alice, &KEY);
+    alice.encrypt(&mut huge, b"huge").unwrap();
+    alice.encrypt(&mut small, b"small").unwrap();
+    for i in 0..9u8 {
+        alice
+            .provider
+            .storage()
+            .pad_group_for_test(b"conv_huge", i, MAX_GROUP_VALUE_BYTES);
+    }
+    let generation = table.generation + 1;
+    for _ in 0..3 {
+        assert!(matches!(
+            alice.seal_changes(&KEY, generation),
+            Err(SealError::RecordLimit {
+                kind: KIND_GROUP,
+                ..
+            })
+        ));
+    }
+    assert!(alice.delete_group(b"conv_huge").unwrap());
+    // The small group's change is still pending and now seals; the huge
+    // group's record is deleted, not sealed.
+    assert_eq!(
+        summary(&table.commit(&mut alice, &KEY)),
+        [
+            (KIND_GROUP, b"conv_huge".to_vec(), false),
+            (KIND_GROUP, b"conv_small".to_vec(), true)
+        ]
+    );
+    let restored = restore(&table, "alice").unwrap();
+    assert!(restored.load_group(b"conv_small").is_ok());
+    assert_eq!(
+        restored.load_group(b"conv_huge").map(|_| ()),
+        Err(MlsError::InvalidState)
+    );
+}
