@@ -929,6 +929,19 @@ the C0 layout: no channel keys means group-level (allowed in the shared
 group and in private groups, exempt from C2 and slow mode, still subject
 to timeouts), and a private group's posts may name their own channel.
 Admission already meters the request body, so body bytes count (D38).
+
+**Deviation (2026-11-11, closes a gap the first build left):** the server
+cannot read a message's type, so "group-level skips C2" would let any
+member skip slow mode and admins-only posting by leaving out the channel
+keys. The exemption is therefore narrowed to bodies the size rule
+identifies as a `history_sync` and not also as a channel body
+(`c7SyncOnlyBodySize`; in a private group, one channel, exactly 1,592
+bytes). Every other envelope takes the normal posting checks, and a private
+channel's group names its channel in the clear metadata on every post.
+Cost: a `history_sync_request` (channel-sized) from a non-admin in an
+admins-only private group is refused; the jittered `history_sync` senders
+cover it. Receivers turn a group-level message of any other type into an
+`invalid` row, so a post disguised at sync size never shows.
 All in `server/internal/storage/c7_history_store.go`; every route is 404
 while the flag is off. Bodies stored before 0084 are never served by the
 history fetch. Server tests are still to be written (no suites were run

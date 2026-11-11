@@ -643,6 +643,20 @@ class AppState extends ChangeNotifier
   String? conversationChannel(String conversationId) =>
       conversations.where((c) => c.id == conversationId).firstOrNull?.channelId;
   @override
+  String? privateGroupChannel(String conversationId) {
+    for (final channels in channelsByCommunity.values) {
+      for (final channel in channels) {
+        if (channel.kind == 'private' &&
+            channel.isRouted &&
+            channel.conversationId == conversationId) {
+          return channel.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  @override
   String? conversationCommunity(String conversationId) => conversations
       .where((c) => c.id == conversationId)
       .firstOrNull

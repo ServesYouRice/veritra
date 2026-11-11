@@ -1666,7 +1666,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               .getSingleOrNull();
           if (command != null &&
               command.conversationId == conversationId &&
-              command.channelId == channel) {
+              // A pin with no channel (a private channel's own group under
+              // C7 names its channel in the clear metadata only) matches
+              // whatever the echo's metadata names; a shared group's pin
+              // always has its channel.
+              (command.channelId == null || command.channelId == channel)) {
             final serverTime = DateTime.parse(echo['created_at'] as String)
                 .millisecondsSinceEpoch;
             if (allowOwnPinEffect)

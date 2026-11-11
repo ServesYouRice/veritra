@@ -515,6 +515,12 @@ abstract interface class ConversationAuthorityConsumer {
 /// An authority that is not one leaves C7 off.
 abstract interface class ConversationCommunitySource {
   String? conversationCommunity(String conversationId);
+
+  /// The private channel whose own group (C0 layout) is [conversationId], or
+  /// null (a shared group, a legacy channel, or anything else). With C7 on,
+  /// that group's posts name the channel in their envelope metadata, so the
+  /// server applies slow mode and admins-only posting to them.
+  String? privateGroupChannel(String conversationId);
 }
 
 /// C7 (docs/designs/C7-channel-history.md): off by default. AppState turns

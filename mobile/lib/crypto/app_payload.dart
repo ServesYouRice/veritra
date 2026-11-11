@@ -41,7 +41,33 @@ enum AppPayloadType {
   infoUpdate,
   profileKey,
   groupProfileKey,
+
+  /// C7: a channel's history record (create, switch, move) in compact form,
+  /// proposed in a message of the channel itself.
+  historyChange,
+
+  /// C7: the group-level message after a membership commit, one sealed slot
+  /// per channel (its body0 carries `for_epoch` and the slot keys).
+  historySync,
+
+  /// C7: a newcomer asking for the `history_sync` it did not receive.
+  historySyncRequest,
 }
+
+/// C7 hidden types (docs/designs/C7-channel-history.md). Never franked
+/// (design decision 3, "Franking"): their envelopes carry a random
+/// `frank_commit`.
+const Set<AppPayloadType> c7PayloadTypes = <AppPayloadType>{
+  AppPayloadType.historyChange,
+  AppPayloadType.historySync,
+  AppPayloadType.historySyncRequest,
+};
+
+/// The only types a group-level C7 message (no `channel_id`) may carry.
+const Set<AppPayloadType> c7GroupLevelTypes = <AppPayloadType>{
+  AppPayloadType.historySync,
+  AppPayloadType.historySyncRequest,
+};
 
 /// C3 types (docs/designs/C3-private-channels-and-info.md). They change state
 /// and never show a bubble.
@@ -63,6 +89,9 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.infoUpdate => 'info_update',
         AppPayloadType.profileKey => 'profile_key',
         AppPayloadType.groupProfileKey => 'group_profile_key',
+        AppPayloadType.historyChange => 'history_change',
+        AppPayloadType.historySync => 'history_sync',
+        AppPayloadType.historySyncRequest => 'history_sync_request',
         _ => name,
       };
 
@@ -74,7 +103,8 @@ extension AppPayloadTypeWire on AppPayloadType {
       this == AppPayloadType.pollClose ||
       infoPayloadTypes.contains(this) ||
       this == AppPayloadType.profileKey ||
-      this == AppPayloadType.groupProfileKey;
+      this == AppPayloadType.groupProfileKey ||
+      c7PayloadTypes.contains(this);
 }
 
 class DecryptedAppPayload {
@@ -224,6 +254,7 @@ class AppPayloadCodec {
             infoPayloadTypes.contains(type) ||
             type == AppPayloadType.profileKey ||
             type == AppPayloadType.groupProfileKey ||
+            c7PayloadTypes.contains(type) ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -520,6 +551,10 @@ class AppPayloadCodec {
       AppPayloadType.profileKey ||
       AppPayloadType.groupProfileKey =>
         version >= 2,
+      AppPayloadType.historyChange => version >= 2 && isValidC7ChangeBody(body),
+      AppPayloadType.historySync => version >= 2 && isValidC7SyncBody(body),
+      AppPayloadType.historySyncRequest =>
+        version >= 2 && isValidC7SyncRequestBody(body),
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,
@@ -551,4 +586,62 @@ extension _FirstOrNull<T> on Iterable<T> {
     final iterator = this.iterator;
     return iterator.moveNext() ? iterator.current : null;
   }
+}
+
+/// `{"r": base64}`: a compact record, 143 bytes, or a move's 143 plus
+/// `lp(close_group_id)` (at most 64 bytes) and the 128-byte wrap.
+bool isValidC7ChangeBody(Map<String, Object?> body) {
+  final r = body['r'];
+  if (body.length != 1 || r is! String) return false;
+  try {
+    final n = base64Decode(r).length;
+    return n == 143 || (n >= 143 + 2 + 1 + 128 && n <= 143 + 2 + 64 + 128);
+  } on FormatException {
+    return false;
+  }
+}
+
+/// `{"for_epoch": u64, "channels": [[channel_id, base64(key_c)], ...]}`:
+/// 1 to 508 channels, ids at most 64 bytes, sorted bytewise and distinct,
+/// each key 32 bytes.
+bool isValidC7SyncBody(Map<String, Object?> body) {
+  final epoch = body['for_epoch'];
+  final channels = body['channels'];
+  if (body.length != 2 || epoch is! int || epoch < 0 || channels is! List) {
+    return false;
+  }
+  if (channels.isEmpty || channels.length > 508) return false;
+  List<int>? previous;
+  for (final entry in channels) {
+    if (entry is! List || entry.length != 2) return false;
+    final id = entry[0], key = entry[1];
+    if (id is! String || key is! String || id.isEmpty) return false;
+    final idBytes = utf8.encode(id);
+    if (idBytes.length > 64) return false;
+    try {
+      if (base64Decode(key).length != 32) return false;
+    } on FormatException {
+      return false;
+    }
+    if (previous != null && _compareBytes(previous, idBytes) >= 0) {
+      return false;
+    }
+    previous = idBytes;
+  }
+  return true;
+}
+
+/// `{"for_epoch": u64}`: the membership commit whose `history_sync` the
+/// sender is missing.
+bool isValidC7SyncRequestBody(Map<String, Object?> body) {
+  final epoch = body['for_epoch'];
+  return body.length == 1 && epoch is int && epoch >= 0;
+}
+
+int _compareBytes(List<int> a, List<int> b) {
+  final n = a.length < b.length ? a.length : b.length;
+  for (var i = 0; i < n; i++) {
+    if (a[i] != b[i]) return a[i] - b[i];
+  }
+  return a.length - b.length;
 }
