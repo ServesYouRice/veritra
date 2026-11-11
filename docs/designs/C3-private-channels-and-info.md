@@ -171,6 +171,10 @@ Steps 1-3 reuse C0's conversation model and W11's table and record codec.
 
 ## Risks and residuals
 
+- Cached records cannot be implicitly moved between key homes by changing
+  server topology. Publication and announcement recovery require the accepted
+  record's key to have arrived in the target home. Explicit channel conversion
+  remains unimplemented. This guard does not authenticate initial topology.
 - Membership of each private channel is visible to the server (tell users).
 - Icon presence and size bucket are visible.
 - A removed member keeps what they already saw.

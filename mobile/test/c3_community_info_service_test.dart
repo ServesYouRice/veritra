@@ -612,6 +612,59 @@ void main() {
         isEmpty);
   }, skip: skip);
 
+  for (final rotate in [false, true]) {
+    test(
+        'a relabelled private channel cannot leak through ${rotate ? 'rotation' : 'editing'}',
+        () async {
+      final admin = device('admin', {_shared, _privateConv}, admin: true);
+      const subject = InfoSubject(
+          infoKindChannel,
+          'chan_00000000000000000000000000000003',
+          'comm_00000000000000000000000000000001');
+      await admin.service
+          .publish(community, (r) => named('Club', r), mint: true);
+      await admin.service.publish(
+          subject,
+          (r) => CommunityInfoRecord(
+              kind: subject.kind,
+              subjectId: subject.id,
+              revision: r,
+              name: 'Private name',
+              topic: 'Private topic',
+              privatePlace: const InfoPrivatePlace(position: 0)),
+          mint: true);
+      final original = server.records[subject.key]!;
+      final puts = server.puts;
+      admin.sent.clear();
+      // The server now reports this private channel as an open channel.
+      (admin.service.topology as _Topology).privateKnown = false;
+      if (rotate) {
+        final home = admin.service.homeOf(community)!;
+        await admin.service.markRotationDue(home, _community);
+        expect(await admin.service.runRotations((_, __) => [subject]), 0);
+        expect(await admin.service.dueRotations(), {'community|$_community'});
+      } else {
+        await expectLater(
+            admin.service.publish(
+                subject,
+                (r) => CommunityInfoRecord(
+                    kind: subject.kind,
+                    subjectId: subject.id,
+                    revision: r,
+                    name: 'Edited name',
+                    topic:
+                        admin.service.shown(subject.kind, subject.id)!.topic),
+                expectedRevision: original.version),
+            throwsA(isA<InfoKeyMissing>()));
+      }
+      expect(server.puts, puts);
+      expect(server.records[subject.key], same(original));
+      expect(await admin.service.healAnnouncement(subject), isFalse);
+      expect(
+          admin.sent.where((e) => e.$2 == AppPayloadType.infoUpdate), isEmpty);
+    }, skip: skip);
+  }
+
   test('a stale If-Match is retried; a 404 never clears what is shown',
       () async {
     final admin = device('admin', {_shared}, admin: true);

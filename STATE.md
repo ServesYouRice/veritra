@@ -7,6 +7,12 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-09.**
 
+2026-11-11 C3 topology review: blocked implicit re-encryption of cached
+private-channel info into the community key home after server relabelling.
+Editing and rotation regressions reproduce the leak without the guard.
+C3 remains incomplete (verified C4 roles, remote-removal rotation and encrypted
+creation still missing). Evidence: [`topology review`](testing/evidence/C3-topology-review-2026-11-11.md).
+
 2026-11-11 C3 final review: fixed snapshot edits overwriting unseen metadata,
 rotation completion without an announcement, and unauthorized announcements
 suppressing retries. Full Windows test/lint pass (2,442 Flutter tests).

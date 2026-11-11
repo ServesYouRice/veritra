@@ -301,6 +301,12 @@ class CommunityInfoService {
     CommunityInfoEvent key = selected;
     final accepted =
         await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
+    // Topology comes from the server. It must not turn a cached private
+    // record into community-readable content by relabelling its channel.
+    // Moving a record between key homes requires an explicit conversion.
+    if (accepted != null && !await _acceptedKeyInHome(accepted, home)) {
+      throw const InfoKeyMissing();
+    }
     for (var attempt = 0;; attempt++) {
       final served = await api.get(
           kind: subject.kind,
@@ -407,6 +413,16 @@ class CommunityInfoService {
         ),
       );
 
+  Future<bool> _acceptedKeyInHome(
+      AcceptedCommunityInfo accepted, InfoKeyHome home) async {
+    final keys = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    return keys.any((k) =>
+        k.keyId == accepted.keyId &&
+        k.key != null &&
+        k.conversationId == home.conversationId);
+  }
+
   /// Sends the announcement of an accepted record again when none is held
   /// for it: a record is accepted from others only with one, so this is this
   /// device's own upload whose announcement could not be queued (no open
@@ -422,6 +438,7 @@ class CommunityInfoService {
         (servedVersion != null && servedVersion != accepted.revision)) {
       return false;
     }
+    if (!await _acceptedKeyInHome(accepted, home)) return false;
     final digest = CommunityInfoCodec.recordSha256(accepted.blob);
     final updates = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.update, subject.kind, subject.id);
