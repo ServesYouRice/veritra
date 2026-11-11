@@ -457,6 +457,25 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C7 two-part messages, first slice (2026-11-11):** no ABI or schema
+  change; behind the server's `PRIVATE_MESSENGER_C7_HISTORY` (off by
+  default), which the setup status reports as `c7_history`. While it is on,
+  every application message a device sends in a community conversation
+  (`community_shared`, a private channel's group, or a legacy channel) is two
+  parts (docs/designs/C7-channel-history.md, "Core idea"): MLS encrypts only
+  the 68-byte reference `"C7R1" | body_key | sha256(sealed_body)`, and the
+  envelope's `sealed_body` is `c7_seal(body_key, aad, sig | padded VAP1)`
+  with `aad = lp(conversation_id) | lp(channel_id or "") |
+  lp(sender_device_id) | lp(action_id)` and `sig` the post signature with
+  `gen = 0` (`mobile/lib/crypto/c7_two_part.dart`). This slice always uses a
+  random `body_key`, the `members_from_join` behaviour, so a newcomer can
+  open nothing from before its join; generation keys, records and
+  `history_sync` (the `full` mode) are not built. A receiver that decrypts a
+  reference checks the body's hash and opens it under the reference's key;
+  a missing or bad body is a P1 `invalid` row and the MLS state and cursor
+  commit. Receiving two-part messages needs no switch. The sealed body is
+  kept in the outbox entry, so a retry is byte-identical, and the server's
+  replay check compares it. With C7 off nothing changes on the wire.
 - **L1 complete adds, join notice, recovery retype and pre-L1 RK
   confirmation (2026-11-11):** held groups the server reports no change
   for are audited against signed lists (bounded, after the reconcile

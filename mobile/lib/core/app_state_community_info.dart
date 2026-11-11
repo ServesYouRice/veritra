@@ -350,12 +350,25 @@ extension CommunityInfoActions on AppState {
     if (service == null || trimmed.isEmpty) return null;
     final existing = communityCategories(communityId);
     if (existing.length >= infoMaxCategories) return null;
-    final random = Random.secure();
-    final hex = List<String>.generate(
-            16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
-        .join();
-    final id = 'cat_$hex';
-    if (!await _publishCategory(communityId, id, trimmed, expected: 0)) {
+    // A deleted category's id is reused first: the server binds each id to
+    // the community for good, at most 200 of them.
+    final reuse = service
+        .tombstonedCategories(communityId)
+        .where((id) => !existing.contains(id))
+        .firstOrNull;
+    final String id;
+    if (reuse != null) {
+      id = reuse;
+    } else {
+      final random = Random.secure();
+      final hex = List<String>.generate(
+              16, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'))
+          .join();
+      id = 'cat_$hex';
+    }
+    final expected =
+        reuse == null ? 0 : service.shown(infoKindCategory, id)?.revision ?? 0;
+    if (!await _publishCategory(communityId, id, trimmed, expected: expected)) {
       return null;
     }
     final listed = await publishCommunityInfo(communityId,
@@ -372,6 +385,59 @@ extension CommunityInfoActions on AppState {
               channels: now.channels,
             ));
     return listed ? id : null;
+  }
+
+  /// Deletes a category (C3: a tombstone, there is no client DELETE). The
+  /// community record drops it and every open channel in it first, so it
+  /// leaves the view at once; then the category's own record becomes a
+  /// tombstone, whose id a later category reuses. A private channel's own
+  /// place keeps the id but shows no category, since the community no
+  /// longer lists it. Owners and admins only.
+  Future<bool> deleteCommunityCategory(
+      String communityId, String categoryId) async {
+    final service = _info;
+    if (service == null ||
+        !communityCategories(communityId).contains(categoryId)) {
+      return false;
+    }
+    final unlisted = await publishCommunityInfo(communityId,
+        edit: (now) => CommunityInfoRecord(
+              kind: now.kind,
+              subjectId: now.subjectId,
+              revision: now.revision,
+              name: now.name,
+              icon: now.icon,
+              categories: <String>[
+                ...?now.categories?.where((c) => c != categoryId),
+              ],
+              channels: <InfoChannelPlace>[
+                for (final place in now.channels ?? const <InfoChannelPlace>[])
+                  place.categoryId == categoryId
+                      ? InfoChannelPlace(channelId: place.channelId)
+                      : place,
+              ],
+            ));
+    if (!unlisted) return false;
+    final pending = _infoPublishing[communityId];
+    if (pending != null) await pending;
+    try {
+      await service.publish(
+        InfoSubject(infoKindCategory, categoryId, communityId),
+        (revision) => CommunityInfoRecord(
+          kind: infoKindCategory,
+          subjectId: categoryId,
+          revision: revision,
+        ),
+        expectedRevision:
+            service.shown(infoKindCategory, categoryId)?.revision ?? 0,
+      );
+    } catch (err) {
+      // The category is already out of the community's list; only its id
+      // is not free for reuse yet.
+      developer.log('c3_publish_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }
+    return true;
   }
 
   /// Renames a category. Owners and admins only.

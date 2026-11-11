@@ -124,6 +124,30 @@ class _CommunityInfoScreenState extends State<CommunityInfoScreen> {
         () => state.renameCommunityCategory(_communityId, categoryId, name));
   }
 
+  Future<void> _deleteCategory(String categoryId) async {
+    final l10n = context.l10n;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.communityCategoryDelete),
+        content: Text(l10n.communityCategoryDeleteConfirm),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.commonCancel),
+          ),
+          FilledButton(
+            key: const Key('community-category-delete-confirm'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.communityCategoryDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _save(() => state.deleteCommunityCategory(_communityId, categoryId));
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -198,11 +222,25 @@ class _CommunityInfoScreenState extends State<CommunityInfoScreen> {
                       leading: const Icon(Icons.folder_outlined),
                       title: Text(categoryName(id)),
                       trailing: admin
-                          ? IconButton(
-                              tooltip: l10n.communityCategoryRename,
-                              onPressed:
-                                  _saving ? null : () => _renameCategory(id),
-                              icon: const Icon(Icons.edit_outlined),
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                IconButton(
+                                  tooltip: l10n.communityCategoryRename,
+                                  onPressed: _saving
+                                      ? null
+                                      : () => _renameCategory(id),
+                                  icon: const Icon(Icons.edit_outlined),
+                                ),
+                                IconButton(
+                                  key: Key('community-category-delete-$id'),
+                                  tooltip: l10n.communityCategoryDelete,
+                                  onPressed: _saving
+                                      ? null
+                                      : () => _deleteCategory(id),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                              ],
                             )
                           : null,
                     ),

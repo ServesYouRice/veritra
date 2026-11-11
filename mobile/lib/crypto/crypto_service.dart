@@ -511,6 +511,22 @@ abstract interface class ConversationAuthorityConsumer {
   set conversationAuthority(ConversationAuthority authority);
 }
 
+/// The community a conversation belongs to (C7 signs it into every post).
+/// An authority that is not one leaves C7 off.
+abstract interface class ConversationCommunitySource {
+  String? conversationCommunity(String conversationId);
+}
+
+/// C7 (docs/designs/C7-channel-history.md): off by default. AppState turns
+/// it on when the server reports `c7_history` (PRIVATE_MESSENGER_C7_HISTORY),
+/// and then every application message in a community conversation is sent
+/// as an MLS reference plus a sealed body. Receiving two-part messages needs
+/// no switch.
+abstract interface class C7HistoryConsumer {
+  bool get c7SealedBodies;
+  set c7SealedBodies(bool enabled);
+}
+
 /// Off by default. AppState enables this only for the current verified
 /// subscription's local-decryption capability. The service freezes the grant
 /// for each queued inbound operation, never enabling capture halfway through.

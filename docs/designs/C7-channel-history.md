@@ -915,13 +915,39 @@ id), and the 409
 community conversations. Off, a body is refused everywhere (400
 `invalid_sealed_body`).
 
-Still left in step 3: the history fetch route, the former-member key
-route, `history-hide`, the group-level exception to C0's channel rule (a
-`history_sync` in the shared group carries no `channel_id`), the C2
-refusal narrowed to envelopes with a `channel_id`, `channel_id` on a
-private channel group's posts, admission limits counting body bytes, and
-the HTTP and storage tests (owner instruction of 2026-11-11: no test
-suites run in this pass).
+Second slice (same day, migration 0084): the history fetch
+(`GET /api/v1/conversations/{id}/history?channel_id=&before=&limit=`,
+newest first, `before` a message id, at most 100 rows; each body records
+its sync event and named epoch so the fetch serves exactly what the I51
+join filter withheld), the former-member key call
+(`GET /api/v1/conversations/{id}/former-member-keys`, `{devices:
+[{device_id, account_id, signing_key, revoked}]}`), `history-hide`
+(`POST /api/v1/messages/{id}/history-hide`, sender or a role that may
+delete the sender's messages; a moderator's hide adds a `message_hidden`
+row to `moderation_events`), and the C0/C2 exceptions for conversations in
+the C0 layout: no channel keys means group-level (allowed in the shared
+group and in private groups, exempt from C2 and slow mode, still subject
+to timeouts), and a private group's posts may name their own channel.
+Admission already meters the request body, so body bytes count (D38).
+All in `server/internal/storage/c7_history_store.go`; every route is 404
+while the flag is off. Bodies stored before 0084 are never served by the
+history fetch. Server tests are still to be written (no suites were run
+in this pass, owner instruction).
+
+Step 4, first slice (same day): the two-part send and receive with a
+random `body_key` for every message (the `members_from_join` behaviour of
+the implicit genesis), the API client calls for the three routes, the
+history-hide call after an own delete, and the switch that follows the
+server's `c7_history`. See `docs/crypto.md`, change log. Not built: the
+generation keys and records (create, switch, move), the ordering table in
+the receive path, rekey at removal merge, `history_sync` and its request,
+`keyless`/`unsure`, the re-add wipe, targeted-action sealing, the newcomer's
+backward walk, two-pass import and prefetch, the private group's
+`channel_id` on sends (until it is sent, with the flag on every honest
+private-channel post is group-level on the server, so slow mode and an
+admins-only posting policy are skipped for all of them; keep the flag off),
+the receiver rule that a group-level message is one of the two
+hidden types, local schema for C7 state, and every step-5 flow and test.
 
 ## Open questions for the owner
 

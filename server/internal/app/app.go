@@ -233,7 +233,7 @@ func (a *App) Handler() http.Handler {
 	}
 	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, RoomMedia: roomMedia(a.Config), Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
 		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load, MaxAttachmentBytes: a.Store.Limits().AttachmentBytes,
-		ScopedSync: a.Config.ScopedSync, PublicOrigin: a.Config.PublicOrigin, RecoveryActiveWindow: a.Config.RecoveryActiveWindow, RecoveryWait: a.Config.RecoveryWait}
+		ScopedSync: a.Config.ScopedSync, C7History: a.Config.C7History, PublicOrigin: a.Config.PublicOrigin, RecoveryActiveWindow: a.Config.RecoveryActiveWindow, RecoveryWait: a.Config.RecoveryWait}
 	if a.Config.Attestation != "" {
 		provider, err := attest.New(a.Config.Attestation)
 		if err == nil {

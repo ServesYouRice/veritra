@@ -1482,6 +1482,8 @@
   "communityCategoryNew": "New category",
   "communityCategoryName": "Category name",
   "communityCategoryRename": "Rename category",
+  "communityCategoryDelete": "Delete category",
+  "communityCategoryDeleteConfirm": "Delete this category? Its channels stay and show without a category.",
   "communityCategoryPlaceholder": "Category",
   "communityCategoryNone": "No category",
   "communityChannelPlaces": "Where channels sit",
