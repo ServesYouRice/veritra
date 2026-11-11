@@ -3752,6 +3752,65 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoBackupPromptLater => 'Not now';
 
   @override
+  String get k1RestoreOpen => 'Restore from a backup';
+
+  @override
+  String get k1RestoreTitle => 'Restore from a backup';
+
+  @override
+  String get k1RestoreIntro =>
+      'Pick a backup made by one of your other devices and type your recovery key. Your history is merged in; messages already here stay.';
+
+  @override
+  String get k1RestoreLoading => 'Looking for backups…';
+
+  @override
+  String get k1RestoreEmpty => 'No backup from another device was found.';
+
+  @override
+  String get k1RestoreLoadFailed => 'The list of backups could not be loaded.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (the copy before)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'A device';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'This device was removed from your account.';
+
+  @override
+  String get k1RestoreDone => 'History restored.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'That is not a valid recovery key for this account.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'This backup was locked with a different recovery key.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'This backup could not be opened. It may be damaged.';
+
+  @override
+  String get k1RestoreNetwork =>
+      'The server could not be reached. Nothing changed.';
+
+  @override
+  String get k1RestoreUnavailable =>
+      'This device cannot restore from a backup.';
+
+  @override
   String get connectSignInPasskey => 'Sign in with a passkey';
 
   @override

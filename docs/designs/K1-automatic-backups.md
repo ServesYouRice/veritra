@@ -321,7 +321,21 @@ Where the build differs from the text above, and why:
   this.
 - **Phones** say "when you open the app, at most once a day", never
   "daily" (D91).
-- **Still to do:** restore (K1-4), the confirmation schedule and the second
+- **Restore (K1-4, built).** Settings > Automatic backups > "Restore from a
+  backup" lists the K1 copies of the account's other devices (own copies are
+  left off: the importer refuses a source equal to the receiver). The typed
+  key's `rk_id` is compared with the row's before any download; the first
+  416 bytes are peeked (account, device, counter, `rk_id`) before the body;
+  the body's size and SHA-256 are checked against the row; Rust opens it
+  pinned to the row's device; the K2 importer merges it (`transferId` is the
+  backup id, `digest` the SHA-256, so a repeat is a no-op). The importer
+  context takes counter and time from the decoded snapshot (inside the
+  authenticated container), not from the seal header: the snapshot keeps its
+  own namespace counter. A typed key that is also the account's current key
+  turns backups on here. Phones back up when the app opens or resumes (owner
+  decision, so design question 7 is answered: no phone background jobs in
+  this build).
+- **Still to do:** the K0-R follow-up reorder (restore before the new key), the confirmation schedule and the second
   copy (K1-5), background runs and retiring VBK2 and the recovery-token
   route (K1-6, after K1-4, so a restore path always exists).
 

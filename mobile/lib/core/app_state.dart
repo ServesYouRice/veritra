@@ -28,6 +28,7 @@ import '../crypto/native_crypto_bindings.dart'
         NativeCryptoException,
         idBytes;
 import 'device_lists.dart';
+import 'k1_restore.dart';
 import '../crypto/sha256.dart';
 import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
@@ -39,7 +40,8 @@ import '../push/push_service.dart';
 import '../push/background_wake_runner.dart';
 import '../push/notice_decisions.dart';
 import '../push/wake_worker_bridge.dart' show WakeNoticeResult;
-import '../storage/history_snapshot.dart' show HistoryConversation;
+import '../storage/history_snapshot.dart'
+    show HistoryConversation, HistoryImportContext, HistorySnapshot;
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart';
@@ -96,6 +98,7 @@ part 'app_state_reports.dart';
 part 'app_state_passkeys.dart';
 part 'app_state_recovery.dart';
 part 'app_state_k1_backup.dart';
+part 'app_state_k1_restore.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
 part 'app_state_profiles.dart';

@@ -1,12 +1,16 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart'
+    show BackupHeaderInfo, OpenedBackup;
 import 'package:private_messenger/features/settings/auto_backup_screen.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/ui/theme.dart';
+import 'package:private_messenger/features/settings/k1_restore_screen.dart';
 import 'package:private_messenger/ui/widgets/recovery_key_prompt_banner.dart';
 
 import 'k0_recovery_fakes.dart';
@@ -27,9 +31,43 @@ class _SealCrypto extends K0Crypto implements BackupSealCryptoService {
       Uint8List.fromList(<int>[1, 2, 3]);
 }
 
+class _OpenCrypto extends _SealCrypto implements BackupOpenCryptoService {
+  @override
+  BackupHeaderInfo peekK1Backup(Uint8List prefix) => throw UnimplementedError();
+
+  @override
+  Future<OpenedBackup> openK1Backup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  }) async =>
+      throw UnimplementedError();
+}
+
 class _Api extends K0Api {
   _Api(super.server);
   int uploads = 0;
+
+  @override
+  Future<List<Map<String, Object?>>> listBackups(String token,
+          {int limit = 100}) async =>
+      <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 'backup_a',
+          'device_id': 'dev_src',
+          'device_name': 'Old phone',
+          'device_revoked': true,
+          'kind': 1,
+          'ciphertext_sha256': 'a' * 64,
+          'size_bytes': 10,
+          'created_at': '2026-11-08T09:00:00Z',
+          'counter': 2,
+          'rk_id': base64.encode(List<int>.filled(16, 0xB2)),
+          'superseded': false,
+        },
+        <String, Object?>{'id': 'legacy', 'kind': 0},
+      ];
 
   @override
   Future<void> uploadK1Backup(String token, Uint8List ciphertext,
@@ -88,6 +126,30 @@ void main() {
     expect(
         find.byKey(const ValueKey<String>('auto-backup-now')), findsOneWidget);
     expect(find.text('This phone backs up when you open the app.'),
+        findsOneWidget);
+  });
+
+  testWidgets('the restore screen lists copies of other devices and asks for '
+      'the key', (tester) async {
+    final state = k0App(server, store, _OpenCrypto())
+      ..session = k0SignedIn
+      ..api = _Api(server);
+    state.k1DesktopTimerEnabled = false;
+    addTearDown(state.dispose);
+    state.recoveryKeyStatus =
+        const RecoveryKeyStatus(available: true, configured: true);
+    await tester.pumpWidget(app(K1RestoreScreen(state: state)));
+    await tester
+        .runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Old phone'), findsOneWidget);
+    expect(find.text('This device was removed from your account.'),
+        findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('k1-restore-legacy')),
+        findsNothing);
+    await tester.tap(find.byKey(const ValueKey<String>('k1-restore-backup_a')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('auto-backup-key-field')),
         findsOneWidget);
   });
 
