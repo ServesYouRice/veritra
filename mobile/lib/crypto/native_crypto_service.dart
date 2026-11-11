@@ -435,7 +435,8 @@ class NativeCryptoService
 
   @override
   Future<List<MlsDeviceRef>> missingApprovedDevices(
-      String? conversationId, Iterable<String> accountIds) async {
+      String? conversationId, Iterable<String> accountIds,
+      {Set<String> excluding = const <String>{}}) async {
     final pins = _deviceListPins;
     if (pins == null) return const [];
     final present = await _serial(() async {
@@ -452,7 +453,13 @@ class NativeCryptoService
     });
     final budget = Stopwatch()..start();
     final missing = <MlsDeviceRef>[];
-    for (final account in accountIds.toSet()) {
+    // The server's member list and every account the tree already holds: an
+    // account the server leaves out cannot hide its new device this way.
+    final accounts = <String>{
+      ...accountIds,
+      for (final ref in present) ref.accountId,
+    }..removeAll(excluding);
+    for (final account in accounts) {
       final remaining = deviceListGroupBudget - budget.elapsed;
       List<DeviceListPair> pairs;
       try {

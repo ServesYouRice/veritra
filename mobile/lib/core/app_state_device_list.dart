@@ -406,11 +406,37 @@ extension AppStateDeviceList on AppState {
           head.standing(idBytes(current.deviceId ?? ''), own) ==
               PinStanding.approved) {
         await localStore.saveSetting(_recoveryStatementSetting, '');
+      } else if (head != null &&
+          status.state == DeviceListState.ok &&
+          !_chainsOnHead(statement, head)) {
+        // The head moved past it and does not name this device: the stored
+        // version can never be taken (review fix). It is dropped, so the
+        // recovery key is asked for again and a fresh version is signed on
+        // the current head.
+        await localStore.saveSetting(_recoveryStatementSetting, '');
+        unawaited(_refreshOwnListState().catchError((Object _) {}));
       }
       return;
     }
     await localStore.saveSetting(_recoveryStatementSetting, '');
     await pins.pinOwnStep(account, statement);
+  }
+
+  /// Whether [statement]'s `prev_hash` is [head]'s list hash, read from the
+  /// VDL1 body (`"VDL1" | 1 | lp(account) | u64 version | prev_hash`). An
+  /// unreadable statement does not chain.
+  static bool _chainsOnHead(Uint8List statement, DeviceListPin head) {
+    if (statement.length < 7) return false;
+    final accountLength = (statement[5] << 8) | statement[6];
+    final start = 7 + accountLength + 8;
+    if (statement.length < start + 32) return false;
+    final prev = statement.sublist(start, start + 32);
+    if (head.listHash.length != 32) return false;
+    var same = 0;
+    for (var i = 0; i < 32; i++) {
+      same |= prev[i] ^ head.listHash[i];
+    }
+    return same == 0;
   }
 
   Future<Uint8List?> _storedRecoveryStatement(
