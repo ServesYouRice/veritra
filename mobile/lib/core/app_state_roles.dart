@@ -102,15 +102,33 @@ extension RoleActions on AppState {
         _ => 'This role change is not allowed.',
       };
 
+  /// The server's role row for [accountId] in [conversationId]'s record
+  /// group: a group's own member route, or for a community's shared group the
+  /// community's member route (the shared conversation's roster is the
+  /// community's, and the server refuses role changes on it).
+  Future<void> _serverRole(Session current, ApiClient client,
+      String conversationId, String accountId, String role) {
+    final group = recordGroupFor(conversationId)!;
+    final conversation = conversations.where((c) => c.id == group).firstOrNull;
+    final communityId = conversation?.communityId;
+    if (conversation != null &&
+        conversation.isCommunityShared &&
+        communityId != null) {
+      return client.setCommunityMemberRole(
+          current.token, communityId, accountId, role);
+    }
+    return client.addConversationMember(current.token, group, accountId,
+        role: role);
+  }
+
   /// Gives [accountId] [role] (never owner: see [transferOwnership]).
   Future<bool> setVerifiedRole(
           String conversationId, String accountId, BuiltInRole role) =>
       _roleCommand(
         conversationId,
         (commands, _, __) => commands.setRole(accountId, role),
-        server: (current, client) => client.addConversationMember(
-            current.token, recordGroupFor(conversationId)!, accountId,
-            role: role.name),
+        server: (current, client) =>
+            _serverRole(current, client, conversationId, accountId, role.name),
       );
 
   /// Marks an admin as one the owner chose (an elector, D81), or not.
@@ -124,9 +142,8 @@ extension RoleActions on AppState {
       _roleCommand(
         conversationId,
         (commands, _, __) => commands.transfer(adminId),
-        server: (current, client) => client.addConversationMember(
-            current.token, recordGroupFor(conversationId)!, adminId,
-            role: 'owner'),
+        server: (current, client) =>
+            _serverRole(current, client, conversationId, adminId, 'owner'),
       );
 
   /// Opens an owner election (D81) after 30 days without the owner here.

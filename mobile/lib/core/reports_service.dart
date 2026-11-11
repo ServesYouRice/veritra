@@ -19,11 +19,13 @@ import 'report_seed_store.dart';
 
 /// Why a report cannot be filed.
 enum ReportFailure {
-  /// The conversation reports to a community's moderators. Their inbox key
-  /// waits for community roles (C4), so this build cannot file it.
+  /// The conversation reports to a community's moderators, but this app
+  /// holds no verified role record for the community (one made before C4),
+  /// so it cannot tell who moderates and seals to nobody.
   communityUnavailable,
 
-  /// No instance owner has published a report key yet.
+  /// No recipient has published a report key yet: no instance owner, or no
+  /// moderator the verified record names.
   noRecipients,
 
   /// This device kept no franking proof for the message: it is unfranked,
@@ -63,7 +65,17 @@ class ReportPlan {
   bool get isCommunity => inbox.kind == reportInboxCommunity;
 
   /// Whether sending is allowed right now (every key pinned).
-  bool get canSend => !isCommunity && check.allPinned;
+  bool get canSend => check.allPinned;
+}
+
+/// Who moderates a community according to the verified role record (C4) of
+/// its shared group: the owner, the admins and the moderators. The server's
+/// roles never decide who receives a community report.
+class ReportModerators {
+  const ReportModerators(this.communityId, this.accounts);
+
+  final String communityId;
+  final Set<String> accounts;
 }
 
 /// The state of an instance owner's own report key as this device sees it:
@@ -165,6 +177,8 @@ class ReportsService {
     required this.crypto,
     required this.store,
     required this.seeds,
+    this.moderatorsOf,
+    this.communityId,
     Random? random,
   })  : pins = ReportKeyPins(store, api.baseUrl),
         _random = random ?? Random.secure();
@@ -178,6 +192,54 @@ class ReportsService {
   final ReportKeyPins pins;
   final Random _random;
 
+  /// The verified moderators of a community conversation, or null when the
+  /// conversation is not in a community or has no verified record.
+  final ReportModerators? Function(String conversationId)? moderatorsOf;
+
+  /// Set for a moderator's inbox in this community: the key, list and open
+  /// calls then use this account's moderator inbox there instead of the
+  /// instance owner's.
+  final String? communityId;
+
+  /// The same service for this account's moderator inbox in [id].
+  ReportsService forCommunity(String id) => ReportsService(
+        api: api,
+        token: token,
+        accountId: accountId,
+        crypto: crypto,
+        store: store,
+        seeds: seeds,
+        moderatorsOf: moderatorsOf,
+        communityId: id,
+        random: _random,
+      );
+
+  /// The listed recipients a report about [conversationId] may be sealed to,
+  /// and the pin scope: every instance owner, or for a community only the
+  /// accounts its verified record ranks moderator or above (never the
+  /// reporter). A server that lists another account's key gets no copy.
+  (List<ReportRecipientKey>, bool Function(String)?) _sealTo(
+      String conversationId, ReportInbox inbox) {
+    final all = _recipients(inbox);
+    if (inbox.kind != reportInboxCommunity) return (all, null);
+    final moderators = moderatorsOf?.call(conversationId);
+    if (moderators == null) {
+      throw const ReportFailureException(ReportFailure.communityUnavailable);
+    }
+    final allowed = <String>{
+      for (final account in moderators.accounts)
+        if (account != accountId)
+          communityModeratorInboxId(moderators.communityId, account),
+    };
+    final prefix = '${moderators.communityId}:';
+    return (
+      [
+        for (final r in all)
+          if (allowed.contains(r.inboxId)) r
+      ],
+      (String id) => allowed.contains(id) && id.startsWith(prefix),
+    );
+  }
   // ---- Reporter ----------------------------------------------------------
 
   /// The text of exactly what a report of [messageKey] would reveal: the
@@ -193,20 +255,14 @@ class ReportsService {
   /// recipients' keys with the pins.
   Future<ReportPlan> prepare(String conversationId) async {
     final inbox = await api.getReportInbox(token, conversationId);
-    if (inbox.kind == reportInboxCommunity) {
-      return ReportPlan(
-        conversationId: conversationId,
-        inbox: inbox,
-        check: const ReportKeyCheck([], []),
-      );
-    }
-    if (inbox.recipients.isEmpty) {
+    final (recipients, scope) = _sealTo(conversationId, inbox);
+    if (recipients.isEmpty) {
       throw const ReportFailureException(ReportFailure.noRecipients);
     }
     return ReportPlan(
       conversationId: conversationId,
       inbox: inbox,
-      check: await pins.check(_recipients(inbox)),
+      check: await pins.check(recipients, scope: scope),
     );
   }
 
@@ -237,15 +293,12 @@ class ReportsService {
       throw const ReportFailureException(ReportFailure.alreadyReported);
     }
     final inbox = await api.getReportInbox(token, conversationId);
-    if (inbox.kind == reportInboxCommunity) {
-      throw const ReportFailureException(ReportFailure.communityUnavailable);
-    }
-    if (inbox.recipients.isEmpty) {
+    final (recipients, scope) = _sealTo(conversationId, inbox);
+    if (recipients.isEmpty) {
       throw const ReportFailureException(ReportFailure.noRecipients);
     }
-    final recipients = _recipients(inbox);
     try {
-      await pins.requirePinned(recipients);
+      await pins.requirePinned(recipients, scope: scope);
     } on ReportKeyNotPinned {
       throw const ReportFailureException(ReportFailure.keysNotPinned);
     }
@@ -287,7 +340,10 @@ class ReportsService {
   /// Compares this device's seed with the key the server lists for this
   /// owner (see [OwnerReportKeyState]).
   Future<OwnerReportKeyStatus> keyStatus() async {
-    final listed = await api.getOwnReportKey(token);
+    final community = communityId;
+    final listed = community == null
+        ? await api.getOwnReportKey(token)
+        : await api.getOwnModeratorReportKey(token, community);
     final seed = await seeds.load(api.baseUrl, accountId);
     if (seed == null) {
       return OwnerReportKeyStatus(
@@ -326,7 +382,7 @@ class ReportsService {
       final key = await crypto.reportPublicKey(seed);
       await seeds.save(api.baseUrl, accountId, seed);
       try {
-        final rev = await api.putInstanceReportKey(token, key);
+        final rev = await _putKey(key);
         return (key, rev);
       } catch (_) {
         // Nothing was published: put the old seed back so the reports it
@@ -350,10 +406,20 @@ class ReportsService {
     if (seed == null) throw StateError('no report key on this device');
     try {
       final key = await crypto.reportPublicKey(seed);
-      return (key, await api.putInstanceReportKey(token, key));
+      return (key, await _putKey(key));
     } finally {
       seed.fillRange(0, seed.length, 0);
     }
+  }
+
+  /// Publishes [key] to this service's inbox: the instance owner's, or this
+  /// account's moderator inbox in [communityId]. The seed is the account's
+  /// one report seed on this device, so every inbox lists the same key.
+  Future<int> _putKey(List<int> key) {
+    final community = communityId;
+    return community == null
+        ? api.putInstanceReportKey(token, key)
+        : api.putModeratorReportKey(token, community, key);
   }
 
   /// This owner's report copies, oldest first.
@@ -363,7 +429,10 @@ class ReportsService {
     // The server's retention and caps bound the inbox; stop at a page limit
     // so a misbehaving server cannot make this loop forever.
     for (var page = 0; page < 40; page++) {
-      final next = await api.listOwnerReports(token, afterId: after);
+      final community = communityId;
+      final next = community == null
+          ? await api.listOwnerReports(token, afterId: after)
+          : await api.listModeratorReports(token, community, afterId: after);
       rows.addAll(next);
       if (next.length < 50) break;
       after = next.last.id;
@@ -381,9 +450,13 @@ class ReportsService {
     Uint8List? plaintext;
     try {
       final own = await crypto.reportPublicKey(seed);
-      if (!_sameBytes(own, row.recipientPublicKey) ||
-          row.inboxKind != reportInboxInstanceOwner ||
-          row.inboxId != accountId) {
+      final community = communityId;
+      final ownInbox = community == null
+          ? row.inboxKind == reportInboxInstanceOwner &&
+              row.inboxId == accountId
+          : row.inboxKind == reportInboxCommunity &&
+              row.inboxId == communityModeratorInboxId(community, accountId);
+      if (!_sameBytes(own, row.recipientPublicKey) || !ownInbox) {
         return OpenedReport(row, failure: ReportOpenFailure.otherKey);
       }
       try {

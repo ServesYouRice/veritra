@@ -139,6 +139,85 @@ func (s *Store) SetInstanceReportKey(ctx context.Context, accountID string, publ
 	return ReportRecipient{InboxID: accountID, PublicKey: publicKey, KeyRev: rev, UpdatedAt: parseTime(now)}, nil
 }
 
+// SetCommunityReportKey publishes accountID's own report public key as its
+// moderator inbox in communityID (C6, one sealed copy per moderator). Any
+// active member may publish one: whether reports are sealed to it is the
+// reporter's app's decision from the verified role record (C4). The same key
+// may serve several communities and the owner inbox; the aad binds each.
+func (s *Store) SetCommunityReportKey(ctx context.Context, communityID, accountID string, publicKey []byte) (ReportRecipient, error) {
+	if len(publicKey) != franking.PublicKeySize || communityID == "" || accountID == "" {
+		return ReportRecipient{}, ErrInvalidInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ReportRecipient{}, err
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM memberships m JOIN accounts a ON a.id = m.account_id
+		WHERE m.community_id = ? AND m.account_id = ? AND a.status = 'active' AND a.deleted_at IS NULL`, communityID, accountID).Scan(&n); err != nil {
+		return ReportRecipient{}, err
+	}
+	if n == 0 {
+		return ReportRecipient{}, ErrNotMember
+	}
+	inboxID := franking.CommunityModeratorInboxID(communityID, accountID)
+	if len(inboxID) > franking.MaxIDSize {
+		return ReportRecipient{}, ErrInvalidInput
+	}
+	var current []byte
+	var rev int64
+	var updated string
+	err = tx.QueryRowContext(ctx, `SELECT public_key, key_rev, updated_at FROM report_inbox_keys WHERE inbox_kind = ? AND inbox_id = ?`, franking.InboxCommunity, inboxID).Scan(&current, &rev, &updated)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		rev = 1
+	case err != nil:
+		return ReportRecipient{}, err
+	case bytes.Equal(current, publicKey):
+		return ReportRecipient{InboxID: inboxID, PublicKey: current, KeyRev: rev, UpdatedAt: parseTime(updated)}, nil
+	default:
+		rev++
+	}
+	now := nowString()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO report_inbox_keys(inbox_kind, inbox_id, public_key, key_rev, set_by_account_id, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?)
+		ON CONFLICT(inbox_kind, inbox_id) DO UPDATE SET public_key = excluded.public_key, key_rev = excluded.key_rev, set_by_account_id = excluded.set_by_account_id, updated_at = excluded.updated_at`,
+		franking.InboxCommunity, inboxID, publicKey, rev, accountID, now); err != nil {
+		return ReportRecipient{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ReportRecipient{}, err
+	}
+	return ReportRecipient{InboxID: inboxID, PublicKey: publicKey, KeyRev: rev, UpdatedAt: parseTime(now)}, nil
+}
+
+// CommunityReportKey returns accountID's own moderator key for communityID
+// (ErrNotFound when none; ErrForbidden unless still a member).
+func (s *Store) CommunityReportKey(ctx context.Context, communityID, accountID string) (ReportRecipient, error) {
+	inboxID := franking.CommunityModeratorInboxID(communityID, accountID)
+	allowed, err := mayReadReportInbox(ctx, s.db, accountID, franking.InboxCommunity, inboxID)
+	if err != nil {
+		return ReportRecipient{}, err
+	}
+	if !allowed {
+		return ReportRecipient{}, ErrForbidden
+	}
+	var r ReportRecipient
+	var updated string
+	err = s.db.QueryRowContext(ctx, `SELECT inbox_id, public_key, key_rev, updated_at FROM report_inbox_keys WHERE inbox_kind = ? AND inbox_id = ?`, franking.InboxCommunity, inboxID).Scan(&r.InboxID, &r.PublicKey, &r.KeyRev, &updated)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReportRecipient{}, ErrNotFound
+		}
+		return ReportRecipient{}, err
+	}
+	r.UpdatedAt = parseTime(updated)
+	return r, nil
+}
+
 // InstanceReportKey returns the calling owner's own published report key, so
 // an owner's device can show the current key's code after another device
 // replaced it. ErrForbidden unless the caller is an active owner; ErrNotFound
@@ -221,9 +300,20 @@ func (s *Store) reportInbox(ctx context.Context, q reportQuerier, conversationID
 			WHERE k.inbox_kind = ? AND a.role = 'owner' AND a.status = 'active' AND a.deleted_at IS NULL
 			ORDER BY k.inbox_id`, kind)
 	} else {
+		// C6 community inbox: every member of the community who published a
+		// moderator key for it. The server cannot know who moderates (the
+		// verified role record, C4, lives in the apps), so the reporter's app
+		// seals only to the listed keys of accounts its record ranks moderator
+		// or above, and CreateReport accepts that subset.
 		rows, err = q.QueryContext(ctx, `
-			SELECT inbox_id, public_key, key_rev, updated_at
-			FROM report_inbox_keys WHERE inbox_kind = ? AND inbox_id = ?`, kind, id)
+			SELECT k.inbox_id, k.public_key, k.key_rev, k.updated_at
+			FROM report_inbox_keys k
+			JOIN accounts a ON a.id = k.set_by_account_id
+			WHERE k.inbox_kind = ?
+			  AND k.inbox_id = ? || ':' || a.id
+			  AND a.status = 'active' AND a.deleted_at IS NULL
+			  AND EXISTS (SELECT 1 FROM memberships m WHERE m.community_id = ? AND m.account_id = a.id)
+			ORDER BY k.inbox_id`, kind, id, id)
 	}
 	if err != nil {
 		return ReportInbox{}, err
@@ -303,9 +393,16 @@ func (s *Store) CreateReport(ctx context.Context, in CreateReportInput) ([]Repor
 	if err != nil {
 		return nil, err
 	}
-	// The copies must be exactly the current recipients, each at its current
-	// key. A missing owner copy would be a report that owner never gets.
-	if len(in.Copies) != len(inbox.Recipients) {
+	// For the instance owners the copies must be exactly the current
+	// recipients, each at its current key: a missing owner copy would be a
+	// report that owner never gets. For a community they are a non-empty
+	// subset: the reporter's app leaves out every listed key whose account its
+	// verified role record does not rank moderator or above, which the server
+	// cannot check. Each copy still has to be a listed key at its current rev.
+	if inbox.Kind == franking.InboxInstanceOwner && len(in.Copies) != len(inbox.Recipients) {
+		return nil, ErrReportInboxChanged
+	}
+	if len(in.Copies) == 0 || len(in.Copies) > len(inbox.Recipients) {
 		return nil, ErrReportInboxChanged
 	}
 	current := make(map[string]ReportRecipient, len(inbox.Recipients))
@@ -400,9 +497,12 @@ func mayReadReportInbox(ctx context.Context, q interface {
 		err := q.QueryRowContext(ctx, `SELECT COUNT(*) FROM accounts WHERE id = ? AND role = 'owner' AND status = 'active' AND deleted_at IS NULL`, accountID).Scan(&n)
 		return n > 0, err
 	case franking.InboxCommunity:
+		// One inbox per moderator per community: only that account, and only
+		// while it is still a member. Not a server role: community roles are
+		// the apps' verified record (C4); the reporter chose to seal to it.
 		err := q.QueryRowContext(ctx, `
 			SELECT COUNT(*) FROM memberships m JOIN accounts a ON a.id = m.account_id
-			WHERE m.account_id = ? AND m.community_id = ? AND m.role IN ('owner', 'admin', 'moderator')
+			WHERE m.account_id = ? AND m.community_id IS NOT NULL AND m.community_id || ':' || m.account_id = ?
 			  AND a.status = 'active' AND a.deleted_at IS NULL`, accountID, id).Scan(&n)
 		return n > 0, err
 	}

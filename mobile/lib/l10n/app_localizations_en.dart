@@ -3610,7 +3610,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportCommunityUnavailable =>
-      'Reports to community moderators are not available yet.';
+      'This community has no verified roles, so the app can\'t tell who its moderators are.';
 
   @override
   String get c6ReportNoOwnerKey =>
@@ -3684,7 +3684,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get c6ReportsCommunityUnavailable =>
-      'Not available yet. Moderator reports arrive with community roles.';
+      'Reports about a community go to its moderators. A moderator opens them from the community.';
 
   @override
   String c6ReportsFiled(String when) {

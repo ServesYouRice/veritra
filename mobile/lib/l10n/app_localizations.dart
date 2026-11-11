@@ -5940,7 +5940,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Reports to community moderators are not available yet.'**
+  /// **'This community has no verified roles, so the app can\'t tell who its moderators are.'**
   String get c6ReportCommunityUnavailable;
 
   /// C6 reports.
@@ -6066,7 +6066,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Not available yet. Moderator reports arrive with community roles.'**
+  /// **'Reports about a community go to its moderators. A moderator opens them from the community.'**
   String get c6ReportsCommunityUnavailable;
 
   /// C6 reports.

@@ -419,9 +419,11 @@ void main() {
     await ownerSetsUpKey();
     final reporter = serviceFor(_reporterAccount);
     server.kind = 'community';
-    final plan = await reporter.prepare(_conversation);
-    expect(plan.isCommunity, isTrue);
-    expect(plan.canSend, isFalse);
+    // No verified role record for the community: nobody to seal to.
+    await expectLater(
+        reporter.prepare(_conversation),
+        throwsA(isA<ReportFailureException>().having(
+            (e) => e.kind, 'kind', ReportFailure.communityUnavailable)));
     await expectLater(
         reporter.file(
             conversationId: _conversation, messageKey: '$_sender:$_action'),

@@ -65,10 +65,6 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       final preview = await service.previewText(widget.messageKey);
       final plan = await service.prepare(widget.conversationId);
       if (!mounted) return;
-      if (plan.isCommunity) {
-        _block(context.l10n.c6ReportCommunityUnavailable);
-        return;
-      }
       setState(() {
         _plan = plan;
         _preview = preview;
@@ -234,7 +230,9 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       const SizedBox(height: BoneSpacing.sm),
       for (final r in unsure) ...<Widget>[
         SelectableText(
-          l10n.c6ReportOwnerKey(shortId(r.recipient.inboxId),
+          // A moderator's inbox id is `<community>:<account>`; show the
+          // account.
+          l10n.c6ReportOwnerKey(shortId(r.recipient.inboxId.split(':').last),
               reportKeyFingerprint(r.recipient.publicKey)),
           style: theme.textTheme.bodyMedium
               ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),

@@ -2967,7 +2967,9 @@ lp(reporter_account_id)
 
 with `lp` a big-endian u32 length, `inbox_kind` `instance_owner` or
 `community`, and `inbox_id` the owner's account id (one inbox and one sealed
-copy per instance owner) or the community id. `report_id` is chosen by the
+copy per instance owner) or, for a community, one moderator's inbox
+`<community id>:<account id>` (one sealed copy per moderator, 2026-11-11).
+`report_id` is chosen by the
 reporter's app, once per report, and is the same in every copy, so the
 copies belong together and a copy cannot be replayed as another report. The
 envelope id is not in the aad: it is sealed inside the body. Including the
@@ -2988,8 +2990,9 @@ own copies; for `instance_owner` the inbox is the caller) and `DELETE
 /api/v1/reports/{id}` (dismiss the caller's own copy). The server picks the
 inbox from the conversation kind (a community channel to that community's
 moderator inbox, a DM or group to the instance owners), requires a member
-reporter, and requires the copies to be exactly the current recipients, each
-at the current `key_rev` and key (a revision alone repeats if the publishing
+reporter, and requires the copies to be exactly the current recipients (for
+a community: a non-empty subset of them, see the C6 design's "Community
+moderator inbox"), each at the current `key_rev` and key (a revision alone repeats if the publishing
 owner is deleted). It checks that each `sealed` starts with `VRP1` and fits
 the Rust core's bounds, never opens one, never logs one, keeps at most 20
 reports a day per reporter (one report is all its copies) and 2000 copies per
@@ -3016,8 +3019,10 @@ adds `local_filed_reports (origin, account_id, message_key, filed_at)`, ids
 only, so a message is reported once per account and server; it is cleared
 with the pinned report keys on a full wipe. No ABI or payload change.
 
-**Not wired.** (1) The community inbox key has no publish route: it needs
-C4's role state to be distributed (design item 8). (2) The report screens,
+**Not wired.** (1) Built 2026-11-11: one key and one sealed copy per
+community moderator, chosen by the reporter's app from the verified role
+record (C4); no shared community seed (C6 design, "Community moderator
+inbox"). (2) The report screens,
 the call that builds a report from a stored reveal and posts it (the pieces
 are built: `ReportBody`, `sealReportCopies`, `ReportKeyPins`), the owner's
 own report seed storage and key publication, and the "verified against what

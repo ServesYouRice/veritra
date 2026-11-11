@@ -112,7 +112,14 @@ class ReportKeyPins {
   final DateTime Function() _clock;
 
   /// Compares [recipients] (as the server lists them) with the pins.
-  Future<ReportKeyCheck> check(List<ReportRecipientKey> recipients) async {
+  ///
+  /// [scope] limits which pins may be reported as missing: the owner inbox
+  /// and each community's moderators are pinned in the same table (a
+  /// moderator by [communityModeratorInboxId]), and a pin of one inbox is
+  /// never missing from another. Null: every pin without a `:` (the owners).
+  Future<ReportKeyCheck> check(List<ReportRecipientKey> recipients,
+      {bool Function(String inboxId)? scope}) async {
+    final inScope = scope ?? (String id) => !id.contains(':');
     final pins = {
       for (final pin in await store.loadReportKeyPins(origin))
         pin.ownerAccountId: pin
@@ -136,7 +143,9 @@ class ReportKeyPins {
       assessments,
       [
         for (final pin in pins.values)
-          if (!listed.contains(pin.ownerAccountId)) pin
+          if (inScope(pin.ownerAccountId) &&
+              !listed.contains(pin.ownerAccountId))
+            pin
       ],
     );
   }
@@ -144,9 +153,9 @@ class ReportKeyPins {
   /// Checks [recipients] and returns the check when every key is pinned.
   /// Throws [ReportKeyNotPinned] otherwise, so no copy is sealed to an
   /// unconfirmed key.
-  Future<ReportKeyCheck> requirePinned(
-      List<ReportRecipientKey> recipients) async {
-    final result = await check(recipients);
+  Future<ReportKeyCheck> requirePinned(List<ReportRecipientKey> recipients,
+      {bool Function(String inboxId)? scope}) async {
+    final result = await check(recipients, scope: scope);
     if (!result.allPinned) throw ReportKeyNotPinned(result);
     return result;
   }

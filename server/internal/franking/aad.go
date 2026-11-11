@@ -23,7 +23,9 @@ const (
 // another reporter: the recipient's app rebuilds this from the server's
 // report row, and a report that was sealed for different values does not
 // open. For the instance owners' inbox, InboxID is the owner's account id (one
-// sealed copy per owner, D95); for a community it is the community id.
+// sealed copy per owner, D95); for a community it is one moderator's own
+// inbox in that community, CommunityModeratorInboxID (one sealed copy per
+// moderator, the same rule).
 type ReportRoute struct {
 	InboxKind         string
 	InboxID           string
@@ -31,6 +33,14 @@ type ReportRoute struct {
 	ConversationID    string
 	ReportID          string
 	ReporterAccountID string
+}
+
+// CommunityModeratorInboxID names one moderator's inbox in a community:
+// "<community id>:<account id>". Ids are "<prefix>_<hex>", so the separator
+// never occurs inside one; both are well under 64 bytes, so the result fits
+// MaxIDSize and the schema's 128-character inbox id.
+func CommunityModeratorInboxID(communityID, accountID string) string {
+	return communityID + ":" + accountID
 }
 
 // ReportAAD returns the HPKE aad for a report: the label, then each field

@@ -1078,6 +1078,59 @@ class ApiClient {
     });
   }
 
+  /// C6: publishes the caller's report public key as a moderator inbox of
+  /// [communityId] (one sealed copy per moderator). Needs a recent sign-in.
+  Future<int> putModeratorReportKey(
+      String token, String communityId, List<int> publicKey) async {
+    final json = await _jsonRequest(
+      'PUT',
+      '/api/v1/reports/inbox-keys/community/${Uri.encodeComponent(communityId)}',
+      token: token,
+      body: <String, Object?>{'public_key': base64Encode(publicKey)},
+    );
+    return _decode(() {
+      final rev = json['key_rev'];
+      if (rev is! int || rev < 1) throw const FormatException('invalid rev');
+      return rev;
+    });
+  }
+
+  /// The caller's own moderator report key for [communityId], or null.
+  Future<ReportInboxRecipient?> getOwnModeratorReportKey(
+      String token, String communityId) async {
+    final Map<String, Object?> json;
+    try {
+      json = await _jsonRequest('GET',
+          '/api/v1/reports/inbox-keys/community/${Uri.encodeComponent(communityId)}',
+          token: token);
+    } on ApiException catch (err) {
+      if (err.statusCode == 404) return null;
+      rethrow;
+    }
+    return _decode(() => ReportInboxRecipient.fromJson(json));
+  }
+
+  /// The caller's own report copies in [communityId]'s moderator inbox.
+  Future<List<ReportCopyRow>> listModeratorReports(
+      String token, String communityId,
+      {String? afterId, int limit = 50}) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/reports',
+        queryParameters: <String, String>{
+          'inbox': 'community',
+          'community_id': communityId,
+          'limit': '$limit',
+          if (afterId != null && afterId.isNotEmpty) 'after_id': afterId,
+        },
+      ).toString(),
+      token: token,
+      maxResponseBytes: _maxCiphertextResponseBytes,
+    );
+    return _rows(json, 'reports', ReportCopyRow.fromJson);
+  }
+
   /// The calling owner's own current report key as the server holds it, or
   /// null when none was published.
   Future<ReportInboxRecipient?> getOwnReportKey(String token) async {
@@ -1365,6 +1418,22 @@ class ApiClient {
       token: token,
     );
     return _rows(json, 'members', ConversationMember.fromJson);
+  }
+
+  /// Sets [accountId]'s server-side role in a community (the server's own
+  /// route checks follow it; apps read roles from the verified record, C4).
+  Future<void> setCommunityMemberRole(
+    String token,
+    String communityId,
+    String accountId,
+    String role,
+  ) async {
+    await _jsonRequest(
+      'POST',
+      '${_targetPath(InviteTargetKind.community, communityId)}/members',
+      token: token,
+      body: <String, Object?>{'account_id': accountId, 'role': role},
+    );
   }
 
   /// Leaves a community when [accountId] is `me`, or removes a member. The

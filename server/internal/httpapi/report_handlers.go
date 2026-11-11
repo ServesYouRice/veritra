@@ -49,6 +49,42 @@ func (a *API) getInstanceReportKey(w http.ResponseWriter, r *http.Request, princ
 	writeJSON(w, http.StatusOK, recipient)
 }
 
+// PUT /api/v1/reports/inbox-keys/community/{community_id}: a community member
+// publishes their own report public key as their moderator inbox there (C6,
+// one sealed copy per moderator). Reporters' apps seal to it only when their
+// verified role record ranks this account moderator or above.
+func (a *API) putCommunityReportKey(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	var req struct {
+		PublicKey []byte `json:"public_key"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if len(req.PublicKey) != franking.PublicKeySize {
+		writeError(w, http.StatusBadRequest, "invalid_public_key")
+		return
+	}
+	communityID := strings.TrimSpace(r.PathValue("community_id"))
+	recipient, err := a.Store.SetCommunityReportKey(r.Context(), communityID, principal.AccountID, req.PublicKey)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	a.recordAuditEvent(r.Context(), &principal.AccountID, "report.inbox_key.updated", map[string]interface{}{"inbox_kind": franking.InboxCommunity, "key_rev": recipient.KeyRev})
+	writeJSON(w, http.StatusOK, recipient)
+}
+
+// GET /api/v1/reports/inbox-keys/community/{community_id}: the caller's own
+// moderator key there (404 when none is published).
+func (a *API) getCommunityReportKey(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	recipient, err := a.Store.CommunityReportKey(r.Context(), strings.TrimSpace(r.PathValue("community_id")), principal.AccountID)
+	if err != nil {
+		handleStorageError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, recipient)
+}
+
 // GET /api/v1/reports/inbox?conversation_id=: where a report about a message
 // of this conversation goes, and the keys to seal one copy to each recipient.
 // Members only.
@@ -104,19 +140,20 @@ func (a *API) createReport(w http.ResponseWriter, r *http.Request, principal dom
 }
 
 // GET /api/v1/reports?inbox=instance_owner, or ?inbox=community&community_id=:
-// the sealed reports of an inbox the caller may read. For instance_owner the
-// inbox is the caller's own.
+// the sealed reports of an inbox the caller may read: always the caller's own
+// (for a community, the caller's moderator inbox there).
 func (a *API) listReports(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	query := r.URL.Query()
 	kind, inboxID := strings.TrimSpace(query.Get("inbox")), principal.AccountID
 	switch kind {
 	case franking.InboxInstanceOwner:
 	case franking.InboxCommunity:
-		inboxID = strings.TrimSpace(query.Get("community_id"))
-		if inboxID == "" {
+		communityID := strings.TrimSpace(query.Get("community_id"))
+		if communityID == "" {
 			writeError(w, http.StatusBadRequest, "community_id_required")
 			return
 		}
+		inboxID = franking.CommunityModeratorInboxID(communityID, principal.AccountID)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_inbox")
 		return

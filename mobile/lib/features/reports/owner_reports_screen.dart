@@ -17,16 +17,22 @@ import '../../ui/widgets/tile_group.dart';
 /// C6 step 4: the instance owner's report inbox (docs/designs/C6-reports-
 /// franking.md, D95). Shows this device's report key (its code, for people
 /// who pin it), the reports sent to this owner and, per report, the revealed
-/// message and a check against the server's record. The community moderator
-/// inbox waits for community roles (C4) and is shown as unavailable.
+/// message and a check against the server's record. With [communityId] it
+/// is this account's moderator inbox in that community instead (C6: one
+/// sealed copy per moderator the community's verified role record names).
 class OwnerReportsScreen extends StatefulWidget {
   const OwnerReportsScreen({
     required this.state,
     required this.reauthenticate,
+    this.communityId,
     super.key,
   });
 
   final AppState state;
+
+  /// The community whose moderator inbox this is, or null for the instance
+  /// owner's inbox.
+  final String? communityId;
 
   /// Publishing a key is credential-sensitive (the server answers
   /// `recent_auth_required`), so the person proves themselves first.
@@ -46,7 +52,9 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
   @override
   void initState() {
     super.initState();
-    _service = widget.state.reportsService;
+    final service = widget.state.reportsService;
+    final community = widget.communityId;
+    _service = community == null ? service : service?.forCommunity(community);
     _load();
   }
 
@@ -165,15 +173,17 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
                               onTap: () => _openDetail(report),
                             ),
                         ]),
-                      SectionHeader(l10n.c6ReportsCommunity),
-                      TileGroup(children: <Widget>[
-                        ListTile(
-                          enabled: false,
-                          leading: const Icon(Icons.groups_outlined),
-                          title: Text(l10n.c6ReportsCommunity),
-                          subtitle: Text(l10n.c6ReportsCommunityUnavailable),
-                        ),
-                      ]),
+                      if (widget.communityId == null) ...<Widget>[
+                        SectionHeader(l10n.c6ReportsCommunity),
+                        TileGroup(children: <Widget>[
+                          ListTile(
+                            enabled: false,
+                            leading: const Icon(Icons.groups_outlined),
+                            title: Text(l10n.c6ReportsCommunity),
+                            subtitle: Text(l10n.c6ReportsCommunityUnavailable),
+                          ),
+                        ]),
+                      ],
                     ],
                   ),
       ),
@@ -214,7 +224,11 @@ class _OwnerReportsScreenState extends State<OwnerReportsScreen> {
               replace: state == OwnerReportKeyState.heldElsewhere),
         )
       else ...<Widget>[
-        if (state == OwnerReportKeyState.unpublished)
+        // A moderator inbox whose key another inbox's replace left behind:
+        // publish this device's key there too (the seed is per account).
+        if (state == OwnerReportKeyState.unpublished ||
+            (widget.communityId != null &&
+                state == OwnerReportKeyState.replacedElsewhere))
           ListTile(
             leading: const Icon(Icons.publish_outlined),
             title: Text(l10n.c6ReportsKeyPublish),

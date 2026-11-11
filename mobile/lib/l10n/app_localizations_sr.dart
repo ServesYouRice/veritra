@@ -3625,7 +3625,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportCommunityUnavailable =>
-      'Пријаве модераторима заједнице још нису доступне.';
+      'Ова заједница нема проверене улоге, па апликација не зна ко су њени модератори.';
 
   @override
   String get c6ReportNoOwnerKey =>
@@ -3700,7 +3700,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get c6ReportsCommunityUnavailable =>
-      'Још није доступно. Пријаве модераторима стижу уз улоге у заједници.';
+      'Пријаве у заједници иду њеним модераторима. Модератор их отвара из заједнице.';
 
   @override
   String c6ReportsFiled(String when) {
@@ -7990,7 +7990,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportCommunityUnavailable =>
-      'Prijave moderatorima zajednice još nisu dostupne.';
+      'Ova zajednica nema proverene uloge, pa aplikacija ne zna ko su njeni moderatori.';
 
   @override
   String get c6ReportNoOwnerKey =>
@@ -8065,7 +8065,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get c6ReportsCommunityUnavailable =>
-      'Još nije dostupno. Prijave moderatorima stižu uz uloge u zajednici.';
+      'Prijave u zajednici idu njenim moderatorima. Moderator ih otvara iz zajednice.';
 
   @override
   String c6ReportsFiled(String when) {

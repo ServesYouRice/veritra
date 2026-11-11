@@ -10,6 +10,7 @@ import '../../push/push_service.dart';
 import '../../core/models.dart';
 import '../../desktop/message_notifications.dart';
 import '../../desktop/update_service.dart';
+import '../../ui/reauthenticate.dart';
 import '../../ui/about.dart';
 import '../../ui/appearance.dart';
 import 'link_preview_tile.dart';
@@ -761,48 +762,8 @@ class SettingsScreen extends StatelessWidget {
     }
   }
 
-  Future<bool> _reauthenticate(BuildContext context) async {
-    final controller = TextEditingController();
-    try {
-      final password = await showDialog<String>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(dialogContext.l10n.settingsReauthTitle),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            obscureText: true,
-            autofillHints: const <String>[AutofillHints.password],
-            decoration: InputDecoration(
-              labelText: dialogContext.l10n.settingsReauthField,
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(dialogContext.l10n.commonCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: Text(dialogContext.l10n.commonContinue),
-            ),
-          ],
-        ),
-      );
-      if (password == null || password.isEmpty) {
-        return false;
-      }
-      final ok = await state.reauthenticate(password);
-      if (!ok && context.mounted && state.error != null) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(state.error!)));
-      }
-      return ok;
-    } finally {
-      controller.dispose();
-    }
-  }
+  Future<bool> _reauthenticate(BuildContext context) =>
+      promptReauthenticate(context, state);
 
   Future<void> _changePassword(BuildContext context) async {
     if (!await _reauthenticate(context) || !context.mounted) {
