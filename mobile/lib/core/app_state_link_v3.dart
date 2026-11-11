@@ -992,8 +992,8 @@ extension DeviceLinkV3Actions on AppState {
     await _journalLinkedDeviceAnchor(client, linked,
         signingKey: base64Decode(pending.claim['signing_key'] as String),
         approverDeviceId: pending.reservation['existing_device_id'] as String,
-        approverSigningKey:
-            base64Decode(pending.reservation['existing_signing_key'] as String));
+        approverSigningKey: base64Decode(
+            pending.reservation['existing_signing_key'] as String));
     await _oweInitialKeyPackages(linked);
     await promoter.promotePendingEnrollment(linked,
         kind: PendingEnrollment.kindDeviceLinkV3,

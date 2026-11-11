@@ -518,6 +518,7 @@ class _World {
         localStore: newStore,
         clock: () => DateTime.now().subtract(newClockLag));
     return AppState(
+      screenGuard: FakeScreenGuard(),
       apiClientFactory: (_) => api,
       cryptoService: crypto,
       localStore: newStore,
@@ -552,6 +553,7 @@ class _World {
     )));
     api = _LinkApi(server);
     source = AppState(
+      screenGuard: FakeScreenGuard(),
       apiClientFactory: (_) => api,
       cryptoService: sourceCrypto,
       localStore: sourceStore,
@@ -989,6 +991,7 @@ void main() {
                 localStore: w.sourceStore,
                 clock: DateTime.now);
             w.source = AppState(
+              screenGuard: FakeScreenGuard(),
               apiClientFactory: (_) => w.api,
               cryptoService: w.sourceCrypto,
               localStore: w.sourceStore,

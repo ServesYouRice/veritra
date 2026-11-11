@@ -78,9 +78,11 @@ extension AppStateDeviceList on AppState {
 
   /// Write ahead of session persistence/promotion. Only public signed bytes.
   Future<void> _journalDeviceListAnchor(
-      Session current, List<List<int>> statements) =>
-      localStore.saveSetting(_anchorJournalKey(current),
-          jsonEncode([for (final statement in statements) base64Encode(statement)]));
+          Session current, List<List<int>> statements) =>
+      localStore.saveSetting(
+          _anchorJournalKey(current),
+          jsonEncode(
+              [for (final statement in statements) base64Encode(statement)]));
 
   /// Must finish before any active-session path can read server lists.
   /// Errors deliberately propagate: missing durable trust is not TOFU.
@@ -90,7 +92,8 @@ extension AppStateDeviceList on AppState {
     final pins = _deviceListPins;
     if (pins == null) throw StateError('device-list verifier unavailable');
     final statements = [
-      for (final value in jsonDecode(raw) as List) base64Decode(value as String),
+      for (final value in jsonDecode(raw) as List)
+        base64Decode(value as String),
     ];
     if (statements.isEmpty) throw StateError('empty activation anchor');
     await pins.pinChain(current.accountId!, statements,
@@ -294,10 +297,13 @@ extension AppStateDeviceList on AppState {
       required List<int> approverSigningKey}) async {
     final crypto = _listCrypto;
     if (crypto == null) throw StateError('device-list verifier unavailable');
-    final pins = DeviceListPins(store: localStore,
-        source: _EnrollmentListSource(client, current), verifier: crypto);
+    final pins = DeviceListPins(
+        store: localStore,
+        source: _EnrollmentListSource(client, current),
+        verifier: crypto);
     final statements = await pins.linkedAnchor(current.accountId!,
-        deviceId: idBytes(current.deviceId!), signingKey: signingKey,
+        deviceId: idBytes(current.deviceId!),
+        signingKey: signingKey,
         approverDeviceId: idBytes(approverDeviceId),
         approverSigningKey: approverSigningKey);
     await _journalDeviceListAnchor(current, statements);

@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:drift/native.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/device_lists.dart';
@@ -10,6 +12,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'native_test_env.dart';
@@ -206,6 +209,92 @@ void main() {
     }
   }
 
+  for (final failure in ['crypto-committed', 'clear']) {
+    test(
+        'interruption after $failure restores the original native identity and pin',
+        () async {
+      final api = _ListApi(bindings);
+      final store = _FailingActivationStore(failure);
+      final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+      final state = _state(api, crypto);
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      expect(state.session, isNull);
+      expect(state.error, isNotNull);
+      expect(await store.loadCryptoState(), isNotNull);
+      final original = api.chain.single;
+      final key = bindings
+          .checkDeviceListChain(idBytes(_account), [original])
+          .head
+          .entries
+          .single
+          .signingKey;
+      state.dispose();
+      final ghost = bindings.createDevice(_account, 'dev_ghost');
+      addTearDown(ghost.close);
+      api.served = [
+        ghost.signDeviceList(
+            DeviceListBody(
+              accountId: idBytes(_account),
+              version: 1,
+              prevHash: DeviceListBody.zeroHash,
+              createdAtMs: 1,
+              change: DeviceListChange.genesis,
+              entries: [
+                DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
+              ],
+            ),
+            idBytes('dev_ghost'))
+      ];
+      store.fail = false;
+      final restoredCrypto =
+          NativeCryptoService(bindings: bindings, localStore: store);
+      final restart = _state(api, restoredCrypto);
+      addTearDown(restart.dispose);
+      await restart.tryRestoreSession();
+      expect(restart.session?.deviceId, _own);
+      expect(await restoredCrypto.currentSigningKey(), key);
+      expect(
+          (await store.loadDeviceListPin(_account))?.headStatement, original);
+    }, skip: skip);
+  }
+
+  test('activation journal survives closing and reopening the database',
+      () async {
+    final dir = Directory.systemTemp.createTempSync('l1-anchor-journal');
+    final file = File('${dir.path}/local.sqlite');
+    final api = _ListApi(bindings);
+    var database = EncryptedLocalDatabase(NativeDatabase(file));
+    var store = _JournalDatabaseStore(database)..failPin = true;
+    var state =
+        _state(api, NativeCryptoService(bindings: bindings, localStore: store));
+    try {
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      expect(state.session, isNull);
+      expect(await store.loadSession(), isNotNull);
+      expect(await store.loadDeviceListPin(_account), isNull);
+      state.dispose();
+      await database.close();
+      // No state survives in Dart. Only the on-disk journal/session do.
+      database = EncryptedLocalDatabase(NativeDatabase(file));
+      store = _JournalDatabaseStore(database);
+      state = _state(
+          api, NativeCryptoService(bindings: bindings, localStore: store));
+      api.listRead = 'unavailable';
+      await state.tryRestoreSession();
+      expect((await store.loadDeviceListPin(_account))?.headStatement,
+          api.chain.single);
+      expect(api.listFetches, 0);
+      // A crash before the first MLS save loses that key, requiring explicit
+      // recovery. It must never activate using a replacement server anchor.
+      expect(state.session, isNull);
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+    } finally {
+      state.dispose();
+      await database.close();
+      dir.deleteSync(recursive: true);
+    }
+  }, skip: skip);
+
   test(
       'an account from before L1 reviews its devices once; removals and the '
       'recovery key then chain, re-signed after a 409', () async {
@@ -283,6 +372,7 @@ void main() {
 }
 
 AppState _state(_ListApi api, NativeCryptoService crypto) => AppState(
+      screenGuard: FakeScreenGuard(),
       apiClientFactory: (_) => api,
       cryptoService: crypto,
       localStore: crypto.localStore,
@@ -504,6 +594,12 @@ class _FailingActivationStore extends MemoryLocalStore {
     if (fail && stage == 'journal' && name.startsWith('l1.activation.')) {
       throw StateError('journal write failed');
     }
+    if (fail &&
+        stage == 'clear' &&
+        name.startsWith('l1.activation.') &&
+        value.isEmpty) {
+      throw StateError('journal clear failed');
+    }
     await super.saveSetting(name, value);
   }
 
@@ -524,5 +620,56 @@ class _FailingActivationStore extends MemoryLocalStore {
   Future<void> saveCryptoState(StoredCryptoState state, int cursor) async {
     if (fail && stage == 'crypto') throw StateError('crypto write failed');
     await super.saveCryptoState(state, cursor);
+    if (fail && stage == 'crypto-committed') {
+      throw StateError('lost crypto write result');
+    }
+  }
+}
+
+/// Uses the production SQLite journal/session/pin primitives across reopen.
+/// MLS state is deliberately absent: the injected failure precedes activation.
+class _JournalDatabaseStore extends MemoryLocalStore {
+  _JournalDatabaseStore(this.database);
+  final EncryptedLocalDatabase database;
+  bool failPin = false;
+
+  @override
+  Future<void> saveSetting(String name, String value) =>
+      database.writeMetadata('setting:$name', value);
+
+  @override
+  Future<String?> loadSetting(String name) =>
+      database.readMetadata('setting:$name');
+
+  @override
+  Future<void> saveSession(Session session) =>
+      database.writeSessionJson(jsonEncode({
+        'base_url': session.baseUrl,
+        'token': session.token,
+        'account_id': session.accountId,
+        'device_id': session.deviceId,
+      }));
+
+  @override
+  Future<Session?> loadSession() async {
+    final raw = await database.readSessionJson();
+    if (raw == null) return null;
+    final value = jsonDecode(raw) as Map<String, dynamic>;
+    return Session(
+        baseUrl: value['base_url'] as String,
+        token: value['token'] as String,
+        accountId: value['account_id'] as String,
+        deviceId: value['device_id'] as String);
+  }
+
+  @override
+  Future<DeviceListPin?> loadDeviceListPin(String accountId) =>
+      database.readDeviceListPin(accountId);
+
+  @override
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+      {required int? expectedVersion}) async {
+    if (failPin) throw StateError('pin write failed');
+    return database.writeDeviceListPin(pin, expectedVersion: expectedVersion);
   }
 }

@@ -103,6 +103,7 @@ releases the hold. Run inherited Rust VDL1/key-binding tests, server signed-list
 and honest-server gates, Flutter pin/store/gate tests, and repository checks.
 
 The full L1 package remains partial: complete adds independent of the server's
-device enumeration, recovery-key retype/legacy confirmation UI, removed-message UI, chains beyond the
-bounded limits and independent security review/demo evidence still need work. Work is
-performed alone as explicitly requested; no independent review is claimed.
+device enumeration, recovery-key retype/legacy confirmation UI, removed-message
+UI, chains beyond the bounded limits and independent security review/demo
+evidence still need work. Work is performed alone as explicitly requested;
+no independent review is claimed.
