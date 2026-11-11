@@ -1657,8 +1657,8 @@ class ApiClient {
   /// claims; the restore opens the container to trust anything.
   Future<List<Map<String, Object?>>> listBackups(String token,
       {int limit = 100}) async {
-    final json = await _jsonRequest('GET', '/api/v1/backups?limit=$limit',
-        token: token);
+    final json =
+        await _jsonRequest('GET', '/api/v1/backups?limit=$limit', token: token);
     final backups = json['backups'];
     if (backups is! List) throw const ApiResponseException();
     return <Map<String, Object?>>[

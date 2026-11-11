@@ -59,7 +59,8 @@ class K1BackupEntry {
     return K1BackupEntry(
       id: id,
       deviceId: device,
-      deviceName: raw['device_name'] is String ? raw['device_name'] as String : '',
+      deviceName:
+          raw['device_name'] is String ? raw['device_name'] as String : '',
       deviceRevoked: raw['device_revoked'] == true,
       createdAt: at.toUtc(),
       sizeBytes: size,

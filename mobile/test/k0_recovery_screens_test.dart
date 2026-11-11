@@ -285,8 +285,8 @@ void main() {
     await tester
         .tap(find.byKey(const ValueKey<String>('follow-up-restore-skip')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('older backups become unusable'),
-        findsOneWidget);
+    expect(
+        find.textContaining('older backups become unusable'), findsOneWidget);
     // Cancel keeps the step.
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
@@ -294,8 +294,8 @@ void main() {
     await tester
         .tap(find.byKey(const ValueKey<String>('follow-up-restore-skip')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(
-        const ValueKey<String>('follow-up-restore-skip-confirm')));
+    await tester.tap(
+        find.byKey(const ValueKey<String>('follow-up-restore-skip-confirm')));
     await tester.pumpAndSettle();
     expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
     state.dispose();

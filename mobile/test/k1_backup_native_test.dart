@@ -119,7 +119,9 @@ void main() {
           sourceDeviceId: 'dev_a',
           counter: 4,
           createdAt: 1730000000000,
-          conversations: const [HistoryConversation('conv', 'dm')],
+          conversations: const [
+            HistoryConversation('conv', 'dm')
+          ],
           messages: [
             LocalMessage(
                 key: 'dev_a:1',

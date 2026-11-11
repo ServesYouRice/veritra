@@ -130,7 +130,8 @@ void main() {
         findsOneWidget);
   });
 
-  testWidgets('the restore screen lists copies of other devices and asks for '
+  testWidgets(
+      'the restore screen lists copies of other devices and asks for '
       'the key', (tester) async {
     final state = k0App(server, store, _OpenCrypto())
       ..session = k0SignedIn
@@ -146,8 +147,8 @@ void main() {
     expect(find.textContaining('Old phone'), findsOneWidget);
     expect(find.text('This device was removed from your account.'),
         findsOneWidget);
-    expect(find.byKey(const ValueKey<String>('k1-restore-legacy')),
-        findsNothing);
+    expect(
+        find.byKey(const ValueKey<String>('k1-restore-legacy')), findsNothing);
     await tester.tap(find.byKey(const ValueKey<String>('k1-restore-backup_a')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey<String>('auto-backup-key-field')),

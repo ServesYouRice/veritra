@@ -46,7 +46,9 @@ Uint8List _snapshotBytes({String account = 'acct_me', String device = _src}) =>
         conversations: const [
           HistoryConversation('conv', 'dm', title: 'old chat')
         ],
-        messages: [_msg('hello')],
+        messages: [
+          _msg('hello')
+        ],
         reactions: const [],
         pins: const [],
         starred: const {},
@@ -214,8 +216,8 @@ void main() {
       () async {
     crypto.rkId = _otherRkId;
     final entry = (await state.loadK1RestoreList())!.single;
-    expect(
-        await state.restoreFromK1Backup(entry, k0Display), K1RestoreResult.otherKey);
+    expect(await state.restoreFromK1Backup(entry, k0Display),
+        K1RestoreResult.otherKey);
     expect(api.ranges, isEmpty);
     expect(crypto.entropies.single, everyElement(0));
   });
@@ -223,7 +225,8 @@ void main() {
   test('a wrong header, digest or snapshot imports nothing', () async {
     final entry = (await state.loadK1RestoreList())!.single;
     Future<void> corrupt() async => expect(
-        await state.restoreFromK1Backup(entry, k0Display), K1RestoreResult.corrupt);
+        await state.restoreFromK1Backup(entry, k0Display),
+        K1RestoreResult.corrupt);
     crypto.headerAccount = 'acct_other';
     await corrupt();
     crypto.headerAccount = 'acct_me';
@@ -253,8 +256,8 @@ void main() {
   test('a network failure is retryable and changes nothing', () async {
     final entry = (await state.loadK1RestoreList())!.single;
     api.downloadFailure = ApiException(503, '');
-    expect(
-        await state.restoreFromK1Backup(entry, k0Display), K1RestoreResult.network);
+    expect(await state.restoreFromK1Backup(entry, k0Display),
+        K1RestoreResult.network);
     expect(await bodies(), isNot(contains('hello')));
   });
 
@@ -267,8 +270,7 @@ void main() {
       _row(container, id: 'backup_junk', sha: 'zz'),
     ];
     final candidates = k1RestoreCandidates(
-        rows.map(K1BackupEntry.tryParse).whereType<K1BackupEntry>(),
-        'dev_old');
+        rows.map(K1BackupEntry.tryParse).whereType<K1BackupEntry>(), 'dev_old');
     expect(candidates.map((e) => e.id), <String>['backup_cur', 'backup_prev']);
   });
 

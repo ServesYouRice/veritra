@@ -116,8 +116,9 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
 
   String _entryTitle(BuildContext context, K1BackupEntry entry) {
     final l10n = context.l10n;
-    final device =
-        entry.deviceName.isEmpty ? l10n.k1RestoreDeviceUnnamed : entry.deviceName;
+    final device = entry.deviceName.isEmpty
+        ? l10n.k1RestoreDeviceUnnamed
+        : entry.deviceName;
     final date = formatDateTime(context, entry.createdAt.toLocal());
     return entry.superseded
         ? l10n.k1RestoreEntryPrevious(device, date)
