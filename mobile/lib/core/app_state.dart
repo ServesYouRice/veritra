@@ -829,9 +829,14 @@ class AppState extends ChangeNotifier
   bool _k1RerunRequested = false;
   Timer? _k1Timer;
 
-  /// Where the second copy goes (K1-5); tests replace it.
+  /// Where the second copy goes (K1-5): a desktop folder, or an Android
+  /// document tree through the channel. Tests replace it.
   @visibleForTesting
-  K1SecondCopyWriter k1SecondCopyWriter = const FileK1SecondCopyWriter();
+  K1SecondCopyWriter k1SecondCopyWriter = const PlatformK1SecondCopyWriter();
+
+  /// The phone second-copy channel (Android folder pick, iOS export).
+  @visibleForTesting
+  K1SecondCopyChannel k1SecondCopyChannel = const K1SecondCopyChannel();
 
   /// The clock K1 schedules read; tests move it.
   @visibleForTesting

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/k1_second_copy.dart';
 import 'package:private_messenger/ui/about.dart';
 
 void main() {
@@ -134,5 +135,71 @@ void main() {
       infoPlist,
       contains('Veritra uses the camera to scan device-link QR codes.'),
     );
+  });
+
+  // K1 second copy on phones (D91). These are text checks of native code
+  // no test here builds: they catch a renamed channel or a moved
+  // registration, not a compile error or a picker that misbehaves.
+  group('K1 second copy channel (text checks, not builds)', () {
+    const kotlinDir =
+        'android/app/src/main/kotlin/org/veritra/private_messenger';
+
+    test('Kotlin, Swift and Dart name the same channel', () {
+      final quoted = '"$k1SecondCopyChannelName"';
+      expect(File('$kotlinDir/K1SecondCopy.kt').readAsStringSync(),
+          contains('const val CHANNEL = $quoted'));
+      expect(File('ios/Runner/AppDelegate.swift').readAsStringSync(),
+          contains('name: $quoted'));
+    });
+
+    test('both engines register it before Dart can call it', () {
+      final engine =
+          File('$kotlinDir/SharedFlutterEngine.kt').readAsStringSync();
+      final install = engine.indexOf('K1SecondCopy.install(app, messenger)');
+      expect(install, greaterThan(0));
+      expect(install, lessThan(engine.indexOf('executeDartEntrypoint')));
+
+      final swift = File('ios/Runner/AppDelegate.swift').readAsStringSync();
+      final shared = swift.substring(swift.indexOf('func sharedEngine('));
+      final register = shared.indexOf('registerK1SecondCopyChannel(engine)');
+      expect(register, greaterThan(0));
+      expect(register, lessThan(shared.indexOf('return engine')));
+    });
+
+    test('Android asks for no storage permission: only the picked tree', () {
+      final manifest =
+          File('android/app/src/main/AndroidManifest.xml').readAsStringSync();
+      for (final permission in <String>[
+        'READ_EXTERNAL_STORAGE',
+        'WRITE_EXTERNAL_STORAGE',
+        'MANAGE_EXTERNAL_STORAGE',
+        'MANAGE_DOCUMENTS',
+      ]) {
+        expect(manifest, isNot(contains(permission)), reason: permission);
+      }
+      final activity = File('$kotlinDir/MainActivity.kt').readAsStringSync();
+      expect(activity, contains('Intent.ACTION_OPEN_DOCUMENT_TREE'));
+      expect(activity, contains('FLAG_GRANT_PERSISTABLE_URI_PERMISSION'));
+      expect(activity, contains('takePersistableUriPermission('));
+      final copy = File('$kotlinDir/K1SecondCopy.kt').readAsStringSync();
+      expect(copy, contains('releasePersistableUriPermission('));
+      // The file is written in full and synced before the old one goes.
+      final write = copy.substring(copy.indexOf('fun write(context'));
+      expect(write.indexOf('writeAll(resolver, temp, bytes)'),
+          lessThan(write.indexOf('oldDeleted = true')));
+      expect(copy, contains('fd.sync()'));
+    });
+
+    test('iOS exports a protected temporary copy through the picker', () {
+      final swift = File('ios/Runner/AppDelegate.swift').readAsStringSync();
+      expect(
+          swift,
+          contains('UIDocumentPickerViewController(forExporting: [file], '
+              'asCopy: true)'));
+      expect(swift, contains('.completeFileProtection'));
+      // The temporary file is removed whichever way the picker closes.
+      expect(swift, contains('func documentPickerWasCancelled('));
+      expect(swift, contains('didPickDocumentsAt'));
+    });
   });
 }

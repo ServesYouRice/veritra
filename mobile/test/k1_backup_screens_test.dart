@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, debugDefaultTargetPlatformOverride;
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -129,6 +131,66 @@ void main() {
     expect(find.text('This phone backs up when you open the app.'),
         findsOneWidget);
   });
+
+  // Phones (D91): iOS saves a copy by hand, Android names the picked folder
+  // and never shows its content URI.
+  for (final platform in <TargetPlatform>[
+    TargetPlatform.iOS,
+    TargetPlatform.android,
+  ]) {
+    testWidgets('the second copy on ${platform.name}', (tester) async {
+      debugDefaultTargetPlatformOverride = platform;
+      try {
+        server.status = RecoveryKeyStatus(
+            available: true,
+            configured: true,
+            rkId: Uint8List.fromList(List<int>.filled(16, 0xB2)));
+        final state = signedIn();
+        addTearDown(state.dispose);
+        state.recoveryKeyStatus = server.status;
+        await tester
+            .pumpWidget(app(AutoBackupScreen(state: state, isPhone: true)));
+        await tester.pumpAndSettle();
+        await tester
+            .tap(find.byKey(const ValueKey<String>('auto-backup-type-key')));
+        await tester.pumpAndSettle();
+        await tester.enterText(
+            find.byKey(const ValueKey<String>('auto-backup-key-field')),
+            k0Display);
+        await tester
+            .tap(find.byKey(const ValueKey<String>('auto-backup-key-submit')));
+        await tester.runAsync(
+            () => Future<void>.delayed(const Duration(milliseconds: 50)));
+        await tester.pumpAndSettle();
+        expect(find.text('Backups are on for this device.'), findsOneWidget);
+        final save =
+            find.byKey(const ValueKey<String>('auto-backup-save-copy'));
+        final folder =
+            find.byKey(const ValueKey<String>('auto-backup-second-copy'));
+        if (platform == TargetPlatform.iOS) {
+          expect(save, findsOneWidget);
+          expect(folder, findsNothing);
+          expect(find.text('Save a copy of the backup'), findsOneWidget);
+          return;
+        }
+        expect(save, findsNothing);
+        expect(find.text('Keep a second copy in a folder'), findsOneWidget);
+        const tree = 'content://com.android.externalstorage.documents/tree/'
+            'primary%3ABackups';
+        await tester.runAsync(
+            () => state.setK1SecondCopyFolder(tree, label: 'Backups'));
+        await tester.pumpAndSettle();
+        expect(find.text('Second copy: Backups'), findsOneWidget);
+        expect(find.textContaining('content://'), findsNothing);
+        await tester.runAsync(() => state.setK1SecondCopyFolder(tree));
+        await tester.pumpAndSettle();
+        expect(find.text('Second copy: the folder you chose'), findsOneWidget);
+        expect(find.textContaining('content://'), findsNothing);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    });
+  }
 
   testWidgets(
       'the restore screen lists copies of other devices and asks for '

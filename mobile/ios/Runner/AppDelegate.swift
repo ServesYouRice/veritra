@@ -12,6 +12,7 @@ import Darwin
   // Set once in didFinishLaunching; false until the crypto boundary checks.
   private var cryptoBoundaryReady = false
   private let wakeCoordinator = IOSWakeCoordinator()
+  private let k1Exporter = K1SecondCopyExporter()
 
   func sharedEngine(background: Bool = false) -> FlutterEngine? {
     dispatchPrecondition(condition: .onQueue(.main))
@@ -29,6 +30,7 @@ import Darwin
     guard engine.run() else { ownedEngine = nil; return nil }
     GeneratedPluginRegistrant.register(with: engine)
     registerStorageChannel(engine)
+    registerK1SecondCopyChannel(engine)
     registerPushChannels(engine)
     wakeCoordinator.attach(engine.binaryMessenger, background: startingInBackground)
     return engine
@@ -156,6 +158,30 @@ import Darwin
       } else {
         result(nil)
       }
+    }
+  }
+
+  /// K1 second copy (D91: a manual export on iOS; no silent writes to
+  /// user folders). Dart sends this device's latest backup, already checked
+  /// against the server row; the system picker saves a copy where the user
+  /// chooses, and the app keeps no link to it. Answers true when saved,
+  /// false when cancelled. Errors carry a code only, never a name or path.
+  private func registerK1SecondCopyChannel(_ registry: FlutterPluginRegistry) {
+    guard let registrar = registry.registrar(forPlugin: "VeritraK1SecondCopy") else { return }
+    FlutterMethodChannel(
+      name: "org.veritra.private_messenger/k1_second_copy",
+      binaryMessenger: registrar.messenger()
+    ).setMethodCallHandler { [weak self] call, result in
+      guard call.method == "export" else { result(FlutterMethodNotImplemented); return }
+      guard let arguments = call.arguments as? [String: Any],
+            let name = arguments["name"] as? String, K1SecondCopyExporter.validName(name),
+            let bytes = arguments["bytes"] as? FlutterStandardTypedData else {
+        result(FlutterError(code: "invalid_arguments", message: nil, details: nil)); return
+      }
+      guard let self, let root = self.ownedEngine?.viewController else {
+        result(FlutterError(code: "ui_unavailable", message: nil, details: nil)); return
+      }
+      self.k1Exporter.export(name: name, data: bytes.data, from: root, result: result)
     }
   }
 
@@ -550,5 +576,68 @@ final class IOSWakeCoordinator {
         }
       }
     }
+  }
+}
+
+/// Saves one K1 backup copy through the system document picker. The bytes
+/// go to a private temporary folder first (the picker exports a file, not
+/// data), and that folder is removed when the picker closes either way.
+final class K1SecondCopyExporter: NSObject, UIDocumentPickerDelegate,
+  UIAdaptivePresentationControllerDelegate {
+  private var pending: (folder: URL, result: FlutterResult)?
+
+  static func validName(_ name: String) -> Bool {
+    name.range(of: "\\Averitra-backup-[A-Za-z0-9_-]{1,200}\\.vhc\\z", options: .regularExpression) != nil
+  }
+
+  func export(name: String, data: Data, from root: UIViewController, result: @escaping FlutterResult) {
+    // The delegate is held here while the picker is open; one at a time.
+    guard pending == nil else {
+      result(FlutterError(code: "busy", message: nil, details: nil)); return
+    }
+    var top = root
+    while let presented = top.presentedViewController { top = presented }
+    let folder = FileManager.default.temporaryDirectory
+      .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    let file = folder.appendingPathComponent(name)
+    do {
+      try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+      try data.write(to: file, options: [.atomic, .completeFileProtection])
+    } catch {
+      try? FileManager.default.removeItem(at: folder)
+      result(FlutterError(code: "write_failed", message: nil, details: nil)); return
+    }
+    let picker: UIDocumentPickerViewController
+    if #available(iOS 14.0, *) {
+      picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
+    } else {
+      // iOS 13 (the deployment target): the export mode copies as well.
+      picker = UIDocumentPickerViewController(url: file, in: .exportToService)
+    }
+    picker.delegate = self
+    pending = (folder, result)
+    top.present(picker, animated: true)
+    // A sheet swiped away may tell only the presentation controller; the
+    // export must not stay "busy" until the app restarts.
+    picker.presentationController?.delegate = self
+  }
+
+  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+    finish(saved: false)
+  }
+
+  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    finish(saved: true)
+  }
+
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+    finish(saved: false)
+  }
+
+  private func finish(saved: Bool) {
+    guard let pending else { return }
+    self.pending = nil
+    try? FileManager.default.removeItem(at: pending.folder)
+    pending.result(saved)
   }
 }

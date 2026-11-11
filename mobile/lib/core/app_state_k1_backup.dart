@@ -154,16 +154,112 @@ extension K1BackupActions on AppState {
   }
 
   /// Sets (or with null clears) the folder of the second copy, and writes
-  /// the first copy with the next run.
-  Future<void> setK1SecondCopyFolder(String? folder) async {
+  /// the first copy with the next run. [label] is what Settings shows for
+  /// it. An Android folder no longer used gives up its grant.
+  Future<void> setK1SecondCopyFolder(String? folder, {String? label}) async {
     final state = _k1StateForSession();
     if (state == null) return;
+    final previous = state.secondCopyPath;
     state.secondCopyPath = folder;
+    state.secondCopyLabel = folder == null ? null : label;
     state.secondCopyAt = null;
     state.secondCopyFailed = false;
     await _saveK1State(state);
     notifyListeners();
+    if (previous != null && previous != folder && isK1DocumentTree(previous)) {
+      try {
+        await k1SecondCopyChannel.release(previous);
+      } catch (_) {
+        // Best effort: a stale grant only counts against the cap.
+      }
+    }
     if (folder != null) unawaited(runK1BackupIfDue(force: true));
+  }
+
+  /// Android: the system folder picker for the second copy. Nothing
+  /// changes when the user cancels or the pick fails.
+  Future<K1SecondCopyPick> pickK1SecondCopyFolder() async {
+    if (_k1StateForSession() == null) return K1SecondCopyPick.failed;
+    final K1PickedFolder? picked;
+    try {
+      picked = await k1SecondCopyChannel.pickFolder();
+    } catch (_) {
+      return K1SecondCopyPick.failed;
+    }
+    if (picked == null) return K1SecondCopyPick.cancelled;
+    await setK1SecondCopyFolder(picked.folder, label: picked.label);
+    return K1SecondCopyPick.picked;
+  }
+
+  /// iOS (D91: manual export): saves this device's latest backup where the
+  /// user chooses, through the system picker. The copy is downloaded and
+  /// must be the one this device uploaded last: its row's size and SHA-256,
+  /// and its header's account, device, counter and key id, so a server
+  /// cannot hand over an older or another device's copy. A cancelled export
+  /// changes nothing.
+  Future<K1SecondCopyExport> exportK1SecondCopy() async {
+    final current = session;
+    final client = api;
+    final state = _k1StateForSession();
+    final crypto = cryptoService;
+    if (current == null ||
+        client == null ||
+        current.token.isEmpty ||
+        current.accountId == null ||
+        current.deviceId == null ||
+        state == null ||
+        !state.hasKey ||
+        crypto is! BackupOpenCryptoService) {
+      return K1SecondCopyExport.failed;
+    }
+    final open = crypto as BackupOpenCryptoService;
+    final rkId = Uint8List.fromList(state.rkId!);
+    final counter = state.counter;
+    try {
+      final rows = await client.listBackups(current.token);
+      K1BackupEntry? entry;
+      for (final row in rows) {
+        final parsed = K1BackupEntry.tryParse(row);
+        if (parsed != null &&
+            parsed.deviceId == current.deviceId &&
+            parsed.counter == counter &&
+            _constantTimeBytesEqual(parsed.rkId, rkId)) {
+          entry = parsed;
+        }
+      }
+      if (entry == null || state.lastSuccessAt == null) {
+        return K1SecondCopyExport.noCopy;
+      }
+      final body = await _k1ReadBytes(
+          await client.downloadBackup(current.token, entry.id),
+          k1MaxBackupCiphertextBytes);
+      if (body.length != entry.sizeBytes ||
+          body.length < k1BackupPeekBytes ||
+          _hexOf(sha256(body)) != entry.sha256Hex) {
+        return K1SecondCopyExport.failed;
+      }
+      final peek =
+          open.peekK1Backup(Uint8List.sublistView(body, 0, k1BackupPeekBytes));
+      if (peek.accountId != current.accountId ||
+          peek.sourceDeviceId != current.deviceId ||
+          peek.counter != counter ||
+          !_constantTimeBytesEqual(peek.rkId, rkId)) {
+        return K1SecondCopyExport.failed;
+      }
+      if (!identical(session, current)) return K1SecondCopyExport.failed;
+      final saved = await k1SecondCopyChannel.export(
+          k1SecondCopyFileName(current.accountId!, current.deviceId!), body);
+      if (!saved) return K1SecondCopyExport.cancelled;
+      if (identical(_k1StateForSession(), state)) {
+        state.secondCopyAt = k1Clock();
+        state.secondCopyFailed = false;
+        await _saveK1State(state);
+        notifyListeners();
+      }
+      return K1SecondCopyExport.saved;
+    } catch (_) {
+      return K1SecondCopyExport.failed;
+    }
   }
 
   /// Runs a backup when one is due (a day since the last good copy, no
@@ -258,7 +354,12 @@ extension K1BackupActions on AppState {
         !_constantTimeBytesEqual(accountRkId, key.rkId)) {
       return K1BackupError.keyChanged;
     }
-    // 2. Build the snapshot, without disappearing messages.
+    // 2. Build the snapshot, without disappearing messages. The stored
+    // conversation list is brought up to date first: a chat started since
+    // the last refresh already has stored messages, and the export refuses
+    // a message whose conversation it does not know (found by K1-7).
+    if (conversationsLoaded) await _persistSnapshot();
+    if (!identical(session, current)) return K1BackupError.failed;
     final plaintext = _k1Bytes(
         await localStore.exportHistorySnapshot(omitDisappearing: true));
     Uint8List? ciphertext;
@@ -491,3 +592,10 @@ class _K1RunKey {
 /// already is one.
 Uint8List _k1Bytes(List<int> bytes) =>
     bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
+
+/// What [K1BackupActions.pickK1SecondCopyFolder] did.
+enum K1SecondCopyPick { picked, cancelled, failed }
+
+/// What [K1BackupActions.exportK1SecondCopy] did. [noCopy]: this device has
+/// no good copy on the server yet ("Back up now" first).
+enum K1SecondCopyExport { saved, cancelled, noCopy, failed }
