@@ -86,6 +86,7 @@ import '../crypto/profile_record_codec.dart'
     show ProfileRecordException, ProfilePhoto;
 import 'passkeys.dart';
 import 'receipts_state.dart';
+import 'report_key_announcer.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
 import 'typing_state.dart';
@@ -236,6 +237,9 @@ class Ops {
 
   /// C3: background community info sends (keys, requests, announcements).
   static const communityInfo = 'community_info';
+
+  /// C6: background moderator report key announcements and requests.
+  static const reportKeys = 'report_keys';
   static const blocks = 'blocks';
   static const profile = 'profile';
   static const mute = 'mute';
@@ -465,6 +469,17 @@ class AppState extends ChangeNotifier
   /// C4: the owner's automatic election cancels waiting out their random
   /// delay, by record group ([RoleActions]).
   final Map<String, Timer> _ownerCancelTimers = <String, Timer>{};
+
+  /// C6: this account's report public key on this device (canonical base64,
+  /// '' when it holds no seed), cached per server and account so a sync
+  /// pass reads the keystore once. Cleared when the seed changes.
+  ({String baseUrl, String accountId, String key})? _reportKeyMemo;
+
+  /// C6: record groups where the server does not list this device's key as
+  /// this account's moderator inbox, by key: nothing is announced there
+  /// until the seed changes (one lookup per session, not per pass).
+  final Map<String, String> _reportKeyUnlisted = <String, String>{};
+  bool _reportKeyAnnouncing = false;
   final Random _ownerCancelRandom = Random.secure();
 
   /// C4 server succession: when this device last asked the server to make
@@ -4675,8 +4690,11 @@ class AppState extends ChangeNotifier
     // C3 info payloads are background work: their failures land under
     // their own op, never in the composer's send error.
     return _runScoped(
-        infoPayloadTypes.contains(type) ? Ops.communityInfo : Ops.send,
-        () async {
+        infoPayloadTypes.contains(type)
+            ? Ops.communityInfo
+            : reportKeyPayloadTypes.contains(type)
+                ? Ops.reportKeys
+                : Ops.send, () async {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final current = session;
       final client = api;
@@ -4725,11 +4743,14 @@ class AppState extends ChangeNotifier
       // carry it; otherwise the payload has none and receivers fall back to
       // the server-stamped time.
       final retention = conversation.retentionSeconds;
-      // C3 info payloads never expire: a key must outlive the timer.
-      final DateTime? senderExpiry =
-          retention != null && retention > 0 && !infoPayloadTypes.contains(type)
-              ? DateTime.now().toUtc().add(Duration(seconds: retention))
-              : null;
+      // C3 info payloads never expire: a key must outlive the timer. Nor do
+      // C6 report key announcements (their settings outlive the row anyway).
+      final DateTime? senderExpiry = retention != null &&
+              retention > 0 &&
+              !infoPayloadTypes.contains(type) &&
+              !reportKeyPayloadTypes.contains(type)
+          ? DateTime.now().toUtc().add(Duration(seconds: retention))
+          : null;
       final Object? expiringService = mls;
       if (mls != null &&
           senderExpiry != null &&
@@ -6403,6 +6424,9 @@ class AppState extends ChangeNotifier
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
           await reconcileServerOwners();
+          // C6: announce this moderator's report key where it is due. Not
+          // awaited, like the C3 refresh: sending never holds up sync.
+          unawaited(_announceReportKeys());
         } catch (err) {
           // A self-update is optional; it never blocks sync.
           if (err is ApiException && err.statusCode == 401) rethrow;

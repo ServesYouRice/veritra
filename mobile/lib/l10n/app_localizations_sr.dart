@@ -3628,6 +3628,20 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ова заједница нема проверене улоге, па апликација не зна ко су њени модератори.';
 
   @override
+  String get c6ReportModeratorKeysPending =>
+      'Кључ ниједног модератора још није стигао на овај уређај. Кључеви стижу преко заједнице. Покушај поново касније.';
+
+  @override
+  String c6ReportModeratorCount(int count) {
+    return 'Модератора који добијају копију: $count';
+  }
+
+  @override
+  String c6ReportModeratorsUnconfirmed(int count) {
+    return 'Модератора чији кључ још није стигао на овај уређај и који не добијају копију: $count';
+  }
+
+  @override
   String get c6ReportNoOwnerKey =>
       'Ниједан власник сервера још не може да прима пријаве. Замоли га да подеси кључ за пријаве.';
 
@@ -7991,6 +8005,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get c6ReportCommunityUnavailable =>
       'Ova zajednica nema proverene uloge, pa aplikacija ne zna ko su njeni moderatori.';
+
+  @override
+  String get c6ReportModeratorKeysPending =>
+      'Ključ nijednog moderatora još nije stigao na ovaj uređaj. Ključevi stižu preko zajednice. Pokušaj ponovo kasnije.';
+
+  @override
+  String c6ReportModeratorCount(int count) {
+    return 'Moderatora koji dobijaju kopiju: $count';
+  }
+
+  @override
+  String c6ReportModeratorsUnconfirmed(int count) {
+    return 'Moderatora čiji ključ još nije stigao na ovaj uređaj i koji ne dobijaju kopiju: $count';
+  }
 
   @override
   String get c6ReportNoOwnerKey =>

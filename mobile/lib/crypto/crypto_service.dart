@@ -699,6 +699,16 @@ class GovernanceRemovalUnprovenException implements Exception {
   String toString() => 'GovernanceRemovalUnprovenException';
 }
 
+/// C6: the accounts that hold a leaf in a conversation's MLS group, read from
+/// this device's own group state. A private channel's reports go only to the
+/// moderators in this roster (docs/designs/C6-reports-franking.md, "Private
+/// channels").
+abstract interface class MlsRosterCryptoService {
+  /// [conversationId]'s MLS account roster, or null when this device holds
+  /// no group for it or a member id is not text.
+  Set<String>? mlsAccountsOf(String conversationId);
+}
+
 /// C4 role commands: role-only commits built by [GovernanceCommands] from the
 /// group's current record and MLS roster, queued like any staged commit.
 abstract interface class RoleCommandCryptoService {

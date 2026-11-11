@@ -5943,6 +5943,24 @@ abstract class AppLocalizations {
   /// **'This community has no verified roles, so the app can\'t tell who its moderators are.'**
   String get c6ReportCommunityUnavailable;
 
+  /// C6 reports: no moderator key is authenticated over MLS yet.
+  ///
+  /// In en, this message translates to:
+  /// **'No moderator\'s key has reached this device yet. Keys arrive through the community. Try again later.'**
+  String get c6ReportModeratorKeysPending;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderators who get a copy: {count}'**
+  String c6ReportModeratorCount(int count);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderators whose key has not reached this device yet, and who get no copy: {count}'**
+  String c6ReportModeratorsUnconfirmed(int count);
+
   /// C6 reports.
   ///
   /// In en, this message translates to:

@@ -15,8 +15,9 @@ import '../../ui/widgets/large_title_bar.dart';
 /// The screen says plainly what is sent (this one message, sealed), shows the
 /// owners' key codes the first time a key is seen or when it changed so a
 /// person can pin it, and only then sends. A community conversation reports
-/// to its moderators, whose inbox waits for community roles (C4): the screen
-/// says so and offers nothing.
+/// to the moderators of its verified role record (C4), sealed to the keys
+/// they announced over MLS: no codes and no tap. Moderators whose key has
+/// not reached this device are counted, and get no copy.
 class ReportMessageScreen extends StatefulWidget {
   const ReportMessageScreen({
     required this.state,
@@ -90,6 +91,7 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       return switch (err.kind) {
         ReportFailure.communityUnavailable => l10n.c6ReportCommunityUnavailable,
         ReportFailure.noRecipients => l10n.c6ReportNoOwnerKey,
+        ReportFailure.moderatorKeysPending => l10n.c6ReportModeratorKeysPending,
         ReportFailure.notReportable => l10n.c6ReportNotReportable,
         ReportFailure.keysNotPinned => l10n.c6ReportKeysNotPinned,
         ReportFailure.alreadyReported => l10n.c6ReportAlready,
@@ -214,8 +216,22 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
     final theme = Theme.of(context);
     final plan = _plan;
     if (plan == null) return const <Widget>[];
+    if (plan.isCommunity) {
+      // Moderator keys are trusted only over MLS: nothing to compare.
+      return <Widget>[
+        Text(l10n.c6ReportModeratorCount(plan.check.recipients.length),
+            style: theme.textTheme.bodyMedium),
+        if (plan.unconfirmed.isNotEmpty) ...<Widget>[
+          const SizedBox(height: BoneSpacing.sm),
+          Text(l10n.c6ReportModeratorsUnconfirmed(plan.unconfirmed.length),
+              style: theme.textTheme.bodyMedium),
+        ],
+      ];
+    }
     final unsure = plan.check.recipients
-        .where((r) => r.status != ReportKeyStatus.pinned)
+        .where((r) =>
+            r.status == ReportKeyStatus.unpinned ||
+            r.status == ReportKeyStatus.changed)
         .toList();
     if (unsure.isEmpty && plan.check.missing.isEmpty) {
       return <Widget>[
@@ -230,9 +246,7 @@ class _ReportMessageScreenState extends State<ReportMessageScreen> {
       const SizedBox(height: BoneSpacing.sm),
       for (final r in unsure) ...<Widget>[
         SelectableText(
-          // A moderator's inbox id is `<community>:<account>`; show the
-          // account.
-          l10n.c6ReportOwnerKey(shortId(r.recipient.inboxId.split(':').last),
+          l10n.c6ReportOwnerKey(shortId(r.recipient.inboxId),
               reportKeyFingerprint(r.recipient.publicKey)),
           style: theme.textTheme.bodyMedium
               ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),

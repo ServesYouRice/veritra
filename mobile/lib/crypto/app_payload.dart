@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'community_info_payload.dart';
 import 'franking.dart';
 import 'poll.dart';
+import 'report_key_announcement.dart';
 
 const int appPayloadVersion = 2;
 const int _headerLength = 8;
@@ -56,7 +57,21 @@ enum AppPayloadType {
 
   /// C7: a newcomer asking for the `history_sync` it did not receive.
   historySyncRequest,
+
+  /// C6: the sender's own report public key, announced in a community's
+  /// shared group so reporters can trust it without a tap.
+  reportKey,
+
+  /// C6: asks the named accounts to announce their report keys again.
+  reportKeyRequest,
 }
+
+/// C6 moderator-key types (rules in `report_key_announcement.dart`). Hidden, never
+/// franked, never reportable, never expiring.
+const Set<AppPayloadType> reportKeyPayloadTypes = <AppPayloadType>{
+  AppPayloadType.reportKey,
+  AppPayloadType.reportKeyRequest,
+};
 
 /// C7 hidden types (docs/designs/C7-channel-history.md). Never franked
 /// (design decision 3, "Franking"): their envelopes carry a random
@@ -97,6 +112,8 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.historyChange => 'history_change',
         AppPayloadType.historySync => 'history_sync',
         AppPayloadType.historySyncRequest => 'history_sync_request',
+        AppPayloadType.reportKey => 'report_key',
+        AppPayloadType.reportKeyRequest => 'report_key_request',
         _ => name,
       };
 
@@ -110,7 +127,8 @@ extension AppPayloadTypeWire on AppPayloadType {
       this == AppPayloadType.profileKey ||
       this == AppPayloadType.groupProfileKey ||
       this == AppPayloadType.memberLeave ||
-      c7PayloadTypes.contains(this);
+      c7PayloadTypes.contains(this) ||
+      reportKeyPayloadTypes.contains(this);
 }
 
 class DecryptedAppPayload {
@@ -221,6 +239,9 @@ class FrankingPolicy {
     'infoUpdate',
     // C4: a leave proof says nothing anyone would report.
     'memberLeave',
+    // C6: a report key announcement or request is never reportable.
+    'reportKey',
+    'reportKeyRequest',
   };
 
   /// Whether a payload without `frank` is accepted (as unreportable).
@@ -265,6 +286,7 @@ class AppPayloadCodec {
             type == AppPayloadType.groupProfileKey ||
             type == AppPayloadType.memberLeave ||
             c7PayloadTypes.contains(type) ||
+            reportKeyPayloadTypes.contains(type) ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -569,6 +591,9 @@ class AppPayloadCodec {
       AppPayloadType.historySync => version >= 2 && isValidC7SyncBody(body),
       AppPayloadType.historySyncRequest =>
         version >= 2 && isValidC7SyncRequestBody(body),
+      AppPayloadType.reportKey => version >= 2 && isValidReportKeyBody(body),
+      AppPayloadType.reportKeyRequest =>
+        version >= 2 && isValidReportKeyRequestBody(body),
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,

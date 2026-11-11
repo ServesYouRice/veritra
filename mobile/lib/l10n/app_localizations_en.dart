@@ -3614,6 +3614,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'This community has no verified roles, so the app can\'t tell who its moderators are.';
 
   @override
+  String get c6ReportModeratorKeysPending =>
+      'No moderator\'s key has reached this device yet. Keys arrive through the community. Try again later.';
+
+  @override
+  String c6ReportModeratorCount(int count) {
+    return 'Moderators who get a copy: $count';
+  }
+
+  @override
+  String c6ReportModeratorsUnconfirmed(int count) {
+    return 'Moderators whose key has not reached this device yet, and who get no copy: $count';
+  }
+
+  @override
   String get c6ReportNoOwnerKey =>
       'No server owner can receive reports yet. Ask them to set up a report key.';
 

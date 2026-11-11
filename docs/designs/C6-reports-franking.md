@@ -9,7 +9,9 @@ receivers keep `kf` and `P` (local schema 19), the envelope id is sealed
 inside the report, one sealed copy per instance owner, owner keys pinned in
 the app, 90-day or dismissed retention, unfranked payloads accepted behind a
 switch. The community moderator inbox is built (2026-11-11, "Community
-moderator inbox" below). Not done: the owner's way to
+moderator inbox" below), and moderator keys are trusted through MLS with no
+tap ("Moderator keys over MLS"). A private channel's reports go only to
+its own moderator members ("Private channels"). Not done: the owner's way to
 verify without the server learning the envelope id, and the app's report
 screens (step 4).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
@@ -152,6 +154,9 @@ Recommendation: A for both.
    and the server must route new reports only to the new key. Reports
    already sealed to the old key stay readable by the removed moderator;
    decide whether that is acceptable or the old inbox is re-sealed.
+   **Answered 2026-11-11:** no shared seed exists (one key per moderator,
+   "Community moderator inbox"); what a departed moderator already received
+   is accepted ("Departed moderators").
 9. **C7 hidden types** (`docs/designs/C7-channel-history.md`, decision 3).
    `history_change`, `history_sync` and `history_sync_request` are never
    franked (a `frank` member would push a record out of the 512-byte
@@ -371,24 +376,151 @@ owners ("one key and one sealed copy per owner") is applied to moderators.
 - **Reading.** A copy is listed, dismissed and verified (`/envelope`) only by
   the account its inbox id names, and only while that account is still a
   member of the community. Not a server role.
-- **Trust.** Moderator keys are pinned by a person exactly like owner keys
-  (`ReportKeyPins`, keyed by the inbox id); a pin of one inbox is never
-  reported missing from another.
+- **Trust.** (Superseded the same day by "Moderator keys over MLS" below.)
+  Moderator keys were pinned by a person exactly like owner keys
+  (`ReportKeyPins`, keyed by the inbox id).
 - **Rotation (open item 8).** Nothing to rotate: a moderator who is demoted
   in the record, or leaves, stops receiving new copies at once (the record
-  for the first, the membership filter for the second). Copies they already
-  received stay readable by them until dismissed or 90 days old.
+  for the first, the membership filter for the second; tested by
+  `c6_reports_service_test.dart` and `TestCommunityReportsRouteToModerators`).
+  Copies they already received stay readable by them: see "Departed
+  moderators" below.
 - **App.** The report screen files community reports; a moderator opens
   their inbox from the community screen (flag icon), the same screen as the
   owner's inbox with the community's routes.
 
-Left: authenticating moderator keys over MLS (so no tap is needed to trust
-them); deleting a departed moderator's copies at once; replacing the seed
-from one inbox screen does not republish the account's other inboxes (a
-moderator inbox then shows "replaced elsewhere" and offers to publish this
-device's key; the owner inbox needs a replace); tests for the new
-routes beyond the updated `TestCommunityReportsRouteToModerators`; the
-independent review.
+Left (after "Moderator keys over MLS" below): replacing the seed from one
+inbox screen does not republish the account's other inboxes (a moderator
+inbox then shows "replaced elsewhere" and offers to publish this device's
+key; the owner inbox needs a replace); the independent review.
+
+## Moderator keys over MLS (2026-11-11)
+
+Replaces the manual trust tap for moderator keys. A reporter cannot compare
+a moderator's code with anything (there is no out-of-band channel to the
+moderators of a community the way there is to the instance owners, D95), so
+the tap protected nothing: a server that listed its own key for a moderator
+got a tap from anyone who wanted to report. Instead each moderator's app
+says over MLS which key is its own, and the reporter seals only to a listed
+key that matches.
+
+- **Announcement.** A hidden payload `report_key` with
+  `{"key": <canonical base64 of 32 bytes>}`, sent by an account's own device
+  in the community's shared group (the group whose MLS state holds the C4
+  record). MLS authenticates the sending account (leaf credential, D25), and
+  the receiver keeps it only from a leaf its account's L1 list approves now
+  and only in a group whose own MLS state holds a C4 record (not by the
+  server's word about the conversation's kind). It is stored as the setting
+  `c6.report_key.<shared group>.<account>`, committed with the MLS state;
+  the latest in MLS order wins. Never franked, never expiring, never
+  reportable. Wire rules: `docs/crypto.md`, §4.
+- **Role check at seal time.** Any member's announcement is kept; whether
+  the account moderates is judged when a report is sealed, against the
+  verified C4 record of the same shared group (owner, admins, moderators;
+  never the reporter). So a demotion takes effect on the next report, and a
+  re-promotion needs no new announcement.
+- **Sealing.** For each account the record ranks moderator or above, the
+  reporter seals to the server-listed key of its inbox `<community>:<account>`
+  only when it equals that account's announced key. A listed key with no
+  matching announcement (a newcomer that has not seen it, a key the server
+  substituted, a key replaced on another device and not yet announced) gets
+  no copy; the server accepts the subset. With no moderator confirmed the
+  report is refused (`moderatorKeysPending`). The screen shows how many
+  moderators get a copy and how many do not yet. No moderator key is ever
+  pinned, and pins made under the first design are ignored.
+- **Who announces, and when.** A device announces where the verified record
+  ranks its account moderator or above, the server lists this device's key
+  as that account's inbox there (so a key another device replaced is never
+  announced back, and two devices of one account cannot take turns), and
+  either it never announced this key in that group, or a request naming its
+  account arrived since its last announcement and at least 5 minutes passed
+  (`ReportKeyAnnouncer`). It runs at the end of a foreground sync pass
+  (never on a background wake) and right after the key is created or
+  published.
+- **Newcomers.** MLS gives a newcomer no messages from before its join, so
+  it has no announcements. On a foreground pass, every member's app checks
+  each community with a verified record: when it holds no announcement for
+  some of the record's moderators, it sends a hidden `report_key_request`
+  naming those accounts (sorted, at most 64), at once for a new set of
+  missing accounts and otherwise at most once a week
+  (`ReportKeyAnnouncer.askMissing`). Each named moderator's app answers with
+  `report_key` on its next foreground pass. The report flow itself sends
+  nothing to the group: a request made when someone opens the report
+  screen would tell every member, the reported one included, that this
+  account is about to report. A report goes to the moderators already
+  confirmed, or waits (the reporter tries again).
+- **Channel.** The shared group needs a channel id on every payload. A
+  report key payload rides in an open channel, or in an announcement channel
+  when the sender is an owner or admin under the record (the server refuses
+  anyone else's envelope there).
+- **No new schema or migration.** The settings channel already commits with
+  the MLS state. No ABI change.
+
+Residuals:
+
+- A community with only announcement channels: moderators below admin
+  cannot announce, so their keys are never confirmed and they get no
+  copies. Admins and the owner can.
+- "Already reported" is durable, so a moderator whose key is confirmed only
+  after a report was filed never gets that report. No re-send is built.
+- A moderator who is offline for long leaves newcomers' reports with fewer
+  copies until it comes back; it could not read them earlier anyway.
+- A moderator who never published a key never answers, so members ask for
+  it again once a week (a small hidden message per member per week).
+- The server sees the timing of these hidden envelopes, as of any message,
+  but they are sent on the background pass, not when someone reports.
+- The announcement is as trustworthy as the account's MLS leaf: a device
+  the L1 list approves for that account speaks for it, as for its messages.
+
+## Departed moderators (accepted)
+
+A moderator who is demoted or leaves keeps what their device already
+fetched: their seed opens any copy sealed to their key that they hold, and
+nothing can take that back (the same holds for a member's copy of the
+messages themselves). This is accepted, not fixed. What is enforced is that
+nothing new reaches them: the next report is sealed only to accounts the
+verified record names at that moment (a demotion), the server stops listing
+a departed member's key and refuses a copy sealed to it (a leave), and it
+stops listing the copies a departed member received. Tests:
+`c6_reports_service_test.dart` ("a moderator the verified record removes
+gets no new reports") and `TestCommunityReportsRouteToModerators`. The
+copies a demoted moderator already received stay on the server until they
+dismiss them or 90 days pass; deleting them at demotion would need the
+server to know who moderates, which only the apps' verified record says.
+
+## Private channels (owner decision 2026-11-11)
+
+A report about a post in a private channel is sealed only to the verified
+moderators (owner and admins included, as for any community report) who are
+members of that private channel, not to every moderator of the community.
+Reports about posts in the shared conversation (open and announcement
+channels) are unchanged.
+
+- **App.** `reportModeratorsFor` takes the owner, admins and moderators of
+  the shared group's verified record, as before. When the reported
+  conversation is not the record group (a private channel is its own MLS
+  group), it keeps only the accounts in that group's MLS roster, read from
+  this device's own group state (`MlsRosterCryptoService.mlsAccountsOf`).
+  When the roster cannot be read, there are no recipients: no report
+  rather than one to the wrong people. Keys are still trusted from the
+  announcements in the shared group, so a copy goes to: record says
+  moderator or above, MLS roster of the channel has the account, and the
+  server lists the key that account announced.
+- **Server.** The community inbox of a conversation lists only the keys of
+  accounts that are members of that conversation (a `memberships` row for
+  it), and `CreateReport` accepts a subset of that list only. Every
+  community member is in the shared conversation, and in each channel of a
+  legacy community, so this narrows private channels only.
+- **Residuals.** A private channel with no moderator-or-above member who
+  published a key cannot take reports: the app finds no recipient
+  (`ReportFailure.noRecipients`), or the server answers
+  `report_inbox_unavailable` when no member of the channel listed a key. A moderator added to the channel later gets none of the
+  earlier reports. A moderator removed from the channel keeps the copies
+  they already have, as in "Departed moderators".
+- Tests: `c6_private_channel_reports_test.dart`,
+  `c6_native_report_key_test.dart` (the roster read over real OpenMLS) and
+  `TestPrivateChannelReportsRouteOnlyToItsMembers`. No wire, ABI, local
+  schema or server migration change.
 
 ## Owner decisions (2026-11-01)
 
