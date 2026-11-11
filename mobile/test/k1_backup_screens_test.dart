@@ -11,6 +11,7 @@ import 'package:private_messenger/features/settings/auto_backup_screen.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/ui/theme.dart';
 import 'package:private_messenger/features/settings/k1_restore_screen.dart';
+import 'package:private_messenger/ui/widgets/history_copy_banner.dart';
 import 'package:private_messenger/ui/widgets/recovery_key_prompt_banner.dart';
 
 import 'k0_recovery_fakes.dart';
@@ -151,6 +152,32 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey<String>('auto-backup-key-field')),
         findsOneWidget);
+  });
+
+  testWidgets('a history copy that ended offers the restore from a backup',
+      (tester) async {
+    final state = k0App(server, store, _OpenCrypto())
+      ..session = k0SignedIn
+      ..api = _Api(server)
+      ..historyTransferStatus = const HistoryTransferStatus(
+          incoming: true, phase: HistoryTransferPhase.ended);
+    state.k1DesktopTimerEnabled = false;
+    addTearDown(state.dispose);
+    state.recoveryKeyStatus =
+        const RecoveryKeyStatus(available: true, configured: true);
+    await tester.pumpWidget(app(HistoryCopyBanner(state: state)));
+    expect(find.byKey(const ValueKey<String>('history-copy-restore')),
+        findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey<String>('history-copy-restore')));
+    await tester.pumpAndSettle();
+    expect(find.byType(K1RestoreScreen), findsOneWidget);
+    // The sending side never sees it.
+    state.historyTransferStatus = const HistoryTransferStatus(
+        incoming: false, phase: HistoryTransferPhase.ended);
+    await tester.pumpWidget(app(HistoryCopyBanner(state: state)));
+    expect(find.byKey(const ValueKey<String>('history-copy-restore')),
+        findsNothing);
   });
 
   testWidgets('the prompt shows without a key and hides on "Not now"',
