@@ -307,8 +307,9 @@
 
   "searchHint": "Search people, communities, channels…",
   "searchClear": "Clear search",
+  "searchLookUpAccount": "Look up this username",
   "searchIntroTitle": "Search people and communities",
-  "searchIntroMessage": "Communities and channels are found by name on this device. People are found on the server by exact username only. Message contents are end-to-end encrypted and never searchable on the server.",
+  "searchIntroMessage": "Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.",
   "searchNoResultsTitle": "No results",
   "searchNoResultsMessage": "Nothing matched. Usernames must match exactly, and only communities and channels whose names this device holds can be found.",
   "searchNoOpenChannel": "No channel you can open yet",

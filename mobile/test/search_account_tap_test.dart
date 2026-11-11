@@ -79,7 +79,8 @@ Future<_PeopleState> _openSearch(WidgetTester tester) async {
   await tester.tap(find.text('People and communities'));
   await tester.pumpAndSettle();
   await tester.enterText(find.byType(TextField), 'peer');
-  await tester.pump(const Duration(milliseconds: 400));
+  // The account lookup runs on submit only.
+  await tester.testTextInput.receiveAction(TextInputAction.search);
   await tester.pumpAndSettle();
   expect(find.text('Samuel'), findsOneWidget);
   return state;

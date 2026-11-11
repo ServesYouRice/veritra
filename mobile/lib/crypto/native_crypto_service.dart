@@ -58,6 +58,9 @@ import 'report_key_announcement.dart';
 import 'k2_transfer_crypto.dart';
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
+import '../calls/room/native_call_group.dart';
+import '../calls/room/room_ports.dart'
+    show CallGroupHandle, ParentGroupView, RoomCryptoSource;
 
 class NativeCryptoService
     implements
@@ -85,7 +88,8 @@ class NativeCryptoService
         RecoveryCryptoService,
         ReportCryptoService,
         RoleCommandCryptoService,
-        MlsRosterCryptoService {
+        MlsRosterCryptoService,
+        RoomCryptoSource {
   NativeCryptoService({
     required this.bindings,
     required this.localStore,
@@ -243,6 +247,7 @@ class NativeCryptoService
         noticeCaptureEnabled = false;
         _noticeOrigin = null;
         _device?.close();
+        _closeCallGroups();
         final device = bindings.createDevice(
           reservation.accountId,
           reservation.deviceId,
@@ -969,6 +974,7 @@ class NativeCryptoService
         noticeCaptureEnabled = false;
         _noticeOrigin = null;
         _device?.close();
+        _closeCallGroups();
         _device = restored.device;
         _deviceCounter = null;
         _accountId = accountId;
@@ -981,6 +987,7 @@ class NativeCryptoService
   Future<void> abandonPendingEnrollment() => _serial(() async {
         if (!_pendingEnrollment) return;
         _device?.close();
+        _closeCallGroups();
         _device = null;
         _deviceCounter = null;
         final first = _firstState;
@@ -1049,6 +1056,7 @@ class NativeCryptoService
           // may have been lost): the copy and its key are never needed.
           _firstState = null;
           _device?.close();
+          _closeCallGroups();
           _device = null;
           final restored = await _openStored(accountId, deviceId, stored);
           _device = restored.device;
@@ -1105,6 +1113,7 @@ class NativeCryptoService
           // An earlier promotion committed: the stored state is the
           // identity, and the frozen one is never used again.
           _device?.close();
+          _closeCallGroups();
           _device = null;
           _deviceCounter = null;
           first.stateKey.fillRange(0, first.stateKey.length, 0);
@@ -1164,6 +1173,7 @@ class NativeCryptoService
         try {
           checkCanCommit();
           _device?.close();
+          _closeCallGroups();
           _device = restored.device;
           _deviceCounter = restored.counter;
           _adoptNoticeOrigin(origin, accountId, deviceId);
@@ -4228,6 +4238,43 @@ class NativeCryptoService
     return state;
   }
 
+  /// B6 call-group handles open on scratch copies of this identity. Each
+  /// closes when its call ends, and all close when the identity changes or
+  /// the service is disposed, so no call outlives its account.
+  final Set<ScratchCallGroupHandle> _callGroups = <ScratchCallGroupHandle>{};
+
+  void _closeCallGroups() {
+    for (final handle in _callGroups.toList()) {
+      handle.close();
+    }
+    _callGroups.clear();
+  }
+
+  /// A scratch device restored from the committed state (D70): the call
+  /// group is created and joined there and is never sealed, stored, backed
+  /// up or transferred, because nothing ever seals that device.
+  @override
+  Future<CallGroupHandle> openCallGroup() => _serial(() async {
+        final accountId = _accountId;
+        final deviceId = _deviceId;
+        if (_pendingEnrollment ||
+            _device == null ||
+            accountId == null ||
+            deviceId == null) {
+          throw StateError('native MLS device is not active');
+        }
+        final restored = await _restoreCommitted(accountId, deviceId,
+            minimumCounter: _deviceCounter ?? 0);
+        final handle = _TrackedCallGroup(restored.device, bindings,
+            onClose: (handle) => _callGroups.remove(handle));
+        _callGroups.add(handle);
+        return handle;
+      });
+
+  @override
+  ParentGroupView get parentGroups =>
+      NativeParentGroupView.live(() => _pendingEnrollment ? null : _device);
+
   NativeCryptoDevice _requiredDevice() {
     final device = _device;
     if (device == null || _accountId == null || _deviceId == null) {
@@ -4464,6 +4511,7 @@ class NativeCryptoService
         noticeCaptureEnabled = false;
         _noticeOrigin = null;
         _device?.close();
+        _closeCallGroups();
         _device = null;
         _deviceCounter = null;
         _firstState = null;
@@ -4870,4 +4918,15 @@ Set<String>? moderatorProtectsFor(
     })
       if (record.rankOf(account) >= rank) account,
   };
+}
+
+class _TrackedCallGroup extends ScratchCallGroupHandle {
+  _TrackedCallGroup(super.device, super.bindings, {required this.onClose});
+  final void Function(_TrackedCallGroup handle) onClose;
+
+  @override
+  void close() {
+    super.close();
+    onClose(this);
+  }
 }

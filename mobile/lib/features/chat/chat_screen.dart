@@ -10,7 +10,7 @@ import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
 import '../../calls/call_controller.dart';
-import '../../calls/room/room_engine.dart' show RoomSession;
+import '../../calls/room/room_engine.dart' show RoomCall, RoomSession;
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../core/composer_drafts.dart';
@@ -805,19 +805,32 @@ class _ChatScreenState extends State<ChatScreen> {
   /// B6: opens the group-call screen and joins the room of this chat. The
   /// engine lives only as long as the screen.
   Future<void> _openRoom(RoomSession session, String conversationId) async {
-    final engine = session.createEngine();
+    final RoomCall call;
+    try {
+      call = await session.openCall(conversationId);
+    } catch (_) {
+      if (!mounted) return;
+      // No call without frame encryption (B6, fail closed).
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.roomFailedCryptor)));
+      return;
+    }
+    if (!mounted) {
+      await call.close();
+      return;
+    }
+    final engine = call.engine;
     final route = MaterialPageRoute<void>(
       builder: (_) => RoomScreen(
         engine: engine,
         nameFor: session.nameFor,
-        controls: session.controls,
+        controls: call.controls,
       ),
     );
     final done = Navigator.of(context).push(route);
     unawaited(engine.join(conversationId));
     await done;
-    await engine.leave();
-    engine.dispose();
+    await call.close();
   }
 
   Future<void> _showStarredMessages() async {

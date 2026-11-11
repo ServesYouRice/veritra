@@ -202,6 +202,14 @@ abstract interface class CallGroupCrypto {
 
   int currentEpoch(Uint8List groupId);
 
+  /// An MLS application message in the call group (the track announcement).
+  Uint8List encryptApplication(Uint8List groupId, Uint8List plaintext);
+
+  /// Opens an application message that claims to come from [sender]; throws
+  /// when it does not decrypt or its MLS sender is someone else.
+  Uint8List decryptApplication(
+      Uint8List groupId, Uint8List ciphertext, CallMember sender);
+
   /// `K(s,t)` of the current epoch for [sender]'s stream slot.
   Uint8List mediaKey(
       Uint8List groupId, String callId, CallMember sender, int stream);
@@ -289,4 +297,23 @@ abstract interface class RoomMediaControls implements Listenable {
   bool get canShareScreen;
   bool get sharingScreen;
   Future<void> setSharingScreen(bool on);
+}
+
+/// A call group's MLS state, held apart from the messaging device so that it
+/// is never sealed, backed up or transferred (D70). [close] forgets it.
+abstract interface class CallGroupHandle {
+  CallGroupCrypto get crypto;
+  void close();
+}
+
+/// What a crypto service offers for B6: a call-group handle per call and
+/// the parent conversations' current MLS rosters.
+abstract interface class RoomCryptoSource {
+  /// Opens a call-group handle on a copy of this device's committed MLS
+  /// state that is never sealed. Throws when no device is active.
+  Future<CallGroupHandle> openCallGroup();
+
+  /// Reads the active device's parent groups at each call, never a cached
+  /// handle; an unknown conversation or no active device lists nobody.
+  ParentGroupView get parentGroups;
 }

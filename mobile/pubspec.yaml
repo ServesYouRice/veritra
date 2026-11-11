@@ -28,6 +28,8 @@ dependencies:
   mobile_scanner: ^7.5.0
   path_provider: 2.1.6
   flutter_webrtc: 1.6.3
+  # Group-call media transport (B6, O1 under D106). Exact version.
+  livekit_client: 2.13.2
   sqlite3: 3.5.2
   file_selector: 1.1.0
   # Desktop shell (W3, W4). Newer tray_manager releases need Flutter 3.47.
