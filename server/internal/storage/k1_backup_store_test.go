@@ -179,8 +179,8 @@ func TestK1BackupsShareTheAccountQuota(t *testing.T) {
 	if usage() != third {
 		t.Fatalf("account usage = %d, want %d", usage(), third)
 	}
-	// A replacement counts the copy it replaces for the day it stays
-	// downloadable: 2 x third fits, a third copy of that size does not.
+	// A replacement counts the copy it replaces once (design: usage less the
+	// copy replaced, plus the new size); the old copy stays a day.
 	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_a2", third, 2, k1TestRK)); err != nil {
 		t.Fatalf("replacement: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestK1BackupsShareTheAccountQuota(t *testing.T) {
 		t.Fatalf("account usage after a replacement = %d, want %d", usage(), 2*third)
 	}
 	// A third copy of the same device deletes the oldest superseded one
-	// first (two copies per device), so 2 x third still fits.
+	// first (two copies per device).
 	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_a3", third, 3, k1TestRK)); err != nil {
 		t.Fatalf("third copy: %v", err)
 	}
@@ -207,6 +207,27 @@ func TestK1BackupsShareTheAccountQuota(t *testing.T) {
 	}
 	if usage() >= before {
 		t.Fatalf("account usage after a delete = %d, was %d", usage(), before)
+	}
+}
+
+// A device whose copy fills the account's quota can still replace it with a
+// same-size copy; another device's copy of that size is refused.
+func TestK1ReplacementAtTheQuotaCountsOnce(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	setK1TestRecoveryKey(t, ctx, store, owner.Account.ID, k1TestRK)
+	limit := store.Limits().AccountStorageBytes
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_full1", limit, 1, k1TestRK)); err != nil {
+		t.Fatalf("copy that fills the quota: %v", err)
+	}
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, owner.Device.ID, "k1_full2", limit, 2, k1TestRK)); err != nil {
+		t.Fatalf("same-size replacement: %v", err)
+	}
+	addTestDevice(t, ctx, store, owner.Account.ID, "dev_k1_b")
+	if _, err := store.CreateK1Backup(ctx, k1Upload(owner, "dev_k1_b", "k1_b1", 1, 1, k1TestRK)); !errors.Is(err, ErrStorageQuota) {
+		t.Fatalf("another device at the quota: err = %v, want %v", err, ErrStorageQuota)
 	}
 }
 

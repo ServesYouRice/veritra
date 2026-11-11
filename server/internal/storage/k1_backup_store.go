@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
@@ -122,7 +123,7 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 		return domain.BackupBlob{}, err
 	}
 	removed = append(removed, older...)
-	if err := s.enforceK1BackupAllowance(ctx, tx, in.AccountID, in.SizeBytes); err != nil {
+	if err := s.enforceK1BackupAllowance(ctx, tx, in.AccountID, in.DeviceID, in.SizeBytes); err != nil {
 		return domain.BackupBlob{}, err
 	}
 	stamp := formatTime(now)
@@ -155,12 +156,28 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 
 // enforceK1BackupAllowance checks the account's shared storage quota (owner
 // decision 2026-11-11: backups share ACCOUNT_STORAGE_MIB with attachments;
-// migration 0079 counts kind-1 copies in blob_usage_accounts again). Usage is
-// read after this device's older superseded copy was deleted in the same
-// transaction, so a replacement counts the copy it replaces once, for the
-// day it stays downloadable. The instance total counts every blob too.
-func (s *Store) enforceK1BackupAllowance(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
-	return s.enforceBlobQuotaBytes(ctx, tx, accountID, incoming)
+// migration 0079 counts kind-1 copies in blob_usage_accounts again). The
+// design's formula: usage, less this device's copy that the upload replaces,
+// plus the new size, so a same-size replacement does not need room for two
+// copies. (The replaced copy stays on disk for its day of grace; the quota is
+// checked against the steady state.) Usage is read after the device's older
+// superseded copy was deleted in the same transaction. The instance total
+// counts every blob.
+func (s *Store) enforceK1BackupAllowance(ctx context.Context, tx *sql.Tx, accountID, deviceID string, incoming int64) error {
+	var accountUsage, instanceUsage, replaced int64
+	if err := tx.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?1), 0),
+		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1),
+		COALESCE((SELECT SUM(size_bytes) FROM backup_blobs
+			WHERE account_id = ?1 AND device_id = ?2 AND kind = 1 AND superseded_at IS NULL), 0)`,
+		accountID, deviceID).Scan(&accountUsage, &instanceUsage, &replaced); err != nil {
+		return err
+	}
+	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
+	if incoming < 0 || accountUsage-replaced > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
+		return s.refuse(admission.Storage, ErrStorageQuota)
+	}
+	return nil
 }
 
 // k1PruneCondition selects the kind-1 rows a prune deletes: superseded more
