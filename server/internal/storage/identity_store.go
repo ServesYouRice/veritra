@@ -36,9 +36,11 @@ const (
 	// effective idle lifetime by at most one minute, about 0.002% of
 	// SessionIdleLifetime. Validity is still checked on every request.
 	SessionTouchInterval = time.Minute
-	// DeviceSeenInterval bounds devices.last_seen_at writes. The value is only
-	// coarse lost-device review data, so five minutes is precise enough.
-	DeviceSeenInterval = 5 * time.Minute
+	// DeviceSeenInterval is the precision of devices.last_seen_at (L2-2): the
+	// value is stored as the UTC day start, so the server keeps no exact
+	// activity time and writes at most once per device per day. Readers must
+	// allow this much slack.
+	DeviceSeenInterval = 24 * time.Hour
 )
 
 // SessionActivity is the stored activity of an authenticated session, read in
@@ -77,9 +79,15 @@ func newSessionPolicy(cfg config.Config) sessionPolicy {
 	return policy
 }
 
+// deviceSeenDay truncates t to the UTC day, the stored precision of
+// devices.last_seen_at.
+func deviceSeenDay(t time.Time) time.Time {
+	return t.UTC().Truncate(DeviceSeenInterval)
+}
+
 // DeviceSeenDue reports whether MarkDeviceSeen would write at now.
 func (a SessionActivity) DeviceSeenDue(now time.Time) bool {
-	return a.DeviceLastSeenAt == nil || !a.DeviceLastSeenAt.After(now.Add(-DeviceSeenInterval))
+	return a.DeviceLastSeenAt == nil || a.DeviceLastSeenAt.Before(deviceSeenDay(now))
 }
 
 // sessionLifetime returns the idle and absolute expiry for a session
@@ -365,22 +373,22 @@ func scanSessionPrincipal(row *sql.Row, rotatedOut bool) (domain.Principal, Sess
 	return principal, activity, nil
 }
 
-// MarkDeviceSeen records coarse device activity for lost-device review. The
-// DeviceSeenInterval write throttle avoids turning every authenticated request into a
+// MarkDeviceSeen records coarse device activity (the UTC day) for lost-device
+// review. The once-a-day write avoids turning every authenticated request into a
 // database write while keeping the value useful to the account owner.
 func (s *Store) MarkDeviceSeen(ctx context.Context, deviceID string) error {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return nil
 	}
-	now := time.Now().UTC()
+	day := formatTime(deviceSeenDay(time.Now()))
 	_, err := s.db.ExecContext(ctx, `
 		UPDATE devices
 		SET last_seen_at = ?
 		WHERE id = ?
 		  AND revoked_at IS NULL
-		  AND (last_seen_at IS NULL OR last_seen_at <= ?)`,
-		formatTime(now), deviceID, formatTime(now.Add(-DeviceSeenInterval)))
+		  AND (last_seen_at IS NULL OR last_seen_at < ?)`,
+		day, deviceID, day)
 	return err
 }
 

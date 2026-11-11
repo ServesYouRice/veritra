@@ -8,6 +8,12 @@
 	log default {
 		format filter {
 			request>uri delete
+			request>remote_ip delete
+			request>client_ip delete
+			request>remote_port delete
+			request>headers>User-Agent delete
+			request>headers>X-Forwarded-For delete
+			request>headers>X-Real-IP delete
 			request>headers>X-Recovery-Token delete
 			request>headers>X-Veritra-Setup-Token delete
 			request>headers>X-Veritra-Claim-Token delete
@@ -27,6 +33,12 @@ messenger.example.com {
 	log {
 		format filter {
 			request>uri delete
+			request>remote_ip delete
+			request>client_ip delete
+			request>remote_port delete
+			request>headers>User-Agent delete
+			request>headers>X-Forwarded-For delete
+			request>headers>X-Real-IP delete
 			request>headers>X-Recovery-Token delete
 			request>headers>X-Veritra-Setup-Token delete
 			request>headers>X-Veritra-Claim-Token delete
