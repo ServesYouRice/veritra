@@ -238,7 +238,10 @@ type MessageEnvelope struct {
 	// FrankCommit is the C6 franking commitment (32 bytes) the sender
 	// attached at send time. Opaque to the server, written once at insert,
 	// never inside CryptoMetadata (C6 condition G3).
-	FrankCommit    []byte          `json:"frank_commit,omitempty"`
+	FrankCommit []byte `json:"frank_commit,omitempty"`
+	// SealedBody is the C7 sealed body (docs/designs/C7-channel-history.md):
+	// opaque, stored in envelope_bodies, never in sync_events.
+	SealedBody     []byte          `json:"sealed_body,omitempty"`
 	AttachmentRefs json.RawMessage `json:"attachment_refs"`
 	ReplyToID      *string         `json:"reply_to_id,omitempty"`
 	ThreadRootID   *string         `json:"thread_root_id,omitempty"`

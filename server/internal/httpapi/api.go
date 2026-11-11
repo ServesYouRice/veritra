@@ -538,6 +538,10 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, map[string]interface{}{"error": "device_list_conflict", "head_version": head})
 	case errors.Is(err, storage.ErrNotMember), errors.Is(err, storage.ErrForbidden):
 		writeError(w, http.StatusForbidden, "forbidden")
+	case errors.Is(err, storage.ErrHistoryRouteOnly):
+		writeError(w, http.StatusConflict, "history_route_only")
+	case errors.Is(err, storage.ErrInvalidSealedBody):
+		writeError(w, http.StatusBadRequest, "invalid_sealed_body")
 	case errors.Is(err, storage.ErrPostingRestricted):
 		writeError(w, http.StatusForbidden, "posting_restricted")
 	case errors.Is(err, storage.ErrTimedOut):

@@ -65,7 +65,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	}
 	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
 	if err == nil {
-		if !sameIdempotentMessage(existing, envelope) {
+		// C7: the replay compares the stored sealed body too, so a retry
+		// with a different body is a conflict.
+		existing, err = withSealedBody(ctx, tx, existing, nil)
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		if !sameIdempotentMessage(existing, envelope) || !sameSealedBody(existing.SealedBody, envelope.SealedBody) {
 			return domain.MessageEnvelope{}, false, 0, ErrIdempotencyConflict
 		}
 		if err := tx.Commit(); err != nil {
@@ -87,6 +93,11 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	// or announcement channels; elsewhere it must name none.
 	route, err := routeEnvelope(ctx, tx, envelope.ConversationID, envelope.CryptoMetadata)
 	if err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	// C7: a sealed body is required in community conversations and refused
+	// elsewhere (and refused everywhere while C7 is off).
+	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
 	// C2: in an announcement channel or an admins-only group only owners and
@@ -158,6 +169,9 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		if _, err := tx.ExecContext(ctx, `INSERT INTO message_attachments(message_id, attachment_id) VALUES(?, ?)`, envelope.ID, attachmentID); err != nil {
 			return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
 		}
+	}
+	if err := insertSealedBody(ctx, tx, envelope, route.channelID); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
 	}
 	var eventID int64
 	if withSyncEvent {
@@ -283,7 +297,7 @@ func (s *Store) MessageByID(ctx context.Context, messageID string) (domain.Messa
 		}
 		return domain.MessageEnvelope{}, err
 	}
-	return msg, nil
+	return withSealedBody(ctx, s.db, msg, nil)
 }
 
 // MessageForAccount returns one unexpired envelope only when the requester is
@@ -315,7 +329,7 @@ func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID stri
 	if message.ExpiresAt != nil && !message.ExpiresAt.After(time.Now().UTC()) {
 		return domain.MessageEnvelope{}, ErrMessageExpired
 	}
-	return message, nil
+	return withSealedBody(ctx, s.db, message, nil)
 }
 
 func (s *Store) UpdateMessageEnvelope(ctx context.Context, messageID, accountID string, ciphertext []byte, cryptoProtocol string, cryptoMetadata json.RawMessage) (domain.MessageEnvelope, error) {
@@ -339,6 +353,11 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	// C7: in community conversations an envelope is never rewritten in
+	// place; edits and deletes go through history-hide and new envelopes.
+	if err := s.refuseLegacyCommunityMessage(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -397,6 +416,11 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	// C7: in community conversations an envelope is never rewritten in
+	// place; edits and deletes go through history-hide and new envelopes.
+	if err := s.refuseLegacyCommunityMessage(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -566,6 +590,11 @@ func (s *Store) ListMessages(ctx context.Context, conversationID, accountID stri
 	}
 	if !member {
 		return nil, ErrNotMember
+	}
+	// C7: community history is local, or comes from the history route; the
+	// server serves no paging there.
+	if err := s.refuseLegacyCommunityRoute(ctx, s.db, conversationID); err != nil {
+		return nil, err
 	}
 	limit := opts.Limit
 	if limit <= 0 || limit > 200 {
@@ -960,6 +989,9 @@ func (s *Store) SaveSyncEvent(ctx context.Context, eventType string, accountID *
 // at that event version. A later edit must never make replay fetch a newer
 // representation for an older cursor position.
 func messageSyncEventPayload(envelope domain.MessageEnvelope) map[string]interface{} {
+	// C7: a sealed body is served from envelope_bodies (attachSyncBodies),
+	// never copied into sync_events, so it is pruned with its envelope.
+	envelope.SealedBody = nil
 	return map[string]interface{}{
 		"message_id":      envelope.ID,
 		"conversation_id": envelope.ConversationID,
@@ -1031,6 +1063,9 @@ func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, af
 		if expired {
 			return SyncPage{}, ErrSyncCursorExpired
 		}
+	}
+	if err := attachSyncBodies(ctx, s.db, page.Events); err != nil {
+		return SyncPage{}, err
 	}
 	return page, nil
 }

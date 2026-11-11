@@ -508,7 +508,10 @@ type messageEnvelopeRequest struct {
 	// FrankCommit is the C6 franking commitment: a top-level field, exactly
 	// 32 bytes when present, stored write-once in its own column. The server
 	// can neither compute nor check it.
-	FrankCommit    []byte          `json:"frank_commit,omitempty"`
+	FrankCommit []byte `json:"frank_commit,omitempty"`
+	// SealedBody is the C7 sealed body: required in community conversations
+	// while C7 is on, refused elsewhere; the storage layer checks its size.
+	SealedBody     []byte          `json:"sealed_body,omitempty"`
 	AttachmentRefs json.RawMessage `json:"attachment_refs,omitempty"`
 	ReplyToID      *string         `json:"reply_to_id,omitempty"`
 	ThreadRootID   *string         `json:"thread_root_id,omitempty"`
@@ -559,6 +562,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		CryptoProtocol:  req.CryptoProtocol,
 		CryptoMetadata:  req.CryptoMetadata,
 		FrankCommit:     req.FrankCommit,
+		SealedBody:      req.SealedBody,
 		AttachmentRefs:  req.AttachmentRefs,
 		ReplyToID:       req.ReplyToID,
 		ThreadRootID:    req.ThreadRootID,

@@ -154,6 +154,9 @@ func (s *Store) ListConversationSyncPage(ctx context.Context, accountID, deviceI
 			return SyncPage{}, ErrSyncCursorExpired
 		}
 	}
+	if err := attachSyncBodies(ctx, s.db, events); err != nil {
+		return SyncPage{}, err
+	}
 	return SyncPage{Events: events, ScannedThrough: last, Truncated: truncated}, nil
 }
 
