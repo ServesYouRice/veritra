@@ -366,14 +366,23 @@ fn the_sign_content_cannot_be_another_domain_of_this_crate() {
     // varint 23, then the RFC 9420 prefix and this label.
     assert_eq!(content[0], 23);
     assert_eq!(&content[1..24], b"MLS 1.0 VeritraC4Leave1");
-    // Every raw signing domain of this crate starts with ASCII "veritra-".
-    for domain in [
-        crate::c7::LABEL_POST,
-        crate::c7::LABEL_REKEY_CHK,
-        crate::c7::LABEL_SLOT,
-        crate::l1::LABEL_SIG,
-        b"veritra-enrollment-proof-v1".as_slice(),
-    ] {
+    // Every raw (non-SignWithLabel) message the device credential key signs
+    // starts with an ASCII "veritra-" domain: C7 (`c7::signing_input`, its
+    // SIGN_DOMAINS only), the L1 device list (`l1::signed_message`), the
+    // enrollment proof (`MlsDevice::create_enrollment_credential`), the K2
+    // history hand-off (`history::signature_message`) and the device-link v3
+    // enrollment proof (`link_v3::EnrollmentProof::message`). A new raw
+    // signing site joins this list. Recovery keys are other keys.
+    let raw_domains: Vec<&[u8]> = crate::c7::SIGN_DOMAINS
+        .into_iter()
+        .chain([
+            crate::l1::LABEL_SIG,
+            b"veritra-enrollment-proof-v1".as_slice(),
+            b"veritra-k2-handoff-sig-v1".as_slice(),
+            b"veritra-device-link-enrollment-v3".as_slice(),
+        ])
+        .collect();
+    for domain in raw_domains {
         assert!(domain.starts_with(b"veritra-"));
         assert_ne!(domain[0], content[0]);
     }
@@ -404,7 +413,7 @@ fn vector_values() -> Value {
         "label": std::str::from_utf8(LEAVE_LABEL).unwrap(),
         "group_id_hex": hex(&group_id),
         "leaf_index": 3,
-        "encryption_key_hex": hex(&encryption_key),
+        "encryption_key_tls_hex": hex(&encryption_key),
         "signing_seed_hex": hex(&SEED),
         "signing_public_hex": hex(key.verifying_key().as_bytes()),
         "leave_tbs_hex": hex(&tbs),

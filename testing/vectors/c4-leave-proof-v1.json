@@ -1,7 +1,7 @@
 {
   "aad_hex": "56434c3102000000030040f4ceb1be13b06484d700dd1d3e803286b98ae2b7aa24b5a82afdcf7f9e458562b31a417ec6dc0e703f13bf172e7ffc726f6d55742d0ef47f5399afd2c379a407000000050040501296887486632248c000788b2df07aedf6764477df67eb1d4e601475857c4763ac263c761ce532e132fc0c814971ef80fda3c2c8a5a2edb284746aca3f810e",
   "description": "C4 leave proof in the commit (crypto ABI 24, docs/crypto.md). LeaveTBS = VL(group_id) || u32 leaf_index || EncryptionKey (TLS opaque<V>); the leaf signature key signs RFC 9420 SignContent(\"MLS 1.0 VeritraC4Leave1\", LeaveTBS) with Ed25519. statement = u32 leaf_index || u16 64 || signature; commit AAD = \"VCL1\" || u8 count (1..16) || statements with distinct leaves. Seeds are fixed test values; regenerate with the ignored Rust test leave_proof::tests::print_vector. Every malformed_aad proves nothing.",
-  "encryption_key_hex": "20030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
+  "encryption_key_tls_hex": "20030a11181f262d343b424950575e656c737a81888f969da4abb2b9c0c7ced5dc",
   "group_id_hex": "636f6e765f766563746f72",
   "label": "VeritraC4Leave1",
   "leaf_index": 3,

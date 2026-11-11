@@ -584,7 +584,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `c4.leave_signed.<group>.<account>` and `c4.leave_signed_out.<group>`, and
   the server's leave-notice limit raised from one to two per hour (Go, no
   migration). Vectors `testing/vectors/c4-leave-proof-v1.json` (Rust,
-  Dart). No local schema or server migration change. Deltas from the
+  Dart, Go). No local schema or server migration change. Deltas from the
   design: the epoch is gone from `LeaveTBS`, the statement and the payload;
   Dart accepts one approved proven leaf of the account (not every removed
   leaf); the committer drops statements that no longer verify instead of
@@ -3893,8 +3893,11 @@ the leaf changes. The design's `epoch` field is dropped (review 2026-11-11,
 item 2): the encryption-key binding already ends a statement when the leaf
 changes, and an epoch could only be checked against "not after now", which
 adds nothing. `SignContent` starts with the varint 0x17, which no raw
-signing domain of the crate starts with (each is ASCII `veritra-...`), and
-its label is none of RFC 9420's (`leave_proof_tests.rs`).
+message the device credential key signs starts with (C7, the L1 device
+list, the enrollment proof, the K2 hand-off and the device-link v3
+enrollment proof each begin with an ASCII `veritra-...` domain), and its
+label is none of RFC 9420's (`leave_proof_tests.rs` lists them; a new raw
+signing site joins that list).
 
 **Carrier.** The leaver sends it in a new hidden payload type
 `member_leave_signed` (`{"statement": canonical base64 of the 70 bytes}`,
@@ -3962,8 +3965,10 @@ integration): `pm_crypto_c4_sign_leave`, `pm_crypto_group_stage_commit_proven`,
 review format 2. Vectors: `testing/vectors/c4-leave-proof-v1.json`
 (`LeaveTBS`, `SignContent`, signature, statement, AAD, malformed lists),
 checked in Rust (`leave_proof::tests::shared_vector_matches`) and in Dart
-(`mobile/test/c4_leave_proof_vector_test.dart`); Go does not parse it (the
-server checks nothing here).
+(`mobile/test/c4_leave_proof_vector_test.dart`), and re-derived in Go with
+the standard library alone (`server/internal/c4vector`, which signs the same
+bytes and gets the same Ed25519 signature); the server itself never parses
+it (it checks nothing here).
 
 **Versioning.** Old builds ignore the AAD and the new payload type and judge
 as before. A new receiver of an old committer's commit sees no AAD and holds
