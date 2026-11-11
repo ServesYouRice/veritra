@@ -578,9 +578,25 @@ void main() {
     // The scratch leaf is the messaging device's own: it matches the parent.
     final parent = alice.service.parentGroups;
     expect(parent.hasMember('conv_1', leaves.single), isTrue);
-    expect(parent.members('conv_1').map((m) => m.id).toSet(),
+    expect(parent.members('conv_1')!.map((m) => m.id).toSet(),
         {'acct_alice/dev_alice', 'acct_bob/dev_bob'});
+    expect(await parent.allApproved('conv_1'), isTrue);
     expect(parent.members('conv_unknown'), isEmpty);
+    expect(await parent.allApproved('conv_unknown'), isFalse);
+    // Bob's list removes his device (review MEDIUM, round 7): once alice
+    // judges again, his leaf, still in the tree, is no call member and no
+    // call starts.
+    sharedTestDeviceLists.markRemoved('acct_bob', 'dev_bob');
+    try {
+      await alice.service.refreshApprovalHold('conv_1');
+      expect(
+          parent.members('conv_1')!.map((m) => m.id), ['acct_alice/dev_alice']);
+      expect(await parent.allApproved('conv_1'), isFalse);
+    } finally {
+      sharedTestDeviceLists.unmarkRemoved('acct_bob', 'dev_bob');
+    }
+    await alice.service.refreshApprovalHold('conv_1');
+    expect(await parent.allApproved('conv_1'), isTrue);
 
     // The messaging device seals a new state while the call is open.
     final sent = await alice
@@ -600,6 +616,9 @@ void main() {
     final copy = await restarted.openCallGroup();
     expect(() => copy.crypto.members(groupId), throwsA(anything),
         reason: 'the call group never reached sealed state');
+    // A fresh service has not loaded its L1 verdicts: unknown, not empty,
+    // until they are loaded from the store.
+    expect(await restarted.parentGroups.allApproved('conv_1'), isTrue);
     expect(restarted.parentGroups.members('conv_1'), hasLength(2));
     copy.close();
     await restarted.dispose();

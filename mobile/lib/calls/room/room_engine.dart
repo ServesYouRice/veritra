@@ -9,9 +9,15 @@ import 'room_ports.dart';
 /// crash means leave and rejoin (design, "The call group").
 ///
 /// Rules this class enforces (docs/designs/B6-group-calls.md):
-///  - only devices that are a leaf of the parent conversation's group are
-///    ever accepted into the call, checked by whoever commits, by every
-///    member that receives an Add, and by the joiner on every Welcome leaf;
+///  - only devices that are a leaf of the parent conversation's group, and
+///    that this device's L1 judgment approves, are ever accepted into the
+///    call, checked by whoever commits, by every member that receives an
+///    Add, and by the joiner on every Welcome leaf; no call starts or is
+///    joined while the parent holds a leaf that is not approved, and nobody
+///    is added or removed while that judgment is not loaded;
+///  - this device switches to a new epoch's send key only while every call
+///    member is an approved parent leaf (it keeps the old one, which the
+///    others drop after 10 s, until the member is removed);
 ///  - the lowest leaf commits within 200 ms, the others after 2 s plus
 ///    500 ms per rank; every commit is staged, sent, and merged only on the
 ///    server's yes (a 409 discards it, so no fork);
@@ -30,6 +36,10 @@ enum RoomFailure {
   welcomeRefused,
   welcomeTimeout,
   commitRefused,
+
+  /// The parent conversation holds a leaf this device's L1 judgment does
+  /// not approve (or that judgment could not be loaded).
+  parentNotApproved,
   other,
 }
 
@@ -122,6 +132,19 @@ class RoomEngine extends ChangeNotifier {
     }
     phase = RoomPhase.joining;
     notifyListeners();
+    // Review MEDIUM (round 7): a parent leaf that is removed, unapproved or
+    // not judged yet could be added to the call; start or join none then.
+    final bool clean;
+    try {
+      clean = await parent.allApproved(conversation);
+    } catch (_) {
+      _setFailed(RoomFailure.parentNotApproved);
+      return;
+    }
+    if (!clean) {
+      _setFailed(RoomFailure.parentNotApproved);
+      return;
+    }
     final RoomJoinInfo info;
     try {
       info = await api.join(conversation);
@@ -207,6 +230,7 @@ class RoomEngine extends ChangeNotifier {
       if (phase != RoomPhase.active) return;
       if (!await _apply(record, group, id)) return;
     }
+    _switchSendKey();
     await _afterChange();
   }
 
@@ -220,6 +244,9 @@ class RoomEngine extends ChangeNotifier {
   }
 
   Future<void> _tryWelcome(String id, Uint8List group) async {
+    // The Welcome's leaves are checked against approved parent leaves; while
+    // that judgment is not loaded, wait for the next refresh.
+    if (parent.members(conversationId!) == null) return;
     final commits = await _fetch(id, _joinEpoch);
     if (commits == null) return;
     for (final record in commits) {
@@ -251,6 +278,9 @@ class RoomEngine extends ChangeNotifier {
   Future<bool> _apply(
       RoomCommitRecord record, Uint8List group, String id) async {
     if (record.epoch != crypto.currentEpoch(group) + 1) return true;
+    // Its Adds cannot be checked while the parent's L1 judgment is not
+    // loaded: stop here and apply it on the next refresh.
+    if (parent.members(conversationId!) == null) return false;
     final ProcessedCommit result;
     try {
       result = crypto.processCommit(group, record.commit);
@@ -419,9 +449,11 @@ class RoomEngine extends ChangeNotifier {
     }
     final members = crypto.members(group);
     final inCall = {for (final m in members) m.id};
-    final parentMembers = {
-      for (final m in parent.members(conversationId!)) m.id: m
-    };
+    // Nobody is added or removed while the parent's L1 judgment is not
+    // loaded: an empty roster would remove everyone.
+    final approved = parent.members(conversationId!);
+    if (approved == null) return null;
+    final parentMembers = {for (final m in approved) m.id: m};
     final self = '$selfAccountId/$selfDeviceId';
     final adds = <({Uint8List keyPackage, CallMember member})>[];
     // Devices that left and joined again: the server gave them a new seat
@@ -538,8 +570,10 @@ class RoomEngine extends ChangeNotifier {
         participants.add(participant);
       }
     }
-    // A sender switches only after it has merged the commit.
-    keys.useSendKey(index);
+    // A sender switches only after it has merged the commit, and only while
+    // every member is an approved parent leaf ([_switchSendKey]).
+    _pendingSendIndex = index;
+    _switchSendKey();
     final previous = _installed.keys.where((e) => e != epochNow).toList();
     _installed[epochNow] = participants;
     for (final old in previous) {
@@ -552,6 +586,28 @@ class RoomEngine extends ChangeNotifier {
         }
       }));
     }
+  }
+
+  /// The send key index waiting for [_switchSendKey], if any.
+  int? _pendingSendIndex;
+
+  /// Review LOW (round 7): this device's media moves to a new epoch's key
+  /// only while every call member is a leaf of the parent that the L1
+  /// judgment approves. A member that lost approval (or whose parent leaf
+  /// is gone) never gets media under a key this device switched to after
+  /// that; the committer removes it, and the switch follows. Until then
+  /// this device keeps sending under the previous key, which the others
+  /// drop after [oldKeyLifetime] (fail closed: silence, never a leak).
+  void _switchSendKey() {
+    final index = _pendingSendIndex;
+    final group = _groupId;
+    final conversation = conversationId;
+    if (index == null || group == null || conversation == null) return;
+    for (final member in crypto.members(group)) {
+      if (!parent.hasMember(conversation, member)) return;
+    }
+    keys.useSendKey(index);
+    _pendingSendIndex = null;
   }
 
   // ---- leaving and failing ------------------------------------------------
@@ -583,6 +639,7 @@ class RoomEngine extends ChangeNotifier {
     _removals.clear();
     _installed.clear();
     _seenOffers.clear();
+    _pendingSendIndex = null;
     keys.clear();
     _groupId = null;
     phase = next;

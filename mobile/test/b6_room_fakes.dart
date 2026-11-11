@@ -345,14 +345,25 @@ class FakeCrypto implements CallGroupCrypto {
   }
 }
 
+/// The parent group's approved leaves ([list]), its leaves the L1 judgment
+/// does not approve ([unapproved]), and whether that judgment is loaded
+/// ([known]).
 class FakeParent implements ParentGroupView {
   FakeParent(List<CallMember> members) : list = List.of(members);
   final List<CallMember> list;
+  final List<CallMember> unapproved = [];
+  bool known = true;
   @override
-  bool hasMember(String conversationId, CallMember member) => list
-      .any((m) => m.id == member.id && s(m.signingKey) == s(member.signingKey));
+  bool hasMember(String conversationId, CallMember member) =>
+      known &&
+      list.any(
+          (m) => m.id == member.id && s(m.signingKey) == s(member.signingKey));
   @override
-  List<CallMember> members(String conversationId) => List.of(list);
+  List<CallMember>? members(String conversationId) =>
+      known ? List.of(list) : null;
+  @override
+  Future<bool> allApproved(String conversationId) async =>
+      known && unapproved.isEmpty;
 }
 
 class FakeKeys implements FrameKeySink {

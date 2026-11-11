@@ -4532,8 +4532,20 @@ class NativeCryptoService
       });
 
   @override
-  ParentGroupView get parentGroups =>
-      NativeParentGroupView.live(() => _pendingEnrollment ? null : _device);
+  ParentGroupView get parentGroups => NativeParentGroupView.live(
+        () => _pendingEnrollment ? null : _device,
+        // B6 (review MEDIUM, round 7): only leaves this device's L1
+        // judgment approves may be in a call, as for [_approvedAccountsOf].
+        judged: (conversationId) {
+          final verdicts = _verdictCache[conversationId];
+          if (verdicts == null) unawaited(_warmVerdicts(conversationId));
+          return verdicts;
+        },
+        load: (conversationId) async {
+          await _warmVerdicts(conversationId);
+          return _verdictCache[conversationId];
+        },
+      );
 
   NativeCryptoDevice _requiredDevice() {
     final device = _device;

@@ -360,6 +360,108 @@ void main() {
     b2.engine.dispose();
   });
 
+  // Review MEDIUM (round 7): the parent's MLS tree alone is not the roster.
+  test(
+      'no call starts or is joined while the parent holds a leaf the L1 '
+      'judgment does not approve, or while that judgment is unknown', () async {
+    parent.unapproved.add(member('x'));
+    final a = Device('a', server, clock, parent);
+    await a.engine.join('conv_1');
+    await pump();
+    expect(a.engine.phase, RoomPhase.failed);
+    expect(a.engine.failure, RoomFailure.parentNotApproved);
+    expect(server.joins, 0, reason: 'the server is never asked');
+    expect(a.keys.keys, isEmpty);
+    a.engine.dispose();
+
+    parent.unapproved.clear();
+    parent.known = false;
+    final again = Device('a', server, clock, parent);
+    await again.engine.join('conv_1');
+    await pump();
+    expect(again.engine.failure, RoomFailure.parentNotApproved);
+    expect(server.joins, 0);
+    again.engine.dispose();
+
+    parent.known = true;
+    final clean = await start('a');
+    expect(clean.engine.phase, RoomPhase.active);
+    clean.engine.dispose();
+  });
+
+  test(
+      'while the parent judgment is not loaded nobody is removed, and a '
+      'commit waits instead of failing the call', () async {
+    final a = await start('a');
+    final bView = FakeParent(parent.list);
+    final b2 = await start('b', parentView: bView);
+    await admit(a, b2);
+    // b's view of the parent is not loaded: an empty roster would remove a.
+    bView.known = false;
+    b2.engine.refresh();
+    await pump();
+    await clock.advance(const Duration(seconds: 3));
+    expect(server.epoch, 1, reason: 'no removal from an unknown roster');
+    expect(b2.engine.roster, hasLength(2));
+    // a commits a join meanwhile (its own view is loaded): b waits for the
+    // judgment instead of refusing the Add and rejoining.
+    final c = await start('c', parentView: FakeParent(parent.list));
+    await admit(a, c);
+    expect(server.epoch, 2);
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.phase, RoomPhase.active);
+    expect(b2.engine.epoch, 1);
+    expect(b2.crypto.drops, 0);
+    bView.known = true;
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.epoch, 2);
+    for (final d in [a, b2, c]) {
+      d.engine.dispose();
+    }
+  });
+
+  // Review LOW (round 7): a member that lost approval gets no media under
+  // a key this device switched to after that.
+  test(
+      'the send key stays while a call member is not an approved parent '
+      'leaf, and moves once it is removed', () async {
+    final a = await start('a');
+    final bView = FakeParent(parent.list);
+    final b2 = await start('b', parentView: bView);
+    await admit(a, b2);
+    final c = await start('c', parentView: FakeParent(parent.list));
+    await admit(a, c);
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.epoch, 2);
+    expect(b2.keys.sendIndex, 2);
+    // In b's judgment c lost approval; a's has not caught up and a's
+    // hourly self-update moves the epoch first.
+    bView.list.removeWhere((m) => m.id == c.self.id);
+    final joinedAt = clock.current;
+    await clock.advance(
+        RoomEngine.selfUpdateEvery - const Duration(milliseconds: 100));
+    expect(clock.current.isBefore(joinedAt.add(RoomEngine.selfUpdateEvery)),
+        isTrue);
+    expect(server.epoch, 3, reason: "a's self-update");
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.epoch, 3);
+    expect(b2.keys.keys['acct_b/dev_b:0@3'], isNotNull,
+        reason: 'receive keys install as before');
+    expect(b2.keys.sendIndex, 2, reason: 'c could read b under epoch 3');
+    // b removes c itself (rank 1, after 2 s); then it switches.
+    await clock.advance(const Duration(seconds: 3));
+    expect(server.epoch, 4);
+    expect(b2.engine.roster.map((m) => m.id), isNot(contains(c.self.id)));
+    expect(b2.keys.sendIndex, 4);
+    for (final d in [a, b2, c]) {
+      d.engine.dispose();
+    }
+  });
+
   test(
       'a device the server reports gone is removed, and the roster ignores a seat with no MLS leaf',
       () async {
