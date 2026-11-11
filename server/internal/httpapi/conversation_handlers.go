@@ -259,6 +259,34 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 	}
 	conversationID := parts[0]
 	switch {
+	case (parts[1] == "history" || parts[1] == "former-member-keys") && r.Method == http.MethodGet && !a.C7History:
+		writeError(w, http.StatusNotFound, "not_found")
+	case parts[1] == "history" && r.Method == http.MethodGet:
+		// C7: the only route that serves pre-join sealed bodies.
+		if principal.DeviceID == "" {
+			writeError(w, http.StatusBadRequest, "device_session_required")
+			return
+		}
+		query := r.URL.Query()
+		bodies, err := a.Store.ListHistoryBodies(r.Context(), principal.AccountID, principal.DeviceID, conversationID,
+			strings.TrimSpace(query.Get("channel_id")), strings.TrimSpace(query.Get("before")), messageQueryLimit(r))
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"history": bodies})
+	case parts[1] == "former-member-keys" && r.Method == http.MethodGet:
+		// C7: one bulk call at join, in every mode.
+		if principal.DeviceID == "" {
+			writeError(w, http.StatusBadRequest, "device_session_required")
+			return
+		}
+		keys, err := a.Store.ListFormerMemberKeys(r.Context(), principal.AccountID, principal.DeviceID, conversationID)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"devices": keys})
 	case parts[1] == "members" && r.Method == http.MethodGet:
 		members, err := a.Store.ListConversationMembers(r.Context(), conversationID, principal.AccountID)
 		if err != nil {
@@ -612,6 +640,13 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 	}
 	messageID := parts[0]
 	switch {
+	case parts[1] == "history-hide" && r.Method == http.MethodPost:
+		// C7: an author's or moderator's delete reaches the history route.
+		if _, err := a.Store.HideHistoryMessage(r.Context(), messageID, principal.AccountID); err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "history_hidden"})
 	case parts[1] == "edit" && r.Method == http.MethodPost:
 		req, ok := decodeEncryptedMutation(w, r)
 		if !ok {

@@ -1251,6 +1251,8 @@
   "communityCategoryNew": "Nova kategorija",
   "communityCategoryName": "Naziv kategorije",
   "communityCategoryRename": "Preimenuj kategoriju",
+  "communityCategoryDelete": "Obriši kategoriju",
+  "communityCategoryDeleteConfirm": "Obrisati ovu kategoriju? Njeni kanali ostaju i prikazuju se bez kategorije.",
   "communityCategoryPlaceholder": "Kategorija",
   "communityCategoryNone": "Bez kategorije",
   "communityChannelPlaces": "Gde su kanali",

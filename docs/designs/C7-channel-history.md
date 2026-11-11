@@ -915,13 +915,72 @@ id), and the 409
 community conversations. Off, a body is refused everywhere (400
 `invalid_sealed_body`).
 
-Still left in step 3: the history fetch route, the former-member key
-route, `history-hide`, the group-level exception to C0's channel rule (a
-`history_sync` in the shared group carries no `channel_id`), the C2
-refusal narrowed to envelopes with a `channel_id`, `channel_id` on a
-private channel group's posts, admission limits counting body bytes, and
-the HTTP and storage tests (owner instruction of 2026-11-11: no test
-suites run in this pass).
+Second slice (same day, migration 0084): the history fetch
+(`GET /api/v1/conversations/{id}/history?channel_id=&before=&limit=`,
+newest first, `before` a message id, at most 100 rows; each body records
+its sync event and named epoch so the fetch serves exactly what the I51
+join filter withheld), the former-member key call
+(`GET /api/v1/conversations/{id}/former-member-keys`, `{devices:
+[{device_id, account_id, signing_key, revoked}]}`), `history-hide`
+(`POST /api/v1/messages/{id}/history-hide`, sender or a role that may
+delete the sender's messages; a moderator's hide adds a `message_hidden`
+row to `moderation_events`), and the C0/C2 exceptions for conversations in
+the C0 layout: no channel keys means group-level (allowed in the shared
+group and in private groups, exempt from C2 and slow mode, still subject
+to timeouts), and a private group's posts may name their own channel.
+Admission already meters the request body, so body bytes count (D38).
+
+**Deviation (2026-11-11, closes a gap the first build left):** the server
+cannot read a message's type, so "group-level skips C2" would let any
+member skip slow mode and admins-only posting by leaving out the channel
+keys. The exemption is therefore narrowed to bodies the size rule
+identifies as a `history_sync` and not also as a channel body
+(`c7SyncOnlyBodySize`; in a private group, one channel, exactly 1,592
+bytes). Every other envelope takes the normal posting checks, and a private
+channel's group names its channel in the clear metadata on every post.
+Cost: a `history_sync_request` (channel-sized) from a non-admin in an
+admins-only private group is refused; the jittered `history_sync` senders
+cover it. Receivers turn a group-level message of any other type into an
+`invalid` row, so a post disguised at sync size never shows.
+All in `server/internal/storage/c7_history_store.go`; every route is 404
+while the flag is off. Bodies stored before 0084 are never served by the
+history fetch. Server tests are still to be written (no suites were run
+in this pass, owner instruction).
+
+Step 4, first slice (same day): the two-part send and receive with a
+random `body_key` for every message (the `members_from_join` behaviour of
+the implicit genesis), the API client calls for the three routes, the
+history-hide call after an own delete, and the switch that follows the
+server's `c7_history`. See `docs/crypto.md`, change log. Not built: the
+generation keys and records (create, switch, move), the ordering table in
+the receive path, rekey at removal merge, `history_sync` and its request,
+`keyless`/`unsure`, the re-add wipe, targeted-action sealing, the newcomer's
+backward walk, two-pass import and prefetch, the private group's
+`channel_id` on sends (until it is sent, with the flag on every honest
+private-channel post is group-level on the server, so slow mode and an
+admins-only posting policy are skipped for all of them; keep the flag off),
+the receiver rule that a group-level message is one of the two
+hidden types, local schema for C7 state, and every step-5 flow and test.
+
+Step 4, second slice (same day): the server gap above is closed, private
+groups name their channel, the three hidden types are registered with the
+group-level receiver rule (docs/crypto.md W7 table), and each group's
+membership floor and removal root are kept in one sealed setting
+(`setting:c7.group.<conversation>`, `mobile/lib/crypto/c7_group_state.dart`)
+written in the same transition as the merged MLS state at all three merge
+sites, with the re-add wipe at removal and Welcome. A sealed setting, not a
+new table, so no local schema change. Tests for the pure parts and the
+switch are written (`mobile/test/c7_two_part_test.dart`,
+`server/internal/httpapi/c7_history_test.go`) but were never run.
+
+Still not built, and blocked on C4: records (create, switch, move) need
+C4's verified role state for their authority check (section "Authority":
+switches cannot ship before it), and without records no channel is ever
+`full`, so `full` sealing under generation keys, `history_sync` slots that
+hand keys over, `keyless`/`unsure`, targeted-action sealing and the
+newcomer's import, backward walk and prefetch have nothing to carry. Also
+left: sending `history_sync` (all slots random until then) and its request
+with the jitter, the per-channel chain state and its storage.
 
 ## Open questions for the owner
 

@@ -52,6 +52,11 @@ func TestC7BodySizeRule(t *testing.T) {
 			t.Fatalf("channel body %d accepted", n)
 		}
 	}
+	// A private group's history_sync (one channel) is exempt from the posting
+	// checks; a channel-sized body never is.
+	if !c7SyncOnlyBodySize(1592) || c7SyncOnlyBodySize(124+512) {
+		t.Fatal("sync-only size rule")
+	}
 	// P(500) + 124 + 700*500: the largest history_sync body.
 	if !C7BodySizeValid(64512+124+350000, true) || C7BodySizeValid(64512+124+350000, false) {
 		t.Fatal("largest history_sync body")

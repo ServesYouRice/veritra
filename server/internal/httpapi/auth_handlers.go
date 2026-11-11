@@ -75,6 +75,11 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 	if a.Passkeys != nil {
 		response["passkeys"] = a.passkeySetupStatus()
 	}
+	// C7: apps send community messages in two parts exactly while this is
+	// on. It names a server setting, not any channel's history mode.
+	if a.C7History {
+		response["c7_history"] = true
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 

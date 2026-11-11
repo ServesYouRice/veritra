@@ -4265,6 +4265,13 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityCategoryRename => 'Преименуј категорију';
 
   @override
+  String get communityCategoryDelete => 'Обриши категорију';
+
+  @override
+  String get communityCategoryDeleteConfirm =>
+      'Обрисати ову категорију? Њени канали остају и приказују се без категорије.';
+
+  @override
   String get communityCategoryPlaceholder => 'Категорија';
 
   @override
@@ -8622,6 +8629,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get communityCategoryRename => 'Preimenuj kategoriju';
+
+  @override
+  String get communityCategoryDelete => 'Obriši kategoriju';
+
+  @override
+  String get communityCategoryDeleteConfirm =>
+      'Obrisati ovu kategoriju? Njeni kanali ostaju i prikazuju se bez kategorije.';
 
   @override
   String get communityCategoryPlaceholder => 'Kategorija';

@@ -468,6 +468,25 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   or server migration change. Rules: "Group role state (C4)", "C4 app
   wiring" below. Needs the independent review; not yet covered by tests.
 
+- **C7 two-part messages, first slice (2026-11-11):** no ABI or schema
+  change; behind the server's `PRIVATE_MESSENGER_C7_HISTORY` (off by
+  default), which the setup status reports as `c7_history`. While it is on,
+  every application message a device sends in a community conversation
+  (`community_shared`, a private channel's group, or a legacy channel) is two
+  parts (docs/designs/C7-channel-history.md, "Core idea"): MLS encrypts only
+  the 68-byte reference `"C7R1" | body_key | sha256(sealed_body)`, and the
+  envelope's `sealed_body` is `c7_seal(body_key, aad, sig | padded VAP1)`
+  with `aad = lp(conversation_id) | lp(channel_id or "") |
+  lp(sender_device_id) | lp(action_id)` and `sig` the post signature with
+  `gen = 0` (`mobile/lib/crypto/c7_two_part.dart`). This slice always uses a
+  random `body_key`, the `members_from_join` behaviour, so a newcomer can
+  open nothing from before its join; generation keys, records and
+  `history_sync` (the `full` mode) are not built. A receiver that decrypts a
+  reference checks the body's hash and opens it under the reference's key;
+  a missing or bad body is a P1 `invalid` row and the MLS state and cursor
+  commit. Receiving two-part messages needs no switch. The sealed body is
+  kept in the outbox entry, so a retry is byte-identical, and the server's
+  replay check compares it. With C7 off nothing changes on the wire.
 - **L1 complete adds, join notice, recovery retype and pre-L1 RK
   confirmation (2026-11-11):** held groups the server reports no change
   for are audited against signed lists (bounded, after the reconcile
@@ -2323,6 +2342,14 @@ input can differ.
 | `info_key` | 2, hidden | `subject_kind` (`community` or `channel`), `subject_id`, `key_id` (32 hex = W11 key id of `key`), `key` (canonical base64 of 32 bytes) | Any member holding the key, **only in the group that owns it**: the community shared group for the community key, the private channel's group for its key | C3: kept with the MLS state (schema 31); used only when it arrived in the owning group. Never franked, never reportable |
 | `info_key_request` | 2, hidden | `subject_kind` (`community` or `channel`), `subject_id` | Any member | C3: kept so a key holder can answer; one per subject per hour |
 | `info_update` | 2, hidden | `subject_kind` (`community`, `category` or `channel`), `subject_id`, `revision` (≥ 1), `key_id` (32 hex), `record_sha256` (64 lowercase hex of the blob as served) | Community and category: owner and admins; channel: any member unless admins restrict channel info (D80), all under the community shared group's C4 role state | C3: a fetched record is shown only when an announcement from an allowed editor, in the group that owns its key, matches it |
+| `history_change` | 2, hidden | `r`: canonical base64 of the 143-byte compact record, or a move's 143 + `lp(close_group_id)` + 128-byte wrap | Owner and admins under the verified C4 role state (D80); only in a two-part C7 message of the channel itself | C7: a record proposal (docs/designs/C7-channel-history.md decision 3). Never franked: the envelope's `frank_commit` is 32 random bytes |
+| `history_sync` | 2, hidden | `for_epoch` (u64), `channels`: `[[channel_id, base64(key_c)], ...]`, 1 to 508 entries, ids sorted bytewise and distinct, keys 32 bytes | Any member; group-level only (no `channel_id`), two-part only | C7 decision 5: body0 of the history_sync body; its slots follow body0 in the sealed body. Never franked |
+| `history_sync_request` | 2, hidden | `for_epoch` (u64): the membership commit whose history_sync the sender lacks | A newcomer; group-level only, two-part only | C7 decision 5. Never franked |
+
+In a C0-layout conversation a two-part message with no `channel_id` must be
+`history_sync` or `history_sync_request`, and those two never carry one;
+anything else is an `invalid` row (C7). The C7 types arrive only in two
+parts.
 
 A "reserved" type has a fixed name and body now. Until its package turns
 it on, a receiver treats it as `unsupported`, and a sender never sends it.

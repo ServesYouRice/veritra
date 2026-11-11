@@ -366,12 +366,17 @@ class EnrollmentPromotion {
 }
 
 /// Durable C3 removal watermark, written atomically with the MLS transition.
+/// The sealed setting that holds one group's C7 state
+/// (`mobile/lib/crypto/c7_group_state.dart`).
+String c7GroupSetting(String conversationId) => 'c7.group.$conversationId';
+
 String communityInfoRemovalSetting(String conversationId) =>
     'c3.removal_epoch.$conversationId';
 
 /// C4 removal proof: [accountId]'s authenticated `member_leave` in the record
 /// group [conversationId], holding the MLS epoch it was sent in. Written
-/// atomically with the message's transition; cleared when the account is
+/// atomically with the message's transition (through
+/// [MlsStateTransition.c7Settings], the shared settings channel); cleared when the account is
 /// added again or its removal merges (docs/crypto.md, "C4 app wiring").
 String governanceLeaveSetting(String conversationId, String accountId) =>
     'c4.leave.$conversationId.${Uri.encodeComponent(accountId)}';
@@ -393,14 +398,16 @@ class MlsStateTransition {
     this.approvalLeaves,
     this.governanceObservation,
     this.infoRemovalEpoch,
-    this.settingWrites = const <String, String?>{},
+    this.c7Settings = const <String, String?>{},
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
   });
 
-  /// Settings written in the same transaction (null deletes one): C4 leave
-  /// proofs ([governanceLeaveSetting]).
-  final Map<String, String?> settingWrites;
+  /// C7 group state (setting name to value, null deletes), written in the
+  /// same transaction as the MLS state: a crash can never apply a removal
+  /// commit and lose its rekey root (docs/designs/C7-channel-history.md,
+  /// "One local transaction"). Sealed settings are never in K1 or K2.
+  final Map<String, String?> c7Settings;
 
   /// The leaf verdicts of the commit or Welcome this transition applies
   /// (L1, D94), written in the same transaction.
@@ -798,7 +805,7 @@ abstract class LocalStore {
     String? resolvedMlsOutboxKey,
     GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
-    Map<String, String?> settingWrites = const <String, String?>{},
+    Map<String, String?> c7Settings = const <String, String?>{},
   });
   Future<StoredCryptoState?> loadCryptoState();
 
@@ -1432,16 +1439,11 @@ class MemoryLocalStore implements LocalStore {
       _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
           protectedKeyIds: protectedKeyIds);
     }
-    for (final write in transition.settingWrites.entries) {
-      final value = write.value;
-      value == null
-          ? _settings.remove(write.key)
-          : _settings[write.key] = value;
-    }
     if (transition.infoRemovalEpoch case final epoch?) {
       _settings[communityInfoRemovalSetting(transition.conversationId)] =
           epoch.toString();
     }
+    _applyC7Settings(transition.c7Settings);
     _applyApprovalLeaves(transition.approvalLeaves);
     _applyGovernanceObservation(transition.governanceObservation);
     _setCryptoState(transition.state);
@@ -1711,6 +1713,17 @@ class MemoryLocalStore implements LocalStore {
   Future<void> saveApprovalLeaves(ApprovalLeafChange change) async =>
       _applyApprovalLeaves(change);
 
+  void _applyC7Settings(Map<String, String?> settings) {
+    for (final entry in settings.entries) {
+      final value = entry.value;
+      if (value == null) {
+        _settings.remove(entry.key);
+      } else {
+        _settings[entry.key] = value;
+      }
+    }
+  }
+
   void _applyApprovalLeaves(ApprovalLeafChange? change) {
     if (change == null) return;
     final rows = change.replaceAll
@@ -1936,7 +1949,7 @@ class MemoryLocalStore implements LocalStore {
     String? resolvedMlsOutboxKey,
     GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
-    Map<String, String?> settingWrites = const <String, String?>{},
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
@@ -1946,12 +1959,7 @@ class MemoryLocalStore implements LocalStore {
       _settings[communityInfoRemovalSetting(infoRemoval.conversationId)] =
           infoRemoval.epoch.toString();
     }
-    for (final write in settingWrites.entries) {
-      final value = write.value;
-      value == null
-          ? _settings.remove(write.key)
-          : _settings[write.key] = value;
-    }
+    _applyC7Settings(c7Settings);
     if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
@@ -3271,7 +3279,7 @@ class SecureLocalStore implements LocalStore {
       approvalLeaves: transition.approvalLeaves,
       governanceObservation: transition.governanceObservation,
       infoRemovalEpoch: transition.infoRemovalEpoch,
-      settingWrites: transition.settingWrites,
+      c7Settings: transition.c7Settings,
     );
   }
 
@@ -3556,7 +3564,7 @@ class SecureLocalStore implements LocalStore {
     String? resolvedMlsOutboxKey,
     GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
-    Map<String, String?> settingWrites = const <String, String?>{},
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: expectedCounter, currentCursor: expectedCursor);
@@ -3571,7 +3579,7 @@ class SecureLocalStore implements LocalStore {
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
       governanceObservation: governanceObservation,
       infoRemoval: infoRemoval,
-      settingWrites: settingWrites,
+      c7Settings: c7Settings,
     );
   }
 

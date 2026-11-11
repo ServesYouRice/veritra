@@ -91,10 +91,18 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	}
 	// C0: a post in a shared community conversation must name one of its open
 	// or announcement channels; elsewhere it must name none.
-	route, err := routeEnvelope(ctx, tx, envelope.ConversationID, envelope.CryptoMetadata)
+	// C7 (while on) adds group-level envelopes with no channel keys, and the
+	// channel_id of a private channel's group (routeCommunityEnvelope).
+	route, layout, err := s.routeCommunityEnvelope(ctx, tx, envelope.ConversationID, envelope.CryptoMetadata)
 	if err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	// Only a group-level body the size rule identifies as a history_sync
+	// (and not also as a channel body) skips C2 and slow mode: the server
+	// cannot read the type, so every other envelope, a private channel's
+	// posts included, takes the normal posting checks. In a private group
+	// (one channel) a history_sync is exactly 1,592 bytes.
+	groupLevel := layout && route.channelID == "" && c7SyncOnlyBodySize(len(envelope.SealedBody))
 	// C7: a sealed body is required in community conversations and refused
 	// elsewhere (and refused everywhere while C7 is off).
 	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
@@ -103,6 +111,9 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	// C2: in an announcement channel or an admins-only group only owners and
 	// admins post. Checked after the idempotent replay above, so a retry of an
 	// already stored post still answers.
+	// With C7, in community conversations the refusal applies only to
+	// envelopes that carry a channel_id: a group-level history_sync from a
+	// non-admin in a private announcement channel's group must pass.
 	var restricted bool
 	if err := tx.QueryRowContext(ctx, `SELECT c.posting_policy = 'admins' OR COALESCE(ch.kind = 'announcement', 0) FROM conversations c LEFT JOIN channels ch ON ch.id = c.channel_id WHERE c.id = ?`, envelope.ConversationID).Scan(&restricted); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -110,12 +121,17 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	restricted = restricted || route.announcement
+	restricted = (restricted || route.announcement) && !groupLevel
 	if restricted && !domain.CanPostRestricted(senderRole) {
 		return domain.MessageEnvelope{}, false, 0, ErrPostingRestricted
 	}
-	// C5: a timeout and a channel's slow mode, by the server's clock.
-	if err := checkPostingAllowedTx(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, senderRole, route.channelID, now); err != nil {
+	// C5: a timeout and a channel's slow mode, by the server's clock. A
+	// group-level C7 message belongs to no channel, so only the timeout.
+	if groupLevel {
+		if err := checkNotTimedOutTx(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, now); err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+	} else if err := checkPostingAllowedTx(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, senderRole, route.channelID, now); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
 	for _, referenceID := range []*string{envelope.ReplyToID, envelope.ThreadRootID} {
@@ -170,9 +186,6 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 			return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
 		}
 	}
-	if err := insertSealedBody(ctx, tx, envelope, route.channelID); err != nil {
-		return domain.MessageEnvelope{}, false, 0, err
-	}
 	var eventID int64
 	if withSyncEvent {
 		payload, err := json.Marshal(messageSyncEventPayload(envelope))
@@ -194,6 +207,11 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		if err := enqueuePushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt)); err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}
+	}
+	// After the sync event, whose id the history fetch compares with each
+	// device's join cursor.
+	if err := insertSealedBody(ctx, tx, envelope, route.channelID, eventID); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
 	}
 	if recipients != nil && withSyncEvent {
 		// Accounts that blocked the sender never see the envelope, on any read

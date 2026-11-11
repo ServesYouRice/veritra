@@ -45,6 +45,8 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'c7_group_state.dart';
+import 'c7_two_part.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
 import 'message_format.dart';
@@ -63,6 +65,7 @@ class NativeCryptoService
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
+        C7HistoryConsumer,
         DeviceListCryptoService,
         ApprovedDeviceDiscoveryCryptoService,
         DeviceSigningKeyCryptoService,
@@ -99,6 +102,40 @@ class NativeCryptoService
   final DateTime Function() _clock;
   @override
   set conversationAuthority(ConversationAuthority value) => _authority = value;
+
+  /// C7: whether sends in community conversations go in two parts. Off by
+  /// default; AppState follows the server's `c7_history`.
+  @override
+  bool c7SealedBodies = false;
+
+  /// The C7 group state change a merged commit makes, for the same MLS
+  /// transition. Empty while C7 is off or outside community conversations;
+  /// a commit that removed this device deletes the state (re-add wipe).
+  Future<Map<String, String?>> _c7AfterCommit(
+      String conversationId, C7CommitOutcome outcome) async {
+    if (!c7SealedBodies ||
+        !c7CommunityKind(_authority?.conversationKind(conversationId))) {
+      return const <String, String?>{};
+    }
+    final now = C7GroupState.decode(
+        await localStore.loadSetting(c7GroupSetting(conversationId)));
+    final next = now.afterCommit(outcome);
+    if (identical(next, now)) return const <String, String?>{};
+    return <String, String?>{c7GroupSetting(conversationId): next?.encode()};
+  }
+
+  String? _c7PrivateChannel(String conversationId) => switch (_authority) {
+        final ConversationCommunitySource source =>
+          source.privateGroupChannel(conversationId),
+        _ => null,
+      };
+
+  /// A conversation in the C0 layout: a shared group or a private channel's
+  /// own group. There a two-part message with no `channel_id` is
+  /// group-level and may only be a `history_sync` or its request.
+  bool _c7Layout(String conversationId) =>
+      _authority?.conversationKind(conversationId) == 'community_shared' ||
+      _c7PrivateChannel(conversationId) != null;
 
   @override
   CommunityInfoCodec get communityInfoCodec => CommunityInfoCodec(bindings);
@@ -1145,6 +1182,7 @@ class NativeCryptoService
         final previous = await _requiredState();
         try {
           int? infoRemovalEpoch;
+          var c7Settings = const <String, String?>{};
           if (bundle.hasCommit) {
             final device = _requiredDevice();
             final ({int epoch, bool pending}) before;
@@ -1170,6 +1208,7 @@ class NativeCryptoService
                 if (outcome.removedAny && !outcome.removedSelf) {
                   infoRemovalEpoch = outcome.newEpoch;
                 }
+                c7Settings = await _c7AfterCommit(item.conversationId, outcome);
               } finally {
                 outcome.wipeRoot();
               }
@@ -1189,11 +1228,12 @@ class NativeCryptoService
                 );
           await localStore.commitLocalMlsState(
             governanceObservation: own.observation,
-            settingWrites: own.settings,
             expectedCounter: previous.counter,
             expectedCursor: await localStore.loadSyncCursor(),
             state: _sealNext(previous),
             resolvedMlsOutboxKey: item.idempotencyKey,
+            // C4 proofs share the C7 settings channel.
+            c7Settings: <String, String?>{...c7Settings, ...own.settings},
             infoRemoval: infoRemovalEpoch == null
                 ? null
                 : (
@@ -1845,6 +1885,7 @@ class NativeCryptoService
               final device = _requiredDevice();
               final expected = MlsCommitBundle.decode(bundle.payload).epoch + 1;
               int? infoRemovalEpoch;
+              var c7Settings = const <String, String?>{};
               if (device.groupEpoch(message.conversationId).pending) {
                 final outcome =
                     device.c7MergePendingCommit(message.conversationId);
@@ -1852,6 +1893,8 @@ class NativeCryptoService
                   if (outcome.removedAny && !outcome.removedSelf) {
                     infoRemovalEpoch = outcome.newEpoch;
                   }
+                  c7Settings =
+                      await _c7AfterCommit(message.conversationId, outcome);
                 } finally {
                   outcome.wipeRoot();
                 }
@@ -1864,7 +1907,6 @@ class NativeCryptoService
                   MlsCommitBundle.decode(bundle.payload));
               await localStore.commitMlsTransition(MlsStateTransition(
                 governanceObservation: own.observation,
-                settingWrites: own.settings,
                 checkCanCommit: checkCanCommit,
                 messageId: marker,
                 conversationId: message.conversationId,
@@ -1874,6 +1916,7 @@ class NativeCryptoService
                 cursor: message.syncEventId,
                 resolvedMlsOutboxKey: bundle.idempotencyKey,
                 infoRemovalEpoch: infoRemovalEpoch,
+                c7Settings: <String, String?>{...c7Settings, ...own.settings},
               ));
               await _rejudgeAfterOwnCommit(message.conversationId);
               return;
@@ -1907,6 +1950,7 @@ class NativeCryptoService
           int? infoRemovalEpoch;
           GovernanceObservationChange? commitObservation;
           var commitSettings = const <String, String?>{};
+          var c7Settings = const <String, String?>{};
           switch (message.kind) {
             case 'welcome':
               if (message.recipientDeviceId != _deviceId) {
@@ -2015,6 +2059,8 @@ class NativeCryptoService
                 if (pairs.removed && !pairs.removedSelf) {
                   infoRemovalEpoch = pairs.epoch;
                 }
+                c7Settings = await _c7AfterCommit(
+                    message.conversationId, pairs.c7Outcome);
               } finally {
                 root?.fillRange(0, root.length, 0);
               }
@@ -2049,7 +2095,16 @@ class NativeCryptoService
             approvalLeaves: approval,
             infoRemovalEpoch: infoRemovalEpoch,
             governanceObservation: commitObservation,
-            settingWrites: commitSettings,
+            // C4 leave proofs share the C7 settings channel.
+            c7Settings: message.kind == 'welcome' && c7SealedBodies
+                ? <String, String?>{
+                    ...commitSettings,
+                    // The re-add wipe and the newcomer's floor (decision 5).
+                    c7GroupSetting(message.conversationId): C7GroupState.joined(
+                            device.groupEpoch(message.conversationId).epoch)
+                        .encode(),
+                  }
+                : <String, String?>{...c7Settings, ...commitSettings},
           ));
         } catch (_) {
           await _restorePrevious(previous);
@@ -2367,6 +2422,12 @@ class NativeCryptoService
           throw StateError('a channel is named exactly for a shared group');
         }
         final channelId = sharedGroup ? routeChannelId : null;
+        // C7: a private channel's own group names its channel in the clear
+        // metadata (the server already maps the group to it), never inside
+        // the payload, so the server's posting checks apply to its posts.
+        final c7Private = c7SealedBodies && !sharedGroup
+            ? _c7PrivateChannel(conversationId)
+            : null;
         try {
           final idempotencyKey = _randomIdempotencyKey();
           final deviceId = _deviceId!;
@@ -2417,7 +2478,36 @@ class NativeCryptoService
           }
           final device = _requiredDevice();
           final epoch = groupEpoch.epoch;
-          final ciphertext = device.encrypt(conversationId, payload);
+          // C7: in a community conversation MLS carries only the reference;
+          // the padded VAP1 goes in the sealed body beside it.
+          List<int> mlsPlaintext = payload;
+          Uint8List? sealedBody;
+          if (c7SealedBodies &&
+              c7CommunityKind(_authority?.conversationKind(conversationId))) {
+            final communityId = switch (_authority) {
+              final ConversationCommunitySource source =>
+                source.conversationCommunity(conversationId),
+              _ => null,
+            };
+            if (communityId == null || communityId.isEmpty) {
+              throw StateError('C7 needs the community of this conversation');
+            }
+            final sealed = c7SealMessage(
+              bindings: bindings,
+              sign: (message) => device.c7Sign(
+                  domain: c7PostSignatureDomain, message: message),
+              communityId: communityId,
+              conversationId: conversationId,
+              channelId: channelId ?? c7Private,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              epoch: epoch,
+              paddedVap1: payload,
+            );
+            mlsPlaintext = sealed.reference;
+            sealedBody = sealed.sealedBody;
+          }
+          final ciphertext = device.encrypt(conversationId, mlsPlaintext);
           final envelope = MessageEnvelope(
             conversationId: conversationId,
             idempotencyKey: idempotencyKey,
@@ -2431,13 +2521,15 @@ class NativeCryptoService
               if (channelId != null) ...<String, Object?>{
                 'channel_id': channelId,
                 'community_layout_generation': routeGeneration,
-              },
+              } else if (c7Private != null && sealedBody != null)
+                'channel_id': c7Private,
               // The epoch is already readable in the MLS message header. The
               // server uses it to withhold a message from a device that
               // joined after that epoch and cannot decrypt it (card I51).
               'mls_epoch': epoch,
             },
             frankCommit: commit,
+            sealedBody: sealedBody,
             attachmentRefs: attachmentRefs,
           );
           await localStore.commitOutgoingApplicationTransition(
@@ -2588,8 +2680,12 @@ class NativeCryptoService
       }
       try {
         operationFence();
-        final List<int> plaintext;
         LeafVerdict? senderVerdict;
+        List<int> plaintext;
+        // C7: whether the message came in two parts, and the channel its
+        // clear metadata names (bound into the body's aad).
+        var c7TwoPart = false;
+        String? c7Channel;
         try {
           final decrypted = await _decryptOrUndecryptable(
               previous,
@@ -2652,6 +2748,48 @@ class NativeCryptoService
             ));
             return null;
           }
+          // C7: a two-part message's reference names its sealed body. A
+          // missing, swapped or damaged body is an invalid row; the MLS
+          // state and the cursor commit with it (P1), so a server that
+          // strips a body cannot stop the conversation.
+          // Parsed whatever the conversation's cached kind: the magic and
+          // the exact 68 bytes never match a VAP1, MLS authenticated them,
+          // and a list that has not caught up must not lose the message.
+          final reference = parseC7Reference(plaintext);
+          if (reference != null) {
+            final metadata = envelope.cryptoMetadata;
+            final routeChannel =
+                metadata is Map ? metadata['channel_id'] : null;
+            final opened = c7OpenLive(
+              bindings: bindings,
+              reference: reference,
+              sealedBody: envelope.sealedBody,
+              conversationId: envelope.conversationId,
+              channelId: routeChannel is String ? routeChannel : null,
+              senderDeviceId: envelope.senderDeviceId,
+              actionId: envelope.idempotencyKey,
+            );
+            plaintext.fillRange(0, plaintext.length, 0);
+            c7TwoPart = true;
+            c7Channel = routeChannel is String ? routeChannel : null;
+            if (opened == null) {
+              await localStore.commitMlsTransition(MlsStateTransition(
+                checkCanCommit: operationFence,
+                messageId: marker,
+                conversationId: envelope.conversationId,
+                expectedCounter: previous.counter,
+                expectedCursor: cursor,
+                state: _sealNext(previous),
+                cursor: syncEventId,
+                upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+                messageEffects: <MessageEffect>[
+                  _invalidRow(envelope, syncEventId),
+                ],
+              ));
+              return null;
+            }
+            plaintext = opened;
+          }
         } on NativeCryptoException catch (error) {
           if (!error.kind.ratchetAdvanced) rethrow;
           // The ratchet already advanced, so the message can never be
@@ -2707,6 +2845,43 @@ class NativeCryptoService
           reveal = checked.reveal;
           switch (outcome) {
             case DecodedAppPayload(:final payload):
+              // C7: in the C0 layout a group-level two-part message (no
+              // channel_id) is a history_sync or its request, and those are
+              // never anything else; a private group names only its own
+              // channel. The C7 types come only in two parts. Anything
+              // else is an invalid row: the server cannot tell a post from
+              // a history_sync, so this is what keeps a post that skipped
+              // the posting checks from showing.
+              final c7Kind = c7PayloadTypes.contains(payload.type);
+              final layout = _c7Layout(envelope.conversationId);
+              final privateChannel = _c7PrivateChannel(envelope.conversationId);
+              if ((c7Kind && !c7TwoPart) ||
+                  (c7TwoPart &&
+                      layout &&
+                      ((c7Channel == null) !=
+                              c7GroupLevelTypes.contains(payload.type) ||
+                          (privateChannel != null &&
+                              c7Channel != null &&
+                              c7Channel != privateChannel)))) {
+                effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
+                reveal = null;
+                break;
+              }
+              if (c7Kind) {
+                // Records and history_sync are applied by the C7 state
+                // (later slice); the row stands in for the envelope.
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.action,
+                    senderHidden: true,
+                  ),
+                ];
+                reveal = null;
+                break;
+              }
               // C3: info keys, key requests and announcements change state
               // and show nothing. A hidden action row stands in for the
               // envelope; no reveal is ever kept, so a report cannot hand an
@@ -2880,7 +3055,7 @@ class NativeCryptoService
           // an invalid placeholder) is dropped by the store, not an error.
           frankReveals: reveal == null ? const <FrankReveal>[] : [reveal],
           communityInfo: info,
-          settingWrites: settings,
+          c7Settings: settings,
           governanceObservation: observation,
         ));
         return text;
@@ -4202,6 +4377,10 @@ List<MessageEffect> messageEffectsFor(
       throw const FormatException('community info payloads are not messages'),
     AppPayloadType.memberLeave =>
       throw const FormatException('leave proofs are not messages'),
+    AppPayloadType.historyChange ||
+    AppPayloadType.historySync ||
+    AppPayloadType.historySyncRequest =>
+      throw const FormatException('C7 history payloads are not messages'),
   };
 }
 

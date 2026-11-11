@@ -278,7 +278,10 @@ int passFetchedFloor({
     fetchedGeneration == sessionGeneration ? fetchedThrough : 0;
 
 class AppState extends ChangeNotifier
-    implements ConversationAuthority, VerifiedRoleSource {
+    implements
+        ConversationAuthority,
+        ConversationCommunitySource,
+        VerifiedRoleSource {
   AppState({
     required this.apiClientFactory,
     required this.cryptoService,
@@ -658,6 +661,25 @@ class AppState extends ChangeNotifier
   @override
   String? conversationChannel(String conversationId) =>
       conversations.where((c) => c.id == conversationId).firstOrNull?.channelId;
+  @override
+  String? privateGroupChannel(String conversationId) {
+    for (final channels in channelsByCommunity.values) {
+      for (final channel in channels) {
+        if (channel.kind == 'private' &&
+            channel.isRouted &&
+            channel.conversationId == conversationId) {
+          return channel.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  @override
+  String? conversationCommunity(String conversationId) => conversations
+      .where((c) => c.id == conversationId)
+      .firstOrNull
+      ?.communityId;
   bool isArchived(String id) => conversationPrefs[id]?.archivedAt != null;
   bool isChatPinned(String id) => conversationPrefs[id]?.pinnedAt != null;
   List<LocalPin> pinsFor(String id) {
@@ -2373,6 +2395,9 @@ class AppState extends ChangeNotifier
     if (!_refreshOwned(current, generation)) return;
     conversations = list;
     _conversationsFromServer = true;
+    if (cryptoService case final C7HistoryConsumer c7) {
+      unawaited(_followC7Switch(client, c7));
+    }
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
     linkPreviewMode = linkPreviewModeFromName(previewMode);
@@ -3997,10 +4022,41 @@ class AppState extends ChangeNotifier
     }
   }
 
-  /// Deletes one of this account's own messages for every member.
-  Future<bool> deleteMessage(String conversationId, String targetKey) =>
-      _sendPayload(conversationId, AppPayloadType.delete,
-          <String, Object?>{'message_id': targetKey});
+  /// Deletes one of this account's own messages for every member. With C7
+  /// on, a community post is also marked `history_hidden`, so newcomers
+  /// never fetch it (design decision 7).
+  Future<bool> deleteMessage(String conversationId, String targetKey) async {
+    final sent = await _sendPayload(conversationId, AppPayloadType.delete,
+        <String, Object?>{'message_id': targetKey});
+    if (sent) await _hideFromHistory(conversationId, targetKey);
+    return sent;
+  }
+
+  /// C7: the history-hide call that goes with a W7 delete. Best effort: the
+  /// delete already reached every member, and a failed hide only leaves the
+  /// body in the history route until retention removes it.
+  Future<void> _hideFromHistory(String conversationId, String targetKey) async {
+    final crypto = cryptoService;
+    final client = api;
+    final token = session?.token;
+    if (crypto is! C7HistoryConsumer ||
+        !(crypto as C7HistoryConsumer).c7SealedBodies ||
+        client == null ||
+        token == null) {
+      return;
+    }
+    final kind = conversationKind(conversationId);
+    if (kind != 'community_shared' && kind != 'community_channel') return;
+    final serverId =
+        historyFor(conversationId).forKey(targetKey)?.serverMessageId;
+    if (serverId == null) return;
+    try {
+      await client.hideHistoryMessage(token, serverId);
+    } catch (err) {
+      developer.log('c7_history_hide_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }
+  }
 
   /// Sets this account's reaction on a message; an empty [reaction] clears it.
   Future<bool> react(
@@ -4234,6 +4290,18 @@ class AppState extends ChangeNotifier
   }) async {
     final bytes = await loadAttachment(entry, conversationId: conversationId);
     await File(destinationPath).writeAsBytes(bytes, flush: true);
+  }
+
+  /// C7: sends go in two parts exactly while the server reports
+  /// `c7_history` (PRIVATE_MESSENGER_C7_HISTORY). A failed read keeps the
+  /// last answer; the server refuses a mismatched send either way.
+  Future<void> _followC7Switch(ApiClient client, C7HistoryConsumer c7) async {
+    try {
+      final status = await client.setupStatus();
+      c7.c7SealedBodies = status['c7_history'] == true;
+    } catch (_) {
+      // Keep the current setting until the next refresh.
+    }
   }
 
   /// The most plaintext bytes the server accepts for one attachment (the

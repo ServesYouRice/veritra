@@ -389,9 +389,13 @@ channels (open: community record; private: the channel's own record); the
 community card groups channels by category. Key freshness: see docs/crypto.md
 ("C3 key freshness", local schema 35).
 
+Category deletion (2026-11-11): the community record drops the category and
+the open channels' places in it, then the category record becomes a
+tombstone; a new category reuses a tombstoned id first (the bound below).
+
 **Still left:** channel conversion (open to private and back: a server route
-and MLS group move, not built); category deletion (tombstone and id reuse);
-and app-to-app acceptance evidence with production C4 role records. Until the
+and MLS group move, not built; it is C7's `move`, decision 11, and needs
+C7's records first); and app-to-app acceptance evidence with production C4 role records. Until the
 app holds a verified role record, nothing another account wrote is shown.
 After any removal a non-admin's rotation obligation never completes, so it
 cannot edit channel info again (contrary to D80's "any member"). Rules from the first review that still bind:

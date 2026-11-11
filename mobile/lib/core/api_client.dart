@@ -1678,6 +1678,65 @@ class ApiClient {
     );
   }
 
+  /// C7: the bodies sync withheld from this device in [conversationId]'s
+  /// stream ([channelId], or the group-level stream when null), newest
+  /// first, before the message [beforeId]. Each row is
+  /// `{message_id, sender_device_id, action_id, channel_id?, created_at,
+  /// epoch?, body}` with `body` base64. 404 while the server has C7 off.
+  Future<List<Map<String, Object?>>> historyBodies(
+    String token,
+    String conversationId, {
+    String? channelId,
+    String? beforeId,
+    int limit = 50,
+  }) async {
+    final query = <String, String>{
+      if (channelId != null) 'channel_id': channelId,
+      if (beforeId != null) 'before': beforeId,
+      'limit': '$limit',
+    };
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+            '/history',
+        queryParameters: query,
+      ).toString(),
+      token: token,
+      maxResponseBytes: _maxCiphertextResponseBytes,
+    );
+    return _decode(() => (json['history'] as List)
+        .map((row) => Map<String, Object?>.from(row as Map))
+        .toList());
+  }
+
+  /// C7: the signing keys of devices that posted in [conversationId] and are
+  /// no longer in its group (one bulk call at join, in every mode).
+  Future<List<Map<String, Object?>>> formerMemberKeys(
+      String token, String conversationId) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+          '/former-member-keys',
+      token: token,
+    );
+    return _decode(() => (json['devices'] as List)
+        .map((row) => Map<String, Object?>.from(row as Map))
+        .toList());
+  }
+
+  /// C7: marks a community post `history_hidden`, so the history route never
+  /// serves it to a newcomer. The author's or a moderator's delete sends it
+  /// with the W7 delete.
+  Future<void> hideHistoryMessage(String token, String messageId) async {
+    await _jsonRequest(
+      'POST',
+      '/api/v1/messages/${Uri.encodeComponent(messageId)}/history-hide',
+      token: token,
+      body: const <String, Object?>{},
+    );
+  }
+
   Future<AttachmentEnvelope> uploadEncryptedAttachment(
     String token,
     String conversationId,

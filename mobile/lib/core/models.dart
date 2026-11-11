@@ -407,6 +407,7 @@ class MessageEnvelope {
     this.replyToId,
     this.threadRootId,
     this.frankCommit,
+    this.sealedBody,
   });
 
   final String conversationId;
@@ -414,6 +415,10 @@ class MessageEnvelope {
   final List<int> ciphertext;
   final String cryptoProtocol;
   final Map<String, Object?> cryptoMetadata;
+
+  /// The C7 sealed body sent beside a two-part message's MLS reference, or
+  /// null. Kept in the outbox so a retry is byte-identical.
+  final List<int>? sealedBody;
   final List<Object?> attachmentRefs;
   final String? replyToId;
   final String? threadRootId;
@@ -430,6 +435,7 @@ class MessageEnvelope {
       'crypto_protocol': cryptoProtocol,
       'crypto_metadata': cryptoMetadata,
       if (frankCommit != null) 'frank_commit': base64Encode(frankCommit!),
+      if (sealedBody != null) 'sealed_body': base64Encode(sealedBody!),
       'attachment_refs': attachmentRefs,
       if (replyToId != null) 'reply_to_id': replyToId,
       if (threadRootId != null) 'thread_root_id': threadRootId,
@@ -451,6 +457,8 @@ class MessageEnvelope {
       threadRootId: json['thread_root_id'] as String?,
       frankCommit:
           ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
+      sealedBody:
+          ReceivedMessageEnvelope.frankCommitFromJson(json['sealed_body']),
     );
   }
 }
@@ -653,6 +661,7 @@ class ReceivedMessageEnvelope {
     this.deletedAt,
     this.expiresAt,
     this.frankCommit,
+    this.sealedBody,
   });
 
   final String id;
@@ -660,6 +669,10 @@ class ReceivedMessageEnvelope {
   final String senderAccountId;
   final String senderDeviceId;
   final String idempotencyKey;
+
+  /// The C7 sealed body the server served with this envelope, or null.
+  /// Untrusted: a two-part message's reference fixes its hash.
+  final List<int>? sealedBody;
   final List<int> ciphertext;
   final String cryptoProtocol;
   final Object? cryptoMetadata;
@@ -694,6 +707,9 @@ class ReceivedMessageEnvelope {
       deletedAt: _parseOptionalTime(json['deleted_at']),
       expiresAt: _parseOptionalTime(json['expires_at']),
       frankCommit: frankCommitFromJson(json['frank_commit']),
+      // Read as leniently as frank_commit: a bad value reads as absent, and
+      // the reference then makes the message an invalid row.
+      sealedBody: frankCommitFromJson(json['sealed_body']),
     );
   }
 
@@ -719,6 +735,7 @@ class ReceivedMessageEnvelope {
         'crypto_protocol': cryptoProtocol,
         if (cryptoMetadata != null) 'crypto_metadata': cryptoMetadata,
         if (frankCommit != null) 'frank_commit': base64Encode(frankCommit!),
+        if (sealedBody != null) 'sealed_body': base64Encode(sealedBody!),
         if (attachmentRefs != null) 'attachment_refs': attachmentRefs,
         if (replyToId != null) 'reply_to_id': replyToId,
         if (threadRootId != null) 'thread_root_id': threadRootId,

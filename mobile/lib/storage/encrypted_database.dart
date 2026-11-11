@@ -1505,7 +1505,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     ApprovalLeafChange? approvalLeaves,
     int? infoRemovalEpoch,
-    Map<String, String?> settingWrites = const <String, String?>{},
+    Map<String, String?> c7Settings = const <String, String?>{},
     MlsCommitFailureInjector? failureInjector,
     GovernanceObservationChange? governanceObservation,
     String? leaseKey,
@@ -1614,7 +1614,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _applyMessageEffects(messageEffects);
         await _writeFrankRevealsInTransaction(frankReveals);
         await _writeCommunityInfoInTransaction(communityInfo);
-        await _writeSettingsInTransaction(settingWrites);
         if (infoRemovalEpoch != null) {
           await into(localMetadata).insertOnConflictUpdate(
             LocalMetadataCompanion.insert(
@@ -1623,6 +1622,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             ),
           );
         }
+        await _writeC7SettingsInTransaction(c7Settings);
         // L1 (D94): the leaf verdicts of a commit or Welcome commit with the
         // group state, so a crash can never leave a merged group unjudged.
         await _writeApprovalLeavesInTransaction(approvalLeaves);
@@ -1679,7 +1679,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               .getSingleOrNull();
           if (command != null &&
               command.conversationId == conversationId &&
-              command.channelId == channel) {
+              // A pin with no channel (a private channel's own group under
+              // C7 names its channel in the clear metadata only) matches
+              // whatever the echo's metadata names; a shared group's pin
+              // always has its channel.
+              (command.channelId == null || command.channelId == channel)) {
             final serverTime = DateTime.parse(echo['created_at'] as String)
                 .millisecondsSinceEpoch;
             if (allowOwnPinEffect)
@@ -1978,23 +1982,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _writeCommunityInfoInTransaction(communityInfo);
       });
 
-  /// Settings written inside the caller's transaction; null deletes one.
-  Future<void> _writeSettingsInTransaction(Map<String, String?> writes) async {
-    for (final write in writes.entries) {
-      final value = write.value;
-      if (value == null) {
-        await (delete(localMetadata)
-              ..where((table) => table.name.equals('setting:${write.key}')))
-            .go();
-      } else {
-        await into(localMetadata).insertOnConflictUpdate(
-          LocalMetadataCompanion.insert(
-              name: 'setting:${write.key}', value: value),
-        );
-      }
-    }
-  }
-
   Future<void> commitLocalMlsState({
     required int expectedCounter,
     required int expectedCursor,
@@ -2006,7 +1993,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     String? leaseKey,
     String? resolvedMlsOutboxKey,
     ({String conversationId, int epoch})? infoRemoval,
-    Map<String, String?> settingWrites = const <String, String?>{},
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) =>
       transaction(() => _commitLocalMlsStateInTransaction(
             expectedCounter: expectedCounter,
@@ -2019,7 +2006,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             leaseKey: leaseKey,
             resolvedMlsOutboxKey: resolvedMlsOutboxKey,
             infoRemoval: infoRemoval,
-            settingWrites: settingWrites,
+            c7Settings: c7Settings,
           ));
 
   Future<void> _commitLocalMlsStateInTransaction({
@@ -2033,7 +2020,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     String? leaseKey,
     String? resolvedMlsOutboxKey,
     ({String conversationId, int epoch})? infoRemoval,
-    Map<String, String?> settingWrites = const <String, String?>{},
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) async {
     await _assertSyncLeaseInTransaction(leaseKey);
     final previousState = await (select(localCryptoStates)
@@ -2071,7 +2058,23 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         ),
       );
     }
-    await _writeSettingsInTransaction(settingWrites);
+    await _writeC7SettingsInTransaction(c7Settings);
+  }
+
+  /// C7 group state rows (`setting:<name>`), written or deleted inside the
+  /// caller's MLS transaction.
+  Future<void> _writeC7SettingsInTransaction(
+      Map<String, String?> settings) async {
+    for (final entry in settings.entries) {
+      final name = 'setting:${entry.key}';
+      final value = entry.value;
+      if (value == null) {
+        await (delete(localMetadata)..where((t) => t.name.equals(name))).go();
+      } else {
+        await into(localMetadata).insertOnConflictUpdate(
+            LocalMetadataCompanion.insert(name: name, value: value));
+      }
+    }
   }
 
   Future<
