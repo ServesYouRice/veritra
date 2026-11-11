@@ -38,7 +38,9 @@ void main() {
     test('the demo primary keeps its names too', () {
       expect(demo.databaseKey, 'veritra.demo.database_key.v1');
       expect(demo.secureKey('read_receipts.v1'), 'veritra.read_receipts.v1');
-      expect(demo.directoryIn(Directory('/s')).path, '/s/profiles/demo');
+      final sep = Platform.pathSeparator;
+      expect(
+          demo.directoryIn(Directory('/s')).path, '/s${sep}profiles${sep}demo');
       expect(demo.pasteScope, 'demo');
     });
 
