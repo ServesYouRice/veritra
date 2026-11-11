@@ -224,6 +224,20 @@ class SettingsScreen extends StatelessWidget {
                       subtitle: Text(l10n.settingsDeviceListSetupDetail),
                       onTap: () => _reviewDeviceList(context),
                     ),
+                  if (state.recoveryListNeedsRetype)
+                    ListTile(
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.settingsRecoveryRetype),
+                      subtitle: Text(l10n.settingsRecoveryRetypeDetail),
+                      onTap: () => _retypeRecoveryKey(context),
+                    ),
+                  if (state.recoveryKeyNeedsConfirmation)
+                    ListTile(
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.settingsRecoveryConfirm),
+                      subtitle: Text(l10n.settingsRecoveryConfirmDetail),
+                      onTap: () => _confirmPreL1RecoveryKey(context),
+                    ),
                   if (state.membershipChangesAvailable)
                     ListTile(
                       leading: const Icon(Icons.qr_code_2),
@@ -669,6 +683,81 @@ class SettingsScreen extends StatelessWidget {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(message)));
       }
+    }
+  }
+
+  /// Asks for the recovery key from the user's paper. The typed text is
+  /// handed on and dropped with the dialog; it is never stored.
+  Future<String?> _askRecoveryKey(BuildContext context) async {
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(dialogContext.l10n.recoveryKeyConfirmTitle),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Text(dialogContext.l10n.recoveryKeyConfirmDetail),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: InputDecoration(
+                  labelText: dialogContext.l10n.recoveryKeyField,
+                ),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: Text(dialogContext.l10n.commonCancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: Text(dialogContext.l10n.commonContinue),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  void _showRecoveryResult(BuildContext context, bool ok, String done) {
+    final message = ok ? done : state.errorFor(Ops.recoveryKey);
+    if (message != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
+  }
+
+  /// L1 recovery retype: the held seed is gone, so the key is typed again.
+  Future<void> _retypeRecoveryKey(BuildContext context) async {
+    final typed = await _askRecoveryKey(context);
+    if (typed == null || typed.trim().isEmpty || !context.mounted) return;
+    final ok = await state.finishRecoveryWithTypedKey(typed);
+    if (context.mounted) {
+      _showRecoveryResult(context, ok, context.l10n.recoveryRetypeDone);
+    }
+  }
+
+  /// L1: a recovery key from before approved-device lists, typed once.
+  Future<void> _confirmPreL1RecoveryKey(BuildContext context) async {
+    final typed = await _askRecoveryKey(context);
+    if (typed == null || typed.trim().isEmpty || !context.mounted) return;
+    var result = await state.confirmPreL1RecoveryKey(typed);
+    if (result == RecoveryActionResult.needsRecentAuth && context.mounted) {
+      if (!await _reauthenticate(context) || !context.mounted) return;
+      result = await state.confirmPreL1RecoveryKey(typed);
+    }
+    if (context.mounted && result != RecoveryActionResult.needsRecentAuth) {
+      _showRecoveryResult(context, result == RecoveryActionResult.done,
+          context.l10n.recoveryKeyConfirmedForList);
     }
   }
 

@@ -191,6 +191,22 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your contacts can\'t add your devices to chats until you confirm which ones are yours.';
 
   @override
+  String get settingsRecoveryRetype =>
+      'Type your recovery key again to finish recovery';
+
+  @override
+  String get settingsRecoveryRetypeDetail =>
+      'Your contacts can\'t add this device to chats until you do.';
+
+  @override
+  String get settingsRecoveryConfirm =>
+      'Confirm your recovery key to keep recovery working';
+
+  @override
+  String get settingsRecoveryConfirmDetail =>
+      'Your recovery key was set before approved-device lists. Type it once, or recovering your account with it will be refused.';
+
+  @override
   String get deviceListReviewTitle => 'Which devices are yours?';
 
   @override
@@ -1930,6 +1946,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'A message from a device that isn\'t approved was hidden.';
 
   @override
+  String chatDevicesNotJoined(String name) {
+    return 'Some of $name\'s devices haven\'t joined yet.';
+  }
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Couldn\'t join this chat. Ask a member to add you again.';
 
@@ -2904,6 +2925,16 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get recoveryKeyUnreadable =>
       'That recovery key is not valid. Check it for a typo.';
+
+  @override
+  String get recoveryKeyNotThisAccount =>
+      'That isn\'t this account\'s recovery key. Check your paper and try again.';
+
+  @override
+  String get recoveryKeyConfirmedForList => 'Recovery key confirmed.';
+
+  @override
+  String get recoveryRetypeDone => 'Recovery finished on this device.';
 
   @override
   String get recoveryClaimRefused =>

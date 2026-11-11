@@ -105,6 +105,7 @@ part 'app_state_k1_backup.dart';
 part 'app_state_k1_restore.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
+part 'app_state_l1_joins.dart';
 part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
 
@@ -348,6 +349,18 @@ class AppState extends ChangeNotifier
   /// This account has no approved-device list yet (from before L1): its
   /// devices are added to no chat until the user reviews them once.
   bool ownDeviceListMissing = false;
+
+  /// This account's verified head names no recovery key (L1 design,
+  /// "Existing accounts"). With a key the server reports configured, that
+  /// key is from before L1 and must be typed once (see
+  /// [AppStateDeviceList.recoveryKeyNeedsConfirmation]).
+  bool _ownHeadWithoutRecoveryKey = false;
+
+  /// This device was enrolled by recovery, its own verified pin does not
+  /// list it, and no signed recovery version waits to be posted: the held
+  /// seed is gone or does not match, so the recovery key must be typed again
+  /// (L1 design, "Recovery when every device is lost", step 4).
+  bool recoveryListNeedsRetype = false;
 
   /// The last restore list held old-format (VBK2) copies, which are never
   /// opened (K1-6). Only the screen's note reads it.
@@ -968,6 +981,19 @@ class AppState extends ChangeNotifier
   int _catchUpRetryAttempt = 0;
   final Set<String> _failedMlsConversations = <String>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
+
+  /// L1 complete-adds audit and incomplete-join clocks (app_state_l1_joins).
+  final _L1JoinAudit _l1Joins = _L1JoinAudit();
+
+  /// How often one held group is audited for approved devices that are not
+  /// leaves when the server reports no change for it (L1).
+  @visibleForTesting
+  Duration l1JoinAuditInterval = const Duration(minutes: 15);
+
+  /// How long an approved device may stay out of a group before the chat
+  /// says so (L1 design, "Sending adds").
+  @visibleForTesting
+  Duration l1IncompleteJoinGrace = const Duration(hours: 1);
   final Set<String> _mlsReconcileNow = <String>{};
   bool _mlsReconcileRequested = true;
 
@@ -1816,10 +1842,12 @@ class AppState extends ChangeNotifier
         notifyListeners();
         return;
       }
+      await _resumeDeviceListAnchor(restored);
       session = restored;
       _replaceApi(restored.baseUrl);
       await _resumeRecoveredIdentity(restored);
       await _mlsCrypto?.activateSession(restored);
+      await _clearDeviceListAnchorJournal(restored);
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final records = await localStore.pendingEnvelopeRecords();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -2015,7 +2043,7 @@ class AppState extends ChangeNotifier
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
       Uint8List? genesis;
-      session = await api!.createOwner(
+      final created = await api!.createOwner(
         username: username,
         password: password,
         deviceName: config.deviceName,
@@ -2024,12 +2052,15 @@ class AppState extends ChangeNotifier
         setupToken: setupToken,
         deviceList: genesis = await _signGenesis(enrollment),
       );
-      await _oweInitialKeyPackages(session!);
-      await localStore.saveSession(session!);
-      await _mlsCrypto?.activateSession(session!);
+      if (genesis != null) await _journalDeviceListAnchor(created, [genesis]);
+      await _oweInitialKeyPackages(created);
+      await localStore.saveSession(created);
+      await _resumeDeviceListAnchor(created);
+      await _mlsCrypto?.activateSession(created);
+      await _clearDeviceListAnchorJournal(created);
+      session = created;
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
-        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();
@@ -2072,13 +2103,18 @@ class AppState extends ChangeNotifier
   Future<void> _finishDeviceSignIn(
       Session localSession, bool hadMlsState) async {
     {
+      final signedIn = session!;
+      session = null;
       final sameIdentity = localSession.accountId != null &&
-          localSession.baseUrl == session!.baseUrl &&
-          localSession.accountId == session!.accountId &&
-          localSession.deviceId == session!.deviceId;
-      await localStore.saveSession(session!);
+          localSession.baseUrl == signedIn.baseUrl &&
+          localSession.accountId == signedIn.accountId &&
+          localSession.deviceId == signedIn.deviceId;
+      await localStore.saveSession(signedIn);
+      await _resumeDeviceListAnchor(signedIn);
       await _reloadStoredDrafts();
-      await _mlsCrypto?.activateSession(session!);
+      await _mlsCrypto?.activateSession(signedIn);
+      await _clearDeviceListAnchorJournal(signedIn);
+      session = signedIn;
       // The same device signing in again keeps its cursor: it was committed
       // with the MLS state, and replaying from event 0 would meet commits
       // and messages that state has already consumed (I33 stops sync on
@@ -2579,7 +2615,7 @@ class AppState extends ChangeNotifier
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
       Uint8List? genesis;
-      session = await api!.register(
+      final created = await api!.register(
         inviteCode: inviteCode,
         username: username,
         password: password,
@@ -2588,12 +2624,15 @@ class AppState extends ChangeNotifier
         credential: credential,
         deviceList: genesis = await _signGenesis(enrollment),
       );
-      await _oweInitialKeyPackages(session!);
-      await localStore.saveSession(session!);
-      await _mlsCrypto?.activateSession(session!);
+      if (genesis != null) await _journalDeviceListAnchor(created, [genesis]);
+      await _oweInitialKeyPackages(created);
+      await localStore.saveSession(created);
+      await _resumeDeviceListAnchor(created);
+      await _mlsCrypto?.activateSession(created);
+      await _clearDeviceListAnchorJournal(created);
+      session = created;
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
-        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();
@@ -5536,8 +5575,12 @@ class AppState extends ChangeNotifier
     );
     if (!config.transport.allows(restored.baseUrl)) return false;
     await wake.check(requireOwner: false);
+    await _resumeDeviceListAnchor(restored);
+    fence();
     await crypto.activateExistingSessionBounded(restored,
         checkCanCommit: fence);
+    fence();
+    await _clearDeviceListAnchorJournal(restored);
     fence();
     if (session != null || _isForeground) return false;
     final generation = ++_sessionGeneration;
@@ -6210,6 +6253,14 @@ class AppState extends ChangeNotifier
           }
           if (!_syncOwnerActive(current, ownerGeneration)) return;
         }
+        // L1: groups the server reports no change for are still checked
+        // against their members' signed lists (bounded per pass).
+        try {
+          await _auditCompleteAdds(current, ownerGeneration);
+        } catch (err) {
+          if (err is ApiException && err.statusCode == 401) rethrow;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         try {
           await _maybeSelfUpdate(current, ownerGeneration);
         } catch (err) {
@@ -7543,6 +7594,7 @@ class AppState extends ChangeNotifier
     _cancelCatchUpRetry();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
+    _l1Joins.clear();
     _mlsReconcileNow.clear();
     _mlsReconcileRequested = true;
     _manualRetryKey = null;
@@ -8204,6 +8256,11 @@ class AppState extends ChangeNotifier
     final holdSeq = _removalHoldSeq;
     final changes = await client.mlsPendingChanges(current.token);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _l1Joins.reported = <String>{
+      for (final change in changes) change.conversationId,
+    };
+    await _loadMissingJoins(current);
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
     final stillPending = <String>{};
     var staged = false;
@@ -8236,20 +8293,55 @@ class AppState extends ChangeNotifier
         }
         // L1 (D94): only devices on their account's approved list are
         // claimed and added; the rest wait, and no key package is spent.
-        final approvedAdds = await _approvedForAdd(change.add);
+        final discovery = mls is ApprovedDeviceDiscoveryCryptoService
+            ? mls as ApprovedDeviceDiscoveryCryptoService
+            : null;
+        List<MlsDeviceRef>? discovered;
+        var discoveryComplete = false;
+        if (discovery != null) {
+          try {
+            discovered = await _discoverApprovedAdds(
+                current, client, discovery, change.conversationId);
+            discoveryComplete = true;
+          } catch (err) {
+            if (err is ApiException && err.statusCode == 401) rethrow;
+            if (change.remove.isEmpty) rethrow;
+            // Discovery failure authorizes no additions, but must not prevent
+            // removing a leaf. Never fall back to server-enumerated adds.
+            discovered = const [];
+          }
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (discoveryComplete && discovered!.isEmpty) {
+          // Every approved device is a leaf already: no gap to report.
+          await _noteMissingJoins(change.conversationId, const <String>{}, now);
+        }
+        final approvedAdds = discovered == null
+            ? await _approvedForAdd(change.add)
+            : [for (final ref in discovered) ref.deviceId];
         if (approvedAdds.isEmpty &&
             change.add.isNotEmpty &&
             change.remove.isEmpty) {
           throw DeviceListNotApprovedException(
               [for (final item in change.add) item.deviceId]);
         }
+        if (discovered != null && discoveryComplete) {
+          // Only the tree resolves a gap, never a claimed package.
+          await _noteMissingJoins(change.conversationId,
+              AppStateL1Joins._gapAccounts(discovered), now);
+        }
         final adds = approvedAdds.isEmpty
             ? const <DeviceKeyPackage>[]
-            : await client.claimDeviceKeyPackages(
-                current.token,
-                change.conversationId,
-                approvedAdds,
-              );
+            : discovered != null
+                ? await _claimListedDevices(
+                    current, client, change.conversationId, discovered,
+                    stillOwner: () =>
+                        _syncOwnerActive(current, ownerGeneration))
+                : await client.claimDeviceKeyPackages(
+                    current.token,
+                    change.conversationId,
+                    approvedAdds,
+                  );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (adds.isEmpty && change.remove.isEmpty) continue;
         await mls.stageMembershipChange(change.conversationId,
@@ -8311,6 +8403,34 @@ class AppState extends ChangeNotifier
       }
     }
     return out;
+  }
+
+  Future<List<MlsDeviceRef>> _discoverApprovedAdds(
+      Session current,
+      ApiClient client,
+      ApprovedDeviceDiscoveryCryptoService discovery,
+      String conversationId,
+      {bool creating = false}) async {
+    final members =
+        await client.conversationMembers(current.token, conversationId);
+    final missing = await discovery.missingApprovedDevices(
+        creating ? null : conversationId,
+        members.map((member) => member.accountId));
+    // The server and native commit format cap each bundle at 256 changes.
+    return missing.take(256).toList();
+  }
+
+  void _checkDiscoveredPackages(
+      List<MlsDeviceRef> requested, List<DeviceKeyPackage> packages) {
+    final expected = requested.toSet();
+    final seen = <String>{};
+    for (final package in packages) {
+      if (!expected.contains(
+              (accountId: package.accountId, deviceId: package.deviceId)) ||
+          !seen.add(package.deviceId)) {
+        throw const FormatException('unexpected claimed device');
+      }
+    }
   }
 
   /// How long a device that is not the change's coordinator waits before it
@@ -8696,8 +8816,21 @@ class AppState extends ChangeNotifier
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
-    final packages = await client.claimConversationKeyPackages(
-        current.token, conversationId);
+    final ownerGeneration = _sessionGeneration;
+    final List<DeviceKeyPackage> packages;
+    if (mls is ApprovedDeviceDiscoveryCryptoService) {
+      final requested = await _discoverApprovedAdds(current, client,
+          mls as ApprovedDeviceDiscoveryCryptoService, conversationId,
+          creating: true);
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      packages = await _claimListedDevices(
+          current, client, conversationId, requested,
+          stillOwner: () => _syncOwnerActive(current, ownerGeneration));
+    } else {
+      packages = await client.claimConversationKeyPackages(
+          current.token, conversationId);
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     await mls.initializeConversation(conversationId, packages);
     // The creator's leaf key was made with the group.
     await _noteSelfUpdate(current,

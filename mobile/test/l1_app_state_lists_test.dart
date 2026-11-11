@@ -1,15 +1,20 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
+import 'package:drift/native.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/storage/local_store.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
 import 'native_test_env.dart';
@@ -30,6 +35,78 @@ void main() {
   setUp(() {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
   });
+
+  for (final answer in [
+    'valid',
+    'partial',
+    'duplicate',
+    'wrong-account',
+    'ghost'
+  ]) {
+    test('creation discovers signed devices; claim answer $answer', () async {
+      final api = _DiscoveryApi(bindings)..answer = answer;
+      final store = MemoryLocalStore();
+      final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+      final state = _state(api, crypto);
+      addTearDown(state.dispose);
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      await _addSignedPhone(bindings, api, crypto);
+      final created = await state.startConversation(kind: 'group');
+      expect(api.claims.single, ['dev_phone']);
+      if (['duplicate', 'wrong-account', 'ghost'].contains(answer)) {
+        expect(created, isNull);
+        expect(api.bundles, isEmpty);
+        expect(await crypto.groupEpoch('conv_discovery'), isNull);
+      } else {
+        expect(created?.id, 'conv_discovery');
+        expect(api.bundles, hasLength(1));
+        expect(api.bundles.single.added.map((ref) => ref.deviceId),
+            answer == 'partial' ? isEmpty : ['dev_phone']);
+      }
+    }, skip: skip);
+  }
+
+  test('reconcile discovers an approved device omitted from pending adds',
+      () async {
+    final api = _DiscoveryApi(bindings);
+    final store = MemoryLocalStore();
+    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    await state.startConversation(kind: 'group');
+    expect(api.claims, isEmpty);
+    await _addSignedPhone(bindings, api, crypto);
+    api.pending = true;
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await _until(() => api.bundles.length == 2);
+    expect(api.claims.single, ['dev_phone']);
+    expect(api.bundles.last.added.single.deviceId, 'dev_phone');
+    expect(api.bundles.last.added.any((ref) => ref.deviceId == 'dev_ghost'),
+        isFalse);
+  }, skip: skip);
+
+  test('failed add discovery still permits a removal commit', () async {
+    final api = _DiscoveryApi(bindings);
+    final crypto =
+        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    await _addSignedPhone(bindings, api, crypto);
+    await state.startConversation(kind: 'group');
+    expect(api.bundles.single.added.single.deviceId, 'dev_phone');
+    api
+      ..pending = true
+      ..removing = true
+      ..membersUnavailable = true;
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await _until(() => api.bundles.length == 2);
+    expect(api.bundles.last.added, isEmpty);
+    expect(api.bundles.last.removed.single.deviceId, 'dev_phone');
+    expect(api.claims, hasLength(1),
+        reason: 'no claims during failed discovery');
+  }, skip: skip);
 
   test('setup carries a genesis that names this device with its key', () async {
     final api = _ListApi(bindings);
@@ -85,6 +162,213 @@ void main() {
         PinStanding.unknown);
   }, skip: skip);
 
+  for (final registration in [false, true]) {
+    for (final read in ['empty', 'missing', 'unavailable']) {
+      test(
+          '${registration ? 'registration' : 'setup'} keeps its genesis '
+          'when list reads are $read', () async {
+        final api = _ListApi(bindings)..listRead = read;
+        final store = MemoryLocalStore();
+        final crypto =
+            NativeCryptoService(bindings: bindings, localStore: store);
+        final state = _state(api, crypto);
+        addTearDown(state.dispose);
+        if (registration) {
+          await state.registerWithInvite(
+              _origin, 'invite', 'owner', 'password');
+        } else {
+          await state.createOwner(_origin, 'owner', 'password', 'setup');
+        }
+        expect(api.chain, hasLength(1));
+        final original = api.chain.single;
+        expect(
+            (await store.loadDeviceListPin(_account))?.headStatement, original);
+
+        // Withholding the real list first must not allow a later first-use
+        // replacement with a server-controlled identity for this account.
+        final ghost = bindings.createDevice(_account, 'dev_ghost');
+        addTearDown(ghost.close);
+        api
+          ..listRead = 'normal'
+          ..served = [
+            ghost.signDeviceList(
+              DeviceListBody(
+                accountId: idBytes(_account),
+                version: 1,
+                prevHash: DeviceListBody.zeroHash,
+                createdAtMs: 1,
+                change: DeviceListChange.genesis,
+                entries: [
+                  DeviceListPair(
+                      idBytes('dev_ghost'), ghost.signingPublicKey()),
+                ],
+              ),
+              idBytes('dev_ghost'),
+            ),
+          ];
+        await DeviceListPins(
+          store: store,
+          source: _ApiLists(api),
+          verifier: crypto,
+        ).refresh(_account, force: true);
+        final pin = await store.loadDeviceListPin(_account);
+        expect(pin?.headStatement, original);
+        expect(pin?.conflict, isFalse);
+        expect(pin?.standing(idBytes('dev_ghost'), ghost.signingPublicKey()),
+            PinStanding.unknown);
+        expect(pin?.standing(idBytes(_own), await crypto.currentSigningKey()),
+            PinStanding.approved);
+      }, skip: skip);
+    }
+  }
+
+  for (final registration in [false, true]) {
+    for (final failure in ['journal', 'session', 'pin', 'crypto']) {
+      test(
+          '${registration ? 'registration' : 'setup'} stops at $failure '
+          'storage failure and never restores through TOFU', () async {
+        final api = _ListApi(bindings);
+        final store = _FailingActivationStore(failure);
+        final crypto =
+            NativeCryptoService(bindings: bindings, localStore: store);
+        final state = _state(api, crypto);
+        if (registration) {
+          await state.registerWithInvite(
+              _origin, 'invite', 'owner', 'password');
+        } else {
+          await state.createOwner(_origin, 'owner', 'password', 'setup');
+        }
+        expect(state.session, isNull);
+        expect(state.error, isNotNull);
+        expect(api.listFetches, 0);
+        final saved = await store.loadSession();
+        expect(saved != null, failure == 'pin' || failure == 'crypto');
+        final genesis = api.chain.single;
+        final ghost = bindings.createDevice(_account, 'dev_ghost');
+        addTearDown(ghost.close);
+        api.served = [
+          ghost.signDeviceList(
+              DeviceListBody(
+                accountId: idBytes(_account),
+                version: 1,
+                prevHash: DeviceListBody.zeroHash,
+                createdAtMs: 1,
+                change: DeviceListChange.genesis,
+                entries: [
+                  DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
+                ],
+              ),
+              idBytes('dev_ghost'))
+        ];
+        state.dispose();
+        // Real cold start: no in-memory pending identity or pin cache.
+        final restart = _state(
+            api, NativeCryptoService(bindings: bindings, localStore: store));
+        await restart.tryRestoreSession();
+        expect(restart.session, isNull);
+        expect(api.listFetches, 0);
+        if (saved != null) {
+          expect(restart.lifecycle, SessionLifecycle.recoveryRequired);
+          // The pin failure persists across restart; no server chain is read.
+          if (failure == 'pin') {
+            expect(await store.loadDeviceListPin(_account), isNull);
+            store.fail = false;
+            await restart.tryRestoreSession();
+          }
+          expect((await store.loadDeviceListPin(_account))?.headStatement,
+              genesis);
+        }
+        restart.dispose();
+      }, skip: skip);
+    }
+  }
+
+  for (final failure in ['crypto-committed', 'clear']) {
+    test(
+        'interruption after $failure restores the original native identity and pin',
+        () async {
+      final api = _ListApi(bindings);
+      final store = _FailingActivationStore(failure);
+      final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+      final state = _state(api, crypto);
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      expect(state.session, isNull);
+      expect(state.error, isNotNull);
+      expect(await store.loadCryptoState(), isNotNull);
+      final original = api.chain.single;
+      final key = bindings
+          .checkDeviceListChain(idBytes(_account), [original])
+          .head
+          .entries
+          .single
+          .signingKey;
+      state.dispose();
+      final ghost = bindings.createDevice(_account, 'dev_ghost');
+      addTearDown(ghost.close);
+      api.served = [
+        ghost.signDeviceList(
+            DeviceListBody(
+              accountId: idBytes(_account),
+              version: 1,
+              prevHash: DeviceListBody.zeroHash,
+              createdAtMs: 1,
+              change: DeviceListChange.genesis,
+              entries: [
+                DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
+              ],
+            ),
+            idBytes('dev_ghost'))
+      ];
+      store.fail = false;
+      final restoredCrypto =
+          NativeCryptoService(bindings: bindings, localStore: store);
+      final restart = _state(api, restoredCrypto);
+      addTearDown(restart.dispose);
+      await restart.tryRestoreSession();
+      expect(restart.session?.deviceId, _own);
+      expect(await restoredCrypto.currentSigningKey(), key);
+      expect(
+          (await store.loadDeviceListPin(_account))?.headStatement, original);
+    }, skip: skip);
+  }
+
+  test('activation journal survives closing and reopening the database',
+      () async {
+    final dir = Directory.systemTemp.createTempSync('l1-anchor-journal');
+    final file = File('${dir.path}/local.sqlite');
+    final api = _ListApi(bindings);
+    var database = EncryptedLocalDatabase(NativeDatabase(file));
+    var store = _JournalDatabaseStore(database)..failPin = true;
+    var state =
+        _state(api, NativeCryptoService(bindings: bindings, localStore: store));
+    try {
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      expect(state.session, isNull);
+      expect(await store.loadSession(), isNotNull);
+      expect(await store.loadDeviceListPin(_account), isNull);
+      state.dispose();
+      await database.close();
+      // No state survives in Dart. Only the on-disk journal/session do.
+      database = EncryptedLocalDatabase(NativeDatabase(file));
+      store = _JournalDatabaseStore(database);
+      state = _state(
+          api, NativeCryptoService(bindings: bindings, localStore: store));
+      api.listRead = 'unavailable';
+      await state.tryRestoreSession();
+      expect((await store.loadDeviceListPin(_account))?.headStatement,
+          api.chain.single);
+      expect(api.listFetches, 0);
+      // A crash before the first MLS save loses that key, requiring explicit
+      // recovery. It must never activate using a replacement server anchor.
+      expect(state.session, isNull);
+      expect(state.lifecycle, SessionLifecycle.recoveryRequired);
+    } finally {
+      state.dispose();
+      await database.close();
+      dir.deleteSync(recursive: true);
+    }
+  }, skip: skip);
+
   test(
       'an account from before L1 reviews its devices once; removals and the '
       'recovery key then chain, re-signed after a 409', () async {
@@ -93,8 +377,15 @@ void main() {
     final crypto = NativeCryptoService(bindings: bindings, localStore: store);
     final state = _state(api, crypto);
     addTearDown(state.dispose);
-    await state.createOwner(_origin, 'owner', 'password', 'setup');
-    expect(api.chain, isEmpty, reason: 'a pre-L1 server took no genesis');
+    // An existing pre-L1 identity, with no locally signed genesis. New
+    // accounts always keep their own genesis even if an old server ignores it.
+    await crypto.createEnrollmentCredential(await api.reserveOwnerEnrollment());
+    await store.saveSession(_ListApi._session);
+    await crypto.activateSession(_ListApi._session);
+    state
+      ..api = api
+      ..session = _ListApi._session;
+    expect(api.chain, isEmpty);
 
     final phone = bindings.createDevice(_account, 'dev_phone');
     final stranger = bindings.createDevice(_account, 'dev_stranger');
@@ -154,7 +445,134 @@ void main() {
   }, skip: skip);
 }
 
+Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
+    NativeCryptoService crypto) async {
+  final phone = bindings.createDevice(_account, 'dev_phone');
+  try {
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    final statement = await crypto.signDeviceList(DeviceListBody(
+      accountId: idBytes(_account),
+      version: head.version + 1,
+      prevHash: head.listHash,
+      createdAtMs: 2,
+      change: DeviceListChange.add,
+      entries: [
+        ...head.entries,
+        DeviceListPair(idBytes('dev_phone'), phone.signingPublicKey())
+      ],
+    ));
+    api._take(statement);
+    await DeviceListPins(
+            store: crypto.localStore, source: _ApiLists(api), verifier: crypto)
+        .pinOwnStep(_account, statement);
+    api.package = DeviceKeyPackage(
+        id: 'kp_phone',
+        accountId: _account,
+        deviceId: 'dev_phone',
+        keyPackage: phone.createKeyPackage(),
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        expiresAt: DateTime.now().add(const Duration(days: 1)));
+  } finally {
+    phone.close();
+  }
+}
+
+class _DiscoveryApi extends _ListApi {
+  _DiscoveryApi(super.bindings);
+  final claims = <List<String>>[];
+  final bundles = <MlsCommitBundle>[];
+  DeviceKeyPackage? package;
+  String answer = 'valid';
+  bool pending = false;
+  bool removing = false;
+  bool membersUnavailable = false;
+
+  @override
+  Future<List<SyncEvent>> syncEvents(String token,
+          {int after = 0, int limit = 100}) async =>
+      [
+        if (pending && after == 0)
+          SyncEvent(
+              id: 1,
+              type: 'device_list.updated',
+              accountId: _account,
+              payload: const {'version': 2},
+              createdAt: DateTime.utc(2026, 11, 11)),
+      ];
+
+  @override
+  Future<Conversation> createConversationDetailed(
+    String token, {
+    required String kind,
+    String? title,
+    String? communityId,
+    String? channelId,
+    List<String> memberAccountIds = const [],
+    int? retentionSeconds,
+  }) async =>
+      Conversation(id: 'conv_discovery', kind: kind, createdBy: _account);
+
+  @override
+  Future<List<ConversationMember>> conversationMembers(
+      String token, String id) async {
+    if (membersUnavailable) throw ApiException(503, '');
+    return [ConversationMember(accountId: _account, role: 'owner')];
+  }
+
+  @override
+  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
+          String token, String id) =>
+      throw StateError('claim-all must not be used for L1 creation');
+
+  @override
+  Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
+      String token, String id, List<String> deviceIds) async {
+    claims.add(deviceIds);
+    final item = package!;
+    if (answer == 'partial') return [];
+    if (answer == 'duplicate') return [item, item];
+    if (answer == 'valid') return [item];
+    return [
+      DeviceKeyPackage(
+          id: item.id,
+          accountId: answer == 'wrong-account' ? 'acct_other' : _account,
+          deviceId: answer == 'ghost' ? 'dev_ghost' : item.deviceId,
+          keyPackage: item.keyPackage,
+          ciphersuite: item.ciphersuite,
+          expiresAt: item.expiresAt)
+    ];
+  }
+
+  @override
+  Future<int> sendMlsCommitBundle(
+    String token,
+    String id, {
+    required String idempotencyKey,
+    required MlsCommitBundle bundle,
+  }) async {
+    bundles.add(bundle);
+    pending = false;
+    return bundle.epoch + (bundle.hasCommit ? 1 : 0);
+  }
+
+  @override
+  Future<List<MlsPendingChange>> mlsPendingChanges(String token) async => [
+        if (pending)
+          MlsPendingChange(
+              conversationId: 'conv_discovery',
+              epoch: removing ? 1 : 0,
+              add: const [
+                (accountId: _account, deviceId: 'dev_ghost')
+              ],
+              remove: [
+                if (removing) (accountId: _account, deviceId: 'dev_phone')
+              ]),
+      ];
+}
+
 AppState _state(_ListApi api, NativeCryptoService crypto) => AppState(
+      screenGuard: FakeScreenGuard(),
       apiClientFactory: (_) => api,
       cryptoService: crypto,
       localStore: crypto.localStore,
@@ -179,6 +597,16 @@ class _QuietSync implements SyncService {
 
   @override
   Future<void> dispose() => _controller.close();
+}
+
+class _ApiLists implements DeviceListSource {
+  _ApiLists(this.api);
+  final _ListApi api;
+
+  @override
+  Future<DeviceListPage?> fetchDeviceList(String accountId,
+          {required int after}) =>
+      api.fetchDeviceList('tok', accountId, after: after);
 }
 
 class _ListApi extends ApiClient with LegacySyncPageFake {
@@ -245,6 +673,7 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   }
 
   int listFetches = 0;
+  String listRead = 'normal';
 
   /// What fetches serve instead of [chain] (a lying server).
   List<Uint8List>? served;
@@ -253,6 +682,11 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
       {required int after}) async {
     listFetches++;
+    if (listRead == 'empty') {
+      return const DeviceListPage(headVersion: 0, statements: [], more: false);
+    }
+    if (listRead == 'missing') return null;
+    if (listRead == 'unavailable') throw ApiException(503, '');
     if (accountId != _account) return null;
     final rest = (served ?? chain).skip(after).toList();
     return DeviceListPage(
@@ -263,6 +697,25 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
           (version: after + i + 1, statement: rest[i]),
       ],
     );
+  }
+
+  @override
+  Future<EnrollmentReservation> reserveRegistrationEnrollment(
+          String inviteCode) =>
+      reserveOwnerEnrollment();
+
+  @override
+  Future<Session> register({
+    required String inviteCode,
+    required String username,
+    required String password,
+    required String deviceName,
+    required EnrollmentReservation enrollment,
+    required EnrollmentCredential credential,
+    List<int>? deviceList,
+  }) async {
+    if (acceptGenesis) _take(deviceList);
+    return _session;
   }
 
   @override
@@ -328,4 +781,95 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   @override
   Future<RecoveryKeyStatus> recoveryKeyStatus(String token) async =>
       const RecoveryKeyStatus(available: true, configured: false);
+}
+
+/// Injects a durable-store failure at each activation boundary.
+class _FailingActivationStore extends MemoryLocalStore {
+  _FailingActivationStore(this.stage);
+  final String stage;
+  bool fail = true;
+
+  @override
+  Future<void> saveSetting(String name, String value) async {
+    if (fail && stage == 'journal' && name.startsWith('l1.activation.')) {
+      throw StateError('journal write failed');
+    }
+    if (fail &&
+        stage == 'clear' &&
+        name.startsWith('l1.activation.') &&
+        value.isEmpty) {
+      throw StateError('journal clear failed');
+    }
+    await super.saveSetting(name, value);
+  }
+
+  @override
+  Future<void> saveSession(Session session) async {
+    if (fail && stage == 'session') throw StateError('session write failed');
+    await super.saveSession(session);
+  }
+
+  @override
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+      {required int? expectedVersion}) async {
+    if (fail && stage == 'pin') throw StateError('pin write failed');
+    return super.saveDeviceListPin(pin, expectedVersion: expectedVersion);
+  }
+
+  @override
+  Future<void> saveCryptoState(StoredCryptoState state, int cursor) async {
+    if (fail && stage == 'crypto') throw StateError('crypto write failed');
+    await super.saveCryptoState(state, cursor);
+    if (fail && stage == 'crypto-committed') {
+      throw StateError('lost crypto write result');
+    }
+  }
+}
+
+/// Uses the production SQLite journal/session/pin primitives across reopen.
+/// MLS state is deliberately absent: the injected failure precedes activation.
+class _JournalDatabaseStore extends MemoryLocalStore {
+  _JournalDatabaseStore(this.database);
+  final EncryptedLocalDatabase database;
+  bool failPin = false;
+
+  @override
+  Future<void> saveSetting(String name, String value) =>
+      database.writeMetadata('setting:$name', value);
+
+  @override
+  Future<String?> loadSetting(String name) =>
+      database.readMetadata('setting:$name');
+
+  @override
+  Future<void> saveSession(Session session) =>
+      database.writeSessionJson(jsonEncode({
+        'base_url': session.baseUrl,
+        'token': session.token,
+        'account_id': session.accountId,
+        'device_id': session.deviceId,
+      }));
+
+  @override
+  Future<Session?> loadSession() async {
+    final raw = await database.readSessionJson();
+    if (raw == null) return null;
+    final value = jsonDecode(raw) as Map<String, dynamic>;
+    return Session(
+        baseUrl: value['base_url'] as String,
+        token: value['token'] as String,
+        accountId: value['account_id'] as String,
+        deviceId: value['device_id'] as String);
+  }
+
+  @override
+  Future<DeviceListPin?> loadDeviceListPin(String accountId) =>
+      database.readDeviceListPin(accountId);
+
+  @override
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+      {required int? expectedVersion}) async {
+    if (failPin) throw StateError('pin write failed');
+    return database.writeDeviceListPin(pin, expectedVersion: expectedVersion);
+  }
 }

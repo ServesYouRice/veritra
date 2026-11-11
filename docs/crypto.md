@@ -457,6 +457,69 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 complete adds, join notice, recovery retype and pre-L1 RK
+  confirmation (2026-11-11):** held groups the server reports no change
+  for are audited against signed lists (bounded, after the reconcile
+  fallback). Accounts with an approved device left out for an hour are
+  shown in the chat, and the clock persists in settings. A recovered device
+  with no usable held seed signs change 4 from the retyped key through the
+  same native call. A pre-L1 key is confirmed by `rk_id` and set again with
+  change 5. No ABI, schema, migration or dependency change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). Not yet
+  covered by tests; needs the independent review.
+
+- **L1 signed-list add discovery (2026-11-11):** creation and reported pending
+  membership changes derive device candidates from verified account lists,
+  subtract the native roster and claim explicit IDs. Claim answers must be a
+  unique subset of the requested account/device pairs; the native gate still
+  enforces the pinned signing key. Entirely withheld pending conversations and
+  the incomplete-join notice remain open. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). No counter changes.
+
+- **L1 enrollment-anchor review follow-up (2026-11-11):** journal locally
+  signed genesis or authenticated linked-device chains before durable session
+  activation. Replay before foreground/background restore can activate MLS.
+  Link chains must prove the exact frozen approver signed the new key's add
+  before any pin is written. Storage and validation failures stop activation;
+  the pending claim/journal survives for retry. See
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
+- **L1 chain-import continuity review (2026-11-11):** a verified imported
+  chain must contain the exact existing pinned head before it can advance
+  that pin. An unrelated genesis or a signed fork cannot replace trust via
+  `pinChain`; conflicts remain sticky and identical imports are no-ops.
+  Native regressions cover replacement, forks, rollback and valid extension.
+  No ABI, schema, migration or release-gate change. The full package remains
+  incomplete, including durable enrollment anchors; see
+  [`review evidence`](../testing/evidence/L1-review.md).
+
+- **L1 local genesis anchor (2026-11-11):** setup and invitation registration
+  pin their locally signed genesis without consulting the server first.
+  Withholding the list or returning a failed read cannot discard this trust
+  anchor and enable a later server-supplied genesis. Legacy accounts with no
+  locally signed genesis retain the reviewed migration flow. No ABI, schema,
+  migration or release-gate change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
+- **L1 bounded long-chain verification (2026-11-11):** client downloads now
+  allow up to 4,096 statements, independently of the native 256-statement batch
+  limit. First contact, chain import and fork proof verification compose the
+  existing native chain and step verifiers with full pair history. Pinned
+  catch-up can cross 256 versions. Download and native history limits still
+  fail closed; no counter, dependency or release-gate change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
+- **L1 current-list integration (2026-11-10):** design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). Reuses the already
+  merged Rust, server and mobile L1 implementation. Rejudges previously approved
+  leaves before sending and when judging incoming senders, using the existing
+  bounded/rate-limited list refresh. A verified signed removal holds outgoing
+  encryption until the leaf leaves the MLS tree. Cached approval cannot override
+  a newer pin or signed fork. Incoming formerly approved senders retain the
+  existing `removed` policy. No ABI, schema or migration change is needed;
+  assigned counters 24/41/0074 remain unused. Full-package follow-ups are recorded
+  in the integration design; independent security review is still required.
+
 - **C3 key freshness, local schema 35 (2026-11-11):** no ABI or wire change.
   The info key a device seals with (`CommunityInfoService.currentKey`) was
   the one whose id first arrived here last. A retired key whose first copy
@@ -742,14 +805,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     the last fetch is not hidden for good. The signed change 4 is stored and
     posted again until the server takes it. Setup and registration pin their
     own genesis. Call signals from a leaf that is not approved are dropped.
-  - **Known gaps after review:** a leaf approved once is not judged again
-    (a device removed by change 3 stays approved until its MLS removal
-    lands, so D68's residual is not closed yet); a conflict is sticky with
+  - **Known gaps after review (historical):** the cached-approved-leaf gap is
+    fixed by the 2026-11-10 current-list integration above. A conflict is sticky with
     no clear path, and a made-up genesis from the server alone triggers it;
     text from a `checking` sender is dropped, not kept hidden (owner
     question); judging a commit can wait about 25 s for the server inside
-    the crypto queue, more than a 20 s background wake; first sight refuses
-    chains over 256 versions.
+    the crypto queue, more than a 20 s background wake. The first-sight
+    256-version limit is replaced by bounded native-step composition in the
+    2026-11-11 entry above.
 
 - **L1-1, approved-device list, crypto layer, ABI 14 (2026-11-07, D94):**
   design [`L1-approved-device-list.md`](designs/L1-approved-device-list.md).
