@@ -4217,6 +4217,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get communityCategoryRename => 'Rename category';
 
   @override
+  String get communityCategoryDelete => 'Delete category';
+
+  @override
+  String get communityCategoryDeleteConfirm =>
+      'Delete this category? Its channels stay and show without a category.';
+
+  @override
   String get communityCategoryPlaceholder => 'Category';
 
   @override

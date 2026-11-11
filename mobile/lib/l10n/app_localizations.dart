@@ -6963,6 +6963,18 @@ abstract class AppLocalizations {
   /// **'Rename category'**
   String get communityCategoryRename;
 
+  /// No description provided for @communityCategoryDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete category'**
+  String get communityCategoryDelete;
+
+  /// No description provided for @communityCategoryDeleteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete this category? Its channels stay and show without a category.'**
+  String get communityCategoryDeleteConfirm;
+
   /// No description provided for @communityCategoryPlaceholder.
   ///
   /// In en, this message translates to:

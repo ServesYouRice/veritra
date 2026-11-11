@@ -1210,6 +1210,8 @@
   "communityCategoryNew": "Нова категорија",
   "communityCategoryName": "Назив категорије",
   "communityCategoryRename": "Преименуј категорију",
+  "communityCategoryDelete": "Обриши категорију",
+  "communityCategoryDeleteConfirm": "Обрисати ову категорију? Њени канали остају и приказују се без категорије.",
   "communityCategoryPlaceholder": "Категорија",
   "communityCategoryNone": "Без категорије",
   "communityChannelPlaces": "Где су канали",

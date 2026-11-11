@@ -170,6 +170,17 @@ class CommunityInfoService {
   /// placeholder).
   CommunityInfoRecord? shown(String kind, String id) => _shown['$kind|$id'];
 
+  /// [communityId]'s category ids whose shown record is a tombstone, sorted.
+  /// C3 reuses one before minting a new id: the server's 200-binding bound
+  /// holds for the community's whole life.
+  List<String> tombstonedCategories(String communityId) => <String>[
+        for (final entry in _shown.entries)
+          if (entry.value.kind == infoKindCategory &&
+              entry.value.isTombstone &&
+              _shownSubjects[entry.key]?.communityId == communityId)
+            entry.value.subjectId,
+      ]..sort();
+
   /// Where [subject]'s key lives, or null when C3 is not active for it.
   InfoKeyHome? homeOf(InfoSubject subject) {
     final shared = topology.sharedConversationOf(subject.communityId);
