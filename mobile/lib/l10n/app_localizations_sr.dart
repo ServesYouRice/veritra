@@ -3766,6 +3766,17 @@ class AppLocalizationsSr extends AppLocalizations {
   String get autoBackupPromptLater => 'Не сада';
 
   @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Пре него што замените кључ за опоравак, можете вратити историју из копија које су направили ваши изгубљени уређаји. Оне се отварају вашим старим кључем, који за њих престаје да важи кад га замените.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Прескочи';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ако прескочите, старије копије постају неупотребљиве чим замените кључ за опоравак. Прескочити ипак?';
+
+  @override
   String get k1RestoreOpen => 'Врати из резервне копије';
 
   @override
@@ -7813,6 +7824,17 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get autoBackupPromptLater => 'Ne sada';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Pre nego što zamenite ključ za oporavak, možete vratiti istoriju iz kopija koje su napravili vaši izgubljeni uređaji. One se otvaraju vašim starim ključem, koji za njih prestaje da važi kad ga zamenite.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Preskoči';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ako preskočite, starije kopije postaju neupotrebljive čim zamenite ključ za oporavak. Preskočiti ipak?';
 
   @override
   String get k1RestoreOpen => 'Vrati iz rezervne kopije';

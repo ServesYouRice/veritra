@@ -3752,6 +3752,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get autoBackupPromptLater => 'Not now';
 
   @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Skip';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'If you skip, older backups become unusable after you replace your recovery key. Skip anyway?';
+
+  @override
   String get k1RestoreOpen => 'Restore from a backup';
 
   @override

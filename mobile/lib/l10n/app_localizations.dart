@@ -6171,6 +6171,24 @@ abstract class AppLocalizations {
   /// **'Not now'**
   String get autoBackupPromptLater;
 
+  /// No description provided for @recoveryFollowUpRestoreDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.'**
+  String get recoveryFollowUpRestoreDetail;
+
+  /// No description provided for @recoveryFollowUpRestoreSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get recoveryFollowUpRestoreSkip;
+
+  /// No description provided for @recoveryFollowUpRestoreSkipWarning.
+  ///
+  /// In en, this message translates to:
+  /// **'If you skip, older backups become unusable after you replace your recovery key. Skip anyway?'**
+  String get recoveryFollowUpRestoreSkipWarning;
+
   /// No description provided for @k1RestoreOpen.
   ///
   /// In en, this message translates to:

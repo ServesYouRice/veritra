@@ -335,7 +335,11 @@ Where the build differs from the text above, and why:
   turns backups on here. Phones back up when the app opens or resumes (owner
   decision, so design question 7 is answered: no phone background jobs in
   this build).
-- **Still to do:** the K0-R follow-up reorder (restore before the new key), the confirmation schedule and the second
+- **K0-R follow-up reorder (built).** After a recovery the forced steps are
+  now restore (or a warned skip), new recovery key, new password; the step
+  is persisted. The old "start from the restored session" entry and the
+  banner restore action stay until VBK2 is retired (K1-6).
+- **Still to do:** the confirmation schedule and the second
   copy (K1-5), background runs and retiring VBK2 and the recovery-token
   route (K1-6, after K1-4, so a restore path always exists).
 

@@ -13,9 +13,12 @@ import 'auto_backup_screen.dart' show RecoveryKeyTypeDialog;
 /// this account. The list is the server's; the typed recovery key and the
 /// container's own header are what the restore trusts.
 class K1RestoreScreen extends StatefulWidget {
-  const K1RestoreScreen({required this.state, super.key});
+  const K1RestoreScreen({required this.state, this.onRestored, super.key});
 
   final AppState state;
+
+  /// Called after a restore finished (the forced follow-up goes on).
+  final Future<void> Function()? onRestored;
 
   @override
   State<K1RestoreScreen> createState() => _K1RestoreScreenState();
@@ -65,6 +68,10 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
     if (!mounted) return;
     setState(() => _busy = false);
     messenger.showSnackBar(SnackBar(content: Text(_resultText(result))));
+    if (result == K1RestoreResult.done) {
+      await widget.onRestored?.call();
+      if (mounted && widget.onRestored != null) Navigator.of(context).pop();
+    }
   }
 
   @override
