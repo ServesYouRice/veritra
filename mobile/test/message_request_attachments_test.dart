@@ -17,7 +17,6 @@ import 'test_crypto_service.dart';
 /// their own case. Before, the request test had no attachment service, so
 /// every case failed on "attachments are unavailable".
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
   late Directory directory;
 
   setUp(() async {

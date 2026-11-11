@@ -16,9 +16,6 @@ import 'package:private_messenger/crypto/sha256.dart';
 import 'api_bounded_decoding.dart';
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  HttpOverrides.global =
-      null; // the test binding fakes HTTP; these use a real local server
   group('bounded API decoding (T44A)', boundedDecodingTests);
 
   test('CallSession model parsing requires version and invited_account_id', () {

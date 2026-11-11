@@ -14,7 +14,6 @@ import 'package:private_messenger/sync/sync_service.dart';
 import 'test_crypto_service.dart';
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
   test('describeError maps API errors, crypto stub, and network failures', () {
     expect(
       describeError(ApiException(400, '{"error":"weak_password"}')),

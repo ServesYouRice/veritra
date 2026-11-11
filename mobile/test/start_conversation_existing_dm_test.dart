@@ -115,9 +115,6 @@ Future<Conversation> _createAgainst(int status) async {
 }
 
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-  HttpOverrides.global =
-      null; // the test binding fakes HTTP; these use a real local server
   test('a 201 is a new conversation', () async {
     final conversation = await _createAgainst(HttpStatus.created);
     expect(conversation.id, 'dm_1');
