@@ -67,9 +67,11 @@ func (l LiveKit) JoinToken(room, identity string, now time.Time, ttl time.Durati
 		"sub": identity,
 		"nbf": now.Add(-10 * time.Second).Unix(),
 		"exp": now.Add(ttl).Unix(),
+		// Data carries the call group's sealed track announcements (MLS
+		// application messages), which the SFU cannot read.
 		"video": map[string]any{
 			"room": room, "roomJoin": true,
-			"canPublish": true, "canSubscribe": true, "canPublishData": false,
+			"canPublish": true, "canSubscribe": true, "canPublishData": true,
 		},
 	})
 }

@@ -191,6 +191,15 @@ func (s *Store) CommitRoom(ctx context.Context, roomID, deviceID string, expecte
 	if _, err := liveRoomForDevice(ctx, tx, roomID, deviceID); err != nil {
 		return 0, err
 	}
+	// Only a device already in the call group may commit to it: a seat still
+	// waiting for its Welcome holds no group state and must not take an epoch.
+	var inGroup bool
+	if err := tx.QueryRowContext(ctx, `SELECT in_group FROM call_room_participants WHERE room_id = ? AND device_id = ? AND left_at IS NULL`, roomID, deviceID).Scan(&inGroup); err != nil {
+		return 0, err
+	}
+	if !inGroup {
+		return 0, ErrRoomNotLive
+	}
 	res, err := tx.ExecContext(ctx, `UPDATE call_rooms SET epoch = epoch + 1 WHERE id = ? AND epoch = ? AND ended_at IS NULL`, roomID, expectedEpoch)
 	if err != nil {
 		return 0, err
@@ -207,9 +216,11 @@ func (s *Store) CommitRoom(ctx context.Context, roomID, deviceID string, expecte
 		return 0, err
 	}
 	// Bookkeeping only: the devices this commit added no longer wait. The
-	// members decide who is really in the group from the commit itself.
+	// members decide who is really in the group from the commit itself. Only
+	// a seat with an unexpired offer can have been added, so no other seat is
+	// marked (a committer cannot let a seat without an offer commit).
 	for _, id := range added {
-		if _, err := tx.ExecContext(ctx, `UPDATE call_room_participants SET in_group = 1 WHERE room_id = ? AND device_id = ? AND left_at IS NULL`, roomID, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE call_room_participants SET in_group = 1 WHERE room_id = ? AND device_id = ? AND left_at IS NULL AND in_group = 0 AND offer_key_package IS NOT NULL AND offer_expires_at >= ?`, roomID, id, now.Unix()); err != nil {
 			return 0, err
 		}
 	}
@@ -413,7 +424,7 @@ func scanRoom(row *sql.Row) (Room, error) {
 // one the join route issued, unexpired and unused. The server cannot check
 // the signature (it holds no keys of the call group); every member does.
 func (s *Store) SetRoomOffer(ctx context.Context, roomID, deviceID, nonce string, keyPackage, signature []byte, expiresAt int64, now time.Time) error {
-	if nonce == "" || len(keyPackage) == 0 || len(keyPackage) > 48<<10 || len(signature) != 64 || expiresAt <= now.Unix() || expiresAt > now.Add(2*RoomOfferWindow).Unix() {
+	if nonce == "" || len(keyPackage) == 0 || len(keyPackage) > 48<<10 || len(signature) != 64 || expiresAt <= now.Unix() || expiresAt > now.Add(RoomOfferWindow).Unix() {
 		return ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
