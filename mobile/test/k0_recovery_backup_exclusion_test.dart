@@ -85,7 +85,7 @@ void main() {
             ?.claimToken,
         claimToken);
 
-    final backup = utf8.decode(await store.exportBackup());
+    final snapshot = utf8.decode(await store.exportHistorySnapshot());
     for (final forbidden in <String>[
       claimToken,
       deviceSecret,
@@ -96,9 +96,9 @@ void main() {
       base64Encode(sealed),
       utf8.decode(sealed),
     ]) {
-      expect(backup, isNot(contains(forbidden)), reason: forbidden);
+      expect(snapshot, isNot(contains(forbidden)), reason: forbidden);
     }
-    // The backup still holds what it is for.
-    expect(backup, contains('acct_me'));
+    // The snapshot still holds what it is for.
+    expect(snapshot, contains('acct_me'));
   });
 }

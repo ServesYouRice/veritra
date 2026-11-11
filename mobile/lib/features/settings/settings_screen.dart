@@ -7,8 +7,6 @@ import 'package:flutter/services.dart';
 import '../../core/app_state.dart';
 import '../../l10n/l10n.dart';
 import '../../push/push_service.dart';
-import 'auto_backup_screen.dart';
-import 'backup_screen.dart';
 import '../../core/models.dart';
 import '../../desktop/message_notifications.dart';
 import '../../desktop/update_service.dart';
@@ -28,6 +26,7 @@ import '../../ui/widgets/tile_group.dart';
 import '../reports/owner_reports_screen.dart';
 import '../../core/account_host.dart';
 import 'accounts_screen.dart';
+import 'auto_backup_screen.dart';
 import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
@@ -353,28 +352,10 @@ class SettingsScreen extends StatelessWidget {
                   ),
                 ],
               ),
-              if (state.backupAvailable) ...<Widget>[
-                SectionHeader(l10n.settingsSectionRecovery),
-                TileGroup(
-                  children: <Widget>[
-                    ListTile(
-                      leading: const Icon(Icons.key_outlined),
-                      title: Text(l10n.settingsBackup),
-                      subtitle: Text(l10n.settingsBackupDetail),
-                      trailing: const Icon(Icons.chevron_right),
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute<void>(
-                          builder: (_) => BackupScreen(state: state),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
               SectionHeader(l10n.settingsSectionComingSoon),
               TileGroup(
                 children: <Widget>[
-                  if (!state.backupAvailable)
+                  if (!state.k1BackupSupported)
                     ListTile(
                       enabled: false,
                       leading: const Icon(Icons.key_outlined),

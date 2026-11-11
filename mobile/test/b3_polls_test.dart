@@ -396,8 +396,6 @@ void main() {
         final row = (await store.loadMessages('conv')).single;
         expect(row.deletedAt, 5);
         expect(row.body, isNull);
-        expect(
-            utf8.decode(await store.exportBackup()), isNot(contains('Lunch?')));
       });
 
       test('only the author deletes a poll', () async {
@@ -424,28 +422,6 @@ void main() {
         final row = (await store.loadMessages('conv')).single;
         expect(row.hiddenAt, isNotNull);
         expect(row.body, isNull);
-      });
-
-      test('a poll survives a backup restore with its votes', () async {
-        await _commit(store, [_pollRow()]);
-        await _commit(store, [
-          vote('bob', [1])
-        ]);
-        final backup = await store.exportBackup();
-        await store.restoreBackup(backup);
-        // A restore leaves no device or MLS state; enroll the device again.
-        await store.saveSession(const Session(
-            baseUrl: 'https://example.test',
-            token: 'token',
-            accountId: 'alice',
-            deviceId: 'dev'));
-        await store.saveCryptoState(
-            StoredCryptoState(
-                counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-            0);
-        expect((await poll()).votes, {
-          'bob': [1]
-        });
       });
     });
   }

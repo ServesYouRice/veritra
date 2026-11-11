@@ -355,23 +355,6 @@ void main() {
                 .blob,
             [4]);
       });
-
-      test('a backup carries no info key; a restore clears them', () async {
-        await commit([_event(CommunityInfoEventKind.key, n: 7)]);
-        await store.saveAcceptedCommunityInfo(AcceptedCommunityInfo(
-            subjectKind: 'community',
-            subjectId: _community,
-            revision: 1,
-            keyId: '1' * 32,
-            blob: const [1]));
-        final backup = await store.exportBackup();
-        expect(utf8.decode(backup, allowMalformed: true),
-            isNot(contains(base64.encode(List<int>.filled(32, 7)))));
-        await store.restoreBackup(backup);
-        expect(await keys(), isEmpty);
-        expect(await store.loadAcceptedCommunityInfo('community', _community),
-            isNull);
-      });
     });
   }
 

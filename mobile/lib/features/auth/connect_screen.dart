@@ -9,7 +9,6 @@ import '../../core/account_host.dart';
 import '../../core/app_state.dart';
 import '../../storage/account_slots.dart';
 import '../settings/accounts_screen.dart' show AccountsShortcut;
-import '../settings/backup_screen.dart';
 import '../../ui/about.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/section_header.dart';
@@ -306,14 +305,6 @@ class _ConnectScreenState extends State<ConnectScreen> {
                       child: Text(context.l10n.connectOtherWays),
                     ),
                   ),
-                  if (widget.state.backupAvailable)
-                    Center(
-                      child: TextButton(
-                        onPressed: () =>
-                            showRestoreBackupDialog(context, widget.state),
-                        child: Text(context.l10n.connectRestoreBackup),
-                      ),
-                    ),
                   // K0 R4: someone who lost every device recovers with the
                   // password and recovery key.
                   if (widget.state.recoveryAvailable)

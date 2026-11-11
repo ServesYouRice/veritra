@@ -11,8 +11,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/models.dart';
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
-import '../crypto/message_format.dart'
-    show formatJsonWithoutPreview, pinLimitPerChat;
+import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/conversation_pause.dart';
 import '../crypto/app_payload.dart' show effectiveExpiryMillis;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
@@ -496,79 +495,6 @@ class OutgoingApplicationStateTransition {
   final List<MessageEffect> messageEffects;
 }
 
-/// The backup plaintext format. Version 6 (D71, D73) carries the account
-/// and the local history only: no bearer token, no device id or secret, no
-/// MLS state or its key, no outboxes and no sync cursor, so a stolen backup
-/// cannot sign in or act as the device that made it. Versions 1 to 5 still
-/// restore; their credentials, MLS state, outboxes and cursor are dropped
-/// (see [restoredAccountSession]).
-const int backupFormatVersion = 6;
-
-/// The session a restore leaves: the account a backup belongs to, signed
-/// out, with no device. Its history waits for this device to be enrolled
-/// into the same account (today by a device link); [LocalStore.saveSession]
-/// keeps the history for that account and drops it for any other.
-Session restoredAccountSession({
-  required String baseUrl,
-  required String accountId,
-  String? username,
-  String? role,
-}) =>
-    Session(
-      baseUrl: baseUrl,
-      token: '',
-      accountId: accountId,
-      username: username,
-      role: role,
-    );
-
-/// Whether [session] is what a restore left ([restoredAccountSession]).
-bool isRestoredAccountSession(Session session) =>
-    session.token.isEmpty &&
-    (session.deviceId?.isEmpty ?? true) &&
-    (session.deviceSecret?.isEmpty ?? true) &&
-    (session.accountId?.isNotEmpty ?? false);
-
-class LocalBackupData {
-  const LocalBackupData({
-    required this.session,
-    required this.conversations,
-    required this.messages,
-    this.history = const <LocalMessage>[],
-    this.reactions = const <LocalMessageReaction>[],
-    this.formatVersion = backupFormatVersion,
-    this.expiryBackfillIds = const <String>{},
-    this.pins = const [],
-    this.starred = const {},
-    this.conversationPrefs = const [],
-    this.historyNamespace,
-  });
-
-  /// Server ids of history entries whose JSON has no `expiresAt` key at all
-  /// (a backup from before expiry travelled with the history, even when it
-  /// says version 2). Only these get their expiry from the cached envelope;
-  /// an entry that carries the key, null or not, is taken as it is.
-  final Set<String> expiryBackfillIds;
-  final List<LocalPin> pins;
-  final Map<String, int> starred;
-  final List<LocalConversationPref> conversationPrefs;
-  final HistoryNamespace? historyNamespace;
-
-  /// The backup format this was read from, or the current one for a backup
-  /// being written (3: message expiry travels with the history).
-  final int formatVersion;
-
-  /// Decrypted history (D27). Empty in a version 1 backup.
-  final List<LocalMessage> history;
-  final List<LocalMessageReaction> reactions;
-
-  /// When writing, the active session (only its account fields are
-  /// written). When read, always a [restoredAccountSession].
-  final Session session;
-  final List<Conversation> conversations;
-  final Map<String, List<ReceivedMessageEnvelope>> messages;
-}
-
 class PendingEnvelopeRecord {
   const PendingEnvelopeRecord({
     required this.envelope,
@@ -789,8 +715,6 @@ abstract class LocalStore {
       {int? generation, void Function()? checkCanCommit});
 
   /// When this device last made an encrypted backup (card I45).
-  Future<void> saveLastBackupAt(DateTime at);
-  Future<DateTime?> loadLastBackupAt();
 
   /// Group invite commitments, excluded from backups and identity changes.
   Future<void> saveInviteAnchor(InviteAnchor anchor);
@@ -946,8 +870,6 @@ abstract class LocalStore {
       LocalNoticeOwner owner, String decisionId, LocalNoticeOutcome outcome,
       {int? now, void Function()? checkCanCommit});
 
-  Future<List<int>> exportBackup();
-  Future<void> restoreBackup(List<int> encoded);
   Future<void> savePeerVerification(
       String conversationId, String peerAccountId, List<int> transcriptHash);
   Future<List<int>?> loadPeerVerification(
@@ -1033,16 +955,8 @@ class MemoryLocalStore implements LocalStore {
   String? _syncLeaseKey;
   SyncRecovery? _syncRecovery;
   final Map<String, ConversationPause> _pauses = <String, ConversationPause>{};
-  DateTime? _lastBackupAt;
   final Map<String, StoredDraft> _drafts = <String, StoredDraft>{};
   final Map<String, DateTime?> _mutes = <String, DateTime?>{};
-
-  @override
-  Future<void> saveLastBackupAt(DateTime at) async =>
-      _lastBackupAt = at.toUtc();
-
-  @override
-  Future<DateTime?> loadLastBackupAt() async => _lastBackupAt;
 
   LocalNoticeState _noticeState = LocalNoticeState();
 
@@ -1215,7 +1129,6 @@ class MemoryLocalStore implements LocalStore {
     _approvalLeaves.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
-    _lastBackupAt = null;
   }
 
   @override
@@ -2264,75 +2177,6 @@ class MemoryLocalStore implements LocalStore {
   }
 
   @override
-  Future<List<int>> exportBackup() async {
-    final activeSession = _session;
-    final state = _cryptoState;
-    if (activeSession == null || state == null) {
-      throw StateError('complete authenticated crypto state is required');
-    }
-    final now = DateTime.now().toUtc();
-    final nowMs = now.millisecondsSinceEpoch;
-    return _encodeBackup(LocalBackupData(
-      session: activeSession,
-      conversations: _snapshot?.conversations ?? const <Conversation>[],
-      messages: _withoutExpired(_snapshot?.messagesByConversation, now),
-      history: _history
-          .allMessages()
-          .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
-          .toList(growable: false),
-      reactions: _history.allReactions(),
-      pins: _history.pins.values.toList(),
-      starred: _history.starred,
-      conversationPrefs: _conversationPrefs.values.toList(),
-      historyNamespace: _historyNamespace,
-    ));
-  }
-
-  @override
-  Future<void> restoreBackup(List<int> encoded) async {
-    final backup = _decodeBackup(encoded);
-    // Like a freshly linked device (D71, D73): no MLS state, no outboxes,
-    // and sync starts from the beginning once a device is enrolled.
-    _session = backup.session;
-    _syncCursor = 0;
-    _snapshot = CachedSnapshot(
-        cursor: 0,
-        conversations: backup.conversations,
-        messagesByConversation: backup.messages);
-    _outbox.clear();
-    _outboxRecords.clear();
-    _mlsOutbox.clear();
-    _cryptoState = null;
-    _cryptoRecords.clear();
-    _pauses.clear();
-    // Transfers go with the MLS state; the ledger and a pending enrollment
-    // stay (finding 4).
-    _historyTransfers.clear();
-    _processedMlsMessages.clear();
-    _peerVerifications.clear();
-    // C3: info keys and records are never in a backup; the restored device
-    // asks the groups for keys again.
-    _communityInfoEvents = const <CommunityInfoEvent>[];
-    _inviteAnchors.clear();
-    _acceptedCommunityInfo.clear();
-    final kept = withoutPendingHistory(
-        history: backup.history,
-        reactions: backup.reactions,
-        pins: backup.pins,
-        starred: backup.starred);
-    _history.replace(kept.history, kept.reactions);
-    _noticeState = LocalNoticeState();
-    _historyNamespace = backup.historyNamespace?.copy() ?? HistoryNamespace();
-    _history.pins.addEntries(kept.pins.map((p) => MapEntry(p.targetKey, p)));
-    _history.pendingPins.clear();
-    _history.starred.addAll(kept.starred);
-    _conversationPrefs
-      ..clear()
-      ..addEntries(
-          backup.conversationPrefs.map((p) => MapEntry(p.conversationId, p)));
-  }
-
-  @override
   Future<void> savePeerVerification(String conversationId, String peerAccountId,
       List<int> transcriptHash) async {
     _validatePeerVerification(conversationId, peerAccountId, transcriptHash);
@@ -2388,7 +2232,6 @@ class MemoryLocalStore implements LocalStore {
     _filedReports.clear();
     _syncLeaseKey = null;
     _syncRecovery = null;
-    _lastBackupAt = null;
     await clearCachedState();
     _syncCursor = 0;
   }
@@ -3010,18 +2853,6 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> saveSetting(String name, String value) async =>
       (await _database()).writeMetadata('setting:$name', value);
-
-  @override
-  Future<void> saveLastBackupAt(DateTime at) async =>
-      (await _database()).writeMetadata(
-          EncryptedLocalDatabase.lastBackupName, at.toUtc().toIso8601String());
-
-  @override
-  Future<DateTime?> loadLastBackupAt() async =>
-      DateTime.tryParse(await (await _database())
-                  .readMetadata(EncryptedLocalDatabase.lastBackupName) ??
-              '')
-          ?.toUtc();
 
   @override
   Future<List<ConversationPause>> loadConversationPauses() async =>
@@ -3819,73 +3650,6 @@ class SecureLocalStore implements LocalStore {
     final snapshot = HistorySnapshot.decode(encoded);
     await (await _database()).importHistorySnapshot(snapshot, context,
         (json) => json == null ? null : _sessionFrom(jsonDecode(json)));
-  }
-
-  @override
-  Future<List<int>> exportBackup() async {
-    final database = await _database();
-    return database.transaction(() async {
-      final activeSession = await loadSession();
-      final snapshot = await loadSnapshot();
-      final state = await loadCryptoState();
-      if (activeSession == null || state == null) {
-        throw StateError('complete authenticated crypto state is required');
-      }
-      // Rows past their expiry are not written to the backup, even when the
-      // purge has not removed them yet (W2). The MLS state, the outboxes and
-      // the cursor stay on this device (D71, D73).
-      final now = DateTime.now().toUtc();
-      final nowMs = now.millisecondsSinceEpoch;
-      return _encodeBackup(LocalBackupData(
-        session: activeSession,
-        conversations: snapshot?.conversations ?? const <Conversation>[],
-        messages: _withoutExpired(snapshot?.messagesByConversation, now),
-        history: (await database.readAllMessages())
-            .where((item) => item.expiresAt == null || item.expiresAt! > nowMs)
-            .toList(growable: false),
-        reactions: await database.readAllReactions(),
-        pins: await database.select(database.localPins).get(),
-        starred: {
-          for (final row in await database.select(database.localStarred).get())
-            row.messageKey: row.starredAt
-        },
-        conversationPrefs: await loadConversationPrefs(),
-        historyNamespace: await database.readHistoryNamespace(),
-      ));
-    });
-  }
-
-  @override
-  Future<void> restoreBackup(List<int> encoded) async {
-    final backup = _decodeBackup(encoded);
-    await (await _database()).restoreBackupState(
-      sessionJson: jsonEncode(_sessionJson(backup.session)),
-      conversations: backup.conversations
-          .map((item) => (id: item.id, payloadJson: jsonEncode(item.toJson())))
-          .toList(),
-      envelopes: <({
-        String id,
-        String conversationId,
-        int position,
-        String payloadJson
-      })>[
-        for (final entry in backup.messages.entries)
-          for (var index = 0; index < entry.value.length; index++)
-            (
-              id: entry.value[index].id,
-              conversationId: entry.key,
-              position: index,
-              payloadJson: jsonEncode(entry.value[index].toJson())
-            ),
-      ],
-      history: backup.history,
-      reactions: backup.reactions,
-      backfillExpiryFor: backup.expiryBackfillIds,
-      pins: backup.pins,
-      starred: backup.starred,
-      conversationPrefs: backup.conversationPrefs,
-      historyNamespace: backup.historyNamespace,
-    );
   }
 
   @override
@@ -4772,26 +4536,9 @@ String _identity(Session session) =>
     '${session.baseUrl}|${session.accountId ?? ''}|${session.deviceId ?? ''}';
 
 /// Whether saving [next] over [previous] changes the identity, which drops
-/// that identity's local state. A restored account (no device yet, D71)
-/// keeps its restored history when a device of the same account on the
-/// same server is enrolled over it; any other account still drops it.
-bool _identityChanged(Session previous, Session next) {
-  if (isRestoredAccountSession(previous)) {
-    // The link canonicalizes the origin, so compare it the same way.
-    return _comparableOrigin(previous.baseUrl) !=
-            _comparableOrigin(next.baseUrl) ||
-        previous.accountId != next.accountId;
-  }
-  return _identity(previous) != _identity(next);
-}
-
-String _comparableOrigin(String baseUrl) {
-  try {
-    return canonicalizeServerOrigin(baseUrl);
-  } on FormatException {
-    return baseUrl;
-  }
-}
+/// that identity's local state.
+bool _identityChanged(Session previous, Session next) =>
+    _identity(previous) != _identity(next);
 
 Map<String, Object?> _sessionJson(Session session) => <String, Object?>{
       'base_url': session.baseUrl,
@@ -4842,19 +4589,6 @@ StoredCryptoState? _cryptoStateFrom(Object? raw) {
   }
 }
 
-/// [messages] without the envelopes whose expiry has passed at [now].
-Map<String, List<ReceivedMessageEnvelope>> _withoutExpired(
-  Map<String, List<ReceivedMessageEnvelope>>? messages,
-  DateTime now,
-) =>
-    <String, List<ReceivedMessageEnvelope>>{
-      for (final entry in (messages ?? const {}).entries)
-        entry.key: entry.value
-            .where((item) =>
-                item.expiresAt == null || item.expiresAt!.isAfter(now))
-            .toList(growable: false),
-    };
-
 StoredCryptoState _copyCryptoState(StoredCryptoState state) =>
     StoredCryptoState(
       counter: state.counter,
@@ -4874,174 +4608,6 @@ StoredCryptoRecord _copyCryptoRecord(StoredCryptoRecord r) =>
 String _cryptoRecordKey(int kind, List<int> recordId) =>
     '${kind.toString().padLeft(5, '0')}:'
     '${recordId.map((b) => b.toRadixString(16).padLeft(2, '0')).join()}';
-
-LocalMessage _withoutLinkPreview(LocalMessage m) => m.formatJson == null
-    ? m
-    : m.copyWith(formatJson: Value(formatJsonWithoutPreview(m.formatJson)));
-
-List<int> _encodeBackup(LocalBackupData data) {
-  final accountId = data.session.accountId;
-  if (accountId == null || accountId.isEmpty) {
-    throw StateError('backup needs an account');
-  }
-  return utf8.encode(jsonEncode(
-    <String, Object?>{
-      'version': backupFormatVersion,
-      'history_namespace':
-          (data.historyNamespace ?? HistoryNamespace()).toJson(),
-      // Decrypted history (D27). Local only: the backup is encrypted with
-      // a key the server never sees.
-      // A link preview stays out (about 22 KiB a row against the 64 MiB
-      // cap); the text and its other decoration are kept.
-      'history': data.history
-          .map((item) => _withoutLinkPreview(item).toJson())
-          .toList(),
-      'reactions': data.reactions.map((item) => item.toJson()).toList(),
-      'pins': data.pins.map((p) => p.toJson()).toList(),
-      'starred': data.starred,
-      'conversation_prefs':
-          data.conversationPrefs.map((p) => p.toJson()).toList(),
-      // The account only (D71): never the bearer token, the device id or
-      // the device secret, so the backup cannot sign in as this device.
-      'account': <String, Object?>{
-        'base_url': data.session.baseUrl,
-        'account_id': accountId,
-        if (data.session.username != null) 'username': data.session.username,
-        if (data.session.role != null) 'role': data.session.role,
-      },
-      'conversations': data.conversations.map((item) => item.toJson()).toList(),
-      'messages': <String, Object?>{
-        for (final entry in data.messages.entries)
-          entry.key: entry.value.map((item) => item.toJson()).toList(),
-      },
-      // No MLS state or its key (D73), no outboxes (their payloads belong
-      // to that state) and no sync cursor: a restored device re-joins its
-      // groups like a freshly linked one.
-    },
-  ));
-}
-
-LocalBackupData _decodeBackup(List<int> encoded) {
-  if (encoded.isEmpty || encoded.length > 64 * 1024 * 1024) {
-    throw const FormatException('invalid backup size');
-  }
-  try {
-    final root = Map<String, Object?>.from(
-        jsonDecode(utf8.decode(encoded, allowMalformed: false)) as Map);
-    final version = root['version'];
-    if (version is! int || version < 1 || version > backupFormatVersion) {
-      throw const FormatException('unsupported backup version');
-    }
-    final expiryBackfillIds = <String>{};
-    final history = version == 1
-        ? const <LocalMessage>[]
-        : (root['history'] as List).map((item) {
-            final json = Map<String, dynamic>.from(item as Map);
-            // v1-v3 predate the explicit sender-hidden column.
-            json.putIfAbsent('senderHidden', () => false);
-            final message = LocalMessage.fromJson(json);
-            final serverId = message.serverMessageId;
-            if (serverId != null && !json.containsKey('expiresAt')) {
-              expiryBackfillIds.add(serverId);
-            }
-            return message;
-          }).toList(growable: false);
-    final reactions = version == 1
-        ? const <LocalMessageReaction>[]
-        : (root['reactions'] as List)
-            .map((item) => LocalMessageReaction.fromJson(
-                Map<String, dynamic>.from(item as Map)))
-            .toList(growable: false);
-    final session =
-        version < 6 ? _legacyBackupAccount(root) : _backupAccount(root);
-    final conversations = (root['conversations'] as List)
-        .map((item) =>
-            Conversation.fromJson(Map<String, Object?>.from(item as Map)))
-        .toList(growable: false);
-    final messages = <String, List<ReceivedMessageEnvelope>>{};
-    for (final entry
-        in Map<String, Object?>.from(root['messages'] as Map).entries) {
-      messages[entry.key] = (entry.value as List)
-          .map((item) => ReceivedMessageEnvelope.fromJson(
-              Map<String, Object?>.from(item as Map)))
-          .toList(growable: false);
-    }
-    // Versions 1 to 5 also carry the outboxes, pending pin commands, the
-    // cursor and the MLS state with its key. They belong to the device that
-    // made the backup and are dropped unread (D71, D73).
-    return LocalBackupData(
-        session: session,
-        conversations: conversations,
-        messages: messages,
-        history: history,
-        reactions: reactions,
-        formatVersion: version,
-        historyNamespace: version < 5
-            ? null
-            : HistoryNamespace.fromJson(root['history_namespace']),
-        pins: version < 4
-            ? const []
-            : (root['pins'] as List)
-                .map((p) =>
-                    LocalPin.fromJson(Map<String, dynamic>.from(p as Map)))
-                .toList(),
-        starred: version < 4
-            ? const {}
-            : Map<String, int>.from(root['starred'] as Map),
-        conversationPrefs: version < 4
-            ? const []
-            : (root['conversation_prefs'] as List)
-                .map((p) => LocalConversationPref.fromJson(
-                    Map<String, dynamic>.from(p as Map)))
-                .toList(),
-        expiryBackfillIds: expiryBackfillIds);
-  } catch (error) {
-    if (error is FormatException) rethrow;
-    throw const FormatException('invalid backup encoding');
-  }
-}
-
-/// The account of a version 6 backup, as a [restoredAccountSession].
-Session _backupAccount(Map<String, Object?> root) {
-  final account = Map<String, Object?>.from(root['account'] as Map);
-  final baseUrl = account['base_url'];
-  final accountId = account['account_id'];
-  final username = account['username'];
-  final role = account['role'];
-  if (baseUrl is! String ||
-      baseUrl.isEmpty ||
-      accountId is! String ||
-      accountId.isEmpty ||
-      (username != null && username is! String) ||
-      (role != null && role is! String)) {
-    throw const FormatException('invalid backup account');
-  }
-  return restoredAccountSession(
-      baseUrl: baseUrl,
-      accountId: accountId,
-      username: username as String?,
-      role: role as String?);
-}
-
-/// The account of a version 1 to 5 backup. Its session must still bind to
-/// the backup's account and device as before, but its token, device id and
-/// device secret are dropped: the result is a [restoredAccountSession].
-Session _legacyBackupAccount(Map<String, Object?> root) {
-  final session = _sessionFrom(root['session']);
-  if (session == null ||
-      session.accountId == null ||
-      session.accountId!.isEmpty ||
-      session.deviceId == null ||
-      root['account_id'] != session.accountId ||
-      root['device_id'] != session.deviceId) {
-    throw const FormatException('backup identity binding mismatch');
-  }
-  return restoredAccountSession(
-      baseUrl: session.baseUrl,
-      accountId: session.accountId!,
-      username: session.username,
-      role: session.role);
-}
 
 void _validateCryptoState(StoredCryptoState state) {
   if (state.counter <= 0 ||

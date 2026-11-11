@@ -188,6 +188,20 @@ void main() {
               .map((m) => m.body ?? '')
               .toList();
 
+  test('an old-format (VBK2) copy is never listed and the screen says so',
+      () async {
+    api.rows = [
+      <String, Object?>{'id': 'backup_old', 'kind': 0, 'size_bytes': 10},
+      <String, Object?>{'id': 'backup_older', 'size_bytes': 10},
+    ];
+    final list = (await state.loadK1RestoreList())!;
+    expect(list, isEmpty);
+    expect(state.k1LegacyBackupsRefused, isTrue);
+    api.rows = [_row(container)];
+    expect(await state.loadK1RestoreList(), hasLength(1));
+    expect(state.k1LegacyBackupsRefused, isFalse);
+  });
+
   test('restores into an enrolled device, keeps the key, wipes buffers',
       () async {
     final list = (await state.loadK1RestoreList())!;

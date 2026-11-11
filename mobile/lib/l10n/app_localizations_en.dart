@@ -3816,6 +3816,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get k1RestoreEmpty => 'No backup from another device was found.';
 
   @override
+  String get k1RestoreLegacyRefused =>
+      'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.';
+
+  @override
   String get k1RestoreLoadFailed => 'The list of backups could not be loaded.';
 
   @override
