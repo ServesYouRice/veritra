@@ -45,11 +45,15 @@ type Config struct {
 	APNsPrivateKey   string
 	TURNURLs         []string
 	TURNSharedSecret string
-	Environment      string
-	LogLevel         string
-	LogFormat        string
-	PasswordCost     int
-	SyncRetention    time.Duration
+	// B6 (group calls): the SFU. All three set, or none (rooms unavailable).
+	SFUURL        string
+	SFUAPIKey     string
+	SFUAPISecret  string
+	Environment   string
+	LogLevel      string
+	LogFormat     string
+	PasswordCost  int
+	SyncRetention time.Duration
 	// Session lifetimes (card T37C). A session ends SessionIdleLifetime after
 	// its last use or SessionAbsoluteLifetime after its last password and
 	// device-secret authentication, whichever comes first. Zero means default.
@@ -96,6 +100,7 @@ var SecretEnvKeys = []string{
 	"PRIVATE_MESSENGER_FCM_PRIVATE_KEY",
 	"PRIVATE_MESSENGER_APNS_PRIVATE_KEY",
 	"PRIVATE_MESSENGER_TURN_SHARED_SECRET",
+	"PRIVATE_MESSENGER_SFU_API_SECRET",
 }
 
 func Load() (Config, error) {
@@ -148,6 +153,9 @@ func Load() (Config, error) {
 		APNsPrivateKey:   secrets["PRIVATE_MESSENGER_APNS_PRIVATE_KEY"],
 		TURNURLs:         splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
 		TURNSharedSecret: secrets["PRIVATE_MESSENGER_TURN_SHARED_SECRET"],
+		SFUURL:           strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_URL")),
+		SFUAPIKey:        strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_API_KEY")),
+		SFUAPISecret:     secrets["PRIVATE_MESSENGER_SFU_API_SECRET"],
 		Environment:      loadEnvironment(),
 		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
 		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
@@ -178,6 +186,9 @@ func Load() (Config, error) {
 	}
 	if (len(cfg.TURNURLs) == 0) != (cfg.TURNSharedSecret == "") {
 		return Config{}, fmt.Errorf("TURN URLs and shared secret must be configured together")
+	}
+	if err := validateSFU(cfg); err != nil {
+		return Config{}, err
 	}
 	for i, raw := range cfg.TURNURLs {
 		canonical, err := canonicalTURNURL(raw)
@@ -557,4 +568,36 @@ func parseTrustedProxy(value string) (netip.Prefix, error) {
 		return netip.Prefix{}, fmt.Errorf("public proxy ranges must be /%d or narrower", floor)
 	}
 	return prefix, nil
+}
+
+// validateSFU: the SFU address, API key and secret are configured together,
+// the address is a ws, wss, http or https URL, and the secret is long enough
+// to sign tokens (B6).
+func validateSFU(cfg Config) error {
+	set := 0
+	for _, v := range []string{cfg.SFUURL, cfg.SFUAPIKey, cfg.SFUAPISecret} {
+		if v != "" {
+			set++
+		}
+	}
+	if set == 0 {
+		return nil
+	}
+	if set != 3 {
+		return fmt.Errorf("PRIVATE_MESSENGER_SFU_URL, _SFU_API_KEY and _SFU_API_SECRET must be configured together")
+	}
+	u, err := url.Parse(cfg.SFUURL)
+	if err != nil || u.Host == "" || (u.Scheme != "ws" && u.Scheme != "wss" && u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("invalid PRIVATE_MESSENGER_SFU_URL")
+	}
+	if len(cfg.SFUAPISecret) < 32 {
+		return fmt.Errorf("PRIVATE_MESSENGER_SFU_API_SECRET must be at least 32 characters")
+	}
+	if cfg.Environment == "production" && (u.Scheme == "ws" || u.Scheme == "http") {
+		host := u.Hostname()
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			return fmt.Errorf("PRIVATE_MESSENGER_SFU_URL must be wss or https in production")
+		}
+	}
+	return nil
 }
