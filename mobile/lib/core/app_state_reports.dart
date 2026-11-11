@@ -45,8 +45,13 @@ extension ReportActions on AppState {
   ReportModerators? reportModeratorsFor(String conversationId) {
     final conversation =
         conversations.where((c) => c.id == conversationId).firstOrNull;
-    final communityId = conversation?.communityId;
-    if (conversation == null || communityId == null) return null;
+    if (conversation == null) return null;
+    final communityId = conversation.communityId ??
+        communities
+            .where((c) => c.sharedConversationId == conversationId)
+            .firstOrNull
+            ?.id;
+    if (communityId == null) return null;
     final GovernanceState? record;
     try {
       record = governanceOf(conversationId);

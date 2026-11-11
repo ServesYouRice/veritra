@@ -110,7 +110,11 @@ extension RoleActions on AppState {
       String conversationId, String accountId, String role) {
     final group = recordGroupFor(conversationId)!;
     final conversation = conversations.where((c) => c.id == group).firstOrNull;
-    final communityId = conversation?.communityId;
+    final communityId = conversation?.communityId ??
+        communities
+            .where((c) => c.sharedConversationId == group)
+            .firstOrNull
+            ?.id;
     if (conversation != null &&
         conversation.isCommunityShared &&
         communityId != null) {
