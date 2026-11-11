@@ -431,14 +431,19 @@ per-recipient secrets, so against the server the Welcome pad mainly hides
 the record and credential contents' sizes; against a network observer it
 hides the tree size too.
 
-**Compatibility.** Both directions work without a lockstep upgrade: an
-ABI 22 core (the same OpenMLS 0.9.2) accepts a padded key package, because
-its leaf lists `0xF0A2`, and a padded Welcome, because OpenMLS ignores an
-unknown GroupInfo extension; an ABI 23 core accepts unpadded packages and
-Welcomes (`unpadded_packages_are_still_added_and_bad_pads_refused`). The
-only new receive rule is the malformed-pad refusal, which no honest client
-of either version triggers. The app still pins the exact ABI (23), as for
-every bump.
+**Compatibility.** Tested: an ABI 23 core adds unpadded key packages and
+joins unpadded Welcomes
+(`unpadded_packages_are_still_added_and_bad_pads_refused`). Expected but
+**not tested** against an ABI 22 build: an ABI 22 core (the same OpenMLS
+0.9.2) accepts a padded key package, because the package's own leaf lists
+`0xF0A2` in its capabilities, and a padded Welcome, because OpenMLS keeps an
+unknown GroupInfo extension without acting on it. This departs from the
+design's test plan line "an older library refuses a padded blob (fail
+closed)": padding is meant to need no lockstep upgrade, and the reviewer
+has to accept that or ask for the cross-version test (build origin/main's
+core and feed it this branch's blobs). The only new receive rule is the
+malformed-pad refusal, which no honest client of either version triggers.
+The app still pins the exact ABI (23), as for every bump.
 
 ## Sealed sender boundary (ABI 23, L2-3)
 
@@ -599,8 +604,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   not used by the app or server yet). `pm_crypto_group_decrypt` and every
   other signature are unchanged. Header, Dart binding (`!= 23`) and
   `scripts/verify-mobile-crypto.sh` updated; vector
-  `testing/vectors/l2-padding-v1.json` (Rust, Go, Dart). ABI 22 and 23
-  cores accept each other's blobs. No local schema or server migration.
+  `testing/vectors/l2-padding-v1.json` (Rust, Go, Dart). ABI 23 accepts
+  ABI 22 blobs (tested); the reverse is expected, not tested. No local schema or server migration.
   Rules: "L2 padding" and "Sealed sender boundary" above. Needs the
   independent review (G25), the two-stage Welcome build in particular.
 
