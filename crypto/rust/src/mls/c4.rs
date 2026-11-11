@@ -37,9 +37,20 @@ fn role_type() -> ExtensionType {
 
 /// The capabilities every Veritra leaf advertises: OpenMLS's defaults plus
 /// the role extension. Key packages and a creator's leaf use it, so any
-/// ABI 20 device can join a record group.
+/// ABI 20 device can join a record group. Since ABI 23 (L2-1) it also lists
+/// the pad extension, which RFC 9420 requires of any extension a key
+/// package carries; nothing requires it of other leaves or of the group.
 pub(super) fn leaf_capabilities() -> Capabilities {
-    Capabilities::new(None, None, Some(&[role_type()]), None, None)
+    Capabilities::new(
+        None,
+        None,
+        Some(&[
+            role_type(),
+            ExtensionType::Unknown(crate::l2::PAD_EXTENSION_TYPE),
+        ]),
+        None,
+        None,
+    )
 }
 
 /// A record is 1 to [`MAX_ROLE_RECORD_BYTES`] bytes; nothing else is

@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (22u)
+#define PM_CRYPTO_ABI_VERSION (23u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -236,6 +236,9 @@ int32_t pm_crypto_k2_source_finish(PmCryptoHandle *, PmHistoryStream *,
 int32_t pm_crypto_k2_receive_finish(PmCryptoHandle *, PmHistoryStream *,
     PmByteSlice, PmOwnedBuffer *);
 void pm_crypto_k2_stream_destroy(PmHistoryStream *);
+/* ABI 23 (L2-1): the key package is padded to a size bucket (see
+ * pm_crypto_l2_padded_size) by one extension of type 0xF0A2 whose data is
+ * zero bytes, and its leaf lists 0xF0A2 in its capabilities. */
 int32_t pm_crypto_device_create_key_package(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
 /* ABI 9: the only enrollment signature. It covers
@@ -359,6 +362,25 @@ int32_t pm_crypto_group_decrypt(PmCryptoHandle *handle, PmByteSlice group_id,
                                 PmByteSlice sender_account_id,
                                 PmByteSlice sender_device_id,
                                 PmOwnedBuffer *out_plaintext);
+/* ABI 23 (L2-3, sealed sender; not wired into the app yet): decrypts an
+ * application message and returns the sender MLS authenticated instead of
+ * checking a claimed one. PM_CRYPTO_SENDER_REMOVED for a past-epoch message
+ * from a sender no longer in the group; PM_CRYPTO_SENDER_MISMATCH for a
+ * sender credential that is not a device identity. In both the ratchet has
+ * advanced. pm_crypto_group_decrypt keeps its D25 check. */
+int32_t pm_crypto_group_decrypt_sealed(PmCryptoHandle *handle,
+                                       PmByteSlice group_id,
+                                       PmByteSlice ciphertext,
+                                       PmOwnedBuffer *out_plaintext,
+                                       PmOwnedBuffer *out_sender_account_id,
+                                       PmOwnedBuffer *out_sender_device_id);
+/* ABI 23 (L2-1): the size bucket of a blob of `length` bytes: the next
+ * multiple of 256 (at least 256) up to 4096, then the next power of two up
+ * to 8 MiB. PM_CRYPTO_INVALID_ARGUMENT above 8 MiB. Staged commits that add
+ * devices pad their Welcome to this bucket inside the encrypted GroupInfo
+ * (extension 0xF0A2, zero bytes); joins refuse a pad that is not zeros.
+ * Vector: testing/vectors/l2-padding-v1.json. */
+int32_t pm_crypto_l2_padded_size(uint64_t length, uint64_t *out_padded);
 /* ABI 13 (C7, docs/designs/C7-channel-history.md revision 7). Nothing is
  * wired into the app, and every piece needs the independent crypto review
  * before release, the exporter use in particular. Vector:

@@ -168,9 +168,21 @@ impl MlsDevice {
         if self.provider.storage().key_package_count()? >= records::MAX_KEY_PACKAGES {
             return Err(MlsError::InvalidState);
         }
+        // L2-1 (ABI 23): the package is padded to a size bucket by one pad
+        // extension. Its unpadded size depends only on the credential, so a
+        // throwaway package with the same credential, built in memory and
+        // never stored, measures it.
+        let bare = self.bare_key_package_size()?;
+        let pad = crate::l2::key_package_pad(bare);
+        let extensions = match pad {
+            Some(pad) => Extensions::single(crate::l2::pad_extension(pad))
+                .map_err(|_| MlsError::KeyGeneration)?,
+            None => Extensions::default(),
+        };
         // C4 (ABI 20): every leaf advertises the role extension.
         let bundle = KeyPackage::builder()
             .leaf_node_capabilities(c4::leaf_capabilities())
+            .key_package_extensions(extensions)
             .build(
                 CIPHERSUITE,
                 &self.provider,
@@ -178,9 +190,33 @@ impl MlsDevice {
                 self.credential.clone(),
             )
             .map_err(|_| MlsError::KeyGeneration)?;
+        let bytes = bundle
+            .key_package()
+            .tls_serialize_detached()
+            .map_err(|_| MlsError::KeyGeneration)?;
+        debug_assert!(pad.is_none() || crate::l2::bucket(bytes.len()) == Some(bytes.len()));
+        Ok(bytes)
+    }
+
+    /// The size of this device's key package with no extensions, from a
+    /// throwaway package (fresh keys, the same credential and capabilities)
+    /// that only an in-memory provider ever sees.
+    fn bare_key_package_size(&self) -> Result<usize, MlsError> {
+        let provider = openmls_rust_crypto::OpenMlsRustCrypto::default();
+        let signer = SignatureKeyPair::new(CIPHERSUITE.signature_algorithm())
+            .map_err(|_| MlsError::KeyGeneration)?;
+        let credential = CredentialWithKey {
+            credential: self.credential.credential.clone(),
+            signature_key: signer.public().into(),
+        };
+        let bundle = KeyPackage::builder()
+            .leaf_node_capabilities(c4::leaf_capabilities())
+            .build(CIPHERSUITE, &provider, &signer, credential)
+            .map_err(|_| MlsError::KeyGeneration)?;
         bundle
             .key_package()
             .tls_serialize_detached()
+            .map(|bytes| bytes.len())
             .map_err(|_| MlsError::KeyGeneration)
     }
 
@@ -368,6 +404,7 @@ impl MlsDevice {
             {
                 return Err(MlsError::InvalidKeyPackage);
             }
+            check_key_package_pad(&key_package)?;
             key_packages.push(key_package);
             added.push(expected);
         }
@@ -381,30 +418,44 @@ impl MlsDevice {
         ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
         let epoch = group.epoch().as_u64();
         let id = group.group_id().as_slice().to_vec();
-        let bundle = self.in_group(&id, || {
-            let builder = group
-                .commit_builder()
-                .propose_adds(key_packages)
-                .propose_removals(removed);
-            let builder = match record_extensions {
-                Some(extensions) => builder
-                    .propose_group_context_extensions(extensions)
-                    .map_err(|_| MlsError::GroupOperation)?,
-                None => builder,
-            };
-            builder
-                .load_psks(self.provider.storage())
-                .map_err(|_| MlsError::GroupOperation)?
-                .build(
-                    self.provider.rand(),
-                    self.provider.crypto(),
-                    &self.signer,
-                    |_| true,
-                )
-                .map_err(|_| MlsError::GroupOperation)?
-                .stage_commit(&self.provider)
-                .map_err(|_| MlsError::GroupOperation)
-        })?;
+        let stage = |group: &mut MlsGroup, pad: Option<usize>| {
+            self.in_group(&id, || {
+                let builder = group
+                    .commit_builder()
+                    .propose_adds(key_packages.clone())
+                    .propose_removals(removed.iter().copied());
+                let builder = match &record_extensions {
+                    Some(extensions) => builder
+                        .propose_group_context_extensions(extensions.clone())
+                        .map_err(|_| MlsError::GroupOperation)?,
+                    None => builder,
+                };
+                let builder = builder
+                    .load_psks(self.provider.storage())
+                    .map_err(|_| MlsError::GroupOperation)?;
+                let builder = match pad {
+                    Some(pad) => builder
+                        .create_group_info_with_extensions([crate::l2::pad_extension(pad)])
+                        .map_err(|_| MlsError::GroupOperation)?,
+                    None => builder,
+                };
+                builder
+                    .build(
+                        self.provider.rand(),
+                        self.provider.crypto(),
+                        &self.signer,
+                        |_| true,
+                    )
+                    .map_err(|_| MlsError::GroupOperation)?
+                    .stage_commit(&self.provider)
+                    .map_err(|_| MlsError::GroupOperation)
+            })
+        };
+        let bundle = if adds.is_empty() {
+            stage(group, None)?
+        } else {
+            self.stage_padded_welcome(group, stage)?
+        };
         // The sender runs the receivers' check on its own commit, so it never
         // sends what every receiver refuses (and never merges it).
         let checked = match group.pending_commit() {
@@ -433,6 +484,69 @@ impl MlsDevice {
             welcome,
             epoch,
         })
+    }
+
+    /// L2-1 (ABI 23): stages a commit whose Welcome is padded to a size
+    /// bucket ([`crate::l2::bucket`]) by a pad extension in its GroupInfo,
+    /// which is encrypted and signed, so neither the server nor a network
+    /// observer reads the unpadded length.
+    ///
+    /// The GroupInfo's size is known only once the commit is built, so the
+    /// commit is staged with a 64-byte pad, measured, cleared and staged
+    /// again with the pad that reaches the bucket (64 bytes keeps the pad's
+    /// own length prefix at two bytes, so the size grows by one per pad
+    /// byte). A third stage is needed only when a vector length prefix
+    /// crosses 16 KiB; a bucket that a prefix step jumps over is replaced by
+    /// the next one. Building writes nothing; each discarded stage costs one
+    /// handshake ratchet generation, which receivers skip as they would a
+    /// lost message. A Welcome already over [`crate::l2::MAX_PADDED`] keeps
+    /// its 64-byte pad.
+    fn stage_padded_welcome(
+        &self,
+        group: &mut MlsGroup,
+        stage: impl Fn(&mut MlsGroup, Option<usize>) -> Result<CommitMessageBundle, MlsError>,
+    ) -> Result<CommitMessageBundle, MlsError> {
+        const FIRST_PAD: usize = 64;
+        const MAX_STAGES: usize = 6;
+        let mut pad = FIRST_PAD;
+        let mut target: Option<usize> = None;
+        let mut tried = Vec::with_capacity(MAX_STAGES);
+        for _ in 0..MAX_STAGES {
+            let bundle = stage(group, Some(pad))?;
+            let size = bundle
+                .to_welcome_msg()
+                .ok_or(MlsError::GroupOperation)?
+                .tls_serialized_len();
+            tried.push(pad);
+            let goal = match target {
+                Some(goal) => goal,
+                None => match crate::l2::bucket(size) {
+                    Some(goal) => goal,
+                    None => return Ok(bundle),
+                },
+            };
+            if size == goal {
+                return Ok(bundle);
+            }
+            self.clear_pending_commit(group)?;
+            let mut next = if size < goal {
+                pad + (goal - size)
+            } else {
+                pad.saturating_sub(size - goal).max(FIRST_PAD)
+            };
+            let mut goal = goal;
+            if tried.contains(&next) {
+                // A length prefix step skips this bucket: take the next one.
+                goal = crate::l2::next_bucket(goal).ok_or(MlsError::GroupOperation)?;
+                next = pad + (goal - size.min(goal));
+            }
+            target = Some(goal);
+            pad = next;
+        }
+        // Not reached for any size the tests cover. Padding is a privacy
+        // measure, so it never blocks a membership change: the commit goes
+        // with the first pad, off-bucket.
+        stage(group, Some(FIRST_PAD))
     }
 
     /// Stages one commit that adds and removes no one and carries an update
@@ -906,11 +1020,10 @@ impl MlsDevice {
             welcome,
         )
         .map_err(|_| MlsError::GroupOperation)?;
-        if builder
-            .processed_welcome()
-            .unverified_group_info()
-            .group_id()
-            != &group_id
+        let group_info = builder.processed_welcome().unverified_group_info();
+        // L2-1: the GroupInfo's pad, if any, is zeros within the cap.
+        if group_info.group_id() != &group_id
+            || group_info.extensions().iter().any(crate::l2::malformed_pad)
         {
             return Err(MlsError::InvalidMessage);
         }
@@ -1072,6 +1185,58 @@ impl MlsDevice {
             ProcessedMessageContent::ApplicationMessage(message) => {
                 Ok((message.into_bytes(), message_epoch))
             }
+            _ => Err(MlsError::UnexpectedMessage),
+        }
+    }
+}
+
+/// Plaintext, sender account id and sender device id of a sealed message.
+pub type SealedMessage = (Vec<u8>, Vec<u8>, Vec<u8>);
+
+impl MlsDevice {
+    /// L2-3 (ABI 23): decrypts an application message whose sender the
+    /// transport does not name (sealed sender) and returns the sender that
+    /// MLS authenticated, `(plaintext, account_id, device_id)`. The binding
+    /// of D25 moves from "the envelope says, MLS confirms" to "MLS says":
+    /// nothing the server sends is compared, so a forged outer sender has
+    /// no effect. A past-epoch message counts only while its sender is
+    /// still a member, as in [`Self::decrypt_with_epoch`]. Not used by the
+    /// app yet; [`Self::decrypt`] keeps its D25 check unchanged.
+    pub fn decrypt_sealed(
+        &self,
+        group: &mut MlsGroup,
+        ciphertext: &[u8],
+    ) -> Result<SealedMessage, MlsError> {
+        let protocol_message = MlsMessageIn::tls_deserialize_exact(ciphertext)
+            .map_err(|_| MlsError::InvalidMessage)?
+            .try_into_protocol_message()
+            .map_err(|_| MlsError::InvalidMessage)?;
+        let id = group.group_id().as_slice().to_vec();
+        let processed = self.in_group(&id, || {
+            group
+                .process_message(&self.provider, protocol_message)
+                .map_err(|_| MlsError::InvalidMessage)
+        })?;
+        let identity = processed.credential().serialized_content().to_vec();
+        let removed = processed.epoch() != group.epoch()
+            && !group
+                .members()
+                .any(|member| member.credential.serialized_content() == identity.as_slice());
+        let content = processed.into_content();
+        let sender = decode_device_identity(&identity)
+            .map(|(account, device)| (account.to_vec(), device.to_vec()));
+        match content {
+            ProcessedMessageContent::ApplicationMessage(message) => match sender {
+                _ if removed => {
+                    wipe(message.into_bytes());
+                    Err(MlsError::SenderRemoved)
+                }
+                Ok((account, device)) => Ok((message.into_bytes(), account, device)),
+                Err(_) => {
+                    wipe(message.into_bytes());
+                    Err(MlsError::SenderMismatch)
+                }
+            },
             _ => Err(MlsError::UnexpectedMessage),
         }
     }
@@ -1257,6 +1422,18 @@ fn decode_device_identity(identity: &[u8]) -> Result<(&[u8], &[u8]), MlsError> {
     Ok((account, &rest[2..end]))
 }
 
+/// L2-1: refuses a key package whose pad extension is malformed.
+fn check_key_package_pad(key_package: &KeyPackage) -> Result<(), MlsError> {
+    if key_package
+        .extensions()
+        .iter()
+        .any(crate::l2::malformed_pad)
+    {
+        return Err(MlsError::InvalidKeyPackage);
+    }
+    Ok(())
+}
+
 /// The structural checks a remote commit must pass before it is merged.
 /// Who may commit, and whether an identity really belongs to its signing
 /// key, needs a trust anchor (L1) and is not decided here.
@@ -1310,6 +1487,10 @@ fn inspect_commit(
         })
         .collect::<Result<Vec<_>, _>>()?;
     ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
+    // L2-1: an added key package's pad, if any, is zeros within the cap.
+    for proposal in staged.add_proposals() {
+        check_key_package_pad(proposal.add_proposal().key_package())?;
+    }
 
     // C7 (decision 8): credential keys never change in place. An update
     // keeps the identity and the signature key; a changed key is only a

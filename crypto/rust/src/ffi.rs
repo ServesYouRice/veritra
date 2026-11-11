@@ -1699,6 +1699,78 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt(
     })
 }
 
+/// ABI 23 (L2-3, sealed sender): decrypts an application message and
+/// returns the sender MLS authenticated (account and device ids) instead of
+/// checking one the transport claimed. `PM_CRYPTO_SENDER_REMOVED` for a
+/// past-epoch message whose sender has left, `PM_CRYPTO_SENDER_MISMATCH`
+/// for a sender credential that is not a Veritra device identity; in both
+/// the ratchet has advanced. Not wired into the app yet;
+/// `pm_crypto_group_decrypt` keeps its D25 check.
+///
+/// # Safety
+/// Every non-empty slice must be readable and the outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_decrypt_sealed(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    ciphertext: PmByteSlice,
+    out_plaintext: *mut PmOwnedBuffer,
+    out_sender_account_id: *mut PmOwnedBuffer,
+    out_sender_device_id: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        // Checked before decrypting: a decrypt consumes its ratchet step.
+        if out_plaintext.is_null()
+            || out_sender_account_id.is_null()
+            || out_sender_device_id.is_null()
+        {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let ciphertext = unsafe { borrowed(ciphertext, MAX_CIPHERTEXT_BYTES)? };
+        let (plaintext, account, device) = unsafe {
+            with_device(handle, |device| {
+                let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device
+                    .decrypt_sealed(&mut group, ciphertext)
+                    .map_err(|error| match error {
+                        MlsError::SenderMismatch => PM_CRYPTO_SENDER_MISMATCH,
+                        MlsError::SenderRemoved => PM_CRYPTO_SENDER_REMOVED,
+                        _ => PM_CRYPTO_ERROR,
+                    })
+            })?
+        };
+        unsafe {
+            three_outputs(
+                [out_plaintext, out_sender_account_id, out_sender_device_id],
+                [plaintext, account, device],
+            )
+        }
+    })
+}
+
+/// ABI 23 (L2-1): the size bucket for a blob of `length` bytes (256-byte
+/// steps up to 4 KiB, then powers of two up to 8 MiB). Writes it to
+/// `out_padded` and returns `PM_CRYPTO_OK`, or `PM_CRYPTO_INVALID_ARGUMENT`
+/// above 8 MiB or for a null output. Pure; exported for the shared vectors
+/// (`testing/vectors/l2-padding-v1.json`).
+///
+/// # Safety
+/// `out_padded` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_l2_padded_size(length: u64, out_padded: *mut u64) -> i32 {
+    ffi_call(|| {
+        if out_padded.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let length = usize::try_from(length).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        let padded = crate::l2::bucket(length).ok_or(PM_CRYPTO_INVALID_ARGUMENT)?;
+        // SAFETY: checked non-null above; the caller provides one u64.
+        unsafe { out_padded.write(padded as u64) };
+        Ok(())
+    })
+}
+
 /// ABI 13 (C7): a commit changed the roster by at least one Remove.
 pub const PM_CRYPTO_C7_COMMIT_REMOVED: u8 = 1;
 /// ABI 13 (C7): a commit carried at least one Add.
