@@ -177,6 +177,31 @@ wake events. Calls require a self-hosted coturn-compatible shared secret via
 `PRIVATE_MESSENGER_TURN_URLS` and `PRIVATE_MESSENGER_TURN_SHARED_SECRET`; TURN
 relays see DTLS-SRTP ciphertext, not call media plaintext.
 
+## Group calls and voice rooms (optional, B6)
+
+Group calls need a selective forwarding unit (SFU). The default stack has
+none and group calls answer `503 rooms_unavailable`. To turn them on, run an
+SFU yourself (LiveKit server, Apache-2.0, as its own container; an example
+configuration is `deploy/livekit/livekit.example.yaml`) and set:
+
+- `PRIVATE_MESSENGER_SFU_URL`: where apps connect (`wss://` in production;
+  `ws://` only for a loopback demo);
+- `PRIVATE_MESSENGER_SFU_API_KEY` and `PRIVATE_MESSENGER_SFU_API_SECRET` (or
+  `_FILE`): the SFU's API key and a secret of at least 32 characters. All
+  three are set together or not at all; the server refuses to start otherwise.
+
+The server only signs short-lived join tokens (5 minutes, a random room name
+and a random per-join identity, never an account or conversation id) and
+checks the SFU's signed webhooks at `POST /api/v1/rooms/webhook` (point the
+SFU's webhook there). It never connects to the SFU's media ports and never
+sees media or keys: the apps encrypt every frame with keys derived from a
+short-lived MLS group per call. The SFU does see client network addresses,
+who is in a room, packet sizes and timing, as TURN does for one-to-one calls.
+Rooms hold at most 50 devices (the apps limit video to 25); one live room per
+conversation. A seat the SFU never reports gone is ended after 12 hours, and
+ended rooms are deleted after an hour. Group calls are off in release builds
+with the rest of messaging.
+
 ## Mobile first-run connection
 
 The mobile connect flow starts with an empty server origin and accepts HTTPS

@@ -55,6 +55,15 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'device_session_required': ApiErrorKind.authentication,
   'claim_token_required': ApiErrorKind.authentication,
   'invalid_identity': ApiErrorKind.authentication,
+  // B6 group-call rooms.
+  'rooms_unavailable': ApiErrorKind.unavailable,
+  'room_full': ApiErrorKind.conflict,
+  'room_ended': ApiErrorKind.notFound,
+  'not_in_room': ApiErrorKind.permission,
+  'room_epoch_conflict': ApiErrorKind.conflict,
+  'invalid_join_offer': ApiErrorKind.invalidRequest,
+  'invalid_conversation': ApiErrorKind.invalidRequest,
+  'internal_error': ApiErrorKind.server,
   // Permission.
   'forbidden': ApiErrorKind.permission,
   'mls_not_in_group': ApiErrorKind.permission,

@@ -2012,6 +2012,48 @@ class ApiClient {
     return _rows(json, 'calls', CallSession.fromJson).toList(growable: false);
   }
 
+  // ---- B6 group-call rooms (docs/designs/B6-group-calls.md). Raw JSON:
+  // the room engine's adapter (calls/room/room_api.dart) reads it. ----
+
+  Future<Map<String, Object?>> joinRoom(String token, String conversationId) =>
+      _jsonRequest('POST', '/api/v1/rooms/join',
+          token: token,
+          body: <String, Object?>{'conversation_id': conversationId});
+
+  Future<Map<String, Object?>> roomState(String token, String callId) =>
+      _jsonRequest('GET', '/api/v1/rooms/${Uri.encodeComponent(callId)}',
+          token: token);
+
+  Future<Map<String, Object?>> roomCommits(String token, String callId,
+          {required int after}) =>
+      _jsonRequest(
+          'GET',
+          Uri(
+              path: '/api/v1/rooms/${Uri.encodeComponent(callId)}/commits',
+              queryParameters: <String, String>{'after': '$after'}).toString(),
+          token: token,
+          maxResponseBytes: 8 * 1024 * 1024);
+
+  /// A 409 `room_epoch_conflict` means another commit won this epoch.
+  Future<Map<String, Object?>> sendRoomCommit(
+          String token, String callId, Map<String, Object?> body) =>
+      _jsonRequest(
+          'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/commit',
+          token: token, body: body);
+
+  Future<void> sendRoomOffer(
+      String token, String callId, Map<String, Object?> body) async {
+    await _jsonRequest(
+        'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/offer',
+        token: token, body: body);
+  }
+
+  Future<void> leaveRoom(String token, String callId) async {
+    await _jsonRequest(
+        'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/leave',
+        token: token, body: const <String, Object?>{});
+  }
+
   Future<void> confirmMlsRevocation(
     String token,
     String conversationId,

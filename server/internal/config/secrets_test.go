@@ -105,3 +105,31 @@ func TestConfigOutputRedactsSecrets(t *testing.T) {
 		t.Fatalf("unexpected config output: %s", outputs[0])
 	}
 }
+
+func TestValidateSFU(t *testing.T) {
+	good := Config{Environment: "production", SFUURL: "wss://sfu.example.com", SFUAPIKey: "k", SFUAPISecret: strings.Repeat("s", 32)}
+	if err := validateSFU(good); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSFU(Config{}); err != nil {
+		t.Fatalf("unset must be fine: %v", err)
+	}
+	for name, mutate := range map[string]func(*Config){
+		"partial":      func(c *Config) { c.SFUAPIKey = "" },
+		"short secret": func(c *Config) { c.SFUAPISecret = "short" },
+		"bad scheme":   func(c *Config) { c.SFUURL = "ftp://sfu.example.com" },
+		"plain ws":     func(c *Config) { c.SFUURL = "ws://sfu.example.com" },
+		"userinfo":     func(c *Config) { c.SFUURL = "wss://u:p@sfu.example.com" },
+	} {
+		c := good
+		mutate(&c)
+		if err := validateSFU(c); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	local := good
+	local.SFUURL = "ws://127.0.0.1:7880"
+	if err := validateSFU(local); err != nil {
+		t.Fatalf("loopback ws refused: %v", err)
+	}
+}
