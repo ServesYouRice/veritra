@@ -369,6 +369,13 @@ class EnrollmentPromotion {
 String communityInfoRemovalSetting(String conversationId) =>
     'c3.removal_epoch.$conversationId';
 
+/// C4 removal proof: [accountId]'s authenticated `member_leave` in the record
+/// group [conversationId], holding the MLS epoch it was sent in. Written
+/// atomically with the message's transition; cleared when the account is
+/// added again or its removal merges (docs/crypto.md, "C4 app wiring").
+String governanceLeaveSetting(String conversationId, String accountId) =>
+    'c4.leave.$conversationId.${Uri.encodeComponent(accountId)}';
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -386,9 +393,14 @@ class MlsStateTransition {
     this.approvalLeaves,
     this.governanceObservation,
     this.infoRemovalEpoch,
+    this.settingWrites = const <String, String?>{},
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
   });
+
+  /// Settings written in the same transaction (null deletes one): C4 leave
+  /// proofs ([governanceLeaveSetting]).
+  final Map<String, String?> settingWrites;
 
   /// The leaf verdicts of the commit or Welcome this transition applies
   /// (L1, D94), written in the same transaction.
@@ -396,6 +408,7 @@ class MlsStateTransition {
 
   /// C4: clocks from the accepted transition, committed atomically with it.
   final GovernanceObservationChange? governanceObservation;
+
   /// Authenticated remote removal epoch (C3); null for adds and updates.
   final int? infoRemovalEpoch;
 
@@ -785,6 +798,7 @@ abstract class LocalStore {
     String? resolvedMlsOutboxKey,
     GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
+    Map<String, String?> settingWrites = const <String, String?>{},
   });
   Future<StoredCryptoState?> loadCryptoState();
 
@@ -1418,6 +1432,12 @@ class MemoryLocalStore implements LocalStore {
       _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
           protectedKeyIds: protectedKeyIds);
     }
+    for (final write in transition.settingWrites.entries) {
+      final value = write.value;
+      value == null
+          ? _settings.remove(write.key)
+          : _settings[write.key] = value;
+    }
     if (transition.infoRemovalEpoch case final epoch?) {
       _settings[communityInfoRemovalSetting(transition.conversationId)] =
           epoch.toString();
@@ -1916,6 +1936,7 @@ class MemoryLocalStore implements LocalStore {
     String? resolvedMlsOutboxKey,
     GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
+    Map<String, String?> settingWrites = const <String, String?>{},
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
@@ -1924,6 +1945,12 @@ class MemoryLocalStore implements LocalStore {
     if (infoRemoval != null) {
       _settings[communityInfoRemovalSetting(infoRemoval.conversationId)] =
           infoRemoval.epoch.toString();
+    }
+    for (final write in settingWrites.entries) {
+      final value = write.value;
+      value == null
+          ? _settings.remove(write.key)
+          : _settings[write.key] = value;
     }
     if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
@@ -3244,6 +3271,7 @@ class SecureLocalStore implements LocalStore {
       approvalLeaves: transition.approvalLeaves,
       governanceObservation: transition.governanceObservation,
       infoRemovalEpoch: transition.infoRemovalEpoch,
+      settingWrites: transition.settingWrites,
     );
   }
 
@@ -3528,6 +3556,7 @@ class SecureLocalStore implements LocalStore {
     String? resolvedMlsOutboxKey,
     GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
+    Map<String, String?> settingWrites = const <String, String?>{},
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: expectedCounter, currentCursor: expectedCursor);
@@ -3542,6 +3571,7 @@ class SecureLocalStore implements LocalStore {
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
       governanceObservation: governanceObservation,
       infoRemoval: infoRemoval,
+      settingWrites: settingWrites,
     );
   }
 

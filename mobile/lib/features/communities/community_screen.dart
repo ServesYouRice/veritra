@@ -13,6 +13,7 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
+import '../chat/roles_screen.dart';
 import 'membership_screens.dart';
 import 'community_info_screen.dart';
 import 'create_channel_dialog.dart';
@@ -365,6 +366,20 @@ class _CommunityCard extends StatelessWidget {
                       ),
                     ),
                     icon: const Icon(Icons.folder_outlined),
+                  ),
+                // C4: the shared group's verified roles.
+                if (community.sharedConversationId != null)
+                  IconButton(
+                    key: Key('community-roles-${community.id}'),
+                    tooltip: context.l10n.rolesTitle,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => RolesScreen(
+                            state: state,
+                            conversationId: community.sharedConversationId!),
+                      ),
+                    ),
+                    icon: const Icon(Icons.admin_panel_settings_outlined),
                   ),
                 if (state.canCreateChannel(community.id))
                   IconButton(

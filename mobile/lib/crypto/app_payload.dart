@@ -41,6 +41,10 @@ enum AppPayloadType {
   infoUpdate,
   profileKey,
   groupProfileKey,
+
+  /// C4 removal proof: the sender's own leave from this record group, bound
+  /// to the MLS epoch it is sent in (`docs/crypto.md`, "C4 app wiring").
+  memberLeave,
 }
 
 /// C3 types (docs/designs/C3-private-channels-and-info.md). They change state
@@ -63,6 +67,7 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.infoUpdate => 'info_update',
         AppPayloadType.profileKey => 'profile_key',
         AppPayloadType.groupProfileKey => 'group_profile_key',
+        AppPayloadType.memberLeave => 'member_leave',
         _ => name,
       };
 
@@ -74,7 +79,8 @@ extension AppPayloadTypeWire on AppPayloadType {
       this == AppPayloadType.pollClose ||
       infoPayloadTypes.contains(this) ||
       this == AppPayloadType.profileKey ||
-      this == AppPayloadType.groupProfileKey;
+      this == AppPayloadType.groupProfileKey ||
+      this == AppPayloadType.memberLeave;
 }
 
 class DecryptedAppPayload {
@@ -182,6 +188,8 @@ class FrankingPolicy {
     'infoKey',
     'infoKeyRequest',
     'infoUpdate',
+    // C4: a leave proof says nothing anyone would report.
+    'memberLeave',
   };
 
   /// Whether a payload without `frank` is accepted (as unreportable).
@@ -224,6 +232,7 @@ class AppPayloadCodec {
             infoPayloadTypes.contains(type) ||
             type == AppPayloadType.profileKey ||
             type == AppPayloadType.groupProfileKey ||
+            type == AppPayloadType.memberLeave ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -520,6 +529,10 @@ class AppPayloadCodec {
       AppPayloadType.profileKey ||
       AppPayloadType.groupProfileKey =>
         version >= 2,
+      AppPayloadType.memberLeave => version >= 2 &&
+          body.length == 1 &&
+          body['epoch'] is int &&
+          (body['epoch'] as int) >= 0,
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,

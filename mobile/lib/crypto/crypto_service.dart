@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import '../core/models.dart';
 import '../core/roles/governance.dart' show GovernanceState;
+import '../core/roles/governance_commands.dart'
+    show GovernanceCommands, GovernanceObservations;
 import '../storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
@@ -627,4 +629,52 @@ class UnavailableCryptoService
 
   @override
   GovernanceState? governanceOf(String conversationId) => null;
+}
+
+/// C4: a group's verified role record with the MLS account roster it was
+/// read with and this device's own clocks for it.
+class GovernanceView {
+  const GovernanceView({
+    required this.record,
+    required this.roster,
+    required this.observations,
+  });
+
+  final GovernanceState record;
+  final Set<String> roster;
+  final GovernanceObservations? observations;
+}
+
+/// A remote commit the C4 rules refuse (docs/crypto.md, "C4 app wiring"). It
+/// is an invalid MLS control message: the conversation pauses on it (I33).
+class GovernanceRefusedException implements Exception {
+  const GovernanceRefusedException(this.reason);
+  final String reason;
+  @override
+  String toString() => 'GovernanceRefusedException($reason)';
+}
+
+/// This device cannot prove the departure of a governing account its
+/// change would remove; the removal stays pending for a device that can.
+class GovernanceRemovalUnprovenException implements Exception {
+  const GovernanceRemovalUnprovenException(this.conversationId);
+  final String conversationId;
+  @override
+  String toString() => 'GovernanceRemovalUnprovenException';
+}
+
+/// C4 role commands: role-only commits built by [GovernanceCommands] from the
+/// group's current record and MLS roster, queued like any staged commit.
+abstract interface class RoleCommandCryptoService {
+  /// The record, roster and clocks of [groupId], or null without a record.
+  Future<GovernanceView?> governanceView(String groupId);
+
+  /// Builds the next record with [build] (which throws
+  /// `GovernanceCommandException` to refuse) and stages it as a commit.
+  Future<void> stageRoleChange(
+    String groupId,
+    GovernanceState Function(GovernanceCommands commands,
+            GovernanceObservations? observed, DateTime now)
+        build,
+  );
 }

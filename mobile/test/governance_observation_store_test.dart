@@ -198,8 +198,7 @@ void main() {
       expect(observed.electionSeen, isNull);
     });
 
-    test('$label: clocks follow crypto lifetime',
-        () async {
+    test('$label: clocks follow crypto lifetime', () async {
       final s = store();
       await s.saveSession(session);
       await s.commitMlsTransition(transition(0, change(open, now)));
@@ -292,8 +291,7 @@ void main() {
     return file;
   }
 
-  test('schema 34 upgrades to the C4 schema with empty local clocks',
-      () async {
+  test('schema 34 upgrades to the C4 schema with empty local clocks', () async {
     final db = EncryptedLocalDatabase(NativeDatabase(await schema34()));
     databases.add(db);
     expect(await db.readMetadata('retained'), 'value');

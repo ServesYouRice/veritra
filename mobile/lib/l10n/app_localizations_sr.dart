@@ -4278,6 +4278,84 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get communityInfoOpen => 'Категорије и иконица';
+
+  @override
+  String get rolesTitle => 'Улоге';
+
+  @override
+  String get rolesDetail => 'Проверава апликација сваког члана, а не сервер.';
+
+  @override
+  String get rolesNoRecord =>
+      'Ова група је направљена пре проверених улога, па су приказане улоге оне које каже сервер.';
+
+  @override
+  String get rolesUnavailable =>
+      'Улоге тренутно не могу да се прочитају на овом уређају.';
+
+  @override
+  String rolesYou(String name) {
+    return '$name (ти)';
+  }
+
+  @override
+  String get rolesElector => 'Гласа за новог власника';
+
+  @override
+  String get rolesMakeAdmin => 'Постави за администратора';
+
+  @override
+  String get rolesMakeModerator => 'Постави за модератора';
+
+  @override
+  String get rolesMakeMember => 'Врати у члана';
+
+  @override
+  String get rolesStepDown => 'Одступи';
+
+  @override
+  String get rolesElectorOn => 'Дозволи гласање за новог власника';
+
+  @override
+  String get rolesElectorOff => 'Забрани гласање за новог власника';
+
+  @override
+  String get rolesTransfer => 'Предај власништво';
+
+  @override
+  String rolesTransferConfirm(String name) {
+    return 'Предати ову групу кориснику $name? Ти постајеш администратор.';
+  }
+
+  @override
+  String get rolesOwnership => 'Власништво';
+
+  @override
+  String rolesElectionOpen(String votes, String total) {
+    return 'Избор власника је у току. Гласова: $votes од $total.';
+  }
+
+  @override
+  String get rolesElectionNone =>
+      'Ако власник није ту дуже од 30 дана, администратори могу да изаберу новог.';
+
+  @override
+  String get rolesStartElection => 'Покрени избор власника';
+
+  @override
+  String rolesVoteFor(String name) {
+    return 'Гласај за: $name';
+  }
+
+  @override
+  String get rolesCloseElection => 'Заврши избор';
+
+  @override
+  String get rolesOwnerCancelNote =>
+      'Ти си власник: твоја апликација сама завршава овај избор.';
+
+  @override
+  String get rolesOnlyAdminsPost => 'Само администратори објављују';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8559,4 +8637,82 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get communityInfoOpen => 'Kategorije i ikonica';
+
+  @override
+  String get rolesTitle => 'Uloge';
+
+  @override
+  String get rolesDetail => 'Proverava aplikacija svakog člana, a ne server.';
+
+  @override
+  String get rolesNoRecord =>
+      'Ova grupa je napravljena pre proverenih uloga, pa su prikazane uloge one koje kaže server.';
+
+  @override
+  String get rolesUnavailable =>
+      'Uloge trenutno ne mogu da se pročitaju na ovom uređaju.';
+
+  @override
+  String rolesYou(String name) {
+    return '$name (ti)';
+  }
+
+  @override
+  String get rolesElector => 'Glasa za novog vlasnika';
+
+  @override
+  String get rolesMakeAdmin => 'Postavi za administratora';
+
+  @override
+  String get rolesMakeModerator => 'Postavi za moderatora';
+
+  @override
+  String get rolesMakeMember => 'Vrati u člana';
+
+  @override
+  String get rolesStepDown => 'Odstupi';
+
+  @override
+  String get rolesElectorOn => 'Dozvoli glasanje za novog vlasnika';
+
+  @override
+  String get rolesElectorOff => 'Zabrani glasanje za novog vlasnika';
+
+  @override
+  String get rolesTransfer => 'Predaj vlasništvo';
+
+  @override
+  String rolesTransferConfirm(String name) {
+    return 'Predati ovu grupu korisniku $name? Ti postaješ administrator.';
+  }
+
+  @override
+  String get rolesOwnership => 'Vlasništvo';
+
+  @override
+  String rolesElectionOpen(String votes, String total) {
+    return 'Izbor vlasnika je u toku. Glasova: $votes od $total.';
+  }
+
+  @override
+  String get rolesElectionNone =>
+      'Ako vlasnik nije tu duže od 30 dana, administratori mogu da izaberu novog.';
+
+  @override
+  String get rolesStartElection => 'Pokreni izbor vlasnika';
+
+  @override
+  String rolesVoteFor(String name) {
+    return 'Glasaj za: $name';
+  }
+
+  @override
+  String get rolesCloseElection => 'Završi izbor';
+
+  @override
+  String get rolesOwnerCancelNote =>
+      'Ti si vlasnik: tvoja aplikacija sama završava ovaj izbor.';
+
+  @override
+  String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';
 }

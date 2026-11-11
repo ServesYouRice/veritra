@@ -80,6 +80,13 @@ type MLSCommitBundleInput struct {
 	Added              []MLSDeviceRef
 	Removed            []MLSDeviceRef
 	RevocationDeviceID string
+	// RoleChange is the sender's declaration that a commit adding and
+	// removing no one carries a C4 role-record change, not a self-update.
+	// Like Added and Removed it is unverifiable here; receivers judge the
+	// record. It only exempts the commit from the self-update interval and
+	// from waiting behind a pending removal (an unproven removal may stay
+	// pending for good, docs/crypto.md "C4 app wiring").
+	RoleChange bool
 }
 
 type MLSCommitBundleResult struct {
@@ -143,13 +150,13 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 	hasCommit := len(input.Commit) > 0
 	// A Welcome needs an Added device and a revocation a Removed one (both
 	// checked below), so an update-only commit carries neither.
-	updateOnly := hasCommit && len(input.Added) == 0 && len(input.Removed) == 0
+	updateOnly := hasCommit && len(input.Added) == 0 && len(input.Removed) == 0 && !input.RoleChange
 	if input.ConversationID == "" || input.SenderAccountID == "" || input.SenderDeviceID == "" ||
 		input.Epoch < 0 || input.IdempotencyKey == "" || len(input.IdempotencyKey) > 96 ||
 		len(input.Commit) > maxMLSHandshake || len(input.Welcome) > maxMLSHandshake ||
 		!validMLSDeviceRefs(input.Added) || !validMLSDeviceRefs(input.Removed) ||
 		(len(input.Added) > 0) != (len(input.Welcome) > 0) ||
-		(!hasCommit && (len(input.Added) > 0 || len(input.Removed) > 0 || input.Epoch != 0)) {
+		(!hasCommit && (len(input.Added) > 0 || len(input.Removed) > 0 || input.Epoch != 0 || input.RoleChange)) {
 		return MLSCommitBundleResult{}, ErrInvalidInput
 	}
 	for _, removed := range input.Removed {

@@ -4261,4 +4261,83 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get communityInfoOpen => 'Categories and icon';
+
+  @override
+  String get rolesTitle => 'Roles';
+
+  @override
+  String get rolesDetail =>
+      'Checked by every member\'s app, not by the server.';
+
+  @override
+  String get rolesNoRecord =>
+      'This group was made before verified roles, so the roles shown are the server\'s.';
+
+  @override
+  String get rolesUnavailable =>
+      'Roles can\'t be read on this device right now.';
+
+  @override
+  String rolesYou(String name) {
+    return '$name (you)';
+  }
+
+  @override
+  String get rolesElector => 'Votes for a new owner';
+
+  @override
+  String get rolesMakeAdmin => 'Make admin';
+
+  @override
+  String get rolesMakeModerator => 'Make moderator';
+
+  @override
+  String get rolesMakeMember => 'Make member';
+
+  @override
+  String get rolesStepDown => 'Step down';
+
+  @override
+  String get rolesElectorOn => 'Let them vote for a new owner';
+
+  @override
+  String get rolesElectorOff => 'Stop them voting for a new owner';
+
+  @override
+  String get rolesTransfer => 'Make owner';
+
+  @override
+  String rolesTransferConfirm(String name) {
+    return 'Hand this group to $name? You become an admin.';
+  }
+
+  @override
+  String get rolesOwnership => 'Ownership';
+
+  @override
+  String rolesElectionOpen(String votes, String total) {
+    return 'An owner election is open. Votes: $votes of $total.';
+  }
+
+  @override
+  String get rolesElectionNone =>
+      'If the owner is away for more than 30 days, the admins can choose a new one.';
+
+  @override
+  String get rolesStartElection => 'Start an owner election';
+
+  @override
+  String rolesVoteFor(String name) {
+    return 'Vote for $name';
+  }
+
+  @override
+  String get rolesCloseElection => 'End the election';
+
+  @override
+  String get rolesOwnerCancelNote =>
+      'You are the owner: your app ends this election by itself.';
+
+  @override
+  String get rolesOnlyAdminsPost => 'Only admins post';
 }

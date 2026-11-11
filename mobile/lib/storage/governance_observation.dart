@@ -14,6 +14,7 @@ class GovernanceObservationChange {
     required this.state,
     required this.authenticatedSender,
     required this.receivedAt,
+    this.senderApproved = true,
   }) {
     if (groupId.isEmpty ||
         groupId.length > 128 ||
@@ -30,9 +31,14 @@ class GovernanceObservationChange {
   final String authenticatedSender;
   final DateTime receivedAt;
 
-  GovernanceObservations reduce(GovernanceObservations? previous) =>
-      previous == null
-          ? GovernanceObservations.firstSeen(state, receivedAt.toUtc())
-          : previous.accepted(state, receivedAt.toUtc(),
-              ownerActive: authenticatedSender == state.owner);
+  /// Whether the sender's leaf is on its account's L1 approved-device list.
+  /// A leaf that is not never counts as the owner's activity: any member can
+  /// add a leaf under the owner's account id (ABI 20 review note).
+  final bool senderApproved;
+
+  GovernanceObservations reduce(GovernanceObservations? previous) => previous ==
+          null
+      ? GovernanceObservations.firstSeen(state, receivedAt.toUtc())
+      : previous.accepted(state, receivedAt.toUtc(),
+          ownerActive: senderApproved && authenticatedSender == state.owner);
 }

@@ -1,7 +1,10 @@
 # C4: built-in roles, verified by every app
 
-**Status: rules engine, codec, ABI 20 carrier, command planner and schema 36
-observation storage; app wiring remains blocked on C1 removal proofs.** Rescoped
+**Status: rules engine, codec, ABI 20 carrier, command planner, schema 36
+observation storage and the app wiring (producers, two-phase receiver,
+removal proofs, L1 gate, roles screen, owner cancel) are built; not yet
+covered by tests or independently reviewed; server succession is not
+built.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
 `5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
@@ -498,7 +501,7 @@ reserved for the remaining work). `STATE.md` and release gates are unchanged.
 
 ## Durable observations (review follow-up, 2026-11-11)
 
-Schema **38** adds `local_governance_observations`, keyed by the MLS group
+Schema **36** adds `local_governance_observations`, keyed by the MLS group
 id (the shared group for community channels). It keeps owner identity,
 `ownerRev`, last locally observed owner activity, and the open election's
 revision and first receipt time. Microsecond timestamps round-trip exactly.
@@ -523,3 +526,19 @@ creation rolls back the schema version and retries safely.
 These APIs remain unused by app receivers until the documented removal-proof
 and approved-leaf checks exist. This follow-up closes durable storage, not
 the C4 application wiring or the package as a whole.
+
+## App wiring and removal proofs (2026-11-11)
+
+The removal proofs this design required before receivers are now part of
+C4 itself, not C1 (C1 merged with no proof): a governing account (admin,
+moderator, elector, electorate member, voter or candidate; never the owner,
+never a plain member) leaves the roster only by a kick an approved committer
+`mayActOn`, by its own `member_leave` payload bound to its MLS epoch, or by
+its own L1 list removing every leaf it has. A privileged record change, an
+owner's cancel and a kick need an L1-approved committer. Producers, the
+two-phase receiver, observations, the owner's automatic cancel (random delay
+up to 24 hours), the `role_change` bundle flag and a roles screen are wired.
+DMs carry no record (decision taken for the open question). Rules and
+residuals: `docs/crypto.md`, "C4 app wiring". Still open: server
+succession after a won election, an independent review, and tests of the
+wiring.

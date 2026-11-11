@@ -457,6 +457,17 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C4 app wiring and removal proofs (2026-11-11):** groups and community
+  shared groups are created with the genesis role record; every commit
+  producer carries `requiredRecord` (or a role command) through
+  `stageCommitWithRoles`; remote commits go through the ABI 20 two-phase
+  receive (stage, judge, merge or discard). New: removal proofs for
+  governing accounts, an L1 gate on privileged committers, the hidden
+  `member_leave` payload, and the `role_change` commit-bundle flag (server
+  exempts such commits from the self-update interval). No ABI, local schema
+  or server migration change. Rules: "Group role state (C4)", "C4 app
+  wiring" below. Needs the independent review; not yet covered by tests.
+
 - **L1 complete adds, join notice, recovery retype and pre-L1 RK
   confirmation (2026-11-11):** held groups the server reports no change
   for are audited against signed lists (bounded, after the reconcile
@@ -3068,19 +3079,19 @@ once no old sender is left.
 
 ## Group role state (C4)
 
-**2026-11-11 review follow-up:** local schema **38** persists device-local
+**2026-11-11 review follow-up:** local schema **36** persists device-local
 governance observations in the encrypted database, atomically with accepted
 MLS transitions and outgoing application messages. It records the owner,
 `ownerRev`, last locally observed owner activity, election opening revision
 and first-seen time. Restarts preserve these waits; backups and history
 transfers exclude them. Group deletion and crypto/identity replacement drop
 them. The storage effect accepts only an already authenticated transition;
-it is not wired into app receivers before C1 removal proofs and L1-approved
-role rosters exist. ABI **22** and server migration **0071** remain reserved
-for the remaining C4 work; the ABI 20 carrier and release gates are unchanged.
+the receivers now feed it ("C4 app wiring"). No ABI or server migration
+number is used by C4's remaining work; the ABI 20 carrier and release gates
+are unchanged.
 
-Built: the record codec (Dart) and the crypto carrier (ABI 20, change log);
-not wired into the app. Design:
+Built: the record codec (Dart), the crypto carrier (ABI 20, change log) and
+the app wiring ("C4 app wiring" below). Design:
 `docs/designs/C4-custom-roles.md` (built-in roles only, D80). Rules engine:
 `mobile/lib/core/roles/governance.dart`.
 
@@ -3254,6 +3265,111 @@ every receiver's sync. The owner's self-update stays path-only
 record, so it never moves `owner_rev`. It cannot cancel an election either, and
 receivers refuse an owner commit that leaves one open, so while an election is
 open the owner's app sends the cancel (a commit with the record) first.
+
+### C4 app wiring (2026-11-11)
+
+What the app now does with the ABI 20 carrier. Code:
+`mobile/lib/crypto/native_crypto_service.dart` (producers, receiver,
+`stageRoleChange`), `mobile/lib/core/app_state_roles.dart` (actions, leave
+proof, owner cancel), `mobile/lib/core/roles/governance.dart`
+(`removalNeedsProof`).
+
+**Which groups carry a record.** A group (`kind = group`) and a
+community's shared group are created with `createGroupWithRoles` and the
+genesis record (the creator owns it). The kind is the one the creating app
+asked the server for, held locally while the group is made. A DM carries no
+record (two people have no roles; decision for the open question above), and
+a private channel's group carries none (it is judged by the shared group's
+record). Groups made before this keep no record and no verified roles.
+
+**Producers.** Every staged commit (first add, reconcile, re-add, device
+replacement, revocation) computes `requiredRecord` for itself and, when it
+differs from the current record, stages it with `stageCommitWithRoles`
+after running `validateCommit` on it. Role commands (`GovernanceCommands`:
+set role, electors, posting, transfer, open, vote, close) are role-only
+commits through the same call. The owner's periodic self-update, while an
+election is open, is replaced by the cancel (a path-only update carries no
+record and receivers refuse an owner commit that leaves an election open).
+A bundle that carries a record is marked `role_change: true`; the server
+(`CreateMLSCommitBundle`) does not count such a commit as a self-update, so
+it is neither rate-limited as one nor held behind a pending removal. The
+flag is unverifiable, like `added` and `removed`; receivers judge the record.
+
+**Receiving.** Every remote commit is staged (`stageIncomingCommit`),
+judged, then merged (`mergeIncomingCommit`) or discarded. A discard is
+followed by restoring the committed state, and the conversation pauses on
+that commit (`GovernanceRefusedException`, an invalid control message under
+I33). In a record group the judgment is:
+
+1. Both records decode; a record never appears or disappears; committer and
+   rosters are UTF-8 account ids.
+2. `validateCommit(prev, next, committer, before, after)` on the review's
+   own data. Its inputs come only from MLS: no L1 verdict, server role or
+   clock enters it, so every device reaches the same answer.
+3. **L1 gate.** When the commit changes the record beyond `requiredRecord`
+   (a role decision), is an owner commit cancelling an election, or is
+   justified as a kick (below), the committer's leaf must be `approved` by
+   its account's L1 list. `checking` (the list cannot be read now) retries
+   the commit later; anything else refuses it. This narrows D94 ("a commit
+   is never refused for a list reason") for these commits only: an
+   unapproved leaf can carry any account's id (ABI 20 review note), so it
+   must never act with that account's role. Other commits keep D94.
+4. **Removal proofs.** For each account the commit drops from the roster
+   and that `removalNeedsProof` (admin, moderator, elector, in an open
+   election's electorate, a voter or a voted-for candidate; never the owner,
+   never a plain member), one of these must hold, else the commit is
+   refused:
+   - *kick*: the approved committer `mayActOn` the account under the record
+     before the commit;
+   - *leave*: this device holds the account's own `member_leave` from this
+     group (below);
+   - *revocation*: every leaf of the account in the tree is `removed` by
+     the account's own L1 list (a list read failure retries later).
+
+Producers apply the same test to their own removals and leave out those
+they cannot prove; the server keeps them pending for a device that can (the
+kicker, or any member once the proof or the list arrives).
+
+**`member_leave`** (app payload v2, hidden, never franked, never reported:
+`{"epoch": n}`). A governing member's app sends it to the record group
+before it asks the server to leave, and waits until the server holds it.
+Receivers keep it only in a record group and only when `epoch` equals the
+epoch MLS authenticated for the message, in the setting
+`c4.leave.<group>.<account>`, written with the message's transition. It is
+deleted when its removal merges, when the account is added again, and for
+every current member on a Welcome. The owner cannot leave (D81): the app
+refuses until it has transferred.
+
+**Observations.** Accepted commits, Welcomes and application messages in a
+record group update `local_governance_observations` (schema 36) in the same
+transaction. Only an approved leaf of the owner counts as owner activity.
+Owner posts in a private channel's group do not count (their record is the
+shared group's), which can only make a challenge happen sooner; the owner's
+app cancels it.
+
+**Owner cancel.** On each self-update pass the owner's app schedules, for
+each record group with an open election, one cancel after a random delay
+of up to 24 hours; it sends it only if the election is still open.
+
+**Using the record.** `AppState.governanceOf` maps a community channel to
+its shared group. `roleOf`, `mayPost`, `canCreateChannel`, the C2 drop and
+the C3 info checks read the record first, the server's role only where
+there is none. Granting a role or transferring ownership commits the record
+and then updates the server's row, so the server's own route checks follow
+it; the two may still disagree (the record wins in every app). A posting
+switch and a new announcement channel are written to the record too.
+
+**Residuals.**
+- A plain member's forced removal needs no proof; it moves only `joined`,
+  which orders the no-admin claim.
+- An account deleted without sending `member_leave` (or a server removal
+  of a governing account nobody can prove) stays in the tree: its removal
+  stays pending and the D68 send hold in that group does not release.
+- A server role that differs from the record (for example a member added
+  at a role, which the record does not grant) yields kicks no receiver
+  accepts; they stay pending until the role is also set in the record.
+- Server succession (moving the server's owner row after a won election) is
+  not built; apps never read that row for roles.
 
 **Using it.** C2: a post is accepted where `mayPost` holds, and posting is
 restricted where this record or the server says so. C1/C5: `mayActOn`. A

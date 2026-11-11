@@ -713,3 +713,22 @@ GovernanceCheck validateCommit(
     added: after.difference(before),
   );
 }
+
+/// C4 removal proofs (docs/crypto.md, "C4 app wiring"): whether a commit that
+/// takes [account]'s last device out of the group must be justified, because
+/// pruning the account changes who governs. True for an admin, moderator or
+/// elector, and for an account in an open election's electorate, a voter or
+/// a candidate with a vote. Never for the owner, who is never pruned and may
+/// be out of the roster (D81), nor for a plain member, whose removal moves
+/// only its `joined` entry. Receivers and producers both use this.
+bool removalNeedsProof(GovernanceState state, String account) {
+  if (account == state.owner) return false;
+  final election = state.election;
+  return state.admins.containsKey(account) ||
+      state.moderators.contains(account) ||
+      state.electors.contains(account) ||
+      (election != null &&
+          (election.electorate.contains(account) ||
+              election.votes.containsKey(account) ||
+              election.votes.containsValue(account)));
+}

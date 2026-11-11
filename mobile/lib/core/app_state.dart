@@ -54,6 +54,7 @@ import '../calls/call_service.dart' show isTerminalCallState;
 import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
 import 'roles/governance.dart';
+import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
 import 'attachments.dart';
 import 'client_config.dart';
@@ -108,6 +109,7 @@ part 'app_state_device_list.dart';
 part 'app_state_l1_joins.dart';
 part 'app_state_community_info.dart';
 part 'app_state_profiles.dart';
+part 'app_state_roles.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -456,6 +458,16 @@ class AppState extends ChangeNotifier
   /// and which posts are listed, comes from here. Set by the chat screen.
   final Map<String, String> _selectedChannels = {};
 
+  /// C4: the owner's automatic election cancels waiting out their random
+  /// delay, by record group ([RoleActions]).
+  final Map<String, Timer> _ownerCancelTimers = <String, Timer>{};
+  final Random _ownerCancelRandom = Random.secure();
+
+  /// Kinds of conversations whose MLS group this device is creating before
+  /// they are in [conversations] (C4: the creator's own kind decides
+  /// whether the group carries a role record).
+  final Map<String, String> _creatingKinds = <String, String>{};
+
   // C3 (app_state_community_info.dart).
   CommunityInfoService? _infoService;
   String? _infoServiceOwner;
@@ -501,6 +513,10 @@ class AppState extends ChangeNotifier
   final Set<String> _previewPending = <String>{};
   @override
   String? roleOf(String conversationId, String accountId) {
+    // C4: a verified record names the role; the server's word is a hint
+    // only for a group without one.
+    final record = governanceOf(conversationId);
+    if (record != null) return record.roleOf(accountId).name;
     final memberRole = membersFor(conversationId)
         .where((m) => m.accountId == accountId)
         .firstOrNull
@@ -538,7 +554,9 @@ class AppState extends ChangeNotifier
       if (override != null) return override;
     }
     try {
-      return cryptoService.governanceOf(conversationId);
+      // A community channel is judged by its shared group's record (C0).
+      return cryptoService
+          .governanceOf(recordGroupFor(conversationId) ?? conversationId);
     } catch (_) {
       return null;
     }
@@ -635,6 +653,7 @@ class AppState extends ChangeNotifier
       membersFor(conversationId).map((m) => m.accountId).toSet();
   @override
   String? conversationKind(String conversationId) =>
+      _creatingKinds[conversationId] ??
       conversations.where((c) => c.id == conversationId).firstOrNull?.kind;
   @override
   String? conversationChannel(String conversationId) =>
@@ -2583,7 +2602,9 @@ class AppState extends ChangeNotifier
               (conversation.createdBy != null &&
                   conversation.createdBy != current.accountId) ||
               (mls != null && await mls.groupEpoch(conversation.id) != null));
-      if (!existingDm) await _setUpConversationGroup(conversation.id);
+      if (!existingDm) {
+        await _setUpConversationGroup(conversation.id, kind: conversation.kind);
+      }
       conversations = <Conversation>[
         conversation,
         ...conversations.where((item) => item.id != conversation.id),
@@ -2693,7 +2714,7 @@ class AppState extends ChangeNotifier
       // this device creates now; channels in it need no group of their own.
       final shared = created!.sharedConversationId;
       if (shared != null) {
-        await _setUpConversationGroup(shared);
+        await _setUpConversationGroup(shared, kind: 'community_shared');
         await refreshConversations();
       }
     });
@@ -2742,7 +2763,8 @@ class AppState extends ChangeNotifier
       final inSharedGroup = creation.conversation.isCommunityShared;
       // An open channel posts into the community's existing group.
       if (!inSharedGroup) {
-        await _setUpConversationGroup(creation.conversation.id);
+        await _setUpConversationGroup(creation.conversation.id,
+            kind: creation.conversation.kind);
       }
       channelsByCommunity = <String, List<Channel>>{
         ...channelsByCommunity,
@@ -2776,6 +2798,11 @@ class AppState extends ChangeNotifier
       unawaited(() async {
         await publishChannelInfo(routed.channel, name: name, mint: true);
         if (routed.shared) await publishCommunityInfo(communityId);
+        // C4: an announcement channel is restricted in the record too.
+        if (routed.shared && routed.channel.kind == 'announcement') {
+          await _recordAnnouncementChannel(
+              routed.channel.conversationId!, routed.channel.id);
+        }
       }());
     }
     return error == null ? created : null;
@@ -2917,7 +2944,18 @@ class AppState extends ChangeNotifier
   }
 
   /// Leaves a conversation and drops its local state.
-  Future<bool> leaveConversation(String conversationId) {
+  Future<bool> leaveConversation(String conversationId) async {
+    // C4: before the leave, outside the members op (it sends).
+    final owner = session;
+    if (owner != null) {
+      try {
+        await _beforeLeavingRecordGroup(owner, conversationId);
+      } on UserFacingException catch (err) {
+        _opErrors[Ops.members] = err.message;
+        notifyListeners();
+        return false;
+      }
+    }
     return _runScoped(Ops.members, () async {
       final current = session;
       final client = api;
@@ -3567,6 +3605,9 @@ class AppState extends ChangeNotifier
       ];
       notifyListeners();
     });
+    // C4: the record restricts too, so a server that later switches the
+    // setting off cannot let members' posts through (C2).
+    await _recordPosting(conversationId, policy == 'admins');
   }
 
   Future<List<MetadataSearchResult>> searchMetadata(String query) async {
@@ -6263,6 +6304,7 @@ class AppState extends ChangeNotifier
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         try {
           await _maybeSelfUpdate(current, ownerGeneration);
+          await _scheduleOwnerCancels();
         } catch (err) {
           // A self-update is optional; it never blocks sync.
           if (err is ApiException && err.statusCode == 401) rethrow;
@@ -8811,7 +8853,17 @@ class AppState extends ChangeNotifier
 
   /// Creates the MLS group for a new conversation and sends each member's
   /// Welcome, so the composer works as soon as the conversation opens.
-  Future<void> _setUpConversationGroup(String conversationId) async {
+  Future<void> _setUpConversationGroup(String conversationId,
+      {String? kind}) async {
+    if (kind != null) _creatingKinds[conversationId] = kind;
+    try {
+      await _setUpConversationGroupOnce(conversationId);
+    } finally {
+      _creatingKinds.remove(conversationId);
+    }
+  }
+
+  Future<void> _setUpConversationGroupOnce(String conversationId) async {
     final current = session;
     final client = api;
     final mls = _mlsCrypto;
@@ -9545,6 +9597,7 @@ class AppState extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    _cancelOwnerCancelTimers();
     unawaited(screenGuard.setSecure(false));
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
