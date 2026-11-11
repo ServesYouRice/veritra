@@ -852,9 +852,14 @@ class AppState extends ChangeNotifier
   bool _k1RerunRequested = false;
   Timer? _k1Timer;
 
-  /// Where the second copy goes (K1-5); tests replace it.
+  /// Where the second copy goes (K1-5): a desktop folder, or an Android
+  /// document tree through the channel. Tests replace it.
   @visibleForTesting
-  K1SecondCopyWriter k1SecondCopyWriter = const FileK1SecondCopyWriter();
+  K1SecondCopyWriter k1SecondCopyWriter = const PlatformK1SecondCopyWriter();
+
+  /// The phone second-copy channel (Android folder pick, iOS export).
+  @visibleForTesting
+  K1SecondCopyChannel k1SecondCopyChannel = const K1SecondCopyChannel();
 
   /// The clock K1 schedules read; tests move it.
   @visibleForTesting
@@ -8456,9 +8461,12 @@ class AppState extends ChangeNotifier
     final holdSeq = _removalHoldSeq;
     final changes = await client.mlsPendingChanges(current.token);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
-    _l1Joins.reported = <String>{
-      for (final change in changes) change.conversationId,
-    };
+    // Only conversations whose discovery finishes in this pass count as
+    // covered (review fix): a change listed at a stale epoch, still backing
+    // off or waiting for its coordinator is skipped here, and the audit
+    // must not skip it as well.
+    final covered = <String>{};
+    _l1Joins.reported = covered;
     await _loadMissingJoins(current);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
@@ -8501,8 +8509,10 @@ class AppState extends ChangeNotifier
         if (discovery != null) {
           try {
             discovered = await _discoverApprovedAdds(
-                current, client, discovery, change.conversationId);
+                current, client, discovery, change.conversationId,
+                removing: {for (final ref in change.remove) ref.accountId});
             discoveryComplete = true;
+            covered.add(change.conversationId);
           } catch (err) {
             if (err is ApiException && err.statusCode == 401) rethrow;
             if (change.remove.isEmpty) rethrow;
@@ -8610,12 +8620,18 @@ class AppState extends ChangeNotifier
       ApiClient client,
       ApprovedDeviceDiscoveryCryptoService discovery,
       String conversationId,
-      {bool creating = false}) async {
+      {bool creating = false,
+      Set<String> removing = const <String>{}}) async {
     final members =
         await client.conversationMembers(current.token, conversationId);
+    final memberIds = {for (final member in members) member.accountId};
+    // Accounts that already hold a leaf are examined as well (the native
+    // call adds them), except one this change removes from the
+    // conversation: a departing account never gains a device. A device
+    // revoke keeps its account in the list, so its siblings still join.
     final missing = await discovery.missingApprovedDevices(
-        creating ? null : conversationId,
-        members.map((member) => member.accountId));
+        creating ? null : conversationId, memberIds,
+        excluding: removing.difference(memberIds));
     // The server and native commit format cap each bundle at 256 changes.
     return missing.take(256).toList();
   }

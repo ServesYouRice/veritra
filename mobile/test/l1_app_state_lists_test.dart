@@ -13,6 +13,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
+import 'package:private_messenger/l10n/l10n.dart' show englishL10n;
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -443,6 +444,443 @@ void main() {
     expect(chain.head.recoveryKey, isNotNull);
     expect(api.recoveryKeyLists.single, api.chain.last);
   }, skip: skip);
+
+  // ------------------------------------------------------------------
+  // The four L1 flows of 2026-11-11 (docs/designs/L1-approved-devices.md):
+  // the complete-adds audit, the incomplete-join notice, the recovery
+  // retype and the pre-L1 recovery-key confirmation, with the review fixes.
+
+  /// An owner with [groups] groups that hold only this device; then
+  /// [devices] are signed onto the owner's list. A first catch-up runs
+  /// before they are added, so no earlier pass sees them.
+  Future<({_AuditApi api, AppState state, NativeCryptoService crypto})>
+      auditSetup(
+          {int groups = 1,
+          List<String> devices = const ['dev_phone'],
+          Duration? interval,
+          bool tearDown = true}) async {
+    final api = _AuditApi(bindings);
+    final crypto =
+        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final state = _state(api, crypto)..reconcileFallback = Duration.zero;
+    if (tearDown) addTearDown(state.dispose);
+    expect(state.l1JoinAuditInterval, const Duration(minutes: 15));
+    state.l1JoinAuditInterval = Duration.zero;
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    for (var i = 0; i < groups; i++) {
+      expect(
+          (await state.startConversation(kind: 'group'))?.id, 'conv_${i + 1}');
+    }
+    await _catchUp(state);
+    expect(api.claims, isEmpty);
+    for (final id in devices) {
+      await _addSignedDevice(bindings, api, crypto, id);
+    }
+    state.l1JoinAuditInterval = interval ?? const Duration(minutes: 15);
+    return (api: api, state: state, crypto: crypto);
+  }
+
+  /// A new app instance on the same store (a restart).
+  Future<AppState> restart(_AuditApi api, NativeCryptoService crypto,
+      {Duration fallback = Duration.zero,
+      Duration interval = const Duration(minutes: 15)}) async {
+    final state = _state(api, crypto)
+      ..reconcileFallback = fallback
+      ..l1JoinAuditInterval = interval;
+    await state.tryRestoreSession();
+    expect(state.session?.deviceId, _own);
+    return state;
+  }
+
+  Future<void> stop(AppState state) async {
+    state.dispose();
+    await state.backgroundWorkIdle;
+  }
+
+  test(
+      'audit: a group the server never reports gains the approved device '
+      'by explicit claim; the next audit finds it complete', () async {
+    final (:api, :state, :crypto) = await auditSetup(interval: Duration.zero);
+    final created = api.bundles.length;
+    await _catchUp(state);
+    expect(api.claims, [
+      ['dev_phone']
+    ]);
+    expect(api.bundles, hasLength(created + 1));
+    expect(api.bundles.last.added.map((ref) => ref.deviceId), ['dev_phone']);
+    // The tree now holds it: the next audit claims nothing and clears the
+    // recorded gap.
+    await _catchUp(state);
+    expect(api.claims, hasLength(1));
+    expect(await crypto.localStore.loadSetting('l1.missing_joins'), isEmpty);
+    expect(state.incompleteJoinAccounts('conv_1'), isEmpty);
+  }, skip: skip);
+
+  test(
+      'audit: the reconcile fallback gives an honest coordinator the first '
+      'turn', () async {
+    final (:api, :state, :crypto) = await auditSetup();
+    state.reconcileFallback = const Duration(minutes: 3);
+    await _catchUp(state);
+    expect(api.claims, isEmpty, reason: 'waits out the fallback first');
+    // The gap is recorded (and persisted) at once, with no notice yet.
+    final stored =
+        jsonDecode((await crypto.localStore.loadSetting('l1.missing_joins'))!)
+            as Map;
+    expect(stored['owner'], '$_account\u0000$_own');
+    expect((stored['joins'] as Map)['conv_1'], contains(_account));
+    expect(state.incompleteJoinAccounts('conv_1'), isEmpty);
+    expect(
+        state.incompleteJoinAccounts('conv_1',
+            now: DateTime.now().toUtc().add(const Duration(hours: 1))),
+        {_account});
+  }, skip: skip);
+
+  test('audit: at most 8 groups per pass, each at most every 15 minutes',
+      () async {
+    final (:api, :state, :crypto) = await auditSetup(groups: 9);
+    // Claims answer nothing, so every audited group keeps its gap.
+    api.answer = 'partial';
+    await _catchUp(state);
+    expect(api.claims, hasLength(8));
+    await _catchUp(state);
+    // Only the ninth was left; the first eight wait out their interval.
+    expect(api.claims, hasLength(9));
+    await _catchUp(state);
+    expect(api.claims, hasLength(9));
+    expect(api.bundles.where((bundle) => bundle.added.isNotEmpty), isEmpty);
+  }, skip: skip);
+
+  test('audit: one refused device (403) does not keep its siblings out',
+      () async {
+    final (:api, :state, :crypto) =
+        await auditSetup(devices: ['dev_phone', 'dev_tablet']);
+    api.refuse = {'dev_tablet'};
+    await _catchUp(state);
+    expect(api.claims, hasLength(3));
+    expect(api.claims.first, unorderedEquals(['dev_phone', 'dev_tablet']));
+    expect(api.claims.skip(1).map((ids) => ids.single),
+        unorderedEquals(['dev_phone', 'dev_tablet']));
+    expect(api.bundles.last.added.map((ref) => ref.deviceId), ['dev_phone']);
+  }, skip: skip);
+
+  test(
+      'audit (review fix): a change listed at a stale epoch still gets '
+      'discovery', () async {
+    final (:api, :state, :crypto) = await auditSetup();
+    api
+      ..pending = true // A device_list.updated event asks for reconcile.
+      ..pendingList = const [
+        MlsPendingChange(
+            conversationId: 'conv_1', epoch: 99, add: [], remove: [])
+      ];
+    await _catchUp(state);
+    expect(api.staleReadBeforeClaim, isTrue,
+        reason: 'reconcile read the stale change before the audit claimed');
+    expect(api.claims, [
+      ['dev_phone']
+    ]);
+    expect(api.bundles.last.added.single.deviceId, 'dev_phone');
+  }, skip: skip);
+
+  test(
+      'audit (review fix): an account the server leaves out of the member '
+      'list is still examined', () async {
+    final (:api, :state, :crypto) = await auditSetup();
+    api.memberList = const <ConversationMember>[];
+    await _catchUp(state);
+    expect(api.claims, [
+      ['dev_phone']
+    ]);
+    expect(api.bundles.last.added.single.deviceId, 'dev_phone');
+  }, skip: skip);
+
+  test(
+      'notice: a gap older than the grace is shown after a restart; a '
+      'refused bundle keeps it, only the tree clears it', () async {
+    final (:api, :state, :crypto) =
+        await auditSetup(devices: const [], tearDown: false);
+    // Signed while this device is active, added while the app is closed.
+    final add = await _signDeviceAdd(bindings, api, crypto, 'dev_phone');
+    await stop(state);
+    await _publishDeviceAdd(api, crypto, add);
+    final twoHoursAgo = DateTime.now()
+        .toUtc()
+        .subtract(const Duration(hours: 2))
+        .millisecondsSinceEpoch;
+    await crypto.localStore.saveSetting(
+        'l1.missing_joins',
+        jsonEncode({
+          'owner': '$_account\u0000$_own',
+          'joins': {
+            'conv_1': {_account: twoHoursAgo}
+          },
+        }));
+    // The claim answers but the server refuses the commit: the device stays
+    // out of the tree, so the clock keeps running (d396c6d).
+    api.refuseBundles = true;
+    var running = await restart(api, crypto);
+    await _catchUp(running);
+    expect(api.claims, isNotEmpty);
+    expect(api.refusedBundles, greaterThan(0));
+    expect(running.incompleteJoinAccounts('conv_1'), {_account});
+    await stop(running);
+
+    // The server takes the commit: the notice stays until a later audit
+    // finds the device in the tree.
+    api.refuseBundles = false;
+    running = await restart(api, crypto, interval: Duration.zero);
+    addTearDown(running.dispose);
+    await _catchUp(running);
+    expect(api.bundles.last.added.single.deviceId, 'dev_phone');
+    await _catchUp(running);
+    expect(running.incompleteJoinAccounts('conv_1'), isEmpty);
+    expect(await crypto.localStore.loadSetting('l1.missing_joins'), isEmpty);
+  }, skip: skip);
+
+  test('notice: clocks stored for another identity are not used', () async {
+    final (:api, :state, :crypto) =
+        await auditSetup(devices: const [], tearDown: false);
+    // Signed while this device is active, added while the app is closed.
+    final add = await _signDeviceAdd(bindings, api, crypto, 'dev_phone');
+    await stop(state);
+    await _publishDeviceAdd(api, crypto, add);
+    await crypto.localStore.saveSetting(
+        'l1.missing_joins',
+        jsonEncode({
+          'owner': '$_account\u0000dev_other',
+          'joins': {
+            'conv_1': {_account: 1}
+          },
+        }));
+    final running =
+        await restart(api, crypto, fallback: const Duration(minutes: 3));
+    addTearDown(running.dispose);
+    await _catchUp(running);
+    // A fresh clock: no notice, and no claim before the fallback.
+    expect(running.incompleteJoinAccounts('conv_1'), isEmpty);
+    expect(api.claims, isEmpty);
+    final stored =
+        jsonDecode((await crypto.localStore.loadSetting('l1.missing_joins'))!)
+            as Map;
+    expect(stored['owner'], '$_account\u0000$_own');
+  }, skip: skip);
+
+  /// An owner whose list's head names recovery key [key] (change 5), and
+  /// [chained]: a genuine next version of that head, signed but not sent.
+  Future<
+      ({
+        _ListApi api,
+        RecoveryKeyDraft key,
+        RecoveryKeyDraft other,
+        Uint8List chained
+      })> ownerWithRecoveryKey() async {
+    final api = _ListApi(bindings);
+    final crypto =
+        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final owner = _state(api, crypto);
+    await owner.createOwner(_origin, 'owner', 'password', 'setup');
+    final key = await owner.createRecoveryKeyDraft();
+    final other = await owner.createRecoveryKeyDraft();
+    addTearDown(key.dispose);
+    addTearDown(other.dispose);
+    expect(await owner.saveRecoveryKey(key), RecoveryActionResult.done);
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    expect(head.change, DeviceListChange.recoveryKey);
+    final tablet = bindings.createDevice(_account, 'dev_tablet');
+    addTearDown(tablet.close);
+    final chained = await crypto.signDeviceList(DeviceListBody(
+      accountId: idBytes(_account),
+      version: head.version + 1,
+      prevHash: head.listHash,
+      createdAtMs: 3,
+      change: DeviceListChange.add,
+      entries: [
+        ...head.entries,
+        DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey())
+      ],
+      recoveryKey: head.recoveryKey,
+    ));
+    await stop(owner);
+    return (api: api, key: key, other: other, chained: chained);
+  }
+
+  /// A device recovered into the owner's account (K0-R) whose held seed is
+  /// gone: it is not on the list and nothing was posted.
+  Future<({AppState state, NativeCryptoService crypto})> recovered(
+      _ListApi api) async {
+    final store = MemoryLocalStore();
+    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    const session = Session(
+        baseUrl: _origin,
+        token: 'tok',
+        accountId: _account,
+        deviceId: 'dev_rec');
+    await crypto.createEnrollmentCredential(const EnrollmentReservation(
+        id: 'enroll_rec',
+        accountId: _account,
+        deviceId: 'dev_rec',
+        challenge: <int>[4, 5, 6]));
+    await store.saveSession(session);
+    await crypto.activateSession(session);
+    await store.saveSetting('k0.recovered_device', '$_account\u0000dev_rec');
+    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
+        .pinChain(_account, api.chain, expectedHead: api.chain.last);
+    state
+      ..api = api
+      ..session = session;
+    return (state: state, crypto: crypto);
+  }
+
+  test(
+      'retype: a recovered device without its held seed signs change 4 '
+      'from the typed key; a wrong key signs nothing', () async {
+    final (:api, :key, :other, chained: _) = await ownerWithRecoveryKey();
+    final (:state, :crypto) = await recovered(api);
+    await state.refreshDevices();
+    await _until(() => state.recoveryListNeedsRetype);
+    final before = api.chain.length;
+
+    expect(await state.finishRecoveryWithTypedKey(other.display), isFalse);
+    expect(
+        state.errorFor(Ops.recoveryKey), englishL10n.recoveryKeyNotThisAccount);
+    expect(api.chain, hasLength(before));
+    expect(state.recoveryListNeedsRetype, isTrue);
+
+    expect(await state.finishRecoveryWithTypedKey(key.display), isTrue);
+    expect(api.chain, hasLength(before + 1));
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    expect(head.change, DeviceListChange.recovery);
+    expect(head.entries.single.deviceId, idBytes('dev_rec'));
+    expect(head.entries.single.signingKey, await crypto.currentSigningKey());
+    expect(state.recoveryListNeedsRetype, isFalse);
+    expect(await crypto.localStore.loadSetting('l1.recovery_list_statement'),
+        isEmpty);
+  }, skip: skip);
+
+  for (final chains in [false, true]) {
+    test(
+        'retype (review fix): after a conflict, a stored version the head '
+        '${chains ? 'still chains on is kept' : 'moved past is dropped'}',
+        () async {
+      final (:api, :key, :other, :chained) = await ownerWithRecoveryKey();
+      final (:state, :crypto) = await recovered(api);
+      // The stale one chains on the genesis, which the head moved past.
+      final stored = chains ? chained : api.chain.first;
+      await crypto.localStore.saveSetting(
+          'l1.recovery_list_statement',
+          jsonEncode({
+            'account_id': _account,
+            'device_id': 'dev_rec',
+            'statement': base64Encode(stored),
+          }));
+      final before = api.chain.length;
+      api.conflictsLeft = 1;
+      await state.refreshDevices();
+      await _until(() => api.conflictsLeft == 0);
+      if (chains) {
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(
+            await crypto.localStore.loadSetting('l1.recovery_list_statement'),
+            isNotEmpty);
+        expect(state.recoveryListNeedsRetype, isFalse);
+        expect(api.chain, hasLength(before));
+        return;
+      }
+      String? left = 'unread';
+      for (var i = 0; i < 200 && left != ''; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        left =
+            await crypto.localStore.loadSetting('l1.recovery_list_statement');
+      }
+      expect(left, isEmpty);
+      await _until(() => state.recoveryListNeedsRetype);
+      // The prompt leads to a fresh version on the current head.
+      expect(await state.finishRecoveryWithTypedKey(key.display), isTrue);
+      expect(api.chain, hasLength(before + 1));
+      expect(
+          bindings
+              .checkDeviceListChain(idBytes(_account), api.chain)
+              .head
+              .change,
+          DeviceListChange.recovery);
+    }, skip: skip);
+  }
+
+  test(
+      'pre-L1 key: matched by rk_id, then set again with change 5 after '
+      'recent auth; a wrong key sends nothing', () async {
+    final api = _ListApi(bindings)..acceptGenesis = false;
+    final store = MemoryLocalStore();
+    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await crypto.createEnrollmentCredential(await api.reserveOwnerEnrollment());
+    await store.saveSession(_ListApi._session);
+    await crypto.activateSession(_ListApi._session);
+    state
+      ..api = api
+      ..session = _ListApi._session;
+    api.serverDevices = [
+      Device(
+          id: _own,
+          accountId: _account,
+          name: 'This',
+          createdAt: DateTime.utc(2026),
+          signingKey: await crypto.currentSigningKey()),
+    ];
+    await state.refreshDevices();
+    await _until(() => state.ownDeviceListMissing);
+    expect(await state.createApprovedDeviceList({_own}),
+        RecoveryActionResult.done);
+    expect(
+        bindings
+            .checkDeviceListChain(idBytes(_account), api.chain)
+            .head
+            .recoveryKey,
+        isNull);
+    // A key set before L1: the server knows its rk_id, the list does not.
+    final key = await state.createRecoveryKeyDraft();
+    final other = await state.createRecoveryKeyDraft();
+    addTearDown(key.dispose);
+    addTearDown(other.dispose);
+    final values = await crypto
+        .deriveRecoveryKey(await crypto.decodeRecoveryKey(key.display));
+    api.recoveryStatus =
+        RecoveryKeyStatus(available: true, configured: true, rkId: values.rkId);
+    await state.refreshRecoveryKeyStatus();
+    await state.refreshDevices();
+    await _until(() => state.recoveryKeyNeedsConfirmation);
+    final before = api.chain.length;
+
+    expect(await state.confirmPreL1RecoveryKey(other.display),
+        RecoveryActionResult.failed);
+    expect(
+        state.errorFor(Ops.recoveryKey), englishL10n.recoveryKeyNotThisAccount);
+    expect(api.chain, hasLength(before));
+    expect(api.putRkIds, isEmpty);
+
+    api.recentAuthLeft = 1;
+    expect(await state.confirmPreL1RecoveryKey(key.display),
+        RecoveryActionResult.needsRecentAuth);
+    expect(api.putRkIds, isEmpty);
+    expect(api.chain, hasLength(before));
+    expect(state.recoveryKeyNeedsConfirmation, isTrue);
+
+    expect(await state.confirmPreL1RecoveryKey(key.display),
+        RecoveryActionResult.done);
+    expect(api.putRkIds.single, values.rkId);
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    expect(head.change, DeviceListChange.recoveryKey);
+    expect(head.recoveryKey, values.rkListPub);
+    expect(api.recoveryKeyLists.single, api.chain.last);
+    expect(state.recoveryKeyNeedsConfirmation, isFalse);
+  }, skip: skip);
 }
 
 Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
@@ -579,8 +1017,8 @@ AppState _state(_ListApi api, NativeCryptoService crypto) => AppState(
       syncServiceFactory: (_, __) => _QuietSync(),
     );
 
-Future<void> _until(bool Function() condition) async {
-  for (var i = 0; i < 200 && !condition(); i++) {
+Future<void> _until(bool Function() condition, {int ticks = 200}) async {
+  for (var i = 0; i < ticks && !condition(); i++) {
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
   expect(condition(), isTrue);
@@ -736,15 +1174,28 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
     ];
   }
 
+  /// What `GET /account/recovery-key` answers (null: none configured).
+  RecoveryKeyStatus? recoveryStatus;
+  int recentAuthLeft = 0;
+  final List<List<int>> putRkIds = <List<int>>[];
+
   @override
   Future<RecoveryKeyStatus> putRecoveryKey(String token,
       {required List<int> rkAuthPub,
       required List<int> rkId,
       List<int>? deviceList}) async {
+    if (recentAuthLeft > 0) {
+      recentAuthLeft--;
+      throw ApiException(403, '{"error":"recent_auth_required"}');
+    }
     _take(deviceList);
+    putRkIds.add(rkId);
     if (deviceList != null) recoveryKeyLists.add(deviceList);
-    return RecoveryKeyStatus(
-        available: true, configured: true, setAt: DateTime.utc(2026, 11, 7));
+    return recoveryStatus = RecoveryKeyStatus(
+        available: true,
+        configured: true,
+        setAt: DateTime.utc(2026, 11, 7),
+        rkId: Uint8List.fromList(rkId));
   }
 
   @override
@@ -780,6 +1231,7 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
 
   @override
   Future<RecoveryKeyStatus> recoveryKeyStatus(String token) async =>
+      recoveryStatus ??
       const RecoveryKeyStatus(available: true, configured: false);
 }
 
@@ -871,5 +1323,140 @@ class _JournalDatabaseStore extends MemoryLocalStore {
       {required int? expectedVersion}) async {
     if (failPin) throw StateError('pin write failed');
     return database.writeDeviceListPin(pin, expectedVersion: expectedVersion);
+  }
+}
+
+/// Runs one foreground catch-up (sync, reconcile, the L1 audit) to its end.
+Future<void> _catchUp(AppState state) async {
+  final before = state.lastSyncedAt;
+  state.handleAppLifecycleState(AppLifecycleState.resumed);
+  await _until(() => state.lastSyncedAt != before, ticks: 600);
+  await state.backgroundWorkIdle;
+}
+
+/// Signs [deviceId] onto the owner's list (an add) and offers its package.
+Future<void> _addSignedDevice(NativeCryptoBindings bindings, _AuditApi api,
+    NativeCryptoService crypto, String deviceId) async {
+  await _publishDeviceAdd(
+      api, crypto, await _signDeviceAdd(bindings, api, crypto, deviceId));
+}
+
+/// The owner's next list version adding [deviceId] (signed, not sent), and
+/// the device's key package offered by [api].
+Future<Uint8List> _signDeviceAdd(NativeCryptoBindings bindings, _AuditApi api,
+    NativeCryptoService crypto, String deviceId) async {
+  final device = bindings.createDevice(_account, deviceId);
+  try {
+    api.packages[deviceId] = DeviceKeyPackage(
+        id: 'kp_$deviceId',
+        accountId: _account,
+        deviceId: deviceId,
+        keyPackage: device.createKeyPackage(),
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        expiresAt: DateTime.now().add(const Duration(days: 1)));
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    return await crypto.signDeviceList(DeviceListBody(
+      accountId: idBytes(_account),
+      version: head.version + 1,
+      prevHash: head.listHash,
+      createdAtMs: 2,
+      change: DeviceListChange.add,
+      entries: [
+        ...head.entries,
+        DeviceListPair(idBytes(deviceId), device.signingPublicKey())
+      ],
+    ));
+  } finally {
+    device.close();
+  }
+}
+
+/// The server takes [statement] and the owner's pin advances to it.
+Future<void> _publishDeviceAdd(
+    _AuditApi api, NativeCryptoService crypto, Uint8List statement) async {
+  api._take(statement);
+  await DeviceListPins(
+          store: crypto.localStore, source: _ApiLists(api), verifier: crypto)
+      .pinOwnStep(_account, statement);
+}
+
+/// A server for the audit: numbered groups it lists, a pending-change list
+/// it controls (empty: it reports nothing), explicit claims by device with
+/// per-device 403s, and commit bundles it may refuse.
+class _AuditApi extends _DiscoveryApi {
+  _AuditApi(super.bindings);
+  final Map<String, DeviceKeyPackage> packages = <String, DeviceKeyPackage>{};
+  final List<Conversation> groups = <Conversation>[];
+  List<MlsPendingChange> pendingList = const <MlsPendingChange>[];
+  List<ConversationMember>? memberList;
+  Set<String> refuse = const <String>{};
+  bool refuseBundles = false;
+  int refusedBundles = 0;
+  bool _servedStale = false;
+
+  /// Whether a pending-change read that listed [pendingList] came before
+  /// the first claim (null: no claim yet).
+  bool? staleReadBeforeClaim;
+
+  @override
+  Future<Conversation> createConversationDetailed(
+    String token, {
+    required String kind,
+    String? title,
+    String? communityId,
+    String? channelId,
+    List<String> memberAccountIds = const [],
+    int? retentionSeconds,
+  }) async {
+    final created = Conversation(
+        id: 'conv_${groups.length + 1}', kind: kind, createdBy: _account);
+    groups.add(created);
+    return created;
+  }
+
+  @override
+  Future<List<Conversation>> conversations(String token) async =>
+      List<Conversation>.of(groups);
+
+  @override
+  Future<List<ConversationMember>> conversationMembers(
+          String token, String id) async =>
+      memberList ?? [ConversationMember(accountId: _account, role: 'owner')];
+
+  @override
+  Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
+      String token, String id, List<String> deviceIds) async {
+    claims.add(deviceIds);
+    staleReadBeforeClaim ??= _servedStale;
+    if (deviceIds.any(refuse.contains)) {
+      throw ApiException(403, '{"error":"forbidden"}');
+    }
+    if (answer == 'partial') return const <DeviceKeyPackage>[];
+    return [
+      for (final device in deviceIds)
+        if (packages[device] case final DeviceKeyPackage package) package,
+    ];
+  }
+
+  @override
+  Future<int> sendMlsCommitBundle(
+    String token,
+    String id, {
+    required String idempotencyKey,
+    required MlsCommitBundle bundle,
+  }) async {
+    if (refuseBundles && bundle.added.isNotEmpty) {
+      refusedBundles++;
+      throw ApiException(409, '{"error":"mls_epoch_conflict"}');
+    }
+    return super.sendMlsCommitBundle(token, id,
+        idempotencyKey: idempotencyKey, bundle: bundle);
+  }
+
+  @override
+  Future<List<MlsPendingChange>> mlsPendingChanges(String token) async {
+    if (pendingList.isNotEmpty) _servedStale = true;
+    return pendingList;
   }
 }

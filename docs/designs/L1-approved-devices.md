@@ -75,6 +75,16 @@ is claimed alone, and refused ones are skipped. One such device therefore
 cannot keep its siblings out. The audit runs on catch-up,
 with no timer of its own.
 
+Review fixes (2026-11-11). A reported change counts as covered only once
+its discovery has finished in that pass. A change listed at a stale epoch,
+still backing off, or waiting for its coordinator therefore does not keep
+the audit away from its group. Discovery examines the server's member
+accounts and also every account that already holds a leaf in the local
+tree, so a server that leaves an account off the member list cannot hide
+that account's new devices. An account the change removes, and that the
+member list no longer names, is left out: a departing account never gains
+a device. A device revoke keeps its account, so the siblings still join.
+
 ### Incomplete-join notice (2026-11-11)
 
 Each discovery pass that completes (reported change or audit) records, per
@@ -98,7 +108,12 @@ finish recovery" in Settings. The typed key is decoded and passed as entropy
 to the same native call, which still checks the body, the chain step and the
 head's recovery key. Nothing derived from it is kept, and the entropy is
 wiped after the call. The signed statement goes through the existing
-store-then-post retry path.
+store-then-post retry path. Review fix: a `device_list_conflict` answer
+means another version landed first. If the refreshed head does not name
+this device, and the stored statement's `prev_hash` is not the head's list
+hash, the stored statement can never be taken. It is then dropped, so the
+retype prompt returns and the next statement is signed on the current
+head. A stored statement that still chains on the head is kept.
 
 An account whose verified head names no recovery key, while the server
 reports one configured, has a pre-L1 key, and recovery is refused for it. In
@@ -183,10 +198,37 @@ and self-updates stop. Check incoming removed verdicts and that an MLS removal
 releases the hold. Run inherited Rust VDL1/key-binding tests, server signed-list
 and honest-server gates, Flutter pin/store/gate tests, and repository checks.
 
-The full L1 package remains partial. Still to do: the removed-sender
-marker ("sent from a device <name> removed"), which must be recorded at
-entry, and probably needs a local schema bump; chains beyond the bounded
-limits; tests for the audit, notice, retype and confirmation flows (not
-written or run in that session, on the owner's instruction); adversarial
-demo evidence; and the independent security review. No independent review
-is claimed.
+### Removed-sender mark (2026-11-11, local schema 40)
+
+The receive path records the sender leaf's verdict on the stored row:
+`local_messages.sender_removed` is set when the verdict is `removed`. The
+chat shows "Sent from a device <name> removed" (or "Sent from a device you
+removed") above the text, in DMs too, and the bubble's spoken label says the
+same. An edit from a removed leaf sets the mark on its target; an approved
+edit leaves an earlier mark. History snapshots carry the mark as an optional
+`senderRemoved: true`. The upgrade adds the column first in the upgrade
+transaction (older steps read through the current rows) and is idempotent.
+Not covered: a deferred edit from a removed leaf (target not yet here) is
+applied unmarked when its target arrives; reactions are not marked.
+
+Flow tests (2026-11-11). `mobile/test/l1_app_state_lists_test.dart` uses
+the native engine to cover:
+- the audit: explicit claim, fallback wait, 8 per pass, 15-minute
+  interval, and the per-device fallback on a 403;
+- the review fixes: a stale-epoch change, an account left off the member
+  list, and a stored recovery statement past the head;
+- the notice across restarts: a refused bundle keeps the gap, and clocks
+  of another identity are ignored;
+- the retype with a right key and a wrong key;
+- the pre-L1 confirmation: mismatch, recent auth, and change 5 with the
+  same `rk_id`.
+
+Seven code mutations (the three fixes, the gap rule, the 403 fallback, the
+batch size and the owner check) were each caught by the matching test.
+
+The full L1 package remains partial. Still to do:
+- chains beyond the bounded limits;
+- adversarial demo evidence;
+- the independent security review.
+
+No independent review is claimed.

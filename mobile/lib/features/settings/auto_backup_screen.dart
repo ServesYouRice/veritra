@@ -1,6 +1,8 @@
 import 'dart:io' show Platform;
 
 import 'package:file_selector/file_selector.dart' show getDirectoryPath;
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
@@ -176,15 +178,45 @@ class AutoBackupScreen extends StatelessWidget {
 
   List<Widget> _secondCopy(BuildContext context, K1BackupState? backup) {
     final l10n = context.l10n;
-    if (!k1SecondCopySupported) {
-      return <Widget>[
-        const SizedBox(height: BoneSpacing.md),
-        Text(l10n.k1SecondCopyPhone,
-            style: Theme.of(context).textTheme.bodySmall),
-      ];
+    final at = backup?.secondCopyAt;
+    switch (k1SecondCopyMode) {
+      case K1SecondCopyMode.none:
+        return <Widget>[
+          const SizedBox(height: BoneSpacing.md),
+          Text(l10n.k1SecondCopyUnavailable,
+              style: Theme.of(context).textTheme.bodySmall),
+        ];
+      case K1SecondCopyMode.export:
+        // iOS (D91): no silent writes to user folders; saved by hand.
+        return <Widget>[
+          const SizedBox(height: BoneSpacing.md),
+          TileGroup(
+            children: <Widget>[
+              ListTile(
+                key: const ValueKey<String>('auto-backup-save-copy'),
+                leading: const Icon(Icons.ios_share_outlined),
+                title: Text(l10n.k1SecondCopySave),
+                subtitle: Text(at != null
+                    ? l10n.k1SecondCopySavedAt(
+                        formatDateTime(context, at.toLocal()))
+                    : l10n.k1SecondCopySaveDetail),
+                onTap: () => _exportCopy(context),
+              ),
+            ],
+          ),
+        ];
+      case K1SecondCopyMode.folder:
+        break;
     }
     final path = backup?.secondCopyPath;
-    final at = backup?.secondCopyAt;
+    final label = backup?.secondCopyLabel;
+    // An Android document tree is a content URI: its name is shown, never
+    // the URI.
+    final shown = path == null
+        ? null
+        : isK1DocumentTree(path)
+            ? (label == null || label.isEmpty ? null : label)
+            : path;
     return <Widget>[
       const SizedBox(height: BoneSpacing.md),
       TileGroup(
@@ -196,7 +228,9 @@ class AutoBackupScreen extends StatelessWidget {
                 : Icons.folder_copy_outlined),
             title: Text(path == null
                 ? l10n.k1SecondCopyChoose
-                : l10n.k1SecondCopyFolder(path)),
+                : shown == null
+                    ? l10n.k1SecondCopyChosenFolder
+                    : l10n.k1SecondCopyFolder(shown)),
             subtitle: backup?.secondCopyFailed == true
                 ? Text(l10n.k1SecondCopyFailed)
                 : at != null
@@ -204,6 +238,15 @@ class AutoBackupScreen extends StatelessWidget {
                         .autoBackupLast(formatDateTime(context, at.toLocal())))
                     : Text(l10n.k1SecondCopyDetail),
             onTap: () async {
+              if (defaultTargetPlatform == TargetPlatform.android) {
+                final messenger = ScaffoldMessenger.of(context);
+                final picked = await state.pickK1SecondCopyFolder();
+                if (picked == K1SecondCopyPick.failed) {
+                  messenger.showSnackBar(
+                      SnackBar(content: Text(l10n.k1SecondCopyPickFailed)));
+                }
+                return;
+              }
               final folder = await getDirectoryPath();
               if (folder != null) await state.setK1SecondCopyFolder(folder);
             },
@@ -231,6 +274,18 @@ class AutoBackupScreen extends StatelessWidget {
     final ok = await state.confirmK1Key(typed);
     messenger.showSnackBar(SnackBar(
         content: Text(ok ? l10n.k1ConfirmOk : l10n.k1ConfirmMismatch)));
+  }
+
+  Future<void> _exportCopy(BuildContext context) async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    final outcome = await state.exportK1SecondCopy();
+    final text = switch (outcome) {
+      K1SecondCopyExport.saved || K1SecondCopyExport.cancelled => null,
+      K1SecondCopyExport.noCopy => l10n.k1SecondCopyNoneYet,
+      K1SecondCopyExport.failed => l10n.k1SecondCopySaveFailed,
+    };
+    if (text != null) messenger.showSnackBar(SnackBar(content: Text(text)));
   }
 
   Future<void> _typeKey(BuildContext context) async {

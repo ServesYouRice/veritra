@@ -3243,6 +3243,18 @@ abstract class AppLocalizations {
   /// **'No admin or moderator in this channel can renew its key; ask one to join.'**
   String get chatKeyRenewalNoAdmin;
 
+  /// No description provided for @chatSentFromRemovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent from a device {name} removed'**
+  String chatSentFromRemovedDevice(String name);
+
+  /// No description provided for @chatSentFromOwnRemovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent from a device you removed'**
+  String get chatSentFromOwnRemovedDevice;
+
   /// No description provided for @chatDevicesNotJoined.
   ///
   /// In en, this message translates to:
@@ -6489,11 +6501,53 @@ abstract class AppLocalizations {
   /// **'Stop the second copy'**
   String get k1SecondCopyOff;
 
-  /// No description provided for @k1SecondCopyPhone.
+  /// No description provided for @k1SecondCopyUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'A second copy in a folder is available on desktop. Phones keep the backup on the server only.'**
-  String get k1SecondCopyPhone;
+  /// **'This device cannot keep a second copy. The backup stays on the server.'**
+  String get k1SecondCopyUnavailable;
+
+  /// No description provided for @k1SecondCopyChosenFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Second copy: the folder you chose'**
+  String get k1SecondCopyChosenFolder;
+
+  /// No description provided for @k1SecondCopyPickFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'That folder cannot be used. Pick another one.'**
+  String get k1SecondCopyPickFailed;
+
+  /// No description provided for @k1SecondCopySave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save a copy of the backup'**
+  String get k1SecondCopySave;
+
+  /// No description provided for @k1SecondCopySaveDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Saves this phone\'s latest backup where you choose. Only your recovery key opens it. Save again now and then: this copy does not update itself.'**
+  String get k1SecondCopySaveDetail;
+
+  /// No description provided for @k1SecondCopySavedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy saved {date}'**
+  String k1SecondCopySavedAt(String date);
+
+  /// No description provided for @k1SecondCopyNoneYet.
+  ///
+  /// In en, this message translates to:
+  /// **'There is no backup from this phone yet. Back up now, then save a copy.'**
+  String get k1SecondCopyNoneYet;
+
+  /// No description provided for @k1SecondCopySaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The copy could not be saved. Try again.'**
+  String get k1SecondCopySaveFailed;
 
   /// No description provided for @recoveryFollowUpRestoreDetail.
   ///

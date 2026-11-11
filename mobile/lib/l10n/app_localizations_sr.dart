@@ -1961,6 +1961,15 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ниједан администратор ни модератор у овом каналу не може да обнови његов кључ; замолите неког од њих да се придружи.';
 
   @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Послато са уређаја који је уклоњен са налога корисника $name';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice =>
+      'Послато са уређаја који сте уклонили';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Неки уређаји корисника $name се још нису придружили.';
   }
@@ -3961,8 +3970,36 @@ class AppLocalizationsSr extends AppLocalizations {
   String get k1SecondCopyOff => 'Заустави другу копију';
 
   @override
-  String get k1SecondCopyPhone =>
-      'Друга копија у фасцикли је доступна на рачунару. Телефони чувају копију само на серверу.';
+  String get k1SecondCopyUnavailable =>
+      'Овај уређај не може да чува другу копију. Копија остаје на серверу.';
+
+  @override
+  String get k1SecondCopyChosenFolder =>
+      'Друга копија: фасцикла коју сте изабрали';
+
+  @override
+  String get k1SecondCopyPickFailed =>
+      'Та фасцикла не може да се користи. Изаберите другу.';
+
+  @override
+  String get k1SecondCopySave => 'Сачувај копију';
+
+  @override
+  String get k1SecondCopySaveDetail =>
+      'Чува најновију копију са овог телефона где изаберете. Отвара је само кључ за опоравак. Сачувајте је поново с времена на време: ова копија се не ажурира сама.';
+
+  @override
+  String k1SecondCopySavedAt(String date) {
+    return 'Копија сачувана $date';
+  }
+
+  @override
+  String get k1SecondCopyNoneYet =>
+      'Са овог телефона још нема копије. Направите копију сада, па је онда сачувајте.';
+
+  @override
+  String get k1SecondCopySaveFailed =>
+      'Копија није сачувана. Покушајте поново.';
 
   @override
   String get recoveryFollowUpRestoreDetail =>
@@ -6340,6 +6377,15 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Nijedan administrator ni moderator u ovom kanalu ne može da obnovi njegov ključ; zamolite nekog od njih da se pridruži.';
 
   @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Poslato sa uređaja koji je uklonjen sa naloga korisnika $name';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice =>
+      'Poslato sa uređaja koji ste uklonili';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Neki uređaji korisnika $name se još nisu pridružili.';
   }
@@ -8345,8 +8391,36 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get k1SecondCopyOff => 'Zaustavi drugu kopiju';
 
   @override
-  String get k1SecondCopyPhone =>
-      'Druga kopija u fascikli je dostupna na računaru. Telefoni čuvaju kopiju samo na serveru.';
+  String get k1SecondCopyUnavailable =>
+      'Ovaj uređaj ne može da čuva drugu kopiju. Kopija ostaje na serveru.';
+
+  @override
+  String get k1SecondCopyChosenFolder =>
+      'Druga kopija: fascikla koju ste izabrali';
+
+  @override
+  String get k1SecondCopyPickFailed =>
+      'Ta fascikla ne može da se koristi. Izaberite drugu.';
+
+  @override
+  String get k1SecondCopySave => 'Sačuvaj kopiju';
+
+  @override
+  String get k1SecondCopySaveDetail =>
+      'Čuva najnoviju kopiju sa ovog telefona gde izaberete. Otvara je samo ključ za oporavak. Sačuvajte je ponovo s vremena na vreme: ova kopija se ne ažurira sama.';
+
+  @override
+  String k1SecondCopySavedAt(String date) {
+    return 'Kopija sačuvana $date';
+  }
+
+  @override
+  String get k1SecondCopyNoneYet =>
+      'Sa ovog telefona još nema kopije. Napravite kopiju sada, pa je onda sačuvajte.';
+
+  @override
+  String get k1SecondCopySaveFailed =>
+      'Kopija nije sačuvana. Pokušajte ponovo.';
 
   @override
   String get recoveryFollowUpRestoreDetail =>

@@ -197,8 +197,14 @@ abstract interface class OwnDeviceAlertCryptoService {
 abstract interface class ApprovedDeviceDiscoveryCryptoService {
   /// Lists currently approved devices of member [accountIds] absent from the
   /// actual MLS tree. Null [conversationId] means a new group with only self.
+  ///
+  /// Every account that already has a leaf in the tree is examined too, so
+  /// a server that leaves an account out of the member list cannot hide its
+  /// new approved device; [excluding] names accounts whose removal is
+  /// pending, which never gain a device.
   Future<List<MlsDeviceRef>> missingApprovedDevices(
-      String? conversationId, Iterable<String> accountIds);
+      String? conversationId, Iterable<String> accountIds,
+      {Set<String> excluding = const <String>{}});
 }
 
 /// A membership change named only devices that are not on their accounts'

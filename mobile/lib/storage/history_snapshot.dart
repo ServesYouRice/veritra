@@ -713,6 +713,11 @@ const _messageFields = {
   'senderHidden'
 };
 
+/// Fields a snapshot row may also carry. `senderRemoved` (L1, schema 40) is
+/// written only when true, so a snapshot without such a message stays one an
+/// older importer reads; a marked message is never copied unmarked.
+const _readMessageFields = {..._messageFields, 'senderRemoved'};
+
 /// A link preview (B2, up to ~22 KiB of thumbnail per row) never travels in a
 /// snapshot: it would push a long history over the 64 MiB cap, and a build
 /// older than B2 rejects the key. The reader still accepts it.
@@ -722,11 +727,12 @@ Map<String, Object?> _messageJson(LocalMessage m) {
       if (_messageFields.contains(e.key)) e.key: e.value
   };
   json['formatJson'] = formatJsonWithoutPreview(json['formatJson'] as String?);
+  if (m.senderRemoved == true) json['senderRemoved'] = true;
   return json;
 }
 
 LocalMessage _readMessage(Object? raw) {
-  final j = _object(raw, _messageFields);
+  final j = _object(raw, _readMessageFields);
   final key = _id(j['key']), device = _id(j['senderDeviceId']);
   if (!key.startsWith('$device:') || key.length <= device.length + 1)
     _invalid();
@@ -748,6 +754,7 @@ LocalMessage _readMessage(Object? raw) {
         'unverifiable'
       }.contains(j['kind']) ||
       (j['senderHidden'] != null && j['senderHidden'] is! bool) ||
+      (j['senderRemoved'] != null && j['senderRemoved'] != true) ||
       (j['forwardHops'] != null &&
           (j['forwardHops'] is! int ||
               (j['forwardHops'] as int) < 0 ||
@@ -852,7 +859,8 @@ LocalMessage historyMessageFromInsert(InsertMessageEffect effect) =>
         formatJson: effect.formatJson,
         forwardHops: effect.forwardHops,
         channelId: effect.channelId,
-        senderHidden: effect.senderHidden);
+        senderHidden: effect.senderHidden,
+        senderRemoved: effect.senderRemoved ? true : null);
 
 HistorySnapshot captureHistory(
     {required Session session,

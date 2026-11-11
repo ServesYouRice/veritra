@@ -5,7 +5,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.view.WindowManager
@@ -27,6 +29,45 @@ class MainActivity : FlutterActivity() {
         get() = PushRegistrationConfig.providers
         set(value) { PushRegistrationConfig.providers = value }
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var pendingFolderResult: MethodChannel.Result? = null
+
+    /** K1 second copy: the user picks the folder; the grant is kept. */
+    internal fun pickK1Folder(result: MethodChannel.Result) {
+        if (pendingFolderResult != null) {
+            result.error("busy", null, null)
+            return
+        }
+        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).addFlags(
+            K1SecondCopy.GRANT or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        pendingFolderResult = result
+        try {
+            startActivityForResult(intent, K1SecondCopy.PICK_REQUEST)
+        } catch (_: ActivityNotFoundException) {
+            pendingFolderResult = null
+            result.error("no_picker", null, null)
+        }
+    }
+
+    @Deprecated("FlutterActivity is not a ComponentActivity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != K1SecondCopy.PICK_REQUEST) return
+        val result = pendingFolderResult ?: return
+        pendingFolderResult = null
+        val tree = data?.data
+        if (resultCode != RESULT_OK || tree == null) {
+            result.success(null) // Cancelled: nothing changes.
+            return
+        }
+        try {
+            contentResolver.takePersistableUriPermission(tree, K1SecondCopy.GRANT)
+            result.success(mapOf(
+                "tree" to tree.toString(),
+                "label" to K1SecondCopy.label(applicationContext, tree)))
+        } catch (_: SecurityException) {
+            result.error("permission_refused", null, null)
+        }
+    }
 
     override fun onResume() {
         super.onResume()
@@ -71,6 +112,8 @@ class MainActivity : FlutterActivity() {
     override fun onDestroy() {
         pendingPermissionResult?.error("ui_unavailable", null, null)
         pendingPermissionResult = null
+        pendingFolderResult?.error("ui_unavailable", null, null)
+        pendingFolderResult = null
         SharedFlutterEngine.detach(this)
         super.onDestroy()
     }

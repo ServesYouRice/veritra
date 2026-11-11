@@ -2632,6 +2632,8 @@ class _MemoryMessageHistory {
             body: Value(effect.body),
             editedAt: Value(effect.at),
             formatJson: Value(effect.formatJson),
+            senderRemoved:
+                effect.senderRemoved ? const Value(true) : const Value.absent(),
           );
           markLiveHistoryEffect(namespace, effect, effect.targetKey);
         case DeleteMessageEffect():

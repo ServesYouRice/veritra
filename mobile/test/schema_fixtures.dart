@@ -22,7 +22,8 @@ Future<void> stripW8Schema(EncryptedLocalDatabase database) async {
     'format_json',
     'forward_hops',
     'channel_id',
-    'sender_hidden'
+    'sender_hidden',
+    'sender_removed'
   ]) {
     if (columns.contains(column))
       await database

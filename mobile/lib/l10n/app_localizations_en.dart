@@ -1947,6 +1947,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'No admin or moderator in this channel can renew its key; ask one to join.';
 
   @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Sent from a device $name removed';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice => 'Sent from a device you removed';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Some of $name\'s devices haven\'t joined yet.';
   }
@@ -3945,8 +3953,35 @@ class AppLocalizationsEn extends AppLocalizations {
   String get k1SecondCopyOff => 'Stop the second copy';
 
   @override
-  String get k1SecondCopyPhone =>
-      'A second copy in a folder is available on desktop. Phones keep the backup on the server only.';
+  String get k1SecondCopyUnavailable =>
+      'This device cannot keep a second copy. The backup stays on the server.';
+
+  @override
+  String get k1SecondCopyChosenFolder => 'Second copy: the folder you chose';
+
+  @override
+  String get k1SecondCopyPickFailed =>
+      'That folder cannot be used. Pick another one.';
+
+  @override
+  String get k1SecondCopySave => 'Save a copy of the backup';
+
+  @override
+  String get k1SecondCopySaveDetail =>
+      'Saves this phone\'s latest backup where you choose. Only your recovery key opens it. Save again now and then: this copy does not update itself.';
+
+  @override
+  String k1SecondCopySavedAt(String date) {
+    return 'Copy saved $date';
+  }
+
+  @override
+  String get k1SecondCopyNoneYet =>
+      'There is no backup from this phone yet. Back up now, then save a copy.';
+
+  @override
+  String get k1SecondCopySaveFailed =>
+      'The copy could not be saved. Try again.';
 
   @override
   String get recoveryFollowUpRestoreDetail =>

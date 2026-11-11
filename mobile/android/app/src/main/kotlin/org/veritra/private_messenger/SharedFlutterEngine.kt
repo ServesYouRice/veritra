@@ -71,6 +71,7 @@ object SharedFlutterEngine {
             act.handleScreenGuardMethod(call, result)
         }
         WakeWorkerCoordinator.installChannel(app, messenger, background)
+        K1SecondCopy.install(app, messenger) { activity.get() }
         created.dartExecutor.executeDartEntrypoint(DartExecutor.DartEntrypoint.createDefault())
         return created
     }
