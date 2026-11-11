@@ -944,7 +944,7 @@
   "roomFailedWelcome": "Bezbedno pridruživanje nije uspelo. Pokušajte ponovo.",
   "roomFailedOther": "Poziv nije mogao da se nastavi.",
   "roomFailedCryptor": "Ovaj uređaj ne može da zaštiti medije poziva, pa se nije pridružio.",
-  "roomPeople": "{count, plural, =1{1 osoba} few{{count} osobe} other{{count} osoba}}",
+  "roomPeople": "{count, plural, one{{count} osoba} few{{count} osobe} other{{count} osoba}}",
   "@roomPeople": {
     "placeholders": {
       "count": {

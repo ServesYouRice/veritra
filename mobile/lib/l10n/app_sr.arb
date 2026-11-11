@@ -964,7 +964,7 @@
   "roomFailedWelcome": "Безбедно придруживање није успело. Покушајте поново.",
   "roomFailedOther": "Позив није могао да се настави.",
   "roomFailedCryptor": "Овај уређај не може да заштити медије позива, па се није придружио.",
-  "roomPeople": "{count, plural, =1{1 особа} few{{count} особе} other{{count} особа}}",
+  "roomPeople": "{count, plural, one{{count} особа} few{{count} особе} other{{count} особа}}",
   "@roomPeople": {"placeholders": {"count": {"type": "int"}}},
   "moderationTitle": "Модерација",
   "moderationDetail": "Забране, утишавање чланова, спори режим, паузирање позивница и дневник активности",

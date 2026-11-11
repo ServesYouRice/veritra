@@ -3377,7 +3377,7 @@ class AppLocalizationsSr extends AppLocalizations {
       locale: localeName,
       other: '$count особа',
       few: '$count особе',
-      one: '1 особа',
+      one: '$count особа',
     );
     return '$_temp0';
   }
@@ -7500,7 +7500,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       locale: localeName,
       other: '$count osoba',
       few: '$count osobe',
-      one: '1 osoba',
+      one: '$count osoba',
     );
     return '$_temp0';
   }
