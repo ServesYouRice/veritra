@@ -64,7 +64,7 @@ Future<void> _until(bool Function() condition) async {
   fail('condition not reached');
 }
 
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: _origin);
   final List<String> claims = [];
   bool refuse = true;

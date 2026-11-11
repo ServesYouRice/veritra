@@ -790,7 +790,7 @@ class _StandInServer {
 
 /// The real ApiClient; only the read endpoints AppState polls are stubbed,
 /// so commits and envelopes cross real HTTP to [_StandInServer].
-class _StandInApi extends ApiClient {
+class _StandInApi extends ApiClient with LegacySyncPageFake {
   _StandInApi(String baseUrl) : super(baseUrl: baseUrl);
 
   @override

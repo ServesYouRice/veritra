@@ -2603,11 +2603,11 @@
       "title": "ListSyncEvents re-scans the entire run of hidden trailing events on every poll",
       "severity": "medium",
       "task": "TASK-209",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: needs an API change on both sides (see STATE.md Open work, hidden tail on every poll).",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": "Reproduced by timing, not a failing assertion: before the change a poll behind 40,000 hidden events took 231 ms every time and nothing in the response or the cursor could skip them (benchmark BenchmarkSyncHiddenTailPoll/legacy_every_poll; the new API did not exist, so a unit test could not compile against the old code).",
+      "test": "server/internal/storage/sync_bounded_scan_test.go, server/internal/httpapi/sync_bounded_contract_test.go, mobile/test/app_state_catch_up_test.dart (group bounded scan position), server/internal/storage/sync_hidden_run_bench_test.go",
+      "proof": "Opt-in scan=bounded on GET /api/v1/sync/events: scanned_through and scan_truncated (name from the scoped route, D92), hidden-row cursors accepted in the bounded expiry test, SyncBounds not computed for a bounded 200, app pages while scan_truncated and persists the cursor only after the page is applied. Poll behind 40,000 hidden events: 231 ms to 0.36 ms. Evidence: testing/evidence/sync-hidden-tail-poll.md. Q-002 default taken: D92, a block-hidden run the cursor passes is not replayed after an unblock.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-5d54a035cb1c",

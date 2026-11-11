@@ -267,7 +267,7 @@ Future<void> _waitFor(FutureOr<bool> Function() condition,
   fail('condition not reached');
 }
 
-class _OutboxApi extends ApiClient {
+class _OutboxApi extends ApiClient with LegacySyncPageFake {
   _OutboxApi() : super(baseUrl: 'https://localhost:8080');
 
   final Map<String, List<Object>> failures = <String, List<Object>>{};

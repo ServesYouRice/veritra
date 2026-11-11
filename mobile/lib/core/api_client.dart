@@ -2290,6 +2290,48 @@ class ApiClient {
     return _rows(json, 'events', SyncEvent.fromJson);
   }
 
+  /// [syncEvents] with the scan position, asking for the bounded scan
+  /// (TASK-209, D92): the server examines at most a budget of candidates,
+  /// hidden ones included, and reports how far it looked
+  /// ([ConversationSyncPage.scannedThrough]) and whether the budget ended the
+  /// page early ([ConversationSyncPage.truncated]). Both are absent from an
+  /// older server, which also ignores the opt-in. Test fakes that only
+  /// override [syncEvents] mix in [LegacySyncPageFake].
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = Uri(
+        path: '/api/v1/sync/events',
+        queryParameters: <String, String>{
+          'after': after.toString(),
+          'limit': pageLimit.toString(),
+          'scan': 'bounded',
+        },
+      ).toString();
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
+    final events = _rows(json, 'events', SyncEvent.fromJson);
+    return _decode(() {
+      final through = json['scanned_through'];
+      final truncated = json['scan_truncated'];
+      if (through != null && (through is! int || through < 0)) {
+        throw const FormatException();
+      }
+      if (truncated != null && truncated is! bool) {
+        throw const FormatException();
+      }
+      return ConversationSyncPage(
+        events,
+        scannedThrough: through as int?,
+        truncated: truncated == true,
+      );
+    });
+  }
+
   /// One conversation's own sync stream (C1 prerequisite 1), in event order.
   /// The server serves it only when the operator turned scoped sync on, and
   /// answers 404 otherwise. A conversation whose retention was pruned past
@@ -2952,4 +2994,16 @@ class ConversationSyncPage {
   final List<SyncEvent> events;
   final int? scannedThrough;
   final bool truncated;
+}
+
+/// For test fakes that override [ApiClient.syncEvents] only: the page method
+/// answers from it, with no scan position, as an older server would.
+mixin LegacySyncPageFake on ApiClient {
+  @override
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      ConversationSyncPage(await syncEvents(token, after: after, limit: limit));
 }

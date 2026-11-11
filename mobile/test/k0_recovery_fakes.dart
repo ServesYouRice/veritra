@@ -223,7 +223,7 @@ class K0Server {
       );
 }
 
-class K0Api extends ApiClient {
+class K0Api extends ApiClient with LegacySyncPageFake {
   K0Api(this.server, [String baseUrl = k0Origin]) : super(baseUrl: baseUrl);
 
   final K0Server server;
