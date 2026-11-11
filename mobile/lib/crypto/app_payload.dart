@@ -101,6 +101,31 @@ const Set<AppPayloadType> infoPayloadTypes = <AppPayloadType>{
   AppPayloadType.infoUpdate,
 };
 
+/// C4 types that may ride under the clear leave-notice mark (`c4_leave`),
+/// which the server lets past the posting rules. A marked envelope holding
+/// anything else is an invalid row at every receiver.
+const Set<AppPayloadType> leaveNoticePayloadTypes = <AppPayloadType>{
+  AppPayloadType.memberLeave,
+};
+
+/// The expiry a sender signs into a payload of [type] in a conversation with
+/// a disappearing timer of [retentionSeconds] (TASK-106), or null. C3 info
+/// payloads never expire (a key must outlive the timer), nor do C6 report key
+/// announcements (their settings outlive the row anyway), nor the L2-5
+/// own-device alert (the native service refuses an expiring one, and the
+/// alert would be lost in every chat with a timer).
+DateTime? senderExpiryFor(
+    AppPayloadType type, int? retentionSeconds, DateTime now) {
+  if (retentionSeconds == null ||
+      retentionSeconds <= 0 ||
+      infoPayloadTypes.contains(type) ||
+      reportKeyPayloadTypes.contains(type) ||
+      type == AppPayloadType.deviceListAlert) {
+    return null;
+  }
+  return now.add(Duration(seconds: retentionSeconds));
+}
+
 extension AppPayloadTypeWire on AppPayloadType {
   /// The string in the payload's `type`. Existing types keep their Dart enum
   /// name (the wire contract of every device); new multi-word types are

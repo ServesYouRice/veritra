@@ -64,7 +64,7 @@ object K1SecondCopy {
                     if (!tree.isNullOrBlank()) {
                         try {
                             app.contentResolver.releasePersistableUriPermission(Uri.parse(tree), GRANT)
-                        } catch (_: SecurityException) {
+                        } catch (ignored: SecurityException) {
                             // Not held (already released or revoked): nothing to do.
                         }
                     }
@@ -88,7 +88,7 @@ object K1SecondCopy {
         context.contentResolver.query(
             folder, arrayOf(Document.COLUMN_DISPLAY_NAME), null, null, null,
         )?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-    } catch (_: Exception) {
+    } catch (ignored: Exception) {
         null
     }
 
@@ -99,7 +99,8 @@ object K1SecondCopy {
      * old file is deleted, then the new one is renamed. A failure before the
      * delete removes the temporary file and keeps the old copy; a failed
      * rename after it keeps the complete `.part` until the next run, which
-     * replaces it (the warning shows meanwhile). A provider that cannot
+     * first renames it back to `<name>` (it is then the only copy) and only
+     * then replaces it (the warning shows meanwhile). A provider that cannot
      * rename gets the file written in place instead.
      */
     @Throws(IOException::class)
@@ -108,9 +109,25 @@ object K1SecondCopy {
         val parent = DocumentsContract.buildDocumentUriUsingTree(
             tree, DocumentsContract.getTreeDocumentId(tree))
         val part = "$name.part"
-        // A leftover temporary file would make the provider name the new
-        // one "<name>.part (1)".
-        find(resolver, tree, part)?.let { DocumentsContract.deleteDocument(resolver, it) }
+        val leftover = find(resolver, tree, part)
+        if (leftover != null) {
+            if (find(resolver, tree, name) == null) {
+                // The last run deleted the old copy and then failed to
+                // rename: the `.part` is the only complete copy. Restore it
+                // first; if that fails, keep it and fail (the warning
+                // shows), never delete it.
+                val restored = try {
+                    DocumentsContract.renameDocument(resolver, leftover, name) != null
+                } catch (ignored: Exception) {
+                    false
+                }
+                if (!restored) throw IOException("restore")
+            } else {
+                // A leftover temporary file would make the provider name
+                // the new one "<name>.part (1)".
+                DocumentsContract.deleteDocument(resolver, leftover)
+            }
+        }
         val temp = DocumentsContract.createDocument(
             resolver, parent, "application/octet-stream", part,
         ) ?: throw IOException("create")
@@ -135,7 +152,7 @@ object K1SecondCopy {
             if (!oldDeleted) {
                 try {
                     DocumentsContract.deleteDocument(resolver, temp)
-                } catch (_: Exception) {}
+                } catch (ignored: Exception) {}
             }
             throw err
         }

@@ -82,4 +82,20 @@ void main() {
     }
     expect(isValidDeviceListAlertBody(body), isTrue);
   });
+
+  // Review M2: in a chat with a disappearing timer the alert went through
+  // the expiring send, which the native service refuses ("alerts do not
+  // expire"), and the failure was swallowed: no alert in any such chat.
+  test('an alert never gets a sender expiry, whatever the timer', () {
+    final now = DateTime.utc(2026, 11, 11);
+    expect(senderExpiryFor(AppPayloadType.deviceListAlert, 60, now), isNull);
+    expect(senderExpiryFor(AppPayloadType.deviceListAlert, null, now), isNull);
+    expect(senderExpiryFor(AppPayloadType.text, 60, now),
+        now.add(const Duration(seconds: 60)));
+    expect(senderExpiryFor(AppPayloadType.text, 0, now), isNull);
+    expect(senderExpiryFor(AppPayloadType.infoKey, 60, now), isNull);
+    expect(senderExpiryFor(AppPayloadType.reportKey, 60, now), isNull);
+    // A leave proof may expire with the group's timer (the server allows it).
+    expect(senderExpiryFor(AppPayloadType.memberLeave, 60, now), isNotNull);
+  });
 }

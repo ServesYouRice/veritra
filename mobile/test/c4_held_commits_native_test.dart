@@ -93,6 +93,34 @@ void main() {
     }
   }, skip: skip);
 
+  // Review M1 (owner decision B): a stolen or replaced phone its account's
+  // list removed is still in the tree and can post a valid member_leave;
+  // it must not prove the governing account's leave.
+  test('a leave proof from a removed leaf proves nothing', () async {
+    final [alice, bob, carol] = await clients(['alice', 'bob', 'carol']);
+    await alice.service.initializeConversation(
+        'conv_1', [await bob.keyPackage(), await carol.keyPackage()]);
+    await _deliver(alice, joiners: [bob, carol]);
+    await alice.service.stageRoleChange(
+        'conv_1', (c, _, __) => c.setRole(bob.account, BuiltInRole.admin));
+    await _deliver(alice, members: [bob, carol]);
+    // Carol's pin shows Bob's phone removed; Alice's does not yet.
+    carol.lists.markRemoved(bob.account, bob.device);
+    final leave = await bob.service
+        .encryptPayload('conv_1', AppPayloadType.memberLeave, const {});
+    await bob.store.removePendingEnvelope(leave.idempotencyKey);
+    await carol.receive(bob, leave);
+    await alice.receive(bob, leave);
+    expect(
+        await carol.store
+            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+        isNull);
+    expect(
+        await alice.store
+            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+        isNotNull);
+  }, skip: skip);
+
   test('a role commit from a leaf not approved yet is held, then merges',
       () async {
     final [alice, bob, carol] = await clients(['alice', 'bob', 'carol']);

@@ -162,28 +162,72 @@ class NativeCryptoService
   }
 
   @override
-  Set<String>? mlsAccountsOf(String conversationId) {
+  Set<String>? mlsAccountsOf(String conversationId) =>
+      _approvedAccountsOf(conversationId);
+
+  @override
+  Set<String>? groupMemberAccounts(String conversationId) =>
+      _approvedAccountsOf(conversationId);
+
+  /// The accounts holding a leaf in [conversationId]'s MLS tree that this
+  /// device's last judgment found `approved` by the account's L1 list, with
+  /// the key in the tree (review L7: an unapproved leaf can carry any
+  /// account's id, so it must not make that account a channel member for
+  /// C6 reports or the C3 no-admin rule). Null when the group is unknown or
+  /// no judgment is cached yet; a load is started, so a later call answers.
+  Set<String>? _approvedAccountsOf(String conversationId) {
     final device = _device;
     if (device == null) return null;
+    final verdicts = _verdictCache[conversationId];
+    if (verdicts == null) {
+      unawaited(_warmVerdicts(conversationId));
+      return null;
+    }
     try {
-      return device.groupRoleState(conversationId).accounts;
+      return <String>{
+        for (final leaf in device.groupMembers(conversationId))
+          if (verdicts.any((row) =>
+              row.verdict == LeafVerdict.approved &&
+              row.sameLeaf(leaf.accountId, leaf.deviceId) &&
+              _sameBytes(row.signingKey, leaf.signingKey)))
+            utf8.decode(leaf.accountId),
+      };
     } catch (_) {
       return null;
     }
   }
 
-  @override
-  Set<String>? groupMemberAccounts(String conversationId) {
-    final device = _device;
-    if (device == null) return null;
+  /// The last judged leaves per conversation (L7), kept in step with every
+  /// write of the stored verdicts this service makes.
+  final Map<String, List<ApprovalLeaf>> _verdictCache =
+      <String, List<ApprovalLeaf>>{};
+
+  Future<void> _warmVerdicts(String conversationId) async {
     try {
-      return <String>{
-        for (final leaf in device.groupMembers(conversationId))
-          utf8.decode(leaf.accountId),
-      };
-    } catch (_) {
-      return null;
+      final rows = await localStore.loadApprovalLeaves(conversationId);
+      _verdictCache.putIfAbsent(conversationId, () => rows);
+    } on Object {
+      // Asked again on the next call.
     }
+  }
+
+  void _rememberVerdicts(ApprovalLeafChange change) {
+    if (change.replaceAll) {
+      _verdictCache[change.conversationId] =
+          List<ApprovalLeaf>.of(change.leaves);
+      return;
+    }
+    final cached = _verdictCache[change.conversationId];
+    if (cached == null) return;
+    for (final row in change.leaves) {
+      cached.removeWhere((old) => old.sameLeaf(row.accountId, row.deviceId));
+      cached.add(row);
+    }
+  }
+
+  Future<void> _saveApprovalLeaves(ApprovalLeafChange change) async {
+    await localStore.saveApprovalLeaves(change);
+    _rememberVerdicts(change);
   }
 
   /// The rollback counter of the state [_device] holds in memory.
@@ -248,6 +292,7 @@ class NativeCryptoService
           reservation.deviceId,
         );
         _device = device;
+        _verdictCache.clear();
         // The fresh device holds no stored state yet (C-b5dfd921d890).
         _deviceCounter = null;
         _accountId = reservation.accountId;
@@ -637,11 +682,16 @@ class NativeCryptoService
     }
   }
 
-  /// L2-5: the setting holding the highest list head an approved device of
-  /// [accountId] named in a `device_list_alert`, as
-  /// `<head>:<list id hex>:<alerting device id>`.
+  /// L2-5: the setting holding, per alerting device of [accountId], the
+  /// highest list head that device named in a `device_list_alert`: one line
+  /// `<head>:<list id hex>:<alerting device id>` per device (a single line
+  /// is the format from before review M3, read the same way).
   static String alertHeadSetting(String accountId) =>
       'l2.alert_head.$accountId';
+
+  /// At most this many alerting devices are kept per account; the lowest
+  /// heads go first. An account's approved devices bound it in practice.
+  static const int maxAlertsPerAccount = 32;
 
   /// L2-5: the setting holding the own list head this device last alerted
   /// [conversationId] about.
@@ -652,33 +702,56 @@ class NativeCryptoService
   /// account that its list does not approve (L2-5).
   final Set<String> _ownAlertsDue = <String>{};
 
-  /// The head, list id and alerting device kept by [alertHeadSetting], or
-  /// null.
-  Future<({int head, String listId, String deviceId})?> _alerted(
+  /// The heads, list ids and alerting devices kept by [alertHeadSetting].
+  Future<List<({int head, String listId, String deviceId})>> _alerted(
       String accountId) async {
     final value = await localStore.loadSetting(alertHeadSetting(accountId));
-    if (value == null) return null;
-    final first = value.indexOf(':');
-    final second = first < 0 ? -1 : value.indexOf(':', first + 1);
-    if (second < 0) return null;
-    final head = int.tryParse(value.substring(0, first));
-    if (head == null) return null;
-    return (
-      head: head,
-      listId: value.substring(first + 1, second),
-      deviceId: value.substring(second + 1),
-    );
+    if (value == null) return const [];
+    final out = <({int head, String listId, String deviceId})>[];
+    for (final line in value.split('\n')) {
+      final first = line.indexOf(':');
+      final second = first < 0 ? -1 : line.indexOf(':', first + 1);
+      if (second < 0) continue;
+      final head = int.tryParse(line.substring(0, first));
+      if (head == null) continue;
+      out.add((
+        head: head,
+        listId: line.substring(first + 1, second),
+        deviceId: line.substring(second + 1),
+      ));
+    }
+    return out;
+  }
+
+  /// Whether one stored alert still holds [pin]'s account (L2-5):
+  ///
+  /// - with no pin, yes (nothing shows the head is known);
+  /// - once the pin shows the alerting device removed, no: a rogue device
+  ///   that alerts a head never published holds its account's leaves only
+  ///   until the account removes it;
+  /// - for the pinned list, while the pin is below the alerted head;
+  /// - for another list id, while the pin lists the alerting device: the
+  ///   server shows this device another genesis than the one the account's
+  ///   own device holds (held as `checking`, never a sticky conflict, owner
+  ///   decision 2026-11-08, L1-3 question 3). A pin that does not list the
+  ///   alerter at all is a list restarted from a new genesis (or one that
+  ///   never knew it): the old alert names nothing in it and stops counting
+  ///   (review M3), so it cannot hold the account's leaves for good.
+  static bool _alertHolds(
+      ({int head, String listId, String deviceId}) alert, DeviceListPin? pin) {
+    if (pin == null) return true;
+    final alerter = utf8.encode(alert.deviceId);
+    final rows =
+        pin.keys.where((key) => _sameBytes(key.deviceId, alerter)).toList();
+    if (rows.any((key) => key.removedVersion != 0)) return false;
+    if (_hex(pin.listId) == alert.listId) return pin.version < alert.head;
+    return rows.isNotEmpty;
   }
 
   /// Whether a device of [accountId] alerted a list head newer than this
-  /// device's pin, or a list other than the pinned one: the server has not
-  /// shown this device the list the account's own device holds, so no leaf
-  /// of the account is approved until it does (L2-5). A different list id is
-  /// held as `checking`, not made a sticky conflict, as for any chain from
-  /// another genesis (owner decision 2026-11-08, L1-3 question 3). An alert
-  /// stops counting once the pin shows its sender's device removed, so a
-  /// rogue device that alerts a head never published holds its account's
-  /// leaves only until the account removes it.
+  /// device's pin, or a list other than the pinned one ([_alertHolds]): the
+  /// server has not shown this device the list the account's own device
+  /// holds, so no leaf of the account is approved until it does (L2-5).
   Future<bool> _alertedPastPin(List<int> accountId) async {
     final String account;
     try {
@@ -686,32 +759,46 @@ class NativeCryptoService
     } on FormatException {
       return false;
     }
-    final alerted = await _alerted(account);
-    if (alerted == null) return false;
+    final alerts = await _alerted(account);
+    if (alerts.isEmpty) return false;
     final pin = await localStore.loadDeviceListPin(account);
-    if (pin == null) return true;
-    final alerter = utf8.encode(alerted.deviceId);
-    if (pin.keys.any((key) =>
-        _sameBytes(key.deviceId, alerter) && key.removedVersion != 0)) {
-      return false;
-    }
-    return pin.version < alerted.head || _hex(pin.listId) != alerted.listId;
+    return alerts.any((alert) => _alertHolds(alert, pin));
   }
 
   /// L2-5 receive: an approved device of [accountId] says the account's
   /// list head is [headVersion] and that a leaf of it in [conversationId]
-  /// is not on it. The head is kept (only ever raised), the list is fetched
-  /// again past the rate limit, and the group is judged again: a fork of
-  /// the pinned chain becomes `conflict` (L1), and a head the server keeps
-  /// from this device holds the account's leaves as `checking`. Never
-  /// throws; it runs after the message's transition has committed.
+  /// is not on it. The head is kept per alerting device (only ever raised
+  /// for the same list), so one device's inflated head never drops another
+  /// device's honest alert (review M3); alerts that no longer hold (their
+  /// device removed, the pin caught up, or a list that does not list them)
+  /// are dropped. The list is fetched again past the rate limit and the
+  /// group is judged again: a fork of the pinned chain becomes `conflict`
+  /// (L1), and a head the server keeps from this device holds the account's
+  /// leaves as `checking`. Never throws; it runs after the message's
+  /// transition has committed.
   Future<void> _applyDeviceListAlert(String conversationId, String accountId,
       String deviceId, int headVersion, String listId) async {
     try {
-      final known = await _alerted(accountId);
-      if (known == null || headVersion > known.head) {
-        await localStore.saveSetting(
-            alertHeadSetting(accountId), '$headVersion:$listId:$deviceId');
+      if (!deviceId.contains('\n')) {
+        final pin = await localStore.loadDeviceListPin(accountId);
+        final kept = [
+          for (final alert in await _alerted(accountId))
+            if (alert.deviceId != deviceId && _alertHolds(alert, pin)) alert,
+        ];
+        final own = (await _alerted(accountId))
+            .where((alert) => alert.deviceId == deviceId)
+            .firstOrNull;
+        final next =
+            own == null || own.listId != listId || headVersion > own.head
+                ? (head: headVersion, listId: listId, deviceId: deviceId)
+                : own;
+        if (_alertHolds(next, pin)) kept.add(next);
+        kept.sort((a, b) => b.head.compareTo(a.head));
+        final value = [
+          for (final alert in kept.take(maxAlertsPerAccount))
+            '${alert.head}:${alert.listId}:${alert.deviceId}',
+        ].join('\n');
+        await localStore.saveSetting(alertHeadSetting(accountId), value);
       }
       final pins = _deviceListPins;
       if (pins != null) {
@@ -721,9 +808,9 @@ class NativeCryptoService
             .timeout(deviceListJudgeTimeout);
       }
       final change = await _judgeGroup(conversationId);
-      await localStore.saveApprovalLeaves(change);
+      await _saveApprovalLeaves(change);
     } on Object {
-      // Best effort: the stored head still applies at the next judgment.
+      // Best effort: the stored heads still apply at the next judgment.
     }
   }
 
@@ -859,7 +946,7 @@ class NativeCryptoService
   Future<bool> _refreshApprovalHold(String conversationId) async {
     if (!await _hasGroup(conversationId)) return false;
     final change = await _judgeGroup(conversationId);
-    await localStore.saveApprovalLeaves(change);
+    await _saveApprovalLeaves(change);
     return change.leaves.any((row) => row.verdict != LeafVerdict.approved);
   }
 
@@ -888,7 +975,7 @@ class NativeCryptoService
     String deviceId,
   ) async {
     final change = await _judgeGroup(conversationId);
-    await localStore.saveApprovalLeaves(change);
+    await _saveApprovalLeaves(change);
     final row = change.leaves
         .where((row) => row.sameLeaf(idBytes(accountId), idBytes(deviceId)))
         .firstOrNull;
@@ -923,7 +1010,7 @@ class NativeCryptoService
   Future<void> _rejudgeAfterOwnCommit(String conversationId) async {
     try {
       if (!await _hasGroup(conversationId)) return;
-      await localStore.saveApprovalLeaves(await _judgeGroup(conversationId));
+      await _saveApprovalLeaves(await _judgeGroup(conversationId));
     } on Object {
       // Judged again before the next send.
     }
@@ -970,6 +1057,7 @@ class NativeCryptoService
         _noticeOrigin = null;
         _device?.close();
         _device = restored.device;
+        _verdictCache.clear();
         _deviceCounter = null;
         _accountId = accountId;
         _deviceId = deviceId;
@@ -982,6 +1070,7 @@ class NativeCryptoService
         if (!_pendingEnrollment) return;
         _device?.close();
         _device = null;
+        _verdictCache.clear();
         _deviceCounter = null;
         final first = _firstState;
         if (first != null) {
@@ -1050,8 +1139,10 @@ class NativeCryptoService
           _firstState = null;
           _device?.close();
           _device = null;
+          _verdictCache.clear();
           final restored = await _openStored(accountId, deviceId, stored);
           _device = restored.device;
+          _verdictCache.clear();
           _deviceCounter = restored.counter;
         }
         _adoptNoticeOrigin(origin, accountId, deviceId);
@@ -1106,6 +1197,7 @@ class NativeCryptoService
           // identity, and the frozen one is never used again.
           _device?.close();
           _device = null;
+          _verdictCache.clear();
           _deviceCounter = null;
           first.stateKey.fillRange(0, first.stateKey.length, 0);
           _firstState = null;
@@ -1116,6 +1208,7 @@ class NativeCryptoService
           }
           final restored = await _openStored(accountId, deviceId, stored);
           _device = restored.device;
+          _verdictCache.clear();
           _deviceCounter = restored.counter;
         }
         _adoptNoticeOrigin(origin, accountId, deviceId);
@@ -1165,6 +1258,7 @@ class NativeCryptoService
           checkCanCommit();
           _device?.close();
           _device = restored.device;
+          _verdictCache.clear();
           _deviceCounter = restored.counter;
           _adoptNoticeOrigin(origin, accountId, deviceId);
           _accountId = accountId;
@@ -2310,6 +2404,7 @@ class NativeCryptoService
                   }
                 : <String, String?>{...c7Settings, ...commitSettings},
           ));
+          _rememberVerdicts(approval);
         } catch (_) {
           await _restorePrevious(previous);
           rethrow;
@@ -3068,8 +3163,22 @@ class NativeCryptoService
                   : null) as String?,
             ),
           );
-          final outcome = checked.outcome;
-          reveal = checked.reveal;
+          // C4: the server lets an envelope marked as a leave notice past
+          // the posting rules (C2, timeout, slow mode), so a marked
+          // envelope is only ever a leave proof this app knows, or a hidden
+          // payload it does not (a newer leave proof); anything else under
+          // the mark, a visible unsupported payload included, is an invalid
+          // row and never shows (review L1).
+          final markedWrongly = _marksLeaveNotice(envelope.cryptoMetadata) &&
+              !switch (checked.outcome) {
+                DecodedAppPayload(:final payload) =>
+                  leaveNoticePayloadTypes.contains(payload.type),
+                UnsupportedAppPayload(:final hidden) => hidden,
+                InvalidAppPayload() => false,
+              };
+          final outcome =
+              markedWrongly ? const InvalidAppPayload() : checked.outcome;
+          reveal = markedWrongly ? null : checked.reveal;
           switch (outcome) {
             case DecodedAppPayload(:final payload):
               // C7: in the C0 layout a group-level two-part message (no
@@ -3090,16 +3199,6 @@ class NativeCryptoService
                           (privateChannel != null &&
                               c7Channel != null &&
                               c7Channel != privateChannel)))) {
-                effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
-                reveal = null;
-                break;
-              }
-              // C4: the server lets an envelope marked as a leave notice
-              // past the posting rules (C2, timeout, slow mode), so a
-              // marked envelope is only ever a member_leave; anything
-              // else under the mark is an invalid row and never shows.
-              if (_marksLeaveNotice(envelope.cryptoMetadata) &&
-                  payload.type != AppPayloadType.memberLeave) {
                 effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
                 reveal = null;
                 break;
@@ -3179,7 +3278,10 @@ class NativeCryptoService
                     channelId: payload.channelId,
                   ),
                 ];
-                if (payload.body['account_id'] == envelope.senderAccountId) {
+                // Review M3: only from a leaf its list approves now; a
+                // removed (stolen or replaced) device's alert is ignored.
+                if (senderVerdict == LeafVerdict.approved &&
+                    payload.body['account_id'] == envelope.senderAccountId) {
                   alert = (
                     accountId: envelope.senderAccountId,
                     headVersion: payload.body['head_version'] as int,
@@ -3205,7 +3307,12 @@ class NativeCryptoService
                 ];
                 final epoch = mlsMessageEpoch(
                     envelope.ciphertext, envelope.conversationId);
-                if (epoch != null &&
+                // Owner decision B (review M1): a leaf its list removed (a
+                // stolen or replaced phone) has no role, so its leave proof
+                // never strips a governing account; only an approved leaf's
+                // counts.
+                if (senderVerdict == LeafVerdict.approved &&
+                    epoch != null &&
                     payload.body['epoch'] == epoch &&
                     governanceOf(envelope.conversationId) != null) {
                   settings = <String, String?>{
@@ -4341,10 +4448,12 @@ class NativeCryptoService
     } catch (_) {
       _device?.close();
       _device = null;
+      _verdictCache.clear();
       rethrow;
     }
     _device?.close();
     _device = restored.device;
+    _verdictCache.clear();
     _deviceCounter = restored.counter;
   }
 
@@ -4465,6 +4574,7 @@ class NativeCryptoService
         _noticeOrigin = null;
         _device?.close();
         _device = null;
+        _verdictCache.clear();
         _deviceCounter = null;
         _firstState = null;
         _accountId = null;

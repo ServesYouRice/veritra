@@ -349,7 +349,11 @@ class CommunityInfoService {
     if (moderators.isEmpty) return null;
     // Freshness counts the owner's and admins' rows too: a moderator
     // re-sending a key retired by a removal must not make it fresh again.
-    return _freshest(home, keys, (a) => admin(a) || moderators.contains(a));
+    // And here a row from any sender dates the key: an admin who minted it
+    // before the removal and was demoted since is no longer trusted, but
+    // its row still shows the removed member may hold the key.
+    return _freshest(home, keys, (a) => admin(a) || moderators.contains(a),
+        retireByAnyRow: true);
   }
 
   /// Who else's delivery of [home]'s current key covers a due rotation
@@ -380,8 +384,13 @@ class CommunityInfoService {
     return moderators.isEmpty ? null : moderators;
   }
 
+  /// With [retireByAnyRow] a key is also retired when any row of it in
+  /// [home]'s group, from any sender, trusted or not, is older than the last
+  /// removal (the moderator-only second choice; never the primary path,
+  /// where an untrusted member could retire the admins' key that way).
   Future<CommunityInfoEvent?> _freshest(InfoKeyHome home,
-      List<CommunityInfoEvent> keys, bool Function(String) author) async {
+      List<CommunityInfoEvent> keys, bool Function(String) author,
+      {bool retireByAnyRow = false}) async {
     bool trusted(CommunityInfoEvent k) =>
         k.conversationId == home.conversationId &&
         k.keyId != null &&
@@ -399,6 +408,14 @@ class CommunityInfoService {
       if (epoch < (freshness[id] ?? epoch + 1)) freshness[id] = epoch;
     }
     final removal = await _removalEpoch(home);
+    final retired = <String>{
+      if (retireByAnyRow && removal > 0)
+        for (final k in keys)
+          if (k.conversationId == home.conversationId &&
+              k.keyId != null &&
+              (k.epoch ?? unknown) < removal)
+            k.keyId!,
+    };
     CommunityInfoEvent? best;
     var bestEpoch = unknown - 1;
     var bestSeq = -1;
@@ -406,6 +423,7 @@ class CommunityInfoService {
       if (k.key == null || !trusted(k)) continue;
       final epoch = freshness[k.keyId]!;
       if (removal > 0 && epoch < removal) continue;
+      if (retired.contains(k.keyId)) continue;
       final first = firstSeen[k.keyId]!;
       if (epoch > bestEpoch || (epoch == bestEpoch && first > bestSeq)) {
         best = k;

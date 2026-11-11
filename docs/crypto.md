@@ -591,12 +591,25 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   account's announced key; the manual pin is gone for moderators (owner
   keys keep D95's pin). Rules: C6 design, "Moderator keys over MLS"; §4
   type registry. No ABI, local schema or server migration change. Needs
-  the independent review.
+  the independent review. Residual (review 2026-11-11, L6): both types ride
+  in an open channel of the shared group, or an announcement channel for an
+  owner or admin, because C0 routing (`routeEnvelope`) requires a
+  `channel_id` in a shared conversation and refuses a group-level envelope
+  that is not a C7 two-part body. In a community with no open channel an
+  account below admin therefore has no route: a moderator's `report_key`
+  and a member's `report_key_request` are not sent (`_reportKeyChannelFor`
+  is null; the background pass tries again later), and reporters cannot
+  seal to that moderator until an open channel exists or it is made admin. A group-level route
+  would need a server exemption like the leave notice's; not built.
 
 - **C6 private-channel reports (2026-11-11):** a report about a post in a
   private channel is sealed only to verified moderators in that channel's
   MLS roster, and the server's community inbox lists only members of the
-  reported conversation. No wire, ABI, local schema or migration change.
+  reported conversation. The roster (`mlsAccountsOf`, and the C3 no-admin
+  roster `groupMemberAccounts`) counts only accounts with a leaf whose
+  last L1 verdict on this device is `approved`, with the key in the tree
+  (review L7: an unapproved leaf can carry any account's id); before a
+  group's verdicts are loaded it is unknown (null: no report, no stand-in). No wire, ABI, local schema or migration change.
   Rules: C6 design, "Private channels".
 
 - **L2-5 own-device alert (2026-11-11):** the hidden v2 payload
@@ -611,10 +624,18 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   an approved device of an account can hold that account's leaves in its
   chats as `checking` by alerting a head never published, until a pin shows
   that device removed (the alert then stops counting; the head carries no
-  signature, so a receiver cannot check it alone); one alert is kept per
-  account, so while a rogue alert holds it an honest alert at the same or a
-  lower head is dropped, and none is left once the rogue device is
-  removed; first contact is unchanged. Tests:
+  signature, so a receiver cannot check it alone); first contact is
+  unchanged. Review M3 (2026-11-11): an alert counts only from a leaf whose
+  verdict is `approved` (a `removed` leaf's alert is ignored); the setting
+  keeps one line per alerting device, so one device's inflated head never
+  drops another device's later alert; lines that no longer hold (alerting
+  device removed, pin caught up, or a pin of another list id that does not
+  list the alerting device: a list restarted from a new genesis) are
+  dropped at the next write and never hold, so an old list's alert cannot
+  hold the account's leaves as `checking` for good. While one alert holds
+  an account, that account's leaves are `checking`, so their own alerts
+  are not taken until it lifts (the honest device alerts again at its next
+  head, which its removal of the rogue device produces). Tests:
   `mobile/test/l1_native_gate_test.dart` (alert, forged alert, hold and
   release), `mobile/test/l2_device_list_alert_payload_test.dart`. Needs the
   independent review.
@@ -774,8 +795,18 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   fresh epoch (it is trusted to choose keys; honest code never re-sends a key
   from before a removal it has seen). In a private channel a verified
   moderator can likewise make a key it never sent before current, but only
-  as second choice: while no owner or admin key is fresh, and never a key a
-  removal retired (owner and admin rows count in its freshness). Rows stored before schema 35 have no
+  as second choice: while no owner or admin key is fresh. In that second
+  choice a key is also retired when any row of it in the group, from any
+  sender, trusted or not, has an epoch below the last removal. Counting only
+  rows from currently trusted senders was not enough (review 2026-11-11): an
+  admin mints K at epoch 5, a removal lands at 10, the admin is demoted, a
+  moderator re-sends K at 12, and K's only trusted row was the moderator's,
+  so K was current again. The primary owner/admin path keeps trusted rows
+  only, so a member cannot retire the admins' key by replaying it at an old
+  epoch; in the second choice it can (it holds old epoch secrets for a
+  couple of epochs), which only leaves the channel without a current key
+  until a rotation (fail closed). Test: `c3_community_info_service_test.dart`
+  ("demoted since"). Rows stored before schema 35 have no
   epoch and rank below every key with one and below any removal. A device
   upgraded with a removal already recorded for a group and only such rows
   therefore has no current key there; no admin can answer its request (their
@@ -3635,8 +3666,11 @@ exempts a marked envelope from C2, the C5 timeout and slow mode
 attachments, reply, thread or franking commitment; and at most one
 per sender account and membership per hour (`leave_notice_limited`, 429
 with Retry-After). The mark is unverifiable, so receivers turn any marked
-envelope whose payload is not a `member_leave` into an invalid row: a
-marked post never shows. In a shared group the envelope still names a
+envelope whose payload is not a leave proof into an invalid row: a
+marked post never shows. The check runs before the payload is handled
+(review L1): a marked payload of a type this app does not know is kept
+only when the sender marked it hidden (a newer build's leave proof);
+a visible one is an invalid row too. In a shared group the envelope still names a
 channel, because C0 routing requires one there (only a C7 group-level body
 of a history_sync size may name none); the exemption makes the channel's
 rules irrelevant to it. The server learns that an envelope is a leave
@@ -3683,8 +3717,11 @@ messages but never acts with its account's role: its `delete` is the
 author's own only (`messageEffectsFor(senderActsWithRole: false)`), its C3
 `info_key` and `info_update` are ignored (an `info_key_request` is not a
 role action), its post where posting is restricted is dropped
-(`shouldDropRestrictedPost(senderRemoved: true)`), and its pin uses no
-community role. Role-record commits already required an `approved`
+(`shouldDropRestrictedPost(senderRemoved: true)`), its pin uses no
+community role, and its `member_leave` is no leave proof (review M1: a
+stolen phone could otherwise post a valid proof and strip its governing
+account; only a leaf whose verdict is `approved` sets
+`c4.leave.<group>.<account>`). Role-record commits already required an `approved`
 committer (step 3) and are held otherwise; C5 timeouts and C2 powers in the
 record are record changes, so the same rule covers them.
 

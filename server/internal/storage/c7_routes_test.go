@@ -331,6 +331,13 @@ func TestC7EpochMetadataIsANonNegativeInteger(t *testing.T) {
 	if _, err := f.post(ctx, group.ID, f.owner, "neg", json.RawMessage(`{"mls_epoch":-4}`)); !errors.Is(err, ErrInvalidEpochMetadata) {
 		t.Fatalf("negative epoch in a group: %v", err)
 	}
+	// A repeated key next to mls_epoch: Go reads the last value, SQLite's
+	// json_extract the first.
+	for _, metadata := range []string{`{"mls_epoch":-4,"mls_epoch":3}`, `{"mls_epoch":3,"mls_epoch":3}`, `{"mls_epoch":3,"protocol_version":1,"protocol_version":1}`} {
+		if _, err := f.post(ctx, group.ID, f.owner, "dup"+metadata, json.RawMessage(metadata)); !errors.Is(err, ErrInvalidEpochMetadata) {
+			t.Fatalf("repeated key %s: %v", metadata, err)
+		}
+	}
 	for _, metadata := range []string{`{"mls_epoch":0}`, `{"mls_epoch":12}`, `{"protocol_version":1}`} {
 		if _, err := f.post(ctx, group.ID, f.owner, "ok"+metadata, json.RawMessage(metadata)); err != nil {
 			t.Fatalf("%s: %v", metadata, err)

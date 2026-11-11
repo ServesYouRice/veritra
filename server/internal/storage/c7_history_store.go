@@ -130,6 +130,12 @@ func checkMetadataEpoch(metadata json.RawMessage) error {
 	if !ok {
 		return nil
 	}
+	// A repeated key is read differently by Go (the last value) and by
+	// SQLite's json_extract (the first), so {"mls_epoch":-4,"mls_epoch":3}
+	// would pass here and be read as -4 by the join filter.
+	if metadataRepeatsKey(metadata) {
+		return ErrInvalidEpochMetadata
+	}
 	value, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
 	if err != nil || value < 0 {
 		return ErrInvalidEpochMetadata

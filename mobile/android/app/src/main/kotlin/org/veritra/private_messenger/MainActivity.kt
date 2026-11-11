@@ -42,7 +42,7 @@ class MainActivity : FlutterActivity() {
         pendingFolderResult = result
         try {
             startActivityForResult(intent, K1SecondCopy.PICK_REQUEST)
-        } catch (_: ActivityNotFoundException) {
+        } catch (ignored: ActivityNotFoundException) {
             pendingFolderResult = null
             result.error("no_picker", null, null)
         }
@@ -64,7 +64,7 @@ class MainActivity : FlutterActivity() {
             result.success(mapOf(
                 "tree" to tree.toString(),
                 "label" to K1SecondCopy.label(applicationContext, tree)))
-        } catch (_: SecurityException) {
+        } catch (ignored: SecurityException) {
             result.error("permission_refused", null, null)
         }
     }

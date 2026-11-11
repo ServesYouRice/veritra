@@ -4759,15 +4759,8 @@ class AppState extends ChangeNotifier
       // when the conversation has a disappearing timer and the service can
       // carry it; otherwise the payload has none and receivers fall back to
       // the server-stamped time.
-      final retention = conversation.retentionSeconds;
-      // C3 info payloads never expire: a key must outlive the timer. Nor do
-      // C6 report key announcements (their settings outlive the row anyway).
-      final DateTime? senderExpiry = retention != null &&
-              retention > 0 &&
-              !infoPayloadTypes.contains(type) &&
-              !reportKeyPayloadTypes.contains(type)
-          ? DateTime.now().toUtc().add(Duration(seconds: retention))
-          : null;
+      final DateTime? senderExpiry = senderExpiryFor(
+          type, conversation.retentionSeconds, DateTime.now().toUtc());
       final Object? expiringService = mls;
       if (mls != null &&
           senderExpiry != null &&
