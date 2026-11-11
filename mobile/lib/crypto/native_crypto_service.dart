@@ -4448,12 +4448,10 @@ class NativeCryptoService
     } catch (_) {
       _device?.close();
       _device = null;
-      _verdictCache.clear();
       rethrow;
     }
     _device?.close();
     _device = restored.device;
-    _verdictCache.clear();
     _deviceCounter = restored.counter;
   }
 
