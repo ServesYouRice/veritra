@@ -156,7 +156,7 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 
 // enforceK1BackupAllowance checks the account's shared storage quota (owner
 // decision 2026-11-11: backups share ACCOUNT_STORAGE_MIB with attachments;
-// migration 0078 counts kind-1 copies in blob_usage_accounts again). The
+// migration 0079 counts kind-1 copies in blob_usage_accounts again). The
 // design's formula: usage, less this device's copy that the upload replaces,
 // plus the new size, so a same-size replacement does not need room for two
 // copies. (The replaced copy stays on disk for its day of grace; the quota is
