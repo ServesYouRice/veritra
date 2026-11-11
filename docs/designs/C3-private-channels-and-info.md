@@ -347,8 +347,24 @@ This is a server permission hint for UI availability only; encrypted info
 acceptance still requires the verified C4 role source. See
 [`creation-entry evidence`](../../testing/evidence/C3-creation-access-2026-11-11.md).
 
+**Add-key delivery follow-up (2026-11-11):** the committing device now pushes
+the current info key after its accepted add bundle is merged locally, in the
+key's owning group. Foreground sync resolving an own commit after a lost
+response does the same. Accepted records under that key are re-announced only
+where the verified role policy allows this account to author them. Delivery
+never mints a replacement key, defers to pending rotations, and uses the
+ordinary ordered send path outside the session queue. Missing keys, interrupted
+delivery, missing topology and inbound-only background wakes retain the
+request/answer recovery path. This hook is best effort, not a durable second
+outbox. Native-backed app tests exercise both accepted-response and
+lost-response paths; production peer acceptance still waits for C4 wiring.
+
+Overlapping removals now invalidate the older rotation's token before further
+re-sealing, even if its new key was already delivered. The newer mark retains
+its own fresh key and is not delayed by the abandoned pass's backoff.
+
 **Still left:** channel conversion UI;
-icons and the category screens; a push of the key right after an add commit; and step
+icons and the category screens; and step
 4 (`400 plaintext_name_refused`, dropping the plaintext columns). Step 4
 waits for C4's client role wiring: until the app holds a verified role
 record, nothing another account wrote is shown, so new names come only from

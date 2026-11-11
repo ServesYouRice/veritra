@@ -457,6 +457,16 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C3 add-key delivery and overlapping removals (2026-11-11):** no ABI,
+  schema or wire change. After merging its accepted add bundle, the committing
+  device sends the current info key into its owning group and re-announces
+  accepted records under that key where the verified editor policy permits it.
+  Foreground sync completing an own bundle after a lost response also triggers
+  delivery. The normal send queue and removal holds apply; request/answer
+  remains the recovery path for interrupted delivery and inbound-only wakes.
+  A newer removal token cancels an older rotation before further re-sealing
+  and clears its retry delay. Production C4 role wiring remains unfinished.
+
 - **C3 senders and fetch loop (2026-11-09):** no ABI, payload or schema
   change. The `info_key`, `info_key_request` and `info_update` types are now
   sent: through the ordinary send path (removal holds apply), unfranked, no

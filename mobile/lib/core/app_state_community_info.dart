@@ -290,6 +290,48 @@ extension CommunityInfoActions on AppState {
     unawaited(refreshCommunityInfo());
   }
 
+  /// Outbound work must run outside the session queue that merges commits:
+  /// sending a payload queues behind it. Request/answer remains the recovery
+  /// path if this best-effort delivery is interrupted or no key is held yet.
+  Future<void> _deliverInfoAfterAdd(
+      Session owner, int generation, String conversationId) async {
+    if (!_syncOwnerActive(owner, generation)) return;
+    final service = _info;
+    if (service == null) return;
+    try {
+      for (final community in List.of(communities)) {
+        if (community.sharedConversationId == conversationId) {
+          await service.loadAccepted(_communitySubject(community.id));
+        }
+        final channels = channelsByCommunity[community.id] ?? const <Channel>[];
+        final subjects = <InfoSubject>[
+          if (community.sharedConversationId == conversationId) ...[
+            _communitySubject(community.id),
+            for (final category
+                in service.shown(infoKindCommunity, community.id)?.categories ??
+                    const <String>[])
+              InfoSubject(infoKindCategory, category, community.id),
+            for (final channel in channels)
+              if (channel.kind != 'private')
+                InfoSubject(infoKindChannel, channel.id, community.id),
+          ],
+          for (final channel in channels)
+            if (channel.kind == 'private' &&
+                channel.conversationId == conversationId)
+              InfoSubject(infoKindChannel, channel.id, community.id),
+        ];
+        if (subjects.isEmpty) continue;
+        final home = service.homeOf(subjects.first);
+        if (home == null || home.conversationId != conversationId) continue;
+        if (!_syncOwnerActive(owner, generation)) return;
+        await service.deliverAfterAdd(home, community.id, subjects);
+      }
+    } catch (err) {
+      developer.log('c3_add_delivery_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }
+  }
+
   /// One pass over every community with the shared-group layout: fetch and
   /// judge each record, answer key requests, and run due rotations. Runs on
   /// `info.updated`, when the communities load, and after a catch-up (at

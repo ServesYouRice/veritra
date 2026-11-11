@@ -269,12 +269,11 @@ class CommunityInfoService {
       _serializeWrites(() => _publish(subject, build,
           attempts: attempts, mint: mint, expectedRevision: expectedRevision));
 
-  Future<void> _checkWritable(InfoKeyHome home,
-      {required bool rotating}) async {
+  Future<void> _checkWritable(InfoKeyHome home, {Object? rotationToken}) async {
     final due = await _locked(_dueRotations);
+    final mark = due['${home.keySubjectKind}|${home.keySubjectId}'];
     if (topology.sendHeld(home.conversationId) ||
-        (!rotating &&
-            due.containsKey('${home.keySubjectKind}|${home.keySubjectId}'))) {
+        (rotationToken == null ? mark != null : mark?['t'] != rotationToken)) {
       throw const InfoRotationPending();
     }
   }
@@ -285,11 +284,12 @@ class CommunityInfoService {
     int attempts = 3,
     bool mint = false,
     CommunityInfoEvent? withKey,
+    Object? rotationToken,
     int? expectedRevision,
   }) async {
     final home = homeOf(subject);
     if (home == null) throw StateError('C3 is not active here');
-    await _checkWritable(home, rotating: withKey != null);
+    await _checkWritable(home, rotationToken: rotationToken);
     var selected = withKey ?? await currentKey(home, subject.communityId);
     if (selected == null) {
       if (!mint) {
@@ -326,7 +326,7 @@ class CommunityInfoService {
         key = latest;
       }
       // A removal may have started while either read was in flight.
-      await _checkWritable(home, rotating: withKey != null);
+      await _checkWritable(home, rotationToken: rotationToken);
       final record = build(version + 1);
       final blob = codec.seal(key: key.key!, record: record);
       final int stored;
@@ -516,6 +516,74 @@ class CommunityInfoService {
     }
   }
 
+  /// The device that committed an add delivers the current key immediately,
+  /// without waiting for the joiner to ask. Call only after merging that
+  /// accepted commit. The ordinary send path orders this after the commit
+  /// and Welcome; a pending removal leaves delivery to its rotation.
+  ///
+  /// Announcements accepted before the join are sent again where this
+  /// account may author them. Without them a new member cannot authenticate
+  /// the fetched records. Missing keys are requested, never minted here.
+  Future<bool> deliverAfterAdd(InfoKeyHome home, String communityId,
+          Iterable<InfoSubject> subjects) =>
+      _serializeWrites(() async {
+        try {
+          await _checkWritable(home);
+        } on InfoRotationPending {
+          return false;
+        }
+        final key = await currentKey(home, communityId);
+        if (key == null) {
+          await requestKey(home);
+          return false;
+        }
+        final records = <InfoSubject, AcceptedCommunityInfo>{};
+        final policy = policyFor(communityId);
+        for (final subject in subjects) {
+          final at = homeOf(subject);
+          if (subject.communityId != communityId ||
+              at?.conversationId != home.conversationId ||
+              at?.keySubjectKind != home.keySubjectKind ||
+              at?.keySubjectId != home.keySubjectId ||
+              !policy.mayEdit(accountId, subject.kind)) {
+            continue;
+          }
+          final accepted =
+              await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
+          if (accepted?.keyId == key.keyId) records[subject] = accepted!;
+        }
+        // A removal or remote rotation may have arrived during the reads.
+        if ((await currentKey(home, communityId))?.keyId != key.keyId) {
+          return false;
+        }
+        try {
+          await _checkWritable(home);
+        } on InfoRotationPending {
+          return false;
+        }
+        if (!await send(
+            home.conversationId,
+            AppPayloadType.infoKey,
+            infoKeyBody(
+                subjectKind: home.keySubjectKind,
+                subjectId: home.keySubjectId,
+                key: key.key!))) {
+          return false;
+        }
+        for (final entry in records.entries) {
+          try {
+            await _checkWritable(home);
+          } on InfoRotationPending {
+            return false;
+          }
+          if (!await _announce(entry.key, home, entry.value.revision,
+              entry.value.keyId, entry.value.blob)) {
+            return false;
+          }
+        }
+        return true;
+      });
+
   /// Answers key requests for [home] that no key has followed yet. Only an
   /// owner or admin answers, after a short random wait, and only in the group
   /// that owns the key: a request for a private channel's key made in the
@@ -561,7 +629,7 @@ class CommunityInfoService {
     // The write queue keeps rotation from replacing the selected key during
     // the delay. A new removal mark still cancels this answer until rotation.
     try {
-      await _checkWritable(home, rotating: false);
+      await _checkWritable(home);
     } on InfoRotationPending {
       return 0;
     }
@@ -634,6 +702,7 @@ class CommunityInfoService {
           't': '${_clock().microsecondsSinceEpoch}.${_marks++}',
         };
         await _saveDue(due);
+        _backoff.remove('${home.keySubjectKind}|${home.keySubjectId}');
       });
 
   int _marks = 0;
@@ -762,6 +831,9 @@ class CommunityInfoService {
           if (verdict != null && shown == null) throw const InfoKeyMissing();
           if (shown != null) records[subject] = shown;
         }
+        // A newer removal invalidates this pass: its key may already be
+        // known to the newly removed member. Never publish under that key.
+        await _checkWritable(home, rotationToken: token);
         // The key this mark already made, if any; otherwise a new one.
         final made = mark['k'] is String
             ? await _ownKey(home, mark['k'] as String)
@@ -786,12 +858,17 @@ class CommunityInfoService {
         for (final record in records.entries) {
           await _publish(
               record.key, (revision) => _copy(record.value, revision),
-              withKey: fresh, expectedRevision: record.value.revision);
+              withKey: fresh,
+              rotationToken: token,
+              expectedRevision: record.value.revision);
         }
+        await _checkWritable(home, rotationToken: token);
         await _updateMark(id, token, (_) => null);
         _backoff.remove(id);
         done++;
       } catch (_) {
+        // A superseded pass must not delay the newer removal's rotation.
+        if ((await _locked(_dueRotations))[id]?['t'] != token) continue;
         // Stays due, and waits longer each time (1 minute doubling to an
         // hour), so a failing re-seal never storms the group.
         final failures = (wait?.failures ?? 0) + 1;

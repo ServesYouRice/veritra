@@ -6619,6 +6619,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       SyncEvent event, _SyncPageRepair repair,
       {WakeRunContext? wake, required ApiClient client}) async {
     final current = session;
+    final infoGeneration = _sessionGeneration;
     final mls = _mlsCrypto;
     if (current == null || mls == null) return null;
     // A background pass uses only the bounded inbound operations, fenced by
@@ -6657,9 +6658,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         // This device's own commit, accepted but not yet completed by the
         // outbox (answer lost, or the app stopped): sync merges it, so
         // note its update path here as the outbox would have.
-        final ownPathCommit = message.kind == 'commit' &&
-            message.senderDeviceId == current.deviceId &&
-            await _queuedPathCommit(message.idempotencyKey);
+        final ownBundle = message.kind == 'commit' &&
+                message.senderDeviceId == current.deviceId
+            ? await _queuedCommitBundle(message.idempotencyKey)
+            : null;
+        final ownPathCommit = ownBundle != null &&
+            (ownBundle.isUpdateOnly || ownBundle.removed.isNotEmpty);
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
           if (await _skipWelcomeBeforeLeave(current, event, message,
@@ -6696,6 +6700,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               current,
               (policy) => policy.recordPathCommit(
                   message.conversationId, DateTime.now()));
+        }
+        if (wake == null && ownBundle != null && ownBundle.added.isNotEmpty) {
+          unawaited(_trackBackground(() => _deliverInfoAfterAdd(
+              current, infoGeneration, message.conversationId)));
         }
         if (message.kind == 'welcome' &&
             message.recipientDeviceId == current.deviceId) {
@@ -7701,6 +7709,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         _mlsAcceptedUnfinished.remove(message.idempotencyKey);
         if (isBundle) {
           final bundle = MlsCommitBundle.decode(message.payload);
+          if (bundle.added.isNotEmpty &&
+              _syncOwnerActive(current, ownerGeneration)) {
+            unawaited(_trackBackground(() => _deliverInfoAfterAdd(
+                current, ownerGeneration, message.conversationId)));
+          }
           // Sends held for this removal (D68) go once reconcile confirms it.
           if (bundle.removed.isNotEmpty &&
               _removalHolds.containsKey(message.conversationId)) {
@@ -8624,21 +8637,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return _isUpdateOnlyBundle(message) ? backoff : null;
   }
 
-  /// Whether the outbox holds this device's commit bundle [idempotencyKey]
-  /// and it carries an update path (a self-update, or a removal). Never
-  /// throws: a wrong answer costs at most an early or late self-update.
-  Future<bool> _queuedPathCommit(String idempotencyKey) async {
+  /// This device's queued bundle, before sync resolves it after a lost
+  /// server response. Used for self-update tracking and C3 add-key delivery.
+  Future<MlsCommitBundle?> _queuedCommitBundle(String idempotencyKey) async {
     try {
       final queued = (await localStore.pendingMlsMessages())
           .where((item) =>
               item.kind == MlsCommitBundle.kind &&
               item.idempotencyKey == idempotencyKey)
           .firstOrNull;
-      if (queued == null) return false;
-      final bundle = MlsCommitBundle.decode(queued.payload);
-      return bundle.isUpdateOnly || bundle.removed.isNotEmpty;
+      return queued == null ? null : MlsCommitBundle.decode(queued.payload);
     } catch (_) {
-      return false;
+      return null;
     }
   }
 

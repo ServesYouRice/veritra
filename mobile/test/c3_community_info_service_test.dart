@@ -129,6 +129,7 @@ class _Net {
   var held = false;
   var refuse = false;
   AppPayloadType? refuseType;
+  Future<void> Function(AppPayloadType)? afterDeliver;
 
   Future<bool> deliver(_Device from, String conversation, AppPayloadType type,
           Map<String, Object?> body) =>
@@ -160,6 +161,7 @@ class _Net {
             senderDeviceId: device)
       ]);
     }
+    await afterDeliver?.call(type);
     return true;
   }
 }
@@ -228,6 +230,130 @@ void main() {
       name: name,
       categories: const [],
       channels: [InfoChannelPlace(channelId: _open)]);
+
+  test('an adding admin delivers the key and announcements without a request',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final joiner = device('member', {_shared});
+    expect(
+        await joiner.service
+            .currentKey(admin.service.homeOf(community)!, _community),
+        isNull);
+    expect(
+        await admin.service.deliverAfterAdd(
+            admin.service.homeOf(community)!, _community, [community]),
+        isTrue);
+    expect(admin.sent.map((e) => e.$2).toList().sublist(1),
+        [AppPayloadType.infoKey, AppPayloadType.infoUpdate]);
+    expect(await joiner.service.refresh(community), isA<InfoAccepted>());
+    expect(joiner.service.shown(infoKindCommunity, _community)?.name, 'Club');
+    expect(joiner.sent, isEmpty);
+    expect(server.puts, 1);
+  }, skip: skip);
+
+  test('add delivery sends a private key only in its owning group', () async {
+    final admin = device('admin', {_shared, _privateConv}, admin: true);
+    final publicMember = device('other', {_shared});
+    const private = InfoSubject(
+        infoKindChannel,
+        'chan_00000000000000000000000000000003',
+        'comm_00000000000000000000000000000001');
+    await admin.service.publish(
+        private,
+        (r) => CommunityInfoRecord(
+            kind: private.kind,
+            subjectId: private.id,
+            revision: r,
+            name: 'Private',
+            privatePlace: const InfoPrivatePlace(position: 0)),
+        mint: true);
+    final joiner = device('member', {_shared, _privateConv});
+    expect(
+        await admin.service.deliverAfterAdd(
+            admin.service.homeOf(private)!, _community, [community, private]),
+        isTrue);
+    expect(await joiner.service.refresh(private), isA<InfoAccepted>());
+    expect(
+        await publicMember.store.loadCommunityInfoEvents(
+            CommunityInfoEventKind.key, infoKindChannel, _private),
+        isEmpty);
+    expect(admin.sent.every((e) => e.$1 == _privateConv), isTrue);
+  }, skip: skip);
+
+  test('add delivery waits for a removal and requests a missing key', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final home = admin.service.homeOf(community)!;
+    expect(await admin.service.deliverAfterAdd(home, _community, [community]),
+        isFalse);
+    expect(admin.sent.single.$2, AppPayloadType.infoKeyRequest);
+    expect(await admin.service.currentKey(home, _community), isNull);
+    await admin.service.markRotationDue(home, _community);
+    admin.sent.clear();
+    expect(await admin.service.deliverAfterAdd(home, _community, [community]),
+        isFalse);
+    expect(admin.sent, isEmpty);
+    expect(server.puts, 0);
+  }, skip: skip);
+
+  test('failed add delivery can retry without consuming a request allowance',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    final joiner = device('member', {_shared});
+    net.refuseType = AppPayloadType.infoUpdate;
+    expect(await admin.service.deliverAfterAdd(home, _community, [community]),
+        isFalse);
+    net.refuseType = null;
+    expect(await admin.service.deliverAfterAdd(home, _community, [community]),
+        isTrue);
+    expect(await joiner.service.refresh(community), isA<InfoAccepted>());
+  }, skip: skip);
+
+  test('a removal during add delivery cancels its remaining announcements',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    admin.sent.clear();
+    net.afterDeliver = (type) async {
+      if (type == AppPayloadType.infoKey) {
+        net.afterDeliver = null;
+        await admin.service.markRotationDue(home, _community);
+      }
+    };
+    expect(await admin.service.deliverAfterAdd(home, _community, [community]),
+        isFalse);
+    expect(admin.sent.map((e) => e.$2), [AppPayloadType.infoKey]);
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+  }, skip: skip);
+
+  test('add delivery never re-announces a record under a different key',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    final fresh = await admin.service.newKey(home);
+    admin.sent.clear();
+    expect(await admin.service.deliverAfterAdd(home, _community, [community]),
+        isTrue);
+    expect(admin.sent.map((e) => e.$2), [AppPayloadType.infoKey]);
+    expect(admin.sent.single.$3['key_id'], fresh.keyId);
+  }, skip: skip);
+
+  test('a member delivering a key cannot author community info', () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final member = device('member', {_shared});
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await admin.service.deliverAfterAdd(home, _community, [community]);
+    expect(await member.service.refresh(community), isA<InfoAccepted>());
+    member.sent.clear();
+    expect(await member.service.deliverAfterAdd(home, _community, [community]),
+        isTrue);
+    expect(member.sent.map((e) => e.$2), [AppPayloadType.infoKey]);
+  }, skip: skip);
 
   test('an admin publishes; a member asks for the key, gets it, and shows it',
       () async {
@@ -530,6 +656,45 @@ void main() {
                 CommunityInfoEventKind.key, infoKindCommunity, _community))
             .map((k) => k.keyId),
         isNot(contains(served.keyId)));
+  }, skip: skip);
+
+  test('a newer removal cancels a rotation whose key was already sent',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final removed = device('other', {_shared});
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    final original = server.records[community.key]!;
+    await admin.service.markRotationDue(home, _community);
+    String? exposedKey;
+    net.afterDeliver = (type) async {
+      if (type != AppPayloadType.infoKey) return;
+      net.afterDeliver = null;
+      exposedKey = admin.sent.last.$3['key_id'] as String;
+      // This member received the first rotation key, then a second removal
+      // completed before that send returned to the first rotation pass.
+      removed.members.remove(_shared);
+      await admin.service.markRotationDue(home, _community);
+    };
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    expect(exposedKey, isNotNull);
+    expect(server.puts, 1);
+    expect(server.records[community.key], same(original));
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+    // The abandoned pass must not back off the new removal's rotation.
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    final safe = server.records[community.key]!;
+    expect(safe.keyId, isNot(exposedKey));
+    expect(
+        (await removed.store.loadCommunityInfoEvents(
+                CommunityInfoEventKind.key, infoKindCommunity, _community))
+            .map((k) => k.keyId),
+        contains(exposedKey));
+    expect(
+        (await removed.store.loadCommunityInfoEvents(
+                CommunityInfoEventKind.key, infoKindCommunity, _community))
+            .map((k) => k.keyId),
+        isNot(contains(safe.keyId)));
   }, skip: skip);
 
   test('private rotation survives restart and excludes the removed member',
@@ -951,16 +1116,16 @@ void main() {
       unawaitedMark(admin.service, home);
       return [community];
     });
-    expect(await pass, 1);
+    expect(await pass, 0);
     expect(
         await admin.service.dueRotations(), contains('community|$_community'));
     expect(await admin.service.dueRotations(), contains('channel|$_private'));
-    // Exactly one new community key per pass, none for the unplaced channel.
+    // A superseded pass mints no key, nor does the unplaced channel.
     expect(
         (await admin.store.loadCommunityInfoEvents(
                 CommunityInfoEventKind.key, infoKindCommunity, _community))
             .length,
-        keysBefore + 1);
+        keysBefore);
     // Once the community is known gone, its marks go.
     topology.gone = true;
     await admin.service.runRotations((_, __) => []);
