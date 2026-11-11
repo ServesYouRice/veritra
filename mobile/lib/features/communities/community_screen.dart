@@ -4,6 +4,7 @@ import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/avatar.dart';
+import '../../ui/reauthenticate.dart';
 import '../../ui/photo_avatar.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
@@ -13,6 +14,8 @@ import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
+import '../chat/roles_screen.dart';
+import '../reports/owner_reports_screen.dart';
 import 'membership_screens.dart';
 import 'community_info_screen.dart';
 import 'create_channel_dialog.dart';
@@ -365,6 +368,37 @@ class _CommunityCard extends StatelessWidget {
                       ),
                     ),
                     icon: const Icon(Icons.folder_outlined),
+                  ),
+                // C4: the shared group's verified roles.
+                if (community.sharedConversationId != null)
+                  IconButton(
+                    key: Key('community-roles-${community.id}'),
+                    tooltip: context.l10n.rolesTitle,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => RolesScreen(
+                            state: state,
+                            conversationId: community.sharedConversationId!),
+                      ),
+                    ),
+                    icon: const Icon(Icons.admin_panel_settings_outlined),
+                  ),
+                // C6: this moderator's report inbox in the community.
+                if (state.moderatesCommunity(community.id))
+                  IconButton(
+                    key: Key('community-reports-${community.id}'),
+                    tooltip: context.l10n.c6ReportsTitle,
+                    onPressed: () => Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => OwnerReportsScreen(
+                          state: state,
+                          communityId: community.id,
+                          reauthenticate: (context) =>
+                              promptReauthenticate(context, state),
+                        ),
+                      ),
+                    ),
+                    icon: const Icon(Icons.flag_outlined),
                   ),
                 if (state.canCreateChannel(community.id))
                   IconButton(

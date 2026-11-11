@@ -358,3 +358,16 @@ extension RoleStateDevice on NativeCryptoDevice {
     return _readRoleState(bytes);
   }
 }
+
+/// C4 wiring: the two-phase merge reports what the one-shot C7 call did, so
+/// C7's group state follows a commit received either way. [root] is shared,
+/// not copied: wiping one wipes both.
+extension CommitPairsC7Outcome on CommitPairs {
+  C7CommitOutcome get c7Outcome => C7CommitOutcome._(
+        removedAny: removed,
+        addedAny: added,
+        removedSelf: removedSelf,
+        newEpoch: epoch,
+        root: root,
+      );
+}

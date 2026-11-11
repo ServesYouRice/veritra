@@ -513,6 +513,23 @@ extension MembershipActions on AppState {
   /// Leaves a community and every channel in it, and drops their local
   /// state the way leaving a group does. The last owner cannot leave.
   Future<bool> leaveCommunity(String communityId) async {
+    // C4: the shared group's record decides first (outside the op: it
+    // sends): the owner transfers before leaving, a governing member sends
+    // its leave proof.
+    final owner = session;
+    final shared = communities
+        .where((community) => community.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (owner != null && shared != null) {
+      try {
+        await _beforeLeavingRecordGroup(owner, shared);
+      } on UserFacingException catch (err) {
+        _opErrors[Ops.membership] = err.message;
+        notifyListeners();
+        return false;
+      }
+    }
     final done = await _membershipCall<bool>((current, client) async {
       final removal = await client.removeCommunityMember(
         current.token,

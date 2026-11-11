@@ -5940,7 +5940,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Reports to community moderators are not available yet.'**
+  /// **'This community has no verified roles, so the app can\'t tell who its moderators are.'**
   String get c6ReportCommunityUnavailable;
 
   /// C6 reports.
@@ -6066,7 +6066,7 @@ abstract class AppLocalizations {
   /// C6 reports.
   ///
   /// In en, this message translates to:
-  /// **'Not available yet. Moderator reports arrive with community roles.'**
+  /// **'Reports about a community go to its moderators. A moderator opens them from the community.'**
   String get c6ReportsCommunityUnavailable;
 
   /// C6 reports.
@@ -7052,6 +7052,138 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Categories and icon'**
   String get communityInfoOpen;
+
+  /// No description provided for @rolesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Roles'**
+  String get rolesTitle;
+
+  /// No description provided for @rolesDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Checked by every member\'s app, not by the server.'**
+  String get rolesDetail;
+
+  /// No description provided for @rolesNoRecord.
+  ///
+  /// In en, this message translates to:
+  /// **'This group was made before verified roles, so the roles shown are the server\'s.'**
+  String get rolesNoRecord;
+
+  /// No description provided for @rolesUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Roles can\'t be read on this device right now.'**
+  String get rolesUnavailable;
+
+  /// No description provided for @rolesYou.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} (you)'**
+  String rolesYou(String name);
+
+  /// No description provided for @rolesElector.
+  ///
+  /// In en, this message translates to:
+  /// **'Votes for a new owner'**
+  String get rolesElector;
+
+  /// No description provided for @rolesMakeAdmin.
+  ///
+  /// In en, this message translates to:
+  /// **'Make admin'**
+  String get rolesMakeAdmin;
+
+  /// No description provided for @rolesMakeModerator.
+  ///
+  /// In en, this message translates to:
+  /// **'Make moderator'**
+  String get rolesMakeModerator;
+
+  /// No description provided for @rolesMakeMember.
+  ///
+  /// In en, this message translates to:
+  /// **'Make member'**
+  String get rolesMakeMember;
+
+  /// No description provided for @rolesStepDown.
+  ///
+  /// In en, this message translates to:
+  /// **'Step down'**
+  String get rolesStepDown;
+
+  /// No description provided for @rolesElectorOn.
+  ///
+  /// In en, this message translates to:
+  /// **'Let them vote for a new owner'**
+  String get rolesElectorOn;
+
+  /// No description provided for @rolesElectorOff.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop them voting for a new owner'**
+  String get rolesElectorOff;
+
+  /// No description provided for @rolesTransfer.
+  ///
+  /// In en, this message translates to:
+  /// **'Make owner'**
+  String get rolesTransfer;
+
+  /// No description provided for @rolesTransferConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Hand this group to {name}? You become an admin.'**
+  String rolesTransferConfirm(String name);
+
+  /// No description provided for @rolesOwnership.
+  ///
+  /// In en, this message translates to:
+  /// **'Ownership'**
+  String get rolesOwnership;
+
+  /// No description provided for @rolesElectionOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'An owner election is open. Votes: {votes} of {total}.'**
+  String rolesElectionOpen(String votes, String total);
+
+  /// No description provided for @rolesElectionNone.
+  ///
+  /// In en, this message translates to:
+  /// **'If the owner is away for more than 30 days, the admins can choose a new one.'**
+  String get rolesElectionNone;
+
+  /// No description provided for @rolesStartElection.
+  ///
+  /// In en, this message translates to:
+  /// **'Start an owner election'**
+  String get rolesStartElection;
+
+  /// No description provided for @rolesVoteFor.
+  ///
+  /// In en, this message translates to:
+  /// **'Vote for {name}'**
+  String rolesVoteFor(String name);
+
+  /// No description provided for @rolesCloseElection.
+  ///
+  /// In en, this message translates to:
+  /// **'End the election'**
+  String get rolesCloseElection;
+
+  /// No description provided for @rolesOwnerCancelNote.
+  ///
+  /// In en, this message translates to:
+  /// **'You are the owner: your app ends this election by itself.'**
+  String get rolesOwnerCancelNote;
+
+  /// No description provided for @rolesOnlyAdminsPost.
+  ///
+  /// In en, this message translates to:
+  /// **'Only admins post'**
+  String get rolesOnlyAdminsPost;
 }
 
 class _AppLocalizationsDelegate

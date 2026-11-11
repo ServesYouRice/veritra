@@ -731,6 +731,7 @@ extension K2TransferSql on EncryptedLocalDatabase {
             'INSERT INTO local_accounts (singleton, session_json) VALUES (1, ?) '
             'ON CONFLICT(singleton) DO UPDATE SET session_json = excluded.session_json',
             [jsonEncode(request.session)]);
+        await _clearGovernanceObservations();
         await customStatement('DELETE FROM local_crypto_records');
         for (final record in state.records) {
           final sealed = record.sealed;

@@ -486,47 +486,65 @@ func TestCommunityReportsRouteToModerators(t *testing.T) {
 		addMember(t, handler, ownerToken, conversationID, id)
 	}
 
-	// No route publishes a community inbox key yet (C4 distributes it), so
-	// reporting is unavailable until one exists.
-	communityKey := bytes.Repeat([]byte{3}, 32)
-	community1 := reportCopy{InboxID: community.ID, Rev: 1, Key: communityKey, Sealed: sealedWith(5)}
-	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, community1); status != http.StatusConflict || !strings.Contains(body, "report_inbox_unavailable") {
-		t.Fatalf("report without community key status=%d body=%s", status, body)
+	// No moderator has published a key yet, so reporting is unavailable.
+	modKey := bytes.Repeat([]byte{3}, 32)
+	ownerKey := bytes.Repeat([]byte{5}, 32)
+	modInbox := community.ID + ":" + modID
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+	ownerInbox := community.ID + ":" + ownerID
+	modCopy := reportCopy{InboxID: modInbox, Rev: 1, Key: modKey, Sealed: sealedWith(5)}
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, modCopy); status != http.StatusConflict || !strings.Contains(body, "report_inbox_unavailable") {
+		t.Fatalf("report without moderator keys status=%d body=%s", status, body)
 	}
-
-	db := openSQLite(t, dbPath)
-	if _, err := db.Exec(`INSERT INTO report_inbox_keys(inbox_kind, inbox_id, public_key, key_rev, updated_at) VALUES('community', ?, ?, 1, '2026-11-07T00:00:00Z')`, community.ID, communityKey); err != nil {
-		t.Fatal(err)
+	// One key per moderator (the same rule as one per owner, D95), published
+	// by each member for themselves. A non-member cannot publish one.
+	path := "/api/v1/reports/inbox-keys/community/" + community.ID
+	for name, c := range map[string]struct {
+		token string
+		key   []byte
+	}{"moderator": {modToken, modKey}, "owner": {ownerToken, ownerKey}} {
+		if status, response := doJSON(t, handler, http.MethodPut, path, c.token, map[string]interface{}{"public_key": base64.StdEncoding.EncodeToString(c.key)}); status != http.StatusOK {
+			t.Fatalf("%s publish status=%d body=%s", name, status, response)
+		}
+	}
+	outsiderToken, _ := registerMemberWithID(t, handler, ownerToken, "outsider")
+	if status, _ := doJSON(t, handler, http.MethodPut, path, outsiderToken, map[string]interface{}{"public_key": base64.StdEncoding.EncodeToString(modKey)}); status != http.StatusForbidden && status != http.StatusNotFound {
+		t.Fatalf("outsider published a moderator key: %d", status)
 	}
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/reports/inbox?conversation_id="+conversationID, reporterToken, nil)
-	if status != http.StatusOK || !strings.Contains(string(response), `"inbox_kind":"community"`) || !strings.Contains(string(response), community.ID) {
+	if status != http.StatusOK || !strings.Contains(string(response), `"inbox_kind":"community"`) || !strings.Contains(string(response), modInbox) || !strings.Contains(string(response), ownerInbox) {
 		t.Fatalf("community inbox status=%d body=%s", status, response)
 	}
 	// A report sealed to another key is refused even at the current revision.
-	other := community1
+	other := modCopy
 	other.Key = bytes.Repeat([]byte{4}, 32)
 	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, other); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
 		t.Fatalf("report to another key status=%d body=%s", status, body)
 	}
-	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, community1); status != http.StatusCreated {
+	// A subset is accepted: the reporter's app seals only to the accounts its
+	// verified role record ranks moderator or above.
+	if status, body := fileReport(t, handler, reporterToken, conversationID, reportIDOne, modCopy); status != http.StatusCreated {
 		t.Fatalf("community report status=%d body=%s", status, body)
 	}
 
 	query := "inbox=community&community_id=" + community.ID
-	for name, token := range map[string]string{"community owner": ownerToken, "moderator": modToken} {
-		if status, reports, _ := listReportsAs(t, handler, token, query); status != http.StatusOK || len(reports) != 1 || reports[0].InboxKind != "community" || reports[0].InboxID != community.ID || !bytes.Equal(reports[0].RecipientPublicKey, communityKey) {
-			t.Fatalf("%s list status=%d reports=%+v", name, status, reports)
-		}
+	if status, reports, _ := listReportsAs(t, handler, modToken, query); status != http.StatusOK || len(reports) != 1 || reports[0].InboxKind != "community" || reports[0].InboxID != modInbox || !bytes.Equal(reports[0].RecipientPublicKey, modKey) {
+		t.Fatalf("moderator list status=%d reports=%+v", status, reports)
+	}
+	// Each moderator sees only their own copies; the owner got none here.
+	if status, reports, _ := listReportsAs(t, handler, ownerToken, query); status != http.StatusOK || len(reports) != 0 {
+		t.Fatalf("owner list status=%d reports=%d", status, len(reports))
 	}
 	for name, token := range map[string]string{"reporter": reporterToken, "sender": senderToken} {
-		if status, _, _ := listReportsAs(t, handler, token, query); status != http.StatusForbidden {
-			t.Fatalf("%s listed the moderator inbox: %d", name, status)
+		if status, reports, _ := listReportsAs(t, handler, token, query); status == http.StatusOK && len(reports) != 0 {
+			t.Fatalf("%s listed a moderator's copies", name)
 		}
 	}
 	// The instance owners' inbox does not show community reports.
 	if status, reports, _ := listReportsAs(t, handler, ownerToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 0 {
 		t.Fatalf("instance inbox status=%d reports=%d", status, len(reports))
 	}
+	_ = dbPath
 }
 
 func TestReportEnvelopeRecordGoesToTheCopyHolderOnly(t *testing.T) {

@@ -17,6 +17,7 @@ import '../../ui/widgets/tile_group.dart';
 import '../communities/membership_screens.dart';
 import 'chat_list_screen.dart';
 import 'mute_sheet.dart';
+import 'roles_screen.dart';
 import 'safety_number_screen.dart';
 import '../../l10n/l10n.dart';
 
@@ -78,7 +79,13 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
         final theme = Theme.of(context);
         final l10n = context.l10n;
         final retention = conversation.retentionSeconds;
-        final myRole = conversation.currentRole ?? 'member';
+        // C4: the verified record's role where the group has one; the
+        // server's role is only a hint without it.
+        final self = state.session?.accountId;
+        final myRole =
+            (self == null ? null : state.roleOf(conversationId, self)) ??
+                conversation.currentRole ??
+                'member';
         final canManage =
             const <String>{'owner', 'admin', 'moderator'}.contains(myRole);
         // A DM is a fixed pair. Adding a third account would silently turn it
@@ -211,7 +218,11 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                         canRemove: canManage &&
                             !isDm &&
                             member.accountId != state.session?.accountId &&
-                            _outranks(myRole, member.role),
+                            _outranks(
+                                myRole,
+                                state.roleOf(
+                                        conversationId, member.accountId) ??
+                                    member.role),
                         busy: state.isBusy(Ops.members),
                         onRemove: () => _confirmRemove(context, member),
                       ),
@@ -231,6 +242,29 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                     ),
                 ],
               ),
+              if (conversation.isGroup ||
+                  conversation.isCommunityShared) ...<Widget>[
+                const SizedBox(height: BoneSpacing.sm),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      key: const Key('roles-tile'),
+                      leading: const Icon(Icons.admin_panel_settings_outlined),
+                      title: Text(l10n.rolesTitle),
+                      subtitle: Text(l10n.rolesDetail),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => RolesScreen(
+                            state: state,
+                            conversationId: conversationId,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
               const SizedBox(height: BoneSpacing.sm),
               Text(
                 l10n.detailsMembershipNote,

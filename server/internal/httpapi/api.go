@@ -161,6 +161,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v1/messages/envelopes", a.withAuth(a.withWriteBudget(a.createMessageEnvelope)))
 	mux.HandleFunc("PUT /api/v1/reports/inbox-keys/instance", a.withRecentAuth(a.putInstanceReportKey))
 	mux.HandleFunc("GET /api/v1/reports/inbox-keys/instance", a.withAuth(a.getInstanceReportKey))
+	mux.HandleFunc("PUT /api/v1/reports/inbox-keys/community/{community_id}", a.withRecentAuth(a.putCommunityReportKey))
+	mux.HandleFunc("GET /api/v1/reports/inbox-keys/community/{community_id}", a.withAuth(a.getCommunityReportKey))
 	mux.HandleFunc("GET /api/v1/reports/inbox", a.withAuth(a.getReportInbox))
 	mux.HandleFunc("POST /api/v1/reports", a.withAuth(a.withWriteBudget(a.createReport)))
 	mux.HandleFunc("GET /api/v1/reports", a.withAuth(a.listReports))

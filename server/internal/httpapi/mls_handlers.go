@@ -167,6 +167,7 @@ func (a *API) createMLSCommitBundle(w http.ResponseWriter, r *http.Request, prin
 		Added              []storage.MLSDeviceRef `json:"added,omitempty"`
 		Removed            []storage.MLSDeviceRef `json:"removed,omitempty"`
 		RevocationDeviceID string                 `json:"revocation_device_id,omitempty"`
+		RoleChange         bool                   `json:"role_change,omitempty"`
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 12<<20))
 	if err != nil || !decodeRawJSON(w, raw, &request) {
@@ -184,6 +185,7 @@ func (a *API) createMLSCommitBundle(w http.ResponseWriter, r *http.Request, prin
 		SenderDeviceID: principal.DeviceID, Epoch: *request.Epoch,
 		IdempotencyKey: request.IdempotencyKey, Commit: request.Commit, Welcome: request.Welcome,
 		Added: request.Added, Removed: request.Removed, RevocationDeviceID: request.RevocationDeviceID,
+		RoleChange: request.RoleChange,
 	})
 	if errors.Is(err, storage.ErrMLSEpochConflict) {
 		epoch, _, epochErr := a.Store.MLSGroupEpoch(r.Context(), conversationID)

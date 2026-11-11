@@ -1,6 +1,10 @@
 # C4: built-in roles, verified by every app
 
-**Status: design, a pure rules engine and the record codec; no wiring, no ABI.** Rescoped
+**Status: rules engine, codec, ABI 20 carrier, command planner, schema 36
+observation storage and the app wiring (producers, two-phase receiver,
+removal proofs, L1 gate, roles screen, owner cancel) are built; not yet
+covered by tests or independently reviewed; server succession is not
+built.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
 `5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
@@ -399,10 +403,11 @@ before the merge.
 Built (earlier): the rules engine and 62 tests (posting, hierarchy as on the server,
 step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
 open, cancel, close, vote, win, claim, electors, `joined`, `owner_rev`; the
-local waits as pure helpers; the commit-level check). Not built: the ABI
-above, wiring into commit processing, local storage (none is
-needed beyond MLS state), UI, and the server half of the ownership rules
-(below).
+local waits as pure helpers; the commit-level check). The ABI 20 carrier,
+command planner and schema 36 local observation storage are now also built
+(see the follow-ups below). Not built: authenticated removal proofs,
+approved-leaf role rosters, coordinated producer/receiver wiring, automatic
+owner cancellation, UI and server succession (below).
 
 ## Server differences to close
 
@@ -460,3 +465,80 @@ member could act as the owner. Producers that carry a record must land with
 the two-phase receiver, and the server must stop rate-limiting record-only
 commits as self-updates (`mls_group_store.go`), and ABI 19 key packages must
 be replenished before adds into record groups.
+
+## Role command producer slice (2026-11-11)
+
+`mobile/lib/core/roles/governance_commands.dart` now builds role-only records:
+promote/demote, step down, confirm electors, change posting settings, transfer,
+open/close/cancel elections, vote and claim. Every result passes `validateCommit`
+and the canonical codec before it can be handed to a commit producer. Owner
+promotions explicitly choose electors; promotions by other admins do not.
+An ordinary transfer makes the old owner an admin with fresh seniority. A
+deciding vote changes ownership and clears the election in the same record.
+
+Opening and voting require local observations bound to the current owner and
+`ownerRev`; voting also requires the observation of this election's `opened`
+revision. They enforce the existing 30-day and 7-day waits. Observations are
+persisted atomically with accepted MLS transitions by schema 36; they are
+never server timestamps. An unknown or stale observation refuses the command.
+The observation reducer starts conservatively on a join or restore without
+saved clocks, tracks authenticated owner commits and application messages,
+preserves an election's first-seen time, clears it on cancellation and resets
+the activity wait on an ownership change. Backward clock movement never moves
+the last observed activity backward.
+Commands operate on a fixed MLS account roster, not a server membership list,
+and must be rebuilt after an epoch change.
+
+This slice is exercised by pure tests and a three-device native MLS test:
+promotions, posting restrictions, an election, a non-deciding vote and a
+deciding vote converge on all devices. It does **not** enable app producers or
+receivers: the authenticated-removal prerequisite above is still unmet.
+Outstanding: C1 removal proofs and their validation, approved-leaf role
+rosters, all producer/receiver wiring,
+automatic owner cancellation, UI and server succession. No new ABI or server
+migration is used by this slice (22 and 0071 remain
+reserved for the remaining work). `STATE.md` and release gates are unchanged.
+
+## Durable observations (review follow-up, 2026-11-11)
+
+Schema **36** adds `local_governance_observations`, keyed by the MLS group
+id (the shared group for community channels). It keeps owner identity,
+`ownerRev`, last locally observed owner activity, and the open election's
+revision and first receipt time. Microsecond timestamps round-trip exactly.
+Nothing is populated from server role or timestamp fields.
+
+`GovernanceObservationChange` is a storage effect for an already authenticated,
+accepted transition. It reduces the saved observation inside the same
+transaction as the sealed MLS state, effects, replay marker and sync cursor.
+Incoming transitions, accepted local commits and outgoing application messages
+support it; staged outgoing commits do not start clocks before acceptance.
+There is no standalone observation write through `LocalStore`.
+
+Clocks survive restarts and cache clears that keep the MLS state. They are
+discarded with the group, identity, a full crypto replacement or reset, and
+are excluded from backup/history transfer. A rejoin or restore without saved
+observations starts both waits conservatively. Removing a group wins over an
+observation carried by that same transition. Memory and SQLCipher stores
+exercise the same contract, including transaction rollback and stale/replayed
+event refusal. Migration from schema 34 creates an empty table; failed
+creation rolls back the schema version and retries safely.
+
+These APIs remain unused by app receivers until the documented removal-proof
+and approved-leaf checks exist. This follow-up closes durable storage, not
+the C4 application wiring or the package as a whole.
+
+## App wiring and removal proofs (2026-11-11)
+
+The removal proofs this design required before receivers are now part of
+C4 itself, not C1 (C1 merged with no proof): a governing account (admin,
+moderator, elector, electorate member, voter or candidate; never the owner,
+never a plain member) leaves the roster only by a kick an approved committer
+`mayActOn`, by its own `member_leave` payload bound to its MLS epoch, or by
+its own L1 list removing every leaf it has. A privileged record change, an
+owner's cancel and a kick need an L1-approved committer. Producers, the
+two-phase receiver, observations, the owner's automatic cancel (random delay
+up to 24 hours), the `role_change` bundle flag and a roles screen are wired.
+DMs carry no record (decision taken for the open question). Rules and
+residuals: `docs/crypto.md`, "C4 app wiring". Still open: server
+succession after a won election, an independent review, and tests of the
+wiring.

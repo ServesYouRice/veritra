@@ -20,6 +20,7 @@ import '../crypto/poll.dart' show applyPollClose, applyPollVote;
 import 'device_list_records.dart';
 import 'invite_anchor.dart';
 import 'profile_records.dart';
+import 'governance_observation.dart';
 
 export 'device_list_records.dart';
 export 'profile_records.dart';
@@ -35,6 +36,7 @@ part 'filed_reports_sql.dart';
 part 'community_info_sql.dart';
 part 'invite_anchor_sql.dart';
 part 'profile_sql.dart';
+part 'governance_observation_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -197,7 +199,8 @@ final class EditMessageEffect extends MessageEffect {
   final String? channelId;
 }
 
-/// Deletes the text of [targetKey], only if [deleterAccountId] sent it.
+/// Deletes the text of [targetKey], only if [deleterAccountId] sent it, or
+/// (C5) when [moderatorProtects] is set and the target's sender is not in it.
 final class DeleteMessageEffect extends MessageEffect {
   const DeleteMessageEffect({
     required this.targetKey,
@@ -205,6 +208,7 @@ final class DeleteMessageEffect extends MessageEffect {
     required this.at,
     this.conversationId,
     this.channelId,
+    this.moderatorProtects,
   });
 
   final String targetKey;
@@ -212,6 +216,17 @@ final class DeleteMessageEffect extends MessageEffect {
   final int at;
   final String? conversationId;
   final String? channelId;
+
+  /// C5 moderator delete: set only when the group's verified role record
+  /// (C4) makes [deleterAccountId] a moderator or above. It names every
+  /// account the deleter does not outrank (`mayActOn` is false), so a delete
+  /// may hide anyone else's message. Null: the author's own delete only.
+  final Set<String>? moderatorProtects;
+
+  /// Whether the delete may hide a message [sender] wrote.
+  bool allows(String sender) =>
+      sender == deleterAccountId ||
+      (moderatorProtects != null && !moderatorProtects!.contains(sender));
 }
 
 /// Sets or, with an empty [reaction], clears one account's reaction.
@@ -592,7 +607,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 35;
+  static const currentSchemaVersion = 36;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -812,6 +827,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createCommunityInfo();
             await _createInviteAnchors();
             await _createProfiles();
+            await _createGovernanceObservations();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -972,6 +988,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // each info row. Idempotent: a store from before schema 31 got
             // the column with the table above.
             if (from < 35) await _addCommunityInfoEpoch();
+            // C4 (schema 36, the next free number after C3's 35): local
+            // receipt clocks only.
+            if (from < 36) await _createGovernanceObservations();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1036,6 +1055,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                 syncRecoveryName,
               ])))
         .go();
+    await _clearGovernanceObservations();
     await delete(localCryptoStates).go();
     await delete(localCryptoRecords).go();
     await _clearConversationPauses();
@@ -1081,6 +1101,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
+        await _clearGovernanceObservations();
         await delete(localCryptoStates).go();
         await delete(localCryptoRecords).go();
         await _clearConversationPauses();
@@ -1460,6 +1481,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (previous != null && counter <= previous.counter) {
           throw StateError('crypto state counter must increase');
         }
+        await _clearGovernanceObservations();
         await delete(localCryptoRecords).go();
         await _clearConversationPauses();
         await _applyCryptoRecordChanges(recordChanges);
@@ -1498,6 +1520,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     int? infoRemovalEpoch,
     Map<String, String?> c7Settings = const <String, String?>{},
     MlsCommitFailureInjector? failureInjector,
+    GovernanceObservationChange? governanceObservation,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
     void Function()? checkCanCommit,
@@ -1541,6 +1564,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         await failureInjector?.call(MlsCommitStage.afterValidation);
         checkCanCommit?.call();
+        await _applyGovernanceObservation(governanceObservation);
         await _applyCryptoRecordChanges(recordChanges);
         await failureInjector?.call(MlsCommitStage.afterRecords);
         await into(localCryptoStates).insertOnConflictUpdate(
@@ -1905,6 +1929,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<MessageEffect> messageEffects = const <MessageEffect>[],
     List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
+    GovernanceObservationChange? governanceObservation,
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -1932,6 +1957,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         if (await outboxCount() >= maxEntries) {
           throw StateError('outbox_full');
         }
+        await _applyGovernanceObservation(governanceObservation);
         await _applyCryptoRecordChanges(recordChanges);
         await into(localCryptoStates).insertOnConflictUpdate(
           LocalCryptoStatesCompanion.insert(
@@ -1976,6 +2002,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required List<int> stateKey,
     required List<int> sealedState,
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
+    GovernanceObservationChange? governanceObservation,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
     ({String conversationId, int epoch})? infoRemoval,
@@ -1988,6 +2015,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             stateKey: stateKey,
             sealedState: sealedState,
             recordChanges: recordChanges,
+            governanceObservation: governanceObservation,
             leaseKey: leaseKey,
             resolvedMlsOutboxKey: resolvedMlsOutboxKey,
             infoRemoval: infoRemoval,
@@ -2001,6 +2029,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required List<int> stateKey,
     required List<int> sealedState,
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
+    GovernanceObservationChange? governanceObservation,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
     ({String conversationId, int epoch})? infoRemoval,
@@ -2018,6 +2047,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         counter != expectedCounter + 1) {
       throw StateError('stale local MLS transition');
     }
+    await _applyGovernanceObservation(governanceObservation);
     await _applyCryptoRecordChanges(recordChanges);
     await into(localCryptoStates).insertOnConflictUpdate(
       LocalCryptoStatesCompanion.insert(
@@ -2211,6 +2241,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           throw StateError('stale or changed crypto state migration');
         }
         await failureInjector?.call(MlsCommitStage.afterValidation);
+        await _clearGovernanceObservations();
         await delete(localCryptoRecords).go();
         await _applyCryptoRecordChanges(recordChanges);
         await failureInjector?.call(MlsCommitStage.afterRecords);
@@ -2232,6 +2263,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
       final sealed = change.sealed;
       final id = Uint8List.fromList(change.recordId);
       if (sealed == null) {
+        if (change.kind == 2) {
+          await customStatement(
+              'DELETE FROM local_governance_observations WHERE CAST(group_id AS BLOB) = ?',
+              [id]);
+        }
         await (delete(localCryptoRecords)
               ..where(
                   (t) => t.kind.equals(change.kind) & t.recordId.equals(id)))
@@ -2276,6 +2312,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await delete(localCiphertextEnvelopes).go();
         await delete(localConversations).go();
         await delete(localOutboxEntries).go();
+        await _clearGovernanceObservations();
         await delete(localCryptoStates).go();
         await delete(localCryptoRecords).go();
         await _clearConversationPauses();
@@ -2438,7 +2475,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           final deleted = await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(effect.targetKey) &
-                    table.senderAccountId.equals(effect.deleterAccountId) &
+                    (effect.allows(existing.senderAccountId)
+                        ? const Constant(true)
+                        : const Constant(false)) &
                     (effect.conversationId == null
                         ? const Constant(true)
                         : table.conversationId.equals(effect.conversationId!)) &

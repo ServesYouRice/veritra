@@ -5,7 +5,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:drift/drift.dart' show Value;
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -22,6 +22,8 @@ import 'message_search.dart';
 import 'history_snapshot.dart';
 import 'notice_outbox.dart';
 import 'invite_anchor.dart';
+import 'governance_observation.dart';
+export 'governance_observation.dart';
 export 'invite_anchor.dart';
 
 export 'notice_outbox.dart';
@@ -371,6 +373,14 @@ String c7GroupSetting(String conversationId) => 'c7.group.$conversationId';
 String communityInfoRemovalSetting(String conversationId) =>
     'c3.removal_epoch.$conversationId';
 
+/// C4 removal proof: [accountId]'s authenticated `member_leave` in the record
+/// group [conversationId], holding the MLS epoch it was sent in. Written
+/// atomically with the message's transition (through
+/// [MlsStateTransition.c7Settings], the shared settings channel); cleared when the account is
+/// added again or its removal merges (docs/crypto.md, "C4 app wiring").
+String governanceLeaveSetting(String conversationId, String accountId) =>
+    'c4.leave.$conversationId.${Uri.encodeComponent(accountId)}';
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -386,6 +396,7 @@ class MlsStateTransition {
     this.frankReveals = const <FrankReveal>[],
     this.communityInfo = const <CommunityInfoEvent>[],
     this.approvalLeaves,
+    this.governanceObservation,
     this.infoRemovalEpoch,
     this.c7Settings = const <String, String?>{},
     this.resolvedMlsOutboxKey,
@@ -401,6 +412,9 @@ class MlsStateTransition {
   /// The leaf verdicts of the commit or Welcome this transition applies
   /// (L1, D94), written in the same transaction.
   final ApprovalLeafChange? approvalLeaves;
+
+  /// C4: clocks from the accepted transition, committed atomically with it.
+  final GovernanceObservationChange? governanceObservation;
 
   /// Authenticated remote removal epoch (C3); null for adds and updates.
   final int? infoRemovalEpoch;
@@ -501,6 +515,7 @@ class OutgoingApplicationStateTransition {
     required this.state,
     required this.envelope,
     this.draftText,
+    this.governanceObservation,
     this.messageEffects = const <MessageEffect>[],
     this.communityInfo = const <CommunityInfoEvent>[],
   });
@@ -510,6 +525,7 @@ class OutgoingApplicationStateTransition {
   final StoredCryptoState state;
   final MessageEnvelope envelope;
   final String? draftText;
+  final GovernanceObservationChange? governanceObservation;
 
   /// This device's own copy of what it sent, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
@@ -618,6 +634,9 @@ abstract class LocalStore {
   Future<void> removePendingEnvelope(String idempotencyKey);
   Future<void> saveCryptoState(StoredCryptoState state, int syncCursor);
   Future<void> commitMlsTransition(MlsStateTransition transition);
+
+  /// Device-local C4 waits. Missing observations start both waits afresh.
+  Future<GovernanceObservations?> loadGovernanceObservations(String groupId);
   Future<void> commitSyncEvent(SyncEventCommit commit);
 
   /// C6 (schema 19): the franking key and exact payload bytes kept with the
@@ -784,6 +803,7 @@ abstract class LocalStore {
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
     Map<String, String?> c7Settings = const <String, String?>{},
   });
@@ -995,6 +1015,19 @@ class MemoryLocalStore implements LocalStore {
 
   final Map<String, String> _settings = <String, String>{};
 
+  final Map<String, GovernanceObservations> _governanceObservations = {};
+
+  @override
+  Future<GovernanceObservations?> loadGovernanceObservations(
+          String groupId) async =>
+      _governanceObservations[groupId];
+
+  void _applyGovernanceObservation(GovernanceObservationChange? change) {
+    if (change == null) return;
+    _governanceObservations[change.groupId] =
+        change.reduce(_governanceObservations[change.groupId]);
+  }
+
   final Map<String, InviteAnchor> _inviteAnchors = {};
   @override
   Future<void> saveInviteAnchor(InviteAnchor anchor) async {
@@ -1141,6 +1174,7 @@ class MemoryLocalStore implements LocalStore {
     _syncCursor = 0;
     _cryptoState = null;
     _cryptoRecords.clear();
+    _governanceObservations.clear();
     _pauses.clear();
     // Their native half goes with the MLS state; the ledger stays.
     _historyTransfers.clear();
@@ -1294,6 +1328,7 @@ class MemoryLocalStore implements LocalStore {
       throw StateError('crypto state counter must increase');
     }
     _cryptoRecords.clear();
+    _governanceObservations.clear();
     _pauses.clear();
     _setCryptoState(state);
     _syncCursor = syncCursor;
@@ -1305,6 +1340,10 @@ class MemoryLocalStore implements LocalStore {
       final key = _cryptoRecordKey(change.kind, change.recordId);
       final sealed = change.sealed;
       if (sealed == null) {
+        if (change.kind == cryptoRecordKindGroup) {
+          _governanceObservations.removeWhere((groupId, _) =>
+              listEquals(utf8.encode(groupId), change.recordId));
+        }
         _cryptoRecords.remove(key);
       } else {
         _cryptoRecords[key] = StoredCryptoRecord(
@@ -1406,6 +1445,7 @@ class MemoryLocalStore implements LocalStore {
     }
     _applyC7Settings(transition.c7Settings);
     _applyApprovalLeaves(transition.approvalLeaves);
+    _applyGovernanceObservation(transition.governanceObservation);
     _setCryptoState(transition.state);
     _processedMlsMessages.add(transition.messageId);
     final resolved = transition.resolvedMlsOutboxKey;
@@ -1877,6 +1917,7 @@ class MemoryLocalStore implements LocalStore {
       throw const OutboxFullException();
     }
     _applyHistoryEffects(transition.messageEffects);
+    _applyGovernanceObservation(transition.governanceObservation);
     final protectedKeyIds = {
       for (final record in _acceptedCommunityInfo.values) record.keyId
     };
@@ -1906,11 +1947,13 @@ class MemoryLocalStore implements LocalStore {
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
     Map<String, String?> c7Settings = const <String, String?>{},
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
+    _applyGovernanceObservation(governanceObservation);
     _setCryptoState(state);
     if (infoRemoval != null) {
       _settings[communityInfoRemovalSetting(infoRemoval.conversationId)] =
@@ -1990,6 +2033,7 @@ class MemoryLocalStore implements LocalStore {
     }
     _session = promotion.session;
     _cryptoRecords.clear();
+    _governanceObservations.clear();
     _pauses.clear();
     _setCryptoState(state);
     _syncCursor = 0;
@@ -2114,6 +2158,7 @@ class MemoryLocalStore implements LocalStore {
       throw StateError('stale or changed crypto state migration');
     }
     _cryptoRecords.clear();
+    _governanceObservations.clear();
     _setCryptoState(state);
   }
 
@@ -2289,6 +2334,7 @@ class MemoryLocalStore implements LocalStore {
     _session = null;
     _cryptoState = null;
     _cryptoRecords.clear();
+    _governanceObservations.clear();
     _pauses.clear();
     _processedMlsMessages.clear();
     _mlsOutbox.clear();
@@ -2571,7 +2617,7 @@ class _MemoryMessageHistory {
             deferHistoryEffect(namespace, effect, accountId);
             continue;
           }
-          if (target.senderAccountId != effect.deleterAccountId ||
+          if (!effect.allows(target.senderAccountId) ||
               target.hiddenAt != null ||
               target.deletedAt != null ||
               target.channelId != effect.channelId ||
@@ -2915,6 +2961,11 @@ class SecureLocalStore implements LocalStore {
   }
 
   @override
+  Future<GovernanceObservations?> loadGovernanceObservations(
+          String groupId) async =>
+      (await _database()).readGovernanceObservations(groupId);
+
+  @override
   Future<void> saveInviteAnchor(InviteAnchor anchor) async =>
       (await _database()).writeInviteAnchor(anchor);
   @override
@@ -3226,6 +3277,7 @@ class SecureLocalStore implements LocalStore {
       frankReveals: transition.frankReveals,
       communityInfo: transition.communityInfo,
       approvalLeaves: transition.approvalLeaves,
+      governanceObservation: transition.governanceObservation,
       infoRemovalEpoch: transition.infoRemovalEpoch,
       c7Settings: transition.c7Settings,
     );
@@ -3490,6 +3542,7 @@ class SecureLocalStore implements LocalStore {
         payloadJson: jsonEncode(transition.envelope.toJson()),
         maxEntries: maxPendingEnvelopes,
         draftText: transition.draftText,
+        governanceObservation: transition.governanceObservation,
         messageEffects: transition.messageEffects,
         communityInfo: transition.communityInfo,
         recordChanges: _recordWrites(transition.state),
@@ -3509,6 +3562,7 @@ class SecureLocalStore implements LocalStore {
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    GovernanceObservationChange? governanceObservation,
     ({String conversationId, int epoch})? infoRemoval,
     Map<String, String?> c7Settings = const <String, String?>{},
   }) async {
@@ -3523,6 +3577,7 @@ class SecureLocalStore implements LocalStore {
       recordChanges: _recordWrites(state),
       leaseKey: _syncLeaseKey,
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
+      governanceObservation: governanceObservation,
       infoRemoval: infoRemoval,
       c7Settings: c7Settings,
     );

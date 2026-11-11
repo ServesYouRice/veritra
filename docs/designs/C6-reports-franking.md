@@ -8,7 +8,8 @@ carries sealed reports. Owner decision D95 is applied (see "D95 outcome"):
 receivers keep `kf` and `P` (local schema 19), the envelope id is sealed
 inside the report, one sealed copy per instance owner, owner keys pinned in
 the app, 90-day or dismissed retention, unfranked payloads accepted behind a
-switch. Not done: the community inbox key (needs C4), the owner's way to
+switch. The community moderator inbox is built (2026-11-11, "Community
+moderator inbox" below). Not done: the owner's way to
 verify without the server learning the envelope id, and the app's report
 screens (step 4).** Written 2026-11-01 against `main` at `f1b4a36`. The wiring
 needs an independent review before it ships (checks G1 to G6 below).
@@ -339,6 +340,55 @@ and says when another device replaced this one's key.
 
 Left: the moderator inbox (C4); the changed-key trust tap is the same as for a
 new key.
+
+## Community moderator inbox (2026-11-11)
+
+Built on branch `ai/c4-rest` after C4's role record reached the apps. It
+answers open item 8 by having no shared inbox seed at all: the D95 rule for
+owners ("one key and one sealed copy per owner") is applied to moderators.
+
+- **Keys.** Each community member may publish their own report public key as
+  their moderator inbox in that community:
+  `PUT /api/v1/reports/inbox-keys/community/{community_id}` (recent sign-in),
+  `GET` the same path for their own. The inbox id is
+  `<community id>:<account id>` (`franking.CommunityModeratorInboxID`; ids
+  are `<prefix>_<hex>`, so the `:` never occurs inside one, and the result
+  fits the 128-character column), kind `community`, so schema 0047 is
+  unchanged and no migration was needed. The key is the account's one report
+  seed on that device (the same seed and custody rules as the owner's: never
+  moved, deleted on a deliberate sign-out); the aad binds kind and inbox id,
+  so one key serving several inboxes cannot be confused between them.
+- **Who receives a report.** The server lists the keys of the community's
+  current members (`GET /reports/inbox`); it cannot know who moderates, since
+  community roles are the apps' verified role record (C4). The reporter's app
+  seals only to the listed keys of accounts the community's shared-group
+  record ranks moderator or above (owner, admins, moderators), never to
+  itself, and refuses (`communityUnavailable`) when it holds no record. A
+  server that lists an extra account gets that account no copy.
+- **Server check.** For a community the copies must be a non-empty,
+  duplicate-free subset of the listed keys, each at its current revision and
+  key; for the instance owners it stays the exact set.
+- **Reading.** A copy is listed, dismissed and verified (`/envelope`) only by
+  the account its inbox id names, and only while that account is still a
+  member of the community. Not a server role.
+- **Trust.** Moderator keys are pinned by a person exactly like owner keys
+  (`ReportKeyPins`, keyed by the inbox id); a pin of one inbox is never
+  reported missing from another.
+- **Rotation (open item 8).** Nothing to rotate: a moderator who is demoted
+  in the record, or leaves, stops receiving new copies at once (the record
+  for the first, the membership filter for the second). Copies they already
+  received stay readable by them until dismissed or 90 days old.
+- **App.** The report screen files community reports; a moderator opens
+  their inbox from the community screen (flag icon), the same screen as the
+  owner's inbox with the community's routes.
+
+Left: authenticating moderator keys over MLS (so no tap is needed to trust
+them); deleting a departed moderator's copies at once; replacing the seed
+from one inbox screen does not republish the account's other inboxes (a
+moderator inbox then shows "replaced elsewhere" and offers to publish this
+device's key; the owner inbox needs a replace); tests for the new
+routes beyond the updated `TestCommunityReportsRouteToModerators`; the
+independent review.
 
 ## Owner decisions (2026-11-01)
 

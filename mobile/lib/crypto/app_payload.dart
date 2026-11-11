@@ -42,6 +42,10 @@ enum AppPayloadType {
   profileKey,
   groupProfileKey,
 
+  /// C4 removal proof: the sender's own leave from this record group, bound
+  /// to the MLS epoch it is sent in (`docs/crypto.md`, "C4 app wiring").
+  memberLeave,
+
   /// C7: a channel's history record (create, switch, move) in compact form,
   /// proposed in a message of the channel itself.
   historyChange,
@@ -89,6 +93,7 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.infoUpdate => 'info_update',
         AppPayloadType.profileKey => 'profile_key',
         AppPayloadType.groupProfileKey => 'group_profile_key',
+        AppPayloadType.memberLeave => 'member_leave',
         AppPayloadType.historyChange => 'history_change',
         AppPayloadType.historySync => 'history_sync',
         AppPayloadType.historySyncRequest => 'history_sync_request',
@@ -104,6 +109,7 @@ extension AppPayloadTypeWire on AppPayloadType {
       infoPayloadTypes.contains(this) ||
       this == AppPayloadType.profileKey ||
       this == AppPayloadType.groupProfileKey ||
+      this == AppPayloadType.memberLeave ||
       c7PayloadTypes.contains(this);
 }
 
@@ -212,6 +218,8 @@ class FrankingPolicy {
     'infoKey',
     'infoKeyRequest',
     'infoUpdate',
+    // C4: a leave proof says nothing anyone would report.
+    'memberLeave',
   };
 
   /// Whether a payload without `frank` is accepted (as unreportable).
@@ -254,6 +262,7 @@ class AppPayloadCodec {
             infoPayloadTypes.contains(type) ||
             type == AppPayloadType.profileKey ||
             type == AppPayloadType.groupProfileKey ||
+            type == AppPayloadType.memberLeave ||
             c7PayloadTypes.contains(type) ||
             channelId != null ||
             hidden ||
@@ -551,6 +560,10 @@ class AppPayloadCodec {
       AppPayloadType.profileKey ||
       AppPayloadType.groupProfileKey =>
         version >= 2,
+      AppPayloadType.memberLeave => version >= 2 &&
+          body.length == 1 &&
+          body['epoch'] is int &&
+          (body['epoch'] as int) >= 0,
       AppPayloadType.historyChange => version >= 2 && isValidC7ChangeBody(body),
       AppPayloadType.historySync => version >= 2 && isValidC7SyncBody(body),
       AppPayloadType.historySyncRequest =>

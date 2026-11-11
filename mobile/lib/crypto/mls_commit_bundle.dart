@@ -15,6 +15,7 @@ class MlsCommitBundle {
     this.added = const <MlsDeviceRef>[],
     this.removed = const <MlsDeviceRef>[],
     this.revocationDeviceId,
+    this.roleChange = false,
   });
 
   static const kind = 'bundle';
@@ -28,6 +29,11 @@ class MlsCommitBundle {
   final List<MlsDeviceRef> removed;
   final String? revocationDeviceId;
 
+  /// C4: the commit carries a role-record change. A commit that adds and
+  /// removes no one is then not a self-update (the server exempts it from
+  /// the self-update interval, `role_change`).
+  final bool roleChange;
+
   bool get hasCommit => commit.isNotEmpty;
 
   /// A commit that adds and removes no one: a periodic self-update.
@@ -36,7 +42,8 @@ class MlsCommitBundle {
       added.isEmpty &&
       removed.isEmpty &&
       welcome.isEmpty &&
-      revocationDeviceId == null;
+      revocationDeviceId == null &&
+      !roleChange;
 
   Map<String, Object?> toRequestJson(String idempotencyKey) =>
       <String, Object?>{
@@ -48,6 +55,7 @@ class MlsCommitBundle {
         if (removed.isNotEmpty) 'removed': removed.map(_refJson).toList(),
         if (revocationDeviceId != null)
           'revocation_device_id': revocationDeviceId,
+        if (roleChange) 'role_change': true,
       };
 
   List<int> encode() => utf8.encode(jsonEncode(<String, Object?>{
@@ -78,6 +86,7 @@ class MlsCommitBundle {
       added: refs(json['added']),
       removed: refs(json['removed']),
       revocationDeviceId: json['revocation_device_id'] as String?,
+      roleChange: json['role_change'] == true,
     );
   }
 

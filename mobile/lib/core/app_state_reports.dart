@@ -35,7 +35,51 @@ extension ReportActions on AppState {
       crypto: crypto as ReportCryptoService,
       store: localStore,
       seeds: reportSeedStore,
+      moderatorsOf: reportModeratorsFor,
     );
+  }
+
+  /// C6: who receives a report about [conversationId] in a community: the
+  /// owner, admins and moderators of the verified role record (C4) of the
+  /// community's shared group. Null outside a community or without a record.
+  ReportModerators? reportModeratorsFor(String conversationId) {
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conversation == null) return null;
+    final communityId = conversation.communityId ??
+        communities
+            .where((c) => c.sharedConversationId == conversationId)
+            .firstOrNull
+            ?.id;
+    if (communityId == null) return null;
+    final GovernanceState? record;
+    try {
+      record = governanceOf(conversationId);
+    } catch (_) {
+      return null;
+    }
+    if (record == null) return null;
+    return ReportModerators(communityId, <String>{
+      for (final account in <String>{
+        if (record.owner != null) record.owner!,
+        ...record.admins.keys,
+        ...record.moderators,
+      })
+        if (record.rankOf(account) >= BuiltInRole.moderator.rank) account,
+    });
+  }
+
+  /// Whether this account moderates [communityId] under its verified role
+  /// record, so its moderator report inbox is offered.
+  bool moderatesCommunity(String communityId) {
+    final self = session?.accountId;
+    final shared = communities
+        .where((c) => c.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (self == null || shared == null || !reportsAvailable) return false;
+    final moderators = reportModeratorsFor(shared);
+    return moderators != null && moderators.accounts.contains(self);
   }
 
   /// Whether this device holds the signed-in owner's report-key seed, so the

@@ -146,6 +146,12 @@ bool _equalAt(Uint8List bytes, int offset, Uint8List expected) {
 const String reportInboxInstanceOwner = 'instance_owner';
 const String reportInboxCommunity = 'community';
 
+/// One moderator's own inbox in a community (C6, one sealed copy per
+/// moderator): `<community id>:<account id>`, as the server names it
+/// (`franking.CommunityModeratorInboxID`).
+String communityModeratorInboxId(String communityId, String accountId) =>
+    '$communityId:$accountId';
+
 const String _reportAadLabel = 'veritra-c6-report-aad-v2';
 const int _reportPublicKeyBytes = 32;
 const int _maxReportIdBytes = 128;
@@ -153,7 +159,8 @@ const int _maxReportIdBytes = 128;
 /// The HPKE associated data of a sealed C6 report (`docs/crypto.md`, "Franking
 /// v1", report aad; condition G4, D95): the label, then the inbox kind, the
 /// inbox id (the owner's account id for the instance owners, one sealed copy
-/// per owner; the community id for a community), the recipient's report public
+/// per owner; [communityModeratorInboxId] for a community, one per
+/// moderator), the recipient's report public
 /// key, the conversation id, the report id and the reporter's account id, each
 /// with a big-endian u32 length in front. The report id is chosen by the
 /// reporter's app and is the same in every copy of one report. The envelope id
