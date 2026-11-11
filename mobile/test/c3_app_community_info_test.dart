@@ -249,6 +249,15 @@ void main() {
     state.communities = [
       Community(id: id, name: 'Club', sharedConversationId: 'conv_shared'),
     ];
+    // C2's client guard: the creator holds the owner role.
+    state.conversations = [
+      Conversation(
+          id: 'conv_shared',
+          kind: 'community_shared',
+          communityId: id,
+          createdBy: 'alice',
+          currentRole: 'owner'),
+    ];
     expect(
         await state.publishCommunityInfo(id, name: 'Club', mint: true), isTrue);
     final channel = await state.createChannel(id, 'secret', kind: 'private');
@@ -366,7 +375,8 @@ void main() {
           id: 'conv_shared',
           kind: 'community_shared',
           communityId: 'comm_${'1' * 32}',
-          createdBy: 'alice'),
+          createdBy: 'alice',
+          currentRole: 'owner'),
     ];
     // As the creator would at creation: the community record, under a new
     // community key.

@@ -610,6 +610,12 @@ class AppState extends ChangeNotifier
         return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
       }
     }
+    // No verified record: a server hint for availability only (the server
+    // checks every write). The refreshed roster is the fresher hint; the
+    // conversation's role stands in until it has loaded.
+    if (_channelCreationAccessKnown(communityId)) {
+      return mayCreateCommunityChannel(communityId);
+    }
     final role = communityRole(communityId);
     return role == 'owner' || role == 'admin';
   }
@@ -2302,6 +2308,12 @@ class AppState extends ChangeNotifier
 
   /// Availability only: the server checks creation rights on every write.
   /// Never use this roster hint to authenticate encrypted info records.
+  bool _channelCreationAccessKnown(String communityId) =>
+      _channelCreationSession != null &&
+      identical(session, _channelCreationSession) &&
+      _sessionGeneration == _channelCreationGeneration &&
+      _channelCreationAccess.containsKey(communityId);
+
   bool mayCreateCommunityChannel(String communityId) =>
       _channelCreationSession != null &&
       identical(session, _channelCreationSession) &&

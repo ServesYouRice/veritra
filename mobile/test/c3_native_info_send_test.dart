@@ -291,7 +291,7 @@ class _AddRoles implements VerifiedRoleSource {
       false;
 }
 
-class _AddApi extends ApiClient {
+class _AddApi extends ApiClient with LegacySyncPageFake {
   _AddApi(this.alice, this.bob, this.community, this.conversation, this.queued)
       : super(baseUrl: 'https://localhost:8443');
   final _Client alice;
