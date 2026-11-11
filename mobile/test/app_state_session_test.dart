@@ -805,7 +805,7 @@ class _Harness {
   void dispose() => state.dispose();
 }
 
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: _origin);
 
   Session signedIn = _owner;

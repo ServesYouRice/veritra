@@ -5890,15 +5890,46 @@ class AppState extends ChangeNotifier
           return;
         }
         await wake?.check();
-        final events = await client.syncEvents(
+        final pageStartCursor = pageCursor;
+        final syncPage = await client.syncEventsPage(
           current.token,
           after: pageCursor,
           limit: pageSize,
         );
+        final events = syncPage.events;
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) {
           return;
         }
-        if (events.isEmpty) break;
+        // Moves the persisted cursor to the scan position the server
+        // reported (TASK-209, D92): the hidden run behind the last event is
+        // crossed once, not on every poll. Only once the page is fully
+        // applied: the stored cursor must equal the page's last event (or
+        // the cursor the page started at, when it is empty), so nothing a
+        // failed or held-back event left behind is passed. Never moves back.
+        Future<void> advanceToScan(int appliedThrough) async {
+          final scanned = syncPage.scannedThrough;
+          if (scanned == null) return;
+          final stored = await localStore.loadSyncCursor();
+          if (stored != appliedThrough || scanned <= stored) return;
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          wake?.checkCanCommit();
+          await localStore.saveSyncCursor(scanned);
+          if (_syncFetchedGeneration == ownerGeneration) {
+            _syncFetchedThrough = max(_syncFetchedThrough, scanned);
+          }
+        }
+
+        if (events.isEmpty) {
+          await advanceToScan(pageStartCursor);
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          if (!syncPage.truncated) break;
+          pageCursor = await localStore.loadSyncCursor();
+          if (pageCursor <= pageStartCursor) {
+            developer.log('sync_scan_did_not_advance', name: 'veritra.sync');
+            break;
+          }
+          continue;
+        }
         var returnedCursor = pageCursor;
         for (final event in events) {
           if (event.id <= returnedCursor) {
@@ -6036,7 +6067,19 @@ class AppState extends ChangeNotifier
           rethrow;
         }
         await _publishReceived(received, current, ownerGeneration);
+        await advanceToScan(events.last.id);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         pageCursor = await localStore.loadSyncCursor();
+        if (syncPage.truncated) {
+          // The server's scan budget ended this page early, so a short page
+          // is not the end. The cursor must have moved forward, or the same
+          // page would be asked for again.
+          if (pageCursor <= pageStartCursor) {
+            developer.log('sync_scan_did_not_advance', name: 'veritra.sync');
+            break;
+          }
+          continue;
+        }
         if (events.length < pageSize) break;
       }
       // Every event up to the end of the stream is applied.

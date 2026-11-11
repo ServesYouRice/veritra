@@ -795,7 +795,7 @@ AppState _signedInState(ApiClient api) => AppState(
         deviceId: 'dev_owner',
       );
 
-class _FlakyListApiClient extends ApiClient {
+class _FlakyListApiClient extends ApiClient with LegacySyncPageFake {
   _FlakyListApiClient() : super(baseUrl: 'https://localhost:8080');
 
   Object? failure;
@@ -960,7 +960,7 @@ MessageEnvelope _outboxEnvelope(String key) => MessageEnvelope(
       cryptoProtocol: 'test-only-not-production',
     );
 
-class _OutboxApiClient extends ApiClient {
+class _OutboxApiClient extends ApiClient with LegacySyncPageFake {
   _OutboxApiClient() : super(baseUrl: 'https://localhost:8080');
 
   bool failSend = false;
@@ -984,7 +984,7 @@ class _OutboxApiClient extends ApiClient {
       const MessagePage(messages: <ReceivedMessageEnvelope>[]);
 }
 
-class FakeDeviceLinkApiClient extends ApiClient {
+class FakeDeviceLinkApiClient extends ApiClient with LegacySyncPageFake {
   FakeDeviceLinkApiClient({
     this.transcriptByte = 7,
     this.omitTranscript = false,

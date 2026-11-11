@@ -232,7 +232,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 206 `TASK-206` Let a live recovery lease holder renew and complete past the initial lease and capability deadline
 - [x] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
 - [x] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
-- [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); legacy route unchanged, no heads route.
+- [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); done 2026-11-11 on the account route `GET /api/v1/sync/events?scan=bounded` and the app catch-up (a 200 omits the bounds); without `scan=bounded` the route is unchanged; no heads route.
   - Built on the scoped routes behind `?scan=bounded` (opt-in). Not done: the legacy global stream still rescans its hidden tail, `_runOwnedCatchUp` does not persist a scanned-through cursor (that is C1-B2 to B4), no benchmark.
 - [x] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
 - [x] 211 `TASK-211` Require current conversation membership for message edit and delete

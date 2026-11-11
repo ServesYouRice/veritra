@@ -337,7 +337,7 @@ Future<void> _until(bool Function() condition) async {
   }
 }
 
-class _PushApi extends ApiClient {
+class _PushApi extends ApiClient with LegacySyncPageFake {
   _PushApi(this.config) : super(baseUrl: 'https://localhost:8080');
 
   final Map<String, Object?> config;
