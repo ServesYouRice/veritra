@@ -457,6 +457,14 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 enrollment-anchor review follow-up (2026-11-11):** journal locally
+  signed genesis or authenticated linked-device chains before durable session
+  activation. Replay before foreground/background restore can activate MLS.
+  Link chains must prove the exact frozen approver signed the new key's add
+  before any pin is written. Storage and validation failures stop activation;
+  the pending claim/journal survives for retry. See
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md).
+
 - **L1 chain-import continuity review (2026-11-11):** a verified imported
   chain must contain the exact existing pinned head before it can advance
   that pin. An unrelated genesis or a signed fork cannot replace trust via

@@ -1699,10 +1699,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         notifyListeners();
         return;
       }
+      await _resumeDeviceListAnchor(restored);
       session = restored;
       _replaceApi(restored.baseUrl);
       await _resumeRecoveredIdentity(restored);
       await _mlsCrypto?.activateSession(restored);
+      await _clearDeviceListAnchorJournal(restored);
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       final records = await localStore.pendingEnvelopeRecords();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -1895,7 +1897,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
       Uint8List? genesis;
-      session = await api!.createOwner(
+      final created = await api!.createOwner(
         username: username,
         password: password,
         deviceName: config.deviceName,
@@ -1904,12 +1906,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         setupToken: setupToken,
         deviceList: genesis = await _signGenesis(enrollment),
       );
-      await _oweInitialKeyPackages(session!);
-      await localStore.saveSession(session!);
-      await _mlsCrypto?.activateSession(session!);
+      if (genesis != null) await _journalDeviceListAnchor(created, [genesis]);
+      await _oweInitialKeyPackages(created);
+      await localStore.saveSession(created);
+      await _resumeDeviceListAnchor(created);
+      await _mlsCrypto?.activateSession(created);
+      await _clearDeviceListAnchorJournal(created);
+      session = created;
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
-        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();
@@ -1952,13 +1957,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Future<void> _finishDeviceSignIn(
       Session localSession, bool hadMlsState) async {
     {
+      final signedIn = session!;
+      session = null;
       final sameIdentity = localSession.accountId != null &&
-          localSession.baseUrl == session!.baseUrl &&
-          localSession.accountId == session!.accountId &&
-          localSession.deviceId == session!.deviceId;
-      await localStore.saveSession(session!);
+          localSession.baseUrl == signedIn.baseUrl &&
+          localSession.accountId == signedIn.accountId &&
+          localSession.deviceId == signedIn.deviceId;
+      await localStore.saveSession(signedIn);
+      await _resumeDeviceListAnchor(signedIn);
       await _reloadStoredDrafts();
-      await _mlsCrypto?.activateSession(session!);
+      await _mlsCrypto?.activateSession(signedIn);
+      await _clearDeviceListAnchorJournal(signedIn);
+      session = signedIn;
       // The same device signing in again keeps its cursor: it was committed
       // with the MLS state, and replaying from event 0 would meet commits
       // and messages that state has already consumed (I33 stops sync on
@@ -2420,7 +2430,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final credential =
           await cryptoService.createEnrollmentCredential(enrollment);
       Uint8List? genesis;
-      session = await api!.register(
+      final created = await api!.register(
         inviteCode: inviteCode,
         username: username,
         password: password,
@@ -2429,12 +2439,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         credential: credential,
         deviceList: genesis = await _signGenesis(enrollment),
       );
-      await _oweInitialKeyPackages(session!);
-      await localStore.saveSession(session!);
-      await _mlsCrypto?.activateSession(session!);
+      if (genesis != null) await _journalDeviceListAnchor(created, [genesis]);
+      await _oweInitialKeyPackages(created);
+      await localStore.saveSession(created);
+      await _resumeDeviceListAnchor(created);
+      await _mlsCrypto?.activateSession(created);
+      await _clearDeviceListAnchorJournal(created);
+      session = created;
       await localStore.saveSyncCursor(0);
       await _finishSignIn(() async {
-        await _pinOwnGenesis(session!, genesis);
         await _publishInitialMlsKeyPackages();
         await _refreshConversations(notify: true);
         await _refreshDevices();
@@ -5283,8 +5296,12 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     );
     if (!config.transport.allows(restored.baseUrl)) return false;
     await wake.check(requireOwner: false);
+    await _resumeDeviceListAnchor(restored);
+    fence();
     await crypto.activateExistingSessionBounded(restored,
         checkCanCommit: fence);
+    fence();
+    await _clearDeviceListAnchorJournal(restored);
     fence();
     if (session != null || _isForeground) return false;
     final generation = ++_sessionGeneration;

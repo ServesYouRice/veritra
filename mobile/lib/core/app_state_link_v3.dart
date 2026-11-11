@@ -989,11 +989,18 @@ extension DeviceLinkV3Actions on AppState {
         'claim_token': pending.claimToken,
       }),
     );
+    await _journalLinkedDeviceAnchor(client, linked,
+        signingKey: base64Decode(pending.claim['signing_key'] as String),
+        approverDeviceId: pending.reservation['existing_device_id'] as String,
+        approverSigningKey:
+            base64Decode(pending.reservation['existing_signing_key'] as String));
     await _oweInitialKeyPackages(linked);
     await promoter.promotePendingEnrollment(linked,
         kind: PendingEnrollment.kindDeviceLinkV3,
         promotionId: pending.claimRequestHash,
         transfer: transfer);
+    await _resumeDeviceListAnchor(linked);
+    await _clearDeviceListAnchorJournal(linked);
     session = linked;
     _linkPollTimer?.cancel();
     _linkPollTimer = null;
@@ -1002,11 +1009,6 @@ extension DeviceLinkV3Actions on AppState {
     await localStore.deletePendingEnrollment(
         kind: PendingEnrollment.kindDeviceLinkV3, deviceId: pending.deviceId);
     await _finishSignIn(() async {
-      // L1: pin this account's list, which must name this device as added
-      // by the device that approved the link.
-      await _anchorLinkedDevice(linked,
-          approverDeviceId: status.sourceDeviceId,
-          approverSigningKey: status.bytes('existing_signing_key'));
       await _publishInitialMlsKeyPackages();
       await _refreshConversations(notify: true);
       await _refreshDevices();

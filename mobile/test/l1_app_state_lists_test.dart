@@ -145,6 +145,67 @@ void main() {
     }
   }
 
+  for (final registration in [false, true]) {
+    for (final failure in ['journal', 'session', 'pin', 'crypto']) {
+      test(
+          '${registration ? 'registration' : 'setup'} stops at $failure '
+          'storage failure and never restores through TOFU', () async {
+        final api = _ListApi(bindings);
+        final store = _FailingActivationStore(failure);
+        final crypto =
+            NativeCryptoService(bindings: bindings, localStore: store);
+        final state = _state(api, crypto);
+        if (registration) {
+          await state.registerWithInvite(
+              _origin, 'invite', 'owner', 'password');
+        } else {
+          await state.createOwner(_origin, 'owner', 'password', 'setup');
+        }
+        expect(state.session, isNull);
+        expect(state.error, isNotNull);
+        expect(api.listFetches, 0);
+        final saved = await store.loadSession();
+        expect(saved != null, failure == 'pin' || failure == 'crypto');
+        final genesis = api.chain.single;
+        final ghost = bindings.createDevice(_account, 'dev_ghost');
+        addTearDown(ghost.close);
+        api.served = [
+          ghost.signDeviceList(
+              DeviceListBody(
+                accountId: idBytes(_account),
+                version: 1,
+                prevHash: DeviceListBody.zeroHash,
+                createdAtMs: 1,
+                change: DeviceListChange.genesis,
+                entries: [
+                  DeviceListPair(idBytes('dev_ghost'), ghost.signingPublicKey())
+                ],
+              ),
+              idBytes('dev_ghost'))
+        ];
+        state.dispose();
+        // Real cold start: no in-memory pending identity or pin cache.
+        final restart = _state(
+            api, NativeCryptoService(bindings: bindings, localStore: store));
+        await restart.tryRestoreSession();
+        expect(restart.session, isNull);
+        expect(api.listFetches, 0);
+        if (saved != null) {
+          expect(restart.lifecycle, SessionLifecycle.recoveryRequired);
+          // The pin failure persists across restart; no server chain is read.
+          if (failure == 'pin') {
+            expect(await store.loadDeviceListPin(_account), isNull);
+            store.fail = false;
+            await restart.tryRestoreSession();
+          }
+          expect((await store.loadDeviceListPin(_account))?.headStatement,
+              genesis);
+        }
+        restart.dispose();
+      }, skip: skip);
+    }
+  }
+
   test(
       'an account from before L1 reviews its devices once; removals and the '
       'recovery key then chain, re-signed after a 409', () async {
@@ -430,4 +491,38 @@ class _ListApi extends ApiClient {
   @override
   Future<RecoveryKeyStatus> recoveryKeyStatus(String token) async =>
       const RecoveryKeyStatus(available: true, configured: false);
+}
+
+/// Injects a durable-store failure at each activation boundary.
+class _FailingActivationStore extends MemoryLocalStore {
+  _FailingActivationStore(this.stage);
+  final String stage;
+  bool fail = true;
+
+  @override
+  Future<void> saveSetting(String name, String value) async {
+    if (fail && stage == 'journal' && name.startsWith('l1.activation.')) {
+      throw StateError('journal write failed');
+    }
+    await super.saveSetting(name, value);
+  }
+
+  @override
+  Future<void> saveSession(Session session) async {
+    if (fail && stage == 'session') throw StateError('session write failed');
+    await super.saveSession(session);
+  }
+
+  @override
+  Future<bool> saveDeviceListPin(DeviceListPin pin,
+      {required int? expectedVersion}) async {
+    if (fail && stage == 'pin') throw StateError('pin write failed');
+    return super.saveDeviceListPin(pin, expectedVersion: expectedVersion);
+  }
+
+  @override
+  Future<void> saveCryptoState(StoredCryptoState state, int cursor) async {
+    if (fail && stage == 'crypto') throw StateError('crypto write failed');
+    await super.saveCryptoState(state, cursor);
+  }
 }

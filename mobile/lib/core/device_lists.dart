@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import '../crypto/native_crypto_bindings.dart'
     show
         DeviceListChainResult,
+        DeviceListChange,
         DeviceListListedPair,
         DeviceListPair,
         DeviceListSummary,
@@ -259,6 +260,50 @@ class DeviceListPins {
           stored);
     }
     return DeviceListStatus(DeviceListState.ok, pin);
+  }
+
+  /// Verifies a linked device's authenticated add without writing any pin.
+  /// The caller journals the result before promoting the pending identity.
+  Future<List<Uint8List>> linkedAnchor(String accountId,
+      {required List<int> deviceId,
+      required List<int> signingKey,
+      required List<int> approverDeviceId,
+      required List<int> approverSigningKey}) async {
+    final fetched = await _fetchFrom(accountId, 0);
+    if (fetched == null || fetched.isEmpty) {
+      throw StateError('linked account list unavailable');
+    }
+    final statements = [for (final item in fetched) item.statement];
+    final head = _verifyChain(accountId, statements);
+    final own = head.keys.where((key) =>
+        _same(key.deviceId, deviceId) && _same(key.signingKey, signingKey));
+    if (head.conflict ||
+        own.length != 1 ||
+        !own.single.listed ||
+        own.single.addedVersion <= 1) {
+      throw StateError('linked key has no approved add');
+    }
+    final index = own.single.addedVersion - 1;
+    final previous = _verifyChain(accountId, statements.sublist(0, index));
+    final approver = previous.listedKey(approverDeviceId);
+    if (approver == null || !_same(approver, approverSigningKey)) {
+      throw StateError('linked add approver key disagrees');
+    }
+    final add = verifier.checkStep(
+      accountId: accountId,
+      prev: previous.headStatement,
+      statement: statements[index],
+      history: [
+        for (final key in previous.keys)
+          DeviceListPair(key.deviceId, key.signingKey)
+      ],
+    );
+    if (add.change != DeviceListChange.add ||
+        add.signerKind != 1 ||
+        !_same(add.signerDeviceId, approverDeviceId)) {
+      throw StateError('linked add was not signed by the approver');
+    }
+    return statements;
   }
 
   /// Pins the head [statement] of a chain this device just verified some

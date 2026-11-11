@@ -33,6 +33,18 @@ const int _deviceListSignAttempts = 3;
 /// server take (JSON: account, device, base64 statement). Public bytes.
 const String _recoveryStatementSetting = 'l1.recovery_list_statement';
 
+/// Explicit session credentials are needed before a linked session is active.
+class _EnrollmentListSource implements DeviceListSource {
+  _EnrollmentListSource(this.client, this.current);
+  final ApiClient client;
+  final Session current;
+
+  @override
+  Future<DeviceListPage?> fetchDeviceList(String accountId,
+          {required int after}) =>
+      client.fetchDeviceList(current.token, accountId, after: after);
+}
+
 extension AppStateDeviceList on AppState {
   DeviceListCryptoService? get _listCrypto => switch (cryptoService) {
         final DeviceListCryptoService lists => lists,
@@ -57,21 +69,38 @@ extension AppStateDeviceList on AppState {
     ));
   }
 
-  /// Pins this device's own genesis as its account's anchor right after
-  /// setup or registration, so the first refresh does not take the own
-  /// account by trust on first use from the server. The locally signed
-  /// genesis is the anchor even if the server withholds or ignores it;
-  /// reading the server first would let it discard this trust anchor.
-  Future<void> _pinOwnGenesis(Session current, Uint8List? genesis) async {
+  String _anchorJournalKey(Session current) =>
+      'l1.activation.${base64UrlEncode(utf8.encode(jsonEncode([
+            canonicalizeServerOrigin(current.baseUrl),
+            current.accountId,
+            current.deviceId,
+          ])))}';
+
+  /// Write ahead of session persistence/promotion. Only public signed bytes.
+  Future<void> _journalDeviceListAnchor(
+      Session current, List<List<int>> statements) =>
+      localStore.saveSetting(_anchorJournalKey(current),
+          jsonEncode([for (final statement in statements) base64Encode(statement)]));
+
+  /// Must finish before any active-session path can read server lists.
+  /// Errors deliberately propagate: missing durable trust is not TOFU.
+  Future<void> _resumeDeviceListAnchor(Session current) async {
+    final raw = await localStore.loadSetting(_anchorJournalKey(current));
+    if (raw == null || raw.isEmpty) return;
     final pins = _deviceListPins;
-    final account = current.accountId;
-    if (pins == null || genesis == null || account == null) return;
-    try {
-      await pins.pinChain(account, [genesis], expectedHead: genesis);
-    } on Object catch (err) {
-      developer.log('L1 own genesis not pinned: ${err.runtimeType}',
-          name: 'veritra.l1');
-    }
+    if (pins == null) throw StateError('device-list verifier unavailable');
+    final statements = [
+      for (final value in jsonDecode(raw) as List) base64Decode(value as String),
+    ];
+    if (statements.isEmpty) throw StateError('empty activation anchor');
+    await pins.pinChain(current.accountId!, statements,
+        expectedHead: statements.last);
+  }
+
+  Future<void> _clearDeviceListAnchorJournal(Session current) async {
+    final key = _anchorJournalKey(current);
+    final raw = await localStore.loadSetting(key);
+    if (raw != null && raw.isNotEmpty) await localStore.saveSetting(key, '');
   }
 
   /// Refreshes this account's own pin (forced). Null when the account has no
@@ -258,34 +287,20 @@ extension AppStateDeviceList on AppState {
     await _deviceListPins?.pinOwnStep(current.accountId ?? '', statement);
   }
 
-  /// Anchors a newly linked device on its own account's list: the chain
-  /// must verify and its head must list this device with its own key, added
-  /// by the device that approved the link with the key the authenticated
-  /// transcript names. Best effort: a failure leaves no pin, and the next
-  /// refresh pins by trust on first use.
-  Future<void> _anchorLinkedDevice(Session current,
-      {required String approverDeviceId,
+  /// Validate before promotion; never let a server-selected chain become TOFU.
+  Future<void> _journalLinkedDeviceAnchor(ApiClient client, Session current,
+      {required List<int> signingKey,
+      required String approverDeviceId,
       required List<int> approverSigningKey}) async {
-    final pins = _deviceListPins;
     final crypto = _listCrypto;
-    if (pins == null || crypto == null) return;
-    try {
-      final status = await pins.refresh(current.accountId ?? '', force: true);
-      final pin = status.pin;
-      if (status.state != DeviceListState.ok || pin == null) return;
-      final own = await crypto.currentSigningKey();
-      final mine = pin.standing(idBytes(current.deviceId ?? ''), own);
-      final approver =
-          pin.standing(idBytes(approverDeviceId), approverSigningKey);
-      if (mine != PinStanding.approved ||
-          (approver != PinStanding.approved &&
-              approver != PinStanding.removed)) {
-        developer.log('L1: this device is not on its own approved list',
-            name: 'veritra.l1');
-      }
-    } on Object {
-      // Pinned later by trust on first use.
-    }
+    if (crypto == null) throw StateError('device-list verifier unavailable');
+    final pins = DeviceListPins(store: localStore,
+        source: _EnrollmentListSource(client, current), verifier: crypto);
+    final statements = await pins.linkedAnchor(current.accountId!,
+        deviceId: idBytes(current.deviceId!), signingKey: signingKey,
+        approverDeviceId: idBytes(approverDeviceId),
+        approverSigningKey: approverSigningKey);
+    await _journalDeviceListAnchor(current, statements);
   }
 
   /// K0-R completion (design, "Recovery when every device is lost"): signs

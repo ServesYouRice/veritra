@@ -29,6 +29,27 @@ to rename existing working structures. No dependencies or release gates change.
 
 ## Verification and remaining work
 
+### Durable enrollment anchors (review follow-up)
+
+Before saving a new setup/registration session, write its locally signed
+genesis to an encrypted, identity-scoped activation journal. After saving the
+session, replay that journal into the pin store before activating MLS or
+publishing the session in memory. Cold start and background restore replay
+the same journal before activation. Pin-write errors stop activation and keep
+the journal; they never authorize own-account TOFU. Clear the journal only
+after the pin and MLS activation succeed. This uses existing settings storage.
+
+For linking, retain the frozen pending enrollment until journaled promotion.
+Download and verify the complete chain without persisting it. Require the
+new device's exact key to be currently approved, and its original add to be
+signed by the exact approver key in the frozen authenticated link context.
+Presence of both keys somewhere in the chain is insufficient. Journal the
+validated chain before promotion, replay it after promotion (which can clear
+old identity pins), and only then expose the session. Failed downloads,
+validation, journal writes or pin writes cannot activate the linked device.
+An interruption leaves either the pending claim or the activation journal
+for retry; neither retry uses own-account TOFU.
+
 ### Imported-chain continuity (2026-11-11 review)
 
 Whole-chain verification proves internal consistency, not permission to
@@ -53,8 +74,9 @@ Test both setup and invitation registration with real native signatures:
 the server withholds the list, then serves an attacker-signed genesis. The
 original pin must persist and the attacker must stay unapproved. Check a
 failed list read as well. This changes no wire format or storage structure.
-This slice does not make the session, MLS identity and genesis pin one atomic
-write; a crash or local storage failure between those writes remains open.
+The enrollment-anchor follow-up below adds a write-ahead journal so a crash
+or storage failure between the writes cannot cause own-account TOFU. A crash
+before the first MLS identity save can still require explicit relinking.
 
 ### Long chains (2026-11-11)
 
@@ -81,7 +103,6 @@ releases the hold. Run inherited Rust VDL1/key-binding tests, server signed-list
 and honest-server gates, Flutter pin/store/gate tests, and repository checks.
 
 The full L1 package remains partial: complete adds independent of the server's
-device enumeration, recovery-key retype/legacy confirmation UI, authenticated
-linked-device anchor failure handling, removed-message UI, chains beyond the
+device enumeration, recovery-key retype/legacy confirmation UI, removed-message UI, chains beyond the
 bounded limits and independent security review/demo evidence still need work. Work is
 performed alone as explicitly requested; no independent review is claimed.
