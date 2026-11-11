@@ -137,14 +137,28 @@ void main() {
     test('keeps the C7 hidden types exempt when it is off', () {
       expect(refusing.acceptsUnfranked(hiddenUnknown), isTrue);
       expect(FrankingPolicy.unfrankedPayloadTypes, {
-        'history_change',
-        'history_sync',
-        'history_sync_request',
+        // C7 hidden types, by enum name (their wire names are snake_case).
+        'historyChange',
+        'historySync',
+        'historySyncRequest',
         // C3: info payloads are never reportable.
         'infoKey',
         'infoKeyRequest',
         'infoUpdate',
+        // C4: a leave proof is never reportable.
+        'memberLeave',
       });
+      // The policy matches decoded payloads by AppPayloadType.name, so every
+      // entry must name a real type, and every C7 type must be exempt.
+      final names = {for (final type in AppPayloadType.values) type.name};
+      expect(names.containsAll(FrankingPolicy.unfrankedPayloadTypes), isTrue);
+      for (final type in c7PayloadTypes) {
+        expect(
+            refusing.acceptsUnfranked(DecodedAppPayload(DecryptedAppPayload(
+                type: type, actionId: 'a', body: const {}))),
+            isTrue,
+            reason: type.name);
+      }
     });
   });
 

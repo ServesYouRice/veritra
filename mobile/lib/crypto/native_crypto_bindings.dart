@@ -1814,6 +1814,47 @@ class NativeCryptoDevice implements Finalizable {
   }) =>
       _stageCommitKeyedImpl(groupId, adds: adds, removes: removes);
 
+  /// Creates a record group carrying [genesisRecord] (C4, ABI 20); see
+  /// `c4_roles.dart`.
+  void createGroupWithRoles(String groupId, List<int> genesisRecord) =>
+      _createGroupWithRolesImpl(groupId, genesisRecord);
+
+  /// [stageCommitKeyed] that also carries the group's new role [record]
+  /// (C4, ABI 20); see `c4_roles.dart`.
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommitWithRoles(
+    String groupId, {
+    required List<int> record,
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) =>
+      _stageCommitWithRolesImpl(groupId,
+          record: record, adds: adds, removes: removes);
+
+  /// Phase one of receiving a commit (C4, ABI 20); see `c4_roles.dart`.
+  IncomingCommitReview stageIncomingCommit(String groupId, List<int> commit) =>
+      _stageIncomingCommitImpl(groupId, commit);
+
+  /// Phase two: merges the commit [stageIncomingCommit] reviewed (C4,
+  /// ABI 20); see `c4_roles.dart`.
+  CommitPairs mergeIncomingCommit(String groupId, List<int> commit) =>
+      _mergeIncomingCommitImpl(groupId, commit);
+
+  /// Drops the commit held for [groupId]; whether one was held (C4,
+  /// ABI 20); see `c4_roles.dart`.
+  bool discardIncomingCommit(String groupId) =>
+      _discardIncomingCommitImpl(groupId);
+
+  /// The group's role record and account roster (C4, ABI 20); see
+  /// `c4_roles.dart`.
+  GroupRoleState groupRoleState(String groupId) => _groupRoleStateImpl(groupId);
+
   NativeCryptoDevice._(this._bindings, this._handle) {
     _bindings._deviceFinalizer.attach(this, _handle.cast(), detach: this);
   }

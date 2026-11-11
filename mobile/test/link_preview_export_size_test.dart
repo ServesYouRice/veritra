@@ -111,7 +111,9 @@ void main() {
     expect(back[1].formatJson, isNull);
   });
 
-  test('a stored history snapshot of thousands of previewed rows stays under the cap', () async {
+  test(
+      'a stored history snapshot of thousands of previewed rows stays under the cap',
+      () async {
     final store = MemoryLocalStore();
     await store.saveSession(const Session(
       baseUrl: 'https://chat.example.org',

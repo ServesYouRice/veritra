@@ -9,9 +9,9 @@ part of 'native_crypto_bindings.dart';
 // Rust carries the record as opaque bytes (1 to 256 KiB) in GroupContext
 // extension 0xF0C4. Dart encodes it (`encodeGovernance`), decodes it
 // (`decodeGovernance`) and judges every change (`validateCommit`) between
-// [RoleStateDevice.stageIncomingCommit] and
-// [RoleStateDevice.mergeIncomingCommit] or
-// [RoleStateDevice.discardIncomingCommit].
+// [NativeCryptoDevice.stageIncomingCommit] and
+// [NativeCryptoDevice.mergeIncomingCommit] or
+// [NativeCryptoDevice.discardIncomingCommit].
 //
 // Account and device ids come back as BYTES, as in `l1_device_list.dart`: a
 // member can commit an Add whose credential holds ids that are not UTF-8.
@@ -28,8 +28,8 @@ const int _roleOutputMaxBytes = 4 * 1024 * 1024;
 
 /// What a staged remote commit would do, read from MLS before it is merged
 /// (ABI 20). Rust holds the staged commit until
-/// [RoleStateDevice.mergeIncomingCommit] or
-/// [RoleStateDevice.discardIncomingCommit].
+/// [NativeCryptoDevice.mergeIncomingCommit] or
+/// [NativeCryptoDevice.discardIncomingCommit].
 class IncomingCommitReview {
   const IncomingCommitReview({
     required this.removed,
@@ -216,12 +216,15 @@ GroupRoleState _readRoleState(List<int> bytes) {
   return GroupRoleState(record: record, roster: roster);
 }
 
-extension RoleStateDevice on NativeCryptoDevice {
+// The bodies of the NativeCryptoDevice members of the same names (as L1's
+// `_groupMembersImpl`): members, not extension methods, so a test can wrap a
+// device and still forward these calls.
+extension _RoleStateDevice on NativeCryptoDevice {
   /// Creates a record group (ABI 20, C4 item 2): its context requires the
   /// role extension and carries [genesisRecord], which the app builds as
   /// `encodeGovernance(GovernanceState.genesis(creator))`. [createGroup]
   /// stays for a group without a record (a private channel's group).
-  void createGroupWithRoles(String groupId, List<int> genesisRecord) {
+  void _createGroupWithRolesImpl(String groupId, List<int> genesisRecord) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(genesisRecord, roleRecordMaxBytes);
     _withTwo(
@@ -236,7 +239,7 @@ extension RoleStateDevice on NativeCryptoDevice {
   /// commit is then the role change alone. Rust refuses (operationFailed,
   /// nothing staged) a record equal to the current one, a group without a
   /// record, or anything receivers would refuse. Merge or clear it as usual.
-  ({List<int> commit, List<int> welcome, int epoch}) stageCommitWithRoles(
+  ({List<int> commit, List<int> welcome, int epoch}) _stageCommitWithRolesImpl(
     String groupId, {
     required List<int> record,
     List<
@@ -296,7 +299,8 @@ extension RoleStateDevice on NativeCryptoDevice {
   /// Staging uses up the commit's handshake ratchet step: after a discard
   /// (or any failure here) restore the committed state; never seal it. A
   /// review this binding cannot read is discarded before it throws.
-  IncomingCommitReview stageIncomingCommit(String groupId, List<int> commit) {
+  IncomingCommitReview _stageIncomingCommitImpl(
+      String groupId, List<int> commit) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(commit, 4 * 1024 * 1024);
     final bytes = _bindings._withByteLists(
@@ -308,7 +312,7 @@ extension RoleStateDevice on NativeCryptoDevice {
     try {
       return _readReview(bytes);
     } on Object {
-      discardIncomingCommit(groupId);
+      _discardIncomingCommitImpl(groupId);
       rethrow;
     }
   }
@@ -320,7 +324,7 @@ extension RoleStateDevice on NativeCryptoDevice {
   /// (flags, epoch, the C7 root of a removal that keeps this device, added
   /// and committer pairs). Once this returns the commit is merged: as with
   /// [processCommitWithPairs], nothing here throws after that.
-  CommitPairs mergeIncomingCommit(String groupId, List<int> commit) {
+  CommitPairs _mergeIncomingCommitImpl(String groupId, List<int> commit) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(commit, 4 * 1024 * 1024);
     return _bindings._withByteLists(
@@ -332,7 +336,7 @@ extension RoleStateDevice on NativeCryptoDevice {
 
   /// Drops the commit held for [groupId] (the caller refused it). The group
   /// is untouched. Returns whether one was held.
-  bool discardIncomingCommit(String groupId) {
+  bool _discardIncomingCommitImpl(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits), (group) {
       final held = calloc<Uint8>();
@@ -348,7 +352,7 @@ extension RoleStateDevice on NativeCryptoDevice {
 
   /// The group's current role record and account roster (ABI 20, C4 item
   /// 5), for after a join or a restore.
-  GroupRoleState groupRoleState(String groupId) {
+  GroupRoleState _groupRoleStateImpl(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     final bytes = _bindings._withSlice(
         Uint8List.fromList(groupId.codeUnits),

@@ -100,8 +100,11 @@ void main() {
       return call.method == 'setup' ? setup.future : null;
     });
     final notifier = PluginDesktopNotifier(appName: 'Veritra');
+    // show() is now suspended in its setup. On Windows that is the 'setup'
+    // channel call, held open by [setup]; elsewhere local_notifier sets up
+    // without a channel call, so no extra turn may run before clear() or the
+    // notice would already be out.
     final pending = notifier.show(title: 'Veritra', body: 'old account');
-    await Future<void>.delayed(Duration.zero);
     await notifier.clear();
     setup.complete(true);
     await pending;

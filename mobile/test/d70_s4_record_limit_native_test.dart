@@ -220,6 +220,43 @@ class _LimitDevice implements NativeCryptoDevice {
   void joinGroup(String expectedGroupId, List<int> welcome) =>
       real.joinGroup(expectedGroupId, welcome);
 
+  // C4 (ABI 20) role-record calls, now device members.
+  @override
+  void createGroupWithRoles(String groupId, List<int> genesisRecord) =>
+      real.createGroupWithRoles(groupId, genesisRecord);
+
+  @override
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommitWithRoles(
+    String groupId, {
+    required List<int> record,
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) =>
+      real.stageCommitWithRoles(groupId,
+          record: record, adds: adds, removes: removes);
+
+  @override
+  IncomingCommitReview stageIncomingCommit(String groupId, List<int> commit) =>
+      real.stageIncomingCommit(groupId, commit);
+
+  @override
+  CommitPairs mergeIncomingCommit(String groupId, List<int> commit) =>
+      real.mergeIncomingCommit(groupId, commit);
+
+  @override
+  bool discardIncomingCommit(String groupId) =>
+      real.discardIncomingCommit(groupId);
+
+  @override
+  GroupRoleState groupRoleState(String groupId) => real.groupRoleState(groupId);
+
   @override
   List<int> encrypt(String groupId, List<int> plaintext) =>
       real.encrypt(groupId, plaintext);

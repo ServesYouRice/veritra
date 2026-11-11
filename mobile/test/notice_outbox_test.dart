@@ -295,9 +295,7 @@ void main() {
         expect(await store.pendingNoticeDecision(nextOwner), isNull);
       });
 
-      test(
-          'K2 excludes device notice state; logout clears it',
-          () async {
+      test('K2 excludes device notice state; logout clears it', () async {
         await commit(store, [effect('a')], [ref(1, 'a')]);
         final item =
             (await store.pendingNoticeReferences(owner, now: now)).single;
