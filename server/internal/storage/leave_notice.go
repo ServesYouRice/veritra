@@ -67,7 +67,9 @@ func metadataLeaveNotice(metadata json.RawMessage) (bool, error) {
 
 // checkLeaveNoticeTx admits a marked envelope, or refuses it.
 func checkLeaveNoticeTx(ctx context.Context, tx *sql.Tx, envelope domain.MessageEnvelope, attachments int, now time.Time) error {
-	if attachments > 0 || len(envelope.FrankCommit) > 0 || envelope.ExpiresAt != nil ||
+	// An expiry is allowed: a disappearing group's own timer may set one, and
+	// retention bounds it after this check as for any envelope.
+	if attachments > 0 || len(envelope.FrankCommit) > 0 ||
 		(envelope.ReplyToID != nil && strings.TrimSpace(*envelope.ReplyToID) != "") ||
 		(envelope.ThreadRootID != nil && strings.TrimSpace(*envelope.ThreadRootID) != "") {
 		return ErrInvalidInput

@@ -3429,7 +3429,7 @@ leave. The envelope now carries the clear metadata mark `"c4_leave": true`
 exempts a marked envelope from C2, the C5 timeout and slow mode
 (`server/internal/storage/leave_notice.go`), only: in a record group (kind
 `group` outside a community, or a community's shared conversation); with no
-attachments, reply, thread, expiry or franking commitment; and at most one
+attachments, reply, thread or franking commitment; and at most one
 per sender account and membership per hour (`leave_notice_limited`, 429
 with Retry-After). The mark is unverifiable, so receivers turn any marked
 envelope whose payload is not a `member_leave` into an invalid row: a

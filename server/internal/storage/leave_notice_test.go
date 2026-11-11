@@ -75,11 +75,10 @@ func TestLeaveNoticeMarkIsNarrow(t *testing.T) {
 	if _, err := f.post(ctx, f.shared, f.member, "rep", repeated); !errors.Is(err, ErrInvalidChannelRoute) {
 		t.Fatalf("repeated mark: %v", err)
 	}
-	// Nothing rides along: no franking commitment, no reply, no expiry.
+	// Nothing rides along: no franking commitment, no reply or thread.
 	marked := leaveMetadata(base, true)
 	for name, envelope := range map[string]domain.MessageEnvelope{
 		"franked": {FrankCommit: []byte("c")},
-		"expiry":  {ExpiresAt: func() *time.Time { t := time.Now().Add(time.Hour); return &t }()},
 		"thread":  {ThreadRootID: func() *string { s := "msg_x"; return &s }()},
 	} {
 		envelope.ConversationID = f.shared

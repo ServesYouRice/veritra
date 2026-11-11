@@ -71,6 +71,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'posting_restricted': ApiErrorKind.permission,
   'timed_out': ApiErrorKind.permission,
   'slow_mode': ApiErrorKind.rateLimited,
+  'leave_notice_limited': ApiErrorKind.rateLimited,
   'invalid_seconds': ApiErrorKind.invalidRequest,
   // Not found or gone.
   'not_found': ApiErrorKind.notFound,
