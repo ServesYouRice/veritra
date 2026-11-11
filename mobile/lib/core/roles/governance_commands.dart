@@ -53,6 +53,30 @@ class GovernanceObservations {
       electionSeen: seen,
     );
   }
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is GovernanceObservations &&
+          runtimeType == other.runtimeType &&
+          owner == other.owner &&
+          ownerRev == other.ownerRev &&
+          lastOwnerActivity == other.lastOwnerActivity &&
+          electionOpened == other.electionOpened &&
+          electionSeen == other.electionSeen;
+
+  @override
+  int get hashCode => Object.hash(
+        owner,
+        ownerRev,
+        lastOwnerActivity,
+        electionOpened,
+        electionSeen,
+      );
+
+  @override
+  String toString() =>
+      'GovernanceObservations(owner: $owner, ownerRev: $ownerRev, lastOwnerActivity: $lastOwnerActivity, electionOpened: $electionOpened, electionSeen: $electionSeen)';
 }
 
 /// A refused local command. No record should be staged after this exception.

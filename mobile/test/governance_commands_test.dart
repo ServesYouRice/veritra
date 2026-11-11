@@ -377,4 +377,71 @@ void main() {
       isTrue,
     );
   });
+
+  test('no-admin claim with present inactive owner makes old owner an admin',
+      () {
+    // Initial has no admins and owner is in the roster.
+    final open =
+        commands(initial, 'alice').openElection(observed(initial), now);
+    expect(open.election!.electorate, {'alice'});
+    final win = commands(open, 'alice').vote('alice', observed(open), now);
+    expect(win.owner, 'alice');
+    expect(win.admins, {'owner': win.rev});
+    expect(win.election, isNull);
+    valid(open, win, 'alice');
+  });
+
+  test(
+      'owner role and posting changes clear an open election and advance ownerRev',
+      () {
+    final state = admins();
+    final open = commands(state, 'alice').openElection(observed(state), now);
+    expect(open.election, isNotNull);
+
+    final withNewRole =
+        commands(open, 'owner').setRole('dave', BuiltInRole.moderator);
+    valid(open, withNewRole, 'owner');
+    expect(withNewRole.election, isNull);
+    expect(withNewRole.ownerRev, withNewRole.rev);
+    expect(withNewRole.moderators, contains('dave'));
+
+    final openAgain =
+        commands(withNewRole, 'alice').openElection(observed(withNewRole), now);
+    final withPosting = commands(openAgain, 'owner').setPosting(
+      adminsOnly: true,
+      announcementChannels: {'announcements'},
+    );
+    valid(openAgain, withPosting, 'owner');
+    expect(withPosting.election, isNull);
+    expect(withPosting.ownerRev, withPosting.rev);
+    expect(withPosting.adminsOnlyPosting, isTrue);
+  });
+
+  test('admin demotion by owner and stepping down to member work as expected',
+      () {
+    final state = admins();
+    final demoted =
+        commands(state, 'owner').setRole('alice', BuiltInRole.moderator);
+    valid(state, demoted, 'owner');
+    expect(demoted.admins.containsKey('alice'), isFalse);
+    expect(demoted.electors.contains('alice'), isFalse);
+    expect(demoted.moderators.contains('alice'), isTrue);
+
+    final member =
+        commands(demoted, 'alice').setRole('alice', BuiltInRole.member);
+    valid(demoted, member, 'alice');
+    expect(member.roleOf('alice'), BuiltInRole.member);
+  });
+
+  test('GovernanceObservations equality, hashCode and toString', () {
+    final obs1 = observed(initial);
+    final obs2 = observed(initial);
+    expect(obs1, equals(obs2));
+    expect(obs1.hashCode, equals(obs2.hashCode));
+    expect(obs1.toString(), contains('GovernanceObservations('));
+
+    final different = obs1.accepted(initial, now.add(const Duration(hours: 1)),
+        ownerActive: true);
+    expect(obs1, isNot(equals(different)));
+  });
 }
