@@ -467,6 +467,10 @@ class AppState extends ChangeNotifier
   final Map<String, Timer> _ownerCancelTimers = <String, Timer>{};
   final Random _ownerCancelRandom = Random.secure();
 
+  /// C4 server succession: when this device last asked the server to make
+  /// it the owner of a record group it owns by the record ([RoleActions]).
+  final Map<String, DateTime> _successionAskedAt = <String, DateTime>{};
+
   /// Kinds of conversations whose MLS group this device is creating before
   /// they are in [conversations] (C4: the creator's own kind decides
   /// whether the group carries a role record).
@@ -6397,6 +6401,7 @@ class AppState extends ChangeNotifier
         try {
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
+          await reconcileServerOwners();
         } catch (err) {
           // A self-update is optional; it never blocks sync.
           if (err is ApiException && err.statusCode == 401) rethrow;

@@ -180,12 +180,10 @@ extension MembershipActions on AppState {
   /// another server, a malformed one, and a revoked, expired or used up one
   /// each fail with a message that does not repeat the input.
   Future<({MembershipInviteLink link, InvitePreview preview})?>
-      previewInviteLink(String text) {
+  previewInviteLink(String text) {
     return _membershipCall<
-        ({
-          MembershipInviteLink link,
-          InvitePreview preview
-        })>((current, client) async {
+      ({MembershipInviteLink link, InvitePreview preview})
+    >((current, client) async {
       final link = MembershipInviteLink.tryParse(
         text,
         expectedOrigin: client.baseUrl,
@@ -220,19 +218,23 @@ extension MembershipActions on AppState {
       try {
         // Persist the verified group anchor before the server can approve and
         // deliver a Welcome, including when the request response is lost.
-        final preview =
-            await client.previewMembershipInvite(current.token, link.locator);
+        final preview = await client.previewMembershipInvite(
+          current.token,
+          link.locator,
+        );
         if (!await _inviteBindingHolds(link, preview.binding, preview.kind)) {
           throw UserFacingException(l10n.joinLinkUnusable);
         }
         if (preview.kind == InviteTargetKind.group) {
           final binding = preview.binding;
-          await localStore.saveInviteAnchor(InviteAnchor(
-            conversationId: binding.targetId,
-            accountId: binding.inviterAccountId,
-            deviceId: binding.inviterDeviceId,
-            signingKey: binding.inviterSigningKey,
-          ));
+          await localStore.saveInviteAnchor(
+            InviteAnchor(
+              conversationId: binding.targetId,
+              accountId: binding.inviterAccountId,
+              deviceId: binding.inviterDeviceId,
+              signingKey: binding.inviterSigningKey,
+            ),
+          );
         }
         final request = await client.requestToJoin(current.token, link.locator);
         // The answer must carry the binding of this very link; otherwise the
@@ -270,11 +272,13 @@ extension MembershipActions on AppState {
     );
     if (requests != null) {
       final known = <String>{for (final c in communities) c.id};
-      final approvedNewCommunity = requests.any((r) =>
-          r.status == JoinRequestStatus.approved &&
-          r.kind == InviteTargetKind.community &&
-          r.targetId != null &&
-          !known.contains(r.targetId));
+      final approvedNewCommunity = requests.any(
+        (r) =>
+            r.status == JoinRequestStatus.approved &&
+            r.kind == InviteTargetKind.community &&
+            r.targetId != null &&
+            !known.contains(r.targetId),
+      );
       if (approvedNewCommunity) unawaited(refreshCommunities());
     }
     return requests;
@@ -321,8 +325,9 @@ extension MembershipActions on AppState {
     required bool approve,
   }) async {
     final done = await _membershipCall<bool>((current, client) async {
-      final conversationIds =
-          approve ? _joinTargetConversations(request) : const <String>[];
+      final conversationIds = approve
+          ? _joinTargetConversations(request)
+          : const <String>[];
       if (approve) {
         if (!membershipChangesAvailable) {
           throw StateError('adding members is not available in this build');
@@ -452,13 +457,35 @@ extension MembershipActions on AppState {
   }
 
   /// Mutes a member for [seconds] (0 lifts it).
+  ///
+  /// C5: the community's verified record carries the timeout too, so every
+  /// member's app hides the member's posts as the server refuses them
+  /// (docs/crypto.md, "C5 timeouts in the record"). A timeout is set on the
+  /// server first and then recorded with the server's own times; a lift
+  /// leaves the record first and only then the server. Either way a failure
+  /// leaves apps no stricter than the server.
   Future<bool> timeoutCommunityMember(
     String communityId,
     String accountId,
     int seconds,
   ) async {
+    final shared = communities
+        .where((c) => c.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (seconds == 0 && shared != null) {
+      final view = await governanceViewFor(shared);
+      if (view != null && view.record.timeouts.containsKey(accountId)) {
+        final lifted = await _roleCommand(
+          shared,
+          (commands, _, __) => commands.liftTimeout(accountId),
+        );
+        if (!lifted) return false;
+      }
+    }
+    DateTime? until;
     final done = await _membershipCall<bool>((current, client) async {
-      await client.setMemberTimeout(
+      until = await client.setMemberTimeout(
         current.token,
         communityId,
         accountId,
@@ -466,6 +493,21 @@ extension MembershipActions on AppState {
       );
       return true;
     });
+    final end = until;
+    if (done == true && seconds > 0 && end != null && shared != null) {
+      final view = await governanceViewFor(shared);
+      if (view != null) {
+        final untilMs = end.millisecondsSinceEpoch;
+        await _roleCommand(
+          shared,
+          (commands, _, __) => commands.setTimeout(
+            accountId,
+            fromMs: untilMs - seconds * 1000,
+            untilMs: untilMs,
+          ),
+        );
+      }
+    }
     return done ?? false;
   }
 

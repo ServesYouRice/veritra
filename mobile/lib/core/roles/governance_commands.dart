@@ -20,20 +20,24 @@ class GovernanceObservations {
 
   /// A join/restore without saved observations starts both waits now.
   factory GovernanceObservations.firstSeen(
-          GovernanceState state, DateTime now) =>
-      GovernanceObservations(
-        owner: state.owner,
-        ownerRev: state.ownerRev,
-        lastOwnerActivity: now,
-        electionOpened: state.election?.opened,
-        electionSeen: state.election == null ? null : now,
-      );
+    GovernanceState state,
+    DateTime now,
+  ) => GovernanceObservations(
+    owner: state.owner,
+    ownerRev: state.ownerRev,
+    lastOwnerActivity: now,
+    electionOpened: state.election?.opened,
+    electionSeen: state.election == null ? null : now,
+  );
 
   /// Call only after authenticating and accepting the commit or application
   /// message. [ownerActive] means its authenticated sender is the current
   /// owner. Activity and election clocks never use envelope timestamps.
-  GovernanceObservations accepted(GovernanceState state, DateTime now,
-      {required bool ownerActive}) {
+  GovernanceObservations accepted(
+    GovernanceState state,
+    DateTime now, {
+    required bool ownerActive,
+  }) {
     // Moving a wall clock backwards must not shorten an already observed wait.
     final receipt = now.isBefore(lastOwnerActivity) ? lastOwnerActivity : now;
     final ownerChanged = state.owner != owner;
@@ -42,13 +46,14 @@ class GovernanceObservations {
     final seen = opened == null
         ? null
         : sameElection && electionSeen != null
-            ? electionSeen!
-            : receipt;
+        ? electionSeen!
+        : receipt;
     return GovernanceObservations(
       owner: state.owner,
       ownerRev: state.ownerRev,
-      lastOwnerActivity:
-          ownerActive || ownerChanged ? receipt : lastOwnerActivity,
+      lastOwnerActivity: ownerActive || ownerChanged
+          ? receipt
+          : lastOwnerActivity,
       electionOpened: opened,
       electionSeen: seen,
     );
@@ -67,12 +72,12 @@ class GovernanceObservations {
 
   @override
   int get hashCode => Object.hash(
-        owner,
-        ownerRev,
-        lastOwnerActivity,
-        electionOpened,
-        electionSeen,
-      );
+    owner,
+    ownerRev,
+    lastOwnerActivity,
+    electionOpened,
+    electionSeen,
+  );
 
   @override
   String toString() =>
@@ -99,11 +104,16 @@ class GovernanceCommands {
     required this.state,
     required this.actor,
     required Set<String> members,
+    this.epoch,
   }) : members = Set.unmodifiable(members);
 
   final GovernanceState state;
   final String actor;
   final Set<String> members;
+
+  /// The epoch the staged commit will produce (the group's epoch + 1, from
+  /// MLS). Needed only by [setTimeout].
+  final int? epoch;
 
   Never _refuse(String reason) => throw GovernanceCommandException(reason);
 
@@ -115,6 +125,7 @@ class GovernanceCommands {
       actor,
       before: members,
       after: members,
+      epoch: epoch,
     );
     if (!check.ok) _refuse(check.reject!.name);
     // The deterministic rules judge authority; the codec also bounds ids,
@@ -206,6 +217,34 @@ class GovernanceCommands {
     );
   }
 
+  /// C5: records [account]'s timeout as the server set it: [fromMs] to
+  /// [untilMs], the server's clock (`timeout_until` minus the length, and
+  /// `timeout_until`). Replaces an earlier one.
+  GovernanceState setTimeout(
+    String account, {
+    required int fromMs,
+    required int untilMs,
+  }) {
+    final at = epoch;
+    if (at == null) _refuse('no_epoch');
+    if (!members.contains(account)) _refuse('not_member');
+    if (!state.mayActOn(actor, account)) _refuse('hierarchy');
+    final timeout = MemberTimeout(epoch: at, fromMs: fromMs, untilMs: untilMs);
+    if (!timeout.wellFormed) _refuse('bad_timeout');
+    return _finish(
+      _base().copyWith(timeouts: {...state.timeouts, account: timeout}),
+    );
+  }
+
+  /// C5: lifts [account]'s timeout.
+  GovernanceState liftTimeout(String account) {
+    if (!state.timeouts.containsKey(account)) _refuse('no_change');
+    if (!state.mayActOn(actor, account)) _refuse('hierarchy');
+    return _finish(
+      _base().copyWith(timeouts: {...state.timeouts}..remove(account)),
+    );
+  }
+
   /// Owner cancellation and snapshot-member closure have no local wait.
   GovernanceState closeElection() {
     if (state.election == null) _refuse('no_election');
@@ -260,8 +299,9 @@ class GovernanceCommands {
     } else {
       electorate = state.electors.where(members.contains).toSet();
       if (electorate.isEmpty) {
-        electorate =
-            admins.where((a) => state.admins[a]! <= state.ownerRev).toSet();
+        electorate = admins
+            .where((a) => state.admins[a]! <= state.ownerRev)
+            .toSet();
       }
     }
     if (!electorate.contains(actor)) _refuse('not_elector');

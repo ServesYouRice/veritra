@@ -31,7 +31,10 @@ Stream<List<int>> k1UploadSlices(Uint8List bytes) async* {
   const slice = 64 * 1024;
   for (var offset = 0; offset < bytes.length; offset += slice) {
     yield Uint8List.sublistView(
-        bytes, offset, min(offset + slice, bytes.length));
+      bytes,
+      offset,
+      min(offset + slice, bytes.length),
+    );
   }
 }
 
@@ -48,10 +51,10 @@ class ApiClient {
     HttpClient? httpClient,
     TransportPolicy transport = TransportPolicy.production,
     Duration transferIdleTimeout = defaultTransferIdleTimeout,
-  })  : baseUrl = canonicalizeServerOrigin(baseUrl),
-        _transport = transport,
-        _httpClient = httpClient ?? HttpClient(),
-        _transferIdleTimeout = transferIdleTimeout {
+  }) : baseUrl = canonicalizeServerOrigin(baseUrl),
+       _transport = transport,
+       _httpClient = httpClient ?? HttpClient(),
+       _transferIdleTimeout = transferIdleTimeout {
     _httpClient.connectionTimeout = const Duration(seconds: 15);
   }
 
@@ -128,15 +131,21 @@ class ApiClient {
   void _v3Origin() {
     if (!_transport.allows(baseUrl)) {
       throw const FormatException(
-          'device link requires an origin this build allows');
+        'device link requires an origin this build allows',
+      );
     }
   }
 
-  DeviceLinkV3Record _v3Link(Map<String, Object?> json,
-      {String? id, Session? owner}) {
+  DeviceLinkV3Record _v3Link(
+    Map<String, Object?> json, {
+    String? id,
+    Session? owner,
+  }) {
     return _decode(() {
-      final link = DeviceLinkV3Record.fromJson(_object(json, 'device_link'),
-          transport: _transport);
+      final link = DeviceLinkV3Record.fromJson(
+        _object(json, 'device_link'),
+        transport: _transport,
+      );
       if (link.origin != baseUrl ||
           (id != null && link.id != id) ||
           (owner != null &&
@@ -151,8 +160,11 @@ class ApiClient {
   /// [sourceCommitment] is this device's commitment to the random it will
   /// reveal once it accepted the claim (L1-3).
   Future<DeviceLinkV3Record> createDeviceLinkV3(
-      Session owner, String locator, List<int> sourceCommitment,
-      {int expiresInSeconds = 600}) async {
+    Session owner,
+    String locator,
+    List<int> sourceCommitment, {
+    int expiresInSeconds = 600,
+  }) async {
     _v3Owner(owner);
     deviceLinkV3Hash(locator);
     if (expiresInSeconds < 1 || expiresInSeconds > 1800) {
@@ -161,15 +173,18 @@ class ApiClient {
     if (sourceCommitment.length != 32) {
       throw const FormatException('invalid device link commitment');
     }
-    final json = await _jsonRequest('POST', '/api/v1/device-links/v3',
-        token: owner.token,
-        body: {
-          'code': locator,
-          'server_origin': baseUrl,
-          'protocol_version': deviceLinkV3Protocol,
-          'source_commitment': base64Encode(sourceCommitment),
-          'expires_in_seconds': expiresInSeconds,
-        });
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/device-links/v3',
+      token: owner.token,
+      body: {
+        'code': locator,
+        'server_origin': baseUrl,
+        'protocol_version': deviceLinkV3Protocol,
+        'source_commitment': base64Encode(sourceCommitment),
+        'expires_in_seconds': expiresInSeconds,
+      },
+    );
     final link = _v3Link(json, owner: owner);
     if (link.fields['code'] != locator ||
         link.fields['source_commitment'] != base64Encode(sourceCommitment)) {
@@ -180,8 +195,11 @@ class ApiClient {
 
   /// Reveals the source random for the claim in [expected] (L1-3). Call it
   /// only after the native accept of that claim is committed.
-  Future<DeviceLinkV3Record> revealDeviceLinkV3(Session owner,
-      DeviceLinkV3Record expected, List<int> sourceRandom) async {
+  Future<DeviceLinkV3Record> revealDeviceLinkV3(
+    Session owner,
+    DeviceLinkV3Record expected,
+    List<int> sourceRandom,
+  ) async {
     _v3Owner(owner);
     if (expected.origin != baseUrl ||
         expected.accountId != owner.accountId ||
@@ -190,17 +208,21 @@ class ApiClient {
       throw const FormatException('device link reveal context mismatch');
     }
     final link = _v3Link(
-        await _jsonRequest(
-            'POST', '/api/v1/device-links/v3/${expected.id}/reveal',
-            token: owner.token,
-            body: {
-              'protocol_version': deviceLinkV3Protocol,
-              'claim_request_hash':
-                  deviceLinkV3Hash(expected.fields['claim_request_hash']),
-              'source_random': base64Encode(sourceRandom),
-            }),
-        id: expected.id,
-        owner: owner);
+      await _jsonRequest(
+        'POST',
+        '/api/v1/device-links/v3/${expected.id}/reveal',
+        token: owner.token,
+        body: {
+          'protocol_version': deviceLinkV3Protocol,
+          'claim_request_hash': deviceLinkV3Hash(
+            expected.fields['claim_request_hash'],
+          ),
+          'source_random': base64Encode(sourceRandom),
+        },
+      ),
+      id: expected.id,
+      owner: owner,
+    );
     _v3SameClaim(expected, link);
     if (link.fields['source_random'] != base64Encode(sourceRandom)) {
       throw const ApiResponseException();
@@ -209,32 +231,41 @@ class ApiClient {
   }
 
   Future<DeviceLinkV3Reservation> reserveDeviceLinkV3(
-      String locator, String requestId) async {
+    String locator,
+    String requestId,
+  ) async {
     _v3Origin();
     deviceLinkV3Hash(locator);
     deviceLinkV3Hash(requestId);
     final json = await _jsonRequest(
-        'POST', '/api/v1/device-links/v3/claim-enrollment',
-        body: {
-          'code': locator,
-          'protocol_version': deviceLinkV3Protocol,
-          'reservation_request_id': requestId,
-        });
+      'POST',
+      '/api/v1/device-links/v3/claim-enrollment',
+      body: {
+        'code': locator,
+        'protocol_version': deviceLinkV3Protocol,
+        'reservation_request_id': requestId,
+      },
+    );
     return _decode(() => DeviceLinkV3Reservation.fromJson(json));
   }
 
   Future<DeviceLinkV3Record> submitDeviceLinkV3Claim(
-      FrozenDeviceLinkV3Claim claim,
-      DeviceLinkV3Reservation reservation) async {
+    FrozenDeviceLinkV3Claim claim,
+    DeviceLinkV3Reservation reservation,
+  ) async {
     _v3Origin();
     if (claim.fields['server_origin'] != baseUrl ||
         claim.fields['enrollment_reservation_id'] != reservation.fields['id']) {
       throw const FormatException('device link claim origin mismatch');
     }
     final link = _v3Link(
-        await _jsonRequest('POST', '/api/v1/device-links/v3/claim',
-            body: claim.fields),
-        id: claim.fields['enrollment_reservation_id'] as String);
+      await _jsonRequest(
+        'POST',
+        '/api/v1/device-links/v3/claim',
+        body: claim.fields,
+      ),
+      id: claim.fields['enrollment_reservation_id'] as String,
+    );
     for (final (returned, reserved) in [
       ('account_id', 'account_id'),
       ('claimed_device_id', 'device_id'),
@@ -270,25 +301,34 @@ class ApiClient {
     _v3Owner(owner);
     deviceLinkV3Id(id);
     return _v3Link(
-        await _jsonRequest('GET', '/api/v1/device-links/v3/$id',
-            token: owner.token),
-        id: id,
-        owner: owner);
+      await _jsonRequest(
+        'GET',
+        '/api/v1/device-links/v3/$id',
+        token: owner.token,
+      ),
+      id: id,
+      owner: owner,
+    );
   }
 
   /// Polling is deliberately read-only and never yields a Session.
   Future<DeviceLinkV3Record> deviceLinkV3ClaimStatus(
-      DeviceLinkV3Record expected, String claimToken) async {
+    DeviceLinkV3Record expected,
+    String claimToken,
+  ) async {
     _v3Origin();
     if (expected.origin != baseUrl) {
       throw const FormatException('device link status origin mismatch');
     }
     deviceLinkV3ClaimToken(claimToken);
     final link = _v3Link(
-        await _jsonRequest(
-            'GET', '/api/v1/device-links/v3/${expected.id}/claim-status',
-            extraHeaders: {'X-Veritra-Claim-Token': claimToken}),
-        id: expected.id);
+      await _jsonRequest(
+        'GET',
+        '/api/v1/device-links/v3/${expected.id}/claim-status',
+        extraHeaders: {'X-Veritra-Claim-Token': claimToken},
+      ),
+      id: expected.id,
+    );
     _v3SameClaim(expected, link);
     return link;
   }
@@ -312,7 +352,7 @@ class ApiClient {
       'claim_request_hash',
       'created_at',
       'expires_at',
-      'claimed_at'
+      'claimed_at',
     ]) {
       if (expected.fields[key] != actual.fields[key]) {
         throw const ApiResponseException();
@@ -328,7 +368,7 @@ class ApiClient {
       'approved_at',
       'transfer_expires_at',
       'approval_tag',
-      'completed_at'
+      'completed_at',
     ]) {
       if (expected.fields.containsKey(key) &&
           expected.fields[key] != actual.fields[key]) {
@@ -338,8 +378,11 @@ class ApiClient {
   }
 
   Future<DeviceLinkV3Record> approveDeviceLinkV3(
-      Session owner, DeviceLinkV3Record expected, List<int> approvalTag,
-      {List<int>? deviceList}) async {
+    Session owner,
+    DeviceLinkV3Record expected,
+    List<int> approvalTag, {
+    List<int>? deviceList,
+  }) async {
     _v3Owner(owner);
     if (expected.origin != baseUrl ||
         expected.accountId != owner.accountId ||
@@ -348,20 +391,23 @@ class ApiClient {
       throw const FormatException('device link approval context mismatch');
     }
     final link = _v3Link(
-        await _jsonRequest(
-            'POST', '/api/v1/device-links/v3/${expected.id}/approve',
-            token: owner.token,
-            body: {
-              'protocol_version': deviceLinkV3Protocol,
-              'claim_request_hash':
-                  deviceLinkV3Hash(expected.fields['claim_request_hash']),
-              'transcript_hash':
-                  base64Encode(expected.bytes('transcript_hash')),
-              'approval_tag': base64Encode(approvalTag),
-              if (deviceList != null) 'device_list': base64Encode(deviceList),
-            }),
-        id: expected.id,
-        owner: owner);
+      await _jsonRequest(
+        'POST',
+        '/api/v1/device-links/v3/${expected.id}/approve',
+        token: owner.token,
+        body: {
+          'protocol_version': deviceLinkV3Protocol,
+          'claim_request_hash': deviceLinkV3Hash(
+            expected.fields['claim_request_hash'],
+          ),
+          'transcript_hash': base64Encode(expected.bytes('transcript_hash')),
+          'approval_tag': base64Encode(approvalTag),
+          if (deviceList != null) 'device_list': base64Encode(deviceList),
+        },
+      ),
+      id: expected.id,
+      owner: owner,
+    );
     _v3SameClaim(expected, link);
     if (!const {'approved', 'consumed'}.contains(link.state) ||
         link.fields['approval_tag'] != base64Encode(approvalTag)) {
@@ -371,9 +417,10 @@ class ApiClient {
   }
 
   Future<DeviceLinkV3Completion> completeDeviceLinkV3(
-      DeviceLinkV3Record expected,
-      String claimToken,
-      String initialSessionTokenHash) async {
+    DeviceLinkV3Record expected,
+    String claimToken,
+    String initialSessionTokenHash,
+  ) async {
     _v3Origin();
     deviceLinkV3ClaimToken(claimToken);
     deviceLinkV3Hash(initialSessionTokenHash);
@@ -381,20 +428,23 @@ class ApiClient {
       throw const FormatException('device link completion context mismatch');
     }
     final json = await _jsonRequest(
-        'POST', '/api/v1/device-links/v3/${expected.id}/complete',
-        extraHeaders: {
-          'X-Veritra-Claim-Token': claimToken
-        },
-        body: {
-          'protocol_version': deviceLinkV3Protocol,
-          'claim_request_hash':
-              deviceLinkV3Hash(expected.fields['claim_request_hash']),
-          'transcript_hash': base64Encode(expected.bytes('transcript_hash')),
-          'initial_session_token_hash': initialSessionTokenHash,
-        });
+      'POST',
+      '/api/v1/device-links/v3/${expected.id}/complete',
+      extraHeaders: {'X-Veritra-Claim-Token': claimToken},
+      body: {
+        'protocol_version': deviceLinkV3Protocol,
+        'claim_request_hash': deviceLinkV3Hash(
+          expected.fields['claim_request_hash'],
+        ),
+        'transcript_hash': base64Encode(expected.bytes('transcript_hash')),
+        'initial_session_token_hash': initialSessionTokenHash,
+      },
+    );
     return _decode(() {
-      final receipt =
-          DeviceLinkV3Completion.fromJson(json, transport: _transport);
+      final receipt = DeviceLinkV3Completion.fromJson(
+        json,
+        transport: _transport,
+      );
       final fields = receipt.fields;
       if (fields['link_id'] != expected.id ||
           fields['account_id'] != expected.accountId ||
@@ -418,8 +468,11 @@ class ApiClient {
   Future<void> cancelDeviceLinkV3(Session owner, String id) async {
     _v3Owner(owner);
     deviceLinkV3Id(id);
-    await _jsonRequest('DELETE', '/api/v1/device-links/v3/$id',
-        token: owner.token);
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/device-links/v3/$id',
+      token: owner.token,
+    );
   }
 
   Future<EnrollmentReservation> reserveOwnerEnrollment({
@@ -575,8 +628,11 @@ class ApiClient {
   }
 
   Future<List<PasskeyRecord>> passkeys(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/account/passkeys', token: token);
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/account/passkeys',
+      token: token,
+    );
     final raw = json['passkeys'];
     if (raw == null) return const <PasskeyRecord>[];
     if (raw is! List || raw.length > 64) throw const ApiResponseException();
@@ -588,8 +644,11 @@ class ApiClient {
 
   /// Needs a recent password check on the session.
   Future<PasskeyCeremony> passkeyRegisterOptions(String token) async {
-    final json = await _jsonRequest('POST', '/api/v1/account/passkeys/options',
-        token: token);
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/account/passkeys/options',
+      token: token,
+    );
     return _ceremony(json);
   }
 
@@ -617,15 +676,20 @@ class ApiClient {
 
   Future<void> renamePasskey(String token, String id, String name) async {
     await _jsonRequest(
-        'PATCH', '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
-        token: token, body: <String, Object?>{'name': name});
+      'PATCH',
+      '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
+      token: token,
+      body: <String, Object?>{'name': name},
+    );
   }
 
   /// Needs a recent password check on the session.
   Future<void> deletePasskey(String token, String id) async {
     await _jsonRequest(
-        'DELETE', '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
-        token: token);
+      'DELETE',
+      '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
+      token: token,
+    );
   }
 
   PasskeyCeremony _ceremony(Map<String, Object?> json) {
@@ -638,7 +702,8 @@ class ApiClient {
 
   Future<List<Conversation>> conversations(String token) {
     return _collectPages(
-      (before) => '/api/v1/conversations?limit=$_listPageSize'
+      (before) =>
+          '/api/v1/conversations?limit=$_listPageSize'
           '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}',
       token: token,
       key: 'conversations',
@@ -649,7 +714,8 @@ class ApiClient {
 
   Future<List<Device>> devices(String token) {
     return _collectPages(
-      (after) => '/api/v1/devices/me?limit=$_listPageSize'
+      (after) =>
+          '/api/v1/devices/me?limit=$_listPageSize'
           '${after == null ? '' : '&after=${Uri.encodeQueryComponent(after)}'}',
       token: token,
       key: 'devices',
@@ -731,8 +797,11 @@ class ApiClient {
 
   /// `GET /api/v1/account/recovery-key`.
   Future<RecoveryKeyStatus> recoveryKeyStatus(String token) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/account/recovery-key', token: token);
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/account/recovery-key',
+      token: token,
+    );
     return _decode(() => RecoveryKeyStatus.fromJson(json));
   }
 
@@ -796,7 +865,9 @@ class ApiClient {
   /// Polls a recovery request with its claim token. The call after
   /// `ready_at` completes it; only that call carries the session token.
   Future<AccountRecoveryStatus> accountRecoveryStatus(
-      String requestId, String claimToken) async {
+    String requestId,
+    String claimToken,
+  ) async {
     final (status, json) = await _jsonRequestWithStatus(
       'GET',
       '/api/v1/account-recovery/${Uri.encodeComponent(requestId)}/status',
@@ -845,26 +916,36 @@ class ApiClient {
     );
   }
 
-  Future<void> revokeDevice(String token, String deviceId,
-      {List<int>? deviceList}) async {
-    await _jsonRequest('DELETE', '/api/v1/devices/$deviceId',
-        token: token,
-        body: deviceList == null
-            ? null
-            : <String, Object?>{'device_list': base64Encode(deviceList)});
+  Future<void> revokeDevice(
+    String token,
+    String deviceId, {
+    List<int>? deviceList,
+  }) async {
+    await _jsonRequest(
+      'DELETE',
+      '/api/v1/devices/$deviceId',
+      token: token,
+      body: deviceList == null
+          ? null
+          : <String, Object?>{'device_list': base64Encode(deviceList)},
+    );
   }
 
   /// One page of [accountId]'s approved-device list after version [after]
   /// (L1). Null when the server answers 404: an unknown account, or one
   /// this account shares no conversation with (the same answer for both).
-  Future<DeviceListPage?> fetchDeviceList(String token, String accountId,
-      {required int after}) async {
+  Future<DeviceListPage?> fetchDeviceList(
+    String token,
+    String accountId, {
+    required int after,
+  }) async {
     try {
       final json = await _jsonRequest(
-          'GET',
-          '/api/v1/accounts/${Uri.encodeComponent(accountId)}/device-list'
-              '?after=$after',
-          token: token);
+        'GET',
+        '/api/v1/accounts/${Uri.encodeComponent(accountId)}/device-list'
+            '?after=$after',
+        token: token,
+      );
       return _decode(() => DeviceListPage.fromJson(json));
     } on ApiException catch (error) {
       if (error.statusCode == 404) return null;
@@ -875,9 +956,12 @@ class ApiClient {
   /// `POST /api/v1/account/device-list`: a migration genesis, a repair
   /// removal or a recovery version. Returns the version stored.
   Future<int> publishDeviceList(String token, List<int> statement) async {
-    final json = await _jsonRequest('POST', '/api/v1/account/device-list',
-        token: token,
-        body: <String, Object?>{'device_list': base64Encode(statement)});
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/account/device-list',
+      token: token,
+      body: <String, Object?>{'device_list': base64Encode(statement)},
+    );
     final version = json['version'];
     if (version is! int) throw const ApiResponseException();
     return version;
@@ -894,7 +978,8 @@ class ApiClient {
     // it is then re-requested smaller. The export has its own 1..5000 limit
     // range, and the caller follows `next_before`, not the page length.
     return _shrinkingPage(limit, maxLimit: 5000, (pageLimit) {
-      final path = '/api/v1/account/export?limit=$pageLimit'
+      final path =
+          '/api/v1/account/export?limit=$pageLimit'
           '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
       return _jsonRequest(
         'GET',
@@ -1050,7 +1135,9 @@ class ApiClient {
   /// Where a report about a message of [conversationId] goes, and the keys to
   /// seal one copy to each recipient. Members only.
   Future<ReportInbox> getReportInbox(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     final json = await _jsonRequest(
       'GET',
       Uri(
@@ -1081,7 +1168,10 @@ class ApiClient {
   /// C6: publishes the caller's report public key as a moderator inbox of
   /// [communityId] (one sealed copy per moderator). Needs a recent sign-in.
   Future<int> putModeratorReportKey(
-      String token, String communityId, List<int> publicKey) async {
+    String token,
+    String communityId,
+    List<int> publicKey,
+  ) async {
     final json = await _jsonRequest(
       'PUT',
       '/api/v1/reports/inbox-keys/community/${Uri.encodeComponent(communityId)}',
@@ -1097,12 +1187,16 @@ class ApiClient {
 
   /// The caller's own moderator report key for [communityId], or null.
   Future<ReportInboxRecipient?> getOwnModeratorReportKey(
-      String token, String communityId) async {
+    String token,
+    String communityId,
+  ) async {
     final Map<String, Object?> json;
     try {
-      json = await _jsonRequest('GET',
-          '/api/v1/reports/inbox-keys/community/${Uri.encodeComponent(communityId)}',
-          token: token);
+      json = await _jsonRequest(
+        'GET',
+        '/api/v1/reports/inbox-keys/community/${Uri.encodeComponent(communityId)}',
+        token: token,
+      );
     } on ApiException catch (err) {
       if (err.statusCode == 404) return null;
       rethrow;
@@ -1112,8 +1206,11 @@ class ApiClient {
 
   /// The caller's own report copies in [communityId]'s moderator inbox.
   Future<List<ReportCopyRow>> listModeratorReports(
-      String token, String communityId,
-      {String? afterId, int limit = 50}) async {
+    String token,
+    String communityId, {
+    String? afterId,
+    int limit = 50,
+  }) async {
     final json = await _jsonRequest(
       'GET',
       Uri(
@@ -1136,8 +1233,11 @@ class ApiClient {
   Future<ReportInboxRecipient?> getOwnReportKey(String token) async {
     final Map<String, Object?> json;
     try {
-      json = await _jsonRequest('GET', '/api/v1/reports/inbox-keys/instance',
-          token: token);
+      json = await _jsonRequest(
+        'GET',
+        '/api/v1/reports/inbox-keys/instance',
+        token: token,
+      );
     } on ApiException catch (err) {
       if (err.statusCode == 404) return null;
       rethrow;
@@ -1165,8 +1265,11 @@ class ApiClient {
   }
 
   /// The caller's own instance-owner inbox, oldest first, after [afterId].
-  Future<List<ReportCopyRow>> listOwnerReports(String token,
-      {String? afterId, int limit = 50}) async {
+  Future<List<ReportCopyRow>> listOwnerReports(
+    String token, {
+    String? afterId,
+    int limit = 50,
+  }) async {
     final json = await _jsonRequest(
       'GET',
       Uri(
@@ -1196,7 +1299,10 @@ class ApiClient {
   /// report copy [reportRowId] was filed about. The one moment the server
   /// learns an envelope id, from the recipient, at review time.
   Future<ReportEnvelopeRecord> getReportEnvelope(
-      String token, String reportRowId, String envelopeId) async {
+    String token,
+    String reportRowId,
+    String envelopeId,
+  ) async {
     final json = await _jsonRequest(
       'GET',
       Uri(
@@ -1234,8 +1340,9 @@ class ApiClient {
     required List<int> blob,
     required int expectedVersion,
   }) async {
-    final uri =
-        Uri.parse(baseUrl).resolve(_infoPath(kind, subjectId, communityId));
+    final uri = Uri.parse(
+      baseUrl,
+    ).resolve(_infoPath(kind, subjectId, communityId));
     final request = await _openRequest('PUT', uri);
     request.headers
       ..set(HttpHeaders.authorizationHeader, 'Bearer $token')
@@ -1263,8 +1370,9 @@ class ApiClient {
     required String subjectId,
     String? communityId,
   }) async {
-    final uri =
-        Uri.parse(baseUrl).resolve(_infoPath(kind, subjectId, communityId));
+    final uri = Uri.parse(
+      baseUrl,
+    ).resolve(_infoPath(kind, subjectId, communityId));
     final request = await _openRequest('GET', uri);
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     final response = await request.close().timeout(_requestTimeout);
@@ -1276,8 +1384,11 @@ class ApiClient {
       throw await _apiError(response);
     }
     final version = int.tryParse(
-        (response.headers.value(HttpHeaders.etagHeader) ?? '')
-            .replaceAll('"', ''));
+      (response.headers.value(HttpHeaders.etagHeader) ?? '').replaceAll(
+        '"',
+        '',
+      ),
+    );
     final keyId = response.headers.value('X-Profile-Key-Id') ?? '';
     final blob = await _readBounded(response, 256 * 1024 + 28);
     if (version == null || version < 1 || keyId.length != 32) {
@@ -1289,7 +1400,7 @@ class ApiClient {
   /// Versions of the info records this account may read, per kind. Missing
   /// or unreadable subjects are left out.
   Future<List<({String kind, String id, int version, String keyId})>>
-      infoVersions(
+  infoVersions(
     String token, {
     List<String> communityIds = const <String>[],
     List<String> categoryIds = const <String>[],
@@ -1302,41 +1413,52 @@ class ApiClient {
         channelIds.length > 200) {
       final versions =
           <({String kind, String id, int version, String keyId})>[];
-      for (var offset = 0;
-          offset < communityIds.length ||
-              offset < categoryIds.length ||
-              offset < channelIds.length;
-          offset += 200) {
-        versions.addAll(await infoVersions(token,
+      for (
+        var offset = 0;
+        offset < communityIds.length ||
+            offset < categoryIds.length ||
+            offset < channelIds.length;
+        offset += 200
+      ) {
+        versions.addAll(
+          await infoVersions(
+            token,
             communityIds: communityIds.skip(offset).take(200).toList(),
             categoryIds: categoryIds.skip(offset).take(200).toList(),
-            channelIds: channelIds.skip(offset).take(200).toList()));
+            channelIds: channelIds.skip(offset).take(200).toList(),
+          ),
+        );
       }
       return versions;
     }
-    final json = await _jsonRequest('POST', '/api/v1/profiles/versions',
-        token: token,
-        body: <String, Object?>{
-          'community_ids': communityIds,
-          'category_ids': categoryIds,
-          'channel_ids': channelIds,
-        });
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/profiles/versions',
+      token: token,
+      body: <String, Object?>{
+        'community_ids': communityIds,
+        'category_ids': categoryIds,
+        'channel_ids': channelIds,
+      },
+    );
     final raw = json['versions'];
     if (raw is! List) throw const ApiResponseException();
-    return _decode(() => [
-          for (final item in raw)
-            if (item is Map &&
-                item['kind'] is String &&
-                item['id'] is String &&
-                item['version'] is int &&
-                item['key_id'] is String)
-              (
-                kind: item['kind'] as String,
-                id: item['id'] as String,
-                version: item['version'] as int,
-                keyId: item['key_id'] as String,
-              ),
-        ]);
+    return _decode(
+      () => [
+        for (final item in raw)
+          if (item is Map &&
+              item['kind'] is String &&
+              item['id'] is String &&
+              item['version'] is int &&
+              item['key_id'] is String)
+            (
+              kind: item['kind'] as String,
+              id: item['id'] as String,
+              version: item['version'] as int,
+              keyId: item['key_id'] as String,
+            ),
+      ],
+    );
   }
 
   Future<List<Community>> listCommunities(String token) async {
@@ -1436,6 +1558,34 @@ class ApiClient {
     );
   }
 
+  /// C4 server succession: asks the server to make [candidateAccountId] the
+  /// owner of a group ([communityId] null) or of a community, after this
+  /// app's verified role record shows a won election. The server moves its
+  /// row only by its own rule (the owner quiet for 37 days and a majority of
+  /// admins asking); apps never read that row for roles. Returns the
+  /// server's `status`: `moved` or `recorded`.
+  Future<String> requestOwnerSuccession(
+    String token, {
+    String? conversationId,
+    String? communityId,
+    required String candidateAccountId,
+  }) async {
+    if ((conversationId == null) == (communityId == null)) {
+      throw ArgumentError('exactly one of conversationId and communityId');
+    }
+    final path = communityId != null
+        ? _moderationPath(communityId, 'owner-succession')
+        : '/api/v1/conversations/${Uri.encodeComponent(conversationId!)}/owner-succession';
+    final json = await _jsonRequest(
+      'POST',
+      path,
+      token: token,
+      body: <String, Object?>{'candidate_account_id': candidateAccountId},
+    );
+    final status = json['status'];
+    return status is String ? status : '';
+  }
+
   /// Leaves a community when [accountId] is `me`, or removes a member. The
   /// server drops access to every channel at once; MLS removal follows
   /// through each channel's reconcile and is not implied by the response.
@@ -1512,14 +1662,16 @@ class ApiClient {
     return _rows(json, 'bans', CommunityBan.fromJson);
   }
 
-  /// Mutes a member for [seconds]; 0 lifts the timeout.
-  Future<void> setMemberTimeout(
+  /// Mutes a member for [seconds]; 0 lifts the timeout. Returns the
+  /// server's `timeout_until` (null when lifted or not reported), which C5
+  /// copies into the verified record.
+  Future<DateTime?> setMemberTimeout(
     String token,
     String communityId,
     String accountId,
     int seconds,
   ) async {
-    await _jsonRequest(
+    final json = await _jsonRequest(
       'PUT',
       _moderationPath(
         communityId,
@@ -1528,6 +1680,8 @@ class ApiClient {
       token: token,
       body: <String, Object?>{'seconds': seconds},
     );
+    final until = json['timeout_until'];
+    return until is String ? DateTime.tryParse(until)?.toUtc() : null;
   }
 
   /// Sets a channel's gap between a member's posts; 0 turns it off.
@@ -1767,31 +1921,38 @@ class ApiClient {
     final json = await _jsonRequest(
       'GET',
       Uri(
-        path: '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+        path:
+            '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
             '/history',
         queryParameters: query,
       ).toString(),
       token: token,
       maxResponseBytes: _maxCiphertextResponseBytes,
     );
-    return _decode(() => (json['history'] as List)
-        .map((row) => Map<String, Object?>.from(row as Map))
-        .toList());
+    return _decode(
+      () => (json['history'] as List)
+          .map((row) => Map<String, Object?>.from(row as Map))
+          .toList(),
+    );
   }
 
   /// C7: the signing keys of devices that posted in [conversationId] and are
   /// no longer in its group (one bulk call at join, in every mode).
   Future<List<Map<String, Object?>>> formerMemberKeys(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     final json = await _jsonRequest(
       'GET',
       '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
           '/former-member-keys',
       token: token,
     );
-    return _decode(() => (json['devices'] as List)
-        .map((row) => Map<String, Object?>.from(row as Map))
-        .toList());
+    return _decode(
+      () => (json['devices'] as List)
+          .map((row) => Map<String, Object?>.from(row as Map))
+          .toList(),
+    );
   }
 
   /// C7: marks a community post `history_hidden`, so the history route never
@@ -1918,10 +2079,15 @@ class ApiClient {
 
   /// `GET /api/v1/backups`: the account's backups. Rows are the server's
   /// claims; the restore opens the container to trust anything.
-  Future<List<Map<String, Object?>>> listBackups(String token,
-      {int limit = 100}) async {
-    final json =
-        await _jsonRequest('GET', '/api/v1/backups?limit=$limit', token: token);
+  Future<List<Map<String, Object?>>> listBackups(
+    String token, {
+    int limit = 100,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/backups?limit=$limit',
+      token: token,
+    );
     final backups = json['backups'];
     if (backups is! List) throw const ApiResponseException();
     return <Map<String, Object?>>[
@@ -1934,8 +2100,12 @@ class ApiClient {
   /// the byte range [start]..[end] of it (the header peek). The stream is
   /// bounded by [k1MaxBackupCiphertextBytes]; the server verifies every
   /// chunk before sending it.
-  Future<Stream<List<int>>> downloadBackup(String token, String id,
-      {int? start, int? end}) async {
+  Future<Stream<List<int>>> downloadBackup(
+    String token,
+    String id, {
+    int? start,
+    int? end,
+  }) async {
     if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id) ||
         (start != null && (start < 0 || (end != null && end < start)))) {
       throw ArgumentError('invalid backup download');
@@ -2029,8 +2199,9 @@ class ApiClient {
   /// header or a last byte before the first, gives null.
   static ({int first, int last})? _parseContentRange(List<String>? values) {
     if (values == null || values.length != 1) return null;
-    final match = RegExp(r'^bytes (\d{1,15})-(\d{1,15})/(\d{1,15}|\*)$')
-        .firstMatch(values.single.trim());
+    final match = RegExp(
+      r'^bytes (\d{1,15})-(\d{1,15})/(\d{1,15}|\*)$',
+    ).firstMatch(values.single.trim());
     if (match == null) return null;
     final first = int.parse(match.group(1)!);
     final last = int.parse(match.group(2)!);
@@ -2279,42 +2450,66 @@ class ApiClient {
   // the room engine's adapter (calls/room/room_api.dart) reads it. ----
 
   Future<Map<String, Object?>> joinRoom(String token, String conversationId) =>
-      _jsonRequest('POST', '/api/v1/rooms/join',
-          token: token,
-          body: <String, Object?>{'conversation_id': conversationId});
+      _jsonRequest(
+        'POST',
+        '/api/v1/rooms/join',
+        token: token,
+        body: <String, Object?>{'conversation_id': conversationId},
+      );
 
   Future<Map<String, Object?>> roomState(String token, String callId) =>
-      _jsonRequest('GET', '/api/v1/rooms/${Uri.encodeComponent(callId)}',
-          token: token);
-
-  Future<Map<String, Object?>> roomCommits(String token, String callId,
-          {required int after}) =>
       _jsonRequest(
-          'GET',
-          Uri(
-              path: '/api/v1/rooms/${Uri.encodeComponent(callId)}/commits',
-              queryParameters: <String, String>{'after': '$after'}).toString(),
-          token: token,
-          maxResponseBytes: 8 * 1024 * 1024);
+        'GET',
+        '/api/v1/rooms/${Uri.encodeComponent(callId)}',
+        token: token,
+      );
+
+  Future<Map<String, Object?>> roomCommits(
+    String token,
+    String callId, {
+    required int after,
+  }) => _jsonRequest(
+    'GET',
+    Uri(
+      path: '/api/v1/rooms/${Uri.encodeComponent(callId)}/commits',
+      queryParameters: <String, String>{'after': '$after'},
+    ).toString(),
+    token: token,
+    maxResponseBytes: 8 * 1024 * 1024,
+  );
 
   /// A 409 `room_epoch_conflict` means another commit won this epoch.
   Future<Map<String, Object?>> sendRoomCommit(
-          String token, String callId, Map<String, Object?> body) =>
-      _jsonRequest(
-          'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/commit',
-          token: token, body: body);
+    String token,
+    String callId,
+    Map<String, Object?> body,
+  ) => _jsonRequest(
+    'POST',
+    '/api/v1/rooms/${Uri.encodeComponent(callId)}/commit',
+    token: token,
+    body: body,
+  );
 
   Future<void> sendRoomOffer(
-      String token, String callId, Map<String, Object?> body) async {
+    String token,
+    String callId,
+    Map<String, Object?> body,
+  ) async {
     await _jsonRequest(
-        'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/offer',
-        token: token, body: body);
+      'POST',
+      '/api/v1/rooms/${Uri.encodeComponent(callId)}/offer',
+      token: token,
+      body: body,
+    );
   }
 
   Future<void> leaveRoom(String token, String callId) async {
     await _jsonRequest(
-        'POST', '/api/v1/rooms/${Uri.encodeComponent(callId)}/leave',
-        token: token, body: const <String, Object?>{});
+      'POST',
+      '/api/v1/rooms/${Uri.encodeComponent(callId)}/leave',
+      token: token,
+      body: const <String, Object?>{},
+    );
   }
 
   Future<void> confirmMlsRevocation(
@@ -2346,8 +2541,12 @@ class ApiClient {
           if (after != null && after.isNotEmpty) 'after': after,
         },
       ).toString();
-      return _jsonRequest('GET', path,
-          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+      return _jsonRequest(
+        'GET',
+        path,
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      );
     });
     return _rows(json, 'messages', ReceivedMessageEnvelope.fromJson);
   }
@@ -2369,14 +2568,19 @@ class ApiClient {
           if (before != null && before.isNotEmpty) 'before': before,
         },
       ).toString();
-      return _jsonRequest('GET', path,
-          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+      return _jsonRequest(
+        'GET',
+        path,
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      );
     });
     final nextBefore = json['next_before'];
     return MessagePage(
       messages: _rows(json, 'messages', ReceivedMessageEnvelope.fromJson),
-      nextBefore:
-          nextBefore is String && nextBefore.isNotEmpty ? nextBefore : null,
+      nextBefore: nextBefore is String && nextBefore.isNotEmpty
+          ? nextBefore
+          : null,
     );
   }
 
@@ -2417,7 +2621,9 @@ class ApiClient {
   }
 
   Future<ConversationMute> conversationMute(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     final json = await _jsonRequest(
       'GET',
       '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
@@ -2480,8 +2686,10 @@ class ApiClient {
     final request = await _openRequest('GET', Uri.parse(baseUrl).resolve(path));
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     if (ifNoneMatchVersion != null) {
-      request.headers
-          .set(HttpHeaders.ifNoneMatchHeader, '"$ifNoneMatchVersion"');
+      request.headers.set(
+        HttpHeaders.ifNoneMatchHeader,
+        '"$ifNoneMatchVersion"',
+      );
     }
     final response = await request.close().timeout(_requestTimeout);
     if (response.statusCode == 304) {
@@ -2492,8 +2700,11 @@ class ApiClient {
       throw await _apiError(response);
     }
     final version = int.tryParse(
-        (response.headers.value(HttpHeaders.etagHeader) ?? '')
-            .replaceAll('"', ''));
+      (response.headers.value(HttpHeaders.etagHeader) ?? '').replaceAll(
+        '"',
+        '',
+      ),
+    );
     final keyId = response.headers.value('X-Profile-Key-Id');
     final blob = await _readBounded(response, maxProfileBlobBytes);
     if (version == null || version < 1 || keyId == null || blob.isEmpty) {
@@ -2502,17 +2713,25 @@ class ApiClient {
     return ProfileFetch.record(version: version, keyId: keyId, blob: blob);
   }
 
-  Future<ProfileFetch> fetchAccountProfile(String token, String accountId,
-          {int? ifNoneMatchVersion}) =>
-      fetchProfile(
-          token, '/api/v1/profiles/account/${Uri.encodeComponent(accountId)}',
-          ifNoneMatchVersion: ifNoneMatchVersion);
+  Future<ProfileFetch> fetchAccountProfile(
+    String token,
+    String accountId, {
+    int? ifNoneMatchVersion,
+  }) => fetchProfile(
+    token,
+    '/api/v1/profiles/account/${Uri.encodeComponent(accountId)}',
+    ifNoneMatchVersion: ifNoneMatchVersion,
+  );
 
   Future<ProfileFetch> fetchConversationProfile(
-          String token, String conversationId, {int? ifNoneMatchVersion}) =>
-      fetchProfile(token,
-          '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
-          ifNoneMatchVersion: ifNoneMatchVersion);
+    String token,
+    String conversationId, {
+    int? ifNoneMatchVersion,
+  }) => fetchProfile(
+    token,
+    '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+    ifNoneMatchVersion: ifNoneMatchVersion,
+  );
 
   /// Replaces a record. [ifMatchVersion] is the version being replaced, or
   /// null for the first write. Throws [ApiException] with kind conflict when
@@ -2545,20 +2764,32 @@ class ApiClient {
     return version;
   }
 
-  Future<int> putAccountProfile(String token, Uint8List blob,
-          {required String keyId, int? ifMatchVersion}) =>
-      putProfile(token, '/api/v1/profiles/account/me', blob,
-          keyId: keyId, ifMatchVersion: ifMatchVersion);
+  Future<int> putAccountProfile(
+    String token,
+    Uint8List blob, {
+    required String keyId,
+    int? ifMatchVersion,
+  }) => putProfile(
+    token,
+    '/api/v1/profiles/account/me',
+    blob,
+    keyId: keyId,
+    ifMatchVersion: ifMatchVersion,
+  );
 
   Future<int> putConversationProfile(
-          String token, String conversationId, Uint8List blob,
-          {required String keyId, int? ifMatchVersion}) =>
-      putProfile(
-          token,
-          '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
-          blob,
-          keyId: keyId,
-          ifMatchVersion: ifMatchVersion);
+    String token,
+    String conversationId,
+    Uint8List blob, {
+    required String keyId,
+    int? ifMatchVersion,
+  }) => putProfile(
+    token,
+    '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+    blob,
+    keyId: keyId,
+    ifMatchVersion: ifMatchVersion,
+  );
 
   /// The current `{version, key_id}` of every subject the caller may read, at
   /// most 200 of each kind. Unreadable and missing subjects are left out.
@@ -2570,28 +2801,37 @@ class ApiClient {
     if (accountIds.length > 200 || conversationIds.length > 200) {
       throw ArgumentError('at most 200 subjects of a kind');
     }
-    final json = await _jsonRequest('POST', '/api/v1/profiles/versions',
-        token: token,
-        body: <String, Object?>{
-          'account_ids': accountIds,
-          'conversation_ids': conversationIds,
-        });
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/profiles/versions',
+      token: token,
+      body: <String, Object?>{
+        'account_ids': accountIds,
+        'conversation_ids': conversationIds,
+      },
+    );
     final list = json['versions'];
     if (list is! List) throw const ApiResponseException();
-    return _decode(() => [
-          for (final item in list)
-            ProfileVersion.fromJson(Map<String, Object?>.from(item as Map)),
-        ]);
+    return _decode(
+      () => [
+        for (final item in list)
+          ProfileVersion.fromJson(Map<String, Object?>.from(item as Map)),
+      ],
+    );
   }
 
   /// Clears the legacy plaintext title after the group's encrypted profile
   /// holds the name (owner or admin only).
   Future<void> clearConversationTitle(
-      String token, String conversationId) async {
+    String token,
+    String conversationId,
+  ) async {
     final request = await _openRequest(
-        'DELETE',
-        Uri.parse(baseUrl).resolve(
-            '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/title'));
+      'DELETE',
+      Uri.parse(baseUrl).resolve(
+        '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/title',
+      ),
+    );
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     final response = await request.close().timeout(_requestTimeout);
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -2634,8 +2874,12 @@ class ApiClient {
           'limit': pageLimit.toString(),
         },
       ).toString();
-      return _jsonRequest('GET', path,
-          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+      return _jsonRequest(
+        'GET',
+        path,
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      );
     });
     return _rows(json, 'events', SyncEvent.fromJson);
   }
@@ -2661,8 +2905,12 @@ class ApiClient {
           'scan': 'bounded',
         },
       ).toString();
-      return _jsonRequest('GET', path,
-          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+      return _jsonRequest(
+        'GET',
+        path,
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      );
     });
     final events = _rows(json, 'events', SyncEvent.fromJson);
     return _decode(() {
@@ -2693,10 +2941,12 @@ class ApiClient {
     String conversationId, {
     int after = 0,
     int limit = 100,
-  }) async =>
-      (await conversationSyncPage(token, conversationId,
-              after: after, limit: limit))
-          .events;
+  }) async => (await conversationSyncPage(
+    token,
+    conversationId,
+    after: after,
+    limit: limit,
+  )).events;
 
   /// [conversationSyncEvents] with the scan position (C1 bounds, D92): how
   /// far the server looked, hidden events included, and whether its scan
@@ -2709,10 +2959,15 @@ class ApiClient {
   }) async {
     final id = Uri.encodeComponent(conversationId);
     final json = await _shrinkingPage(limit, (pageLimit) {
-      final path = '/api/v1/conversations/$id/sync-events'
+      final path =
+          '/api/v1/conversations/$id/sync-events'
           '?after=$after&limit=$pageLimit&scan=bounded';
-      return _jsonRequest('GET', path,
-          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+      return _jsonRequest(
+        'GET',
+        path,
+        token: token,
+        maxResponseBytes: _maxCiphertextResponseBytes,
+      );
     });
     _decode(() {
       if (json['scope'] != 'conversation' ||
@@ -2805,8 +3060,11 @@ class ApiClient {
   /// Whether this account shares read receipts; the switch is per account, so
   /// every linked device honours it.
   Future<bool> readReceiptsEnabled(String token) async {
-    final json = await _jsonRequest('GET', '/api/v1/account/read-receipts',
-        token: token);
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/account/read-receipts',
+      token: token,
+    );
     return json['enabled'] != false;
   }
 
@@ -3087,8 +3345,9 @@ class ApiClient {
   /// redirect, are bound to this origin, so a 3xx is never followed: it
   /// reaches the caller as an [ApiException] carrying the 3xx status.
   Future<HttpClientRequest> _openRequest(String method, Uri uri) async {
-    final request =
-        await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
+    final request = await _httpClient
+        .openUrl(method, uri)
+        .timeout(_requestTimeout);
     request.followRedirects = false;
     return request;
   }
@@ -3158,11 +3417,14 @@ class ApiClient {
     Map<String, String> extraHeaders = const <String, String>{},
     int maxResponseBytes = _maxJsonResponseBytes,
   }) async {
-    final (_, json) = await _jsonRequestWithStatus(method, path,
-        token: token,
-        body: body,
-        extraHeaders: extraHeaders,
-        maxResponseBytes: maxResponseBytes);
+    final (_, json) = await _jsonRequestWithStatus(
+      method,
+      path,
+      token: token,
+      body: body,
+      extraHeaders: extraHeaders,
+      maxResponseBytes: maxResponseBytes,
+    );
     return json;
   }
 
@@ -3230,7 +3492,8 @@ class ApiClient {
       response.statusCode,
       text,
       ApiException.parseRetryAfter(
-          response.headers.value(HttpHeaders.retryAfterHeader)),
+        response.headers.value(HttpHeaders.retryAfterHeader),
+      ),
     );
   }
 
@@ -3338,8 +3601,11 @@ List<T> _rows<T>(
 /// budget ended the page early: more may follow even when [events] is short
 /// or empty.
 class ConversationSyncPage {
-  const ConversationSyncPage(this.events,
-      {this.scannedThrough, this.truncated = false});
+  const ConversationSyncPage(
+    this.events, {
+    this.scannedThrough,
+    this.truncated = false,
+  });
 
   final List<SyncEvent> events;
   final int? scannedThrough;

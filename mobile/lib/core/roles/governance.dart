@@ -26,6 +26,48 @@ enum BuiltInRole {
 /// At most this many announcement channels (C3's channel limit).
 const int maxAnnouncementChannels = 500;
 
+/// C5: the longest timeout, as the server's `domain.MaxTimeout` (28 days).
+const int maxTimeoutMillis = 28 * 24 * 60 * 60 * 1000;
+
+/// C5: a member's timeout as the verified record holds it (docs/crypto.md,
+/// "C5 timeouts in the record"). [fromMs] and [untilMs] are the server's
+/// clock (Unix milliseconds: `timeout_until` and that minus the length), so
+/// apps judge a post the way the server did. [epoch] is the MLS epoch the
+/// commit setting it produced: a post sent in that epoch or later was made
+/// after the timeout began, whatever time the server stamps on it.
+class MemberTimeout {
+  const MemberTimeout({
+    required this.epoch,
+    required this.fromMs,
+    required this.untilMs,
+  });
+
+  final int epoch;
+  final int fromMs;
+  final int untilMs;
+
+  /// The bounds every record keeps: a start before the end, at most
+  /// [maxTimeoutMillis] apart, nothing negative.
+  bool get wellFormed =>
+      epoch >= 0 &&
+      fromMs >= 0 &&
+      fromMs < untilMs &&
+      untilMs - fromMs <= maxTimeoutMillis;
+
+  @override
+  bool operator ==(Object other) =>
+      other is MemberTimeout &&
+      other.epoch == epoch &&
+      other.fromMs == fromMs &&
+      other.untilMs == untilMs;
+
+  @override
+  int get hashCode => Object.hash(epoch, fromMs, untilMs);
+
+  @override
+  String toString() => 'MemberTimeout($epoch, $fromMs, $untilMs)';
+}
+
 bool _setEq(Set<String> a, Set<String> b) =>
     a.length == b.length && a.containsAll(b);
 
@@ -45,8 +87,7 @@ const Duration electionWait = Duration(days: 7);
 bool mayOpenElectionNow({
   required DateTime now,
   required DateTime lastOwnerActivity,
-}) =>
-    now.difference(lastOwnerActivity) >= ownerInactivityWait;
+}) => now.difference(lastOwnerActivity) >= ownerInactivityWait;
 
 /// Local clock rule: may this app vote (or, in a claim, take ownership) now?
 /// [openedSeen] is when this app saw the election open.
@@ -68,8 +109,8 @@ class Election {
     required this.opened,
     required Set<String> electorate,
     Map<String, String> votes = const {},
-  })  : electorate = Set.unmodifiable(electorate),
-        votes = Map.unmodifiable(votes);
+  }) : electorate = Set.unmodifiable(electorate),
+       votes = Map.unmodifiable(votes);
 
   /// The record `rev` that opened it.
   final int opened;
@@ -122,16 +163,22 @@ class GovernanceState {
     Set<String> electors = const {},
     this.election,
     Map<String, int> joined = const {},
-  })  : admins = Map.unmodifiable(admins),
-        moderators = Set.unmodifiable(moderators),
-        announcementChannels = Set.unmodifiable(announcementChannels),
-        electors = Set.unmodifiable(electors),
-        joined = Map.unmodifiable(joined);
+    Map<String, MemberTimeout> timeouts = const {},
+  }) : admins = Map.unmodifiable(admins),
+       moderators = Set.unmodifiable(moderators),
+       announcementChannels = Set.unmodifiable(announcementChannels),
+       electors = Set.unmodifiable(electors),
+       joined = Map.unmodifiable(joined),
+       timeouts = Map.unmodifiable(timeouts);
 
   /// The first state, written when the creator makes the MLS group: the
   /// creator owns it, nobody else holds a role, nothing is restricted.
   factory GovernanceState.genesis(String creator) => GovernanceState(
-      rev: 0, owner: creator, ownerRev: 0, joined: {creator: 0});
+    rev: 0,
+    owner: creator,
+    ownerRev: 0,
+    joined: {creator: 0},
+  );
 
   /// Previous + 1 on every written change. A pruning at a removal keeps it.
   final int rev;
@@ -175,6 +222,12 @@ class GovernanceState {
   /// drops it. Orders the longest-serving member when no admin is left.
   final Map<String, int> joined;
 
+  /// C5: members in a timeout, set and lifted by a moderator or above who
+  /// outranks them (as the server's `SetMemberTimeout`). An entry stays
+  /// after its end until it is lifted, replaced or its account leaves; it
+  /// then simply refuses nothing.
+  final Map<String, MemberTimeout> timeouts;
+
   /// D81: the owner cannot leave without transferring ownership first. An app
   /// rule: it refuses to commit such a leave. [validateCommit] still accepts a
   /// forced removal of the owner (the server can force one) and keeps it owner.
@@ -193,19 +246,20 @@ class GovernanceState {
     Election? election,
     bool clearElection = false,
     Map<String, int>? joined,
-  }) =>
-      GovernanceState(
-        rev: rev ?? this.rev,
-        owner: clearOwner ? null : (owner ?? this.owner),
-        ownerRev: ownerRev ?? this.ownerRev,
-        admins: admins ?? this.admins,
-        moderators: moderators ?? this.moderators,
-        adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
-        announcementChannels: announcementChannels ?? this.announcementChannels,
-        electors: electors ?? this.electors,
-        election: clearElection ? null : (election ?? this.election),
-        joined: joined ?? this.joined,
-      );
+    Map<String, MemberTimeout>? timeouts,
+  }) => GovernanceState(
+    rev: rev ?? this.rev,
+    owner: clearOwner ? null : (owner ?? this.owner),
+    ownerRev: ownerRev ?? this.ownerRev,
+    admins: admins ?? this.admins,
+    moderators: moderators ?? this.moderators,
+    adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
+    announcementChannels: announcementChannels ?? this.announcementChannels,
+    electors: electors ?? this.electors,
+    election: clearElection ? null : (election ?? this.election),
+    joined: joined ?? this.joined,
+    timeouts: timeouts ?? this.timeouts,
+  );
 
   /// The account's role. Meaningful only for an account in the MLS roster.
   BuiltInRole roleOf(String account) {
@@ -241,7 +295,8 @@ class GovernanceState {
   /// admin, elector and moderator roles, its `joined` entry, and its votes and
   /// votes for it. The owner is never pruned and nobody inherits (D81); the
   /// election's electorate is kept, so a removal can never decide a win.
-  /// [rev] is kept.
+  /// [rev] is kept. Its timeout goes too (as on the server, leaving clears
+  /// it).
   GovernanceState removeAccount(String account) {
     final e = election;
     return copyWith(
@@ -249,6 +304,7 @@ class GovernanceState {
       moderators: {...moderators}..remove(account),
       electors: {...electors}..remove(account),
       joined: {...joined}..remove(account),
+      timeouts: {...timeouts}..remove(account),
       election: e == null
           ? null
           : Election(
@@ -274,21 +330,23 @@ class GovernanceState {
       _setEq(other.announcementChannels, announcementChannels) &&
       _setEq(other.electors, electors) &&
       other.election == election &&
-      _mapEq(other.joined, joined);
+      _mapEq(other.joined, joined) &&
+      _mapEq(other.timeouts, timeouts);
 
   @override
   int get hashCode => Object.hash(
-        rev,
-        owner,
-        ownerRev,
-        admins.length,
-        moderators.length,
-        adminsOnlyPosting,
-        announcementChannels.length,
-        electors.length,
-        election,
-        joined.length,
-      );
+    rev,
+    owner,
+    ownerRev,
+    admins.length,
+    moderators.length,
+    adminsOnlyPosting,
+    announcementChannels.length,
+    electors.length,
+    election,
+    joined.length,
+    timeouts.length,
+  );
 }
 
 /// Why a change was refused. Stable codes for logs and tests.
@@ -337,12 +395,18 @@ class GovernanceCheck {
 /// snapshot holds only admins who were admin by then. An owner commit that
 /// changes roles or posting sets it to its own rev, a win sets it to the
 /// winning rev, nothing else moves it.
+///
+/// C5 timeouts: setting, replacing or lifting one needs a moderator or above
+/// who outranks the member (`mayActOn` before the commit); a set entry names
+/// [epoch], the epoch this commit produces (from MLS, never the server), and
+/// stays within [maxTimeoutMillis]. Timeouts never move `ownerRev`.
 GovernanceCheck validateTransition(
   GovernanceState prev,
   GovernanceState next,
   String actor, {
   required Set<String> members,
   Set<String> added = const {},
+  int? epoch,
 }) {
   GovernanceCheck no(GovernanceReject r) => GovernanceCheck.no(r);
   if (next.rev != prev.rev + 1) return no(GovernanceReject.badRev);
@@ -366,8 +430,15 @@ GovernanceCheck validateTransition(
       next.announcementChannels.any((c) => c.isEmpty)) {
     return no(GovernanceReject.badShape);
   }
+  if (!next.timeouts.values.every((t) => t.wellFormed)) {
+    return no(GovernanceReject.badShape);
+  }
   // The owner is not named here: it may be out of the roster (D81).
-  final named = {...next.admins.keys, ...next.moderators};
+  final named = {
+    ...next.admins.keys,
+    ...next.moderators,
+    ...next.timeouts.keys,
+  };
   if (!members.containsAll(named) ||
       !members.contains(actor) ||
       !members.containsAll(next.joined.keys)) {
@@ -375,8 +446,9 @@ GovernanceCheck validateTransition(
   }
   // An admin keeps its seniority; a new admin starts at this rev.
   for (final e in next.admins.entries) {
-    final since =
-        prev.roleOf(e.key) == BuiltInRole.admin ? prev.admins[e.key] : next.rev;
+    final since = prev.roleOf(e.key) == BuiltInRole.admin
+        ? prev.admins[e.key]
+        : next.rev;
     if (e.value != since) return no(GovernanceReject.badShape);
   }
   // `joined` is written once, when an account is added, and only a removal
@@ -426,6 +498,23 @@ GovernanceCheck validateTransition(
     }
   }
 
+  // C5 timeouts: only a moderator or above who outranks the member sets,
+  // replaces or lifts one, as the server's SetMemberTimeout.
+  for (final account in {...prev.timeouts.keys, ...next.timeouts.keys}) {
+    final now = next.timeouts[account];
+    if (now == prev.timeouts[account]) continue;
+    if (!prev.mayActOn(actor, account)) {
+      return no(
+        actorRank >= BuiltInRole.moderator.rank && account != actor
+            ? GovernanceReject.hierarchy
+            : GovernanceReject.notAllowed,
+      );
+    }
+    if (now != null && (epoch == null || now.epoch != epoch)) {
+      return no(GovernanceReject.badShape);
+    }
+  }
+
   // Electors: only an owner commit sets or clears the flag of an admin that
   // stays admin (never in a transfer). Nothing else, an automatic cancel
   // included, makes an elector.
@@ -471,14 +560,16 @@ GovernanceCheck validateTransition(
   // forced cancel are not the owner's decisions and leave it. Else a rogue
   // admin would stamp it itself and make its stand-ins old enough to vote, or
   // an automatic owner commit would do it for the rogue.
-  final ownChange = transfer ||
+  final ownChange =
+      transfer ||
       !_mapEq(next.admins, prev.admins) ||
       !_setEq(next.moderators, prev.moderators) ||
       !_setEq(next.electors, prev.electors) ||
       next.adminsOnlyPosting != prev.adminsOnlyPosting ||
       !_setEq(next.announcementChannels, prev.announcementChannels);
-  final expectedOwnerRev =
-      handover || (ownerActs && ownChange) ? next.rev : prev.ownerRev;
+  final expectedOwnerRev = handover || (ownerActs && ownChange)
+      ? next.rev
+      : prev.ownerRev;
   if (next.ownerRev != expectedOwnerRev) return no(GovernanceReject.badShape);
 
   // Role changes. A won election moves exactly the roles `_checkWin` fixed.
@@ -546,7 +637,9 @@ GovernanceReject? _checkWin(
   final old = prev.owner;
   final admins = {...prev.admins}..remove(winner);
   if (old != null && members.contains(old)) admins[old] = next.rev;
-  final ok = _mapEq(next.admins, admins) &&
+  final ok =
+      _mapEq(next.admins, admins) &&
+      _mapEq(next.timeouts, prev.timeouts) &&
       _setEq(next.electors, prev.electors.difference({winner})) &&
       _setEq(next.moderators, prev.moderators.difference({winner})) &&
       next.adminsOnlyPosting == prev.adminsOnlyPosting &&
@@ -646,8 +739,7 @@ GovernanceState requiredRecord(
   String committer, {
   required Set<String> before,
   required Set<String> after,
-}) =>
-    _required(prev, committer, before: before, after: after).record;
+}) => _required(prev, committer, before: before, after: after).record;
 
 ({GovernanceState base, GovernanceState record, bool cancel}) _required(
   GovernanceState prev,
@@ -681,13 +773,16 @@ GovernanceState requiredRecord(
 /// [next] the state its GroupContext carries after it ([prev] when the commit
 /// does not change the extension), [before] and [after] the rosters.
 /// [next] must be exactly [requiredRecord], or a valid change by [committer]
-/// from the pruned record.
+/// from the pruned record. [epoch] is the epoch the commit produces (the
+/// staged review's, or the committer's current epoch + 1); a commit that sets
+/// a C5 timeout is refused without it.
 GovernanceCheck validateCommit(
   GovernanceState prev,
   GovernanceState next,
   String committer, {
   required Set<String> before,
   required Set<String> after,
+  int? epoch,
 }) {
   final (:base, record: expected, :cancel) = _required(
     prev,
@@ -701,8 +796,8 @@ GovernanceCheck validateCommit(
       cancel
           ? GovernanceReject.election
           : base != prev
-              ? GovernanceReject.notPruned
-              : GovernanceReject.badRev,
+          ? GovernanceReject.notPruned
+          : GovernanceReject.badRev,
     );
   }
   return validateTransition(
@@ -711,6 +806,7 @@ GovernanceCheck validateCommit(
     committer,
     members: after,
     added: after.difference(before),
+    epoch: epoch,
   );
 }
 

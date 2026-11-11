@@ -46,6 +46,20 @@ final Map<String, GovernanceState> _valid = {
     ownerRev: 1,
     moderators: {'～b', '\u{1F600}a'},
   ),
+  // C5: two timeouts, sorted by account bytes after the other lists.
+  'with_timeouts': GovernanceState(
+    rev: 3,
+    owner: 'acc_owner',
+    ownerRev: 1,
+    moderators: {'acc_m'},
+    joined: {'acc_owner': 0, 'acc_m': 1, 'acc_x': 2, 'acc_y': 2},
+    timeouts: {
+      'acc_y': const MemberTimeout(
+          epoch: 7, fromMs: 1700000000000, untilMs: 1700000600000),
+      'acc_x': const MemberTimeout(
+          epoch: 6, fromMs: 1699999000000, untilMs: 1700002600000),
+    },
+  ),
 };
 
 void main() {
@@ -185,8 +199,12 @@ Map<String, Map<String, String>> _invalid() {
   return {
     'version_1': bad(h(with_(0, 1)), 'unknown version'),
     'version_3': bad(h(with_(0, 3)), 'unknown version'),
-    'unknown_flag_bit': bad(h(with_(flags, 4)), 'unknown flag'),
+    'unknown_flag_bit': bad(h(with_(flags, 8)), 'unknown flag'),
     'election_flag_without_body': bad(h(with_(flags, 2)), 'truncated'),
+    // C5: bit 2 announces a timeout list, which must hold at least one.
+    'timeouts_flag_without_body': bad(h(with_(flags, 4)), 'truncated'),
+    'timeouts_flag_with_empty_list':
+        bad(h([...with_(flags, 4), 0, 0]), 'empty timeouts'),
     'owner_rev_above_rev': bad(h(with_(16, 1)), 'owner_rev'),
     'empty_input': bad('', 'truncated'),
     'moderators_unsorted': bad(h(unsortedMods), 'not sorted'),
