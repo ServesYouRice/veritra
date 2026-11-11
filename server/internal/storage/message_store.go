@@ -108,6 +108,17 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	// C4: a governing member's own leave proof passes the posting rules
+	// below, within the limits checkLeaveNoticeTx sets (leave_notice.go).
+	leaveNotice, err := metadataLeaveNotice(envelope.CryptoMetadata)
+	if err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	if leaveNotice {
+		if err := checkLeaveNoticeTx(ctx, tx, envelope, len(attachmentIDs), now); err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+	}
 	// C2: in an announcement channel or an admins-only group only owners and
 	// admins post. Checked after the idempotent replay above, so a retry of an
 	// already stored post still answers.
@@ -121,13 +132,15 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	restricted = (restricted || route.announcement) && !groupLevel
+	restricted = (restricted || route.announcement) && !groupLevel && !leaveNotice
 	if restricted && !domain.CanPostRestricted(senderRole) {
 		return domain.MessageEnvelope{}, false, 0, ErrPostingRestricted
 	}
 	// C5: a timeout and a channel's slow mode, by the server's clock. A
 	// group-level C7 message belongs to no channel, so only the timeout.
-	if groupLevel {
+	if leaveNotice {
+		// Exempt from the timeout and slow mode too (checked above).
+	} else if groupLevel {
 		if err := checkNotTimedOutTx(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, now); err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}

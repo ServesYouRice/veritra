@@ -557,6 +557,12 @@ func handleStorageError(w http.ResponseWriter, err error) {
 			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(slow.Wait.Seconds()))))
 		}
 		writeError(w, http.StatusTooManyRequests, "slow_mode")
+	case errors.Is(err, storage.ErrLeaveNoticeLimited):
+		var limited storage.LeaveNoticeLimitedError
+		if errors.As(err, &limited) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(limited.Wait.Seconds()))))
+		}
+		writeError(w, http.StatusTooManyRequests, "leave_notice_limited")
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, storage.ErrMessageExpired):

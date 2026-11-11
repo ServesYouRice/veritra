@@ -676,6 +676,20 @@ class GovernanceRefusedException implements Exception {
   String toString() => 'GovernanceRefusedException($reason)';
 }
 
+/// A remote commit the C4 rules cannot accept *yet*: the evidence it needs
+/// may still arrive (a removal proof, or an approved-device list that
+/// approves the committer's leaf). Never a permanent refusal: the
+/// conversation pauses on it as `SyncFailureKind.governanceHeld`, is shown
+/// as waiting, and sync applies the commit again by itself with backoff
+/// (docs/crypto.md, "C4 app wiring", held commits). The device never merges
+/// it unverified, and never skips it.
+class GovernanceHeldException implements Exception {
+  const GovernanceHeldException(this.reason);
+  final String reason;
+  @override
+  String toString() => 'GovernanceHeldException($reason)';
+}
+
 /// This device cannot prove the departure of a governing account its
 /// change would remove; the removal stays pending for a device that can.
 class GovernanceRemovalUnprovenException implements Exception {

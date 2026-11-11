@@ -2040,6 +2040,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Поруке у овом разговору су паузиране: ажурирање шифровања није могло да се примени. Ниједна порука није прескочена, а остали разговори и даље раде.';
 
   @override
+  String get chatSyncHeldNotice =>
+      'Поруке у овом разговору чекају: промена чланства или улоге тражи потврду коју овај уређај још нема. Поново се проверава аутоматски. Ниједна порука није прескочена, а остали разговори и даље раде.';
+
+  @override
   String get chatRemovalHoldNotice =>
       'Ваша порука чека да се заврши ажурирање шифровања после уклањања члана, а затим се шаље.';
 
@@ -6395,6 +6399,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatSyncPausedNotice =>
       'Poruke u ovom razgovoru su pauzirane: ažuriranje šifrovanja nije moglo da se primeni. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.';
+
+  @override
+  String get chatSyncHeldNotice =>
+      'Poruke u ovom razgovoru čekaju: promena članstva ili uloge traži potvrdu koju ovaj uređaj još nema. Ponovo se proverava automatski. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.';
 
   @override
   String get chatRemovalHoldNotice =>

@@ -502,18 +502,19 @@ class PendingMlsMessage {
     required String failureClass,
     required bool terminal,
     required DateTime? nextAttemptAt,
-  }) => PendingMlsMessage(
-    idempotencyKey: idempotencyKey,
-    conversationId: conversationId,
-    kind: kind,
-    payload: payload,
-    recipientDeviceId: recipientDeviceId,
-    revocationDeviceId: revocationDeviceId,
-    attemptCount: attemptCount + 1,
-    nextAttemptAt: nextAttemptAt,
-    failureClass: failureClass,
-    terminal: terminal,
-  );
+  }) =>
+      PendingMlsMessage(
+        idempotencyKey: idempotencyKey,
+        conversationId: conversationId,
+        kind: kind,
+        payload: payload,
+        recipientDeviceId: recipientDeviceId,
+        revocationDeviceId: revocationDeviceId,
+        attemptCount: attemptCount + 1,
+        nextAttemptAt: nextAttemptAt,
+        failureClass: failureClass,
+        terminal: terminal,
+      );
 }
 
 class OutgoingMlsStateTransition {
@@ -931,7 +932,7 @@ abstract class LocalStore {
   /// The crypto state and its records, read together so a restore never
   /// mixes two states (D70).
   Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
-  loadCryptoSnapshot();
+      loadCryptoSnapshot();
 
   /// The one-way format 2/3 to format 4 migration (D70 section 5): replaces
   /// the stored state only if it is still [expectedSealedState] at
@@ -1097,7 +1098,8 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<GovernanceObservations?> loadGovernanceObservations(
     String groupId,
-  ) async => _governanceObservations[groupId];
+  ) async =>
+      _governanceObservations[groupId];
 
   void _applyGovernanceObservation(GovernanceObservationChange? change) {
     if (change == null) return;
@@ -1140,7 +1142,8 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<ConversationPause?> loadConversationPause(
     String conversationId,
-  ) async => _pauses[conversationId];
+  ) async =>
+      _pauses[conversationId];
 
   @override
   Future<ConversationPause> pauseConversation({
@@ -1471,9 +1474,8 @@ class MemoryLocalStore implements LocalStore {
       allowBehindCursor: replay,
     );
     final nextMessages = <String, List<ReceivedMessageEnvelope>>{
-      for (final entry
-          in _snapshot?.messagesByConversation.entries ??
-              const <MapEntry<String, List<ReceivedMessageEnvelope>>>[])
+      for (final entry in _snapshot?.messagesByConversation.entries ??
+          const <MapEntry<String, List<ReceivedMessageEnvelope>>>[])
         entry.key: List<ReceivedMessageEnvelope>.from(entry.value),
     };
     final deletedIds = transition.deletedEnvelopeIds.toSet();
@@ -1482,8 +1484,8 @@ class MemoryLocalStore implements LocalStore {
     }
     final now = DateTime.now().toUtc();
     for (final envelope in transition.upsertedEnvelopes) {
-      final messages = nextMessages[envelope.conversationId] ??=
-          <ReceivedMessageEnvelope>[];
+      final messages =
+          nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((message) => message.id == envelope.id);
       // Arrived already expired (W2): consumed, never stored.
       if (_expired(envelope.expiresAt, now)) continue;
@@ -1538,8 +1540,8 @@ class MemoryLocalStore implements LocalStore {
       );
     }
     if (transition.infoRemovalEpoch case final epoch?) {
-      _settings[communityInfoRemovalSetting(transition.conversationId)] = epoch
-          .toString();
+      _settings[communityInfoRemovalSetting(transition.conversationId)] =
+          epoch.toString();
     }
     _applyC7Settings(transition.c7Settings);
     _applyApprovalLeaves(transition.approvalLeaves);
@@ -1598,20 +1600,22 @@ class MemoryLocalStore implements LocalStore {
     CommunityInfoEventKind kind,
     String subjectKind,
     String subjectId,
-  ) async => _communityInfoEvents
-      .where(
-        (e) =>
-            e.kind == kind &&
-            e.subjectKind == subjectKind &&
-            e.subjectId == subjectId,
-      )
-      .toList();
+  ) async =>
+      _communityInfoEvents
+          .where(
+            (e) =>
+                e.kind == kind &&
+                e.subjectKind == subjectKind &&
+                e.subjectId == subjectId,
+          )
+          .toList();
 
   @override
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
     String subjectKind,
     String subjectId,
-  ) async => _acceptedCommunityInfo['$subjectKind|$subjectId'];
+  ) async =>
+      _acceptedCommunityInfo['$subjectKind|$subjectId'];
 
   @override
   Future<void> saveAcceptedCommunityInfo(AcceptedCommunityInfo info) async {
@@ -1635,15 +1639,16 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<List<ReportKeyPin>> loadReportKeyPins(String origin) async => [
-    for (final pin in _reportKeyPins.values)
-      if (pin.origin == origin) pin,
-  ]..sort((a, b) => a.ownerAccountId.compareTo(b.ownerAccountId));
+        for (final pin in _reportKeyPins.values)
+          if (pin.origin == origin) pin,
+      ]..sort((a, b) => a.ownerAccountId.compareTo(b.ownerAccountId));
 
   @override
   Future<ReportKeyPin?> loadReportKeyPin(
     String origin,
     String ownerAccountId,
-  ) async => _reportKeyPins['$origin\u0000$ownerAccountId'];
+  ) async =>
+      _reportKeyPins['$origin\u0000$ownerAccountId'];
 
   @override
   Future<void> saveReportKeyPin(ReportKeyPin pin) async {
@@ -1706,9 +1711,10 @@ class MemoryLocalStore implements LocalStore {
   Future<List<StoredProfileKey>> loadProfileKeys(
     String kind,
     String subjectId,
-  ) async => List<StoredProfileKey>.of(
-    _profileKeys[_profileId(kind, subjectId)] ?? const [],
-  );
+  ) async =>
+      List<StoredProfileKey>.of(
+        _profileKeys[_profileId(kind, subjectId)] ?? const [],
+      );
 
   @override
   Future<void> saveProfileKey(ProfileKeyEffect key) async =>
@@ -1716,10 +1722,10 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<List<StoredProfileKey>> loadAllProfileKeys(String kind) async => [
-    for (final keys in _profileKeys.values)
-      for (final key in keys)
-        if (key.kind == kind) key,
-  ];
+        for (final keys in _profileKeys.values)
+          for (final key in keys)
+            if (key.kind == kind) key,
+      ];
 
   @override
   Future<void> deleteProfileKey(
@@ -1738,9 +1744,9 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<List<StoredProfile>> loadProfiles(String kind) async => [
-    for (final p in _profiles.values)
-      if (p.kind == kind && !p.isPlaceholder) p,
-  ];
+        for (final p in _profiles.values)
+          if (p.kind == kind && !p.isPlaceholder) p,
+      ];
 
   @override
   Future<bool> saveProfile(StoredProfile profile) async {
@@ -1775,9 +1781,9 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<Map<String, String>> loadProfileStatePrefix(String prefix) async => {
-    for (final e in _profileState.entries)
-      if (e.key.startsWith(prefix)) e.key: e.value,
-  };
+        for (final e in _profileState.entries)
+          if (e.key.startsWith(prefix)) e.key: e.value,
+      };
 
   final Map<String, DeviceListPin> _deviceListPins = <String, DeviceListPin>{};
   final Map<String, List<int>> _deviceListConflicts = <String, List<int>>{};
@@ -1868,10 +1874,10 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<List<String>> loadHeldConversations() async => [
-    for (final entry in _approvalLeaves.entries)
-      if (entry.value.any((leaf) => leaf.verdict != LeafVerdict.approved))
-        entry.key,
-  ]..sort();
+        for (final entry in _approvalLeaves.entries)
+          if (entry.value.any((leaf) => leaf.verdict != LeafVerdict.approved))
+            entry.key,
+      ]..sort();
 
   @override
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId) async {
@@ -1883,7 +1889,8 @@ class MemoryLocalStore implements LocalStore {
     String origin,
     String accountId,
     String messageKey,
-  ) async => _filedReports.contains('$origin\u0000$accountId\u0000$messageKey');
+  ) async =>
+      _filedReports.contains('$origin\u0000$accountId\u0000$messageKey');
 
   @override
   Future<void> markMessageReported(
@@ -1912,17 +1919,16 @@ class MemoryLocalStore implements LocalStore {
       throw StateError('stale sync event commit');
     }
     final nextMessages = <String, List<ReceivedMessageEnvelope>>{
-      for (final entry
-          in _snapshot?.messagesByConversation.entries ??
-              const <MapEntry<String, List<ReceivedMessageEnvelope>>>[])
+      for (final entry in _snapshot?.messagesByConversation.entries ??
+          const <MapEntry<String, List<ReceivedMessageEnvelope>>>[])
         entry.key: List<ReceivedMessageEnvelope>.from(entry.value),
     };
     final nextHistory = _history.copy();
     final nextNamespace = _historyNamespace.copy();
     final envelope = commit.envelope;
     if (envelope != null) {
-      final messages = nextMessages[envelope.conversationId] ??=
-          <ReceivedMessageEnvelope>[];
+      final messages =
+          nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
       messages.removeWhere((item) => item.id == envelope.id);
       if (!_expired(envelope.expiresAt, DateTime.now().toUtc())) {
         messages.add(envelope);
@@ -2129,10 +2135,11 @@ class MemoryLocalStore implements LocalStore {
   List<EnrollmentPromotionRow> _promotionsFor(
     String accountId,
     String deviceId,
-  ) => [
-    for (final row in _promotions)
-      if (row.accountId == accountId && row.deviceId == deviceId) row,
-  ];
+  ) =>
+      [
+        for (final row in _promotions)
+          if (row.accountId == accountId && row.deviceId == deviceId) row,
+      ];
 
   @override
   Future<PendingEnrollment?> loadPendingEnrollment() async {
@@ -2209,10 +2216,9 @@ class MemoryLocalStore implements LocalStore {
     );
     if (mergedTransfer != null) {
       _historyTransfers[_transferKey(
-            mergedTransfer.origin,
-            mergedTransfer.linkId,
-          )] =
-          mergedTransfer;
+        mergedTransfer.origin,
+        mergedTransfer.linkId,
+      )] = mergedTransfer;
     }
     _pendingEnrollment = null;
     return outcome;
@@ -2222,7 +2228,8 @@ class MemoryLocalStore implements LocalStore {
   Future<bool> isEnrollmentPromoted({
     required String accountId,
     required String deviceId,
-  }) async => _promotionsFor(accountId, deviceId).isNotEmpty;
+  }) async =>
+      _promotionsFor(accountId, deviceId).isNotEmpty;
 
   static String _transferKey(String origin, String linkId) =>
       '$origin\u0000$linkId';
@@ -2231,7 +2238,8 @@ class MemoryLocalStore implements LocalStore {
   Future<HistoryTransferProgress?> loadHistoryTransfer(
     String origin,
     String linkId,
-  ) async => _historyTransfers[_transferKey(origin, linkId)];
+  ) async =>
+      _historyTransfers[_transferKey(origin, linkId)];
 
   @override
   Future<List<HistoryTransferProgress>> loadHistoryTransfers() async {
@@ -2314,8 +2322,8 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
-  loadCryptoSnapshot() async =>
-      (state: await loadCryptoState(), records: await loadCryptoRecords());
+      loadCryptoSnapshot() async =>
+          (state: await loadCryptoState(), records: await loadCryptoRecords());
 
   @override
   Future<void> commitCryptoMigration({
@@ -2383,67 +2391,72 @@ class MemoryLocalStore implements LocalStore {
     int limit = localNoticeBatchLimit,
     int? now,
     void Function()? checkCanCommit,
-  }) => _noticeChange(
-    owner,
-    (n) => n.pending(owner, limit),
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) =>
+      _noticeChange(
+        owner,
+        (n) => n.pending(owner, limit),
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<LocalNoticeDecision?> pendingNoticeDecision(
     LocalNoticeOwner owner, {
     int? now,
     void Function()? checkCanCommit,
-  }) => _noticeChange(
-    owner,
-    (n) => n.decision(owner),
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) =>
+      _noticeChange(
+        owner,
+        (n) => n.decision(owner),
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<LocalNoticeDecision?> freezeNoticeDecision(
     LocalNoticeOwner owner,
     Iterable<String> referenceIds, {
     int? now,
     void Function()? checkCanCommit,
-  }) => _noticeChange(
-    owner,
-    (n) => n.freeze(
-      owner,
-      referenceIds,
-      now ?? DateTime.now().millisecondsSinceEpoch,
-    ),
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) =>
+      _noticeChange(
+        owner,
+        (n) => n.freeze(
+          owner,
+          referenceIds,
+          now ?? DateTime.now().millisecondsSinceEpoch,
+        ),
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<void> suppressNoticeReferences(
     LocalNoticeOwner owner,
     Iterable<String> referenceIds, {
     int? now,
     void Function()? checkCanCommit,
-  }) => _noticeChange(
-    owner,
-    (n) => n.suppress(owner, referenceIds),
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) =>
+      _noticeChange(
+        owner,
+        (n) => n.suppress(owner, referenceIds),
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<void> suppressNoticesThrough(
     LocalNoticeOwner owner,
     int eventId, {
     int? now,
     void Function()? checkCanCommit,
-  }) => _noticeChange(
-    owner,
-    (n) {
-      if (eventId < 0 || eventId > _syncCursor)
-        throw StateError('notice watermark is not committed');
-      n.suppressThrough(owner, eventId);
-    },
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) =>
+      _noticeChange(
+        owner,
+        (n) {
+          if (eventId < 0 || eventId > _syncCursor)
+            throw StateError('notice watermark is not committed');
+          n.suppressThrough(owner, eventId);
+        },
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<void> finishNoticeDecision(
     LocalNoticeOwner owner,
@@ -2451,12 +2464,13 @@ class MemoryLocalStore implements LocalStore {
     LocalNoticeOutcome outcome, {
     int? now,
     void Function()? checkCanCommit,
-  }) => _noticeChange(
-    owner,
-    (n) => n.finish(owner, decisionId, outcome),
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) =>
+      _noticeChange(
+        owner,
+        (n) => n.finish(owner, decisionId, outcome),
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
 
   @override
   Future<HistoryNamespace> loadHistoryNamespace() async =>
@@ -2600,7 +2614,8 @@ class MemoryLocalStore implements LocalStore {
   Future<List<MessageSearchHit>> searchMessages(
     String query, {
     int limit = 50,
-  }) async => _history.search(query, limit);
+  }) async =>
+      _history.search(query, limit);
 
   @override
   Future<Map<String, StoredDraft>> loadDrafts() async =>
@@ -2674,9 +2689,8 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<DateTime?> nextMessageExpiry() async {
     DateTime? next;
-    for (final list
-        in _snapshot?.messagesByConversation.values ??
-            const <List<ReceivedMessageEnvelope>>[]) {
+    for (final list in _snapshot?.messagesByConversation.values ??
+        const <List<ReceivedMessageEnvelope>>[]) {
       for (final envelope in list) {
         final at = envelope.expiresAt;
         if (at != null && (next == null || at.isBefore(next))) next = at;
@@ -2762,7 +2776,8 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<List<LocalMessageReaction>> loadReactions(
     String conversationId,
-  ) async => _history.reactions(conversationId);
+  ) async =>
+      _history.reactions(conversationId);
 }
 
 /// In-memory twin of the database's decrypted history, with the same effect
@@ -2988,16 +3003,14 @@ class _MemoryMessageHistory {
               !const [
                 LocalMessageKind.text,
                 LocalMessageKind.attachment,
-              ].contains(target.kind))
-            continue;
+              ].contains(target.kind)) continue;
           pins.remove(effect.targetKey);
           if (!effect.pinned) continue;
           var expiry = effect.at + effect.durationSeconds! * 1000;
           if (target.expiresAt != null && expiry > target.expiresAt!)
             expiry = target.expiresAt!;
           if (expiry <= DateTime.now().millisecondsSinceEpoch) continue;
-          final order =
-              pins.values.fold(
+          final order = pins.values.fold(
                 0,
                 (int max, p) => p.appliedOrder > max ? p.appliedOrder : max,
               ) +
@@ -3011,18 +3024,17 @@ class _MemoryMessageHistory {
             appliedOrder: order,
             expiresAt: expiry,
           );
-          final scoped =
-              pins.values
-                  .where(
-                    (p) =>
-                        p.conversationId == effect.conversationId &&
-                        p.channelId == effect.channelId,
-                  )
-                  .toList()
-                ..sort((a, b) {
-                  final t = b.pinnedAt.compareTo(a.pinnedAt);
-                  return t != 0 ? t : b.appliedOrder.compareTo(a.appliedOrder);
-                });
+          final scoped = pins.values
+              .where(
+                (p) =>
+                    p.conversationId == effect.conversationId &&
+                    p.channelId == effect.channelId,
+              )
+              .toList()
+            ..sort((a, b) {
+              final t = b.pinnedAt.compareTo(a.pinnedAt);
+              return t != 0 ? t : b.appliedOrder.compareTo(a.appliedOrder);
+            });
           while (scoped.length > pinLimitPerChat) {
             final oldest = scoped.removeLast();
             pins.remove(oldest.targetKey);
@@ -3041,8 +3053,7 @@ class _MemoryMessageHistory {
     final target = _messages[key];
     if (target == null ||
         (conversationId != null && target.conversationId != conversationId) ||
-        target.channelId != channelId)
-      return;
+        target.channelId != channelId) return;
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
@@ -3137,16 +3148,17 @@ class _MemoryMessageHistory {
     return result;
   }
 
-  List<LocalMessageReaction> reactions(String conversationId) => _reactions
-      .values
-      .where(
-        (item) => _messages[item.targetKey]?.conversationId == conversationId,
-      )
-      .toList(growable: false);
+  List<LocalMessageReaction> reactions(String conversationId) =>
+      _reactions.values
+          .where(
+            (item) =>
+                _messages[item.targetKey]?.conversationId == conversationId,
+          )
+          .toList(growable: false);
 }
 
-typedef LocalDatabaseFactory =
-    EncryptedLocalDatabase Function(File file, String keyHex);
+typedef LocalDatabaseFactory = EncryptedLocalDatabase Function(
+    File file, String keyHex);
 
 /// Stores growing local state in an encrypted transactional database. Secure
 /// storage contains only the device-bound database key and a one-time legacy
@@ -3161,32 +3173,31 @@ class SecureLocalStore implements LocalStore {
     BackupExclusion? backupExclusion,
     String namespace = '',
     bool existingOnly = false,
-  }) : assert(RegExp(r'^[a-z0-9-]{0,40}$').hasMatch(namespace)),
-       _namespace = namespace,
-       _existingOnly = existingOnly,
-       _storage =
-           storage ??
-           const FlutterSecureStorage(
-             // Fail closed (I39): resetting on a keystore error would wipe
-             // the database key and with it every message on the device.
-             aOptions: AndroidOptions(resetOnError: false),
-             iOptions: IOSOptions(
-               accessibility: KeychainAccessibility.first_unlock_this_device,
-             ),
-             // The data protection keychain needs a keychain-access-groups
-             // entitlement, which only a team-signed build can carry. macOS
-             // builds are unsigned demos for now, so they use the login
-             // keychain. Revisit when macOS builds are signed.
-             mOptions: MacOsOptions(usesDataProtectionKeychain: false),
-           ),
-       _directoryProvider = directoryProvider ?? getApplicationSupportDirectory,
-       _databaseFactory = databaseFactory ?? openEncryptedLocalDatabase,
-       _existingDatabaseFactory =
-           existingDatabaseFactory ?? openExistingEncryptedLocalDatabase,
-       _mlsCommitFailureInjector = mlsCommitFailureInjector,
-       _backupExclusion =
-           backupExclusion ??
-           (Platform.isIOS ? PlatformBackupExclusion.exclude : null);
+  })  : assert(RegExp(r'^[a-z0-9-]{0,40}$').hasMatch(namespace)),
+        _namespace = namespace,
+        _existingOnly = existingOnly,
+        _storage = storage ??
+            const FlutterSecureStorage(
+              // Fail closed (I39): resetting on a keystore error would wipe
+              // the database key and with it every message on the device.
+              aOptions: AndroidOptions(resetOnError: false),
+              iOptions: IOSOptions(
+                accessibility: KeychainAccessibility.first_unlock_this_device,
+              ),
+              // The data protection keychain needs a keychain-access-groups
+              // entitlement, which only a team-signed build can carry. macOS
+              // builds are unsigned demos for now, so they use the login
+              // keychain. Revisit when macOS builds are signed.
+              mOptions: MacOsOptions(usesDataProtectionKeychain: false),
+            ),
+        _directoryProvider =
+            directoryProvider ?? getApplicationSupportDirectory,
+        _databaseFactory = databaseFactory ?? openEncryptedLocalDatabase,
+        _existingDatabaseFactory =
+            existingDatabaseFactory ?? openExistingEncryptedLocalDatabase,
+        _mlsCommitFailureInjector = mlsCommitFailureInjector,
+        _backupExclusion = backupExclusion ??
+            (Platform.isIOS ? PlatformBackupExclusion.exclude : null);
 
   static const _legacyRecordKey = 'veritra.account_state.v2';
   static const _databaseKey = 'veritra.database_key.v1';
@@ -3244,7 +3255,8 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<GovernanceObservations?> loadGovernanceObservations(
     String groupId,
-  ) async => (await _database()).readGovernanceObservations(groupId);
+  ) async =>
+      (await _database()).readGovernanceObservations(groupId);
 
   @override
   Future<void> saveInviteAnchor(InviteAnchor anchor) async =>
@@ -3268,7 +3280,8 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<ConversationPause?> loadConversationPause(
     String conversationId,
-  ) async => (await _database()).readConversationPause(conversationId);
+  ) async =>
+      (await _database()).readConversationPause(conversationId);
 
   @override
   Future<ConversationPause> pauseConversation({
@@ -3278,15 +3291,16 @@ class SecureLocalStore implements LocalStore {
     String? failedEventType,
     String? failedRef,
     void Function()? checkCanCommit,
-  }) async => (await _database()).writeConversationPause(
-    conversationId: conversationId,
-    failedEventId: failedEventId,
-    kind: kind,
-    failedEventType: failedEventType,
-    failedRef: failedRef,
-    leaseKey: _syncLeaseKey,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).writeConversationPause(
+        conversationId: conversationId,
+        failedEventId: failedEventId,
+        kind: kind,
+        failedEventType: failedEventType,
+        failedRef: failedRef,
+        leaseKey: _syncLeaseKey,
+        checkCanCommit: checkCanCommit,
+      );
 
   @override
   Future<void> skipPausedConversationEvent({
@@ -3294,32 +3308,34 @@ class SecureLocalStore implements LocalStore {
     required int eventId,
     required int expectedCursor,
     void Function()? checkCanCommit,
-  }) async => (await _database()).skipPausedConversationEvent(
-    conversationId: conversationId,
-    eventId: eventId,
-    expectedCursor: expectedCursor,
-    leaseKey: _syncLeaseKey,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).skipPausedConversationEvent(
+        conversationId: conversationId,
+        eventId: eventId,
+        expectedCursor: expectedCursor,
+        leaseKey: _syncLeaseKey,
+        checkCanCommit: checkCanCommit,
+      );
 
   @override
   Future<bool> clearConversationPause(
     String conversationId, {
     int? generation,
     void Function()? checkCanCommit,
-  }) async => (await _database()).clearConversationPause(
-    conversationId,
-    generation: generation,
-    leaseKey: _syncLeaseKey,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).clearConversationPause(
+        conversationId,
+        generation: generation,
+        leaseKey: _syncLeaseKey,
+        checkCanCommit: checkCanCommit,
+      );
 
   @override
   Future<SyncRecovery?> loadSyncRecovery() async => SyncRecovery.decode(
-    await (await _database()).readMetadata(
-      EncryptedLocalDatabase.syncRecoveryName,
-    ),
-  );
+        await (await _database()).readMetadata(
+          EncryptedLocalDatabase.syncRecoveryName,
+        ),
+      );
 
   @override
   Future<void> acquireSyncLease(LocalSyncLease lease) async {
@@ -3376,44 +3392,40 @@ class SecureLocalStore implements LocalStore {
   Future<void> saveProjection(
     List<Conversation> conversations,
     Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
-  ) => _replaceProjection(conversations, messagesByConversation, null);
+  ) =>
+      _replaceProjection(conversations, messagesByConversation, null);
 
   Future<void> _replaceProjection(
     List<Conversation> conversations,
     Map<String, List<ReceivedMessageEnvelope>> messagesByConversation,
     int? cursor,
   ) async {
-    final boundedConversations = conversations
-        .take(_maxCachedConversations)
-        .toList(growable: false);
+    final boundedConversations =
+        conversations.take(_maxCachedConversations).toList(growable: false);
     final conversationIds = boundedConversations.map((item) => item.id).toSet();
     await (await _database()).replaceSnapshot(
       conversations: boundedConversations.map(
         (item) => (id: item.id, payloadJson: jsonEncode(item.toJson())),
       ),
-      envelopes:
-          <
-            ({
-              String id,
-              String conversationId,
-              int position,
-              String payloadJson,
-            })
-          >[
-            for (final entry in messagesByConversation.entries)
-              if (conversationIds.contains(entry.key))
-                for (final indexed
-                    in entry.value
-                        .take(_maxMessagesPerConversation)
-                        .toList(growable: false)
-                        .indexed)
-                  (
-                    id: indexed.$2.id,
-                    conversationId: entry.key,
-                    position: indexed.$1,
-                    payloadJson: jsonEncode(indexed.$2.toJson()),
-                  ),
-          ],
+      envelopes: <({
+        String id,
+        String conversationId,
+        int position,
+        String payloadJson,
+      })>[
+        for (final entry in messagesByConversation.entries)
+          if (conversationIds.contains(entry.key))
+            for (final indexed in entry.value
+                .take(_maxMessagesPerConversation)
+                .toList(growable: false)
+                .indexed)
+              (
+                id: indexed.$2.id,
+                conversationId: entry.key,
+                position: indexed.$1,
+                payloadJson: jsonEncode(indexed.$2.toJson()),
+              ),
+      ],
       cursor: cursor,
     );
   }
@@ -3597,7 +3609,8 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<void> recordOwnCommunityInfoEvents(
     List<CommunityInfoEvent> events,
-  ) async => (await _database()).writeCommunityInfoEvents(events);
+  ) async =>
+      (await _database()).writeCommunityInfoEvents(events);
 
   @override
   Future<AcceptedCommunityInfo?> loadAcceptedCommunityInfo(
@@ -3618,7 +3631,8 @@ class SecureLocalStore implements LocalStore {
   Future<ReportKeyPin?> loadReportKeyPin(
     String origin,
     String ownerAccountId,
-  ) async => (await _database()).readReportKeyPin(origin, ownerAccountId);
+  ) async =>
+      (await _database()).readReportKeyPin(origin, ownerAccountId);
 
   @override
   Future<void> saveReportKeyPin(ReportKeyPin pin) async =>
@@ -3633,25 +3647,28 @@ class SecureLocalStore implements LocalStore {
     String origin,
     String accountId,
     String messageKey,
-  ) async => (await _database()).readReportFiled(origin, accountId, messageKey);
+  ) async =>
+      (await _database()).readReportFiled(origin, accountId, messageKey);
 
   @override
   Future<void> markMessageReported(
     String origin,
     String accountId,
     String messageKey,
-  ) async => (await _database()).writeReportFiled(
-    origin,
-    accountId,
-    messageKey,
-    DateTime.now().toUtc().millisecondsSinceEpoch,
-  );
+  ) async =>
+      (await _database()).writeReportFiled(
+        origin,
+        accountId,
+        messageKey,
+        DateTime.now().toUtc().millisecondsSinceEpoch,
+      );
 
   @override
   Future<List<StoredProfileKey>> loadProfileKeys(
     String kind,
     String subjectId,
-  ) async => (await _database()).readProfileKeys(kind, subjectId);
+  ) async =>
+      (await _database()).readProfileKeys(kind, subjectId);
 
   @override
   Future<List<StoredProfileKey>> loadAllProfileKeys(String kind) async =>
@@ -3668,7 +3685,8 @@ class SecureLocalStore implements LocalStore {
     String kind,
     String subjectId,
     String keyId,
-  ) async => (await _database()).deleteProfileKey(kind, subjectId, keyId);
+  ) async =>
+      (await _database()).deleteProfileKey(kind, subjectId, keyId);
 
   @override
   Future<StoredProfile?> loadProfile(String kind, String subjectId) async =>
@@ -3706,10 +3724,11 @@ class SecureLocalStore implements LocalStore {
   Future<bool> saveDeviceListPin(
     DeviceListPin pin, {
     required int? expectedVersion,
-  }) async => (await _database()).writeDeviceListPin(
-    pin,
-    expectedVersion: expectedVersion,
-  );
+  }) async =>
+      (await _database()).writeDeviceListPin(
+        pin,
+        expectedVersion: expectedVersion,
+      );
 
   @override
   Future<void> touchDeviceListPin(String accountId, int checkedAt) async =>
@@ -3722,13 +3741,14 @@ class SecureLocalStore implements LocalStore {
     required List<int> pinnedStatement,
     required List<int> otherStatement,
     required int recordedAt,
-  }) async => (await _database()).writeDeviceListConflict(
-    accountId: accountId,
-    version: version,
-    pinnedStatement: pinnedStatement,
-    otherStatement: otherStatement,
-    recordedAt: recordedAt,
-  );
+  }) async =>
+      (await _database()).writeDeviceListConflict(
+        accountId: accountId,
+        version: version,
+        pinnedStatement: pinnedStatement,
+        otherStatement: otherStatement,
+        recordedAt: recordedAt,
+      );
 
   @override
   Future<List<ApprovalLeaf>> loadApprovalLeaves(String conversationId) async =>
@@ -3941,10 +3961,11 @@ class SecureLocalStore implements LocalStore {
   Future<bool> deletePendingEnrollment({
     required String kind,
     String? deviceId,
-  }) async => (await _database()).deletePendingEnrollment(
-    kind: kind,
-    deviceId: deviceId,
-  );
+  }) async =>
+      (await _database()).deletePendingEnrollment(
+        kind: kind,
+        deviceId: deviceId,
+      );
 
   @override
   Future<EnrollmentPromotionOutcome> promotePendingEnrollment(
@@ -3968,16 +3989,19 @@ class SecureLocalStore implements LocalStore {
   Future<bool> isEnrollmentPromoted({
     required String accountId,
     required String deviceId,
-  }) async => (await (await _database()).readEnrollmentPromotions(
-    accountId: accountId,
-    deviceId: deviceId,
-  )).isNotEmpty;
+  }) async =>
+      (await (await _database()).readEnrollmentPromotions(
+        accountId: accountId,
+        deviceId: deviceId,
+      ))
+          .isNotEmpty;
 
   @override
   Future<HistoryTransferProgress?> loadHistoryTransfer(
     String origin,
     String linkId,
-  ) async => (await _database()).readHistoryTransfer(origin, linkId);
+  ) async =>
+      (await _database()).readHistoryTransfer(origin, linkId);
 
   @override
   Future<List<HistoryTransferProgress>> loadHistoryTransfers() async =>
@@ -4019,13 +4043,13 @@ class SecureLocalStore implements LocalStore {
 
   @override
   Future<List<StoredCryptoRecord>> loadCryptoRecords() async => [
-    for (final row in await (await _database()).readCryptoRecords())
-      _storedRecord(row),
-  ];
+        for (final row in await (await _database()).readCryptoRecords())
+          _storedRecord(row),
+      ];
 
   @override
   Future<({StoredCryptoState? state, List<StoredCryptoRecord> records})>
-  loadCryptoSnapshot() async {
+      loadCryptoSnapshot() async {
     final snapshot = await (await _database()).readCryptoSnapshot();
     final row = snapshot.state;
     StoredCryptoState? state;
@@ -4073,14 +4097,14 @@ class SecureLocalStore implements LocalStore {
       );
 
   static List<CryptoRecordWrite> _recordWrites(StoredCryptoState state) => [
-    for (final change in state.changes)
-      (
-        kind: change.kind,
-        recordId: change.recordId,
-        generation: change.generation,
-        sealed: change.sealed,
-      ),
-  ];
+        for (final change in state.changes)
+          (
+            kind: change.kind,
+            recordId: change.recordId,
+            generation: change.generation,
+            sealed: change.sealed,
+          ),
+      ];
 
   @override
   Future<List<LocalNoticeReference>> pendingNoticeReferences(
@@ -4088,58 +4112,63 @@ class SecureLocalStore implements LocalStore {
     int limit = localNoticeBatchLimit,
     int? now,
     void Function()? checkCanCommit,
-  }) async => (await _database()).pendingNoticeReferences(
-    owner,
-    limit: limit,
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).pendingNoticeReferences(
+        owner,
+        limit: limit,
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<LocalNoticeDecision?> pendingNoticeDecision(
     LocalNoticeOwner owner, {
     int? now,
     void Function()? checkCanCommit,
-  }) async => (await _database()).pendingNoticeDecision(
-    owner,
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).pendingNoticeDecision(
+        owner,
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<LocalNoticeDecision?> freezeNoticeDecision(
     LocalNoticeOwner owner,
     Iterable<String> referenceIds, {
     int? now,
     void Function()? checkCanCommit,
-  }) async => (await _database()).freezeNoticeDecision(
-    owner,
-    referenceIds,
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).freezeNoticeDecision(
+        owner,
+        referenceIds,
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<void> suppressNoticeReferences(
     LocalNoticeOwner owner,
     Iterable<String> referenceIds, {
     int? now,
     void Function()? checkCanCommit,
-  }) async => (await _database()).suppressNoticeReferences(
-    owner,
-    referenceIds,
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).suppressNoticeReferences(
+        owner,
+        referenceIds,
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<void> suppressNoticesThrough(
     LocalNoticeOwner owner,
     int eventId, {
     int? now,
     void Function()? checkCanCommit,
-  }) async => (await _database()).suppressNoticesThrough(
-    owner,
-    eventId,
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).suppressNoticesThrough(
+        owner,
+        eventId,
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
   @override
   Future<void> finishNoticeDecision(
     LocalNoticeOwner owner,
@@ -4147,13 +4176,14 @@ class SecureLocalStore implements LocalStore {
     LocalNoticeOutcome outcome, {
     int? now,
     void Function()? checkCanCommit,
-  }) async => (await _database()).finishNoticeDecision(
-    owner,
-    decisionId,
-    outcome,
-    now: now,
-    checkCanCommit: checkCanCommit,
-  );
+  }) async =>
+      (await _database()).finishNoticeDecision(
+        owner,
+        decisionId,
+        outcome,
+        now: now,
+        checkCanCommit: checkCanCommit,
+      );
 
   @override
   Future<HistoryNamespace> loadHistoryNamespace() async =>
@@ -4162,10 +4192,11 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<List<int>> exportHistorySnapshot({
     bool omitDisappearing = false,
-  }) async => (await _database()).exportHistorySnapshot(
-    (json) => json == null ? null : _sessionFrom(jsonDecode(json)),
-    omitDisappearing: omitDisappearing,
-  );
+  }) async =>
+      (await _database()).exportHistorySnapshot(
+        (json) => json == null ? null : _sessionFrom(jsonDecode(json)),
+        omitDisappearing: omitDisappearing,
+      );
 
   @override
   Future<void> importHistorySnapshot(
@@ -4199,32 +4230,36 @@ class SecureLocalStore implements LocalStore {
   Future<List<int>?> loadPeerVerification(
     String conversationId,
     String peerAccountId,
-  ) => _database().then(
-    (database) => database.readPeerVerification(conversationId, peerAccountId),
-  );
+  ) =>
+      _database().then(
+        (database) =>
+            database.readPeerVerification(conversationId, peerAccountId),
+      );
 
   @override
   Future<List<MessageSearchHit>> searchMessages(
     String query, {
     int limit = 50,
-  }) async => (await _database()).searchMessages(query, limit: limit);
+  }) async =>
+      (await _database()).searchMessages(query, limit: limit);
 
   @override
   Future<Map<String, StoredDraft>> loadDrafts() async => {
-    for (final row in await (await _database()).readDrafts())
-      row.conversationId: StoredDraft(text: row.body, replyTo: row.replyTo),
-  };
+        for (final row in await (await _database()).readDrafts())
+          row.conversationId: StoredDraft(text: row.body, replyTo: row.replyTo),
+      };
 
   @override
   Future<void> saveDraft(
     String conversationId,
     String text, {
     String? replyTo,
-  }) async => (await _database()).saveDraft(
-    conversationId: conversationId,
-    body: text,
-    replyTo: replyTo,
-  );
+  }) async =>
+      (await _database()).saveDraft(
+        conversationId: conversationId,
+        body: text,
+        replyTo: replyTo,
+      );
 
   @override
   Future<void> deleteDraft(String conversationId) async =>
@@ -4232,24 +4267,26 @@ class SecureLocalStore implements LocalStore {
 
   @override
   Future<Map<String, DateTime?>> loadConversationMutes() async => {
-    for (final row in await (await _database()).readMutes(
-      DateTime.now().toUtc().millisecondsSinceEpoch,
-    ))
-      row.conversationId: row.mutedUntil == null
-          ? null
-          : DateTime.fromMillisecondsSinceEpoch(row.mutedUntil!, isUtc: true),
-  };
+        for (final row in await (await _database()).readMutes(
+          DateTime.now().toUtc().millisecondsSinceEpoch,
+        ))
+          row.conversationId: row.mutedUntil == null
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(row.mutedUntil!,
+                  isUtc: true),
+      };
 
   @override
   Future<void> saveConversationMute(
     String conversationId, {
     required bool muted,
     DateTime? until,
-  }) async => (await _database()).saveMute(
-    conversationId,
-    muted: muted,
-    mutedUntil: until?.toUtc().millisecondsSinceEpoch,
-  );
+  }) async =>
+      (await _database()).saveMute(
+        conversationId,
+        muted: muted,
+        mutedUntil: until?.toUtc().millisecondsSinceEpoch,
+      );
 
   @override
   Future<Set<String>> purgeExpiredMessages({DateTime? now}) async =>
@@ -4293,13 +4330,15 @@ class SecureLocalStore implements LocalStore {
     final db = await _database();
     await (db.delete(
       db.localPendingPins,
-    )..where((t) => t.actionKey.equals(actionKey))).go();
+    )..where((t) => t.actionKey.equals(actionKey)))
+        .go();
   }
 
   @override
   Future<List<LocalMessageReaction>> loadReactions(
     String conversationId,
-  ) async => (await _database()).readReactions(conversationId);
+  ) async =>
+      (await _database()).readReactions(conversationId);
 
   @override
   Future<void> clearCachedState({
@@ -5138,14 +5177,14 @@ bool _identityChanged(Session previous, Session next) =>
     _identity(previous) != _identity(next);
 
 Map<String, Object?> _sessionJson(Session session) => <String, Object?>{
-  'base_url': session.baseUrl,
-  'token': session.token,
-  if (session.accountId != null) 'account_id': session.accountId,
-  if (session.deviceId != null) 'device_id': session.deviceId,
-  if (session.username != null) 'username': session.username,
-  if (session.deviceSecret != null) 'device_secret': session.deviceSecret,
-  if (session.role != null) 'role': session.role,
-};
+      'base_url': session.baseUrl,
+      'token': session.token,
+      if (session.accountId != null) 'account_id': session.accountId,
+      if (session.deviceId != null) 'device_id': session.deviceId,
+      if (session.username != null) 'username': session.username,
+      if (session.deviceSecret != null) 'device_secret': session.deviceSecret,
+      if (session.role != null) 'role': session.role,
+    };
 
 Session? _sessionFrom(Object? raw) {
   if (raw is! Map) {

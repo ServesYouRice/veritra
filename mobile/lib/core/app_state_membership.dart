@@ -180,10 +180,12 @@ extension MembershipActions on AppState {
   /// another server, a malformed one, and a revoked, expired or used up one
   /// each fail with a message that does not repeat the input.
   Future<({MembershipInviteLink link, InvitePreview preview})?>
-  previewInviteLink(String text) {
+      previewInviteLink(String text) {
     return _membershipCall<
-      ({MembershipInviteLink link, InvitePreview preview})
-    >((current, client) async {
+        ({
+          MembershipInviteLink link,
+          InvitePreview preview
+        })>((current, client) async {
       final link = MembershipInviteLink.tryParse(
         text,
         expectedOrigin: client.baseUrl,
@@ -325,9 +327,8 @@ extension MembershipActions on AppState {
     required bool approve,
   }) async {
     final done = await _membershipCall<bool>((current, client) async {
-      final conversationIds = approve
-          ? _joinTargetConversations(request)
-          : const <String>[];
+      final conversationIds =
+          approve ? _joinTargetConversations(request) : const <String>[];
       if (approve) {
         if (!membershipChangesAvailable) {
           throw StateError('adding members is not available in this build');

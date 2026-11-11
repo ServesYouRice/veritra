@@ -51,10 +51,10 @@ class ApiClient {
     HttpClient? httpClient,
     TransportPolicy transport = TransportPolicy.production,
     Duration transferIdleTimeout = defaultTransferIdleTimeout,
-  }) : baseUrl = canonicalizeServerOrigin(baseUrl),
-       _transport = transport,
-       _httpClient = httpClient ?? HttpClient(),
-       _transferIdleTimeout = transferIdleTimeout {
+  })  : baseUrl = canonicalizeServerOrigin(baseUrl),
+        _transport = transport,
+        _httpClient = httpClient ?? HttpClient(),
+        _transferIdleTimeout = transferIdleTimeout {
     _httpClient.connectionTimeout = const Duration(seconds: 15);
   }
 
@@ -702,8 +702,7 @@ class ApiClient {
 
   Future<List<Conversation>> conversations(String token) {
     return _collectPages(
-      (before) =>
-          '/api/v1/conversations?limit=$_listPageSize'
+      (before) => '/api/v1/conversations?limit=$_listPageSize'
           '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}',
       token: token,
       key: 'conversations',
@@ -714,8 +713,7 @@ class ApiClient {
 
   Future<List<Device>> devices(String token) {
     return _collectPages(
-      (after) =>
-          '/api/v1/devices/me?limit=$_listPageSize'
+      (after) => '/api/v1/devices/me?limit=$_listPageSize'
           '${after == null ? '' : '&after=${Uri.encodeQueryComponent(after)}'}',
       token: token,
       key: 'devices',
@@ -978,8 +976,7 @@ class ApiClient {
     // it is then re-requested smaller. The export has its own 1..5000 limit
     // range, and the caller follows `next_before`, not the page length.
     return _shrinkingPage(limit, maxLimit: 5000, (pageLimit) {
-      final path =
-          '/api/v1/account/export?limit=$pageLimit'
+      final path = '/api/v1/account/export?limit=$pageLimit'
           '${before == null ? '' : '&before=${Uri.encodeQueryComponent(before)}'}';
       return _jsonRequest(
         'GET',
@@ -1400,7 +1397,7 @@ class ApiClient {
   /// Versions of the info records this account may read, per kind. Missing
   /// or unreadable subjects are left out.
   Future<List<({String kind, String id, int version, String keyId})>>
-  infoVersions(
+      infoVersions(
     String token, {
     List<String> communityIds = const <String>[],
     List<String> categoryIds = const <String>[],
@@ -1413,13 +1410,11 @@ class ApiClient {
         channelIds.length > 200) {
       final versions =
           <({String kind, String id, int version, String keyId})>[];
-      for (
-        var offset = 0;
-        offset < communityIds.length ||
-            offset < categoryIds.length ||
-            offset < channelIds.length;
-        offset += 200
-      ) {
+      for (var offset = 0;
+          offset < communityIds.length ||
+              offset < categoryIds.length ||
+              offset < channelIds.length;
+          offset += 200) {
         versions.addAll(
           await infoVersions(
             token,
@@ -1921,8 +1916,7 @@ class ApiClient {
     final json = await _jsonRequest(
       'GET',
       Uri(
-        path:
-            '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+        path: '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
             '/history',
         queryParameters: query,
       ).toString(),
@@ -2468,27 +2462,29 @@ class ApiClient {
     String token,
     String callId, {
     required int after,
-  }) => _jsonRequest(
-    'GET',
-    Uri(
-      path: '/api/v1/rooms/${Uri.encodeComponent(callId)}/commits',
-      queryParameters: <String, String>{'after': '$after'},
-    ).toString(),
-    token: token,
-    maxResponseBytes: 8 * 1024 * 1024,
-  );
+  }) =>
+      _jsonRequest(
+        'GET',
+        Uri(
+          path: '/api/v1/rooms/${Uri.encodeComponent(callId)}/commits',
+          queryParameters: <String, String>{'after': '$after'},
+        ).toString(),
+        token: token,
+        maxResponseBytes: 8 * 1024 * 1024,
+      );
 
   /// A 409 `room_epoch_conflict` means another commit won this epoch.
   Future<Map<String, Object?>> sendRoomCommit(
     String token,
     String callId,
     Map<String, Object?> body,
-  ) => _jsonRequest(
-    'POST',
-    '/api/v1/rooms/${Uri.encodeComponent(callId)}/commit',
-    token: token,
-    body: body,
-  );
+  ) =>
+      _jsonRequest(
+        'POST',
+        '/api/v1/rooms/${Uri.encodeComponent(callId)}/commit',
+        token: token,
+        body: body,
+      );
 
   Future<void> sendRoomOffer(
     String token,
@@ -2578,9 +2574,8 @@ class ApiClient {
     final nextBefore = json['next_before'];
     return MessagePage(
       messages: _rows(json, 'messages', ReceivedMessageEnvelope.fromJson),
-      nextBefore: nextBefore is String && nextBefore.isNotEmpty
-          ? nextBefore
-          : null,
+      nextBefore:
+          nextBefore is String && nextBefore.isNotEmpty ? nextBefore : null,
     );
   }
 
@@ -2717,21 +2712,23 @@ class ApiClient {
     String token,
     String accountId, {
     int? ifNoneMatchVersion,
-  }) => fetchProfile(
-    token,
-    '/api/v1/profiles/account/${Uri.encodeComponent(accountId)}',
-    ifNoneMatchVersion: ifNoneMatchVersion,
-  );
+  }) =>
+      fetchProfile(
+        token,
+        '/api/v1/profiles/account/${Uri.encodeComponent(accountId)}',
+        ifNoneMatchVersion: ifNoneMatchVersion,
+      );
 
   Future<ProfileFetch> fetchConversationProfile(
     String token,
     String conversationId, {
     int? ifNoneMatchVersion,
-  }) => fetchProfile(
-    token,
-    '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
-    ifNoneMatchVersion: ifNoneMatchVersion,
-  );
+  }) =>
+      fetchProfile(
+        token,
+        '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+        ifNoneMatchVersion: ifNoneMatchVersion,
+      );
 
   /// Replaces a record. [ifMatchVersion] is the version being replaced, or
   /// null for the first write. Throws [ApiException] with kind conflict when
@@ -2769,13 +2766,14 @@ class ApiClient {
     Uint8List blob, {
     required String keyId,
     int? ifMatchVersion,
-  }) => putProfile(
-    token,
-    '/api/v1/profiles/account/me',
-    blob,
-    keyId: keyId,
-    ifMatchVersion: ifMatchVersion,
-  );
+  }) =>
+      putProfile(
+        token,
+        '/api/v1/profiles/account/me',
+        blob,
+        keyId: keyId,
+        ifMatchVersion: ifMatchVersion,
+      );
 
   Future<int> putConversationProfile(
     String token,
@@ -2783,13 +2781,14 @@ class ApiClient {
     Uint8List blob, {
     required String keyId,
     int? ifMatchVersion,
-  }) => putProfile(
-    token,
-    '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
-    blob,
-    keyId: keyId,
-    ifMatchVersion: ifMatchVersion,
-  );
+  }) =>
+      putProfile(
+        token,
+        '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+        blob,
+        keyId: keyId,
+        ifMatchVersion: ifMatchVersion,
+      );
 
   /// The current `{version, key_id}` of every subject the caller may read, at
   /// most 200 of each kind. Unreadable and missing subjects are left out.
@@ -2941,12 +2940,14 @@ class ApiClient {
     String conversationId, {
     int after = 0,
     int limit = 100,
-  }) async => (await conversationSyncPage(
-    token,
-    conversationId,
-    after: after,
-    limit: limit,
-  )).events;
+  }) async =>
+      (await conversationSyncPage(
+        token,
+        conversationId,
+        after: after,
+        limit: limit,
+      ))
+          .events;
 
   /// [conversationSyncEvents] with the scan position (C1 bounds, D92): how
   /// far the server looked, hidden events included, and whether its scan
@@ -2959,8 +2960,7 @@ class ApiClient {
   }) async {
     final id = Uri.encodeComponent(conversationId);
     final json = await _shrinkingPage(limit, (pageLimit) {
-      final path =
-          '/api/v1/conversations/$id/sync-events'
+      final path = '/api/v1/conversations/$id/sync-events'
           '?after=$after&limit=$pageLimit&scan=bounded';
       return _jsonRequest(
         'GET',
@@ -3345,9 +3345,8 @@ class ApiClient {
   /// redirect, are bound to this origin, so a 3xx is never followed: it
   /// reaches the caller as an [ApiException] carrying the 3xx status.
   Future<HttpClientRequest> _openRequest(String method, Uri uri) async {
-    final request = await _httpClient
-        .openUrl(method, uri)
-        .timeout(_requestTimeout);
+    final request =
+        await _httpClient.openUrl(method, uri).timeout(_requestTimeout);
     request.followRedirects = false;
     return request;
   }

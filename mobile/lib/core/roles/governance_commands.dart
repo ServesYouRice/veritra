@@ -22,13 +22,14 @@ class GovernanceObservations {
   factory GovernanceObservations.firstSeen(
     GovernanceState state,
     DateTime now,
-  ) => GovernanceObservations(
-    owner: state.owner,
-    ownerRev: state.ownerRev,
-    lastOwnerActivity: now,
-    electionOpened: state.election?.opened,
-    electionSeen: state.election == null ? null : now,
-  );
+  ) =>
+      GovernanceObservations(
+        owner: state.owner,
+        ownerRev: state.ownerRev,
+        lastOwnerActivity: now,
+        electionOpened: state.election?.opened,
+        electionSeen: state.election == null ? null : now,
+      );
 
   /// Call only after authenticating and accepting the commit or application
   /// message. [ownerActive] means its authenticated sender is the current
@@ -46,14 +47,13 @@ class GovernanceObservations {
     final seen = opened == null
         ? null
         : sameElection && electionSeen != null
-        ? electionSeen!
-        : receipt;
+            ? electionSeen!
+            : receipt;
     return GovernanceObservations(
       owner: state.owner,
       ownerRev: state.ownerRev,
-      lastOwnerActivity: ownerActive || ownerChanged
-          ? receipt
-          : lastOwnerActivity,
+      lastOwnerActivity:
+          ownerActive || ownerChanged ? receipt : lastOwnerActivity,
       electionOpened: opened,
       electionSeen: seen,
     );
@@ -72,12 +72,12 @@ class GovernanceObservations {
 
   @override
   int get hashCode => Object.hash(
-    owner,
-    ownerRev,
-    lastOwnerActivity,
-    electionOpened,
-    electionSeen,
-  );
+        owner,
+        ownerRev,
+        lastOwnerActivity,
+        electionOpened,
+        electionSeen,
+      );
 
   @override
   String toString() =>
@@ -299,9 +299,8 @@ class GovernanceCommands {
     } else {
       electorate = state.electors.where(members.contains).toSet();
       if (electorate.isEmpty) {
-        electorate = admins
-            .where((a) => state.admins[a]! <= state.ownerRev)
-            .toSet();
+        electorate =
+            admins.where((a) => state.admins[a]! <= state.ownerRev).toSet();
       }
     }
     if (!electorate.contains(actor)) _refuse('not_elector');

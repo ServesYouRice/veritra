@@ -2597,8 +2597,8 @@ class _SyncPausedNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final choices = state.conversationPauseFor(conversationId)?.choices ??
-        const <SyncRecoveryChoice>[];
+    final pause = state.conversationPauseFor(conversationId);
+    final choices = pause?.choices ?? const <SyncRecoveryChoice>[];
     return Semantics(
       liveRegion: true,
       container: true,
@@ -2614,7 +2614,9 @@ class _SyncPausedNotice extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              context.l10n.chatSyncPausedNotice,
+              pause?.held == true
+                  ? context.l10n.chatSyncHeldNotice
+                  : context.l10n.chatSyncPausedNotice,
               style: TextStyle(color: scheme.onErrorContainer),
             ),
             Wrap(

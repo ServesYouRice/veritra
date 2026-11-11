@@ -83,9 +83,10 @@ type MLSCommitBundleInput struct {
 	// RoleChange is the sender's declaration that a commit adding and
 	// removing no one carries a C4 role-record change, not a self-update.
 	// Like Added and Removed it is unverifiable here; receivers judge the
-	// record. It only exempts the commit from the self-update interval and
-	// from waiting behind a pending removal (an unproven removal may stay
-	// pending for good, docs/crypto.md "C4 app wiring").
+	// record. It exempts the commit from the self-update interval and from
+	// waiting behind a pending removal (an unproven removal may stay pending
+	// for good, docs/crypto.md "C4 app wiring"); such a role-only commit is
+	// limited to one per MLSRoleChangeInterval per device instead.
 	RoleChange bool
 }
 
@@ -151,6 +152,7 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 	// A Welcome needs an Added device and a revocation a Removed one (both
 	// checked below), so an update-only commit carries neither.
 	updateOnly := hasCommit && len(input.Added) == 0 && len(input.Removed) == 0 && !input.RoleChange
+	roleOnly := hasCommit && len(input.Added) == 0 && len(input.Removed) == 0 && input.RoleChange
 	if input.ConversationID == "" || input.SenderAccountID == "" || input.SenderDeviceID == "" ||
 		input.Epoch < 0 || input.IdempotencyKey == "" || len(input.IdempotencyKey) > 96 ||
 		len(input.Commit) > maxMLSHandshake || len(input.Welcome) > maxMLSHandshake ||
@@ -271,6 +273,11 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 			return MLSCommitBundleResult{}, err
 		}
 	}
+	if roleOnly {
+		if err := s.checkMLSRoleChange(ctx, tx, input.ConversationID, input.SenderDeviceID, now); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
+	}
 
 	for _, added := range input.Added {
 		var eligible bool
@@ -364,6 +371,13 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 			return MLSCommitBundleResult{}, err
 		}
 	}
+	if roleOnly {
+		if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_devices SET last_role_change_at = ?
+			WHERE conversation_id = ? AND device_id = ?`,
+			formatTime(now), input.ConversationID, input.SenderDeviceID); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
+	}
 	for _, removed := range input.Removed {
 		if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_devices SET removed_after_event_id = ?
 			WHERE conversation_id = ? AND device_id = ? AND removed_after_event_id IS NULL`,
@@ -450,6 +464,36 @@ func (s *Store) checkMLSSelfUpdate(ctx context.Context, tx *sql.Tx, conversation
 		return nil
 	}
 	next := parseTime(last.String).Add(time.Duration(s.limits.MLSSelfUpdateMinutes) * time.Minute)
+	if now.Before(next) {
+		return s.refuse(admission.SelfUpdates, mlsSelfUpdateLimitError{retryAfter: next.Sub(now)})
+	}
+	return nil
+}
+
+// MLSRoleChangeInterval is the shortest time between two role-only commits
+// (declared role_change, adding and removing no one) from one device in one
+// conversation. The flag is unverifiable, so it must not be a way around the
+// self-update interval: a member can churn at most one epoch a minute with
+// it. A real role change (a grant, a vote, a claim, a cancel) is one commit
+// a person makes; the app retries a refused one after Retry-After.
+const MLSRoleChangeInterval = time.Minute
+
+// checkMLSRoleChange admits one role-only commit per MLSRoleChangeInterval.
+// It does not wait behind a pending removal (an unproven removal may stay
+// pending for good, docs/crypto.md "C4 app wiring").
+func (s *Store) checkMLSRoleChange(ctx context.Context, tx *sql.Tx, conversationID, deviceID string, now time.Time) error {
+	var last sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT last_role_change_at FROM conversation_mls_devices
+		WHERE conversation_id = ? AND device_id = ?`, conversationID, deviceID).Scan(&last); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !last.Valid {
+		return nil
+	}
+	next := parseTime(last.String).Add(MLSRoleChangeInterval)
 	if now.Before(next) {
 		return s.refuse(admission.SelfUpdates, mlsSelfUpdateLimitError{retryAfter: next.Sub(now)})
 	}

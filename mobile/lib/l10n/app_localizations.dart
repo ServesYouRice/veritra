@@ -3351,6 +3351,12 @@ abstract class AppLocalizations {
   /// **'Messages in this conversation are paused: an encryption update could not be applied. Nothing was skipped, and other conversations keep working.'**
   String get chatSyncPausedNotice;
 
+  /// No description provided for @chatSyncHeldNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in this conversation are waiting: a membership or role change needs a confirmation this device does not have yet. It is checked again automatically. Nothing was skipped, and other conversations keep working.'**
+  String get chatSyncHeldNotice;
+
   /// No description provided for @chatRemovalHoldNotice.
   ///
   /// In en, this message translates to:

@@ -6148,6 +6148,7 @@ class AppState extends ChangeNotifier
       if (wake == null) {
         await _dropLeftConversations(current, ownerGeneration);
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+        _queueDueHeldPauses();
         await _replayRequestedPauses(current, client, ownerGeneration);
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
       }
@@ -6708,6 +6709,18 @@ class AppState extends ChangeNotifier
     if (pause == null || !pause.retryable) return;
     _pauseReplayRequests.add(conversationId);
     await _catchUpSyncEvents();
+  }
+
+  /// Queues every held C4 commit whose backoff has run out for replay in
+  /// this pass ([ConversationPause.heldRetryDue]). Other pauses replay only
+  /// on an explicit retry.
+  void _queueDueHeldPauses() {
+    final now = DateTime.now().toUtc();
+    for (final pause in conversationPauses.values) {
+      if (pause.heldRetryDue(now)) {
+        _pauseReplayRequests.add(pause.conversationId);
+      }
+    }
   }
 
   Future<void> _replayRequestedPauses(
@@ -7278,6 +7291,11 @@ class AppState extends ChangeNotifier
             throw failure(SyncFailureKind.localStorage, err);
           }
           if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
+          // C4: a commit waiting for evidence pauses only its
+          // conversation, and sync applies it again by itself.
+          if (err is GovernanceHeldException) {
+            throw failure(SyncFailureKind.governanceHeld);
+          }
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);

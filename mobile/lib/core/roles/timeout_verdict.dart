@@ -54,10 +54,8 @@ bool shouldDropTimedOutPost({
 }) {
   final timeout = record?.timeouts[sender];
   if (timeout == null) return false;
-  final latest = receivedAt
-      .toUtc()
-      .add(timeoutClockTolerance)
-      .millisecondsSinceEpoch;
+  final latest =
+      receivedAt.toUtc().add(timeoutClockTolerance).millisecondsSinceEpoch;
   var judged = serverTime.toUtc().millisecondsSinceEpoch;
   if (judged > latest) judged = latest;
   if (judged >= timeout.untilMs) return false;

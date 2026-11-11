@@ -67,6 +67,14 @@ class ConversationPause {
   /// Whether a replay may be tried again without the user changing anything.
   bool get retryable => choices.contains(SyncRecoveryChoice.retry);
 
+  /// A C4 commit waiting for evidence (`GovernanceHeldException`): shown
+  /// as waiting, and replayed by sync itself once [heldRetryDue].
+  bool get held => kind == SyncFailureKind.governanceHeld;
+
+  /// Whether sync should apply a held commit again by itself at [now].
+  bool heldRetryDue(DateTime now) =>
+      held && !now.isBefore(recordedAt.add(heldRetryDelay(generation)));
+
   ConversationPause copyWith({
     int? resumeAfter,
     int? failedEventId,
@@ -151,6 +159,7 @@ bool failurePausesConversation(SyncEventFailure failure) {
     case SyncFailureKind.applicationUndecryptable:
     case SyncFailureKind.applicationMissing:
     case SyncFailureKind.unsupportedEvent:
+    case SyncFailureKind.governanceHeld:
       return true;
     case SyncFailureKind.transient:
     case SyncFailureKind.auth:

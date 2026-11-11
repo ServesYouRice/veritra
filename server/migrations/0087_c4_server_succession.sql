@@ -24,3 +24,9 @@ CREATE TABLE IF NOT EXISTS owner_succession_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_owner_succession_conversation ON owner_succession_requests(conversation_id) WHERE conversation_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_owner_succession_community ON owner_succession_requests(community_id) WHERE community_id IS NOT NULL;
+
+-- C4 role-only commits (review finding, 2026-11-11): a bundle declared
+-- role_change skips the self-update interval and the pending-removal hold,
+-- and the flag is unverifiable here. Its own, shorter interval per device
+-- and conversation keeps it from being a way to churn epochs.
+ALTER TABLE conversation_mls_devices ADD COLUMN last_role_change_at TEXT;

@@ -2026,6 +2026,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Messages in this conversation are paused: an encryption update could not be applied. Nothing was skipped, and other conversations keep working.';
 
   @override
+  String get chatSyncHeldNotice =>
+      'Messages in this conversation are waiting: a membership or role change needs a confirmation this device does not have yet. It is checked again automatically. Nothing was skipped, and other conversations keep working.';
+
+  @override
   String get chatRemovalHoldNotice =>
       'Your message waits until the removed member\'s encryption update finishes, then sends.';
 

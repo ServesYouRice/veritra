@@ -38,6 +38,12 @@ enum SyncFailureKind {
   /// This app version does not know the event type.
   unsupportedEvent,
 
+  /// A C4 commit waits for evidence that may still arrive (a removal
+  /// proof, or an approved-device list that approves its committer). Its
+  /// conversation pauses and sync applies the commit again by itself, with
+  /// backoff ([heldRetryDelay]); nothing is merged unverified or skipped.
+  governanceHeld,
+
   /// The server no longer keeps events after this device's cursor.
   cursorExpired,
 
@@ -130,6 +136,7 @@ class SyncRecovery {
   List<SyncRecoveryChoice> get choices {
     switch (kind) {
       case SyncFailureKind.mlsState:
+      case SyncFailureKind.governanceHeld:
       case SyncFailureKind.unsupportedEvent:
       case SyncFailureKind.cryptoUnavailable:
         return const <SyncRecoveryChoice>[
@@ -179,6 +186,7 @@ class SyncRecovery {
       case SyncFailureKind.mlsControlMalformed:
         return l10n.syncErrorControlMissing;
       case SyncFailureKind.mlsState:
+      case SyncFailureKind.governanceHeld:
         return l10n.syncErrorMlsState;
       case SyncFailureKind.applicationUndecryptable:
       case SyncFailureKind.applicationMissing:
@@ -237,4 +245,15 @@ class SyncRecovery {
       return null;
     }
   }
+}
+
+/// How long a [SyncFailureKind.governanceHeld] pause waits before sync
+/// applies its commit again: one minute after the first hold, doubling with
+/// each hold recorded again, at most six hours. Bounded so a commit held
+/// for good costs one conversation page every six hours, not a loop.
+Duration heldRetryDelay(int generation) {
+  final doublings = (generation - 1).clamp(0, 9);
+  final delay = Duration(minutes: 1 << doublings);
+  const cap = Duration(hours: 6);
+  return delay > cap ? cap : delay;
 }

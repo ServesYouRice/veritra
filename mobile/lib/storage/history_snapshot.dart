@@ -190,10 +190,16 @@ class DeferredHistoryEffect {
       required this.at,
       required this.order,
       this.body,
-      this.formatJson});
+      this.formatJson,
+      this.protects});
   final String accountId, conversationId, targetKey, actorAccountId;
   final String? channelId, body, formatJson;
   final bool deleted;
+
+  /// C5 moderator delete ([DeleteMessageEffect.moderatorProtects]): the
+  /// accounts whose messages this delete may not hide. Null: the author's
+  /// own delete only. Never set on an edit.
+  final Set<String>? protects;
   final int at, order;
   String get key => jsonEncode(
       [accountId, conversationId, channelId, targetKey, actorAccountId]);
@@ -207,7 +213,8 @@ class DeferredHistoryEffect {
         'at': at,
         'order': order,
         'body': body,
-        'format': formatJson
+        'format': formatJson,
+        if (protects != null) 'protects': (protects!.toList()..sort()),
       };
   factory DeferredHistoryEffect.fromJson(Object? value) {
     final j = _object(value, {
@@ -220,8 +227,14 @@ class DeferredHistoryEffect {
       'at',
       'order',
       'body',
-      'format'
+      'format',
+      'protects'
     });
+    final rawProtects = j['protects'];
+    if (rawProtects != null &&
+        (rawProtects is! List || rawProtects.length > 4096)) {
+      _invalid();
+    }
     if (j['deleted'] is! bool ||
         (j['body'] != null && j['body'] is! String) ||
         (j['format'] != null && j['format'] is! String)) _invalid();
@@ -235,10 +248,13 @@ class DeferredHistoryEffect {
         at: _time(j['at']),
         order: _time(j['order']),
         body: j['body'] as String?,
-        formatJson: j['format'] as String?);
+        formatJson: j['format'] as String?,
+        protects: rawProtects == null
+            ? null
+            : {for (final id in rawProtects as List) _id(id)});
     if (effect.deleted
         ? (effect.body != null || effect.formatJson != null)
-        : effect.body == null) _invalid();
+        : (effect.body == null || effect.protects != null)) _invalid();
     return effect;
   }
 }
@@ -249,6 +265,7 @@ void deferHistoryEffect(
     HistoryNamespace namespace, MessageEffect effect, String? accountId) {
   if (accountId == null) return;
   String? conversation, channel, body, format;
+  Set<String>? protects;
   late String target, actor;
   late int at;
   final deleted = effect is DeleteMessageEffect;
@@ -267,6 +284,8 @@ void deferHistoryEffect(
       target = effect.targetKey;
       actor = effect.deleterAccountId;
       at = effect.at;
+      // C5: a moderator delete keeps its reach while it waits.
+      protects = effect.moderatorProtects;
     default:
       return;
   }
@@ -281,7 +300,8 @@ void deferHistoryEffect(
       at: at,
       order: namespace.effectOrder + 1,
       body: body,
-      formatJson: format);
+      formatJson: format,
+      protects: protects == null ? null : Set<String>.of(protects));
   if (namespace.deferred[candidate.key]?.deleted == true) return;
   final previous = namespace.deferred[candidate.key];
   namespace.deferred[candidate.key] = candidate;
@@ -307,9 +327,14 @@ LocalMessage applyDeferredHistory(
       .toList()
     ..sort((a, b) => a.order.compareTo(b.order));
   for (final e in candidates) {
+    // The author's own edit or delete; or (C5) a moderator's delete of a
+    // message whose sender it outranks under the record it was judged by.
+    final moderatorDelete = e.deleted &&
+        e.protects != null &&
+        !e.protects!.contains(message.senderAccountId);
     if (e.conversationId != message.conversationId ||
         e.channelId != message.channelId ||
-        e.actorAccountId != message.senderAccountId) {
+        (e.actorAccountId != message.senderAccountId && !moderatorDelete)) {
       // A copied row has no original-sender proof. Its labels cannot erase
       // an authenticated live intent before the actual target arrives.
       if (targetAuthenticated) namespace.deferred.remove(e.key);

@@ -13,9 +13,8 @@ extension RoleActions on AppState {
   /// The MLS group whose record governs [conversationId]: the group itself,
   /// or a community channel's shared group.
   String? recordGroupFor(String conversationId) {
-    final conversation = conversations
-        .where((c) => c.id == conversationId)
-        .firstOrNull;
+    final conversation =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
     if (conversation == null) return null;
     if (conversation.isGroup || conversation.isCommunityShared) {
       return conversationId;
@@ -65,8 +64,7 @@ extension RoleActions on AppState {
       GovernanceCommands commands,
       GovernanceObservations? observed,
       DateTime now,
-    )
-    build, {
+    ) build, {
     Future<void> Function(Session current, ApiClient client)? server,
   }) async {
     final group = recordGroupFor(conversationId);
@@ -89,20 +87,22 @@ extension RoleActions on AppState {
   }
 
   static String _roleRefusal(String reason) => switch (reason) {
-    'owner_active' => 'The owner was active in the last 30 days.',
-    'election_wait' =>
-      'Votes open 7 days after the election started on this device.',
-    'stale_owner_observation' || 'missing_election_observation' =>
-      'This device has not watched this group long enough to vote yet.',
-    'not_elector' => 'Only the electing admins can do this.',
-    'already_voted' => 'You have already voted.',
-    'transfer_first' => 'The owner must transfer ownership first.',
-    'commit_pending' => 'Another change is still being sent. Try again.',
-    'hierarchy' ||
-    'notAllowed' ||
-    'not_owner' => 'Your role does not allow this.',
-    _ => 'This role change is not allowed.',
-  };
+        'owner_active' => 'The owner was active in the last 30 days.',
+        'election_wait' =>
+          'Votes open 7 days after the election started on this device.',
+        'stale_owner_observation' ||
+        'missing_election_observation' =>
+          'This device has not watched this group long enough to vote yet.',
+        'not_elector' => 'Only the electing admins can do this.',
+        'already_voted' => 'You have already voted.',
+        'transfer_first' => 'The owner must transfer ownership first.',
+        'commit_pending' => 'Another change is still being sent. Try again.',
+        'hierarchy' ||
+        'notAllowed' ||
+        'not_owner' =>
+          'Your role does not allow this.',
+        _ => 'This role change is not allowed.',
+      };
 
   /// The server's role row for [accountId] in [conversationId]'s record
   /// group: a group's own member route, or for a community's shared group the
@@ -117,8 +117,7 @@ extension RoleActions on AppState {
   ) {
     final group = recordGroupFor(conversationId)!;
     final conversation = conversations.where((c) => c.id == group).firstOrNull;
-    final communityId =
-        conversation?.communityId ??
+    final communityId = conversation?.communityId ??
         communities
             .where((c) => c.sharedConversationId == group)
             .firstOrNull
@@ -146,22 +145,24 @@ extension RoleActions on AppState {
     String conversationId,
     String accountId,
     BuiltInRole role,
-  ) => _roleCommand(
-    conversationId,
-    (commands, _, __) => commands.setRole(accountId, role),
-    server: (current, client) =>
-        _serverRole(current, client, conversationId, accountId, role.name),
-  );
+  ) =>
+      _roleCommand(
+        conversationId,
+        (commands, _, __) => commands.setRole(accountId, role),
+        server: (current, client) =>
+            _serverRole(current, client, conversationId, accountId, role.name),
+      );
 
   /// Marks an admin as one the owner chose (an elector, D81), or not.
   Future<bool> setElector(
     String conversationId,
     String accountId,
     bool enabled,
-  ) => _roleCommand(
-    conversationId,
-    (commands, _, __) => commands.setElector(accountId, enabled),
-  );
+  ) =>
+      _roleCommand(
+        conversationId,
+        (commands, _, __) => commands.setElector(accountId, enabled),
+      );
 
   /// The owner hands the group to a current admin and becomes an admin.
   Future<bool> transferOwnership(String conversationId, String adminId) =>
@@ -269,10 +270,10 @@ extension RoleActions on AppState {
       if (candidate == null) continue;
       final communityId = conversation.isCommunityShared
           ? (conversation.communityId ??
-                communities
-                    .where((c) => c.sharedConversationId == id)
-                    .firstOrNull
-                    ?.id)
+              communities
+                  .where((c) => c.sharedConversationId == id)
+                  .firstOrNull
+                  ?.id)
           : null;
       if (conversation.isCommunityShared && communityId == null) continue;
       try {
@@ -295,9 +296,9 @@ extension RoleActions on AppState {
 
   /// The owner's cancel, or a snapshot member's close.
   Future<bool> closeOwnerElection(String conversationId) => _roleCommand(
-    conversationId,
-    (commands, _, __) => commands.closeElection(),
-  );
+        conversationId,
+        (commands, _, __) => commands.closeElection(),
+      );
 
   /// C2 in the record: "only admins post" for a group.
   Future<void> _recordPosting(String conversationId, bool adminsOnly) async {
@@ -362,8 +363,7 @@ extension RoleActions on AppState {
     String? channelId;
     final conversation = conversations.where((c) => c.id == group).firstOrNull;
     if (conversation != null && conversation.isCommunityShared) {
-      channelId =
-          _selectedChannels[group] ??
+      channelId = _selectedChannels[group] ??
           channelsByCommunity[conversation.communityId]
               ?.where((channel) => channel.conversationId == group)
               .firstOrNull

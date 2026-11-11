@@ -41,15 +41,20 @@ const Set<AppPayloadType> restrictedPostTypes = <AppPayloadType>{
 ///   [restrictedPostTypes], and in a shared community group `classify`
 ///   already refuses any other payload without a channel.
 /// - Otherwise: restricted where the record or the server says so, and the
-///   sender's role (from the record) is below admin.
+///   sender's role (from the record) is below admin, or its leaf is one its
+///   account's approved-device list removed ([senderRemoved], owner
+///   decision B: a stolen phone keeps no posting power).
 bool shouldDropRestrictedPost({
   required GovernanceState? record,
   required String sender,
   required String? channelId,
   required bool serverRestricts,
+  bool senderRemoved = false,
 }) {
   if (record == null) return false;
   final restricted =
       record.isRestricted(channelId: channelId) || serverRestricts;
-  return restricted && record.rankOf(sender) < BuiltInRole.admin.rank;
+  // Owner decision B: a leaf its account's list removed posts as a member.
+  return restricted &&
+      (senderRemoved || record.rankOf(sender) < BuiltInRole.admin.rank);
 }

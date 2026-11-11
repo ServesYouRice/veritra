@@ -87,7 +87,8 @@ const Duration electionWait = Duration(days: 7);
 bool mayOpenElectionNow({
   required DateTime now,
   required DateTime lastOwnerActivity,
-}) => now.difference(lastOwnerActivity) >= ownerInactivityWait;
+}) =>
+    now.difference(lastOwnerActivity) >= ownerInactivityWait;
 
 /// Local clock rule: may this app vote (or, in a claim, take ownership) now?
 /// [openedSeen] is when this app saw the election open.
@@ -109,8 +110,8 @@ class Election {
     required this.opened,
     required Set<String> electorate,
     Map<String, String> votes = const {},
-  }) : electorate = Set.unmodifiable(electorate),
-       votes = Map.unmodifiable(votes);
+  })  : electorate = Set.unmodifiable(electorate),
+        votes = Map.unmodifiable(votes);
 
   /// The record `rev` that opened it.
   final int opened;
@@ -164,21 +165,21 @@ class GovernanceState {
     this.election,
     Map<String, int> joined = const {},
     Map<String, MemberTimeout> timeouts = const {},
-  }) : admins = Map.unmodifiable(admins),
-       moderators = Set.unmodifiable(moderators),
-       announcementChannels = Set.unmodifiable(announcementChannels),
-       electors = Set.unmodifiable(electors),
-       joined = Map.unmodifiable(joined),
-       timeouts = Map.unmodifiable(timeouts);
+  })  : admins = Map.unmodifiable(admins),
+        moderators = Set.unmodifiable(moderators),
+        announcementChannels = Set.unmodifiable(announcementChannels),
+        electors = Set.unmodifiable(electors),
+        joined = Map.unmodifiable(joined),
+        timeouts = Map.unmodifiable(timeouts);
 
   /// The first state, written when the creator makes the MLS group: the
   /// creator owns it, nobody else holds a role, nothing is restricted.
   factory GovernanceState.genesis(String creator) => GovernanceState(
-    rev: 0,
-    owner: creator,
-    ownerRev: 0,
-    joined: {creator: 0},
-  );
+        rev: 0,
+        owner: creator,
+        ownerRev: 0,
+        joined: {creator: 0},
+      );
 
   /// Previous + 1 on every written change. A pruning at a removal keeps it.
   final int rev;
@@ -247,19 +248,20 @@ class GovernanceState {
     bool clearElection = false,
     Map<String, int>? joined,
     Map<String, MemberTimeout>? timeouts,
-  }) => GovernanceState(
-    rev: rev ?? this.rev,
-    owner: clearOwner ? null : (owner ?? this.owner),
-    ownerRev: ownerRev ?? this.ownerRev,
-    admins: admins ?? this.admins,
-    moderators: moderators ?? this.moderators,
-    adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
-    announcementChannels: announcementChannels ?? this.announcementChannels,
-    electors: electors ?? this.electors,
-    election: clearElection ? null : (election ?? this.election),
-    joined: joined ?? this.joined,
-    timeouts: timeouts ?? this.timeouts,
-  );
+  }) =>
+      GovernanceState(
+        rev: rev ?? this.rev,
+        owner: clearOwner ? null : (owner ?? this.owner),
+        ownerRev: ownerRev ?? this.ownerRev,
+        admins: admins ?? this.admins,
+        moderators: moderators ?? this.moderators,
+        adminsOnlyPosting: adminsOnlyPosting ?? this.adminsOnlyPosting,
+        announcementChannels: announcementChannels ?? this.announcementChannels,
+        electors: electors ?? this.electors,
+        election: clearElection ? null : (election ?? this.election),
+        joined: joined ?? this.joined,
+        timeouts: timeouts ?? this.timeouts,
+      );
 
   /// The account's role. Meaningful only for an account in the MLS roster.
   BuiltInRole roleOf(String account) {
@@ -335,18 +337,18 @@ class GovernanceState {
 
   @override
   int get hashCode => Object.hash(
-    rev,
-    owner,
-    ownerRev,
-    admins.length,
-    moderators.length,
-    adminsOnlyPosting,
-    announcementChannels.length,
-    electors.length,
-    election,
-    joined.length,
-    timeouts.length,
-  );
+        rev,
+        owner,
+        ownerRev,
+        admins.length,
+        moderators.length,
+        adminsOnlyPosting,
+        announcementChannels.length,
+        electors.length,
+        election,
+        joined.length,
+        timeouts.length,
+      );
 }
 
 /// Why a change was refused. Stable codes for logs and tests.
@@ -446,9 +448,8 @@ GovernanceCheck validateTransition(
   }
   // An admin keeps its seniority; a new admin starts at this rev.
   for (final e in next.admins.entries) {
-    final since = prev.roleOf(e.key) == BuiltInRole.admin
-        ? prev.admins[e.key]
-        : next.rev;
+    final since =
+        prev.roleOf(e.key) == BuiltInRole.admin ? prev.admins[e.key] : next.rev;
     if (e.value != since) return no(GovernanceReject.badShape);
   }
   // `joined` is written once, when an account is added, and only a removal
@@ -560,16 +561,14 @@ GovernanceCheck validateTransition(
   // forced cancel are not the owner's decisions and leave it. Else a rogue
   // admin would stamp it itself and make its stand-ins old enough to vote, or
   // an automatic owner commit would do it for the rogue.
-  final ownChange =
-      transfer ||
+  final ownChange = transfer ||
       !_mapEq(next.admins, prev.admins) ||
       !_setEq(next.moderators, prev.moderators) ||
       !_setEq(next.electors, prev.electors) ||
       next.adminsOnlyPosting != prev.adminsOnlyPosting ||
       !_setEq(next.announcementChannels, prev.announcementChannels);
-  final expectedOwnerRev = handover || (ownerActs && ownChange)
-      ? next.rev
-      : prev.ownerRev;
+  final expectedOwnerRev =
+      handover || (ownerActs && ownChange) ? next.rev : prev.ownerRev;
   if (next.ownerRev != expectedOwnerRev) return no(GovernanceReject.badShape);
 
   // Role changes. A won election moves exactly the roles `_checkWin` fixed.
@@ -637,8 +636,7 @@ GovernanceReject? _checkWin(
   final old = prev.owner;
   final admins = {...prev.admins}..remove(winner);
   if (old != null && members.contains(old)) admins[old] = next.rev;
-  final ok =
-      _mapEq(next.admins, admins) &&
+  final ok = _mapEq(next.admins, admins) &&
       _mapEq(next.timeouts, prev.timeouts) &&
       _setEq(next.electors, prev.electors.difference({winner})) &&
       _setEq(next.moderators, prev.moderators.difference({winner})) &&
@@ -739,7 +737,8 @@ GovernanceState requiredRecord(
   String committer, {
   required Set<String> before,
   required Set<String> after,
-}) => _required(prev, committer, before: before, after: after).record;
+}) =>
+    _required(prev, committer, before: before, after: after).record;
 
 ({GovernanceState base, GovernanceState record, bool cancel}) _required(
   GovernanceState prev,
@@ -796,8 +795,8 @@ GovernanceCheck validateCommit(
       cancel
           ? GovernanceReject.election
           : base != prev
-          ? GovernanceReject.notPruned
-          : GovernanceReject.badRev,
+              ? GovernanceReject.notPruned
+              : GovernanceReject.badRev,
     );
   }
   return validateTransition(

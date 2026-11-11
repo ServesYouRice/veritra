@@ -470,11 +470,11 @@ Widget _app(Widget child) => MaterialApp(home: child);
 
 AppState _state(ApiClient api) {
   return AppState(
-      apiClientFactory: (_) => api,
-      cryptoService: TestOnlyCryptoService(),
-      localStore: MemoryLocalStore(),
-      syncServiceFactory: (_, __) => _SyncService(),
-    )
+    apiClientFactory: (_) => api,
+    cryptoService: TestOnlyCryptoService(),
+    localStore: MemoryLocalStore(),
+    syncServiceFactory: (_, __) => _SyncService(),
+  )
     ..api = api
     ..session = const Session(
       baseUrl: _origin,
@@ -490,7 +490,7 @@ class _Api extends ApiClient {
 
   final List<String> createdLocators = <String>[];
   final List<({List<int> signingKey, String tag, List<int> signature})>
-  createdBindings =
+      createdBindings =
       <({List<int> signingKey, String tag, List<int> signature})>[];
   MembershipInviteLink? link;
   final List<String> previewed = <String>[];
@@ -538,7 +538,8 @@ class _Api extends ApiClient {
     String token,
     InviteTargetKind kind,
     String targetId,
-  ) async => List<MembershipInvite>.of(invites);
+  ) async =>
+      List<MembershipInvite>.of(invites);
 
   @override
   Future<InvitePreview> previewMembershipInvite(
@@ -581,7 +582,8 @@ class _Api extends ApiClient {
     String token,
     InviteTargetKind kind,
     String targetId,
-  ) async => List<JoinRequest>.of(pending);
+  ) async =>
+      List<JoinRequest>.of(pending);
 
   @override
   Future<JoinRequest> decideJoinRequest(
@@ -599,19 +601,20 @@ class _Api extends ApiClient {
   Future<List<ConversationMember>> communityMembers(
     String token,
     String communityId,
-  ) async => <ConversationMember>[
-    ConversationMember(
-      accountId: 'acct_owner',
-      role: 'owner',
-      username: 'owner',
-    ),
-    if (!gone.contains('acct_alice'))
-      ConversationMember(
-        accountId: 'acct_alice',
-        role: 'member',
-        username: 'alice',
-      ),
-  ];
+  ) async =>
+      <ConversationMember>[
+        ConversationMember(
+          accountId: 'acct_owner',
+          role: 'owner',
+          username: 'owner',
+        ),
+        if (!gone.contains('acct_alice'))
+          ConversationMember(
+            accountId: 'acct_alice',
+            role: 'member',
+            username: 'alice',
+          ),
+      ];
 
   final List<String> moderation = <String>[];
   bool bobBanned = true;
@@ -684,39 +687,42 @@ class _Api extends ApiClient {
   Future<List<CommunityBan>> communityBans(
     String token,
     String communityId,
-  ) async => <CommunityBan>[
-    if (bobBanned)
-      CommunityBan(
-        accountId: 'acct_bob',
-        username: 'bob',
-        bannedBy: 'acct_owner',
-        createdAt: DateTime.utc(2026, 11, 7),
-      ),
-  ];
+  ) async =>
+      <CommunityBan>[
+        if (bobBanned)
+          CommunityBan(
+            accountId: 'acct_bob',
+            username: 'bob',
+            bannedBy: 'acct_owner',
+            createdAt: DateTime.utc(2026, 11, 7),
+          ),
+      ];
 
   @override
   Future<ModerationState> moderationState(
     String token,
     String communityId,
-  ) async => const ModerationState(
-    invitesPausedUntil: null,
-    slowModeSeconds: <String, int>{'chan_1': 30},
-  );
+  ) async =>
+      const ModerationState(
+        invitesPausedUntil: null,
+        slowModeSeconds: <String, int>{'chan_1': 30},
+      );
 
   @override
   Future<List<ModerationEvent>> moderationEvents(
     String token,
     String communityId,
-  ) async => <ModerationEvent>[
-    ModerationEvent(
-      id: 'mod_1',
-      actor: 'acct_owner',
-      target: 'acct_bob',
-      channelId: null,
-      action: 'ban',
-      createdAt: DateTime.utc(2026, 11, 7),
-    ),
-  ];
+  ) async =>
+      <ModerationEvent>[
+        ModerationEvent(
+          id: 'mod_1',
+          actor: 'acct_owner',
+          target: 'acct_bob',
+          channelId: null,
+          action: 'ban',
+          createdAt: DateTime.utc(2026, 11, 7),
+        ),
+      ];
 
   @override
   Future<CommunityRemoval> removeCommunityMember(
