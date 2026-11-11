@@ -312,6 +312,24 @@ class FakeCrypto implements CallGroupCrypto {
       _apply(s(commit));
 
   @override
+  Uint8List encryptApplication(Uint8List groupId, Uint8List plaintext) =>
+      b('A;$_epoch;${self.id};${base64Encode(plaintext)}');
+
+  @override
+  Uint8List decryptApplication(
+      Uint8List groupId, Uint8List ciphertext, CallMember sender) {
+    final p = s(ciphertext).split(';');
+    if (p.length != 4 ||
+        p[0] != 'A' ||
+        int.parse(p[1]) != _epoch ||
+        p[2] != sender.id ||
+        !_members.any((m) => m.id == sender.id)) {
+      throw StateError('does not decrypt');
+    }
+    return Uint8List.fromList(base64Decode(p[3]));
+  }
+
+  @override
   Uint8List mediaKey(
       Uint8List groupId, String callId, CallMember sender, int stream) {
     keyRequests.add('$_epoch/${sender.id}/$stream');

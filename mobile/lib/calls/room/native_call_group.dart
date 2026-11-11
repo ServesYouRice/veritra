@@ -42,9 +42,9 @@ CallMember _member(LeafPair pair) => CallMember(
 
 /// [CallGroupCrypto] on the native MLS core. The call group is created,
 /// joined and dropped through [device], and [drop] deletes it. The core
-/// does not keep a call group out of [device]'s seals, so this adapter must
-/// not be given the messaging device until it does (D70; design, "Not
-/// built").
+/// does not keep a call group out of [device]'s seals, so [device] must never
+/// be the messaging device: it is a scratch copy of the committed state that
+/// is never sealed ([ScratchCallGroupHandle]; D70).
 ///
 /// Known limits, tracked in the design's build status: the call-only
 /// KeyPackage lives in the device's provider storage until the next
@@ -183,6 +183,16 @@ class NativeCallGroupCrypto implements CallGroupCrypto {
       device.groupEpoch(_groupName(groupId)).epoch;
 
   @override
+  Uint8List encryptApplication(Uint8List groupId, Uint8List plaintext) =>
+      Uint8List.fromList(device.encrypt(_groupName(groupId), plaintext));
+
+  @override
+  Uint8List decryptApplication(
+          Uint8List groupId, Uint8List ciphertext, CallMember sender) =>
+      Uint8List.fromList(device.decrypt(_groupName(groupId), ciphertext,
+          senderAccountId: sender.accountId, senderDeviceId: sender.deviceId));
+
+  @override
   Uint8List mediaKey(
       Uint8List groupId, String callId, CallMember sender, int stream) {
     return device.b6MediaKey(
@@ -202,14 +212,22 @@ class NativeCallGroupCrypto implements CallGroupCrypto {
 
 /// [ParentGroupView] on the parent conversation's native MLS group.
 class NativeParentGroupView implements ParentGroupView {
-  NativeParentGroupView(this.device);
-  final NativeCryptoDevice device;
+  NativeParentGroupView(NativeCryptoDevice device) : _device = (() => device);
+
+  /// Reads the device [current] returns at each call, so a replaced or
+  /// closed handle is never used; null lists nobody (fail closed: no one
+  /// can be added).
+  NativeParentGroupView.live(NativeCryptoDevice? Function() current)
+      : _device = current;
+  final NativeCryptoDevice? Function() _device;
 
   @override
   List<CallMember> members(String conversationId) {
+    final device = _device();
+    if (device == null) return const [];
     try {
       return device.groupMembers(conversationId).map(_member).toList();
-    } on NativeCryptoException {
+    } catch (_) {
       return const [];
     }
   }
@@ -233,4 +251,28 @@ bool _sameBytes(List<int> a, List<int> b) {
     diff |= a[i] ^ b[i];
   }
   return diff == 0;
+}
+
+/// A [CallGroupHandle] on a scratch device restored from the committed
+/// state: the same identity and signing key as the messaging device, so its
+/// leaves match the parent group, but nothing it holds is ever sealed,
+/// stored, backed up or transferred. Closing it forgets the call group and
+/// the call-only KeyPackage together.
+class ScratchCallGroupHandle implements CallGroupHandle {
+  ScratchCallGroupHandle(this._device, NativeCryptoBindings bindings)
+      : crypto = NativeCallGroupCrypto(_device, bindings);
+  final NativeCryptoDevice _device;
+  bool _closed = false;
+
+  @override
+  final NativeCallGroupCrypto crypto;
+
+  bool get closed => _closed;
+
+  @override
+  void close() {
+    if (_closed) return;
+    _closed = true;
+    _device.close();
+  }
 }

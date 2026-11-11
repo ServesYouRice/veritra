@@ -143,13 +143,38 @@ void main() {
           reason: 'per call');
       expect(() => key(aliceCall, bobMember, 4), throwsArgumentError);
 
+      // Bob leaves and rejoins: his old leaf goes in the same commit that
+      // adds his new one, so he is in the group once, with fresh keys.
+      bobCall.drop(groupId);
+      final again = bobCall.makeJoinOffer(groupId, 'nonce-2', 1800000060);
+      final rejoin = aliceCall.stageCommit(groupId,
+          adds: [(keyPackage: again.keyPackage, member: bobMember)],
+          removes: [bobMember]);
+      aliceCall.mergeStaged(groupId);
+      final rejoined = bobCall.joinWithWelcome(groupId, rejoin.welcome!)!;
+      expect(rejoined.map((m) => m.id).toList()..sort(),
+          ['acct_alice/dev_alice', 'acct_bob/dev_bob']);
+      expect(aliceCall.members(groupId), hasLength(2));
+      expect(key(bobCall, bobMember, 0), key(aliceCall, bobMember, 0));
+      expect(key(aliceCall, bobMember, 0), isNot(k1));
+
+      // A sealed application message (the track announcement) opens only
+      // for its real sender.
+      final note = Uint8List.fromList(utf8.encode('tracks'));
+      final sealed = bobCall.encryptApplication(groupId, note);
+      expect(aliceCall.decryptApplication(groupId, sealed, bobMember), note);
+      final forged = bobCall.encryptApplication(groupId, note);
+      expect(() => aliceCall.decryptApplication(groupId, forged, aliceMember),
+          throwsA(anything),
+          reason: 'the MLS sender must be the member named');
+
       // Removing bob: a new epoch with a new key; bob cannot derive it.
       final kAliceEpoch1 = key(aliceCall, aliceMember, 0);
       final removal = aliceCall.stageCommit(groupId, removes: [bobMember]);
       aliceCall.mergeStaged(groupId);
       final k2 = key(aliceCall, aliceMember, 0);
       expect(k2, isNot(kAliceEpoch1));
-      expect(aliceCall.currentEpoch(groupId), 2);
+      expect(aliceCall.currentEpoch(groupId), 3, reason: 'after the rejoin');
       final result = bobCall.processCommit(groupId, removal.commit);
       expect(result.removedSelf, isTrue);
       expect(() => key(aliceCall, bobMember, 0), throwsA(anything),

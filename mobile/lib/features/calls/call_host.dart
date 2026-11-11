@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,9 +6,15 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 import '../../calls/call_controller.dart';
 import '../../calls/call_service.dart';
+import '../../calls/room/livekit_sfu.dart';
+import '../../calls/room/room_api.dart';
+import '../../calls/room/room_engine.dart';
+import '../../calls/room/room_factory.dart';
+import '../../calls/room/room_ports.dart';
 import '../../core/app_state.dart';
 import '../../crypto/crypto_service.dart';
 import '../../l10n/l10n.dart';
+import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../chat/chat_list_screen.dart' show conversationTitle;
 
@@ -28,6 +35,7 @@ class CallHost extends StatefulWidget {
 class _CallHostState extends State<CallHost> {
   NativeCallService? _service;
   CallController? _controller;
+  RoomCallFactory? _rooms;
   String? _token;
 
   @override
@@ -77,7 +85,36 @@ class _CallHostState extends State<CallHost> {
     _service = service;
     _controller = controller;
     state.callController.value = controller;
+    // Group calls (B6): only with a crypto service that can hold a call
+    // group apart from its sealed state.
+    final accountId = session.accountId;
+    final deviceId = session.deviceId;
+    if (crypto is RoomCryptoSource && accountId != null && deviceId != null) {
+      final String bearer = token;
+      final rooms = _rooms = RoomCallFactory(
+        api: ApiClientRoomApi(api, () => bearer),
+        crypto: crypto as RoomCryptoSource,
+        selfAccountId: accountId,
+        selfDeviceId: deviceId,
+        rosterChanges: state,
+        connectSfu: LiveKitSfuConnection.new,
+      );
+      state.roomSession.value =
+          RoomSession(openCall: rooms.open, nameFor: _nameFor);
+    }
     if (mounted) setState(() {});
+  }
+
+  String _nameFor(String accountId) {
+    final state = widget.state;
+    final username = state.conversations
+        .expand((c) => state.membersFor(c.id))
+        .where((m) => m.accountId == accountId)
+        .firstOrNull
+        ?.username;
+    final account = accountLabel(accountId, username);
+    final profile = state.profileNameOf(accountId);
+    return profile == null ? account : '$profile ($account)';
   }
 
   void _teardown() {
@@ -86,6 +123,11 @@ class _CallHostState extends State<CallHost> {
     _controller = null;
     _service = null;
     _token = null;
+    final rooms = _rooms;
+    _rooms = null;
+    widget.state.roomSession.value = null;
+    // A call never outlives the session that opened it.
+    if (rooms != null) unawaited(rooms.closeAll());
     if (widget.state.callController.value == controller) {
       widget.state.callController.value = null;
     }

@@ -1,6 +1,9 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/calls/room/native_call_group.dart'
+    show ScratchCallGroupHandle;
 import 'package:private_messenger/core/errors.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
@@ -558,6 +561,55 @@ void main() {
     expect(after.where((m) => m.kind == LocalMessageKind.unverifiable),
         hasLength(1));
     expect(after.map((m) => m.body), contains('next'));
+  }, skip: skip);
+
+  test('a B6 call group lives on a scratch handle and is never sealed (D70)',
+      () async {
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    final groupId = Uint8List.fromList(List<int>.generate(32, (i) => 200 - i));
+
+    final handle = await alice.service.openCallGroup();
+    handle.crypto.createGroup(groupId);
+    final leaves = handle.crypto.members(groupId);
+    expect(leaves.single.id, 'acct_alice/dev_alice');
+    // The scratch leaf is the messaging device's own: it matches the parent.
+    final parent = alice.service.parentGroups;
+    expect(parent.hasMember('conv_1', leaves.single), isTrue);
+    expect(parent.members('conv_1').map((m) => m.id).toSet(),
+        {'acct_alice/dev_alice', 'acct_bob/dev_bob'});
+    expect(parent.members('conv_unknown'), isEmpty);
+
+    // The messaging device seals a new state while the call is open.
+    final sent = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'during call'});
+    await bob.receive(alice, sent);
+
+    // A fresh service restores exactly what was stored: the conversation,
+    // never the call group.
+    final restarted =
+        TestNativeCryptoService(bindings: bindings, localStore: alice.store);
+    await restarted.activateSession(const Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: 'acct_alice',
+      deviceId: 'dev_alice',
+    ));
+    final copy = await restarted.openCallGroup();
+    expect(() => copy.crypto.members(groupId), throwsA(anything),
+        reason: 'the call group never reached sealed state');
+    expect(restarted.parentGroups.members('conv_1'), hasLength(2));
+    copy.close();
+    await restarted.dispose();
+
+    // The live handle still works, and ending the session closes it.
+    expect(handle.crypto.members(groupId), hasLength(1));
+    await alice.service.dispose();
+    expect((handle as ScratchCallGroupHandle).closed, isTrue);
+    expect(alice.service.parentGroups.members('conv_1'), isEmpty,
+        reason: 'no active device lists nobody');
   }, skip: skip);
 }
 

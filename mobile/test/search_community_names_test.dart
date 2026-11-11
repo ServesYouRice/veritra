@@ -243,16 +243,14 @@ void main() {
     expect(find.text('club'), findsWidgets, reason: 'the account');
   });
 
-  testWidgets('a leading @ is dropped from the account lookup',
-      (tester) async {
+  testWidgets('a leading @ is dropped from the account lookup', (tester) async {
     final state = await _openSearch(tester);
     await _submit(tester, '@club');
     expect(state.serverQueries, <String>['club']);
     expect(find.text('club'), findsWidgets, reason: 'the account');
   });
 
-  testWidgets('a bare @ or a multi-word submit sends nothing',
-      (tester) async {
+  testWidgets('a bare @ or a multi-word submit sends nothing', (tester) async {
     final state = await _openSearch(tester);
     await _submit(tester, '@');
     await _submit(tester, 'chess club');
@@ -260,8 +258,7 @@ void main() {
     expect(state.serverQueries, isEmpty);
   });
 
-  testWidgets('typing after a submit drops the account result',
-      (tester) async {
+  testWidgets('typing after a submit drops the account result', (tester) async {
     final state = await _openSearch(tester);
     await _submit(tester, 'club');
     expect(find.text('ACCOUNT'), findsOneWidget);

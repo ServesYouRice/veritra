@@ -1,6 +1,6 @@
 # B6: group calls and voice rooms
 
-**Status: S2 to S6 built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7 and the media transport are not. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
+**Status: S2 to S6 and the voice media transport built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7, camera and screen share are not. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
 had one independent review (key schedule, frame encryption, threats); its
 five blocking points are fixed here. Needs the independent crypto review
 before S2 lands.
@@ -422,15 +422,59 @@ committer refuses an expired offer (receivers keep 120 s of slack). The
 server refuses room reads, offers and commits from a seat whose account is
 no longer a member of the conversation; leaving stays open.
 
-Not built: the media transport (the SFU client, mute and screen share
-controls behind `RoomMediaControls`, and the frame cryptor key provider
-behind `FrameKeySink`; needs the `livekit_client` package and a licence
-review); the production factory that sets `AppState.roomSession` in
-`main_demo.dart`; the call-group context extension binding `call_id` (core
-change); S1 spike and S7 evidence; Android foreground services and iOS
-broadcast extension. **Before the factory is wired:** a call group must
-stay out of sealed state (D70), K1 backups and K2 transfers. Today it sits
-in the same device provider as the conversations, so the next
-`seal_changes` while a call is open would write it; the core needs to keep
-call groups out of seals (or hold them in a separate handle) first. Needs
-the independent crypto review before S2 lands.
+Media transport and demo factory (2026-11-11, branch `feat/b6-rest`):
+
+- **`livekit_client` 2.13.2** (Apache-2.0) after a licence review of it and
+  every new transitive package (`THIRD_PARTY_NOTICES.md`). Its own E2EE
+  manager is not used (it keys by SFU names, one key per participant).
+- **Separate handle (D70).** Each call opens a scratch device restored from
+  the committed MLS state (`NativeCryptoService.openCallGroup`, a
+  `RoomCryptoSource`). It has the same identity and signing key, so its
+  leaves match the parent group, but nothing ever seals it: the call group
+  and the call-only KeyPackage never reach sealed state, K1 backups or K2
+  transfers, and both go when the call closes. Handles close on sign-out,
+  identity change and dispose. The parent view reads the live messaging
+  device at each call (null lists nobody). A real-MLS test restores from
+  storage after a seal during a call and finds no call group.
+- **Frame keys** (`WebRtcFrameKeys`): libwebrtc's key provider with exactly
+  discard on, no magic bytes, per-participant keys, HKDF (salt
+  `veritra-b6-frame-v1`), ratchet window 0 and a ring of 16; a call is
+  refused before the join if the provider cannot be made. "Removed" keys
+  are overwritten with random bytes (the provider has no delete).
+- **Sending** (`RoomMediaSession`): the voice track is started and disabled,
+  published, its sender cryptor attached and enabled, the key index set,
+  and only then enabled. Any refusal leaves the call (`cryptorNotFailClosed`).
+  DTX and RED off, 32 kbit/s cap (O4).
+- **Receiving binds by MLS, never by SFU names.** Every subscribed track gets
+  a receiver cryptor at once, under a placeholder id with no key, and stays
+  silent. Each device seals a track announcement (`{sfu identity, track sid
+  -> slot}`) as an MLS application message in the call group and sends it
+  over the SFU data channel; the envelope carries the epoch and the sender's
+  roster position, never an account or device id. A receiver binds a track
+  to `account/device:slot` only when the announcement opens for that MLS
+  sender, names the connection that publishes the track, and the sender is
+  in the roster; otherwise the frames are dropped. Announcements repeat each
+  epoch, and a member heard for the first time in an epoch is answered once
+  (it may have been joining). The SFU token now allows data
+  (`canPublishData`) for this.
+- **Factory** (`RoomCallFactory`, wired in `CallHost` for demo builds): a 2 s
+  poll and a refresh on every parent roster change, so a member removed from
+  the conversation is removed from the call; calls close with the session.
+- **Rejoin.** A device whose new seat waits with an offer while its old leaf
+  is still in the group is removed and re-added in one commit.
+- **Server review fixes.** Only a seat already in the call group may commit;
+  `added_device_ids` marks only seats with an unexpired offer; offers expire
+  within 60 s; a session without a device cannot join a room.
+
+Not built: camera and screen share (`canShareScreen` is false; the generic
+receive path handles every slot); the call-group context extension binding
+`call_id` (core change); S1 spike and S7 evidence; Android foreground
+services and iOS broadcast extension; the core keeping
+`pm_crypto_group_b6_media_key` to call groups (would need an ABI change).
+Known gaps to check in S1: a published track sends clear silence until its
+cryptor is attached (no content); a remote track can play for the moment
+between subscription and the cryptor attaching; constant bitrate and the
+audio-level header extension cannot be set through `livekit_client` (O4 is
+only partly met). Android and iOS builds of the new plugin are not checked
+here. Needs the independent crypto review before S2 lands; the scratch
+handle, the announcement envelope and the server fixes need it too.
