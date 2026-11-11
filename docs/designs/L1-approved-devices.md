@@ -29,6 +29,15 @@ to rename existing working structures. No dependencies or release gates change.
 
 ## Verification and remaining work
 
+### Imported-chain continuity (2026-11-11 review)
+
+Whole-chain verification proves internal consistency, not permission to
+replace an existing trust anchor. When importing a chain into an account
+that already has a pin, require the exact pinned statement at its version.
+Reject shorter chains, alternate genesis chains, forks and sticky conflicts.
+An identical head is a no-op; a valid extension still uses the store's
+compare-and-swap write. Test these rules with real native signatures.
+
 ### Locally signed genesis (2026-11-11)
 
 After setup or registration succeeds, pin the genesis this device signed

@@ -567,6 +567,63 @@ void main() {
   }, skip: skip);
 
   group('own versions', () {
+    test('chain import preserves its pinned prefix and is idempotent',
+        () async {
+      final fork = forkOf();
+      await pins.pinChain('acct_fork', [fork.genesis],
+          expectedHead: fork.genesis);
+      final extended = await pins.pinChain(
+          'acct_fork', [fork.genesis, fork.left],
+          expectedHead: fork.left);
+      expect(extended.version, 2);
+      later();
+      final same = await pins.pinChain('acct_fork', [fork.genesis, fork.left],
+          expectedHead: fork.left);
+      expect(same.checkedAt, extended.checkedAt);
+      for (final chain in [
+        [fork.genesis],
+        [fork.genesis, fork.right],
+      ]) {
+        await expectLater(
+            pins.pinChain('acct_fork', chain, expectedHead: chain.last),
+            throwsStateError);
+        expect((await store.loadDeviceListPin('acct_fork'))!.headStatement,
+            fork.left);
+      }
+    });
+
+    test('chain import cannot replace a pinned genesis with another identity',
+        () async {
+      final original = forkOf();
+      final other = forkOf(); // Fresh keys for the same account and device IDs.
+      await pins.pinChain('acct_fork', [original.genesis],
+          expectedHead: original.genesis);
+      for (final chain in [
+        [other.genesis],
+        [other.genesis, other.left],
+      ]) {
+        await expectLater(
+            pins.pinChain('acct_fork', chain, expectedHead: chain.last),
+            throwsStateError);
+        expect((await store.loadDeviceListPin('acct_fork'))!.headStatement,
+            original.genesis);
+      }
+    });
+
+    test('chain import cannot clear a sticky conflict', () async {
+      final fork = forkOf();
+      server.chain = [fork.genesis, fork.left];
+      await pins.refresh('acct_fork');
+      server.chain = [fork.genesis, fork.right];
+      later();
+      expect((await pins.refresh('acct_fork')).state, DeviceListState.conflict);
+      await expectLater(
+          pins.pinChain('acct_fork', [fork.genesis, fork.left],
+              expectedHead: fork.left),
+          throwsStateError);
+      expect((await store.loadDeviceListPin('acct_fork'))!.conflict, isTrue);
+    });
+
     test('a device signs its genesis and an add; both pin forward', () async {
       final alice = bindings.createDevice('acct_own', 'dev_alice');
       final bob = bindings.createDevice('acct_own', 'dev_bob');

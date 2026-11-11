@@ -289,6 +289,16 @@ class DeviceListPins {
     }
     final pin = _verifyChain(accountId, statements);
     final stored = await store.loadDeviceListPin(accountId);
+    if (stored != null) {
+      // Importing an authenticated head is not permission to reset trust.
+      // Require the exact pinned prefix, including for same-height imports.
+      if (stored.conflict ||
+          statements.length < stored.version ||
+          !_same(statements[stored.version - 1], stored.headStatement)) {
+        throw StateError('device list chain disagrees with the existing pin');
+      }
+      if (pin.version == stored.version) return stored;
+    }
     if (!await store.saveDeviceListPin(pin, expectedVersion: stored?.version)) {
       throw StateError('device list pin changed meanwhile');
     }

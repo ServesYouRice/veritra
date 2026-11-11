@@ -457,6 +457,15 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 chain-import continuity review (2026-11-11):** a verified imported
+  chain must contain the exact existing pinned head before it can advance
+  that pin. An unrelated genesis or a signed fork cannot replace trust via
+  `pinChain`; conflicts remain sticky and identical imports are no-ops.
+  Native regressions cover replacement, forks, rollback and valid extension.
+  No ABI, schema, migration or release-gate change. The full package remains
+  incomplete, including durable enrollment anchors; see
+  [`review evidence`](../testing/evidence/L1-review.md).
+
 - **L1 local genesis anchor (2026-11-11):** setup and invitation registration
   pin their locally signed genesis without consulting the server first.
   Withholding the list or returning a failed read cannot discard this trust
