@@ -43,6 +43,7 @@ class CommunityInfoEvent {
     List<int>? key,
     this.revision,
     this.recordSha256,
+    this.seq,
   }) : key = key == null ? null : List<int>.unmodifiable(key);
 
   final CommunityInfoEventKind kind;
@@ -61,6 +62,24 @@ class CommunityInfoEvent {
   final int? revision;
   final String? recordSha256;
 
+  /// Arrival order, set by the store on read (null on a new event). Later
+  /// rows have larger numbers.
+  final int? seq;
+
+  CommunityInfoEvent _withSeq(int value) => CommunityInfoEvent(
+        kind: kind,
+        subjectKind: subjectKind,
+        subjectId: subjectId,
+        conversationId: conversationId,
+        senderAccountId: senderAccountId,
+        senderDeviceId: senderDeviceId,
+        keyId: keyId,
+        key: key,
+        revision: revision,
+        recordSha256: recordSha256,
+        seq: value,
+      );
+
   /// The row's identity: a repeat of the same key, announcement or request
   /// is one row.
   String get ident => switch (kind) {
@@ -69,7 +88,7 @@ class CommunityInfoEvent {
         CommunityInfoEventKind.update =>
           'u|$subjectKind|$subjectId|$conversationId|$senderAccountId|$revision|$recordSha256',
         CommunityInfoEventKind.keyRequest =>
-          'r|$subjectKind|$subjectId|$conversationId|$senderAccountId',
+          'r|$subjectKind|$subjectId|$conversationId|$senderAccountId|$senderDeviceId',
       };
 
   bool get isStorable =>
@@ -129,10 +148,21 @@ class AcceptedCommunityInfo {
 List<CommunityInfoEvent> addCommunityInfoEvent(
     List<CommunityInfoEvent> rows, CommunityInfoEvent event,
     {Set<String> protectedKeyIds = const <String>{}}) {
-  if (!event.isStorable || rows.any((r) => r.ident == event.ident)) {
-    return rows;
+  if (!event.isStorable) return rows;
+  // Numbers are never reused, as with SQLite's AUTOINCREMENT: taken before
+  // a repeated request's old row goes.
+  var top = 0;
+  for (final row in rows) {
+    if ((row.seq ?? 0) > top) top = row.seq!;
   }
-  final next = [...rows, event];
+  if (rows.any((r) => r.ident == event.ident)) {
+    // A repeated key request is a new request (a device asking again after
+    // missing a rotation): it moves to the end. Keys and announcements keep
+    // their first arrival.
+    if (event.kind != CommunityInfoEventKind.keyRequest) return rows;
+    rows = rows.where((r) => r.ident != event.ident).toList();
+  }
+  final next = [...rows, event._withSeq(top + 1)];
   final same = next
       .where((r) =>
           r.kind == event.kind &&
@@ -186,7 +216,7 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
     for (final event in events) {
       if (!event.isStorable) continue;
       await customStatement(
-          'INSERT OR IGNORE INTO local_info_events '
+          '${event.kind == CommunityInfoEventKind.keyRequest ? 'INSERT OR REPLACE' : 'INSERT OR IGNORE'} INTO local_info_events '
           '(ident, kind, subject_kind, subject_id, conversation_id, '
           'sender_account_id, sender_device_id, key_id, info_key, revision, '
           'record_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -246,9 +276,15 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
           key: row.readNullable<Uint8List>('info_key'),
           revision: row.readNullable<int>('revision'),
           recordSha256: row.readNullable<String>('record_sha256'),
+          seq: row.read<int>('seq'),
         ),
     ];
   }
+
+  /// Writes events outside any MLS commit: this device's own keys, which it
+  /// creates itself and never receives.
+  Future<void> writeCommunityInfoEvents(List<CommunityInfoEvent> events) =>
+      transaction(() => _writeCommunityInfoInTransaction(events));
 
   Future<AcceptedCommunityInfo?> readAcceptedCommunityInfo(
       String subjectKind, String subjectId) async {

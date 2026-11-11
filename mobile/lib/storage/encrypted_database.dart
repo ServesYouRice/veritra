@@ -2016,6 +2016,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     required String? draftText,
     required int maxEntries,
     List<MessageEffect> messageEffects = const <MessageEffect>[],
+    List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
   }) =>
@@ -2078,6 +2079,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           }
         }
         await _applyMessageEffects(messageEffects);
+        await _writeCommunityInfoInTransaction(communityInfo);
       });
 
   Future<void> commitLocalMlsState({

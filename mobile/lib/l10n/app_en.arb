@@ -385,6 +385,13 @@
   "@communityChannelCount": {"placeholders": {"count": {"type": "int", "format": "decimalPattern"}}},
   "communityNewChannel": "New channel",
   "communityNoChannelsHint": "Use + to create the first one.",
+  "communityPlaceholderName": "Community",
+  "channelPlaceholderName": "Channel",
+  "channelPrivatePlaceholderName": "Private channel",
+  "channelEditInfo": "Edit channel",
+  "channelTopic": "Topic",
+  "channelEditFailed": "Couldn't save the channel. Try again.",
+  "channelSave": "Save",
   "communityNotMember": "You are not a member yet",
 
   "backupIntro": "A backup holds this device's keys and message history, encrypted on this device. The server stores it but cannot read it. Restoring it on a new device needs the recovery code shown when you make it.",

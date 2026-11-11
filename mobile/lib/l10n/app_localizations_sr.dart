@@ -1018,6 +1018,27 @@ class AppLocalizationsSr extends AppLocalizations {
   String get communityNoChannelsHint => 'Користите + да направите први.';
 
   @override
+  String get communityPlaceholderName => 'Заједница';
+
+  @override
+  String get channelPlaceholderName => 'Канал';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Приватни канал';
+
+  @override
+  String get channelEditInfo => 'Уреди канал';
+
+  @override
+  String get channelTopic => 'Тема';
+
+  @override
+  String get channelEditFailed => 'Канал није сачуван. Покушајте поново.';
+
+  @override
+  String get channelSave => 'Сачувај';
+
+  @override
   String get communityNotMember => 'Још нисте члан';
 
   @override
@@ -4709,6 +4730,27 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get communityNoChannelsHint => 'Koristite + da napravite prvi.';
+
+  @override
+  String get communityPlaceholderName => 'Zajednica';
+
+  @override
+  String get channelPlaceholderName => 'Kanal';
+
+  @override
+  String get channelPrivatePlaceholderName => 'Privatni kanal';
+
+  @override
+  String get channelEditInfo => 'Uredi kanal';
+
+  @override
+  String get channelTopic => 'Tema';
+
+  @override
+  String get channelEditFailed => 'Kanal nije sačuvan. Pokušajte ponovo.';
+
+  @override
+  String get channelSave => 'Sačuvaj';
 
   @override
   String get communityNotMember => 'Još niste član';

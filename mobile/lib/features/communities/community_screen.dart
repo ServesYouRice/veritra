@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../crypto/community_info_codec.dart' show infoNameMax, infoTopicMax;
+
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../l10n/l10n.dart';
@@ -189,7 +191,9 @@ class CommunityScreen extends StatelessWidget {
   ) async {
     final name = await _promptForName(
       context,
-      title: context.l10n.communityNewChannelIn(community.name),
+      title: context.l10n.communityNewChannelIn(
+          state.communityDisplayName(community) ??
+              context.l10n.communityPlaceholderName),
       label: context.l10n.communityChannelName,
     );
     if (name == null || name.isEmpty) {
@@ -308,7 +312,8 @@ class _CommunityCard extends StatelessWidget {
                 ),
               ),
             ),
-            title: Text(community.name),
+            title: Text(state.communityDisplayName(community) ??
+                context.l10n.communityPlaceholderName),
             subtitle: Text(
               channels.isEmpty
                   ? context.l10n.communityNoChannels
@@ -331,12 +336,79 @@ class _CommunityCard extends StatelessWidget {
           for (final channel in channels)
             _ChannelTile(
               channel: channel,
+              title: state.channelDisplayName(channel) ??
+                  (channel.kind == 'private'
+                      ? context.l10n.channelPrivatePlaceholderName
+                      : context.l10n.channelPlaceholderName),
+              topic: state.channelTopic(channel),
               conversationId: _conversationIdFor(channel),
               onOpen: onOpenChannel,
+              // C3: editing shows only where every other device will accept
+              // the edit (the verified role state, D80).
+              onEdit: channel.isRouted &&
+                      _conversationIdFor(channel) != null &&
+                      state.mayEditCommunityInfo(community.id, 'channel')
+                  ? () => _editChannel(context, channel)
+                  : null,
             ),
         ],
       ),
     );
+  }
+
+  /// C3: edits a channel's encrypted name and topic.
+  Future<void> _editChannel(BuildContext context, Channel channel) async {
+    final l10n = context.l10n;
+    final name =
+        TextEditingController(text: state.channelDisplayName(channel) ?? '');
+    final topic =
+        TextEditingController(text: state.channelTopic(channel) ?? '');
+    try {
+      final saved = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(l10n.channelEditInfo),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              TextField(
+                controller: name,
+                autofocus: true,
+                maxLength: infoNameMax,
+                decoration:
+                    InputDecoration(labelText: l10n.communityChannelName),
+              ),
+              TextField(
+                controller: topic,
+                maxLength: infoTopicMax,
+                decoration: InputDecoration(labelText: l10n.channelTopic),
+              ),
+            ],
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(l10n.commonCancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(l10n.channelSave),
+            ),
+          ],
+        ),
+      );
+      if (saved != true || name.text.trim().isEmpty) return;
+      final ok = await state.publishChannelInfo(channel,
+          name: name.text, topic: topic.text);
+      if (!ok && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.channelEditFailed)),
+        );
+      }
+    } finally {
+      name.dispose();
+      topic.dispose();
+    }
   }
 
   /// The conversation backing a channel, if this account is a member of it.
@@ -356,11 +428,17 @@ class _CommunityCard extends StatelessWidget {
 class _ChannelTile extends StatelessWidget {
   const _ChannelTile({
     required this.channel,
+    required this.title,
+    required this.topic,
+    required this.onEdit,
     required this.conversationId,
     required this.onOpen,
   });
 
   final Channel channel;
+  final String title;
+  final String? topic;
+  final VoidCallback? onEdit;
   final String? conversationId;
   final void Function(String conversationId, String? channelId) onOpen;
 
@@ -371,8 +449,19 @@ class _ChannelTile extends StatelessWidget {
       dense: true,
       enabled: id != null,
       leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
-      title: Text(channel.name),
-      subtitle: id == null ? Text(context.l10n.communityNotMember) : null,
+      title: Text(title),
+      subtitle: id == null
+          ? Text(context.l10n.communityNotMember)
+          : topic == null
+              ? null
+              : Text(topic!, maxLines: 1, overflow: TextOverflow.ellipsis),
+      trailing: onEdit == null
+          ? null
+          : IconButton(
+              tooltip: context.l10n.channelEditInfo,
+              onPressed: onEdit,
+              icon: const Icon(Icons.edit_outlined),
+            ),
       onTap: id == null
           ? null
           : () => onOpen(

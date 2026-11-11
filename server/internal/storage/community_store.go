@@ -547,7 +547,7 @@ func (s *Store) CreateChannel(ctx context.Context, communityID, name, kind, crea
 	if err != nil {
 		return domain.Channel{}, err
 	}
-	if !domain.CanManageMembers(role) {
+	if !domain.CanCreateChannel(role) {
 		return domain.Channel{}, ErrForbidden
 	}
 	if kind == "" {
@@ -595,7 +595,7 @@ func (s *Store) CreateChannelWithConversation(ctx context.Context, communityID, 
 		}
 		return domain.Channel{}, domain.Conversation{}, err
 	}
-	if !domain.CanManageMembers(actorRole) {
+	if !domain.CanCreateChannel(actorRole) {
 		return domain.Channel{}, domain.Conversation{}, ErrForbidden
 	}
 	layout, err := communityLayoutOf(ctx, tx, communityID)

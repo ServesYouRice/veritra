@@ -33,6 +33,7 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
 import 'message_format.dart';
 import 'poll.dart' show pollRowBody;
@@ -45,6 +46,7 @@ import 'native_crypto_bindings.dart';
 class NativeCryptoService
     implements
         BackupSealCryptoService,
+        CommunityInfoCryptoService,
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
@@ -77,6 +79,9 @@ class NativeCryptoService
   final DateTime Function() _clock;
   @override
   set conversationAuthority(ConversationAuthority value) => _authority = value;
+
+  @override
+  CommunityInfoCodec get communityInfoCodec => CommunityInfoCodec(bindings);
   ConversationAuthority? _authority;
   NativeCryptoDevice? _device;
 
@@ -1668,8 +1673,15 @@ class NativeCryptoService
     DateTime? expiresAt,
   }) =>
       _serial(() async {
-        if (!_messageTypes.contains(type)) {
+        final info = infoPayloadTypes.contains(type);
+        if (!_messageTypes.contains(type) && !info) {
           throw ArgumentError.value(type, 'type', 'not a message payload');
+        }
+        // C3 info payloads carry no expiry and are never franked: a report
+        // must never hand an info key to its reader.
+        if (info && expiresAt != null) {
+          throw ArgumentError.value(
+              type, 'type', 'info payloads do not expire');
         }
         await _requireNotPaused(conversationId);
         await _requireApproved(conversationId);
@@ -1692,27 +1704,42 @@ class NativeCryptoService
           // payload and the commitment to it beside the ciphertext. The
           // commitment covers the canonical payload without the key, bound to
           // this conversation, this device and this action.
-          final frankKey = generateFrankKey();
-          final framed = AppPayloadCodec().encodeFranked(
-            type: type,
-            conversationId: conversationId,
-            senderDeviceId: deviceId,
-            actionId: idempotencyKey,
-            body: body,
-            frankKey: frankKey,
-            hidden: type.sendsHidden,
-            channelId: channelId,
-            expiresAtMs: expiresAt?.toUtc().millisecondsSinceEpoch,
-          );
-          final payload = framed.padded;
-          final commit = bindings.frankCommit(
-            key: frankKey,
-            conversationId: conversationId,
-            senderDeviceId: deviceId,
-            actionId: idempotencyKey,
-            payload: framed.canonical,
-          );
-          frankKey.fillRange(0, frankKey.length, 0);
+          final Uint8List payload;
+          final List<int>? commit;
+          if (info) {
+            payload = AppPayloadCodec().encode(
+              type: type,
+              conversationId: conversationId,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              body: body,
+              hidden: true,
+              channelId: channelId,
+            );
+            commit = null;
+          } else {
+            final frankKey = generateFrankKey();
+            final framed = AppPayloadCodec().encodeFranked(
+              type: type,
+              conversationId: conversationId,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              body: body,
+              frankKey: frankKey,
+              hidden: type.sendsHidden,
+              channelId: channelId,
+              expiresAtMs: expiresAt?.toUtc().millisecondsSinceEpoch,
+            );
+            payload = framed.padded;
+            commit = bindings.frankCommit(
+              key: frankKey,
+              conversationId: conversationId,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              payload: framed.canonical,
+            );
+            frankKey.fillRange(0, frankKey.length, 0);
+          }
           final device = _requiredDevice();
           final epoch = device.groupEpoch(conversationId).epoch;
           final ciphertext = device.encrypt(conversationId, payload);
@@ -1745,21 +1772,48 @@ class NativeCryptoService
               state: _sealNext(previous),
               envelope: envelope,
               draftText: draftText,
-              messageEffects: messageEffectsFor(
-                DecryptedAppPayload(
-                    type: type,
-                    actionId: idempotencyKey,
-                    body: body,
-                    channelId: channelId),
-                conversationId: conversationId,
-                senderAccountId: _accountId!,
-                senderDeviceId: deviceId,
-                createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
-                state: LocalMessageState.pending,
-                // The sender's own word: the first echo can only shorten it.
-                expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
-                authority: _authority,
-              ),
+              messageEffects: info
+                  ? <MessageEffect>[
+                      InsertMessageEffect(
+                        key: messageKey(deviceId, idempotencyKey),
+                        conversationId: conversationId,
+                        senderAccountId: _accountId!,
+                        senderDeviceId: deviceId,
+                        kind: LocalMessageKind.action,
+                        senderHidden: true,
+                        channelId: channelId,
+                        createdAt:
+                            DateTime.now().toUtc().millisecondsSinceEpoch,
+                        state: LocalMessageState.pending,
+                      ),
+                    ]
+                  : messageEffectsFor(
+                      DecryptedAppPayload(
+                          type: type,
+                          actionId: idempotencyKey,
+                          body: body,
+                          channelId: channelId),
+                      conversationId: conversationId,
+                      senderAccountId: _accountId!,
+                      senderDeviceId: deviceId,
+                      createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+                      state: LocalMessageState.pending,
+                      // The sender's own word: the first echo can only
+                      // shorten it.
+                      expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
+                      authority: _authority,
+                    ),
+              communityInfo: info
+                  ? <CommunityInfoEvent>[
+                      communityInfoEventFor(
+                        DecryptedAppPayload(
+                            type: type, actionId: idempotencyKey, body: body),
+                        conversationId: conversationId,
+                        senderAccountId: _accountId!,
+                        senderDeviceId: deviceId,
+                      ),
+                    ]
+                  : const <CommunityInfoEvent>[],
             ),
           );
           return envelope;
