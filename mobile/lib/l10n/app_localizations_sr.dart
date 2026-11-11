@@ -3319,6 +3319,70 @@ class AppLocalizationsSr extends AppLocalizations {
       'Позив није успео да се повеже. За позиве је потребна подешена релејна (TURN) услуга сервера.';
 
   @override
+  String get roomStart => 'Групни позив';
+
+  @override
+  String get roomTitle => 'Групни позив';
+
+  @override
+  String get roomJoining => 'Придружујем се…';
+
+  @override
+  String get roomConnected => 'У позиву';
+
+  @override
+  String get roomEncryptedNote =>
+      'Глас и видео су шифровани од краја до краја. Сервер их преноси, али не може да их чује.';
+
+  @override
+  String get roomLeave => 'Напусти';
+
+  @override
+  String get roomYou => 'Ви';
+
+  @override
+  String get roomMute => 'Искључи звук';
+
+  @override
+  String get roomUnmute => 'Укључи звук';
+
+  @override
+  String get roomShareScreen => 'Подели екран';
+
+  @override
+  String get roomStopSharing => 'Заустави дељење';
+
+  @override
+  String get roomFailedFull => 'Овај позив је пун.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Групни позиви нису подешени на овом серверу.';
+
+  @override
+  String get roomFailedWelcome =>
+      'Безбедно придруживање није успело. Покушајте поново.';
+
+  @override
+  String get roomFailedOther => 'Позив није могао да се настави.';
+
+  @override
+  String get roomFailedCryptor =>
+      'Овај уређај не може да заштити медије позива, па се није придружио.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count особа',
+      few: '$count особе',
+      one: '1 особа',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get moderationTitle => 'Модерација';
 
   @override
@@ -7308,6 +7372,70 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get callNoticeFailed =>
       'Poziv nije uspeo da se poveže. Za pozive je potrebna podešena relejna (TURN) usluga servera.';
+
+  @override
+  String get roomStart => 'Grupni poziv';
+
+  @override
+  String get roomTitle => 'Grupni poziv';
+
+  @override
+  String get roomJoining => 'Pridružujem se…';
+
+  @override
+  String get roomConnected => 'U pozivu';
+
+  @override
+  String get roomEncryptedNote =>
+      'Glas i video su šifrovani od kraja do kraja. Server ih prenosi, ali ne može da ih čuje.';
+
+  @override
+  String get roomLeave => 'Napusti';
+
+  @override
+  String get roomYou => 'Vi';
+
+  @override
+  String get roomMute => 'Isključi zvuk';
+
+  @override
+  String get roomUnmute => 'Uključi zvuk';
+
+  @override
+  String get roomShareScreen => 'Podeli ekran';
+
+  @override
+  String get roomStopSharing => 'Zaustavi deljenje';
+
+  @override
+  String get roomFailedFull => 'Ovaj poziv je pun.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Grupni pozivi nisu podešeni na ovom serveru.';
+
+  @override
+  String get roomFailedWelcome =>
+      'Bezbedno pridruživanje nije uspelo. Pokušajte ponovo.';
+
+  @override
+  String get roomFailedOther => 'Poziv nije mogao da se nastavi.';
+
+  @override
+  String get roomFailedCryptor =>
+      'Ovaj uređaj ne može da zaštiti medije poziva, pa se nije pridružio.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count osoba',
+      few: '$count osobe',
+      one: '1 osoba',
+    );
+    return '$_temp0';
+  }
 
   @override
   String get moderationTitle => 'Moderacija';

@@ -46,6 +46,7 @@ import '../sync/sync_recovery.dart';
 import '../sync/sync_service.dart';
 import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
+import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
 import 'roles/governance.dart';
 import 'roles/posting_verdict.dart';
@@ -984,6 +985,12 @@ class AppState extends ChangeNotifier
   /// builds (B5); null otherwise, so release builds show no call controls.
   final ValueNotifier<CallController?> callController =
       ValueNotifier<CallController?>(null);
+
+  /// The group-call room engine (B6), set by the demo host like
+  /// [callController]; null otherwise, so release builds show no group-call
+  /// controls. The factory builds the engine for one conversation.
+  final ValueNotifier<RoomSession?> roomSession =
+      ValueNotifier<RoomSession?>(null);
 
   @override
   void notifyListeners() {

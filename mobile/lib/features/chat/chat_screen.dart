@@ -10,6 +10,7 @@ import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
 import '../../calls/call_controller.dart';
+import '../../calls/room/room_engine.dart' show RoomSession;
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../core/composer_drafts.dart';
@@ -31,6 +32,7 @@ import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
+import '../calls/room_screen.dart';
 import '../search/search_screen.dart';
 import 'attachment_views.dart';
 import 'chat_desktop.dart';
@@ -438,6 +440,18 @@ class _ChatScreenState extends State<ChatScreen> {
                               ),
                             ),
                     ),
+                  if (conversation != null && !conversation.isDm && !readOnly)
+                    ValueListenableBuilder<RoomSession?>(
+                      valueListenable: widget.state.roomSession,
+                      builder: (context, session, _) => session == null
+                          ? const SizedBox.shrink()
+                          : IconButton(
+                              key: const Key('chat-call-group'),
+                              tooltip: context.l10n.roomStart,
+                              onPressed: () => unawaited(
+                                  _openRoom(session, conversation.id)),
+                              icon: const Icon(Icons.groups_outlined)),
+                    ),
                   IconButton(
                       tooltip: context.l10n.w8StarredMessages,
                       onPressed: _showStarredMessages,
@@ -750,6 +764,24 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Long-press on mobile, right-click on desktop.
+  /// B6: opens the group-call screen and joins the room of this chat. The
+  /// engine lives only as long as the screen.
+  Future<void> _openRoom(RoomSession session, String conversationId) async {
+    final engine = session.createEngine();
+    final route = MaterialPageRoute<void>(
+      builder: (_) => RoomScreen(
+        engine: engine,
+        nameFor: session.nameFor,
+        controls: session.controls,
+      ),
+    );
+    final done = Navigator.of(context).push(route);
+    unawaited(engine.join(conversationId));
+    await done;
+    await engine.leave();
+    engine.dispose();
+  }
+
   Future<void> _showStarredMessages() async {
     final state = widget.state;
     final selected = await showModalBottomSheet<String>(

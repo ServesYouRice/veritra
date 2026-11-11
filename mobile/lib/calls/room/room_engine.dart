@@ -525,3 +525,18 @@ class RoomEngine extends ChangeNotifier {
     super.dispose();
   }
 }
+
+/// What the app needs to offer group calls: a way to build an engine for one
+/// conversation, the media controls (null when the build has no media
+/// transport), and contact names. Set on the app state only by the demo
+/// host, like the one-to-one call controller (B5).
+class RoomSession {
+  const RoomSession({
+    required this.createEngine,
+    required this.nameFor,
+    this.controls,
+  });
+  final RoomEngine Function() createEngine;
+  final String Function(String accountId) nameFor;
+  final RoomMediaControls? controls;
+}

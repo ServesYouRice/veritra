@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show Listenable;
+
 /// B6 group calls (docs/designs/B6-group-calls.md), the seams of the app
 /// engine. The engine owns the rules (who may join, who commits, when keys
 /// change); these ports own the platform: the server, the MLS core, the
@@ -274,4 +276,17 @@ abstract interface class RoomScheduler {
 
 abstract interface class RoomTimer {
   void cancel();
+}
+
+/// What the room screen may ask of the media transport (the SFU connection).
+/// Null means the build has none, and the screen hides those controls.
+abstract interface class RoomMediaControls implements Listenable {
+  bool get micMuted;
+  Future<void> setMicMuted(bool muted);
+
+  /// Desktop and Android only. iOS can watch a screen share but not send one
+  /// (O6).
+  bool get canShareScreen;
+  bool get sharingScreen;
+  Future<void> setSharingScreen(bool on);
 }
