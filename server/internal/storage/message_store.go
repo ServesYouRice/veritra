@@ -1417,49 +1417,22 @@ func (s *Store) SearchMetadata(ctx context.Context, accountID, query string, lim
 	if domain.ValidID("acct", query) {
 		exactAccountID = query
 	}
-	prefixPattern := escapeLike(query) + "%"
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT type, id, label
 		FROM (
 			-- Accounts are matched on the exact (case-insensitive) username only.
 			-- Prefix/contains matching here would let any authenticated user walk
 			-- the substring space and enumerate the entire user directory, which
-			-- is a metadata leak for a private messenger. Communities/channels
-			-- below stay prefix/contains because they are scoped to the caller's
-			-- memberships. Prefix-only matching also keeps this endpoint on
-			-- ordinary indexes instead of leading-wildcard scans.
+			-- is a metadata leak for a private messenger. Community and channel
+			-- names are encrypted (C3, migration 0080): the server holds none to
+			-- search, and the app searches its own decrypted records.
 			SELECT 'account' AS type, id, username AS label, 0 AS rank
 			FROM accounts
 			WHERE deleted_at IS NULL AND (username = ? COLLATE NOCASE OR id = ?)
-			UNION ALL
-			SELECT 'community' AS type, c.id, c.name AS label,
-				CASE
-					WHEN c.name = ? COLLATE NOCASE THEN 0
-					ELSE 1
-				END AS rank
-			FROM communities c
-			JOIN memberships m ON m.community_id = c.id
-			WHERE m.account_id = ? AND c.name LIKE ? ESCAPE '\'
-			UNION ALL
-			SELECT 'channel' AS type, ch.id, ch.name AS label,
-				CASE
-					WHEN ch.name = ? COLLATE NOCASE THEN 0
-					ELSE 1
-				END AS rank
-			FROM channels ch
-			JOIN memberships m ON m.community_id = ch.community_id
-			LEFT JOIN community_channel_routes r ON r.channel_id = ch.id
-			WHERE m.account_id = ? AND ch.name LIKE ? ESCAPE '\'
-			  -- A private route is listed only to members of its conversation,
-			  -- as listChannelsQuery does.
-			  AND (r.channel_id IS NULL OR r.access_mode <> 'private'
-			       OR EXISTS (SELECT 1 FROM memberships pm WHERE pm.conversation_id = r.conversation_id AND pm.account_id = ?))
 		)
 		ORDER BY rank, label COLLATE NOCASE, type, id
 		LIMIT ? OFFSET ?`,
 		exact, exactAccountID,
-		exact, accountID, prefixPattern,
-		exact, accountID, prefixPattern, accountID,
 		limit, offset)
 	if err != nil {
 		return nil, err

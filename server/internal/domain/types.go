@@ -163,9 +163,10 @@ type Invite struct {
 	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
+// Community and Channel carry IDs only: names, topics and icons are the
+// apps' encrypted info records (C3, migration 0080).
 type Community struct {
 	ID        string    `json:"id"`
-	Name      string    `json:"name"`
 	CreatedBy string    `json:"created_by"`
 	CreatedAt time.Time `json:"created_at"`
 	// LayoutVersion, LayoutGeneration and SharedConversationID describe the
@@ -178,7 +179,6 @@ type Community struct {
 type Channel struct {
 	ID          string `json:"id"`
 	CommunityID string `json:"community_id"`
-	Name        string `json:"name"`
 	// Kind is private or announcement in a legacy community and open,
 	// announcement or private in a community with the shared-group layout.
 	Kind      string    `json:"kind"`

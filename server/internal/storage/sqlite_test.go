@@ -640,14 +640,14 @@ func TestMetadataSearchRanksAndPaginatesAllowedLabelsOnly(t *testing.T) {
 	defer store.Close()
 	owner := createTestOwner(t, ctx, store)
 
-	alphaCommunity, err := store.CreateCommunity(ctx, "Alpha", owner.Account.ID)
+	alphaCommunity, err := store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatalf("create alpha community: %v", err)
 	}
-	if _, err := store.CreateChannel(ctx, alphaCommunity.ID, "Alpine", "private", owner.Account.ID); err != nil {
+	if _, err := store.CreateChannel(ctx, alphaCommunity.ID, "private", owner.Account.ID); err != nil {
 		t.Fatalf("create alpine channel: %v", err)
 	}
-	if _, err := store.CreateCommunity(ctx, "Team Alpha", owner.Account.ID); err != nil {
+	if _, err := store.CreateCommunity(ctx, owner.Account.ID); err != nil {
 		t.Fatalf("create team alpha community: %v", err)
 	}
 
@@ -1592,7 +1592,7 @@ func TestCommunityOwnershipRules(t *testing.T) {
 	if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, owner, owner, domain.RoleMember); err != nil {
 		t.Fatalf("step down: %v", err)
 	}
-	if _, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "more", "", insider); err != nil {
+	if _, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "", insider); err != nil {
 		t.Fatalf("channel after transfer: %v", err)
 	}
 }

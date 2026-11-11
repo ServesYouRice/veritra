@@ -243,11 +243,11 @@ func TestCommunityMemberAddNeedsRoomInEveryChannel(t *testing.T) {
 	store := newLimitedStore(t, config.Limits{ConversationMembers: 3})
 	owner := createTestOwner(t, ctx, store)
 	members := registerMembers(t, ctx, store, owner, "alice", "bob", "carol")
-	community, err := store.CreateCommunity(ctx, "Club", owner.Account.ID)
+	community, err := store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := store.CreateChannelWithConversation(ctx, community.ID, "general", "", owner.Account.ID); err != nil {
+	if _, _, err := store.CreateChannelWithConversation(ctx, community.ID, "", owner.Account.ID); err != nil {
 		t.Fatal(err)
 	}
 	for _, member := range members[:2] {

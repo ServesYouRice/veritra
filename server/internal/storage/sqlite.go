@@ -840,10 +840,3 @@ func nowString() string {
 func formatTime(t time.Time) string {
 	return t.UTC().Format("2006-01-02T15:04:05.000000000Z")
 }
-
-func escapeLike(value string) string {
-	value = strings.ReplaceAll(value, `\`, `\\`)
-	value = strings.ReplaceAll(value, `%`, `\%`)
-	value = strings.ReplaceAll(value, `_`, `\_`)
-	return value
-}

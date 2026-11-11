@@ -164,8 +164,7 @@ func isSharedConversation(ctx context.Context, q queryRower, conversationID stri
 // conversation. A private channel gets its own conversation with the creator
 // as its only member; others join through the existing conversation member
 // route, which refuses non-members of the community.
-func (s *Store) createRoutedChannel(ctx context.Context, tx *sql.Tx, layout communityLayout, communityID, name, access, createdBy, creatorRole, createdAt string) (domain.Channel, domain.Conversation, error) {
-	name = strings.TrimSpace(name)
+func (s *Store) createRoutedChannel(ctx context.Context, tx *sql.Tx, layout communityLayout, communityID, access, createdBy, creatorRole, createdAt string) (domain.Channel, domain.Conversation, error) {
 	channelID, err := domain.NewID("chan")
 	if err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
@@ -186,11 +185,11 @@ func (s *Store) createRoutedChannel(ctx context.Context, tx *sql.Tx, layout comm
 	if access == ChannelAccessAnnouncement {
 		legacyKind = "announcement"
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, name, kind, created_at) VALUES(?, ?, ?, ?, ?)`, channelID, communityID, name, legacyKind, createdAt); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO channels(id, community_id, kind, created_at) VALUES(?, ?, ?, ?)`, channelID, communityID, legacyKind, createdAt); err != nil {
 		return domain.Channel{}, domain.Conversation{}, err
 	}
 	if access == ChannelAccessPrivate {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', ?, ?, ?, ?, ?)`, conversationID, name, communityID, channelID, createdBy, createdAt); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id, kind, title, community_id, channel_id, created_by, created_at) VALUES(?, 'community_channel', NULL, ?, ?, ?, ?)`, conversationID, communityID, channelID, createdBy, createdAt); err != nil {
 			return domain.Channel{}, domain.Conversation{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO community_conversation_layouts(conversation_id, community_id, purpose, generation) VALUES(?, ?, 'private', ?)`, conversationID, communityID, layout.generation); err != nil {
@@ -211,7 +210,7 @@ func (s *Store) createRoutedChannel(ctx context.Context, tx *sql.Tx, layout comm
 		conversation.Kind = CommunityShared
 	}
 	channel := domain.Channel{
-		ID: channelID, CommunityID: communityID, Name: name, Kind: access, CreatedAt: parseTime(createdAt),
+		ID: channelID, CommunityID: communityID, Kind: access, CreatedAt: parseTime(createdAt),
 		ConversationID: &conversationID, LayoutVersion: CommunityLayoutVersion, LayoutGeneration: layout.generation,
 	}
 	return channel, conversation, nil
@@ -236,7 +235,7 @@ func (s *Store) checkNewActiveCommunityMember(ctx context.Context, tx *sql.Tx, c
 // private route is returned only to members of its conversation: the list is
 // the server's side of "who can see a private channel".
 const listChannelsQuery = `
-	SELECT ch.id, ch.community_id, ch.name, ch.kind, ch.created_at,
+	SELECT ch.id, ch.community_id, ch.kind, ch.created_at,
 	       r.conversation_id, r.access_mode, r.generation
 	FROM channels ch
 	LEFT JOIN community_channel_routes r ON r.channel_id = ch.id
