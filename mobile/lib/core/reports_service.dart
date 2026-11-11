@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import '../crypto/crypto_service.dart';
 import '../crypto/franking.dart';
 import '../crypto/report_body.dart';
+import '../crypto/report_key_announcement.dart';
 import '../crypto/report_key_pins.dart';
 import '../storage/local_store.dart';
 import 'api_client.dart';
@@ -27,6 +28,11 @@ enum ReportFailure {
   /// No recipient has published a report key yet: no instance owner, or no
   /// moderator the verified record names.
   noRecipients,
+
+  /// Moderators the verified record names have published keys, but none of
+  /// those keys has been announced to this device over MLS yet, so nothing
+  /// can be sealed. Their apps were asked to announce them again.
+  moderatorKeysPending,
 
   /// This device kept no franking proof for the message: it is unfranked,
   /// older than the proof, deleted, hidden or expired.
@@ -54,13 +60,20 @@ class ReportPlan {
     required this.conversationId,
     required this.inbox,
     required this.check,
+    this.unconfirmed = const <String>[],
   });
 
   final String conversationId;
   final ReportInbox inbox;
 
-  /// How the inbox's keys compare with the app's pins.
+  /// How the inbox's keys compare with the app's pins (owners), or which
+  /// keys MLS authenticated (moderators).
   final ReportKeyCheck check;
+
+  /// Community only: verified moderators whose listed key no MLS
+  /// announcement on this device matches. They get no copy; their apps
+  /// were asked to announce it.
+  final List<String> unconfirmed;
 
   bool get isCommunity => inbox.kind == reportInboxCommunity;
 
@@ -72,10 +85,27 @@ class ReportPlan {
 /// its shared group: the owner, the admins and the moderators. The server's
 /// roles never decide who receives a community report.
 class ReportModerators {
-  const ReportModerators(this.communityId, this.accounts);
+  const ReportModerators(this.communityId, this.accounts,
+      {required this.recordGroupId});
 
   final String communityId;
   final Set<String> accounts;
+
+  /// The group whose MLS state holds the record (the community's shared
+  /// group). Moderator keys are trusted only from announcements in it.
+  final String recordGroupId;
+}
+
+/// Who a report is sealed to: the keys, how they were judged, and the
+/// verified moderators left out for lack of an MLS announcement.
+class _SealTargets {
+  const _SealTargets(this.recipients, this.check,
+      {this.unconfirmed = const <String>[], this.recordGroupId});
+
+  final List<ReportRecipientKey> recipients;
+  final ReportKeyCheck check;
+  final List<String> unconfirmed;
+  final String? recordGroupId;
 }
 
 /// The state of an instance owner's own report key as this device sees it:
@@ -179,8 +209,12 @@ class ReportsService {
     required this.seeds,
     this.moderatorsOf,
     this.communityId,
+    this.requestModeratorKeys,
+    this.onSeedChanged,
+    DateTime Function()? clock,
     Random? random,
   })  : pins = ReportKeyPins(store, api.baseUrl),
+        _clock = clock ?? DateTime.now,
         _random = random ?? Random.secure();
 
   final ApiClient api;
@@ -191,6 +225,16 @@ class ReportsService {
   final ReportSeedStore seeds;
   final ReportKeyPins pins;
   final Random _random;
+  final DateTime Function() _clock;
+
+  /// Sends a `report_key_request` naming [accounts] into [recordGroupId].
+  /// False when nothing was queued.
+  final Future<bool> Function(String recordGroupId, List<String> accounts)?
+      requestModeratorKeys;
+
+  /// Called after this device's report seed was made or published: the
+  /// app announces the key again where this account moderates.
+  final void Function()? onSeedChanged;
 
   /// The verified moderators of a community conversation, or null when the
   /// conversation is not in a community or has no verified record.
@@ -211,35 +255,98 @@ class ReportsService {
         seeds: seeds,
         moderatorsOf: moderatorsOf,
         communityId: id,
+        requestModeratorKeys: requestModeratorKeys,
+        onSeedChanged: onSeedChanged,
+        clock: _clock,
         random: _random,
       );
 
-  /// The listed recipients a report about [conversationId] may be sealed to,
-  /// and the pin scope: every instance owner, or for a community only the
-  /// accounts its verified record ranks moderator or above (never the
-  /// reporter). A server that lists another account's key gets no copy.
-  (List<ReportRecipientKey>, bool Function(String)?) _sealTo(
-      String conversationId, ReportInbox inbox) {
+  /// Who a report about [conversationId] is sealed to.
+  ///
+  /// - Instance owners: every listed owner, judged against the pins a person
+  ///   made (D95).
+  /// - A community: only accounts its verified record ranks moderator or
+  ///   above (never the reporter), and only at a key the account itself
+  ///   announced over MLS in the record group (`report_key`). No pin and no
+  ///   tap: a reporter has no way to compare a moderator's code, and the
+  ///   announcement is authenticated by the moderator's own MLS leaf. A
+  ///   server that lists another account, or another key, gets no copy. A
+  ///   moderator the record no longer names gets none either, whatever the
+  ///   server still lists.
+  Future<_SealTargets> _sealTo(String conversationId, ReportInbox inbox) async {
     final all = _recipients(inbox);
-    if (inbox.kind != reportInboxCommunity) return (all, null);
+    if (inbox.kind != reportInboxCommunity) {
+      return _SealTargets(all, await pins.check(all));
+    }
     final moderators = moderatorsOf?.call(conversationId);
     if (moderators == null) {
       throw const ReportFailureException(ReportFailure.communityUnavailable);
     }
-    final allowed = <String>{
+    final accountOf = <String, String>{
       for (final account in moderators.accounts)
         if (account != accountId)
-          communityModeratorInboxId(moderators.communityId, account),
+          communityModeratorInboxId(moderators.communityId, account): account,
     };
-    final prefix = '${moderators.communityId}:';
-    return (
-      [
-        for (final r in all)
-          if (allowed.contains(r.inboxId)) r
-      ],
-      (String id) => allowed.contains(id) && id.startsWith(prefix),
+    final trusted = <ReportRecipientKey>[];
+    final unconfirmed = <String>[];
+    for (final recipient in all) {
+      final account = accountOf[recipient.inboxId];
+      if (account == null) continue;
+      final announced = await store.loadSetting(
+          reportKeyAnnouncementSetting(moderators.recordGroupId, account));
+      if (announced != null && announced == base64Encode(recipient.publicKey)) {
+        trusted.add(recipient);
+      } else {
+        unconfirmed.add(account);
+      }
+    }
+    return _SealTargets(
+      trusted,
+      ReportKeyCheck([
+        for (final recipient in trusted)
+          ReportKeyAssessment(recipient, ReportKeyStatus.authenticated, null)
+      ], const <ReportKeyPin>[]),
+      unconfirmed: unconfirmed,
+      recordGroupId: moderators.recordGroupId,
     );
   }
+
+  /// Asks the moderators in [targets] that MLS has not confirmed to
+  /// announce their keys again, at most once per [reportKeyRequestSpacing]
+  /// per group. Never throws: a report must not fail on the request.
+  Future<void> _askForKeys(_SealTargets targets) async {
+    final group = targets.recordGroupId;
+    final send = requestModeratorKeys;
+    if (group == null || send == null || targets.unconfirmed.isEmpty) return;
+    try {
+      final now = _clock().toUtc().millisecondsSinceEpoch;
+      final asked = int.tryParse(
+          await store.loadSetting(reportKeyAskedSetting(group)) ?? '');
+      if (asked != null &&
+          now >= asked &&
+          now - asked < reportKeyRequestSpacing.inMilliseconds) {
+        return;
+      }
+      final accounts = (targets.unconfirmed.toSet().toList()..sort())
+          .take(maxReportKeyRequestAccounts)
+          .toList();
+      if (await send(group, accounts)) {
+        await store.saveSetting(reportKeyAskedSetting(group), now.toString());
+      }
+    } catch (_) {
+      // Asked again on the next attempt.
+    }
+  }
+
+  /// Asks for missing moderator keys, then refuses an empty seal.
+  Future<void> _requireTargets(_SealTargets targets) async {
+    await _askForKeys(targets);
+    if (targets.recipients.isNotEmpty) return;
+    throw ReportFailureException(targets.unconfirmed.isEmpty
+        ? ReportFailure.noRecipients
+        : ReportFailure.moderatorKeysPending);
+  }
+
   // ---- Reporter ----------------------------------------------------------
 
   /// The text of exactly what a report of [messageKey] would reveal: the
@@ -255,14 +362,13 @@ class ReportsService {
   /// recipients' keys with the pins.
   Future<ReportPlan> prepare(String conversationId) async {
     final inbox = await api.getReportInbox(token, conversationId);
-    final (recipients, scope) = _sealTo(conversationId, inbox);
-    if (recipients.isEmpty) {
-      throw const ReportFailureException(ReportFailure.noRecipients);
-    }
+    final targets = await _sealTo(conversationId, inbox);
+    await _requireTargets(targets);
     return ReportPlan(
       conversationId: conversationId,
       inbox: inbox,
-      check: await pins.check(recipients, scope: scope),
+      check: targets.check,
+      unconfirmed: targets.unconfirmed,
     );
   }
 
@@ -270,7 +376,8 @@ class ReportsService {
   /// after the person compared the fingerprints.
   Future<void> pinKeys(ReportPlan plan) async {
     for (final assessment in plan.check.recipients) {
-      if (assessment.status != ReportKeyStatus.pinned) {
+      if (assessment.status == ReportKeyStatus.unpinned ||
+          assessment.status == ReportKeyStatus.changed) {
         await pins.pin(assessment.recipient);
       }
     }
@@ -278,7 +385,8 @@ class ReportsService {
 
   /// Files the report about the message [messageKey] of [conversationId].
   /// Looks the recipients up again and seals only to keys that equal their
-  /// pins, so a key swapped after the person confirmed is refused.
+  /// pins (owners) or their MLS announcements (moderators), so a key
+  /// swapped after the person confirmed is refused.
   Future<void> file({
     required String conversationId,
     required String messageKey,
@@ -293,13 +401,10 @@ class ReportsService {
       throw const ReportFailureException(ReportFailure.alreadyReported);
     }
     final inbox = await api.getReportInbox(token, conversationId);
-    final (recipients, scope) = _sealTo(conversationId, inbox);
-    if (recipients.isEmpty) {
-      throw const ReportFailureException(ReportFailure.noRecipients);
-    }
-    try {
-      await pins.requirePinned(recipients, scope: scope);
-    } on ReportKeyNotPinned {
+    final targets = await _sealTo(conversationId, inbox);
+    await _requireTargets(targets);
+    final recipients = targets.recipients;
+    if (!targets.check.allPinned) {
       throw const ReportFailureException(ReportFailure.keysNotPinned);
     }
     final reportId = _newReportId();
@@ -383,6 +488,7 @@ class ReportsService {
       await seeds.save(api.baseUrl, accountId, seed);
       try {
         final rev = await _putKey(key);
+        _seedChanged();
         return (key, rev);
       } catch (_) {
         // Nothing was published: put the old seed back so the reports it
@@ -406,9 +512,19 @@ class ReportsService {
     if (seed == null) throw StateError('no report key on this device');
     try {
       final key = await crypto.reportPublicKey(seed);
-      return (key, await _putKey(key));
+      final rev = await _putKey(key);
+      _seedChanged();
+      return (key, rev);
     } finally {
       seed.fillRange(0, seed.length, 0);
+    }
+  }
+
+  void _seedChanged() {
+    try {
+      onSeedChanged?.call();
+    } catch (_) {
+      // Announcing is the app's background work; publishing succeeded.
     }
   }
 

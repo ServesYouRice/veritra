@@ -147,6 +147,9 @@ void main() {
         'infoUpdate',
         // C4: a leave proof is never reportable.
         'memberLeave',
+        // C6: moderator report key announcements and requests.
+        'reportKey',
+        'reportKeyRequest',
       });
       // The policy matches decoded payloads by AppPayloadType.name, so every
       // entry must name a real type, and every C7 type must be exempt.

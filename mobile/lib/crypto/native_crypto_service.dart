@@ -53,6 +53,7 @@ import 'message_format.dart';
 import 'poll.dart' show pollRowBody;
 import 'crypto_service.dart';
 import 'franking.dart';
+import 'report_key_announcement.dart';
 import 'k2_transfer_crypto.dart';
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
@@ -2399,12 +2400,18 @@ class NativeCryptoService
         // C4: a leave proof is hidden and never franked, like an info
         // payload, but changes no community info.
         final leaveProof = type == AppPayloadType.memberLeave;
-        if (!_messageTypes.contains(type) && !info && !leaveProof) {
+        // C6: a report key announcement or request is hidden and never
+        // franked either, and changes no community info.
+        final reportKey = reportKeyPayloadTypes.contains(type);
+        if (!_messageTypes.contains(type) &&
+            !info &&
+            !leaveProof &&
+            !reportKey) {
           throw ArgumentError.value(type, 'type', 'not a message payload');
         }
         // C3 info payloads carry no expiry and are never franked: a report
         // must never hand an info key to its reader.
-        if (info && expiresAt != null) {
+        if ((info || reportKey) && expiresAt != null) {
           throw ArgumentError.value(
               type, 'type', 'info payloads do not expire');
         }
@@ -2438,7 +2445,7 @@ class NativeCryptoService
           final Uint8List payload;
           final List<int>? commit;
           final groupEpoch = _requiredDevice().groupEpoch(conversationId);
-          if (info || leaveProof) {
+          if (info || leaveProof || reportKey) {
             payload = AppPayloadCodec().encode(
               type: type,
               conversationId: conversationId,
@@ -2539,7 +2546,7 @@ class NativeCryptoService
               state: _sealNext(previous),
               envelope: envelope,
               draftText: draftText,
-              messageEffects: info || leaveProof
+              messageEffects: info || leaveProof || reportKey
                   ? <MessageEffect>[
                       InsertMessageEffect(
                         key: messageKey(deviceId, idempotencyKey),
@@ -2946,6 +2953,32 @@ class NativeCryptoService
                         epoch.toString(),
                   };
                 }
+                reveal = null;
+                break;
+              }
+              // C6: a member's own report key, or a request for keys. Kept
+              // as settings in the record group only, from an approved
+              // device; who moderates is judged when a report is sealed.
+              if (reportKeyPayloadTypes.contains(payload.type)) {
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.action,
+                    senderHidden: true,
+                    channelId: payload.channelId,
+                  ),
+                ];
+                settings = reportKeySettingsFor(
+                  payload,
+                  conversationId: envelope.conversationId,
+                  senderAccountId: envelope.senderAccountId,
+                  isRecordGroup: governanceOf(envelope.conversationId) != null,
+                  verdict: senderVerdict,
+                  selfAccountId: _accountId,
+                  syncEventId: syncEventId,
+                );
                 reveal = null;
                 break;
               }
@@ -4383,6 +4416,9 @@ List<MessageEffect> messageEffectsFor(
     AppPayloadType.historySync ||
     AppPayloadType.historySyncRequest =>
       throw const FormatException('C7 history payloads are not messages'),
+    AppPayloadType.reportKey ||
+    AppPayloadType.reportKeyRequest =>
+      throw const FormatException('report key payloads are not messages'),
   };
 }
 

@@ -457,6 +457,24 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C6 moderator keys over MLS (2026-11-11):** two hidden v2 payload types,
+  `report_key` (`{"key": canonical base64 of the sender's own 32-byte report
+  public key}`) and `report_key_request` (`{"accounts": [1 to 64 distinct
+  account ids]}`), sent in a community's shared group, never franked (no
+  `frank` member, no `frank_commit`), never expiring, never reportable
+  (`FrankingPolicy.unfrankedPayloadTypes`). A receiver keeps them only in a
+  group whose own MLS state holds a C4 record, only from a leaf its
+  account's L1 list approves now, as settings committed in the same
+  transaction as the MLS state: `c6.report_key.<group>.<account>` (the key
+  the MLS sender announced; the latest in MLS order wins) and
+  `c6.report_key_request.<group>` (the sync event id of the latest request
+  naming this account). A reporter seals a community report only to a
+  verified moderator (C4 record) whose server-listed key equals that
+  account's announced key; the manual pin is gone for moderators (owner
+  keys keep D95's pin). Rules: C6 design, "Moderator keys over MLS"; §4
+  type registry. No ABI, local schema or server migration change. Needs
+  the independent review.
+
 - **C4 app wiring and removal proofs (2026-11-11):** groups and community
   shared groups are created with the genesis role record; every commit
   producer carries `requiredRecord` (or a role command) through
@@ -2358,6 +2376,8 @@ input can differ.
 | `history_change` | 2, hidden | `r`: canonical base64 of the 143-byte compact record, or a move's 143 + `lp(close_group_id)` + 128-byte wrap | Owner and admins under the verified C4 role state (D80); only in a two-part C7 message of the channel itself | C7: a record proposal (docs/designs/C7-channel-history.md decision 3). Never franked: the envelope's `frank_commit` is 32 random bytes |
 | `history_sync` | 2, hidden | `for_epoch` (u64), `channels`: `[[channel_id, base64(key_c)], ...]`, 1 to 508 entries, ids sorted bytewise and distinct, keys 32 bytes | Any member; group-level only (no `channel_id`), two-part only | C7 decision 5: body0 of the history_sync body; its slots follow body0 in the sealed body. Never franked |
 | `history_sync_request` | 2, hidden | `for_epoch` (u64): the membership commit whose history_sync the sender lacks | A newcomer; group-level only, two-part only | C7 decision 5. Never franked |
+| `report_key` | 2, hidden | `key`: canonical base64 of 32 bytes, the sender's own report public key; no other field | Any member (the key is the MLS sender's own); who moderates is judged when a report is sealed, against the C4 record | C6: kept as setting `c6.report_key.<group>.<sender account>` only in a group whose MLS state holds a C4 record and only from an L1-approved leaf; latest wins. Never franked, never expires, never reportable |
+| `report_key_request` | 2, hidden | `accounts`: 1 to 64 distinct account ids (1 to 128 characters); no other field | Any member | C6: kept as setting `c6.report_key_request.<group>` (the sync event id) only when it names the receiver's account, under the same group and leaf rules; each named moderator's app announces again, at most once per 5 minutes per group. Never franked |
 
 In a C0-layout conversation a two-part message with no `channel_id` must be
 `history_sync` or `history_sync_request`, and those two never carry one;
