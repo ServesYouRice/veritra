@@ -68,14 +68,19 @@ the reconcile fallback (3 minutes) before this device claims and stages,
 which gives an honest server's pending change and its coordinator the first
 turn. Two devices that act together race on the epoch; the loser's bundle is
 refused and dropped as today, at a cost of one claimed package per missing
-device. A failed audit waits a full interval. The audit runs on catch-up,
+device. A failed audit waits a full interval. The server refuses a whole
+explicit claim (403) when one named device is revoked or off its head. A
+stale pin can still list such a device until repair, so on a 403 each device
+is claimed alone, and refused ones are skipped. One such device therefore
+cannot keep its siblings out. The audit runs on catch-up,
 with no timer of its own.
 
 ### Incomplete-join notice (2026-11-11)
 
 Each discovery pass that completes (reported change or audit) records, per
-conversation, the accounts that still have an approved device outside the
-tree after the claim. The first time a gap was seen is kept and persisted in
+conversation, the accounts that have an approved device outside the tree.
+Only the tree resolves a gap. A claimed package or a staged commit does not,
+because the server may refuse the bundle or never sequence it. The first time a gap was seen is kept and persisted in
 settings (`l1.missing_joins`, conversation, then account, then milliseconds).
 A restart therefore cannot reset the clock. A pass that finds an account
 complete clears it, and a failed discovery leaves the record unchanged.

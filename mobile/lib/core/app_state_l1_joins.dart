@@ -58,7 +58,12 @@ extension AppStateL1Joins on AppState {
     final loaded = <String, Map<String, DateTime>>{};
     try {
       final raw = await localStore.loadSetting(_l1MissingJoinsSetting);
-      final value = raw == null || raw.isEmpty ? null : jsonDecode(raw);
+      final stored = raw == null || raw.isEmpty ? null : jsonDecode(raw);
+      // Another identity's clocks (a relink, another account) are not ours.
+      final value =
+          stored is Map && stored['owner'] == _missingJoinsOwner(current)
+              ? stored['joins']
+              : null;
       if (value is Map) {
         for (final conversation in value.entries) {
           final accounts = conversation.value;
@@ -96,7 +101,13 @@ extension AppStateL1Joins on AppState {
     _l1Joins.loadedFor = generation;
   }
 
+  /// The identity the stored clocks belong to.
+  static String _missingJoinsOwner(Session current) =>
+      '${current.accountId}\u0000${current.deviceId}';
+
   Future<void> _saveMissingJoins() async {
+    final current = session;
+    if (current == null) return;
     final out = <String, Object?>{
       for (final conversation in _l1Joins.missingSince.entries)
         if (conversation.value.isNotEmpty)
@@ -107,7 +118,13 @@ extension AppStateL1Joins on AppState {
     };
     try {
       await localStore.saveSetting(
-          _l1MissingJoinsSetting, out.isEmpty ? '' : jsonEncode(out));
+          _l1MissingJoinsSetting,
+          out.isEmpty
+              ? ''
+              : jsonEncode(<String, Object?>{
+                  'owner': _missingJoinsOwner(current),
+                  'joins': out,
+                }));
     } on Object catch (err) {
       // Memory still holds the clocks; the next change writes them again.
       developer.log('l1_missing_joins_not_saved ${err.runtimeType}',
@@ -116,8 +133,11 @@ extension AppStateL1Joins on AppState {
   }
 
   /// Records one completed discovery of [conversationId]: [unresolved] are
-  /// the accounts that still have an approved device outside the group
-  /// after this pass claimed what it could. Every other account is complete.
+  /// the accounts with an approved device that is not a leaf of the local
+  /// tree. Every other account is complete. Only the tree resolves a gap: a
+  /// claimed package or a staged commit does not (the server may refuse or
+  /// never sequence the bundle), so the clock keeps running until the next
+  /// discovery finds the device in the group.
   Future<void> _noteMissingJoins(
       String conversationId, Set<String> unresolved, DateTime now) async {
     final before =
@@ -137,17 +157,45 @@ extension AppStateL1Joins on AppState {
     notifyListeners();
   }
 
-  /// The accounts of [requested] that [claimed] leaves without a package.
-  static Set<String> _unresolvedAccounts(
-      List<MlsDeviceRef> requested, List<DeviceKeyPackage> claimed) {
-    final got = <MlsDeviceRef>{
-      for (final package in claimed)
-        (accountId: package.accountId, deviceId: package.deviceId),
-    };
-    return <String>{
-      for (final ref in requested)
-        if (!got.contains(ref)) ref.accountId,
-    };
+  /// The accounts [discovered] names.
+  static Set<String> _gapAccounts(List<MlsDeviceRef> discovered) =>
+      <String>{for (final ref in discovered) ref.accountId};
+
+  /// Claims one package for each of [requested] by explicit ID. The server
+  /// refuses a whole batch (403) when one device in it is revoked or off
+  /// its head, which a stale pin can still list until repair: then each
+  /// device is claimed alone and the refused ones are skipped, so one such
+  /// device cannot keep its siblings out. Every answer must be a unique
+  /// subset of [requested].
+  Future<List<DeviceKeyPackage>> _claimListedDevices(Session current,
+      ApiClient client, String conversationId, List<MlsDeviceRef> requested,
+      {bool Function()? stillOwner}) async {
+    if (requested.isEmpty) return const <DeviceKeyPackage>[];
+    List<DeviceKeyPackage> packages;
+    try {
+      packages = await client.claimDeviceKeyPackages(current.token,
+          conversationId, [for (final ref in requested) ref.deviceId]);
+    } on ApiException catch (err) {
+      if (err.statusCode != 403 || requested.length == 1) rethrow;
+      packages = <DeviceKeyPackage>[];
+      ApiException? refused;
+      var anyAnswered = false;
+      for (final ref in requested) {
+        if (stillOwner != null && !stillOwner()) break;
+        try {
+          packages.addAll(await client.claimDeviceKeyPackages(
+              current.token, conversationId, <String>[ref.deviceId]));
+          anyAnswered = true;
+        } on ApiException catch (one) {
+          if (one.statusCode != 403) rethrow;
+          refused = one;
+        }
+      }
+      // Refused one by one as well: the requester itself is not allowed.
+      if (!anyAnswered && refused != null) throw refused;
+    }
+    _checkDiscoveredPackages(requested, packages);
+    return packages;
   }
 
   /// Audits held groups the server did not report as pending: approved
@@ -204,7 +252,7 @@ extension AppStateL1Joins on AppState {
           await _noteMissingJoins(id, const <String>{}, now);
           continue;
         }
-        final accounts = <String>{for (final ref in discovered) ref.accountId};
+        final accounts = _gapAccounts(discovered);
         final earlier = _l1Joins.missingSince[id];
         final firstSeen = <DateTime>[
           for (final account in accounts)
@@ -218,11 +266,9 @@ extension AppStateL1Joins on AppState {
           _l1Joins.due[id] = waitUntil.add(AppState._reconcileFallbackMargin);
           continue;
         }
-        final adds = await client.claimDeviceKeyPackages(
-            current.token, id, [for (final ref in discovered) ref.deviceId]);
+        final adds = await _claimListedDevices(current, client, id, discovered,
+            stillOwner: () => _syncOwnerActive(current, ownerGeneration));
         if (!_syncOwnerActive(current, ownerGeneration)) return;
-        _checkDiscoveredPackages(discovered, adds);
-        await _noteMissingJoins(id, _unresolvedAccounts(discovered, adds), now);
         if (adds.isEmpty) continue;
         await mls.stageMembershipChange(id,
             adds: adds, removes: const <MlsDeviceRef>[]);

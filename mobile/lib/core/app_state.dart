@@ -8180,19 +8180,24 @@ class AppState extends ChangeNotifier
           throw DeviceListNotApprovedException(
               [for (final item in change.add) item.deviceId]);
         }
+        if (discovered != null && discoveryComplete) {
+          // Only the tree resolves a gap, never a claimed package.
+          await _noteMissingJoins(change.conversationId,
+              AppStateL1Joins._gapAccounts(discovered), now);
+        }
         final adds = approvedAdds.isEmpty
             ? const <DeviceKeyPackage>[]
-            : await client.claimDeviceKeyPackages(
-                current.token,
-                change.conversationId,
-                approvedAdds,
-              );
+            : discovered != null
+                ? await _claimListedDevices(
+                    current, client, change.conversationId, discovered,
+                    stillOwner: () =>
+                        _syncOwnerActive(current, ownerGeneration))
+                : await client.claimDeviceKeyPackages(
+                    current.token,
+                    change.conversationId,
+                    approvedAdds,
+                  );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
-        if (discovered != null) _checkDiscoveredPackages(discovered, adds);
-        if (discovered != null && discoveryComplete) {
-          await _noteMissingJoins(change.conversationId,
-              AppStateL1Joins._unresolvedAccounts(discovered, adds), now);
-        }
         if (adds.isEmpty && change.remove.isEmpty) continue;
         await mls.stageMembershipChange(change.conversationId,
             adds: adds, removes: change.remove);
@@ -8673,11 +8678,9 @@ class AppState extends ChangeNotifier
           mls as ApprovedDeviceDiscoveryCryptoService, conversationId,
           creating: true);
       if (!_syncOwnerActive(current, ownerGeneration)) return;
-      packages = requested.isEmpty
-          ? const []
-          : await client.claimDeviceKeyPackages(current.token, conversationId,
-              [for (final ref in requested) ref.deviceId]);
-      _checkDiscoveredPackages(requested, packages);
+      packages = await _claimListedDevices(
+          current, client, conversationId, requested,
+          stillOwner: () => _syncOwnerActive(current, ownerGeneration));
     } else {
       packages = await client.claimConversationKeyPackages(
           current.token, conversationId);
