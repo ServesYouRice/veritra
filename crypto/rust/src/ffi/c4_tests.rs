@@ -220,6 +220,7 @@ struct Review {
     after: Vec<Vec<u8>>,
     record_before: Option<Vec<u8>>,
     record_after: Option<Vec<u8>>,
+    proven: Vec<(Vec<u8>, Vec<u8>, Vec<u8>)>,
 }
 
 unsafe fn stage_incoming(handle: *mut PmCryptoHandle, commit: &[u8]) -> Result<Review, i32> {
@@ -233,7 +234,7 @@ unsafe fn stage_incoming(handle: *mut PmCryptoHandle, commit: &[u8]) -> Result<R
     }
     let bytes = unsafe { take(out) };
     let mut reader = Reader(&bytes);
-    assert_eq!(reader.u8(), 1);
+    assert_eq!(reader.u8(), 2);
     let flags = reader.u8();
     let epoch = reader.u64();
     let committer = reader.pair();
@@ -242,6 +243,7 @@ unsafe fn stage_incoming(handle: *mut PmCryptoHandle, commit: &[u8]) -> Result<R
     let after = reader.accounts();
     let record_before = reader.record(flags & 16 != 0);
     let record_after = reader.record(flags & 32 != 0);
+    let proven = (0..reader.u16()).map(|_| reader.pair()).collect();
     assert!(reader.0.is_empty());
     Ok(Review {
         flags,
@@ -252,6 +254,7 @@ unsafe fn stage_incoming(handle: *mut PmCryptoHandle, commit: &[u8]) -> Result<R
         after,
         record_before,
         record_after,
+        proven,
     })
 }
 
@@ -408,6 +411,7 @@ fn a_record_group_is_created_reviewed_merged_and_read_through_the_abi() {
     );
     assert_eq!(review.record_before.as_deref(), Some(&b"r1"[..]));
     assert_eq!(review.record_after.as_deref(), Some(&b"r2"[..]));
+    assert!(review.proven.is_empty());
     assert_eq!(epoch_and_pending(alice).0, 1);
 
     let merged = unsafe { merge_incoming(alice, &removal.commit) }.unwrap();
@@ -604,4 +608,121 @@ fn bad_arguments_are_refused_before_any_work() {
     expected.extend_from_slice(&[0, 0, 0, 0]);
     assert_eq!(unsafe { take(out) }, expected);
     destroy(&[alice]);
+}
+
+unsafe fn stage_proven(
+    handle: *mut PmCryptoHandle,
+    changes: &[u8],
+    record: &[u8],
+    proofs: &[u8],
+) -> Result<Staged, i32> {
+    let (mut commit, mut welcome, mut epoch) =
+        (PmOwnedBuffer::default(), PmOwnedBuffer::default(), 0u64);
+    let record = if record.is_empty() {
+        EMPTY
+    } else {
+        slice(record)
+    };
+    let proofs = if proofs.is_empty() {
+        EMPTY
+    } else {
+        slice(proofs)
+    };
+    let status = unsafe {
+        pm_crypto_group_stage_commit_proven(
+            handle,
+            slice(GROUP),
+            slice(changes),
+            record,
+            proofs,
+            &mut commit,
+            &mut welcome,
+            &mut epoch,
+        )
+    };
+    if status != PM_CRYPTO_OK {
+        assert!(is_empty(&commit) && is_empty(&welcome));
+        return Err(status);
+    }
+    Ok(Staged {
+        commit: unsafe { take(commit) },
+        welcome: if is_empty(&welcome) {
+            Vec::new()
+        } else {
+            unsafe { take(welcome) }
+        },
+        epoch,
+    })
+}
+
+fn sign_leave(handle: *mut PmCryptoHandle) -> Result<Vec<u8>, i32> {
+    let mut out = PmOwnedBuffer::default();
+    let status = unsafe { pm_crypto_c4_sign_leave(handle, slice(GROUP), &mut out) };
+    if status != PM_CRYPTO_OK {
+        assert!(is_empty(&out));
+        return Err(status);
+    }
+    Ok(unsafe { take(out) })
+}
+
+#[test]
+fn a_leave_statement_travels_in_the_commit_through_the_abi() {
+    let alice = create(b"acct_alice", b"dev_alice");
+    let bob = create(b"acct_bob", b"dev_bob");
+    let carol = create(b"acct_carol", b"dev_carol");
+    // No group yet: nothing to sign.
+    assert_eq!(sign_leave(carol).err(), Some(PM_CRYPTO_ERROR));
+    assert_eq!(
+        unsafe { pm_crypto_c4_sign_leave(carol, slice(GROUP), ptr::null_mut()) },
+        PM_CRYPTO_INVALID_ARGUMENT
+    );
+    assert_eq!(
+        unsafe { pm_crypto_group_create_with_roles(alice, slice(GROUP), slice(b"g0")) },
+        PM_CRYPTO_OK
+    );
+    let (bob_kp, carol_kp) = (key_package(bob), key_package(carol));
+    let (bob_key, carol_key) = (signing_key(bob), signing_key(carol));
+    let add = unsafe {
+        stage_with_roles(
+            alice,
+            &changes(
+                &[
+                    (&bob_kp, b"acct_bob", b"dev_bob", &bob_key),
+                    (&carol_kp, b"acct_carol", b"dev_carol", &carol_key),
+                ],
+                &[],
+            ),
+            b"r1",
+        )
+    }
+    .unwrap();
+    merge_own(alice);
+    join(bob, &add.welcome);
+    join(carol, &add.welcome);
+
+    let statement = sign_leave(carol).unwrap();
+    assert_eq!(statement.len(), 70);
+    let mut proofs = b"VCL1\x01".to_vec();
+    proofs.extend_from_slice(&statement);
+    let removal = changes(&[], &[(b"acct_carol", b"dev_carol")]);
+    // A malformed list or none at all is refused; nothing is staged.
+    for bad in [&b""[..], b"VCL1\x00", &proofs[..proofs.len() - 1]] {
+        assert_eq!(
+            unsafe { stage_proven(bob, &removal, b"", bad) }.err(),
+            Some(PM_CRYPTO_INVALID_ARGUMENT)
+        );
+        assert_eq!(epoch_and_pending(bob), (1, 0));
+    }
+    // Without a record (len 0): a plain keyed removal with the proof.
+    let staged = unsafe { stage_proven(bob, &removal, b"", &proofs) }.unwrap();
+    assert!(staged.welcome.is_empty());
+    merge_own(bob);
+    let review = unsafe { stage_incoming(alice, &staged.commit) }.unwrap();
+    assert_eq!(review.flags & 8, 0);
+    assert_eq!(
+        review.proven,
+        vec![(b"acct_carol".to_vec(), b"dev_carol".to_vec(), carol_key)]
+    );
+    unsafe { merge_incoming(alice, &staged.commit) }.unwrap();
+    destroy(&[alice, bob, carol]);
 }

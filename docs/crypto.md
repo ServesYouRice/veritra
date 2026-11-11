@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 23 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 24 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 23. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 24. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -573,6 +573,23 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C4 leave proof in the commit (2026-11-11, crypto ABI 24):** the
+  owner-approved design, built with the review's required changes (no
+  epoch field; the AAD set inside every stage attempt and checked on the
+  sender's own commit; a cancelled leave self-updates; the length leak
+  documented). New: `pm_crypto_c4_sign_leave`,
+  `pm_crypto_group_stage_commit_proven`, commit review format 2 with the
+  proven leaves, the hidden v2 payload `member_leave_signed`
+  (`{"statement": base64}`, under the leave-notice mark), settings
+  `c4.leave_signed.<group>.<account>` and `c4.leave_signed_out.<group>`, and
+  the server's leave-notice limit raised from one to two per hour (Go, no
+  migration). Vectors `testing/vectors/c4-leave-proof-v1.json` (Rust,
+  Dart, Go). No local schema or server migration change. Deltas from the
+  design: the epoch is gone from `LeaveTBS`, the statement and the payload;
+  Dart accepts one approved proven leaf of the account (not every removed
+  leaf); the committer drops statements that no longer verify instead of
+  failing. Rules: "C4 leave proof in the commit". Needs the independent
+  review.
 - **C6 moderator keys over MLS (2026-11-11):** two hidden v2 payload types,
   `report_key` (`{"key": canonical base64 of the sender's own 32-byte report
   public key}`) and `report_key_request` (`{"accounts": [1 to 64 distinct
@@ -591,12 +608,25 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   account's announced key; the manual pin is gone for moderators (owner
   keys keep D95's pin). Rules: C6 design, "Moderator keys over MLS"; §4
   type registry. No ABI, local schema or server migration change. Needs
-  the independent review.
+  the independent review. Residual (review 2026-11-11, L6): both types ride
+  in an open channel of the shared group, or an announcement channel for an
+  owner or admin, because C0 routing (`routeEnvelope`) requires a
+  `channel_id` in a shared conversation and refuses a group-level envelope
+  that is not a C7 two-part body. In a community with no open channel an
+  account below admin therefore has no route: a moderator's `report_key`
+  and a member's `report_key_request` are not sent (`_reportKeyChannelFor`
+  is null; the background pass tries again later), and reporters cannot
+  seal to that moderator until an open channel exists or it is made admin. A group-level route
+  would need a server exemption like the leave notice's; not built.
 
 - **C6 private-channel reports (2026-11-11):** a report about a post in a
   private channel is sealed only to verified moderators in that channel's
   MLS roster, and the server's community inbox lists only members of the
-  reported conversation. No wire, ABI, local schema or migration change.
+  reported conversation. The roster (`mlsAccountsOf`, and the C3 no-admin
+  roster `groupMemberAccounts`) counts only accounts with a leaf whose
+  last L1 verdict on this device is `approved`, with the key in the tree
+  (review L7: an unapproved leaf can carry any account's id); before a
+  group's verdicts are loaded it is unknown (null: no report, no stand-in). No wire, ABI, local schema or migration change.
   Rules: C6 design, "Private channels".
 
 - **L2-5 own-device alert (2026-11-11):** the hidden v2 payload
@@ -611,10 +641,18 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   an approved device of an account can hold that account's leaves in its
   chats as `checking` by alerting a head never published, until a pin shows
   that device removed (the alert then stops counting; the head carries no
-  signature, so a receiver cannot check it alone); one alert is kept per
-  account, so while a rogue alert holds it an honest alert at the same or a
-  lower head is dropped, and none is left once the rogue device is
-  removed; first contact is unchanged. Tests:
+  signature, so a receiver cannot check it alone); first contact is
+  unchanged. Review M3 (2026-11-11): an alert counts only from a leaf whose
+  verdict is `approved` (a `removed` leaf's alert is ignored); the setting
+  keeps one line per alerting device, so one device's inflated head never
+  drops another device's later alert; lines that no longer hold (alerting
+  device removed, pin caught up, or a pin of another list id that does not
+  list the alerting device: a list restarted from a new genesis) are
+  dropped at the next write and never hold, so an old list's alert cannot
+  hold the account's leaves as `checking` for good. While one alert holds
+  an account, that account's leaves are `checking`, so their own alerts
+  are not taken until it lifts (the honest device alerts again at its next
+  head, which its removal of the rogue device produces). Tests:
   `mobile/test/l1_native_gate_test.dart` (alert, forged alert, hold and
   release), `mobile/test/l2_device_list_alert_payload_test.dart`. Needs the
   independent review.
@@ -774,8 +812,18 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   fresh epoch (it is trusted to choose keys; honest code never re-sends a key
   from before a removal it has seen). In a private channel a verified
   moderator can likewise make a key it never sent before current, but only
-  as second choice: while no owner or admin key is fresh, and never a key a
-  removal retired (owner and admin rows count in its freshness). Rows stored before schema 35 have no
+  as second choice: while no owner or admin key is fresh. In that second
+  choice a key is also retired when any row of it in the group, from any
+  sender, trusted or not, has an epoch below the last removal. Counting only
+  rows from currently trusted senders was not enough (review 2026-11-11): an
+  admin mints K at epoch 5, a removal lands at 10, the admin is demoted, a
+  moderator re-sends K at 12, and K's only trusted row was the moderator's,
+  so K was current again. The primary owner/admin path keeps trusted rows
+  only, so a member cannot retire the admins' key by replaying it at an old
+  epoch; in the second choice it can (it holds old epoch secrets for a
+  couple of epochs), which only leaves the channel without a current key
+  until a rotation (fail closed). Test: `c3_community_info_service_test.dart`
+  ("demoted since"). Rows stored before schema 35 have no
   epoch and rank below every key with one and below any removal. A device
   upgraded with a removal already recorded for a group and only such rows
   therefore has no current key there; no admin can answer its request (their
@@ -2584,7 +2632,8 @@ input can differ.
 | `history_sync_request` | 2, hidden | `for_epoch` (u64): the membership commit whose history_sync the sender lacks | A newcomer; group-level only, two-part only | C7 decision 5. Never franked |
 | `report_key` | 2, hidden | `key`: canonical base64 of 32 bytes, the sender's own report public key; no other field | Any member (the key is the MLS sender's own); who moderates is judged when a report is sealed, against the C4 record | C6: kept as setting `c6.report_key.<group>.<sender account>` only in a group whose MLS state holds a C4 record and only from an L1-approved leaf; latest wins. Never franked, never expires, never reportable |
 | `report_key_request` | 2, hidden | `accounts`: 1 to 64 distinct account ids (1 to 128 characters); no other field | Any member | C6: kept as setting `c6.report_key_request.<group>` (the sync event id) only when it names the receiver's account, under the same group and leaf rules; each named moderator's app announces again, at most once per 5 minutes per group. Sent by a member's background pass when it lacks some moderators' announcements (a new set at once, the same set weekly), never by the report flow. Never franked |
-| `device_list_alert` | 2, hidden | Exactly `account_id` (1 to 128 chars), `head_version` (int ≥ 1), `list_id` (64 lowercase hex): the sender's own pinned list head | An approved device of `account_id` itself (it must equal the MLS-authenticated sender's account; any other alert is a hidden row with no effect) | L2-5: sent, identified and never franked, when this device judges a leaf of its own account unapproved; goes out past the sender's own approval hold, once per conversation and own head. Receivers keep the highest head per account (with its list id), refetch the list past the rate limit and judge again; while their pin is older than that head or of another list id, and does not show the alerting device removed, every leaf of the account is `checking` (held, not sticky) |
+| `device_list_alert` | 2, hidden | Exactly `account_id` (1 to 128 chars), `head_version` (int ≥ 1), `list_id` (64 lowercase hex): the sender's own pinned list head | An approved device of `account_id` itself (it must equal the MLS-authenticated sender's account, and the sending leaf must be `approved` now, review M3; any other alert is a hidden row with no effect) | L2-5: sent, identified and never franked, when this device judges a leaf of its own account unapproved; goes out past the sender's own approval hold, once per conversation and own head. Receivers keep one alert per alerting device (head and list id, at most 32 per account; review M3), refetch the list past the rate limit and judge again. An alert holds while the pin does not show its device removed and either is of the same list id and older than its head, or is of another list id that still lists its device (a list restarted from a new genesis without it releases it); while any alert holds, every leaf of the account is `checking` (held, not sticky). Never expires (no sender expiry, review M2) |
+| `member_leave_signed` | 2, hidden | Exactly `statement`: canonical base64 of the 70-byte leave statement (`u32 leaf_index \|\| u16 64 \|\| Ed25519 signature`) | The leaving device itself (sent after its `member_leave`, under the leave-notice mark) | C4 leave proof in the commit (ABI 24): kept as setting `c4.leave_signed.<group>.<account>` only in a record group and only from a leaf its list approves now; a committer that removes the account carries it in the commit's authenticated data, where Rust verifies it against the tree. Never franked, never expiring in effect (cleared with `c4.leave.*`) |
 
 In a C0-layout conversation a two-part message with no `channel_id` must be
 `history_sync` or `history_sync_request`, and those two never carry one;
@@ -3634,9 +3683,10 @@ leaf its list has `removed` (a phone replaced after it committed, seen by a
 member that was offline) stays held, because L1 list rows carry no removal
 version that could order the removal against the commit (decision B keeps
 such a leaf from acting with its role); and a newcomer holds an honest
-leave-proven removal for good until the leave proof travels in the commit
-itself (*leave proof in the commit*, below). The step-3 `checking` case
-still stalls device sync as a transient error, as before.
+leave-proven removal for good when the leaver sent no signed statement (an
+older build) or its leaf changed since (*leave proof in the commit*,
+below, built at ABI 24, carries it in the commit otherwise). The step-3
+`checking` case still stalls device sync as a transient error, as before.
 
 **`member_leave`** (app payload v2, hidden, never franked, never reported:
 `{"epoch": n}`). A governing member's app sends it to the record group
@@ -3646,7 +3696,9 @@ epoch MLS authenticated for the message, in the setting
 `c4.leave.<group>.<account>`, written with the message's transition. It is
 deleted when its removal merges, when the account is added again, and for
 every current member on a Welcome. The owner cannot leave (D81): the app
-refuses until it has transferred.
+refuses until it has transferred. Since ABI 24 the app then sends
+`member_leave_signed`, the signed statement a committer carries in the
+removal for members that join later (*leave proof in the commit*, below).
 
 *Leave notice* (review fix, 2026-11-11). The proof goes through the
 server's posting checks, so a moderator in an admins-only group, a voter in
@@ -3656,11 +3708,15 @@ leave. The envelope now carries the clear metadata mark `"c4_leave": true`
 exempts a marked envelope from C2, the C5 timeout and slow mode
 (`server/internal/storage/leave_notice.go`), only: in a record group (kind
 `group` outside a community, or a community's shared conversation); with no
-attachments, reply, thread or franking commitment; and at most one
-per sender account and membership per hour (`leave_notice_limited`, 429
-with Retry-After). The mark is unverifiable, so receivers turn any marked
-envelope whose payload is not a `member_leave` into an invalid row: a
-marked post never shows. In a shared group the envelope still names a
+attachments, reply, thread or franking commitment; and at most two
+per sender account and membership per hour (the `member_leave` and, since
+ABI 24, the `member_leave_signed` after it; `leave_notice_limited`, 429
+with Retry-After counted from the oldest notice in the window). The mark is unverifiable, so receivers turn any marked
+envelope whose payload is not a leave proof into an invalid row: a
+marked post never shows. The check runs before the payload is handled
+(review L1): a marked payload of a type this app does not know is kept
+only when the sender marked it hidden (a newer build's leave proof);
+a visible one is an invalid row too. In a shared group the envelope still names a
 channel, because C0 routing requires one there (only a C7 group-level body
 of a history_sync size may name none); the exemption makes the channel's
 rules irrelevant to it. The server learns that an envelope is a leave
@@ -3707,8 +3763,11 @@ messages but never acts with its account's role: its `delete` is the
 author's own only (`messageEffectsFor(senderActsWithRole: false)`), its C3
 `info_key` and `info_update` are ignored (an `info_key_request` is not a
 role action), its post where posting is restricted is dropped
-(`shouldDropRestrictedPost(senderRemoved: true)`), and its pin uses no
-community role. Role-record commits already required an `approved`
+(`shouldDropRestrictedPost(senderRemoved: true)`), its pin uses no
+community role, and its `member_leave` is no leave proof (review M1: a
+stolen phone could otherwise post a valid proof and strip its governing
+account; only a leaf whose verdict is `approved` sets
+`c4.leave.<group>.<account>`). Role-record commits already required an `approved`
 committer (step 3) and are held otherwise; C5 timeouts and C2 powers in the
 record are record changes, so the same rule covers them.
 
@@ -3795,14 +3854,14 @@ by time only (their group carries no record). Builds older than this refuse
 a record with timeouts (unknown flag bit) and their sync of that group
 stops until they update.
 
-### C4 leave proof in the commit (design, owner-approved 2026-11-11; not built)
+### C4 leave proof in the commit (owner-approved 2026-11-11; built at crypto ABI 24)
 
 **Problem.** A governing member's departure is proven by its own
 `member_leave`, which only the members of that moment hold. A newcomer
 never has it (the Welcome deletes proofs; the server withholds pre-join
 events, which it could not decrypt anyway), so an honest leave-proven
-removal committed after it joined is held for good on its device (held
-commits, above). The lasting fix is that the proof travels in the commit.
+removal committed after it joined was held for good on its device (held
+commits, above). The fix is that the proof travels in the commit.
 
 **Options weighed.**
 - *SelfRemove proposal by reference* (RFC 9420 extension; OpenMLS 0.9.2
@@ -3817,75 +3876,135 @@ commits, above). The lasting fix is that the proof travels in the commit.
   opaque to Rust, where the signature must be checked.
 - *Signed leave bytes in the commit's authenticated data* (chosen).
   OpenMLS 0.9.2 sets it for the next outgoing message (`MlsGroup::set_aad`,
-  reset after each message) and gives it on receipt
+  reset after each staged commit) and gives it on receipt
   (`ProcessedMessage::aad`). Older builds never read it, so they behave
   exactly as now.
 
 **What the server learns.** A PrivateMessage's `authenticated_data` is not
 encrypted: the server sees the statements (a signature by the leaver's leaf
-key over the group id, the leaf index, the leaf's HPKE key and an epoch).
-It learns that this leaf consented to leaving, which it already knows from
-the leave request it served. It is stored as part of the commit bytes and
-never logged. This is a server-visible plaintext path and a protocol
-change: it needs an independent second opinion (AGENTS.md) before it is
-built.
+key over the group id, the leaf index and the leaf's HPKE key). It learns
+that this leaf consented to leaving, which it already knows from the leave
+request it served, and which leaf index the leaver had. It is stored as
+part of the commit bytes and never logged. *Length leak:* the AAD sits
+outside MLS's padding of the encrypted content, so the commit's length
+shows how many statements it carries (70 bytes each, plus 5); a reader of
+the commit bytes (the server, or anyone who sees them in transit) learns
+the count without the signatures. The commit's removals are already
+visible to the server as pending changes, so this tells it nothing new
+about who leaves.
 
-**Statement (v1).** Signed by the leaver's Rust device with its leaf
-signature key, `SignWithLabel(sig_key, "VeritraC4Leave1", LeaveTBS)`:
+**Statement (v1).** Signed in Rust (`pm_crypto_c4_sign_leave`) by the
+leaver's device with its leaf signature key, RFC 9420
+`SignWithLabel(sig_key, "VeritraC4Leave1", LeaveTBS)`: Ed25519 over
+`SignContent = VL("MLS 1.0 VeritraC4Leave1") || VL(LeaveTBS)`.
 
 ```
 struct {
   opaque group_id<V>;
-  uint32 leaf_index;          // the leaver's leaf now
-  HPKEPublicKey encryption_key; // the leaver's leaf encryption key now
-  uint64 epoch;               // the epoch it is signed in
+  uint32 leaf_index;              // the leaver's leaf now
+  HPKEPublicKey encryption_key;   // the leaver's leaf encryption key now (opaque<V>)
 } LeaveTBS;
+
+statement = u32 leaf_index || u16 64 || signature        (70 bytes)
 ```
 
 Binding the leaf's encryption key, not only its signature key, stops a
-replay: the device credential (and so the signature key) survives a leave
-and re-add, but a re-add makes a new leaf with a new encryption key, so an
-old statement never verifies against the new leaf.
+replay and bounds the statement's life: the device credential (and so the
+signature key) survives a leave and re-add, but a re-add makes a new leaf
+with a new encryption key, and so does any update path (a self-update, or
+any commit this device makes). A statement is therefore valid only until
+the leaf changes. The design's `epoch` field is dropped (review 2026-11-11,
+item 2): the encryption-key binding already ends a statement when the leaf
+changes, and an epoch could only be checked against "not after now", which
+adds nothing. `SignContent` starts with the varint 0x17, which no raw
+message the device credential key signs starts with (C7, the L1 device
+list, the enrollment proof, the K2 hand-off and the device-link v3
+enrollment proof each begin with an ASCII `veritra-...` domain), and its
+label is none of RFC 9420's (`leave_proof_tests.rs` lists them; a new raw
+signing site joins that list).
 
 **Carrier.** The leaver sends it in a new hidden payload type
-`member_leave_signed` (`{"epoch": n, "statement": b64}`), next to the
-existing `member_leave` (whose decoder refuses any extra key, so the
-statement cannot ride in it; older receivers store the new type as a hidden
-unsupported row). Both carry the leave-notice mark; the server's limit
-becomes two marked envelopes per membership per hour. Receivers keep the
-statement with the proof setting. A committer that proves a removal by
-leave sets the commit's AAD to:
+`member_leave_signed` (`{"statement": canonical base64 of the 70 bytes}`,
+exactly that key), right after the existing `member_leave` has reached the
+server (whose decoder refuses any extra key, so the statement cannot ride in
+it; older receivers store the new type as a hidden unsupported row). It is
+best effort: the leave goes on if it cannot be sent. Both carry the
+leave-notice mark (`leaveNoticePayloadTypes`); the server's limit is two
+marked envelopes per sender and membership per hour, and Retry-After is
+counted from the oldest one in the window (`checkLeaveNoticeTx`).
+Receivers keep it only in a record group and only from a leaf its list
+approves now (as `member_leave`, review M1), in the setting
+`c4.leave_signed.<group>.<account>`, written with the message's
+transition, and cleared wherever `c4.leave.<group>.<account>` is (the
+removal merges, the account is added again, a Welcome).
+
+**Committer.** A commit that removes devices of accounts whose statements
+this device holds goes through `pm_crypto_group_stage_commit_proven`
+(record optional; the `VCL1` list, at most one statement per leaf):
 
 ```
-"VCL1" || u8 count (1..16) { u32 leaf_index || u64 epoch || u16 len || signature }*
+"VCL1" || u8 count (1..16) || statement*    (leaf indices distinct)
 ```
 
-**Verification (Rust, phase one).** `stage_incoming_commit` parses the AAD
-when it starts with `VCL1`; for each statement whose leaf the commit
-removes, it rebuilds `LeaveTBS` from the tree *before* the commit (that
-leaf's encryption key, the group id) and verifies the signature with that
-leaf's signature key. The review gains `proven_leaves` (the LeafPairs that
-verified). Anything malformed, another version, a leaf not removed, or a
-bad signature proves nothing and is never a refusal: the commit is judged
-as without it (so held where proof is needed). Dart's step 4 accepts an
-account whose every removed leaf is in `proven_leaves`.
+Rust keeps only the statements whose leaf the commit removes and that
+verify against the tree before the commit; with none left the commit has no
+AAD. A malformed list is `PM_CRYPTO_INVALID_ARGUMENT` before anything is
+staged, and the app then stages without it. OpenMLS clears the AAD after
+each staged commit (`CommitBuilder::stage_commit`, `reset_aad`), and a
+padded Welcome (L2-1) stages up to seven times, so the AAD is set inside
+every stage attempt and cleared again after the last. After staging the
+sender reads its commit back: the PrivateMessage's AAD must be the chosen
+bytes and every statement in it must verify, or the commit is cleared.
 
-**ABI.** One new call to sign (`pm_c4_sign_leave(device, group) ->
-statement`), the AAD as a new parameter of the staging calls that remove
-(or a new variant of them), and `proven_leaves` in the review: ABI 25 (the
-order may be renumbered at integration). Vectors for the statement and the
-AAD encoding in Rust and Dart (and Go only if the server ever checks it,
-which this design does not need).
+**Verification (Rust, phase one).** `stage_incoming_commit` reads the AAD
+before taking the content; when it is a well-formed `VCL1` list, each
+statement whose leaf the commit removes is checked against the tree
+*before* the commit (that leaf's encryption key, the group id, that leaf's
+signature key, `verify_strict`). The review (format 2) appends
+`u16 n_proven { lp(account) lp(device) [32] key }*`, the LeafPairs that
+verified. Anything malformed, another magic, a leaf not removed, or a bad
+signature proves nothing and is never a refusal: the commit is judged as
+without it (so held where proof is needed).
 
-**Versioning.** Old builds: ignore the AAD and the new payload type; they
-judge as now. New receivers of an old committer's commit: no AAD, so held
-where they lack the proof, as now. New committers always attach the
-statements they hold. Once every supported build sends
+**Dart step 4.** A governing account the committer may not act on is proven
+gone by its `member_leave` (as before), by its list removing every leaf (as
+before), or by an in-commit statement: one proven leaf of that account that
+its list approves now (`checking` retries, as for the committer). Delta from
+the design's "every removed leaf": a leave comes from one device, but the
+account's removal takes all its leaves, so requiring a statement from each
+would fail every multi-device account; one approved leaf is what
+`member_leave` already requires.
+
+**Cancelled leave** (review item 3). Before the statement exists the
+sending device writes `c4.leave_signed_out.<group>`. If the leave does not
+go through (the server refuses it, or the app stops before it), the next
+sync pass stages a self-update in that group (`_voidCancelledLeaves`, never
+while a leave of that group is in progress); the marker is cleared when a
+self-update of this device merges there, or by a Welcome. Until then the
+statement verifies, as `member_leave` would prove the leave to today's
+members.
+
+**ABI.** Crypto ABI 24 (the design's reserved 25, renumbered at
+integration): `pm_crypto_c4_sign_leave`, `pm_crypto_group_stage_commit_proven`,
+review format 2. Vectors: `testing/vectors/c4-leave-proof-v1.json`
+(`LeaveTBS`, `SignContent`, signature, statement, AAD, malformed lists),
+checked in Rust (`leave_proof::tests::shared_vector_matches`) and in Dart
+(`mobile/test/c4_leave_proof_vector_test.dart`), and re-derived in Go with
+the standard library alone (`server/internal/c4vector`, which signs the same
+bytes and gets the same Ed25519 signature); the server itself never parses
+it (it checks nothing here).
+
+**Versioning.** Old builds ignore the AAD and the new payload type and judge
+as before. A new receiver of an old committer's commit sees no AAD and holds
+where it lacks the proof, as before. A new committer attaches every
+statement it holds. A leaver on an older build sends no statement, so its
+removal stays held on a newcomer. Once every supported build sends
 `member_leave_signed`, the old `member_leave` can stop being sent (its own
 decision).
 
-**Residuals.** A leaver that updates its own leaf after signing (a
-self-update between the proof and the server leave) invalidates its own
-statement; its removal then needs the old proof, as now. A leaver that
-never sent the signed statement (an older build) cannot be proven to a
-newcomer.
+**Residuals.** A leaver whose leaf changes after signing (a self-update, or
+any commit of its own, between the statement and the removal) voids its own
+statement; its removal then needs the old proof on each member, as before.
+A newcomer whose list cannot approve the leaver's leaf (a stale pin) holds
+the removal until it can. The statement count leaks through the commit's
+length (above).

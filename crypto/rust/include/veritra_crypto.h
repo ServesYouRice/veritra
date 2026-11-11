@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (23u)
+#define PM_CRYPTO_ABI_VERSION (24u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -578,13 +578,15 @@ int32_t pm_crypto_group_l1_merge_pending_commit(
  *
  * stage_incoming_commit: processes a remote commit to its staged form,
  * checks it (one record proposal allowed), holds it in memory without
- * merging, and writes the review: u8 format=1 | u8 flags (1 removed, 2 added,
+ * merging, and writes the review: u8 format=2 | u8 flags (1 removed, 2 added,
  * 4 removed self, 8 record proposal, 16 record before present, 32 record
  * after present) | u64 new_epoch | committer lp(account) lp(device) [32] key
  * | u16 n_added {lp(account) lp(device) [32] key}* | u16 n {lp(account)}*
  * roster before | u16 n {lp(account)}* roster after (both sorted by bytes,
  * distinct) | u32 len record_before | u32 len record_after (len 0 when
- * absent). lp = u16 length prefix, big-endian. Staging uses up the commit's
+ * absent) | u16 n_proven {lp(account) lp(device) [32] key}* (ABI 24: the
+ * removed leaves whose own leave statement in the commit's authenticated
+ * data verified). lp = u16 length prefix, big-endian. Staging uses up the commit's
  * handshake ratchet step: after a discard the app restores its committed
  * state instead of sealing.
  *
@@ -619,6 +621,27 @@ int32_t pm_crypto_group_discard_incoming_commit(PmCryptoHandle *handle,
 int32_t pm_crypto_group_role_state(PmCryptoHandle *handle,
                                    PmByteSlice group_id,
                                    PmOwnedBuffer *out_state);
+
+/* ABI 24 (C4 leave proof in the commit, docs/crypto.md).
+ *
+ * c4_sign_leave: this device's leave statement for group_id, 70 bytes:
+ * u32 leaf_index | u16 64 | Ed25519 signature, RFC 9420 SignWithLabel with
+ * the leaf signature key, label "VeritraC4Leave1", over LeaveTBS = VL(group
+ * id) | u32 leaf_index | the leaf's EncryptionKey (opaque<V>). Valid until
+ * this leaf changes.
+ *
+ * stage_commit_proven: stage_commit_with_roles with record optional (len 0:
+ * no record proposal) and leave_proofs, a list "VCL1" | u8 count (1..16) |
+ * statements (distinct leaves; malformed: PM_CRYPTO_INVALID_ARGUMENT). The
+ * statements whose leaf the commit removes and that verify against the tree
+ * go into the commit's authenticated data in the same encoding; none left:
+ * no AAD. */
+int32_t pm_crypto_c4_sign_leave(PmCryptoHandle *handle, PmByteSlice group_id,
+                                PmOwnedBuffer *out_statement);
+int32_t pm_crypto_group_stage_commit_proven(
+    PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice changes,
+    PmByteSlice record, PmByteSlice leave_proofs, PmOwnedBuffer *out_commit,
+    PmOwnedBuffer *out_welcome, uint64_t *out_epoch);
 
 int32_t pm_crypto_attachment_encrypt_chunk(
     PmByteSlice key, PmByteSlice nonce_prefix, uint32_t chunk_index,

@@ -13,6 +13,7 @@ use sha2::{Digest, Sha256, Sha512};
 use tls_codec::{Deserialize as TlsDeserializeTrait, Serialize as TlsSerializeTrait};
 
 mod c4;
+pub mod leave_proof;
 #[allow(dead_code)]
 pub(crate) mod link_v3;
 mod list;
@@ -372,6 +373,30 @@ impl MlsDevice {
         removes: &[MemberIdentity<'_>],
         record: Option<&[u8]>,
     ) -> Result<StagedCommitMessages, MlsError> {
+        self.stage_commit_proven(group, adds, expected_keys, removes, record, None)
+    }
+
+    /// [`Self::stage_commit_with_record`] that also carries the leave
+    /// statements the app holds for the devices it removes (C4 leave proof
+    /// in the commit, ABI 24) in the commit's authenticated data.
+    /// `leave_proofs` is a `VCL1` list ([`leave_proof::encode_aad`]); a
+    /// malformed one is refused. Statements whose leaf this commit keeps or
+    /// that no longer verify against the tree (the leaf changed since it
+    /// signed) are dropped, and with none left the commit has no AAD.
+    ///
+    /// OpenMLS clears the AAD after each staged commit, and a padded
+    /// Welcome stages up to seven times, so the AAD is set inside every
+    /// attempt. After staging, the commit's bytes are read back and their
+    /// AAD must be exactly the one chosen, or the commit is cleared.
+    pub fn stage_commit_proven(
+        &self,
+        group: &mut MlsGroup,
+        adds: &[MemberAdd<'_>],
+        expected_keys: &[Option<&[u8]>],
+        removes: &[MemberIdentity<'_>],
+        record: Option<&[u8]>,
+        leave_proofs: Option<&[u8]>,
+    ) -> Result<StagedCommitMessages, MlsError> {
         if expected_keys.len() != adds.len() {
             return Err(MlsError::InvalidKeyPackage);
         }
@@ -416,9 +441,16 @@ impl MlsDevice {
         removed.sort();
         removed.dedup();
         ensure_added_identities_unique(&roster_identities(group, &removed), &added)?;
+        let aad = match leave_proofs {
+            Some(proofs) => leave_proof::committer_aad(group, &removed, proofs)?,
+            None => None,
+        }
+        .unwrap_or_default();
         let epoch = group.epoch().as_u64();
         let id = group.group_id().as_slice().to_vec();
         let stage = |group: &mut MlsGroup, pad: Option<usize>| {
+            // Every attempt: OpenMLS resets the AAD once a commit is staged.
+            group.set_aad(aad.clone());
             self.in_group(&id, || {
                 let builder = group
                     .commit_builder()
@@ -452,24 +484,43 @@ impl MlsDevice {
             })
         };
         let bundle = if adds.is_empty() {
-            stage(group, None)?
+            stage(group, None)
         } else {
-            self.stage_padded_welcome(group, stage)?
+            self.stage_padded_welcome(group, stage)
         };
+        // A failed build leaves the AAD set; it must never ride on the next
+        // application message.
+        group.set_aad(Vec::new());
+        let bundle = bundle?;
         // The sender runs the receivers' check on its own commit, so it never
         // sends what every receiver refuses (and never merges it).
         let checked = match group.pending_commit() {
             Some(staged) => inspect_commit(group, group.own_leaf_index(), staged, true),
             None => Err(MlsError::GroupOperation),
         };
-        if let Err(error) = checked {
-            let _ = self.clear_pending_commit(group);
-            return Err(error);
-        }
         let (commit, welcome, _) = bundle.into_messages();
-        let commit = commit
-            .tls_serialize_detached()
-            .map_err(|_| MlsError::GroupOperation)?;
+        let commit = checked.and_then(|()| {
+            let commit = commit
+                .tls_serialize_detached()
+                .map_err(|_| MlsError::GroupOperation)?;
+            // The AAD that went out is the one chosen, and what it proves is
+            // what a receiver will read from it.
+            if commit_aad(&commit)? != aad
+                || (!aad.is_empty()
+                    && leave_proof::proven_leaves(group, &removed, &aad).len()
+                        != leave_proof::parse_aad(&aad).map_or(0, |s| s.len()))
+            {
+                return Err(MlsError::GroupOperation);
+            }
+            Ok(commit)
+        });
+        let commit = match commit {
+            Ok(commit) => commit,
+            Err(error) => {
+                let _ = self.clear_pending_commit(group);
+                return Err(error);
+            }
+        };
         let welcome = match welcome {
             Some(welcome) => welcome
                 .tls_serialize_detached()
@@ -1514,6 +1565,20 @@ fn inspect_commit(
         keeps_identity(committer, leaf_node)?;
     }
     Ok(())
+}
+
+/// The authenticated data of a serialized PrivateMessage commit.
+fn commit_aad(commit: &[u8]) -> Result<Vec<u8>, MlsError> {
+    match MlsMessageIn::tls_deserialize_exact(commit)
+        .map_err(|_| MlsError::GroupOperation)?
+        .try_into_protocol_message()
+        .map_err(|_| MlsError::GroupOperation)?
+    {
+        ProtocolMessage::PrivateMessage(message) => Ok(message.aad().to_vec()),
+        // Veritra's wire policy is pure ciphertext, so no commit is public;
+        // were one, the comparison below would see an empty AAD.
+        ProtocolMessage::PublicMessage(_) => Ok(Vec::new()),
+    }
 }
 
 /// The device identity inside a Basic credential, checked for format.

@@ -470,6 +470,11 @@ class AppState extends ChangeNotifier
   /// delay, by record group ([RoleActions]).
   final Map<String, Timer> _ownerCancelTimers = <String, Timer>{};
 
+  /// C4 leave proof in the commit: record groups this device is leaving
+  /// right now (between its signed leave statement and the server's
+  /// answer), which the sync pass must not void with a self-update.
+  final Set<String> _leavingRecordGroups = <String>{};
+
   /// C6: this account's report public key on this device (canonical base64,
   /// '' when it holds no seed), cached per server and account so a sync
   /// pass reads the keystore once. Cleared when the seed changes.
@@ -3003,30 +3008,40 @@ class AppState extends ChangeNotifier
 
   /// Leaves a conversation and drops its local state.
   Future<bool> leaveConversation(String conversationId) async {
-    // C4: before the leave, outside the members op (it sends).
-    final owner = session;
-    if (owner != null) {
-      try {
-        await _beforeLeavingRecordGroup(owner, conversationId);
-      } on UserFacingException catch (err) {
-        _opErrors[Ops.members] = err.message;
-        notifyListeners();
-        return false;
+    final group = recordGroupFor(conversationId) ?? conversationId;
+    _leavingRecordGroups.add(group);
+    try {
+      // C4: before the leave, outside the members op (it sends).
+      final owner = session;
+      if (owner != null) {
+        try {
+          await _beforeLeavingRecordGroup(owner, conversationId);
+        } on UserFacingException catch (err) {
+          _opErrors[Ops.members] = err.message;
+          notifyListeners();
+          return false;
+        }
       }
+      return await _runScoped(Ops.members, () async {
+        final current = session;
+        final client = api;
+        if (current == null || client == null) {
+          return;
+        }
+        final leaveEventId = await client.removeConversationMember(
+          current.token,
+          conversationId,
+          'me',
+        );
+        await _dropLeftConversationLocally(
+            current, conversationId, leaveEventId);
+        await _leaveWentThrough(group);
+      });
+    } finally {
+      _leavingRecordGroups.remove(group);
+      // A leave that did not go through voids its signed statement.
+      _voidCancelledLeavesSoon();
     }
-    return _runScoped(Ops.members, () async {
-      final current = session;
-      final client = api;
-      if (current == null || client == null) {
-        return;
-      }
-      final leaveEventId = await client.removeConversationMember(
-        current.token,
-        conversationId,
-        'me',
-      );
-      await _dropLeftConversationLocally(current, conversationId, leaveEventId);
-    });
   }
 
   /// Drops the local state of a conversation the server has just taken this
@@ -4759,15 +4774,8 @@ class AppState extends ChangeNotifier
       // when the conversation has a disappearing timer and the service can
       // carry it; otherwise the payload has none and receivers fall back to
       // the server-stamped time.
-      final retention = conversation.retentionSeconds;
-      // C3 info payloads never expire: a key must outlive the timer. Nor do
-      // C6 report key announcements (their settings outlive the row anyway).
-      final DateTime? senderExpiry = retention != null &&
-              retention > 0 &&
-              !infoPayloadTypes.contains(type) &&
-              !reportKeyPayloadTypes.contains(type)
-          ? DateTime.now().toUtc().add(Duration(seconds: retention))
-          : null;
+      final DateTime? senderExpiry = senderExpiryFor(
+          type, conversation.retentionSeconds, DateTime.now().toUtc());
       final Object? expiringService = mls;
       if (mls != null &&
           senderExpiry != null &&
@@ -6438,6 +6446,7 @@ class AppState extends ChangeNotifier
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         try {
+          await _voidCancelledLeaves(current, ownerGeneration);
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
           await reconcileServerOwners();
@@ -9549,6 +9558,8 @@ class AppState extends ChangeNotifier
         // (or a declined one) and a DM with a blocked peer get none, as
         // they get no read receipt. Their records stay for later.
         if (!_selfUpdateAllowed(conversationId)) continue;
+        // C4: an update now would void the leave statement just sent.
+        if (_leavingRecordGroups.contains(conversationId)) continue;
         if (_revocationPendingGroups.contains(conversationId) ||
             _failedMlsConversations.contains(conversationId) ||
             await _hasPendingMlsWork(conversationId)) {

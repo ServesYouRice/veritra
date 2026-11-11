@@ -147,6 +147,7 @@ void main() {
         'infoUpdate',
         // C4: a leave proof is never reportable.
         'memberLeave',
+        'memberLeaveSigned',
         // C6: moderator report key announcements and requests.
         'reportKey',
         'reportKeyRequest',

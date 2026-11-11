@@ -47,6 +47,11 @@ enum AppPayloadType {
   /// to the MLS epoch it is sent in (`docs/crypto.md`, "C4 app wiring").
   memberLeave,
 
+  /// C4 leave proof in the commit (ABI 24): the sender's own signed leave
+  /// statement (`{"statement": base64}`), which a committer that removes it
+  /// carries in the commit for members that joined after the leave.
+  memberLeaveSigned,
+
   /// C7: a channel's history record (create, switch, move) in compact form,
   /// proposed in a message of the channel itself.
   historyChange,
@@ -101,6 +106,52 @@ const Set<AppPayloadType> infoPayloadTypes = <AppPayloadType>{
   AppPayloadType.infoUpdate,
 };
 
+/// C4 types that may ride under the clear leave-notice mark (`c4_leave`),
+/// which the server lets past the posting rules. A marked envelope holding
+/// anything else is an invalid row at every receiver.
+const Set<AppPayloadType> leaveNoticePayloadTypes = <AppPayloadType>{
+  AppPayloadType.memberLeave,
+  AppPayloadType.memberLeaveSigned,
+};
+
+/// A `member_leave_signed` body: exactly `statement`, the canonical base64
+/// of one 70-byte statement (`u32 leaf || u16 64 || signature`). Rust
+/// verifies the signature when a commit carries it; nothing here does.
+bool isValidLeaveSignedBody(Map<String, Object?> body) {
+  final statement = body['statement'];
+  if (body.length != 1 || statement is! String || statement.length != 96) {
+    return false;
+  }
+  final List<int> bytes;
+  try {
+    bytes = base64.decode(statement);
+  } on FormatException {
+    return false;
+  }
+  return bytes.length == 70 &&
+      bytes[4] == 0 &&
+      bytes[5] == 64 &&
+      base64.encode(bytes) == statement;
+}
+
+/// The expiry a sender signs into a payload of [type] in a conversation with
+/// a disappearing timer of [retentionSeconds] (TASK-106), or null. C3 info
+/// payloads never expire (a key must outlive the timer), nor do C6 report key
+/// announcements (their settings outlive the row anyway), nor the L2-5
+/// own-device alert (the native service refuses an expiring one, and the
+/// alert would be lost in every chat with a timer).
+DateTime? senderExpiryFor(
+    AppPayloadType type, int? retentionSeconds, DateTime now) {
+  if (retentionSeconds == null ||
+      retentionSeconds <= 0 ||
+      infoPayloadTypes.contains(type) ||
+      reportKeyPayloadTypes.contains(type) ||
+      type == AppPayloadType.deviceListAlert) {
+    return null;
+  }
+  return now.add(Duration(seconds: retentionSeconds));
+}
+
 extension AppPayloadTypeWire on AppPayloadType {
   /// The string in the payload's `type`. Existing types keep their Dart enum
   /// name (the wire contract of every device); new multi-word types are
@@ -114,6 +165,7 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.profileKey => 'profile_key',
         AppPayloadType.groupProfileKey => 'group_profile_key',
         AppPayloadType.memberLeave => 'member_leave',
+        AppPayloadType.memberLeaveSigned => 'member_leave_signed',
         AppPayloadType.historyChange => 'history_change',
         AppPayloadType.historySync => 'history_sync',
         AppPayloadType.historySyncRequest => 'history_sync_request',
@@ -132,7 +184,7 @@ extension AppPayloadTypeWire on AppPayloadType {
       infoPayloadTypes.contains(this) ||
       this == AppPayloadType.profileKey ||
       this == AppPayloadType.groupProfileKey ||
-      this == AppPayloadType.memberLeave ||
+      leaveNoticePayloadTypes.contains(this) ||
       this == AppPayloadType.deviceListAlert ||
       c7PayloadTypes.contains(this) ||
       reportKeyPayloadTypes.contains(this);
@@ -246,6 +298,7 @@ class FrankingPolicy {
     'infoUpdate',
     // C4: a leave proof says nothing anyone would report.
     'memberLeave',
+    'memberLeaveSigned',
     // C6: a report key announcement or request is never reportable.
     'reportKey',
     'reportKeyRequest',
@@ -293,7 +346,7 @@ class AppPayloadCodec {
             infoPayloadTypes.contains(type) ||
             type == AppPayloadType.profileKey ||
             type == AppPayloadType.groupProfileKey ||
-            type == AppPayloadType.memberLeave ||
+            leaveNoticePayloadTypes.contains(type) ||
             type == AppPayloadType.deviceListAlert ||
             c7PayloadTypes.contains(type) ||
             reportKeyPayloadTypes.contains(type) ||
@@ -597,6 +650,8 @@ class AppPayloadCodec {
           body.length == 1 &&
           body['epoch'] is int &&
           (body['epoch'] as int) >= 0,
+      AppPayloadType.memberLeaveSigned =>
+        version >= 2 && isValidLeaveSignedBody(body),
       AppPayloadType.deviceListAlert =>
         version >= 2 && isValidDeviceListAlertBody(body),
       AppPayloadType.historyChange => version >= 2 && isValidC7ChangeBody(body),

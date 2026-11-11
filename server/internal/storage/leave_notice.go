@@ -24,11 +24,15 @@ import (
 //     community's shared conversation);
 //   - no attachments, replies, threads or franking commitment: a leave proof
 //     carries none, so nothing a reader would see rides along;
-//   - at most one marked envelope per sender account and membership per
-//     LeaveNoticeInterval.
+//   - at most LeaveNoticesPerInterval marked envelopes per sender account
+//     and membership per LeaveNoticeInterval: the member_leave and, from
+//     crypto ABI 24, the member_leave_signed that carries the leave
+//     statement a committer puts in the commit ("C4 leave proof in the
+//     commit").
 //
-// Receiving apps drop a marked envelope whose payload is not a member_leave,
-// so a marked post shows nothing to anyone.
+// Receiving apps drop a marked envelope whose payload is not a member_leave
+// or member_leave_signed (or a hidden type they do not know), so a marked
+// post shows nothing to anyone.
 
 // EnvelopeLeaveNoticeKey marks an envelope as a C4 leave notice. Its value is
 // the JSON literal true; any other value is refused.
@@ -37,7 +41,10 @@ const EnvelopeLeaveNoticeKey = "c4_leave"
 // LeaveNoticeInterval bounds marked envelopes per sender and membership.
 const LeaveNoticeInterval = time.Hour
 
-// ErrLeaveNoticeLimited answers a second leave notice inside the interval.
+// LeaveNoticesPerInterval is how many marked envelopes one interval admits.
+const LeaveNoticesPerInterval = 2
+
+// ErrLeaveNoticeLimited answers a leave notice over the limit.
 var ErrLeaveNoticeLimited = errors.New("leave notice limited")
 
 // LeaveNoticeLimitedError carries the wait until the next notice is allowed.
@@ -100,12 +107,14 @@ func checkLeaveNoticeTx(ctx context.Context, tx *sql.Tx, envelope domain.Message
 	if start := parseTime(joined); start.After(since) {
 		since = start
 	}
-	var last sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT MAX(created_at) FROM message_envelopes WHERE conversation_id = ? AND sender_account_id = ? AND json_extract(crypto_metadata_json, '$.c4_leave') = 1 AND created_at >= ?`, envelope.ConversationID, envelope.SenderAccountID, formatTime(since)).Scan(&last); err != nil {
+	var count int
+	var oldest sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), MIN(created_at) FROM message_envelopes WHERE conversation_id = ? AND sender_account_id = ? AND json_extract(crypto_metadata_json, '$.c4_leave') = 1 AND created_at >= ?`, envelope.ConversationID, envelope.SenderAccountID, formatTime(since)).Scan(&count, &oldest); err != nil {
 		return err
 	}
-	if last.Valid {
-		wait := parseTime(last.String).Add(LeaveNoticeInterval).Sub(now)
+	if count >= LeaveNoticesPerInterval && oldest.Valid {
+		// Room opens when the oldest notice in the window leaves it.
+		wait := parseTime(oldest.String).Add(LeaveNoticeInterval).Sub(now)
 		if wait < time.Second {
 			wait = time.Second
 		}

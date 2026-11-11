@@ -93,6 +93,34 @@ void main() {
     }
   }, skip: skip);
 
+  // Review M1 (owner decision B): a stolen or replaced phone its account's
+  // list removed is still in the tree and can post a valid member_leave;
+  // it must not prove the governing account's leave.
+  test('a leave proof from a removed leaf proves nothing', () async {
+    final [alice, bob, carol] = await clients(['alice', 'bob', 'carol']);
+    await alice.service.initializeConversation(
+        'conv_1', [await bob.keyPackage(), await carol.keyPackage()]);
+    await _deliver(alice, joiners: [bob, carol]);
+    await alice.service.stageRoleChange(
+        'conv_1', (c, _, __) => c.setRole(bob.account, BuiltInRole.admin));
+    await _deliver(alice, members: [bob, carol]);
+    // Carol's pin shows Bob's phone removed; Alice's does not yet.
+    carol.lists.markRemoved(bob.account, bob.device);
+    final leave = await bob.service
+        .encryptPayload('conv_1', AppPayloadType.memberLeave, const {});
+    await bob.store.removePendingEnvelope(leave.idempotencyKey);
+    await carol.receive(bob, leave);
+    await alice.receive(bob, leave);
+    expect(
+        await carol.store
+            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+        isNull);
+    expect(
+        await alice.store
+            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+        isNotNull);
+  }, skip: skip);
+
   test('a role commit from a leaf not approved yet is held, then merges',
       () async {
     final [alice, bob, carol] = await clients(['alice', 'bob', 'carol']);
@@ -137,6 +165,146 @@ void main() {
     final rows = await bob.store.loadMessages('conv_1');
     expect(rows.single.kind, LocalMessageKind.invalid);
     expect(rows.single.body, isNull);
+  }, skip: skip);
+
+  // C4 leave proof in the commit (ABI 24): the leaver's signed statement
+  // rides in the removal's authenticated data, so a member that joined
+  // after the leave merges an honest removal instead of holding it.
+  Future<({_Client alice, _Client bob, _Client carol, _Client dave})>
+      adminLeaves({bool signed = true, bool cancel = false}) async {
+    final [alice, bob, carol, dave] =
+        await clients(['alice', 'bob', 'carol', 'dave']);
+    await alice.service.initializeConversation(
+        'conv_1', [await bob.keyPackage(), await carol.keyPackage()]);
+    await _deliver(alice, joiners: [bob, carol]);
+    await alice.service.stageRoleChange(
+        'conv_1', (c, _, __) => c.setRole(bob.account, BuiltInRole.admin));
+    await _deliver(alice, members: [bob, carol]);
+    final notices = <MessageEnvelope>[
+      await bob.service
+          .encryptPayload('conv_1', AppPayloadType.memberLeave, const {}),
+      if (signed)
+        await bob.service.encryptPayload(
+            'conv_1', AppPayloadType.memberLeaveSigned, const {}),
+    ];
+    for (final notice in notices) {
+      await bob.store.removePendingEnvelope(notice.idempotencyKey);
+      expect((notice.cryptoMetadata as Map)[leaveNoticeMetadataKey], isTrue);
+      for (final member in [alice, carol]) {
+        await member.receive(bob, notice);
+      }
+    }
+    for (final member in [alice, carol]) {
+      expect(
+          await member.store
+              .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
+          signed ? isNotNull : isNull);
+    }
+    expect(
+        await bob.store.loadSetting(governanceLeaveSignedOutSetting('conv_1')),
+        signed ? '1' : isNull);
+    if (cancel) {
+      // The server refused Bob's leave: his self-update voids the statement
+      // and, once merged, clears his marker.
+      await bob.service.stageSelfUpdate('conv_1');
+      await _deliver(bob, members: [alice, carol]);
+      expect(
+          await bob.store
+              .loadSetting(governanceLeaveSignedOutSetting('conv_1')),
+          isNull);
+    }
+    await alice.service
+        .stageMembershipChange('conv_1', adds: [await dave.keyPackage()]);
+    await _deliver(alice, joiners: [dave], members: [bob, carol]);
+    expect(
+        await dave.store
+            .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
+        isNull);
+    return (alice: alice, bob: bob, carol: carol, dave: dave);
+  }
+
+  test('a newcomer merges a leave proven in the commit itself', () async {
+    final (:alice, :bob, :carol, :dave) = await adminLeaves();
+    await carol.service.stageMembershipChange('conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)]);
+    final removal = await _complete(carol);
+    await dave.applyCommit(carol, removal);
+    expect((await dave.service.governanceView('conv_1'))!.record.admins,
+        isNot(contains(bob.account)));
+    await alice.applyCommit(carol, removal);
+    // Spent by the removal it proved.
+    for (final member in [alice, carol]) {
+      expect(
+          await member.store
+              .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
+          isNull);
+    }
+  }, skip: skip);
+
+  test('an in-commit proof counts only from a leaf its list approves',
+      () async {
+    final (:alice, :bob, :carol, :dave) = await adminLeaves();
+    // Dave's pin does not list Bob's leaf yet (owner decision B).
+    dave.lists.remove(bob.account, bob.device);
+    await carol.service.stageMembershipChange('conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)]);
+    final removal = await _complete(carol);
+    await expectLater(
+        dave.applyCommit(carol, removal),
+        throwsA(isA<GovernanceHeldException>()
+            .having((e) => e.reason, 'reason', 'removal_unproven')));
+    // A later read approves it: the retry merges.
+    await dave.trust(bob);
+    await dave.applyCommit(carol, removal);
+    expect((await dave.service.governanceView('conv_1'))!.record.admins,
+        isNot(contains(bob.account)));
+    expect(alice, isNotNull);
+  }, skip: skip);
+
+  test('a cancelled leave voids its statement with a self-update', () async {
+    final (:alice, :bob, :carol, :dave) = await adminLeaves(cancel: true);
+    // Carol still holds the old statement and attaches it; Rust drops it
+    // (Bob's leaf changed), so Dave cannot verify the removal and holds it.
+    await carol.service.stageMembershipChange('conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)]);
+    final removal = await _complete(carol);
+    await expectLater(
+        dave.applyCommit(carol, removal),
+        throwsA(isA<GovernanceHeldException>()
+            .having((e) => e.reason, 'reason', 'removal_unproven')));
+    // Today's members still merge it with the member_leave they hold.
+    await alice.applyCommit(carol, removal);
+    expect(bob, isNotNull);
+  }, skip: skip);
+
+  test('a leaver on an older build sends no statement: newcomers hold',
+      () async {
+    final (:alice, :bob, :carol, :dave) = await adminLeaves(signed: false);
+    await carol.service.stageMembershipChange('conv_1',
+        removes: [(accountId: bob.account, deviceId: bob.device)]);
+    final removal = await _complete(carol);
+    await expectLater(
+        dave.applyCommit(carol, removal),
+        throwsA(isA<GovernanceHeldException>()
+            .having((e) => e.reason, 'reason', 'removal_unproven')));
+    await alice.applyCommit(carol, removal);
+    expect(bob, isNotNull);
+  }, skip: skip);
+
+  test('a signed statement arrives as a framed, hidden row', () async {
+    final [alice, bob] = await clients(['alice', 'bob']);
+    await alice.service
+        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await _deliver(alice, joiners: [bob]);
+    final sent = await bob.service
+        .encryptPayload('conv_1', AppPayloadType.memberLeaveSigned, const {});
+    await bob.store.removePendingEnvelope(sent.idempotencyKey);
+    await alice.receive(bob, sent);
+    final stored = await alice.store
+        .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account));
+    expect(isValidLeaveSignedBody({'statement': stored}), isTrue);
+    final rows = await alice.store.loadMessages('conv_1');
+    expect(rows.single.kind, LocalMessageKind.action);
   }, skip: skip);
 }
 

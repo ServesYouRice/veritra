@@ -2182,6 +2182,46 @@ void main() {
     }
   }, skip: skip);
 
+  test(
+      'a moderator re-sending a key from an admin demoted since never makes '
+      'it current again after a removal', () async {
+    // The minting admin is no longer an admin in the member's record, so
+    // its row is not a trusted copy; it still dates the key.
+    final demoted = GovernanceState(
+      rev: 4,
+      owner: 'acct_admin',
+      ownerRev: 4,
+      moderators: const {'acct_mod', 'acct_mod2'},
+      joined: modStaff.joined,
+    );
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final admin = device('second', {_privateConv},
+        admin: true, verified: modStaff, roster: true);
+    final mod = device('mod', {_privateConv}, verified: modStaff, roster: true);
+    final member =
+        device('member', {_privateConv}, verified: demoted, roster: true);
+    await admin.service
+        .publish(private, (r) => secret('Secret', r), mint: true);
+    final home = admin.service.homeOf(private)!;
+    final key = (await admin.service.currentKey(home, _community))!;
+    await net.deliver(
+        admin,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    for (final d in [admin, mod, member]) {
+      await d.service.refresh(private);
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    await net.deliverAs(mod, 'dev_mod', _privateConv, AppPayloadType.infoKey,
+        infoKeyBody(subjectKind: 'channel', subjectId: _private, key: key.key!),
+        epoch: 3);
+    expect((await member.service.currentKey(home, _community))?.keyId,
+        isNot(key.keyId));
+  }, skip: skip);
+
   test('with the first admin offline, the next one rotates after its turn',
       () async {
     final devices = await staffAfterRemoval(['admin', 'second', 'third']);

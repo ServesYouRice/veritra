@@ -10,6 +10,7 @@ import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'l1_test_lists.dart';
 
@@ -484,5 +485,59 @@ void main() {
         .processApplicationMessageBounded(echo, 4, checkCanCommit: fence);
     expect(await pair.store.loadSyncCursor(), 4);
     expect(pair.store.references, isEmpty);
+  }, skip: skip);
+
+  // Review L1: the leave-notice mark lets an envelope past the server's
+  // posting rules, so under it only a leave proof or a hidden payload this
+  // app does not know may land; a visible unsupported payload is invalid.
+  test('a marked envelope is a leave proof, a hidden unknown, or invalid',
+      () async {
+    final pair = await _Pair.start(library());
+    addTearDown(pair.close);
+    Uint8List frame(String type, String action, {required bool hidden}) {
+      final content = utf8.encode(jsonEncode({
+        'v': 2,
+        'conversation_id': _conversation,
+        'sender_device_id': 'dev_alice',
+        'action_id': action,
+        'type': type,
+        if (hidden) 'hidden': true,
+        'body': {'text': 'past the posting rules'}
+      }));
+      final out = Uint8List(((content.length + 8 + 255) ~/ 256) * 256)
+        ..setRange(0, 4, 'VAP1'.codeUnits)
+        ..setRange(8, content.length + 8, content);
+      ByteData.sublistView(out).setUint32(4, content.length);
+      return out;
+    }
+
+    ReceivedMessageEnvelope marked(ReceivedMessageEnvelope e) =>
+        ReceivedMessageEnvelope(
+          id: e.id,
+          conversationId: e.conversationId,
+          senderAccountId: e.senderAccountId,
+          senderDeviceId: e.senderDeviceId,
+          idempotencyKey: e.idempotencyKey,
+          ciphertext: e.ciphertext,
+          cryptoProtocol: e.cryptoProtocol,
+          cryptoMetadata: const {leaveNoticeMetadataKey: true},
+          createdAt: e.createdAt,
+        );
+
+    await pair.receive(marked(pair.encrypted(
+        frame('future_visible', 'visible', hidden: false), 'visible')));
+    await pair.receive(marked(pair.encrypted(
+        frame('future_hidden', 'hidden', hidden: true), 'hidden')));
+    await pair.receive(
+        marked(pair.envelope(AppPayloadType.memberLeave, const {'epoch': 1})));
+    final rows = await pair.store.loadMessages(_conversation);
+    expect(rows, hasLength(3));
+    final visible = rows.singleWhere((r) => r.key.endsWith(':server_visible'));
+    expect(visible.kind, LocalMessageKind.invalid);
+    expect(visible.body, isNull);
+    final hidden =
+        rows.singleWhere((r) => r.kind == LocalMessageKind.unsupported);
+    expect(hidden.senderHidden, isTrue);
+    expect(rows.where((r) => r.kind == LocalMessageKind.action), hasLength(1));
   }, skip: skip);
 }
