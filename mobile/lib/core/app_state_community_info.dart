@@ -751,6 +751,9 @@ extension CommunityInfoActions on AppState {
     };
     for (final home in homes) {
       await service.observeRemoval(home, community.id);
+      // An owner or admin member replaces a moderator's key (owner
+      // decision B); the rotation pass after this loop mints it.
+      await service.replaceModeratorKey(home, community.id);
       await service.answerRequests(home, community.id);
     }
   }

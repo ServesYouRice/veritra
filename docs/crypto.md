@@ -805,7 +805,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
      moderators are trusted as a second choice (owner decision 2026-11-11:
      a moderator member rotates when no owner or admin is a member; see
      the C3 design, "Remote removals: who rotates"). Owner and admin keys
-     always win over a moderator's.
+     always win over a moderator's, and an owner or admin member that finds
+     only a moderator's key current mints its own (owner decision B,
+     2026-11-11; `replaceModeratorKey`).
   4. A key whose freshness is below the group's last removal epoch (the
      watermark committed with the MLS state) is retired: never current, even
      when it is the only key held. Callers then ask, or wait for rotation.
