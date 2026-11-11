@@ -33,10 +33,12 @@ type locatorRequest struct {
 
 type createMembershipInviteRequest struct {
 	Locator string `json:"locator"`
-	// SigningKey and BindingTag are what the app bound the invitation to
-	// (D90). The device is the session's, never a field of the request.
+	// SigningKey, BindingTag and BindingSignature are what the app bound the
+	// invitation to (D90, v2): the signature is the device's, 64 bytes. The
+	// device is the session's, never a field of the request.
 	SigningKey       []byte `json:"signing_key"`
 	BindingTag       string `json:"binding_tag"`
+	BindingSignature []byte `json:"binding_signature"`
 	MaxUses          int    `json:"max_uses"`
 	ExpiresInSeconds int64  `json:"expires_in_seconds"`
 }
@@ -99,6 +101,7 @@ func (a *API) createMembershipInvite(w http.ResponseWriter, r *http.Request, pri
 		CreatedByDeviceID: principal.DeviceID,
 		SigningKey:        req.SigningKey,
 		BindingTag:        req.BindingTag,
+		BindingSignature:  req.BindingSignature,
 		Locator:           req.Locator,
 		MaxUses:           req.MaxUses,
 		ExpiresAt:         time.Now().UTC().Add(lifetime),

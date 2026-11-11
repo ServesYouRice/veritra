@@ -55,10 +55,12 @@ silent gap. Splitting account marks by conversation would need a migration.
 ## Owner questions
 
 1. Approved by D90 (secret after `#`; binding to target, account and device
-   keys built before merge). The binding is a secret-keyed tag, built in
-   `C1-invite-format.md`; it still needs an independent design review, and a
-   v2 needs C7's ABI 13 signature and a key commitment the
-   server cannot replace; a link the server can read gets no protection.
+   keys built before merge). The binding is v2 (a device signature, a key
+   commitment in the link and the secret-keyed tag), built in
+   `C1-invite-format.md`; it still needs an independent design review; a
+   link the server can read gets no protection. Open: should an invitation
+   from someone the joiner shares no group with be refused outright? (v2
+   anchors that case on the commitment in the link.)
 2. Allow a migration splitting account prune marks by conversation, or
    accept the conservative pause?
 3. Which agent owns `app_state.dart`, `models.dart`, `api_client.dart` and

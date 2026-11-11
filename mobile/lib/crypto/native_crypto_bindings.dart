@@ -1152,7 +1152,8 @@ class NativeCryptoBindings {
   }
 
   /// Strict Ed25519 verification of `domain | message` (ABI 13). [domain] is
-  /// `veritra-c7-post-sig-v1` or `veritra-c7-history-v1`; any other is
+  /// `veritra-c7-post-sig-v1`, `veritra-c7-history-v1` or
+  /// `veritra-invite-binding-v2`; any other is
   /// [NativeCryptoError.invalidArgument]. `false` for an invalid signature,
   /// a malformed key included.
   bool c7Verify({
@@ -2236,7 +2237,9 @@ class NativeCryptoDevice implements Finalizable {
   }
 
   /// Signs `domain | message` with this device's credential key (ABI 13).
-  /// [domain] is `veritra-c7-post-sig-v1` or `veritra-c7-history-v1`.
+  /// [domain] must be on the native allowlist, such as
+  /// `veritra-c7-post-sig-v1`, `veritra-c7-history-v1` or
+  /// `veritra-invite-binding-v2`.
   Uint8List c7Sign({required String domain, required List<int> message}) {
     _bindings._bounded(message, 4096);
     final signature = _bindings._withSlice(

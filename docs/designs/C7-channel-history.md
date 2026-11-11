@@ -850,7 +850,9 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   - `inspect_commit` refuses an Update or path that changes a leaf's
     signature key (decision 8);
   - credential-key sign and Ed25519 verify over a fixed domain allowlist
-    (`veritra-c7-post-sig-v1`, `veritra-c7-history-v1`);
+    (`veritra-c7-post-sig-v1`, `veritra-c7-history-v1`; the C1 invitation
+    binding later added `veritra-invite-binding-v2` to the same allowlist,
+    see `C1-invite-format.md`);
   - `c7_derive` (HKDF as above) and `c7_seal`/`c7_open` (key commitment,
     AES-256-GCM, random nonce), on existing dependencies (owner decision
     A).

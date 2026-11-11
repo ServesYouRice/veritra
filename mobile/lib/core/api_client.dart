@@ -1388,6 +1388,7 @@ class ApiClient {
     required String locator,
     required List<int> signingKey,
     required String bindingTag,
+    required List<int> bindingSignature,
     int maxUses = 10,
     Duration lifetime = const Duration(days: 7),
   }) async {
@@ -1399,6 +1400,7 @@ class ApiClient {
         'locator': locator,
         'signing_key': base64.encode(signingKey),
         'binding_tag': bindingTag,
+        'binding_signature': base64.encode(bindingSignature),
         'max_uses': maxUses,
         'expires_in_seconds': lifetime.inSeconds,
       },

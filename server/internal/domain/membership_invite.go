@@ -36,6 +36,12 @@ type MembershipInvite struct {
 // Tag is hex HMAC-SHA256, keyed from the link secret, over the origin and
 // those fields. The server stores and returns it but cannot compute or check
 // it; the joiner recomputes it from the link and refuses any mismatch.
+//
+// Signature (v2, migration 0062) is the creating device's Ed25519 signature,
+// 64 bytes, over the same fields and the link's locator; it is empty on an
+// invitation made before v2, which the app refuses. The server stores and
+// returns it and cannot verify it: the joiner does, against the key the link
+// commits to and the MLS roster.
 type InviteBinding struct {
 	TargetKind        string `json:"target_kind"`
 	TargetID          string `json:"target_id"`
@@ -43,6 +49,7 @@ type InviteBinding struct {
 	InviterDeviceID   string `json:"inviter_device_id"`
 	InviterSigningKey []byte `json:"inviter_signing_key"`
 	Tag               string `json:"tag"`
+	Signature         []byte `json:"signature"`
 }
 
 // MembershipInvitePreview is what a signed-in holder of a link sees before
