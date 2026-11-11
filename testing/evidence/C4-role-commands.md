@@ -3,6 +3,10 @@
 Worktree `ai/c4-rest`, base `5b9cff9cce2c5a6bbed8df3a5aa05746ccd30659`.
 This is a partial C4 delivery, not full app wiring.
 
+Follow-up: [schema 38 observation storage](C4-observation-storage.md) now
+closes durable local clocks. Counter and persistence statements below record
+the earlier command-only slice.
+
 ## Exercised behavior
 
 - Typed role-only commands produce canonical records accepted by the existing

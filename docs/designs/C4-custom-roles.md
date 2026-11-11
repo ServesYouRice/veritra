@@ -1,6 +1,7 @@
 # C4: built-in roles, verified by every app
 
-**Status: design, a pure rules engine and the record codec; no wiring, no ABI.** Rescoped
+**Status: rules engine, codec, ABI 20 carrier, command planner and schema 38
+observation storage; app wiring remains blocked on C1 removal proofs.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
 `5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
@@ -473,8 +474,8 @@ deciding vote changes ownership and clears the election in the same record.
 
 Opening and voting require local observations bound to the current owner and
 `ownerRev`; voting also requires the observation of this election's `opened`
-revision. They enforce the existing 30-day and 7-day waits. Observations must
-eventually be persisted atomically with accepted MLS transitions; they are
+revision. They enforce the existing 30-day and 7-day waits. Observations are
+persisted atomically with accepted MLS transitions by schema 38; they are
 never server timestamps. An unknown or stale observation refuses the command.
 The observation reducer starts conservatively on a join or restore without
 saved clocks, tracks authenticated owner commits and application messages,
@@ -489,7 +490,35 @@ promotions, posting restrictions, an election, a non-deciding vote and a
 deciding vote converge on all devices. It does **not** enable app producers or
 receivers: the authenticated-removal prerequisite above is still unmet.
 Outstanding: C1 removal proofs and their validation, approved-leaf role
-rosters, all producer/receiver wiring, durable local activity/election clocks,
-automatic owner cancellation, UI and server succession. No new ABI, local
-schema or server migration is used by this slice (22, 38 and 0071 remain
+rosters, all producer/receiver wiring,
+automatic owner cancellation, UI and server succession. No new ABI or server
+migration is used by this slice (22 and 0071 remain
 reserved for the remaining work). `STATE.md` and release gates are unchanged.
+
+## Durable observations (review follow-up, 2026-11-11)
+
+Schema **38** adds `local_governance_observations`, keyed by the MLS group
+id (the shared group for community channels). It keeps owner identity,
+`ownerRev`, last locally observed owner activity, and the open election's
+revision and first receipt time. Microsecond timestamps round-trip exactly.
+Nothing is populated from server role or timestamp fields.
+
+`GovernanceObservationChange` is a storage effect for an already authenticated,
+accepted transition. It reduces the saved observation inside the same
+transaction as the sealed MLS state, effects, replay marker and sync cursor.
+Incoming transitions, accepted local commits and outgoing application messages
+support it; staged outgoing commits do not start clocks before acceptance.
+There is no standalone observation write through `LocalStore`.
+
+Clocks survive restarts and cache clears that keep the MLS state. They are
+discarded with the group, identity, a full crypto replacement or reset, and
+are excluded from backup/history transfer. A rejoin or restore without saved
+observations starts both waits conservatively. Removing a group wins over an
+observation carried by that same transition. Memory and SQLCipher stores
+exercise the same contract, including transaction rollback and stale/replayed
+event refusal. Migration from schema 34 creates an empty table; failed
+creation rolls back the schema version and retries safely.
+
+These APIs remain unused by app receivers until the documented removal-proof
+and approved-leaf checks exist. This follow-up closes durable storage, not
+the C4 application wiring or the package as a whole.

@@ -2904,6 +2904,17 @@ once no old sender is left.
 
 ## Group role state (C4)
 
+**2026-11-11 review follow-up:** local schema **38** persists device-local
+governance observations in the encrypted database, atomically with accepted
+MLS transitions and outgoing application messages. It records the owner,
+`ownerRev`, last locally observed owner activity, election opening revision
+and first-seen time. Restarts preserve these waits; backups and history
+transfers exclude them. Group deletion and crypto/identity replacement drop
+them. The storage effect accepts only an already authenticated transition;
+it is not wired into app receivers before C1 removal proofs and L1-approved
+role rosters exist. ABI **22** and server migration **0071** remain reserved
+for the remaining C4 work; the ABI 20 carrier and release gates are unchanged.
+
 Built: the record codec (Dart) and the crypto carrier (ABI 20, change log);
 not wired into the app. Design:
 `docs/designs/C4-custom-roles.md` (built-in roles only, D80). Rules engine:
