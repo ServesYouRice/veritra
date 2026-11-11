@@ -6695,6 +6695,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
         }
+        if (message.kind == 'commit' &&
+            message.senderDeviceId != current.deviceId) {
+          // A remote moderator's removal owes an immediate C3 rotation.
+          // The native transition recorded it durably; foreground work
+          // places it once topology is available. Wakes only invalidate
+          // the throttle so the next foreground pass handles it.
+          _lastInfoRefresh = null;
+          if (wake == null) unawaited(refreshCommunityInfo());
+        }
         if (ownPathCommit) {
           await _noteSelfUpdate(
               current,

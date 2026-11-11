@@ -457,6 +457,18 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C3 remote-removal obligations (2026-11-11):** no ABI, schema or wire
+  change. The remote commit path uses ABI 13's authenticated removal outcome
+  and wipes its unused exporter root. Surviving devices persist the removal
+  epoch in encrypted local metadata atomically with MLS state and cursor.
+  Foreground community refresh maps that obligation to the shared or private
+  info key home. Inbound-only wakes record it without sending. Publication,
+  key answers and add delivery refuse stale keys until rotation completes;
+  a newer epoch cancels an in-flight rotation. The completion watermark is
+  separate from the native removal watermark, so a crash or overlapping
+  removal cannot acknowledge an obligation that was never completed.
+  Verified C4 role integration remains unfinished; this does not complete C3.
+
 - **C3 add-key delivery and overlapping removals (2026-11-11):** no ABI,
   schema or wire change. After merging its accepted add bundle, the committing
   device sends the current info key into its owning group and re-announces

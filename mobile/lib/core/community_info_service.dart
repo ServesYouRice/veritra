@@ -10,7 +10,8 @@ import '../storage/local_store.dart'
         AcceptedCommunityInfo,
         CommunityInfoEvent,
         CommunityInfoEventKind,
-        LocalStore;
+        LocalStore,
+        communityInfoRemovalSetting;
 import 'community_info_book.dart';
 
 /// C3 senders and the fetch loop (docs/designs/C3-private-channels-and-info.md,
@@ -269,10 +270,42 @@ class CommunityInfoService {
       _serializeWrites(() => _publish(subject, build,
           attempts: attempts, mint: mint, expectedRevision: expectedRevision));
 
+  String _rotatedSetting(InfoKeyHome home) =>
+      '$_rotationSetting.completed.${home.keySubjectKind}.'
+      '${home.keySubjectId}.${home.conversationId}';
+
+  Future<int> _removalEpoch(InfoKeyHome home) async => int.parse(await store
+          .loadSetting(communityInfoRemovalSetting(home.conversationId)) ??
+      '0');
+
+  /// Recover remote removals from the watermark committed with MLS state.
+  /// Topology may load later, and inbound-only wakes must never send a key.
+  Future<void> observeRemoval(InfoKeyHome home, String communityId) =>
+      _locked(() async {
+        final epoch = await _removalEpoch(home);
+        final completed =
+            int.parse(await store.loadSetting(_rotatedSetting(home)) ?? '0');
+        if (epoch <= completed) return;
+        final due = await _dueRotations();
+        final id = '${home.keySubjectKind}|${home.keySubjectId}';
+        if (due[id]?['e'] == epoch) return;
+        due[id] = <String, Object?>{
+          'c': communityId,
+          'e': epoch,
+          't': '${_clock().microsecondsSinceEpoch}.${_marks++}',
+        };
+        await _saveDue(due);
+        _backoff.remove(id);
+      });
+
   Future<void> _checkWritable(InfoKeyHome home, {Object? rotationToken}) async {
     final due = await _locked(_dueRotations);
     final mark = due['${home.keySubjectKind}|${home.keySubjectId}'];
-    if (topology.sendHeld(home.conversationId) ||
+    final epoch = await _removalEpoch(home);
+    final completed =
+        int.parse(await store.loadSetting(_rotatedSetting(home)) ?? '0');
+    if ((epoch > completed && (rotationToken == null || mark?['e'] != epoch)) ||
+        topology.sendHeld(home.conversationId) ||
         (rotationToken == null ? mark != null : mark?['t'] != rotationToken)) {
       throw const InfoRotationPending();
     }
@@ -289,6 +322,7 @@ class CommunityInfoService {
   }) async {
     final home = homeOf(subject);
     if (home == null) throw StateError('C3 is not active here');
+    await observeRemoval(home, subject.communityId);
     await _checkWritable(home, rotationToken: rotationToken);
     var selected = withKey ?? await currentKey(home, subject.communityId);
     if (selected == null) {
@@ -463,6 +497,7 @@ class CommunityInfoService {
   Future<InfoVerdict?> refresh(InfoSubject subject, {int? knownVersion}) async {
     final home = homeOf(subject);
     if (home == null) return null;
+    await observeRemoval(home, subject.communityId);
     if (!_shown.containsKey(subject.key)) await loadAccepted(subject);
     if (knownVersion != null) {
       final accepted =
@@ -716,6 +751,7 @@ class CommunityInfoService {
         final due = await _dueRotations();
         due['${home.keySubjectKind}|${home.keySubjectId}'] = <String, Object?>{
           'c': communityId,
+          'e': await _removalEpoch(home),
           't': '${_clock().microsecondsSinceEpoch}.${_marks++}',
         };
         await _saveDue(due);
@@ -880,6 +916,10 @@ class CommunityInfoService {
               expectedRevision: record.value.revision);
         }
         await _checkWritable(home, rotationToken: token);
+        // A later removal writes another epoch independently; completing
+        // this pass never acknowledges that later obligation.
+        await store.saveSetting(
+            _rotatedSetting(home), (mark['e'] as int? ?? 0).toString());
         await _updateMark(id, token, (_) => null);
         _backoff.remove(id);
         done++;

@@ -289,12 +289,18 @@ big community", not "an icon"; a tiny icon may stay in the small one.
   button for channel name and topic only where the verified role state
   allows it.
 
-**Remaining removal integration:** moderators may kick, but only owners and admins
-rotate, so a moderator's kick leaves the community key unrotated until an
-admin removes someone. Options: (a) an admin's device rotates when it sees
-a removal it did not make; (b) trust moderator-made keys; (c) only admins
-kick. Recommended: (a). This is the selected follow-up; remote-removal
-rotation is not implemented by this slice.
+**Remote-removal follow-up (2026-11-11):** selected recommended option (a):
+an owner/admin device rotates after observing a removal it did not make.
+The native receive path records the authenticated MLS removal epoch with
+state and cursor, including in an inbound-only wake. Once topology loads,
+foreground refresh places it in the shared or private info key home and
+runs rotation. Edits, answers and add delivery also check the durable
+watermark, so they cannot reuse the old key before refresh places the mark.
+Completion acknowledges only that pass's epoch; a later removal invalidates
+the pass. Non-admins retain the obligation for a later promotion. This
+includes device removals conservatively. C4 verified role integration still
+blocks production acceptance and publication; the native/removal and service
+tests do not establish the complete production C3 flow.
 
 ### Local port and verification (2026-11-09)
 

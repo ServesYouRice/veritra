@@ -198,7 +198,8 @@ void main() {
       api: server,
       send: (c, t, b) => net.deliver(d, c, t, b),
       topology: _Topology(admin, net),
-      codec: CommunityInfoCodec(bindings, random: Random(name.hashCode)),
+      codec: CommunityInfoCodec(bindings,
+          random: Random(name.hashCode + net.devices.length)),
       policyFor: (_) => GovernanceInfoEditPolicy(verified ?? roles),
       accountId: 'acct_$name',
       deviceId: 'dev_$name',
@@ -230,6 +231,121 @@ void main() {
       name: name,
       categories: const [],
       channels: [InfoChannelPlace(channelId: _open)]);
+
+  for (final private in [false, true]) {
+    test(
+        'remote removal rotates ${private ? 'private' : 'shared'} info '
+        'after restart and blocks edits before observation', () async {
+      final admin = device('admin', {_shared, _privateConv}, admin: true);
+      final subject = private
+          ? InfoSubject(infoKindChannel, _private, _community)
+          : community;
+      CommunityInfoRecord record(int r) => private
+          ? CommunityInfoRecord(
+              kind: subject.kind,
+              subjectId: subject.id,
+              revision: r,
+              name: 'Secret',
+              privatePlace: const InfoPrivatePlace(position: 0))
+          : named('Club', r);
+      await admin.service.publish(subject, record, mint: true);
+      final old = server.records[subject.key]!.keyId;
+      final home = admin.service.homeOf(subject)!;
+      // Written by the committed MLS removal, without a local remove request
+      // or a pending-changes response.
+      await admin.store
+          .saveSetting(communityInfoRemovalSetting(home.conversationId), '2');
+      final restarted = device('admin', {_shared, _privateConv},
+          admin: true, store: admin.store);
+      await expectLater(restarted.service.publish(subject, record),
+          throwsA(isA<InfoRotationPending>()));
+      expect(server.puts, 1);
+      await restarted.service.observeRemoval(home, _community);
+      expect(await restarted.service.runRotations((_, __) => [subject]), 1);
+      expect(server.records[subject.key]!.keyId, isNot(old));
+      expect(restarted.sent.every((e) => e.$1 == home.conversationId), isTrue);
+      expect(await restarted.service.dueRotations(), isEmpty);
+      final again = device('admin', {_shared, _privateConv},
+          admin: true, store: admin.store);
+      await again.service.observeRemoval(home, _community);
+      expect(await again.service.runRotations((_, __) => [subject]), 0);
+      await again.service.publish(subject, record);
+      expect(server.puts, 3);
+    }, skip: skip);
+  }
+
+  test('rotation completion cannot acknowledge a different key home', () async {
+    final admin = device('admin', {_privateConv}, admin: true);
+    // Even a server aliasing two homes to one conversation cannot let one
+    // completed key rotation suppress the other's obligation.
+    (admin.service.topology as _Topology).sharedConversation = _privateConv;
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    await admin.service.publish(
+        private,
+        (r) => CommunityInfoRecord(
+            kind: infoKindChannel,
+            subjectId: _private,
+            revision: r,
+            name: 'Secret',
+            privatePlace: const InfoPrivatePlace(position: 0)),
+        mint: true);
+    final oldPrivate = server.records[private.key]!.keyId;
+    await admin.store
+        .saveSetting(communityInfoRemovalSetting(_privateConv), '2');
+    await admin.service
+        .observeRemoval(admin.service.homeOf(community)!, _community);
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    await admin.service
+        .observeRemoval(admin.service.homeOf(private)!, _community);
+    expect(await admin.service.runRotations((_, __) => [private]), 1);
+    expect(server.records[private.key]!.keyId, isNot(oldPrivate));
+  }, skip: skip);
+
+  test('remote removal during delivery invalidates the in-flight rotation',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await admin.store.saveSetting(communityInfoRemovalSetting(_shared), '2');
+    await admin.service.observeRemoval(home, _community);
+    var delivered = false;
+    net.afterDeliver = (type) async {
+      if (type == AppPayloadType.infoKey && !delivered) {
+        delivered = true;
+        await admin.store
+            .saveSetting(communityInfoRemovalSetting(_shared), '3');
+      }
+    };
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    expect(server.puts, 1);
+    await admin.service.observeRemoval(home, _community);
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    final keys =
+        admin.sent.where((e) => e.$2 == AppPayloadType.infoKey).toList();
+    expect(keys, hasLength(2));
+    expect(keys[0].$3['key_id'], isNot(keys[1].$3['key_id']));
+    expect(server.records[community.key]!.keyId, keys[1].$3['key_id']);
+  }, skip: skip);
+
+  test('remote removal stays pending on a non-admin and survives promotion',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await admin.store.saveSetting(communityInfoRemovalSetting(_shared), '2');
+    final member = device('admin', {_shared}, store: admin.store);
+    await member.service.observeRemoval(home, _community);
+    expect(await member.service.runRotations((_, __) => [community]), 0);
+    expect(await member.service.dueRotations(), {community.key});
+    await expectLater(
+        member.service.publish(community, (r) => named('Edit', r)),
+        throwsA(isA<InfoRotationPending>()));
+    final promoted =
+        device('admin', {_shared}, admin: true, store: admin.store);
+    await promoted.service.observeRemoval(home, _community);
+    expect(await promoted.service.runRotations((_, __) => [community]), 1);
+  }, skip: skip);
 
   test('an adding admin delivers the key and announcements without a request',
       () async {

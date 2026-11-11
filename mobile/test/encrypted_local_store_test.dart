@@ -1543,6 +1543,9 @@ void main() {
 
       final restarted = createStore();
       expect(await restarted.loadSyncCursor(), 1, reason: stage.name);
+      expect(await restarted.loadSetting(communityInfoRemovalSetting('conv_1')),
+          isNull,
+          reason: stage.name);
       expect((await restarted.loadCryptoState())?.counter, 1,
           reason: stage.name);
       final snapshot = await restarted.loadSnapshot();
@@ -1560,6 +1563,8 @@ void main() {
 
     final successful = createStore();
     await successful.commitMlsTransition(_nextTransition());
+    expect(await successful.loadSetting(communityInfoRemovalSetting('conv_1')),
+        '7');
     expect(await successful.loadSyncCursor(), 2);
     expect((await successful.loadCryptoState())?.counter, 2);
     expect(
@@ -1672,6 +1677,7 @@ bool _noFts5(CommonDatabase db, String option) => option != 'ENABLE_FTS5';
 
 MlsStateTransition _nextTransition() => MlsStateTransition(
       messageId: 'mls_message_2',
+      infoRemovalEpoch: 7,
       conversationId: 'conv_1',
       expectedCounter: 1,
       expectedCursor: 1,

@@ -361,6 +361,10 @@ class EnrollmentPromotion {
   String toString() => 'EnrollmentPromotion($kind)';
 }
 
+/// Durable C3 removal watermark, written atomically with the MLS transition.
+String communityInfoRemovalSetting(String conversationId) =>
+    'c3.removal_epoch.$conversationId';
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -376,6 +380,7 @@ class MlsStateTransition {
     this.frankReveals = const <FrankReveal>[],
     this.communityInfo = const <CommunityInfoEvent>[],
     this.approvalLeaves,
+    this.infoRemovalEpoch,
     this.resolvedMlsOutboxKey,
     this.checkCanCommit,
   });
@@ -383,6 +388,9 @@ class MlsStateTransition {
   /// The leaf verdicts of the commit or Welcome this transition applies
   /// (L1, D94), written in the same transaction.
   final ApprovalLeafChange? approvalLeaves;
+
+  /// Authenticated remote removal epoch (C3); null for adds and updates.
+  final int? infoRemovalEpoch;
 
   /// An MLS outbox item that this transition settles, removed with it
   /// (card I51: this device's commit, merged when its echo arrives).
@@ -1428,6 +1436,10 @@ class MemoryLocalStore implements LocalStore {
     for (final event in transition.communityInfo) {
       _communityInfoEvents = addCommunityInfoEvent(_communityInfoEvents, event,
           protectedKeyIds: protectedKeyIds);
+    }
+    if (transition.infoRemovalEpoch case final epoch?) {
+      _settings[communityInfoRemovalSetting(transition.conversationId)] =
+          epoch.toString();
     }
     _applyApprovalLeaves(transition.approvalLeaves);
     _setCryptoState(transition.state);
@@ -3191,6 +3203,7 @@ class SecureLocalStore implements LocalStore {
       frankReveals: transition.frankReveals,
       communityInfo: transition.communityInfo,
       approvalLeaves: transition.approvalLeaves,
+      infoRemovalEpoch: transition.infoRemovalEpoch,
     );
   }
 

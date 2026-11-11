@@ -454,6 +454,7 @@ extension CommunityInfoActions on AppState {
             home,
     };
     for (final home in homes) {
+      await service.observeRemoval(home, community.id);
       await service.answerRequests(home, community.id);
     }
   }

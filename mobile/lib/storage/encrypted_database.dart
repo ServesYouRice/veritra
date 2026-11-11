@@ -1629,6 +1629,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<FrankReveal> frankReveals = const <FrankReveal>[],
     List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     ApprovalLeafChange? approvalLeaves,
+    int? infoRemovalEpoch,
     MlsCommitFailureInjector? failureInjector,
     String? leaseKey,
     String? resolvedMlsOutboxKey,
@@ -1735,6 +1736,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _applyMessageEffects(messageEffects);
         await _writeFrankRevealsInTransaction(frankReveals);
         await _writeCommunityInfoInTransaction(communityInfo);
+        if (infoRemovalEpoch != null) {
+          await into(localMetadata).insertOnConflictUpdate(
+            LocalMetadataCompanion.insert(
+              name: 'setting:c3.removal_epoch.$conversationId',
+              value: infoRemovalEpoch.toString(),
+            ),
+          );
+        }
         // L1 (D94): the leaf verdicts of a commit or Welcome commit with the
         // group state, so a crash can never leave a merged group unjudged.
         await _writeApprovalLeavesInTransaction(approvalLeaves);

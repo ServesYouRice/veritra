@@ -1374,6 +1374,7 @@ class NativeCryptoService
             return;
           }
           final device = _requiredDevice();
+          int? infoRemovalEpoch;
           switch (message.kind) {
             case 'welcome':
               if (message.recipientDeviceId != _deviceId) {
@@ -1435,7 +1436,18 @@ class NativeCryptoService
               if (device.groupEpoch(message.conversationId).pending) {
                 device.clearPendingCommit(message.conversationId);
               }
-              device.processCommit(message.conversationId, message.payload);
+              // ABI 13 reports authenticated MLS effects, independent of the
+              // server's membership labels. Persist the rotation obligation
+              // with this transition, including during inbound-only wakes.
+              final outcome = device.c7ProcessCommit(
+                  message.conversationId, message.payload);
+              try {
+                if (outcome.removedAny && !outcome.removedSelf) {
+                  infoRemovalEpoch = outcome.newEpoch;
+                }
+              } finally {
+                outcome.wipeRoot();
+              }
               break;
             default:
               throw StateError('unsupported MLS transport message');
@@ -1465,6 +1477,7 @@ class NativeCryptoService
             state: next,
             cursor: message.syncEventId,
             approvalLeaves: approval,
+            infoRemovalEpoch: infoRemovalEpoch,
           ));
         } catch (_) {
           await _restorePrevious(previous);
