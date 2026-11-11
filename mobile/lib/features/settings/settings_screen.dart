@@ -310,7 +310,8 @@ class SettingsScreen extends StatelessWidget {
                       onTap: state.requestNotificationPermission,
                     ),
                   if (defaultTargetPlatform == TargetPlatform.android &&
-                      state.pushProviders.contains('webpush'))
+                      (state.pushProviders.contains('webpush') ||
+                          state.pushProviders.contains('unifiedpush')))
                     ListTile(
                       enabled: state.pushConfigured && !state.busy,
                       leading: const Icon(Icons.hub_outlined),
@@ -1105,6 +1106,7 @@ String _providerName(String provider) {
     case 'apns':
       return 'Apple Push Notification service';
     case 'webpush':
+    case 'unifiedpush':
       return 'UnifiedPush';
   }
   return provider;

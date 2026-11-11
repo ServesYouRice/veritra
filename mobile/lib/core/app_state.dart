@@ -5328,9 +5328,10 @@ class AppState extends ChangeNotifier
         event.instance == _pushInstance) {
       // A UnifiedPush failure means no distributor answered; anything else
       // is a provider refusal. Neither carries platform error text.
-      _setPushState(event.provider == 'webpush'
-          ? PushState.noDistributor
-          : PushState.registrationFailed);
+      _setPushState(
+          event.provider == 'webpush' || event.provider == 'unifiedpush'
+              ? PushState.noDistributor
+              : PushState.registrationFailed);
     } else if (event is PushUnregisteredEvent &&
         event.instance == _pushInstance) {
       final id = _pushSubscriptionId;
@@ -5364,16 +5365,18 @@ class AppState extends ChangeNotifier
       // Every rotation carries the mode again: the server resets a
       // subscription registered without it back to the generic mode.
       final mode = phoneNoticesAllowed ? 'local_decrypt_v1' : null;
-      final subscriptionId = event.provider == 'webpush'
-          ? await client.registerWebPush(current.token,
-              endpoint: event.endpoint,
-              publicKey: event.publicKey,
-              authSecret: event.authSecret,
-              notificationMode: mode)
-          : await client.registerNativePush(current.token,
-              provider: event.provider,
-              deviceToken: event.endpoint,
-              notificationMode: mode);
+      final subscriptionId =
+          (event.provider == 'webpush' || event.provider == 'unifiedpush')
+              ? await client.registerWebPush(current.token,
+                  provider: event.provider,
+                  endpoint: event.endpoint,
+                  publicKey: event.publicKey,
+                  authSecret: event.authSecret,
+                  notificationMode: mode)
+              : await client.registerNativePush(current.token,
+                  provider: event.provider,
+                  deviceToken: event.endpoint,
+                  notificationMode: mode);
       if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
         // A server registration can commit after teardown started. Use a
         // fresh transport when the old runtime has already closed its own.

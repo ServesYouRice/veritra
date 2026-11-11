@@ -3,9 +3,8 @@
 #   1. G24/G25 passed and release builds have messaging enabled. Today
 #      release builds ship with messaging off (PM_CRYPTO_UNAVAILABLE).
 #   2. The Firebase dependency is gone from the F-Droid build. F-Droid rejects
-#      builds that include Google's firebase-messaging
-#      (mobile/android/app/build.gradle.kts). Needs an owner decision: a
-#      "fdroid" flavor with UnifiedPush only. No such flavor exists yet.
+#      builds that include Google's firebase-messaging. The "fdroid" flavor
+#      uses UnifiedPush only, following the owner's decision.
 #   3. F-Droid's own build server can compile the Rust crypto library (it
 #      needs the pinned Rust and the Android NDK in the recipe below).
 Categories:
@@ -34,9 +33,8 @@ Builds:
       - apt-get update
       - apt-get install -y openjdk-17-jdk-headless
       - update-java-alternatives -a
-    # Flutter names an unsigned APK app-release.apk or app-release-unsigned.apk;
-    # confirm on the first real run.
-    output: mobile/build/app/outputs/flutter-apk/app-release.apk
+    # Flutter names an unsigned APK with flavor app-<flavor>-release.apk:
+    output: mobile/build/app/outputs/flutter-apk/app-fdroid-release.apk
     srclibs:
       - flutter@3.44.0
     rm:
@@ -54,7 +52,7 @@ Builds:
       - export PATH=$PATH:$$flutter$$/bin
       - cd mobile
       - flutter pub get --enforce-lockfile
-      - flutter build apk --release --no-tree-shake-icons
+      - flutter build apk --release --no-tree-shake-icons --flavor fdroid
     ndk: 28.2.13676358   # flutter.ndkVersion of Flutter 3.44.0 (FlutterExtension.kt)
 
 # Reproducible-build verification (F-Droid builds it, compares with the
