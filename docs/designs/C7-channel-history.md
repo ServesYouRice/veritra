@@ -962,6 +962,26 @@ admins-only posting policy are skipped for all of them; keep the flag off),
 the receiver rule that a group-level message is one of the two
 hidden types, local schema for C7 state, and every step-5 flow and test.
 
+Step 4, second slice (same day): the server gap above is closed, private
+groups name their channel, the three hidden types are registered with the
+group-level receiver rule (docs/crypto.md W7 table), and each group's
+membership floor and removal root are kept in one sealed setting
+(`setting:c7.group.<conversation>`, `mobile/lib/crypto/c7_group_state.dart`)
+written in the same transition as the merged MLS state at all three merge
+sites, with the re-add wipe at removal and Welcome. A sealed setting, not a
+new table, so no local schema change. Tests for the pure parts and the
+switch are written (`mobile/test/c7_two_part_test.dart`,
+`server/internal/httpapi/c7_history_test.go`) but were never run.
+
+Still not built, and blocked on C4: records (create, switch, move) need
+C4's verified role state for their authority check (section "Authority":
+switches cannot ship before it), and without records no channel is ever
+`full`, so `full` sealing under generation keys, `history_sync` slots that
+hand keys over, `keyless`/`unsure`, targeted-action sealing and the
+newcomer's import, backward walk and prefetch have nothing to carry. Also
+left: sending `history_sync` (all slots random until then) and its request
+with the jitter, the per-channel chain state and its storage.
+
 ## Open questions for the owner
 
 Earlier questions: 1 (off/on) and 2 (server sees the flag) are answered in
