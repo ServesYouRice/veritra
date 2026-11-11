@@ -68,6 +68,7 @@ class NativeCryptoService
         C7HistoryConsumer,
         DeviceListCryptoService,
         ApprovedDeviceDiscoveryCryptoService,
+        OwnDeviceAlertCryptoService,
         DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
         InviteBindingCryptoService,
@@ -586,13 +587,150 @@ class NativeCryptoService
     final pins = _deviceListPins;
     if (pins == null) return LeafVerdict.checking;
     try {
-      return await pins
+      final verdict = await pins
           .judge(leaf.accountId, leaf.deviceId, leaf.signingKey,
               refreshFirst: network)
           .timeout(deviceListJudgeTimeout);
+      if (verdict == LeafVerdict.approved &&
+          await _alertedPastPin(leaf.accountId)) {
+        return LeafVerdict.checking;
+      }
+      return verdict;
     } on Object {
       return LeafVerdict.checking;
     }
+  }
+
+  /// L2-5: the setting holding the highest list head an approved device of
+  /// [accountId] named in a `device_list_alert`, as
+  /// `<head>:<list id hex>:<alerting device id>`.
+  static String alertHeadSetting(String accountId) =>
+      'l2.alert_head.$accountId';
+
+  /// L2-5: the setting holding the own list head this device last alerted
+  /// [conversationId] about.
+  static String alertSentSetting(String conversationId) =>
+      'l2.alert_sent.$conversationId';
+
+  /// Conversations whose last judgment found a leaf of this device's own
+  /// account that its list does not approve (L2-5).
+  final Set<String> _ownAlertsDue = <String>{};
+
+  /// The head, list id and alerting device kept by [alertHeadSetting], or
+  /// null.
+  Future<({int head, String listId, String deviceId})?> _alerted(
+      String accountId) async {
+    final value = await localStore.loadSetting(alertHeadSetting(accountId));
+    if (value == null) return null;
+    final first = value.indexOf(':');
+    final second = first < 0 ? -1 : value.indexOf(':', first + 1);
+    if (second < 0) return null;
+    final head = int.tryParse(value.substring(0, first));
+    if (head == null) return null;
+    return (
+      head: head,
+      listId: value.substring(first + 1, second),
+      deviceId: value.substring(second + 1),
+    );
+  }
+
+  /// Whether a device of [accountId] alerted a list head newer than this
+  /// device's pin, or a list other than the pinned one: the server has not
+  /// shown this device the list the account's own device holds, so no leaf
+  /// of the account is approved until it does (L2-5). A different list id is
+  /// held as `checking`, not made a sticky conflict, as for any chain from
+  /// another genesis (owner decision 2026-11-08, L1-3 question 3). An alert
+  /// stops counting once the pin shows its sender's device removed, so a
+  /// rogue device that alerts a head never published holds its account's
+  /// leaves only until the account removes it.
+  Future<bool> _alertedPastPin(List<int> accountId) async {
+    final String account;
+    try {
+      account = utf8.decode(accountId);
+    } on FormatException {
+      return false;
+    }
+    final alerted = await _alerted(account);
+    if (alerted == null) return false;
+    final pin = await localStore.loadDeviceListPin(account);
+    if (pin == null) return true;
+    final alerter = utf8.encode(alerted.deviceId);
+    if (pin.keys.any(
+        (key) => _sameBytes(key.deviceId, alerter) && key.removedVersion != 0)) {
+      return false;
+    }
+    return pin.version < alerted.head ||
+        _hex(pin.listId) != alerted.listId;
+  }
+
+  /// L2-5 receive: an approved device of [accountId] says the account's
+  /// list head is [headVersion] and that a leaf of it in [conversationId]
+  /// is not on it. The head is kept (only ever raised), the list is fetched
+  /// again past the rate limit, and the group is judged again: a fork of
+  /// the pinned chain becomes `conflict` (L1), and a head the server keeps
+  /// from this device holds the account's leaves as `checking`. Never
+  /// throws; it runs after the message's transition has committed.
+  Future<void> _applyDeviceListAlert(String conversationId, String accountId,
+      String deviceId, int headVersion, String listId) async {
+    try {
+      final known = await _alerted(accountId);
+      if (known == null || headVersion > known.head) {
+        await localStore.saveSetting(
+            alertHeadSetting(accountId), '$headVersion:$listId:$deviceId');
+      }
+      final pins = _deviceListPins;
+      if (pins != null) {
+        pins.invalidate(accountId);
+        await pins
+            .refresh(accountId, force: true)
+            .timeout(deviceListJudgeTimeout);
+      }
+      final change = await _judgeGroup(conversationId);
+      await localStore.saveApprovalLeaves(change);
+    } on Object {
+      // Best effort: the stored head still applies at the next judgment.
+    }
+  }
+
+  /// L2-5 send: the alerts this device owes, one per conversation and own
+  /// list head. Each body names this account, its pinned head version and
+  /// list id. A conversation already alerted at the current head is left
+  /// out. Call [markOwnDeviceAlertSent] once the alert is queued.
+  @override
+  Future<List<({String conversationId, Map<String, Object?> body})>>
+      ownDeviceAlertsDue() async {
+    final accountId = _accountId;
+    if (accountId == null || _ownAlertsDue.isEmpty) return const [];
+    final pin = await localStore.loadDeviceListPin(accountId);
+    if (pin == null) return const [];
+    final due = <({String conversationId, Map<String, Object?> body})>[];
+    for (final conversationId in _ownAlertsDue.toList()) {
+      final sent =
+          await localStore.loadSetting(alertSentSetting(conversationId));
+      if (sent == '${pin.version}') {
+        _ownAlertsDue.remove(conversationId);
+        continue;
+      }
+      due.add((
+        conversationId: conversationId,
+        body: <String, Object?>{
+          'account_id': accountId,
+          'head_version': pin.version,
+          'list_id': _hex(pin.listId),
+        },
+      ));
+    }
+    return due;
+  }
+
+  /// Records that [conversationId] was alerted at own list head
+  /// [headVersion], so the same alert is not sent again.
+  @override
+  Future<void> markOwnDeviceAlertSent(
+      String conversationId, int headVersion) async {
+    await localStore.saveSetting(
+        alertSentSetting(conversationId), '$headVersion');
+    _ownAlertsDue.remove(conversationId);
   }
 
   /// Judges every leaf against the current pins (D94). Cached approval is
@@ -648,6 +786,16 @@ class NativeCryptoService
           updatedAt: now,
         ),
       );
+    }
+    // L2-5: a leaf of this device's own account that its own list does not
+    // approve (never listed, listed after its removal, or a twin of this
+    // device with another key) is reported to the group.
+    final own = _accountId;
+    if (own != null &&
+        rows.any((row) =>
+            row.verdict == LeafVerdict.unapproved &&
+            _sameBytes(row.accountId, idBytes(own)))) {
+      _ownAlertsDue.add(conversationId);
     }
     return ApprovalLeafChange(
       conversationId: conversationId,
@@ -2399,7 +2547,14 @@ class NativeCryptoService
         // C4: a leave proof is hidden and never franked, like an info
         // payload, but changes no community info.
         final leaveProof = type == AppPayloadType.memberLeave;
-        if (!_messageTypes.contains(type) && !info && !leaveProof) {
+        // L2-5: the own-device alert goes into a chat that is held because
+        // of the very leaf it reports, so it alone skips the approval hold.
+        // It is hidden and never franked, and carries no secret.
+        final deviceAlert = type == AppPayloadType.deviceListAlert;
+        if (!_messageTypes.contains(type) &&
+            !info &&
+            !leaveProof &&
+            !deviceAlert) {
           throw ArgumentError.value(type, 'type', 'not a message payload');
         }
         // C3 info payloads carry no expiry and are never franked: a report
@@ -2408,8 +2563,11 @@ class NativeCryptoService
           throw ArgumentError.value(
               type, 'type', 'info payloads do not expire');
         }
+        if (deviceAlert && expiresAt != null) {
+          throw ArgumentError.value(type, 'type', 'alerts do not expire');
+        }
         await _requireNotPaused(conversationId);
-        await _requireApproved(conversationId);
+        if (!deviceAlert) await _requireApproved(conversationId);
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         if (!await localStore.hasOutboxCapacity()) {
@@ -2438,7 +2596,7 @@ class NativeCryptoService
           final Uint8List payload;
           final List<int>? commit;
           final groupEpoch = _requiredDevice().groupEpoch(conversationId);
-          if (info || leaveProof) {
+          if (info || leaveProof || deviceAlert) {
             payload = AppPayloadCodec().encode(
               type: type,
               conversationId: conversationId,
@@ -2539,7 +2697,7 @@ class NativeCryptoService
               state: _sealNext(previous),
               envelope: envelope,
               draftText: draftText,
-              messageEffects: info || leaveProof
+              messageEffects: info || leaveProof || deviceAlert
                   ? <MessageEffect>[
                       InsertMessageEffect(
                         key: messageKey(deviceId, idempotencyKey),
@@ -2824,6 +2982,7 @@ class NativeCryptoService
         FrankReveal? reveal;
         var info = const <CommunityInfoEvent>[];
         var settings = const <String, String?>{};
+        ({String accountId, int headVersion, String listId})? alert;
         try {
           final checked = _checkFranking(
             envelope,
@@ -2918,6 +3077,30 @@ class NativeCryptoService
                               envelope.ciphertext, envelope.conversationId),
                         ),
                       ];
+                reveal = null;
+                break;
+              }
+              // L2-5: an own-device alert. It counts only about the account
+              // MLS authenticated as its sender (an approved device of it,
+              // checked above); it shows nothing and is never reportable.
+              if (payload.type == AppPayloadType.deviceListAlert) {
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.action,
+                    senderHidden: true,
+                    channelId: payload.channelId,
+                  ),
+                ];
+                if (payload.body['account_id'] == envelope.senderAccountId) {
+                  alert = (
+                    accountId: envelope.senderAccountId,
+                    headVersion: payload.body['head_version'] as int,
+                    listId: payload.body['list_id'] as String,
+                  );
+                }
                 reveal = null;
                 break;
               }
@@ -3031,6 +3214,7 @@ class NativeCryptoService
           reveal = null;
           info = const <CommunityInfoEvent>[];
           settings = const <String, String?>{};
+          alert = null;
         }
         // C4: the owner's posts are its activity; a first message also
         // starts this device's clocks for a group it holds a record for.
@@ -3058,6 +3242,10 @@ class NativeCryptoService
           c7Settings: settings,
           governanceObservation: observation,
         ));
+        if (alert != null) {
+          await _applyDeviceListAlert(envelope.conversationId, alert.accountId,
+              envelope.senderDeviceId, alert.headVersion, alert.listId);
+        }
         return text;
       } catch (_) {
         await _restorePrevious(previous);
@@ -4379,6 +4567,8 @@ List<MessageEffect> messageEffectsFor(
       throw const FormatException('community info payloads are not messages'),
     AppPayloadType.memberLeave =>
       throw const FormatException('leave proofs are not messages'),
+    AppPayloadType.deviceListAlert =>
+      throw const FormatException('device list alerts are not messages'),
     AppPayloadType.historyChange ||
     AppPayloadType.historySync ||
     AppPayloadType.historySyncRequest =>

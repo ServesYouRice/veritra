@@ -51,6 +51,28 @@ extension AppStateDeviceList on AppState {
         _ => null,
       };
 
+  /// L2-5 (D94): sends the own-device alerts the last judgments found due,
+  /// one hidden `device_list_alert` per conversation and own list head,
+  /// identified (it is about this account). Looked at on every sync pass; a
+  /// failed send is tried again on the next pass.
+  Future<void> _sendOwnDeviceAlerts(Session owner, int generation) async {
+    final crypto = cryptoService;
+    if (crypto is! OwnDeviceAlertCryptoService) return;
+    final alerts = crypto as OwnDeviceAlertCryptoService;
+    for (final due in await alerts.ownDeviceAlertsDue()) {
+      if (!_syncOwnerActive(owner, generation)) return;
+      if (!conversations.any((item) => item.id == due.conversationId)) {
+        continue;
+      }
+      final sent = await _sendPayload(
+          due.conversationId, AppPayloadType.deviceListAlert, due.body);
+      if (sent) {
+        await alerts.markOwnDeviceAlertSent(
+            due.conversationId, due.body['head_version'] as int);
+      }
+    }
+  }
+
   /// A change-1 genesis that lists only this (pending) device, signed by it,
   /// for setup and registration. Null with an engine without L1: the account
   /// then starts with no list, and peers add none of its devices until one

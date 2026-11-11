@@ -182,6 +182,18 @@ abstract interface class DeviceListCryptoService implements DeviceListVerifier {
 }
 
 /// Discovers additions independently of the server's device enumeration.
+/// L2-5 (D94): the own-device alert. A device that finds a leaf of its own
+/// account its list does not approve tells the group, with the list head it
+/// holds (`device_list_alert`, `docs/crypto.md` §4).
+abstract interface class OwnDeviceAlertCryptoService {
+  /// The alerts owed: one per conversation and own list head not yet sent.
+  Future<List<({String conversationId, Map<String, Object?> body})>>
+      ownDeviceAlertsDue();
+
+  /// Records that [conversationId] was alerted at own head [headVersion].
+  Future<void> markOwnDeviceAlertSent(String conversationId, int headVersion);
+}
+
 abstract interface class ApprovedDeviceDiscoveryCryptoService {
   /// Lists currently approved devices of member [accountIds] absent from the
   /// actual MLS tree. Null [conversationId] means a new group with only self.

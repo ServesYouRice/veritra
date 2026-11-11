@@ -56,6 +56,11 @@ enum AppPayloadType {
 
   /// C7: a newcomer asking for the `history_sync` it did not receive.
   historySyncRequest,
+
+  /// L2-5 (D94): this account's own device found a leaf of its account in
+  /// the group that its signed list does not approve, and names the list
+  /// head it holds, so peers whose pin is behind can tell.
+  deviceListAlert,
 }
 
 /// C7 hidden types (docs/designs/C7-channel-history.md). Never franked
@@ -97,6 +102,7 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.historyChange => 'history_change',
         AppPayloadType.historySync => 'history_sync',
         AppPayloadType.historySyncRequest => 'history_sync_request',
+        AppPayloadType.deviceListAlert => 'device_list_alert',
         _ => name,
       };
 
@@ -110,6 +116,7 @@ extension AppPayloadTypeWire on AppPayloadType {
       this == AppPayloadType.profileKey ||
       this == AppPayloadType.groupProfileKey ||
       this == AppPayloadType.memberLeave ||
+      this == AppPayloadType.deviceListAlert ||
       c7PayloadTypes.contains(this);
 }
 
@@ -221,6 +228,8 @@ class FrankingPolicy {
     'infoUpdate',
     // C4: a leave proof says nothing anyone would report.
     'memberLeave',
+    // L2-5: an alert about the sender's own account, sent identified.
+    'deviceListAlert',
   };
 
   /// Whether a payload without `frank` is accepted (as unreportable).
@@ -264,6 +273,7 @@ class AppPayloadCodec {
             type == AppPayloadType.profileKey ||
             type == AppPayloadType.groupProfileKey ||
             type == AppPayloadType.memberLeave ||
+            type == AppPayloadType.deviceListAlert ||
             c7PayloadTypes.contains(type) ||
             channelId != null ||
             hidden ||
@@ -565,6 +575,8 @@ class AppPayloadCodec {
           body.length == 1 &&
           body['epoch'] is int &&
           (body['epoch'] as int) >= 0,
+      AppPayloadType.deviceListAlert =>
+        version >= 2 && isValidDeviceListAlertBody(body),
       AppPayloadType.historyChange => version >= 2 && isValidC7ChangeBody(body),
       AppPayloadType.historySync => version >= 2 && isValidC7SyncBody(body),
       AppPayloadType.historySyncRequest =>
@@ -658,4 +670,20 @@ int _compareBytes(List<int> a, List<int> b) {
     if (a[i] != b[i]) return a[i] - b[i];
   }
   return a.length - b.length;
+}
+
+/// L2-5: `{"account_id": <1-128 chars>, "head_version": <int >= 1>,
+/// "list_id": <64 lowercase hex>}` and nothing else.
+bool isValidDeviceListAlertBody(Map<String, Object?> body) {
+  final account = body['account_id'];
+  final head = body['head_version'];
+  final listId = body['list_id'];
+  return body.length == 3 &&
+      account is String &&
+      account.isNotEmpty &&
+      account.length <= 128 &&
+      head is int &&
+      head >= 1 &&
+      listId is String &&
+      RegExp(r'^[0-9a-f]{64}$').hasMatch(listId);
 }

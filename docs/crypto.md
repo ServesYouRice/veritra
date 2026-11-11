@@ -568,6 +568,26 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L2-5 own-device alert (2026-11-11):** the hidden v2 payload
+  `device_list_alert` (registry in "Application payload v2" §4). No ABI,
+  local schema or server migration change; the receiver's alerted head is a
+  local setting (`l2.alert_head.<account>`, value
+  `<head>:<list id>:<alerting device>`), the
+  sender's last alert per chat `l2.alert_sent.<conversation>`. The design
+  said a different list id becomes `conflict`; it is held as `checking`
+  instead, since a chain of another genesis is never a sticky conflict
+  (owner decision 2026-11-08). Residuals: the server can drop the alert;
+  an approved device of an account can hold that account's leaves in its
+  chats as `checking` by alerting a head never published, until a pin shows
+  that device removed (the alert then stops counting; the head carries no
+  signature, so a receiver cannot check it alone); one alert is kept per
+  account, so while a rogue alert holds it an honest alert at the same or a
+  lower head is dropped, and none is left once the rogue device is
+  removed; first contact is unchanged. Tests:
+  `mobile/test/l1_native_gate_test.dart` (alert, forged alert, hold and
+  release), `mobile/test/l2_device_list_alert_payload_test.dart`. Needs the
+  independent review.
+
 - **L2-1 padding and the sealed-sender boundary: ABI 23 (2026-11-11):**
   key packages carry a zero-byte pad extension `0xF0A2` that brings them
   to a size bucket, and every staged commit that adds devices pads its
@@ -2485,6 +2505,7 @@ input can differ.
 | `history_change` | 2, hidden | `r`: canonical base64 of the 143-byte compact record, or a move's 143 + `lp(close_group_id)` + 128-byte wrap | Owner and admins under the verified C4 role state (D80); only in a two-part C7 message of the channel itself | C7: a record proposal (docs/designs/C7-channel-history.md decision 3). Never franked: the envelope's `frank_commit` is 32 random bytes |
 | `history_sync` | 2, hidden | `for_epoch` (u64), `channels`: `[[channel_id, base64(key_c)], ...]`, 1 to 508 entries, ids sorted bytewise and distinct, keys 32 bytes | Any member; group-level only (no `channel_id`), two-part only | C7 decision 5: body0 of the history_sync body; its slots follow body0 in the sealed body. Never franked |
 | `history_sync_request` | 2, hidden | `for_epoch` (u64): the membership commit whose history_sync the sender lacks | A newcomer; group-level only, two-part only | C7 decision 5. Never franked |
+| `device_list_alert` | 2, hidden | Exactly `account_id` (1 to 128 chars), `head_version` (int ≥ 1), `list_id` (64 lowercase hex): the sender's own pinned list head | An approved device of `account_id` itself (it must equal the MLS-authenticated sender's account; any other alert is a hidden row with no effect) | L2-5: sent, identified and never franked, when this device judges a leaf of its own account unapproved; goes out past the sender's own approval hold, once per conversation and own head. Receivers keep the highest head per account (with its list id), refetch the list past the rate limit and judge again; while their pin is older than that head or of another list id, and does not show the alerting device removed, every leaf of the account is `checking` (held, not sticky) |
 
 In a C0-layout conversation a two-part message with no `channel_id` must be
 `history_sync` or `history_sync_request`, and those two never carry one;
