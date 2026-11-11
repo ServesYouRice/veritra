@@ -485,9 +485,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   Residuals: an owner/admin can still make any key current by sending it in a
   fresh epoch (it is trusted to choose keys; honest code never re-sends a key
   from before a removal it has seen). Rows stored before schema 35 have no
-  epoch and rank below every key with one and below any removal; a device
-  upgraded mid-rotation may ask for a key again. Schema 35 adds the nullable
-  column only (idempotent `ALTER TABLE`). Evidence:
+  epoch and rank below every key with one and below any removal. A device
+  upgraded with a removal already recorded for a group and only such rows
+  therefore has no current key there; no admin can answer its request (their
+  keys are epoch-less too) and no rotation is due, so it stays without one
+  until the next removal rotates. There is no release: recreate such demo
+  communities. Schema 35 adds the nullable column only (idempotent
+  `ALTER TABLE`). Evidence:
   [`C3-key-freshness-2026-11-11.md`](../testing/evidence/C3-key-freshness-2026-11-11.md).
 
 - **C3 remote-removal obligations (2026-11-11):** no ABI, schema or wire
