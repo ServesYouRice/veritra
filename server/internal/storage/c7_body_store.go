@@ -112,8 +112,9 @@ func (s *Store) checkSealedBody(ctx context.Context, q queryRower, envelope doma
 }
 
 // insertSealedBody stores the body in the send transaction, with the
-// envelope's lifetime.
-func insertSealedBody(ctx context.Context, tx *sql.Tx, envelope domain.MessageEnvelope, channelID string) error {
+// envelope's lifetime, the sync event that carries it (0: none) and the MLS
+// epoch the envelope names.
+func insertSealedBody(ctx context.Context, tx *sql.Tx, envelope domain.MessageEnvelope, channelID string, eventID int64) error {
 	if len(envelope.SealedBody) == 0 {
 		return nil
 	}
@@ -125,8 +126,16 @@ func insertSealedBody(ctx context.Context, tx *sql.Tx, envelope domain.MessageEn
 	if strings.TrimSpace(channelID) != "" {
 		channel = channelID
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO envelope_bodies(message_id, conversation_id, channel_id, created_at, expires_at, body) VALUES(?, ?, ?, ?, ?, ?)`,
-		envelope.ID, envelope.ConversationID, channel, formatTime(envelope.CreatedAt), expires, envelope.SealedBody)
+	var event interface{}
+	if eventID > 0 {
+		event = eventID
+	}
+	var epoch interface{}
+	if value := metadataEpoch(envelope.CryptoMetadata); value != nil {
+		epoch = *value
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO envelope_bodies(message_id, conversation_id, channel_id, created_at, expires_at, body, sync_event_id, mls_epoch) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		envelope.ID, envelope.ConversationID, channel, formatTime(envelope.CreatedAt), expires, envelope.SealedBody, event, epoch)
 	return err
 }
 
