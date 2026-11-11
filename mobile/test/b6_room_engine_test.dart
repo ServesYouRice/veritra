@@ -125,6 +125,68 @@ void main() {
     b2.engine.dispose();
   });
 
+  test(
+      'a failed create never drops a group the device already held '
+      '(the group id is the server word)', () async {
+    final a = Device('a', server, clock, parent);
+    a.crypto.failCreate = true;
+    await a.engine.join('conv_1');
+    await pump();
+    expect(a.engine.phase, RoomPhase.failed);
+    expect(a.crypto.drops, 0);
+    a.engine.dispose();
+    expect(a.crypto.drops, 0);
+  });
+
+  test('a call group id that is not 32 bytes is refused before any MLS call',
+      () async {
+    server.groupId = b('short-group');
+    final a = Device('a', server, clock, parent);
+    await a.engine.join('conv_1');
+    await pump();
+    expect(a.engine.phase, RoomPhase.failed);
+    expect(a.crypto.exists, isFalse);
+    expect(a.crypto.drops, 0);
+    a.engine.dispose();
+  });
+
+  test('a joiner that never got a Welcome drops nothing when it gives up',
+      () async {
+    final a = await start('a');
+    final b2 = await start('b');
+    expect(b2.engine.phase, RoomPhase.joining);
+    await b2.engine.leave();
+    expect(b2.crypto.drops, 0);
+    // A device that did join drops its group on leaving.
+    await a.engine.leave();
+    expect(a.crypto.drops, 1);
+    a.engine.dispose();
+    b2.engine.dispose();
+  });
+
+  test('the committer refuses an expired offer', () async {
+    final a = await start('a');
+    final b2 = await start('b');
+    // Ten seconds past the offer's own expiry: inside the slack a receiver
+    // allows, but the committer allows none.
+    final seat = server.seats[b2.self.id]!;
+    server.seats[b2.self.id] = RoomSeat(
+        deviceId: seat.deviceId,
+        accountId: seat.accountId,
+        inGroup: false,
+        offerKeyPackage: seat.offerKeyPackage,
+        offerSignature: seat.offerSignature,
+        offerNonce: seat.offerNonce,
+        offerExpiresAt: clock.now().millisecondsSinceEpoch ~/ 1000 - 10);
+    a.engine.refresh();
+    await pump();
+    await clock.advance(const Duration(seconds: 3));
+    expect(server.epoch, 0);
+    expect(a.engine.roster.map((m) => m.id), ['acct_a/dev_a']);
+    a.engine.dispose();
+    b2.engine.dispose();
+  });
+
   test('a device that is not in the parent group is never added', () async {
     final a = await start('a');
     final outsider = Device('x', server, clock, parent);

@@ -68,7 +68,7 @@ class FakeServer {
   FakeServer(this.conversation);
   final String conversation;
   String callId = 'room_1';
-  final Uint8List groupId = b('group-bytes-1');
+  Uint8List groupId = Uint8List.fromList(List.filled(32, 7));
   int epoch = 0;
   final Map<String, RoomSeat> seats = {};
   final List<RoomCommitRecord> log = [];
@@ -191,6 +191,11 @@ class FakeCrypto implements CallGroupCrypto {
   String? staged;
   int discards = 0;
   bool dropped = false;
+  int drops = 0;
+
+  /// The core refuses the create (for example, a group of that id is
+  /// already stored on the device).
+  bool failCreate = false;
   final List<String> keyRequests = [];
 
   static String _enc(CallMember m) =>
@@ -210,6 +215,7 @@ class FakeCrypto implements CallGroupCrypto {
 
   @override
   void createGroup(Uint8List groupId) {
+    if (failCreate) throw StateError('group already exists');
     exists = true;
     _members = [self];
     _epoch = 0;
@@ -315,6 +321,7 @@ class FakeCrypto implements CallGroupCrypto {
   @override
   void drop(Uint8List groupId) {
     dropped = true;
+    drops++;
     exists = false;
     _members = [];
   }

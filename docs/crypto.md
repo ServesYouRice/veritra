@@ -16,12 +16,12 @@ The server now reserves final account/device IDs before key generation and
 atomically verifies and consumes a signed enrollment proof covering the server
 challenge, Ed25519 public key, and SHA-256 key-package commitment. The Flutter
 client models this preflight, and its low-level Dart FFI binding requires ABI
-version 20 exactly (`native_crypto_bindings.dart`) and uses the owned
+version 22 exactly (`native_crypto_bindings.dart`) and uses the owned
 device/buffer calls. Native libraries are packaged for Android/iOS, while the
 production service remains behind the release gate.
 
 The public header is `crypto/rust/include/veritra_crypto.h`, which pins
-`PM_CRYPTO_ABI_VERSION` at 21. Among other things it defines:
+`PM_CRYPTO_ABI_VERSION` at 22. Among other things it defines:
 
 - account/device-bound opaque handles with exactly-once destruction
 - library-owned, zero-on-free output buffers
@@ -476,7 +476,16 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   (`server/internal/b6vector`); the Dart check and binding come with S5. The
   number is the next free one above integ (renumbered from the first assignment, 28). Needs the independent
   crypto review before release (design S2). Not built yet: the call-group
-  context extension check.
+  context extension check. **For the reviewer:** the core does not know
+  which groups are call groups, so the call accepts any stored group id,
+  a persistent conversation group included. The label keeps the output
+  separate from every other exporter value, but the exception is wider than
+  "call groups only" until the context extension marks call groups and the
+  call refuses the rest. A call group also lives in the same device
+  provider as the conversations, so a seal while a call is open would write
+  it into sealed state (D70); the app must not wire rooms to the messaging
+  device until the core keeps call groups out of seals (design, "Not
+  built").
 - **C3, encrypted community info: records, payloads, local schema 31
   (2026-11-08):** no ABI change. Design
   [`C3-private-channels-and-info.md`](designs/C3-private-channels-and-info.md),

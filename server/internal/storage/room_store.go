@@ -360,8 +360,12 @@ func liveRoomForDevice(ctx context.Context, tx *sql.Tx, roomID, deviceID string)
 	if room.EndedAt != nil {
 		return Room{}, ErrRoomEnded
 	}
+	// The seat counts only while its account is still an active member of
+	// the room's conversation: a member removed after joining can no longer
+	// read the room, post offers or take an epoch with a commit. Leaving
+	// stays open to it (LeaveRoom does not come here).
 	var n int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM call_room_participants WHERE room_id = ? AND device_id = ? AND left_at IS NULL`, roomID, deviceID).Scan(&n); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM call_room_participants p JOIN memberships m ON m.conversation_id = ? AND m.account_id = p.account_id JOIN accounts a ON a.id = p.account_id AND a.status = 'active' AND a.deleted_at IS NULL WHERE p.room_id = ? AND p.device_id = ? AND p.left_at IS NULL`, room.ConversationID, roomID, deviceID).Scan(&n); err != nil {
 		return Room{}, err
 	}
 	if n == 0 {

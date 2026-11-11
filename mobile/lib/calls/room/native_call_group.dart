@@ -41,8 +41,10 @@ CallMember _member(LeafPair pair) => CallMember(
     );
 
 /// [CallGroupCrypto] on the native MLS core. The call group is created,
-/// joined and dropped in memory only: callers never seal this device's
-/// state for a call group, and [drop] deletes it.
+/// joined and dropped through [device], and [drop] deletes it. The core
+/// does not keep a call group out of [device]'s seals, so this adapter must
+/// not be given the messaging device until it does (D70; design, "Not
+/// built").
 ///
 /// Known limits, tracked in the design's build status: the call-only
 /// KeyPackage lives in the device's provider storage until the next

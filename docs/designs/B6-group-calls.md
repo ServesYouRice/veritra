@@ -415,10 +415,22 @@ Choices and deviations from the text above:
 - **Call-only KeyPackage** lives in the device's provider storage until the
   next prune (it is not in the uploaded pool).
 
+Review fixes (2026-11-11): the engine drops only a group it created or
+joined (the group id is the server's word, and the core's `delete_group`
+must never run on it), refuses a group id that is not 32 bytes, and the
+committer refuses an expired offer (receivers keep 120 s of slack). The
+server refuses room reads, offers and commits from a seat whose account is
+no longer a member of the conversation; leaving stays open.
+
 Not built: the media transport (the SFU client, mute and screen share
 controls behind `RoomMediaControls`, and the frame cryptor key provider
 behind `FrameKeySink`; needs the `livekit_client` package and a licence
 review); the production factory that sets `AppState.roomSession` in
 `main_demo.dart`; the call-group context extension binding `call_id` (core
 change); S1 spike and S7 evidence; Android foreground services and iOS
-broadcast extension. Needs the independent crypto review before S2 lands.
+broadcast extension. **Before the factory is wired:** a call group must
+stay out of sealed state (D70), K1 backups and K2 transfers. Today it sits
+in the same device provider as the conversations, so the next
+`seal_changes` while a call is open would write it; the core needs to keep
+call groups out of seals (or hold them in a separate handle) first. Needs
+the independent crypto review before S2 lands.

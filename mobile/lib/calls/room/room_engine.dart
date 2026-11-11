@@ -60,6 +60,13 @@ class RoomEngine extends ChangeNotifier {
   static const welcomeWait = Duration(seconds: 30);
   static const maxRejoins = 2;
 
+  /// A call group id is 32 random bytes (design, "The call group").
+  static const groupIdBytes = 32;
+
+  /// How long after its expiry a receiver still accepts an offer the
+  /// committer accepted in time. The committer itself allows none.
+  static const receiverOfferSlack = 120;
+
   /// Stream slots: voice, camera, screen, screen audio.
   static const streamSlots = 4;
 
@@ -72,6 +79,12 @@ class RoomEngine extends ChangeNotifier {
   int maxDevices = 50;
 
   Uint8List? _groupId;
+
+  /// Whether this engine created or joined the call group, so it may drop
+  /// it. The group id is the server's word: a failed create or join must
+  /// never delete a group of that name the device already holds (the core's
+  /// `delete_group` is never called on a server's word).
+  bool _held = false;
   int _rejoins = 0;
   bool _disposed = false;
   Future<void> _queue = Future.value();
@@ -123,8 +136,12 @@ class RoomEngine extends ChangeNotifier {
     _groupId = info.groupId;
     _joinEpoch = info.epoch;
     try {
+      if (info.groupId.length != groupIdBytes) {
+        throw StateError('call group id is not 32 bytes');
+      }
       if (info.created) {
         crypto.createGroup(info.groupId);
+        _held = true;
         phase = RoomPhase.active;
         _installKeys();
         _scheduleSelfUpdate();
@@ -210,6 +227,7 @@ class RoomEngine extends ChangeNotifier {
       if (welcome == null) continue;
       final members = crypto.joinWithWelcome(group, welcome);
       if (members == null) continue; // for someone else
+      _held = true;
       // The joiner checks every leaf of its Welcome against the parent.
       for (final member in members) {
         if (!parent.hasMember(conversationId!, member)) {
@@ -254,7 +272,7 @@ class RoomEngine extends ChangeNotifier {
       state ??= await api.state(id);
       final seat = state.seats.where((s) => s.id == added.id).firstOrNull;
       if (seat == null ||
-          !_offerValid(group, added, seat) ||
+          !_offerValid(group, added, seat, committing: false) ||
           !_seenOffers.add(_offerKey(seat.offerKeyPackage!))) {
         // No valid signed offer, or a KeyPackage already used in this call.
         await _recover(RoomFailure.commitRefused);
@@ -268,7 +286,8 @@ class RoomEngine extends ChangeNotifier {
 
   String _offerKey(Uint8List keyPackage) => keyPackage.join(',');
 
-  bool _offerValid(Uint8List group, CallMember member, RoomSeat seat) {
+  bool _offerValid(Uint8List group, CallMember member, RoomSeat seat,
+      {required bool committing}) {
     final nonce = seat.offerNonce;
     final expires = seat.offerExpiresAt;
     final kp = seat.offerKeyPackage;
@@ -276,10 +295,10 @@ class RoomEngine extends ChangeNotifier {
     if (nonce == null || expires == null || kp == null || signature == null) {
       return false;
     }
-    // An offer is checked against its own expiry with some slack, because a
-    // receiver may process the commit a little after the committer did.
+    // The committer refuses an expired offer. A receiver allows some slack,
+    // because it may process the commit a little after the committer did.
     final now = scheduler.now().millisecondsSinceEpoch ~/ 1000;
-    if (now > expires + 120) return false;
+    if (now > expires + (committing ? 0 : receiverOfferSlack)) return false;
     return crypto.verifyJoinOffer(
       groupId: group,
       member: member,
@@ -336,7 +355,7 @@ class RoomEngine extends ChangeNotifier {
       final member =
           CallMember(seat.accountId, seat.deviceId, known.signingKey);
       if (!parent.hasMember(conversationId!, member)) continue;
-      if (!_offerValid(group, member, seat)) continue;
+      if (!_offerValid(group, member, seat, committing: true)) continue;
       if (_seenOffers.contains(_offerKey(seat.offerKeyPackage!))) continue;
       adds.add((keyPackage: seat.offerKeyPackage!, member: member));
     }
@@ -472,7 +491,8 @@ class RoomEngine extends ChangeNotifier {
     _selfUpdateTimer?.cancel();
     _commitTimer = _welcomeTimer = _selfUpdateTimer = null;
     final group = _groupId;
-    if (group != null) crypto.drop(group);
+    if (group != null && _held) crypto.drop(group);
+    _held = false;
     for (final timer in _removals) {
       timer.cancel();
     }
@@ -514,7 +534,8 @@ class RoomEngine extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     final group = _groupId;
-    if (group != null) crypto.drop(group);
+    if (group != null && _held) crypto.drop(group);
+    _held = false;
     keys.clear();
     _commitTimer?.cancel();
     _welcomeTimer?.cancel();

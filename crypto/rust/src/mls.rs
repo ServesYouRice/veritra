@@ -2585,7 +2585,7 @@ mod tests {
 
     #[test]
     fn b6_media_keys_follow_the_epoch_and_leave_with_the_removed_member() {
-        let ([alice, bob, carol], [mut alice_group, bob_group, carol_group]) =
+        let ([alice, bob, carol], [mut alice_group, mut bob_group, mut carol_group]) =
             three_members(b"call_group_b6");
         let call = b"call_b6";
         // Senders by identity; leaves are alice 0, bob 1, carol 2.
@@ -2649,18 +2649,37 @@ mod tests {
             crate::b6::sender_key(&c7_root, 0, 0).unwrap().as_slice()
         );
 
-        // Removing bob moves the epoch: the key changes, and bob (who never
-        // sees the next epoch) cannot derive it from his old state.
+        // Removing bob moves the epoch: the key changes, carol follows, and
+        // bob, who processes his own removal, can derive no key at all.
         let staged = alice
             .stage_membership_commit(&mut alice_group, &[], &removal_of(b"acct_bob", b"dev_bob"))
             .unwrap();
-        let _ = staged;
         alice
             .merge_pending_commit_with_outcome(&mut alice_group)
             .unwrap();
         let a1 = key(&alice, &alice_group, 0, 0);
         assert_ne!(a0, a1);
-        assert_ne!(a1, key(&bob, &bob_group, 0, 0));
+        carol
+            .process_commit_with_outcome(&mut carol_group, &staged.commit)
+            .unwrap();
+        assert_eq!(a1, key(&carol, &carol_group, 0, 0));
+        // Bob's key for himself is gone from the new epoch too.
+        assert!(alice
+            .b6_media_key(&alice_group, call, b"acct_bob", b"dev_bob", 0)
+            .is_err());
+        let removed = bob
+            .process_commit_with_outcome(&mut bob_group, &staged.commit)
+            .unwrap();
+        assert!(removed.removed_self);
+        // His group is gone, so the FFI's load fails and nothing is derived.
+        assert_eq!(
+            bob.load_group(b"call_group_b6").err(),
+            Some(MlsError::InvalidState)
+        );
+        // Even the stale in-memory handle cannot give the new epoch's key.
+        if let Ok(stale) = bob.b6_media_key(&bob_group, call, b"acct_alice", b"dev_alice", 0) {
+            assert_ne!(stale.as_slice(), a1.as_slice());
+        }
     }
 
     #[test]
