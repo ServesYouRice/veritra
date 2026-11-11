@@ -3,7 +3,6 @@ package storage
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -96,17 +95,15 @@ func TestBlobChunkDigestRecords(t *testing.T) {
 	}
 
 	// Backups: the record reaches downloads and recovery transfers.
-	tokenHash := sha256.Sum256([]byte("recovery token"))
-	if err := store.CreateBackupBlobWithChunkDigests(ctx, owner.Account.ID, owner.Device.ID, "blob_backup_record", sha, 10, record,
-		json.RawMessage(`{"state_counter":1}`), tokenHash[:]); err != nil {
+	if err := insertLegacyBackup(ctx, store, owner.Account.ID, owner.Device.ID, "blob_backup_record", sha, 10,
+		json.RawMessage(`{"state_counter":1}`)); err != nil {
 		t.Fatal(err)
 	}
-	transfer, err := store.BeginRecoveryTransfer(ctx, tokenHash[:], 0)
-	if err != nil || !bytes.Equal(transfer.Backup.ChunkDigests, record) {
-		t.Fatalf("recovery record = %v, err %v", transfer.Backup.ChunkDigests, err)
+	if _, err := store.db.ExecContext(ctx, `UPDATE backup_blobs SET chunk_digests = ? WHERE storage_key = ?`, record, "blob_backup_record"); err != nil {
+		t.Fatal(err)
 	}
-	if err := store.CreateBackupBlob(ctx, owner.Account.ID, owner.Device.ID, "blob_backup_legacy", sha, 10,
-		json.RawMessage(`{"state_counter":2}`), make([]byte, 32)); err != nil {
+	if err := insertLegacyBackup(ctx, store, owner.Account.ID, owner.Device.ID, "blob_backup_legacy", sha, 10,
+		json.RawMessage(`{"state_counter":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	backups, err := store.ListBackups(ctx, owner.Account.ID, 10)

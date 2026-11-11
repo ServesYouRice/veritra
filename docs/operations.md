@@ -50,14 +50,13 @@ rotates the session token; the old token works for two more minutes so
 requests in flight finish, without recent-auth rights. Sign-out, password
 change, sign-out of other devices and device removal revoke both tokens.
 
-Recovery download capabilities are sent only in the `X-Recovery-Token` request
-header to `GET /api/v1/recovery`; they are never URL credentials. Each new
-backup rotates the previous capability, and an approved transfer expires after
-15 minutes or is consumed after its final byte. If a capability may have been
-exposed, immediately upload a fresh backup (which invalidates the old one),
-then purge application, container and reverse-proxy logs covering the exposure
-window according to the host's retention tooling. Do not copy the capability
-into tickets, shell history or diagnostic bundles. A backup holds the
+The 15-minute recovery-token route (`GET /api/v1/recovery`) and the VBK2 backup
+upload (a `POST /api/v1/backups` whose metadata has no `kind`) are retired
+(K1-6, D91). Both answer `410` with the typed codes `recovery_route_retired`
+and `backup_format_retired`, read no token and store nothing; migration 0080
+cleared every stored capability. Old VBK2 copies stay listed until their owner
+deletes them and are never restorable. Backups are K1 copies, downloaded with
+a session through `GET /api/v1/backups/{id}`. A backup holds the
 account's history and settings, never its session token, device secret or
 MLS state (D71, D73). Someone holding a backup and its recovery code can
 read that history but cannot sign in. A restored device joins the account

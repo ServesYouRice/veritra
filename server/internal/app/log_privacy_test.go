@@ -131,7 +131,7 @@ func TestApplicationLogNeverContainsBodiesTokensOrCiphertext(t *testing.T) {
 		statuses = append(statuses, recorder.Code)
 	}
 	// The flow must reach both the success and the rejection paths.
-	if statuses[0] != http.StatusCreated || statuses[1] != http.StatusBadRequest || statuses[3] != http.StatusUnauthorized || statuses[8] != http.StatusCreated || statuses[9] != http.StatusOK {
+	if statuses[0] != http.StatusCreated || statuses[1] != http.StatusBadRequest || statuses[3] != http.StatusUnauthorized || statuses[8] != http.StatusGone || statuses[9] != http.StatusGone {
 		t.Fatalf("unexpected statuses %v", statuses)
 	}
 	output := logs.String()
