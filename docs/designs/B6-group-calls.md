@@ -11,7 +11,7 @@ before S2 lands.
   read them."
 - **Owner approval:** one new server-side component (the SFU, O1) and
   possibly one Flutter client package for it. Neither is covered by D89.
-- **Counters:** crypto ABI 22 (S2, used), server migration 0078 (S3, used), no local
+- **Counters:** crypto ABI 22 (S2, used), server migration 0080 (S3, used), no local
   schema change. No local schema change
   (call state lives in memory only). No W7 payload type.
 
@@ -383,7 +383,7 @@ O1; S5 after S2 and S3; S6 after S5.
 
 Built: S2 (crypto ABI 22: `pm_crypto_group_b6_media_key`, join sign domain,
 vector `testing/vectors/b6-media-v1.json` checked by Rust, Go and Dart); S3
-(migration 0078, `/api/v1/rooms` join, offer, commit, commits, state, leave
+(migration 0080, `/api/v1/rooms` join, offer, commit, commits, state, leave
 and webhook, `RoomMedia` with a LiveKit implementation that signs tokens and
 checks webhooks without a new dependency, config, retention sweep, caps);
 S4 as an example only (`deploy/livekit/livekit.example.yaml`,
