@@ -25,10 +25,15 @@ import (
 //   - no attachments, replies, threads or franking commitment: a leave proof
 //     carries none, so nothing a reader would see rides along;
 //   - at most LeaveNoticesPerInterval marked envelopes per sender account
-//     and membership per LeaveNoticeInterval: the member_leave and, from
-//     crypto ABI 24, the member_leave_signed that carries the leave
-//     statement a committer puts in the commit ("C4 leave proof in the
-//     commit").
+//     and membership per LeaveNoticeInterval. One leave sends two: the
+//     member_leave and, from crypto ABI 24, the member_leave_signed that
+//     carries the leave statement a committer puts in the commit ("C4 leave
+//     proof in the commit"). The limit admits two leaves an hour, so a leave
+//     that did not go through (and was voided) can be tried again at once.
+//
+// A notice also lets its device's next self-update in that conversation
+// pass the self-update interval once (leaveVoidExempt, mls_group_store.go):
+// the void of a cancelled leave.
 //
 // Receiving apps drop a marked envelope whose payload is not a member_leave
 // or member_leave_signed (or a hidden type they do not know), so a marked
@@ -41,8 +46,9 @@ const EnvelopeLeaveNoticeKey = "c4_leave"
 // LeaveNoticeInterval bounds marked envelopes per sender and membership.
 const LeaveNoticeInterval = time.Hour
 
-// LeaveNoticesPerInterval is how many marked envelopes one interval admits.
-const LeaveNoticesPerInterval = 2
+// LeaveNoticesPerInterval is how many marked envelopes one interval admits:
+// two leaves (a cancelled one and its retry), two envelopes each.
+const LeaveNoticesPerInterval = 4
 
 // ErrLeaveNoticeLimited answers a leave notice over the limit.
 var ErrLeaveNoticeLimited = errors.New("leave notice limited")

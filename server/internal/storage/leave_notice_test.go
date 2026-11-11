@@ -45,18 +45,26 @@ func TestLeaveNoticePassesPostingRulesInTheSharedGroup(t *testing.T) {
 		t.Fatalf("leave notice refused: %v", err)
 	}
 	// Its retry answers and does not count twice; a second notice (the
-	// signed statement, ABI 24) is allowed; a third inside the interval is
-	// not.
+	// signed statement, ABI 24) is allowed. A leave that did not go through
+	// may be tried again at once, so its two notices pass too (review LOW:
+	// with two an hour, a cancelled leave kept the member from leaving for
+	// an hour). A fifth inside the interval is refused.
 	if _, err := f.post(ctx, f.shared, f.member, "leave1", notice); err != nil {
 		t.Fatalf("leave notice replay: %v", err)
 	}
 	if _, err := f.post(ctx, f.shared, f.member, "leave2", notice); err != nil {
 		t.Fatalf("second notice: %v", err)
 	}
+	if _, err := f.post(ctx, f.shared, f.member, "retry1", notice); err != nil {
+		t.Fatalf("the retried leave's notice: %v", err)
+	}
+	if _, err := f.post(ctx, f.shared, f.member, "retry2", notice); err != nil {
+		t.Fatalf("the retried leave's signed notice: %v", err)
+	}
 	_, err := f.post(ctx, f.shared, f.member, "leave2b", notice)
 	var limited LeaveNoticeLimitedError
 	if !errors.Is(err, ErrLeaveNoticeLimited) || !errors.As(err, &limited) || limited.Wait <= 0 || limited.Wait > LeaveNoticeInterval {
-		t.Fatalf("third notice: %v wait=%v", err, limited.Wait)
+		t.Fatalf("fifth notice: %v wait=%v", err, limited.Wait)
 	}
 	// The wait runs from the oldest notice in the window.
 	if _, err := f.store.db.ExecContext(ctx, `UPDATE memberships SET created_at = ? WHERE conversation_id = ? AND account_id = ?`, formatTime(time.Now().Add(-2*LeaveNoticeInterval)), f.shared, f.member.Account.ID); err != nil {
