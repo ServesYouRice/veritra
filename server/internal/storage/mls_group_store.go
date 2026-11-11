@@ -353,6 +353,10 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		formatTime(now), input.ConversationID); err != nil {
 		return MLSCommitBundleResult{}, err
 	}
+	// C4 server succession: a commit is activity, as in D81.
+	if err := touchMembershipActivityTx(ctx, tx, input.ConversationID, input.SenderAccountID, now); err != nil {
+		return MLSCommitBundleResult{}, err
+	}
 	if updateOnly {
 		if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_devices SET last_self_update_at = ?
 			WHERE conversation_id = ? AND device_id = ?`,

@@ -831,6 +831,10 @@ func (s *Store) transferCommunityOwnershipTx(ctx context.Context, tx *sql.Tx, co
 	if err != nil {
 		return nil, err
 	}
+	// C4 server succession: asks made for the old owner's absence lapse.
+	if err := markNewOwnerActiveTx(ctx, tx, successionScope{community: true, id: communityID}, targetAccountID); err != nil {
+		return nil, err
+	}
 	return append(first, second...), nil
 }
 
@@ -1327,6 +1331,10 @@ func (s *Store) transferConversationOwnershipTx(ctx context.Context, tx *sql.Tx,
 		return 0, err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE memberships SET role = ? WHERE conversation_id = ? AND account_id = ?`, domain.RoleOwner, conversationID, targetAccountID); err != nil {
+		return 0, err
+	}
+	// C4 server succession: asks made for the old owner's absence lapse.
+	if err := markNewOwnerActiveTx(ctx, tx, successionScope{id: conversationID}, targetAccountID); err != nil {
 		return 0, err
 	}
 	createdAt := nowString()

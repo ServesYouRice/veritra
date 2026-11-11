@@ -186,6 +186,10 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 			return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
 		}
 	}
+	// C4 server succession: the sender's activity day in this conversation.
+	if err := touchMembershipActivityTx(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, now); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
 	var eventID int64
 	if withSyncEvent {
 		payload, err := json.Marshal(messageSyncEventPayload(envelope))
