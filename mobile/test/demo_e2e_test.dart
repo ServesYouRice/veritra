@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
@@ -8,6 +9,7 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/attachments.dart';
 import 'package:private_messenger/core/client_config.dart';
 import 'package:private_messenger/core/k1_restore.dart';
+import 'package:private_messenger/core/k1_second_copy.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
@@ -378,9 +380,11 @@ void main() {
     final alice = await owner.invite('k1alice');
     addTearDown(alice.dispose);
     // K0-R completion sends peers no coordinator notice (D96 covers link
-    // approval only), so alice's device finds the recovered device through
-    // the L1 complete-adds audit, which runs every 15 minutes. Its interval
-    // is set from the start, as an audit already held would keep its time.
+    // approval only), so alice's device finds the recovered device only
+    // through the L1 complete-adds audit: at a catch-up once the group's
+    // 15-minute audit is due, then another at least the 3-minute fallback
+    // later. Nothing wakes the app for it. The interval is set from the
+    // start, as an audit already done would keep its due time.
     alice.state.l1JoinAuditInterval = Duration.zero;
 
     final dm = await owner.state.startConversation(
@@ -413,6 +417,15 @@ void main() {
         timeout: const Duration(minutes: 2));
     expect(owner.state.k1BackupState?.lastError, isNull);
     expect(owner.state.k1BackupState?.lastSuccessAt, isNotNull);
+    // The iOS "Save a copy" path against the real server and native peek:
+    // this device's own row is listed, downloads and matches its header.
+    final exported = _RecordingExport();
+    owner.state.k1SecondCopyChannel = exported;
+    expect(await owner.state.exportK1SecondCopy(), K1SecondCopyExport.saved);
+    expect(exported.name,
+        k1SecondCopyFileName(owner.accountId, owner.state.session!.deviceId!));
+    expect(exported.bytes!.length, greaterThanOrEqualTo(k1BackupPeekBytes));
+    expect(owner.state.k1BackupState?.secondCopyAt, isNotNull);
     final ownerId = owner.accountId;
     final lostDevice = owner.state.session!.deviceId!;
     await owner.state.logout();
@@ -486,6 +499,19 @@ void main() {
         timeout: const Duration(minutes: 2));
     expect(recovered.state.deviceRecoveryRequired, isFalse);
   }, skip: skip, timeout: const Timeout(Duration(minutes: 14)));
+}
+
+/// Records an iOS export instead of showing the document picker.
+class _RecordingExport extends K1SecondCopyChannel {
+  String? name;
+  Uint8List? bytes;
+
+  @override
+  Future<bool> export(String name, Uint8List bytes) async {
+    this.name = name;
+    this.bytes = bytes;
+    return true;
+  }
 }
 
 class _E2eEraser implements SlotErasing {

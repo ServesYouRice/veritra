@@ -200,6 +200,9 @@ void main() {
       // The temporary file is removed whichever way the picker closes.
       expect(swift, contains('func documentPickerWasCancelled('));
       expect(swift, contains('didPickDocumentsAt'));
+      // A swiped-away sheet ends the export too, so it never stays busy.
+      expect(swift, contains('picker.presentationController?.delegate = self'));
+      expect(swift, contains('func presentationControllerDidDismiss('));
     });
   });
 }

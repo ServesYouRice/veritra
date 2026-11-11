@@ -1415,7 +1415,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   writes none. Payload: `account_id` and `device_id` of the link, nothing
   else, no conversation id. The client starts a membership pass on it; only
   the coordinator acts, the others keep the 3-minute fallback. Not covered:
-  coordinators beyond the 64 cap.
+  coordinators beyond the 64 cap, and K0-R: the change-4 version a
+  recovered device posts writes no notice, so peers add that device only
+  through the L1 complete-adds audit (found by K1-7, 2026-11-11; open).
 
 - **K0 R2 review, legacy-group revocation coordinator (2026-11-01):** no
   ABI, payload or schema change. In a legacy group (no recorded roster),

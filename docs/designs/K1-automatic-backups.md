@@ -378,16 +378,25 @@ Where the build differs from the text above, and why:
   the stored conversation projection, which could lag a chat started since
   the last refresh; the export then failed with `invalid history snapshot`
   and no copy was uploaded. The projection is now persisted before export.
-  The K2 transfer export reads the same projection and was not checked.
+  The K2 transfer export already refreshes the list before it exports
+  (`app_state_link_v3.dart`, before `service.send`).
 - **K1-7 end-to-end (built).** `demo_e2e_test.dart` "K1-7": a real server
   and native crypto; the owner chats, saves a recovery key (first copy
   uploads), signs out; K0-R recovers the account on a new device, restores
   the lost device's copy (both messages back), sets a new key (with recent
   auth) and password, and the two accounts chat again. K0-R completion
   sends peers no `device.member_linked` notice (D96 covers link approval
-  only), so the peer adds the recovered device through the L1 complete-adds
-  audit, up to 15 minutes after its next catch-up; the test shortens that
-  interval. A notice when the change-4 version lands would close the gap.
+  only), so a peer adds the recovered device only through the L1
+  complete-adds audit: at a catch-up (an incoming event, opening or
+  resuming the app) once the group's 15-minute audit is due, then another
+  at least the 3-minute fallback later. Nothing wakes the app for it, so a
+  peer whose app stays closed adds it when it next opens, and until then
+  the recovered device is in none of that peer's groups. The test shortens
+  the interval; it is green only because of that. Open (next package): the
+  server writes `device.member_linked` notices when a device-list version
+  that adds a device lands (change 4); server only, no migration. The test
+  also saves the iOS copy against the real server (`exportK1SecondCopy`
+  with a recording channel).
 - **K1-6 (built): VBK2 and the token route retired.** Owner question 1
   (D91): no compatibility path. `POST /backups` without a K1 `kind` and
   `GET /recovery` answer 410 `backup_format_retired` and
