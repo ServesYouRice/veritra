@@ -350,11 +350,12 @@ void main() {
     expect(await client.searchMetadata(owner.token, 'contract-member'),
         isNotEmpty);
 
-    // The contract server runs without push, so it offers no provider and
+    // The contract server has no VAPID, FCM or APNs settings, so it offers
+    // only UnifiedPush (which needs none, server/internal/app/app.go) and
     // refuses registrations it could not deliver through (card I41).
     final pushConfig = await client.pushConfig(owner.token);
-    expect(pushConfig['enabled'], isFalse);
-    expect(pushConfig['providers'], isEmpty);
+    expect(pushConfig['enabled'], isTrue);
+    expect(pushConfig['providers'], ['unifiedpush']);
     expect(pushConfig.containsKey('vapid_public_key'), isFalse);
     Matcher refusedWith(int status, String code) => isA<ApiException>()
         .having((error) => error.statusCode, 'statusCode', status)
