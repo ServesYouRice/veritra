@@ -764,6 +764,70 @@ registrations. Once the owner is set up, remove the setup-token key from
 overlay (one without the other stops startup). A rebuilt server then
 refuses to start empty instead of offering owner setup before the restore.
 
+## Fewer address and time logs (L2-2)
+
+The shipped Caddy profile no longer writes client addresses (`remote_ip`,
+`client_ip`, `remote_port`, `X-Forwarded-For`, `X-Real-IP`) or the user agent
+to its access and error logs. Keep Traefik's access log off on k3s; if you
+turn it on, drop the same fields. This is the shipped default only: an
+operator can turn proxy logs back on, for abuse handling for example, and that
+is their choice. The live connection still shows the address in memory, and a
+network path or VPS provider may keep its own flow logs.
+
+`devices.last_seen_at` is stored as the UTC day (migration 0078) and written
+at most once per device per day. Account recovery widens its activity window
+by one day to match, so an active device is never counted as idle.
+
+## Verify a server build (L2-4)
+
+`scripts/verify-server-build.sh <tag>` checks out the tag, rebuilds the
+Dockerfile `build` stage for each platform with the pinned Go image, and
+compares the server binary's SHA-256 with the binary in the published image
+`REPO:<tag>`. It prints "binary matches release <tag>" or "binary does NOT
+match". It does not compare the multi-arch index digest, because the
+provenance and SBOM attestations inside it differ on every build. A match shows
+the published image holds the code of that tag; it does not show what any
+operator runs. Cosign signing is not used (owner default, D106).
+
+## Server attestation hook (L3-1, off by default)
+
+`GET /api/v1/attestation?nonce=<64 hex chars>` answers 404 unless
+`PRIVATE_MESSENGER_ATTESTATION=configfs-tsm` and
+`PRIVATE_MESSENGER_ATTESTATION_TLS_CERT` (a PEM certificate) are set. The
+report comes from the Linux 6.7+ `configfs-tsm` interface, so no vendor SDK is
+used. Its 64-byte user data is `SHA-512("veritra-attest-v1" || nonce ||
+SHA-256(DER public key of the TLS certificate))`, so a report relayed from
+another machine fails the check against the certificate a verifier connected
+to. That only holds when TLS terminates inside the same VM. The response also
+lists `claimed_build` (version, commit and optional
+`PRIVATE_MESSENGER_IMAGE_DIGEST`): the server's own claim, not evidence. The
+route logs nothing about the nonce or the report. The app never reads this
+route and no client trust decision depends on it.
+
+What this does: it lets a person compare a hardware-signed measurement with an
+expected one. What it does not do: it is not operator-proof. The operator
+still chooses the image, the network, the proxy and the disk, can switch the
+mode off, and sees metadata the server handles. Hardware vendors and their
+firmware stay trusted.
+
+### Confidential VM (optional)
+
+Not tested on a real host yet; it needs a provider that sells AMD SEV-SNP or
+Intel TDX VMs, which the OVH VPS does not (owner default: keep OVH for
+production, pick a provider later). The shape of the setup:
+
+1. Boot a published unified kernel image whose measured initrd holds the
+   reproducible server binary (L2-4), so the measurement covers the server. A
+   container pulled after boot is not measured.
+2. Put the data volume on an encrypted disk whose key is released only to the
+   measured VM.
+3. Terminate TLS inside the VM and set `PRIVATE_MESSENGER_ATTESTATION_TLS_CERT`
+   to that certificate.
+4. A verifier fetches a report with a fresh nonce, checks the vendor signature
+   chain, recomputes the user data from the key of the certificate it connected
+   to, and compares the launch measurement with the one recomputed from the
+   published image. `scripts/verify-attestation.sh` is not written yet.
+
 ## Pre-launch checklist
 
 Before the server holds real conversations. Items marked *owner* need

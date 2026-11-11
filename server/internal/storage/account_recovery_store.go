@@ -305,13 +305,15 @@ func (s *Store) ClaimRecovery(ctx context.Context, input RecoveryClaimInput) (Re
 	now := time.Now().UTC()
 	nowText := formatTime(now)
 	var active bool
+	// last_seen_at is a UTC day (L2-2), so widen the window by that day: a
+	// device seen inside the window must never look inactive.
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS(SELECT 1 FROM devices d
 		WHERE d.account_id = ? AND d.revoked_at IS NULL
 		  AND COALESCE(d.last_seen_at, d.created_at) > ?
 		  AND EXISTS(SELECT 1 FROM sessions s WHERE s.device_id = d.id
 		    AND s.expires_at > ? AND s.absolute_expires_at > ? AND s.last_used_at > ?))`,
-		input.AccountID, formatTime(now.Add(-input.ActiveWindow)), nowText, nowText, s.idleCutoff(now)).Scan(&active); err != nil {
+		input.AccountID, formatTime(now.Add(-input.ActiveWindow-DeviceSeenInterval)), nowText, nowText, s.idleCutoff(now)).Scan(&active); err != nil {
 		return RecoveryClaimResult{}, err
 	}
 	readyAt := now
