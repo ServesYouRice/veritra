@@ -7,6 +7,14 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-09.**
 
+2026-11-11 C3 independent review: own accepted removal commits now persist
+the info-key rotation watermark atomically, including revocation coordinators
+and lost-response echoes. Key answers stop after an intervening removal and
+remain retryable. C3 remains incomplete; verified C4 roles, encrypted-only
+creation and lifecycle UI are still missing. Arrival ordering also cannot
+establish freshness for a retired key first delivered late; retired-key
+tombstones remain unbounded. Evidence: [`review`](testing/evidence/C3-independent-review-2026-11-11.md).
+
 2026-11-11 C3 topology review: blocked implicit re-encryption of cached
 private-channel info into the community key home after server relabelling.
 Editing and rotation regressions reproduce the leak without the guard.

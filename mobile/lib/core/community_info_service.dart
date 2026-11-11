@@ -716,6 +716,11 @@ class CommunityInfoService {
     // again, as this admin, every record under this key that this device
     // accepted.
     for (final subject in _shownSubjects.values.toList()) {
+      try {
+        await _checkWritable(home);
+      } on InfoRotationPending {
+        return 0;
+      }
       final at = homeOf(subject);
       if (at == null ||
           at.conversationId != home.conversationId ||
@@ -725,6 +730,11 @@ class CommunityInfoService {
       final accepted =
           await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
       if (accepted == null || accepted.keyId != key.keyId) continue;
+      try {
+        await _checkWritable(home);
+      } on InfoRotationPending {
+        return 0;
+      }
       if (!await _announce(
           subject, home, accepted.revision, accepted.keyId, accepted.blob)) {
         return 0;
@@ -733,6 +743,11 @@ class CommunityInfoService {
     // A key alone is insufficient for a joiner: retry failed announcements
     // before consuming the request's hourly allowance, even if the key was
     // already delivered by this device or another admin.
+    try {
+      await _checkWritable(home);
+    } on InfoRotationPending {
+      return 0;
+    }
     for (final r in requests) {
       _answered.add('${r.ident}#${r.seq}');
       _answeredDevice[

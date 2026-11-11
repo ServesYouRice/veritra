@@ -2106,6 +2106,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) =>
       transaction(() => _commitLocalMlsStateInTransaction(
             expectedCounter: expectedCounter,
@@ -2116,6 +2117,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             recordChanges: recordChanges,
             leaseKey: leaseKey,
             resolvedMlsOutboxKey: resolvedMlsOutboxKey,
+            infoRemoval: infoRemoval,
           ));
 
   Future<void> _commitLocalMlsStateInTransaction({
@@ -2127,6 +2129,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     String? leaseKey,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) async {
     await _assertSyncLeaseInTransaction(leaseKey);
     final previousState = await (select(localCryptoStates)
@@ -2154,6 +2157,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             ..where(
                 (table) => table.idempotencyKey.equals(resolvedMlsOutboxKey)))
           .go();
+    }
+    if (infoRemoval != null) {
+      await into(localMetadata).insertOnConflictUpdate(
+        LocalMetadataCompanion.insert(
+          name: 'setting:c3.removal_epoch.${infoRemoval.conversationId}',
+          value: infoRemoval.epoch.toString(),
+        ),
+      );
     }
   }
 

@@ -1036,6 +1036,7 @@ class NativeCryptoService
         if (!await _isQueuedBundle(item)) return;
         final previous = await _requiredState();
         try {
+          int? infoRemovalEpoch;
           if (bundle.hasCommit) {
             final device = _requiredDevice();
             final ({int epoch, bool pending}) before;
@@ -1055,7 +1056,16 @@ class NativeCryptoService
               );
               return;
             }
-            if (before.pending) device.mergePendingCommit(item.conversationId);
+            if (before.pending) {
+              final outcome = device.c7MergePendingCommit(item.conversationId);
+              try {
+                if (outcome.removedAny && !outcome.removedSelf) {
+                  infoRemovalEpoch = outcome.newEpoch;
+                }
+              } finally {
+                outcome.wipeRoot();
+              }
+            }
             final after = device.groupEpoch(item.conversationId);
             // Fail closed if the group is not where the accepted commit
             // leads: that would mean a fork.
@@ -1068,6 +1078,12 @@ class NativeCryptoService
             expectedCursor: await localStore.loadSyncCursor(),
             state: _sealNext(previous),
             resolvedMlsOutboxKey: item.idempotencyKey,
+            infoRemoval: infoRemovalEpoch == null
+                ? null
+                : (
+                    conversationId: item.conversationId,
+                    epoch: infoRemovalEpoch
+                  ),
           );
           if (bundle.hasCommit) {
             await _rejudgeAfterOwnCommit(item.conversationId);
@@ -1328,8 +1344,17 @@ class NativeCryptoService
               checkCanCommit?.call();
               final device = _requiredDevice();
               final expected = MlsCommitBundle.decode(bundle.payload).epoch + 1;
+              int? infoRemovalEpoch;
               if (device.groupEpoch(message.conversationId).pending) {
-                device.mergePendingCommit(message.conversationId);
+                final outcome =
+                    device.c7MergePendingCommit(message.conversationId);
+                try {
+                  if (outcome.removedAny && !outcome.removedSelf) {
+                    infoRemovalEpoch = outcome.newEpoch;
+                  }
+                } finally {
+                  outcome.wipeRoot();
+                }
               }
               final after = device.groupEpoch(message.conversationId);
               if (after.pending || after.epoch != expected) {
@@ -1344,6 +1369,7 @@ class NativeCryptoService
                 state: _sealNext(previous),
                 cursor: message.syncEventId,
                 resolvedMlsOutboxKey: bundle.idempotencyKey,
+                infoRemovalEpoch: infoRemovalEpoch,
               ));
               await _rejudgeAfterOwnCommit(message.conversationId);
               return;

@@ -622,6 +622,32 @@ void main() {
     expect(admin.sent.where((s) => s.$2 == AppPayloadType.infoKey), isNotEmpty);
   }, skip: skip);
 
+  test('a removal during a key answer cancels announcements and permits retry',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final member = device('member', {_shared});
+    final home = admin.service.homeOf(community)!;
+    await member.service.requestKey(home);
+    final before = admin.sent.length;
+    net.afterDeliver = (type) async {
+      if (type == AppPayloadType.infoKey) {
+        net.afterDeliver = null;
+        await admin.service.markRotationDue(home, _community);
+      }
+    };
+    expect(await admin.service.answerRequests(home, _community), 0);
+    expect(admin.sent.skip(before).map((s) => s.$2), [AppPayloadType.infoKey]);
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    // No hourly allowance was consumed by the cancelled answer. This retry
+    // re-announces the rotated record even though rotation delivered its key.
+    final afterRotation = admin.sent.length;
+    await admin.service.answerRequests(home, _community);
+    expect(admin.sent.skip(afterRotation).map((s) => s.$2),
+        contains(AppPayloadType.infoUpdate));
+    expect(await member.service.refresh(community), isA<InfoAccepted>());
+  }, skip: skip);
+
   test('a removal during the answer delay waits for the rotated key', () async {
     late _Device admin;
     var markDuringDelay = true;

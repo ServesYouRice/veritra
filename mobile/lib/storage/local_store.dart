@@ -814,11 +814,14 @@ abstract class LocalStore {
   /// Stores a local MLS state change. [resolvedMlsOutboxKey] names an MLS
   /// outbox item settled by the same change (a commit bundle the server
   /// accepted or refused, card I51); it is removed atomically.
+  /// [infoRemoval] records an authenticated own removal in that transaction,
+  /// so revocation coordinators also owe C3 key rotation after a restart.
   Future<void> commitLocalMlsState({
     required int expectedCounter,
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   });
   Future<StoredCryptoState?> loadCryptoState();
 
@@ -1821,10 +1824,15 @@ class MemoryLocalStore implements LocalStore {
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: _cryptoState?.counter ?? 0, currentCursor: _syncCursor);
     _setCryptoState(state);
+    if (infoRemoval != null) {
+      _settings[communityInfoRemovalSetting(infoRemoval.conversationId)] =
+          infoRemoval.epoch.toString();
+    }
     if (resolvedMlsOutboxKey != null) _mlsOutbox.remove(resolvedMlsOutboxKey);
   }
 
@@ -3439,6 +3447,7 @@ class SecureLocalStore implements LocalStore {
     required int expectedCursor,
     required StoredCryptoState state,
     String? resolvedMlsOutboxKey,
+    ({String conversationId, int epoch})? infoRemoval,
   }) async {
     _validateLocalMlsState(expectedCounter, expectedCursor, state,
         currentCounter: expectedCounter, currentCursor: expectedCursor);
@@ -3451,6 +3460,7 @@ class SecureLocalStore implements LocalStore {
       recordChanges: _recordWrites(state),
       leaseKey: _syncLeaseKey,
       resolvedMlsOutboxKey: resolvedMlsOutboxKey,
+      infoRemoval: infoRemoval,
     );
   }
 
