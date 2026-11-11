@@ -81,6 +81,8 @@ type API struct {
 	// ScopedSync turns on the per-scope sync routes (scoped_sync_handlers.go).
 	// Off, they are not registered and answer 404.
 	ScopedSync bool
+	// C7History mirrors config.C7History for the setup status (c7_history).
+	C7History bool
 	// Attest is the L3 proof hook. Nil (the default) leaves
 	// GET /api/v1/attestation unregistered, so it answers 404.
 	Attest       attest.Provider

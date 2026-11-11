@@ -934,6 +934,18 @@ while the flag is off. Bodies stored before 0084 are never served by the
 history fetch. Server tests are still to be written (no suites were run
 in this pass, owner instruction).
 
+Step 4, first slice (same day): the two-part send and receive with a
+random `body_key` for every message (the `members_from_join` behaviour of
+the implicit genesis), the API client calls for the three routes, the
+history-hide call after an own delete, and the switch that follows the
+server's `c7_history`. See `docs/crypto.md`, change log. Not built: the
+generation keys and records (create, switch, move), the ordering table in
+the receive path, rekey at removal merge, `history_sync` and its request,
+`keyless`/`unsure`, the re-add wipe, targeted-action sealing, the newcomer's
+backward walk, two-pass import and prefetch, the private group's
+`channel_id`, the receiver rule that a group-level message is one of the two
+hidden types, local schema for C7 state, and every step-5 flow and test.
+
 ## Open questions for the owner
 
 Earlier questions: 1 (off/on) and 2 (server sees the flag) are answered in

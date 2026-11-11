@@ -43,6 +43,7 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'c7_two_part.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
 import 'message_format.dart';
@@ -61,6 +62,7 @@ class NativeCryptoService
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
+        C7HistoryConsumer,
         DeviceListCryptoService,
         DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
@@ -95,6 +97,11 @@ class NativeCryptoService
   final DateTime Function() _clock;
   @override
   set conversationAuthority(ConversationAuthority value) => _authority = value;
+
+  /// C7: whether sends in community conversations go in two parts. Off by
+  /// default; AppState follows the server's `c7_history`.
+  @override
+  bool c7SealedBodies = false;
 
   @override
   CommunityInfoCodec get communityInfoCodec => CommunityInfoCodec(bindings);
@@ -1902,7 +1909,36 @@ class NativeCryptoService
           }
           final device = _requiredDevice();
           final epoch = device.groupEpoch(conversationId).epoch;
-          final ciphertext = device.encrypt(conversationId, payload);
+          // C7: in a community conversation MLS carries only the reference;
+          // the padded VAP1 goes in the sealed body beside it.
+          List<int> mlsPlaintext = payload;
+          Uint8List? sealedBody;
+          if (c7SealedBodies &&
+              c7CommunityKind(_authority?.conversationKind(conversationId))) {
+            final communityId = switch (_authority) {
+              final ConversationCommunitySource source =>
+                source.conversationCommunity(conversationId),
+              _ => null,
+            };
+            if (communityId == null || communityId.isEmpty) {
+              throw StateError('C7 needs the community of this conversation');
+            }
+            final sealed = c7SealMessage(
+              bindings: bindings,
+              sign: (message) => device.c7Sign(
+                  domain: c7PostSignatureDomain, message: message),
+              communityId: communityId,
+              conversationId: conversationId,
+              channelId: channelId,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              epoch: epoch,
+              paddedVap1: payload,
+            );
+            mlsPlaintext = sealed.reference;
+            sealedBody = sealed.sealedBody;
+          }
+          final ciphertext = device.encrypt(conversationId, mlsPlaintext);
           final envelope = MessageEnvelope(
             conversationId: conversationId,
             idempotencyKey: idempotencyKey,
@@ -1923,6 +1959,7 @@ class NativeCryptoService
               'mls_epoch': epoch,
             },
             frankCommit: commit,
+            sealedBody: sealedBody,
             attachmentRefs: attachmentRefs,
           );
           await localStore.commitOutgoingApplicationTransition(
@@ -2073,7 +2110,7 @@ class NativeCryptoService
       }
       try {
         operationFence();
-        final List<int> plaintext;
+        List<int> plaintext;
         try {
           final decrypted = await _decryptOrUndecryptable(
               previous,
@@ -2134,6 +2171,46 @@ class NativeCryptoService
               ],
             ));
             return null;
+          }
+          // C7: a two-part message's reference names its sealed body. A
+          // missing, swapped or damaged body is an invalid row; the MLS
+          // state and the cursor commit with it (P1), so a server that
+          // strips a body cannot stop the conversation.
+          final reference = c7CommunityKind(
+                  _authority?.conversationKind(envelope.conversationId))
+              ? parseC7Reference(plaintext)
+              : null;
+          if (reference != null) {
+            final metadata = envelope.cryptoMetadata;
+            final routeChannel =
+                metadata is Map ? metadata['channel_id'] : null;
+            final opened = c7OpenLive(
+              bindings: bindings,
+              reference: reference,
+              sealedBody: envelope.sealedBody,
+              conversationId: envelope.conversationId,
+              channelId: routeChannel is String ? routeChannel : null,
+              senderDeviceId: envelope.senderDeviceId,
+              actionId: envelope.idempotencyKey,
+            );
+            plaintext.fillRange(0, plaintext.length, 0);
+            if (opened == null) {
+              await localStore.commitMlsTransition(MlsStateTransition(
+                checkCanCommit: operationFence,
+                messageId: marker,
+                conversationId: envelope.conversationId,
+                expectedCounter: previous.counter,
+                expectedCursor: cursor,
+                state: _sealNext(previous),
+                cursor: syncEventId,
+                upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+                messageEffects: <MessageEffect>[
+                  _invalidRow(envelope, syncEventId),
+                ],
+              ));
+              return null;
+            }
+            plaintext = opened;
           }
         } on NativeCryptoException catch (error) {
           if (!error.kind.ratchetAdvanced) rethrow;
