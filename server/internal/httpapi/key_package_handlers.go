@@ -66,9 +66,9 @@ func (a *API) claimConversationKeyPackages(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "invalid_conversation_id")
 		return
 	}
-	// With a device list, claim only for those devices (adding devices to an
-	// existing group, card I51); without one, for every other member device
-	// (creating the group).
+	// With explicit IDs, claim only those devices (L1 signed-list discovery
+	// at creation or later reconciliation); without IDs, claim every other
+	// member device for older clients creating a group.
 	var request struct {
 		DeviceIDs []string `json:"device_ids"`
 	}

@@ -457,6 +457,14 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 signed-list add discovery (2026-11-11):** creation and reported pending
+  membership changes derive device candidates from verified account lists,
+  subtract the native roster and claim explicit IDs. Claim answers must be a
+  unique subset of the requested account/device pairs; the native gate still
+  enforces the pinned signing key. Entirely withheld pending conversations and
+  the incomplete-join notice remain open. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). No counter changes.
+
 - **L1 enrollment-anchor review follow-up (2026-11-11):** journal locally
   signed genesis or authenticated linked-device chains before durable session
   activation. Replay before foreground/background restore can activate MLS.

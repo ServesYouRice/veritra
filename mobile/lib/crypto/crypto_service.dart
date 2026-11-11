@@ -178,6 +178,14 @@ abstract interface class DeviceListCryptoService implements DeviceListVerifier {
   Future<bool> refreshApprovalHold(String conversationId);
 }
 
+/// Discovers additions independently of the server's device enumeration.
+abstract interface class ApprovedDeviceDiscoveryCryptoService {
+  /// Lists currently approved devices of member [accountIds] absent from the
+  /// actual MLS tree. Null [conversationId] means a new group with only self.
+  Future<List<MlsDeviceRef>> missingApprovedDevices(
+      String? conversationId, Iterable<String> accountIds);
+}
+
 /// A membership change named only devices that are not on their accounts'
 /// approved-device lists now (L1, D94). Nothing was staged; the change stays
 /// pending and is offered again.

@@ -60,6 +60,7 @@ class NativeCryptoService
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
         DeviceListCryptoService,
+        ApprovedDeviceDiscoveryCryptoService,
         DeviceSigningKeyCryptoService,
         EnrollmentPromotionCryptoService,
         InviteBindingCryptoService,
@@ -386,6 +387,47 @@ class NativeCryptoService
 
   @override
   set deviceListPins(DeviceListPins? pins) => _deviceListPins = pins;
+
+  @override
+  Future<List<MlsDeviceRef>> missingApprovedDevices(
+      String? conversationId, Iterable<String> accountIds) async {
+    final pins = _deviceListPins;
+    if (pins == null) return const [];
+    final present = await _serial(() async {
+      if (conversationId == null) {
+        return <MlsDeviceRef>{(accountId: _accountId!, deviceId: _deviceId!)};
+      }
+      return <MlsDeviceRef>{
+        for (final leaf in _requiredDevice().groupMembers(conversationId))
+          (
+            accountId: utf8.decode(leaf.accountId),
+            deviceId: utf8.decode(leaf.deviceId)
+          ),
+      };
+    });
+    final budget = Stopwatch()..start();
+    final missing = <MlsDeviceRef>[];
+    for (final account in accountIds.toSet()) {
+      final remaining = deviceListGroupBudget - budget.elapsed;
+      List<DeviceListPair> pairs;
+      try {
+        pairs = remaining > Duration.zero
+            ? await pins.approvedDevices(account).timeout(
+                remaining < deviceListJudgeTimeout
+                    ? remaining
+                    : deviceListJudgeTimeout)
+            : await pins.approvedDevices(account, refreshFirst: false);
+      } on Object {
+        // A failed refresh cannot invent additions. Existing pins still work.
+        pairs = await pins.approvedDevices(account, refreshFirst: false);
+      }
+      for (final pair in pairs) {
+        final ref = (accountId: account, deviceId: utf8.decode(pair.deviceId));
+        if (!present.contains(ref)) missing.add(ref);
+      }
+    }
+    return missing;
+  }
 
   @override
   DeviceListChainResult checkChain(

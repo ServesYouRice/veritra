@@ -509,6 +509,19 @@ class DeviceListPins {
     return pin.listedKey(device);
   }
 
+  /// Device inventory comes from the signed list, never a server device roster.
+  Future<List<DeviceListPair>> approvedDevices(String accountId,
+      {bool refreshFirst = true}) async {
+    final status =
+        refreshFirst ? await refresh(accountId) : await _stored(accountId);
+    final pin = status.pin;
+    if (status.state != DeviceListState.ok || pin == null) return const [];
+    return [
+      for (final key in pin.listed)
+        DeviceListPair(key.deviceId, key.signingKey),
+    ];
+  }
+
   /// [refresh], then once more past the one-minute limit (but at most every
   /// [minForcedRefresh]) when the answer does not [satisfies] the decision.
   ///

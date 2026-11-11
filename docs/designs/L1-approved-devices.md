@@ -29,6 +29,34 @@ to rename existing working structures. No dependencies or release gates change.
 
 ## Verification and remaining work
 
+### Signed-list add discovery (2026-11-11)
+
+For conversation creation and each pending membership change, read the
+conversation's member accounts, refresh their verified lists, and derive
+candidate devices from those lists. Subtract identities already in the native
+MLS tree (or this device before group creation). Do not use the server's add
+array or claim-all response as the device inventory. Claim packages by these
+explicit device IDs. Reject returned packages for unrequested account/device
+pairs or repeated device IDs; partial answers may stage the available devices.
+The native add gate still binds each package to the currently pinned key.
+Each batch is capped at the existing 256-change bundle limit. The server's
+explicit-claim route also permits current member devices before any group
+roster or legacy MLS message exists, matching first-bundle authorization.
+After initialization, it still requires an active MLS leaf. It verifies the
+requester's device belongs to the authenticated account and is not revoked.
+
+Discovery shares the existing bounded list-refresh policy: a group network
+budget and per-account timeout, then stored verified pins only. Missing lists
+and conflicts authorize no adds; removals remain possible. An existing leaf
+with a different key is never added again under the same identity; the approval
+hold handles it. No ABI, schema, migration or dependency change is required.
+
+This slice covers omitted devices in a reported pending conversation and at
+creation. Detecting an entirely omitted pending conversation, retries when no
+reported change remains, and the one-hour incomplete-join notice remain open.
+The account membership roster itself still belongs to C1/C4; this does not
+turn the server's account roster into cryptographic authorization.
+
 ### Durable enrollment anchors (review follow-up)
 
 Before saving a new setup/registration session, write its locally signed
@@ -102,8 +130,9 @@ and self-updates stop. Check incoming removed verdicts and that an MLS removal
 releases the hold. Run inherited Rust VDL1/key-binding tests, server signed-list
 and honest-server gates, Flutter pin/store/gate tests, and repository checks.
 
-The full L1 package remains partial: complete adds independent of the server's
-device enumeration, recovery-key retype/legacy confirmation UI, removed-message
+The full L1 package remains partial: discovery when the server withholds an
+entire pending conversation, incomplete-join retry/notice,
+recovery-key retype/legacy confirmation UI, removed-message
 UI, chains beyond the bounded limits and independent security review/demo
 evidence still need work. Work is performed alone as explicitly requested;
 no independent review is claimed.

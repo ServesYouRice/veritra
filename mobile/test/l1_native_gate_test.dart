@@ -51,6 +51,72 @@ void main() {
     expect((await bob.history()).single.body, 'hello');
   }, skip: skip);
 
+  test('signed-list discovery finds siblings omitted by the server', () async {
+    final alice = await client('acct_alice', 'dev_alice');
+    final bob = await client('acct_bob', 'dev_bob');
+    final phone = await client('acct_bob', 'dev_phone');
+    await alice.trust(bob);
+    await alice.service
+        .initializeConversation('conv_1', [await bob.keyPackage()]);
+    await _accept(alice, [bob], const []);
+    final genesis = await bob.service.signDeviceList(DeviceListBody(
+      accountId: idBytes('acct_bob'),
+      version: 1,
+      prevHash: DeviceListBody.zeroHash,
+      createdAtMs: 1,
+      change: DeviceListChange.migrationGenesis,
+      entries: [
+        DeviceListPair(
+            idBytes('dev_bob'), await bob.service.currentSigningKey()),
+        DeviceListPair(
+            idBytes('dev_phone'), await phone.service.currentSigningKey()),
+      ],
+    ));
+    final source = _ListSource()..chain = [genesis];
+    final pins = DeviceListPins(
+        store: alice.store, source: source, verifier: alice.service);
+    alice.service.deviceListPins = pins;
+    expect(
+        await alice.service
+            .missingApprovedDevices('conv_1', ['acct_bob', 'acct_bob']),
+        [(accountId: 'acct_bob', deviceId: 'dev_phone')]);
+    expect(
+        await alice.service.missingApprovedDevices(null, ['acct_bob']),
+        unorderedEquals([
+          (accountId: 'acct_bob', deviceId: 'dev_bob'),
+          (accountId: 'acct_bob', deviceId: 'dev_phone'),
+        ]));
+    final head = bindings.checkDeviceListStep(
+        expectedAccountId: idBytes('acct_bob'), statement: genesis);
+    final removed = await bob.service.signDeviceList(DeviceListBody(
+      accountId: idBytes('acct_bob'),
+      version: 2,
+      prevHash: head.listHash,
+      createdAtMs: 2,
+      change: DeviceListChange.remove,
+      entries: [
+        DeviceListPair(
+            idBytes('dev_bob'), await bob.service.currentSigningKey())
+      ],
+    ));
+    source.chain.add(removed);
+    pins.invalidate('acct_bob');
+    expect(await alice.service.missingApprovedDevices('conv_1', ['acct_bob']),
+        isEmpty);
+    // A sticky conflict authorizes nothing, even with a previously pinned key.
+    await alice.store.saveDeviceListConflict(
+        accountId: 'acct_bob',
+        version: 2,
+        pinnedStatement: removed,
+        otherStatement: removed,
+        recordedAt: 3);
+    expect(await alice.service.missingApprovedDevices(null, ['acct_bob']),
+        isEmpty);
+    alice.service.deviceListPins = null;
+    expect(await alice.service.missingApprovedDevices(null, ['acct_bob']),
+        isEmpty);
+  }, skip: skip);
+
   test('a device the list does not approve is never staged', () async {
     final alice = await client('acct_alice', 'dev_alice');
     final bob = await client('acct_bob', 'dev_bob');

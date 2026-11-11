@@ -38,6 +38,17 @@ class TestDeviceLists extends DeviceListPins {
       unavailable.contains(accountId) ? null : _keys[_key(accountId, deviceId)];
 
   @override
+  Future<List<DeviceListPair>> approvedDevices(String accountId,
+          {bool refreshFirst = true}) async =>
+      [
+        if (!unavailable.contains(accountId))
+          for (final entry in _keys.entries)
+            if (entry.key.split('\u0000').first == accountId)
+              DeviceListPair(
+                  idBytes(entry.key.split('\u0000').last), entry.value),
+      ];
+
+  @override
   Future<LeafVerdict> judge(
       List<int> accountId, List<int> deviceId, List<int> signingKey,
       {bool refreshFirst = true}) async {

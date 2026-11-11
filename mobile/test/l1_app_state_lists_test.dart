@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
 import 'package:drift/native.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
@@ -11,6 +12,7 @@ import 'package:private_messenger/core/device_lists.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -33,6 +35,78 @@ void main() {
   setUp(() {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
   });
+
+  for (final answer in [
+    'valid',
+    'partial',
+    'duplicate',
+    'wrong-account',
+    'ghost'
+  ]) {
+    test('creation discovers signed devices; claim answer $answer', () async {
+      final api = _DiscoveryApi(bindings)..answer = answer;
+      final store = MemoryLocalStore();
+      final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+      final state = _state(api, crypto);
+      addTearDown(state.dispose);
+      await state.createOwner(_origin, 'owner', 'password', 'setup');
+      await _addSignedPhone(bindings, api, crypto);
+      final created = await state.startConversation(kind: 'group');
+      expect(api.claims.single, ['dev_phone']);
+      if (['duplicate', 'wrong-account', 'ghost'].contains(answer)) {
+        expect(created, isNull);
+        expect(api.bundles, isEmpty);
+        expect(await crypto.groupEpoch('conv_discovery'), isNull);
+      } else {
+        expect(created?.id, 'conv_discovery');
+        expect(api.bundles, hasLength(1));
+        expect(api.bundles.single.added.map((ref) => ref.deviceId),
+            answer == 'partial' ? isEmpty : ['dev_phone']);
+      }
+    }, skip: skip);
+  }
+
+  test('reconcile discovers an approved device omitted from pending adds',
+      () async {
+    final api = _DiscoveryApi(bindings);
+    final store = MemoryLocalStore();
+    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    await state.startConversation(kind: 'group');
+    expect(api.claims, isEmpty);
+    await _addSignedPhone(bindings, api, crypto);
+    api.pending = true;
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await _until(() => api.bundles.length == 2);
+    expect(api.claims.single, ['dev_phone']);
+    expect(api.bundles.last.added.single.deviceId, 'dev_phone');
+    expect(api.bundles.last.added.any((ref) => ref.deviceId == 'dev_ghost'),
+        isFalse);
+  }, skip: skip);
+
+  test('failed add discovery still permits a removal commit', () async {
+    final api = _DiscoveryApi(bindings);
+    final crypto =
+        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    await _addSignedPhone(bindings, api, crypto);
+    await state.startConversation(kind: 'group');
+    expect(api.bundles.single.added.single.deviceId, 'dev_phone');
+    api
+      ..pending = true
+      ..removing = true
+      ..membersUnavailable = true;
+    state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await _until(() => api.bundles.length == 2);
+    expect(api.bundles.last.added, isEmpty);
+    expect(api.bundles.last.removed.single.deviceId, 'dev_phone');
+    expect(api.claims, hasLength(1),
+        reason: 'no claims during failed discovery');
+  }, skip: skip);
 
   test('setup carries a genesis that names this device with its key', () async {
     final api = _ListApi(bindings);
@@ -369,6 +443,132 @@ void main() {
     expect(chain.head.recoveryKey, isNotNull);
     expect(api.recoveryKeyLists.single, api.chain.last);
   }, skip: skip);
+}
+
+Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
+    NativeCryptoService crypto) async {
+  final phone = bindings.createDevice(_account, 'dev_phone');
+  try {
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    final statement = await crypto.signDeviceList(DeviceListBody(
+      accountId: idBytes(_account),
+      version: head.version + 1,
+      prevHash: head.listHash,
+      createdAtMs: 2,
+      change: DeviceListChange.add,
+      entries: [
+        ...head.entries,
+        DeviceListPair(idBytes('dev_phone'), phone.signingPublicKey())
+      ],
+    ));
+    api._take(statement);
+    await DeviceListPins(
+            store: crypto.localStore, source: _ApiLists(api), verifier: crypto)
+        .pinOwnStep(_account, statement);
+    api.package = DeviceKeyPackage(
+        id: 'kp_phone',
+        accountId: _account,
+        deviceId: 'dev_phone',
+        keyPackage: phone.createKeyPackage(),
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        expiresAt: DateTime.now().add(const Duration(days: 1)));
+  } finally {
+    phone.close();
+  }
+}
+
+class _DiscoveryApi extends _ListApi {
+  _DiscoveryApi(super.bindings);
+  final claims = <List<String>>[];
+  final bundles = <MlsCommitBundle>[];
+  DeviceKeyPackage? package;
+  String answer = 'valid';
+  bool pending = false;
+  bool removing = false;
+  bool membersUnavailable = false;
+
+  @override
+  Future<List<SyncEvent>> syncEvents(String token,
+          {int after = 0, int limit = 100}) async =>
+      [
+        if (pending && after == 0)
+          SyncEvent(
+              id: 1,
+              type: 'device_list.updated',
+              accountId: _account,
+              payload: const {'version': 2},
+              createdAt: DateTime.utc(2026, 11, 11)),
+      ];
+
+  @override
+  Future<Conversation> createConversationDetailed(
+    String token, {
+    required String kind,
+    String? title,
+    String? communityId,
+    String? channelId,
+    List<String> memberAccountIds = const [],
+    int? retentionSeconds,
+  }) async =>
+      Conversation(id: 'conv_discovery', kind: kind, createdBy: _account);
+
+  @override
+  Future<List<ConversationMember>> conversationMembers(
+      String token, String id) async {
+    if (membersUnavailable) throw ApiException(503, '');
+    return [ConversationMember(accountId: _account, role: 'owner')];
+  }
+
+  @override
+  Future<List<DeviceKeyPackage>> claimConversationKeyPackages(
+          String token, String id) =>
+      throw StateError('claim-all must not be used for L1 creation');
+
+  @override
+  Future<List<DeviceKeyPackage>> claimDeviceKeyPackages(
+      String token, String id, List<String> deviceIds) async {
+    claims.add(deviceIds);
+    final item = package!;
+    if (answer == 'partial') return [];
+    if (answer == 'duplicate') return [item, item];
+    if (answer == 'valid') return [item];
+    return [
+      DeviceKeyPackage(
+          id: item.id,
+          accountId: answer == 'wrong-account' ? 'acct_other' : _account,
+          deviceId: answer == 'ghost' ? 'dev_ghost' : item.deviceId,
+          keyPackage: item.keyPackage,
+          ciphersuite: item.ciphersuite,
+          expiresAt: item.expiresAt)
+    ];
+  }
+
+  @override
+  Future<int> sendMlsCommitBundle(
+    String token,
+    String id, {
+    required String idempotencyKey,
+    required MlsCommitBundle bundle,
+  }) async {
+    bundles.add(bundle);
+    pending = false;
+    return bundle.epoch + (bundle.hasCommit ? 1 : 0);
+  }
+
+  @override
+  Future<List<MlsPendingChange>> mlsPendingChanges(String token) async => [
+        if (pending)
+          MlsPendingChange(
+              conversationId: 'conv_discovery',
+              epoch: removing ? 1 : 0,
+              add: const [
+                (accountId: _account, deviceId: 'dev_ghost')
+              ],
+              remove: [
+                if (removing) (accountId: _account, deviceId: 'dev_phone')
+              ]),
+      ];
 }
 
 AppState _state(_ListApi api, NativeCryptoService crypto) => AppState(

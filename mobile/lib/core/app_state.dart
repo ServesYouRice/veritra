@@ -8192,7 +8192,26 @@ class AppState extends ChangeNotifier
         }
         // L1 (D94): only devices on their account's approved list are
         // claimed and added; the rest wait, and no key package is spent.
-        final approvedAdds = await _approvedForAdd(change.add);
+        final discovery = mls is ApprovedDeviceDiscoveryCryptoService
+            ? mls as ApprovedDeviceDiscoveryCryptoService
+            : null;
+        List<MlsDeviceRef>? discovered;
+        if (discovery != null) {
+          try {
+            discovered = await _discoverApprovedAdds(
+                current, client, discovery, change.conversationId);
+          } catch (err) {
+            if (err is ApiException && err.statusCode == 401) rethrow;
+            if (change.remove.isEmpty) rethrow;
+            // Discovery failure authorizes no additions, but must not prevent
+            // removing a leaf. Never fall back to server-enumerated adds.
+            discovered = const [];
+          }
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        final approvedAdds = discovered == null
+            ? await _approvedForAdd(change.add)
+            : [for (final ref in discovered) ref.deviceId];
         if (approvedAdds.isEmpty &&
             change.add.isNotEmpty &&
             change.remove.isEmpty) {
@@ -8207,6 +8226,7 @@ class AppState extends ChangeNotifier
                 approvedAdds,
               );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (discovered != null) _checkDiscoveredPackages(discovered, adds);
         if (adds.isEmpty && change.remove.isEmpty) continue;
         await mls.stageMembershipChange(change.conversationId,
             adds: adds, removes: change.remove);
@@ -8267,6 +8287,34 @@ class AppState extends ChangeNotifier
       }
     }
     return out;
+  }
+
+  Future<List<MlsDeviceRef>> _discoverApprovedAdds(
+      Session current,
+      ApiClient client,
+      ApprovedDeviceDiscoveryCryptoService discovery,
+      String conversationId,
+      {bool creating = false}) async {
+    final members =
+        await client.conversationMembers(current.token, conversationId);
+    final missing = await discovery.missingApprovedDevices(
+        creating ? null : conversationId,
+        members.map((member) => member.accountId));
+    // The server and native commit format cap each bundle at 256 changes.
+    return missing.take(256).toList();
+  }
+
+  void _checkDiscoveredPackages(
+      List<MlsDeviceRef> requested, List<DeviceKeyPackage> packages) {
+    final expected = requested.toSet();
+    final seen = <String>{};
+    for (final package in packages) {
+      if (!expected.contains(
+              (accountId: package.accountId, deviceId: package.deviceId)) ||
+          !seen.add(package.deviceId)) {
+        throw const FormatException('unexpected claimed device');
+      }
+    }
   }
 
   /// How long a device that is not the change's coordinator waits before it
@@ -8652,8 +8700,23 @@ class AppState extends ChangeNotifier
     final client = api;
     final mls = _mlsCrypto;
     if (current == null || client == null || mls == null) return;
-    final packages = await client.claimConversationKeyPackages(
-        current.token, conversationId);
+    final ownerGeneration = _sessionGeneration;
+    final List<DeviceKeyPackage> packages;
+    if (mls is ApprovedDeviceDiscoveryCryptoService) {
+      final requested = await _discoverApprovedAdds(current, client,
+          mls as ApprovedDeviceDiscoveryCryptoService, conversationId,
+          creating: true);
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      packages = requested.isEmpty
+          ? const []
+          : await client.claimDeviceKeyPackages(current.token, conversationId,
+              [for (final ref in requested) ref.deviceId]);
+      _checkDiscoveredPackages(requested, packages);
+    } else {
+      packages = await client.claimConversationKeyPackages(
+          current.token, conversationId);
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     await mls.initializeConversation(conversationId, packages);
     // The creator's leaf key was made with the group.
     await _noteSelfUpdate(current,
