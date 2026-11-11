@@ -84,10 +84,12 @@ import 'typing_state.dart';
 import '../l10n/l10n.dart';
 import 'account_recovery.dart';
 import 'k1_backup.dart';
+import 'screen_guard.dart';
 
 export 'account_recovery.dart';
 export 'membership_invite_link.dart';
 export 'membership_models.dart';
+export 'screen_guard.dart';
 
 part 'app_state_membership.dart';
 part 'app_state_reports.dart';
@@ -279,6 +281,7 @@ class AppState extends ChangeNotifier
     this.passkeyClient = const UnsupportedPasskeyClient(),
     PasskeyPlatform? passkeyPlatform,
     List<String>? passkeyAppleDomains,
+    ScreenGuard? screenGuard,
   })  : reportSeedStore = reportSeedStore ?? MemoryReportSeedStore(),
         passkeyPlatform =
             passkeyPlatform ?? passkeyPlatformOf(defaultTargetPlatform),
@@ -286,7 +289,8 @@ class AppState extends ChangeNotifier
             parsePasskeyDomains(passkeyAppleDomainsDefine),
         pushService = pushService ?? DisabledMobilePushService(),
         receiptPreferences = receiptPreferences ??
-            ReceiptPreferences(MemoryReceiptPreferenceStore()) {
+            ReceiptPreferences(MemoryReceiptPreferenceStore()),
+        screenGuard = screenGuard ?? const PlatformScreenGuard() {
     composerDrafts.onChanged = _draftChanged;
     if (cryptoService case final ConversationAuthorityConsumer consumer) {
       consumer.conversationAuthority = this;
@@ -312,6 +316,9 @@ class AppState extends ChangeNotifier
   /// unsupported one.
   final PasskeyClient passkeyClient;
   final PasskeyPlatform passkeyPlatform;
+
+  /// Screen guard service (e.g. Android FLAG_SECURE).
+  final ScreenGuard screenGuard;
 
   /// Hostnames compiled into the build's associated domains (iOS, macOS).
   final List<String> passkeyAppleDomains;
@@ -434,6 +441,19 @@ class AppState extends ChangeNotifier
   /// metadata only: never a live conversation, member list or permission.
   Map<String, HistoryConversation> _copiedHistory = {};
   bool mentionsInMutedChats = true;
+
+  /// Whether Android FLAG_SECURE protects chats against AI-assistant screen
+  /// reading and screenshots. Stored under `screen_guard_chats`. Defaults to true.
+  bool screenGuardChats = true;
+
+  int _activeChatViews = 0;
+
+  /// Whether the screen guard is currently active (setting enabled and at least
+  /// one chat view active).
+  bool get isScreenGuardActive => screenGuardChats && _activeChatViews > 0;
+
+  @visibleForTesting
+  int get activeChatViewsForTesting => _activeChatViews;
 
   /// Which links this device may fetch to build a preview for a message it
   /// sends (B2). Receivers never fetch. Stored under `b2.link_preview`.
@@ -599,6 +619,29 @@ class AppState extends ChangeNotifier
     mentionsInMutedChats = value;
     await localStore.saveSetting('w8.mentions_muted', '$value');
     notifyListeners();
+  }
+
+  Future<void> setScreenGuardChats(bool value) async {
+    screenGuardChats = value;
+    await localStore.saveSetting('screen_guard_chats', '$value');
+    _updateScreenGuard();
+    notifyListeners();
+  }
+
+  void enterChatView() {
+    _activeChatViews++;
+    _updateScreenGuard();
+  }
+
+  void leaveChatView() {
+    if (_activeChatViews > 0) {
+      _activeChatViews--;
+      _updateScreenGuard();
+    }
+  }
+
+  void _updateScreenGuard() {
+    unawaited(screenGuard.setSecure(isScreenGuardActive));
   }
 
   Future<void> setLinkPreviewMode(LinkPreviewMode mode) async {
@@ -1845,6 +1888,9 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
           await localStore.loadSetting('b2.link_preview'));
+      screenGuardChats =
+          await localStore.loadSetting('screen_guard_chats') != 'false';
+      _updateScreenGuard();
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -2271,11 +2317,13 @@ class AppState extends ChangeNotifier
     final List<LocalConversationPref> prefs;
     final String? mentionsMuted;
     final String? previewMode;
+    final String? screenGuardPref;
     try {
       list = await client.conversations(current.token);
       prefs = await localStore.loadConversationPrefs();
       mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
       previewMode = await localStore.loadSetting('b2.link_preview');
+      screenGuardPref = await localStore.loadSetting('screen_guard_chats');
     } catch (_) {
       if (!_refreshOwned(current, generation)) return;
       rethrow;
@@ -2286,6 +2334,8 @@ class AppState extends ChangeNotifier
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
     linkPreviewMode = linkPreviewModeFromName(previewMode);
+    screenGuardChats = screenGuardPref != 'false';
+    _updateScreenGuard();
     await _loadRequestState(grandfather: false);
     if (!_refreshOwned(current, generation)) return;
     // The server's list is the truth: a conversation no longer in it (an
@@ -5474,6 +5524,9 @@ class AppState extends ChangeNotifier
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
           await localStore.loadSetting('b2.link_preview'));
+      screenGuardChats =
+          await localStore.loadSetting('screen_guard_chats') != 'false';
+      _updateScreenGuard();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
         conversations = cached.conversations;
@@ -7343,6 +7396,8 @@ class AppState extends ChangeNotifier
       capture.noticeCaptureEnabled = false;
     }
     _cancelDraftTimers();
+    _activeChatViews = 0;
+    _updateScreenGuard();
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
@@ -9250,6 +9305,7 @@ class AppState extends ChangeNotifier
   @override
   void dispose() {
     _disposed = true;
+    unawaited(screenGuard.setSecure(false));
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
     _stopK1Backups();

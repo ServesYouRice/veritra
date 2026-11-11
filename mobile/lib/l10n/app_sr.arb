@@ -1137,5 +1137,7 @@
   "settingsUpdateAvailable": "Верзија {version} је доступна",
   "@settingsUpdateAvailable": {"placeholders": {"version": {"type": "String"}}},
   "settingsUpdateError": "Провера ажурирања није успела",
-  "settingsUpdateDisabled": "Аутоматска провера ажурирања је искључена"
+  "settingsUpdateDisabled": "Аутоматска провера ажурирања је искључена",
+  "settingsScreenGuard": "Заштита екрана",
+  "settingsScreenGuardDetail": "Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима."
 }

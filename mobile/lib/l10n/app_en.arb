@@ -1397,5 +1397,7 @@
   "settingsUpdateAvailable": "Version {version} is available",
   "@settingsUpdateAvailable": {"placeholders": {"version": {"type": "String"}}},
   "settingsUpdateError": "Could not check for updates",
-  "settingsUpdateDisabled": "Automatic update checks are turned off"
+  "settingsUpdateDisabled": "Automatic update checks are turned off",
+  "settingsScreenGuard": "Screen guard",
+  "settingsScreenGuardDetail": "Block screenshots and AI-assistant screen reading in chats."
 }

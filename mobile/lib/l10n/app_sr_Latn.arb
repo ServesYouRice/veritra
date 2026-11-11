@@ -1164,5 +1164,7 @@
     }
   },
   "settingsUpdateError": "Provera ažuriranja nije uspela",
-  "settingsUpdateDisabled": "Automatska provera ažuriranja je isključena"
+  "settingsUpdateDisabled": "Automatska provera ažuriranja je isključena",
+  "settingsScreenGuard": "Zaštita ekrana",
+  "settingsScreenGuardDetail": "Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima."
 }

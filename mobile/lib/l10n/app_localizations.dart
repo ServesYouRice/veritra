@@ -6536,6 +6536,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Automatic update checks are turned off'**
   String get settingsUpdateDisabled;
+
+  /// No description provided for @settingsScreenGuard.
+  ///
+  /// In en, this message translates to:
+  /// **'Screen guard'**
+  String get settingsScreenGuard;
+
+  /// No description provided for @settingsScreenGuardDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Block screenshots and AI-assistant screen reading in chats.'**
+  String get settingsScreenGuardDetail;
 }
 
 class _AppLocalizationsDelegate

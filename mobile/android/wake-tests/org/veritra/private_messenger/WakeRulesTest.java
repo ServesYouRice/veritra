@@ -83,6 +83,18 @@ public final class WakeRulesTest {
         check(WakeRules.claimNotice(notices, 101, 102, "demo:new") == WakeRules.NoticeClaim.FULL);
         check(notices.containsKey("demo:first")); // Fresh decisions never evicted.
         check(WakeRules.claimNotice(notices, 102, WakeRules.NOTICE_RETENTION_MS + 1000, "demo:new") == WakeRules.NoticeClaim.NEW);
+        // Screen rules: FLAG_SECURE mask toggling and inspection.
+        check(ScreenRules.FLAG_SECURE == 0x00002000);
+        int baseFlags = 0x00000004; // e.g. some other window flag
+        int secureFlags = ScreenRules.applyFlags(baseFlags, true);
+        check(ScreenRules.isSecure(secureFlags));
+        check(secureFlags == (baseFlags | ScreenRules.FLAG_SECURE));
+        int clearedFlags = ScreenRules.applyFlags(secureFlags, false);
+        check(!ScreenRules.isSecure(clearedFlags));
+        check(clearedFlags == baseFlags);
+        // Repeated apply keeps idempotency
+        check(ScreenRules.applyFlags(secureFlags, true) == secureFlags);
+        check(ScreenRules.applyFlags(clearedFlags, false) == clearedFlags);
         System.out.println("WakeRules: " + checks + " checks passed");
     }
 }

@@ -419,6 +419,15 @@ class SettingsScreen extends StatelessWidget {
                   LinkPreviewTile(
                       mode: state.linkPreviewMode,
                       onChanged: state.setLinkPreviewMode),
+                  if (defaultTargetPlatform == TargetPlatform.android)
+                    SwitchListTile(
+                      key: const ValueKey<String>('settings-screen-guard'),
+                      secondary: const Icon(Icons.shield_outlined),
+                      title: Text(l10n.settingsScreenGuard),
+                      subtitle: Text(l10n.settingsScreenGuardDetail),
+                      value: state.screenGuardChats,
+                      onChanged: state.setScreenGuardChats,
+                    ),
                 ],
               ),
               if (appearance != null) ...<Widget>[

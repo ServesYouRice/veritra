@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.view.WindowManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
@@ -139,6 +140,29 @@ class MainActivity : FlutterActivity() {
                 } else {
                     result.success(PushEventBridge.acknowledgeWake(applicationContext, generation))
                 }
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    internal fun handleScreenGuardMethod(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "setSecure" -> {
+                val secure = call.argument<Boolean>("secure")
+                if (secure == null) {
+                    result.error("invalid_arguments", "Secure flag is required", null)
+                    return
+                }
+                if (secure) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+                result.success(null)
+            }
+            "isSecure" -> {
+                val isSec = ScreenRules.isSecure(window.attributes.flags)
+                result.success(isSec)
             }
             else -> result.notImplemented()
         }
