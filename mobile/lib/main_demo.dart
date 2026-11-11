@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 
+import 'core/account_host.dart';
 import 'core/api_client.dart';
 import 'core/app_state.dart';
 import 'core/client_config.dart';
+import 'core/passkeys.dart';
 import 'core/receipts_state.dart';
 import 'core/report_seed_store.dart';
 import 'core/transport_policy.dart';
@@ -14,7 +16,8 @@ import 'desktop/desktop_services.dart';
 import 'crypto/backup_service.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
-import 'features/chat/attachment_views.dart' show purgeOpenedAttachments;
+import 'features/chat/attachment_views.dart'
+    show purgeOpenedAttachments, useOpenedFilesScope;
 import 'features/chat/composer_attachments.dart'
     show purgePastedImages, usePastedImageProfile;
 import 'main.dart' show VeritraApp, StartupFailureApp;
@@ -22,7 +25,9 @@ import 'push/background_wake_runner.dart';
 import 'push/push_service.dart';
 import 'push/wake_worker_bridge.dart';
 import 'push/wake_launch_coordinator.dart';
+import 'storage/account_slots.dart';
 import 'storage/local_store.dart';
+import 'storage/profile_scope.dart';
 import 'sync/sync_service.dart';
 
 /// Demo entry point (decision D11). Never used for release builds.
@@ -63,18 +68,43 @@ Future<void> main(List<String> args) async {
   }
   final namespace = profile == null ? 'demo' : 'demo-$profile';
   usePastedImageProfile(namespace);
+  final kv = SecureSlotKeyValue();
+  final registryStore =
+      AccountRegistryStore(storage: kv, primaryNamespace: namespace);
+  // A cold wake may open only the protected registry's active slot. The
+  // native profile is checked against it by WakeLaunchCoordinator.
+  final startupSlot = await activeAccountSlotForWake(registryStore);
   final bridge = PlatformWakeWorkerBridge(allowOptIn: _phoneNotices);
-  // One store and one AppState per process (D52 contract): a background
-  // wake and the UI share them, so two owners never race on MLS state.
-  SecureLocalStore? localStore;
-  AppState? appState;
-  AppState build({required bool background}) {
-    final existing = appState;
-    if (existing != null) return existing;
+  // At most one live store and AppState per process (D52 contract): a
+  // background wake and the UI share the active slot's, so two owners never
+  // race on MLS state. The account switcher (B7) tears a slot down fully
+  // before it builds the next.
+  SecureLocalStore? liveStore;
+  AppState? liveState;
+  String? liveSlot;
+
+  Future<void> closeLive() async {
+    final store = liveStore;
+    liveStore = null;
+    liveState = null;
+    liveSlot = null;
+    await store?.close();
+  }
+
+  Future<AccountRuntime> buildRuntime(String slot,
+      {required bool background}) async {
+    final existing = liveState;
+    if (liveSlot == slot && existing != null) {
+      if (!background) liveStore?.allowForegroundInitialization();
+      return AccountRuntime(
+          namespace: slot, state: existing, closeStore: closeLive);
+    }
+    final scope = ProfileScope(namespace: slot, primaryNamespace: namespace);
+    usePastedImageProfile(scope.pasteScope);
+    useOpenedFilesScope(scope.openedFilesFolder);
     // A cold background start opens only existing protected state: no key,
     // database or profile is created for a push.
-    final store = localStore =
-        SecureLocalStore(namespace: namespace, existingOnly: background);
+    final store = SecureLocalStore(namespace: slot, existingOnly: background);
     final bindings = NativeCryptoBindings.load();
     final state = AppState(
       apiClientFactory: (baseUrl) =>
@@ -87,6 +117,7 @@ Future<void> main(List<String> args) async {
       backupService: BackupService(
         bindings: bindings,
         localStore: store,
+        directoryProvider: () => slotWorkingDirectory(scope),
         clientFactory: (baseUrl) {
           // A recovery code names its server; demo builds still accept only
           // HTTPS or loopback (D12).
@@ -96,11 +127,14 @@ Future<void> main(List<String> args) async {
           return ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo);
         },
       ),
-      attachmentService: AttachmentCryptoService(bindings),
-      reportSeedStore: SecureReportSeedStore(),
-      receiptPreferences: ReceiptPreferences(SecureReceiptPreferenceStore()),
+      reportSeedStore: SecureReportSeedStore(scope: scope),
+      attachmentService: AttachmentCryptoService(bindings,
+          directoryProvider: () => slotWorkingDirectory(scope)),
+      receiptPreferences:
+          ReceiptPreferences(SecureReceiptPreferenceStore(scope: scope)),
       syncServiceFactory: (baseUrl, token) =>
           WebSocketSyncService(baseUrl: baseUrl, token: token),
+      passkeyClient: PlatformPasskeyClient(),
       pushService: Platform.isAndroid || Platform.isIOS
           ? PlatformMobilePushService()
           : DisabledMobilePushService(),
@@ -113,10 +147,17 @@ Future<void> main(List<String> args) async {
         syncWhileUnfocused:
             Platform.isWindows || Platform.isLinux || Platform.isMacOS,
       ),
-    );
+    )..historyTransferDirectory = slotHistoryTransferDirectory(scope);
     // A headless engine has no view: never treat it as resumed.
     if (background) state.handleAppLifecycleState(AppLifecycleState.detached);
-    return appState = state;
+    liveStore = store;
+    liveState = state;
+    liveSlot = slot;
+    return AccountRuntime(
+      namespace: slot,
+      state: state,
+      closeStore: closeLive,
+    );
   }
 
   BackgroundWakeRunner? runner;
@@ -124,9 +165,9 @@ Future<void> main(List<String> args) async {
   /// Installs the native worker for [state]'s account and reports whether
   /// native allows phone notices. Used by a cold background start and, when
   /// the demo switch is on, by the UI process after sign-in.
-  Future<bool> installWorker(AppState state) async {
+  Future<bool> installWorker(AppState state, String slot) async {
     final worker = runner = BackgroundWakeRunner(
-      profile: namespace,
+      profile: slot,
       bridge: bridge,
       restoreExisting: state.restoreForBackgroundWake,
       catchUp: state.catchUpForBackgroundWake,
@@ -139,29 +180,31 @@ Future<void> main(List<String> args) async {
     // stays uninstalled until the next sign-in or process start.
     state.beforeLocalSessionClear = () async {
       worker.cancelForForeground();
-      await bridge.uninstall(namespace);
+      await bridge.uninstall(slot);
     };
     final installed = await bridge.install(
-        profile: namespace, onRun: worker.run, onCancel: worker.cancel);
+        profile: slot, onRun: worker.run, onCancel: worker.cancel);
     if (installed && bridge.canOptIn) return true;
     // Native did not allow phone notices (a build without them): no worker
     // may stay bound, so warm runs cannot catch up either.
-    if (installed) await bridge.uninstall(namespace);
+    if (installed) await bridge.uninstall(slot);
     state.beforeLocalSessionClear = null;
-    runner = null;
+    if (identical(runner, worker)) runner = null;
     return false;
   }
 
   final launch = WakeLaunchCoordinator(
     bridge: bridge,
-    profile: namespace,
+    profile: startupSlot ?? namespace,
     // Reached only when native reports a background launch bound to this
     // compiled profile with its silent path installed. Native cold execution
     // exists only in builds made with VERITRA_PHONE_NOTICES; otherwise native
     // never starts this and nothing registers for muted-mention wakes.
     onBackground: () async {
-      final state = build(background: true);
-      if (await installWorker(state)) state.allowPhoneNotices();
+      final slot = startupSlot;
+      if (slot == null) return;
+      final state = (await buildRuntime(slot, background: true)).state;
+      if (await installWorker(state, slot)) state.allowPhoneNotices();
     },
     // The UI takes over: cancel any wake first, then wait for its atomic
     // work to drain before the foreground owner starts.
@@ -172,18 +215,52 @@ Future<void> main(List<String> args) async {
       await worker.drain();
     },
     onUi: () async {
-      final state = build(background: false);
-      if (_phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
-        state.phoneNoticeInstaller = () => installWorker(state);
-      }
-      localStore?.allowForegroundInitialization();
-      final desktop = await DesktopServices.startIfSupported(state);
-      runApp(VeritraApp(state: state, desktop: desktop));
+      final host = AccountHost(
+        registryStore: registryStore,
+        eraser: SlotEraser(
+            storage: kv,
+            scope: ProfileScope(
+                namespace: namespace, primaryNamespace: namespace)),
+        build: (slot) async {
+          final runtime = await buildRuntime(slot, background: false);
+          if (_phoneNotices && (Platform.isAndroid || Platform.isIOS)) {
+            runtime.state.phoneNoticeInstaller =
+                () => installWorker(runtime.state, slot);
+          }
+          // At start and then hourly: a crash while running leaves files too.
+          runtime.state.startAttachmentOrphanSweep();
+          return runtime;
+        },
+        primaryNamespace: namespace,
+        desktopFactory: (state) => DesktopServices.startIfSupported(state,
+            scope: ProfileScope(
+                namespace: (state.localStore as SecureLocalStore).namespace,
+                primaryNamespace: namespace)),
+        inspect: slotInspectorFor(namespace),
+        revoke: slotRevokerFor((baseUrl) =>
+            ApiClient(baseUrl: baseUrl, transport: TransportPolicy.demo)),
+        // The permit follows the active slot; uninstall fences stale wakes
+        // before another runtime can install a new permit.
+        beforeLeave: (runtime) async {
+          final worker = runner;
+          worker?.cancelForForeground();
+          try {
+            await bridge.uninstall(runtime.namespace);
+          } finally {
+            // Native failure must not skip an atomic in-flight job's drain.
+            await worker?.drain();
+            if (identical(runner, worker)) runner = null;
+          }
+        },
+        afterClose: (_) async {
+          await purgeOpenedAttachments(thisSlotOnly: true);
+          await purgePastedImages();
+        },
+      );
+      await host.start();
+      runApp(VeritraApp(host: host));
       unawaited(purgeOpenedAttachments());
       unawaited(purgePastedImages());
-      // At start and then hourly: a crash while running leaves files too.
-      state.startAttachmentOrphanSweep();
-      unawaited(state.tryRestoreSession());
     },
     onUiError: () => runApp(const StartupFailureApp()),
   );

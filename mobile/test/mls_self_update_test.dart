@@ -396,7 +396,7 @@ Future<void> _waitFor(FutureOr<bool> Function() condition,
   fail('condition not reached');
 }
 
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: 'https://localhost:8080');
 
   final List<MlsCommitBundle> bundles = <MlsCommitBundle>[];

@@ -8,14 +8,12 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.view.WindowManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
-import com.google.firebase.FirebaseApp
-import com.google.firebase.FirebaseOptions
-import com.google.firebase.messaging.FirebaseMessaging
 import org.unifiedpush.android.connector.UnifiedPush
 
 class MainActivity : FlutterActivity() {
@@ -81,7 +79,7 @@ class MainActivity : FlutterActivity() {
         when (call.method) {
             "register" -> {
                 val nextInstance = call.argument<String>("instance")
-                // FCM needs no VAPID key; only UnifiedPush (Web Push) does (I41).
+                // FCM needs no VAPID key; UnifiedPush (Web Push) may use it (I41).
                 val nextVapid = call.argument<String>("vapid")?.takeIf { it.isNotBlank() }
                 val providers = call.argument<List<String>>("providers") ?: emptyList()
                 if (nextInstance.isNullOrBlank()) {
@@ -90,9 +88,13 @@ class MainActivity : FlutterActivity() {
                     // A new registration supersedes every callback still
                     // pending from an earlier one (TASK-013).
                     val attempt = PushRegistrationConfig.configure(nextInstance, nextVapid, providers)
-                    val usingFcm = "fcm" in providers && registerWithFCM(attempt)
+                    val usingFcm = FcmBridge.isAvailable() && "fcm" in providers && FcmBridge.register(applicationContext, nextInstance, attempt) {
+                        if ("unifiedpush" in offeredProviders || ("webpush" in offeredProviders && vapid != null)) {
+                            registerWithDistributor(usePicker = false, attempt = attempt)
+                        }
+                    }
                     if (!usingFcm) {
-                        if ("webpush" in providers && nextVapid != null) {
+                        if ("unifiedpush" in providers || ("webpush" in providers && nextVapid != null)) {
                             registerWithDistributor(usePicker = false, attempt = attempt)
                         } else {
                             PushEventBridge.emit(mapOf(
@@ -120,7 +122,7 @@ class MainActivity : FlutterActivity() {
                 }
             }
             "pickDistributor" -> {
-                if (instance == null || vapid == null || "webpush" !in offeredProviders) {
+                if (instance == null || ("webpush" !in offeredProviders && "unifiedpush" !in offeredProviders)) {
                     result.error("not_configured", "Push must be configured first", null)
                 } else {
                     registerWithDistributor(usePicker = true, attempt = PushRegistrationConfig.generation)
@@ -144,10 +146,44 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    internal fun handleScreenGuardMethod(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "setSecure" -> {
+                val secure = call.argument<Boolean>("secure")
+                if (secure == null) {
+                    result.error("invalid_arguments", "Secure flag is required", null)
+                    return
+                }
+                if (secure) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                }
+                result.success(null)
+            }
+            "isSecure" -> {
+                val isSec = ScreenRules.isSecure(window.attributes.flags)
+                result.success(isSec)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
     private fun registerWithDistributor(usePicker: Boolean, attempt: Long) {
         if (!PushRegistrationConfig.current(attempt)) return
         val targetInstance = instance ?: return
-        val targetVapid = vapid ?: return
+        // The connector accepts null for no VAPID; an empty string is invalid.
+        val targetVapid = vapid
+        val targetProvider = if ("unifiedpush" in offeredProviders) "unifiedpush" else "webpush"
+        // Distributor callbacks may arrive after this process has died.
+        // Persist the selection before calling the distributor, keyed by instance.
+        if (!applicationContext.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
+                .edit().putString("distributor_instance", targetInstance)
+                .putString("distributor_provider", targetProvider).commit()) {
+            PushEventBridge.emit(mapOf("type" to "registration_failed",
+                "instance" to targetInstance, "provider" to targetProvider))
+            return
+        }
         val callback: (Boolean) -> Unit = { success ->
             // Unregister or a newer register may have run while the
             // distributor picker was open; then this answer is stale.
@@ -157,7 +193,7 @@ class MainActivity : FlutterActivity() {
                 else -> PushEventBridge.emit(mapOf(
                     "type" to "registration_failed",
                     "instance" to targetInstance,
-                    "provider" to "webpush"))
+                    "provider" to targetProvider))
             }
         }
         if (usePicker) {
@@ -165,43 +201,6 @@ class MainActivity : FlutterActivity() {
         } else {
             UnifiedPush.tryUseCurrentOrDefaultDistributor(this, callback)
         }
-    }
-
-    private fun registerWithFCM(attempt: Long): Boolean {
-        val targetInstance = instance ?: return false
-        if (BuildConfig.VERITRA_FCM_APPLICATION_ID.isBlank() ||
-            BuildConfig.VERITRA_FCM_API_KEY.isBlank() ||
-            BuildConfig.VERITRA_FCM_PROJECT_ID.isBlank() ||
-            BuildConfig.VERITRA_FCM_SENDER_ID.isBlank()) return false
-        if (FirebaseApp.getApps(applicationContext).isEmpty()) {
-            FirebaseApp.initializeApp(applicationContext, FirebaseOptions.Builder()
-                .setApplicationId(BuildConfig.VERITRA_FCM_APPLICATION_ID)
-                .setApiKey(BuildConfig.VERITRA_FCM_API_KEY)
-                .setProjectId(BuildConfig.VERITRA_FCM_PROJECT_ID)
-                .setGcmSenderId(BuildConfig.VERITRA_FCM_SENDER_ID)
-                .build())
-        }
-        applicationContext.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
-            .edit().putString("fcm_instance", targetInstance).apply()
-        FirebaseMessaging.getInstance().token
-            .addOnSuccessListener { token ->
-                if (!PushRegistrationConfig.current(attempt)) return@addOnSuccessListener
-                PushEventBridge.recordEndpoint(applicationContext, "fcm",
-                    targetInstance, token, "", "")
-            }
-            .addOnFailureListener {
-                // A late failure after unregister must not fall back to
-                // UnifiedPush and register again (TASK-013).
-                if (!PushRegistrationConfig.current(attempt)) return@addOnFailureListener
-                PushEventBridge.emit(mapOf(
-                    "type" to "registration_failed",
-                    "instance" to targetInstance,
-                    "provider" to "fcm"))
-                if ("webpush" in offeredProviders && vapid != null) {
-                    registerWithDistributor(usePicker = false, attempt = attempt)
-                }
-            }
-        return true
     }
 
     companion object {
@@ -313,6 +312,7 @@ object PushRegistrationConfig {
         providers = emptyList()
         // Without a bound instance, a later FCM token refresh is not forwarded.
         context.getSharedPreferences("veritra_push_state", Context.MODE_PRIVATE)
-            .edit().remove("fcm_instance").commit()
+            .edit().remove("fcm_instance").remove("distributor_instance")
+            .remove("distributor_provider").commit()
     }
 }

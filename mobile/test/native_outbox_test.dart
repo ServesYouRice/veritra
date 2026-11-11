@@ -14,6 +14,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -30,8 +31,10 @@ import 'package:private_messenger/crypto/mls_commit_bundle.dart'
     show MlsPendingChange;
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/crypto/profile_key_payload.dart';
+import 'package:private_messenger/crypto/profile_record_codec.dart';
 import 'package:private_messenger/storage/encrypted_database.dart'
-    show LocalMessage;
+    show LocalMessage, LocalMessageKind;
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 import 'l1_test_lists.dart';
@@ -139,6 +142,104 @@ void main() {
     },
     skip: skip,
   );
+
+  test('W11 key types and post sidecars cross the native outbox', () async {
+    final harness = await _Harness.start(library());
+    addTearDown(harness.dispose);
+    harness.bob.service.conversationAuthority = _ChangingAuthority();
+    final key = Uint8List.fromList(List.generate(32, (i) => i));
+    final keyId = ProfileRecordCodec.keyId(key);
+    final body = profileKeyBody(key: key, keyId: keyId, version: 7);
+    final cases = <(AppPayloadType, Map<String, Object?>)>[
+      (AppPayloadType.profileKey, body),
+      (AppPayloadType.groupProfileKey, body),
+      (
+        AppPayloadType.text,
+        {'text': 'shared', 'profile_key': body, 'group_profile_key': body}
+      ),
+      (
+        AppPayloadType.reply,
+        {
+          'text': 'reply',
+          'reply_to_id': 'dev_alice:target',
+          'profile_key': body,
+          'group_profile_key': body
+        }
+      ),
+      (
+        AppPayloadType.attachmentManifest,
+        {
+          'attachments': [
+            {
+              'v': 1,
+              'attachment_id': 'att_photo',
+              'key': base64Encode(key),
+              'nonce_prefix': base64Encode(List.filled(8, 1)),
+              'chunk_size': 65536,
+              'plaintext_size': 1,
+              'ciphertext_size': 17,
+              'file_name': 'photo.png',
+              'media_type': 'image/png',
+            }
+          ],
+          'profile_key': body,
+          'group_profile_key': body
+        }
+      ),
+      (
+        AppPayloadType.poll,
+        {
+          'question': 'Where?',
+          'options': ['Here', 'There'],
+          'multiple_choice': false,
+          'profile_key': body,
+          'group_profile_key': body
+        }
+      ),
+    ];
+    for (final (type, payload) in cases) {
+      // Each case must deliver its own keys; an earlier key message must not
+      // make a broken sidecar path pass.
+      await harness.bob.store.deleteProfileSubject('account', 'acct_alice');
+      await harness.bob.store
+          .deleteProfileSubject('conversation', _conversation);
+      final envelope = await harness.aliceCrypto
+          .encryptPayload(_conversation, type, payload);
+      await harness.alice.retryEnvelope(envelope.idempotencyKey);
+      await harness.deliverToBob(await harness.nextEnvelope());
+      if (type != AppPayloadType.groupProfileKey) {
+        expect(
+            (await harness.bob.store.loadProfileKeys('account', 'acct_alice'))
+                .single
+                .key,
+            key,
+            reason: type.name);
+      }
+      if (type != AppPayloadType.profileKey) {
+        expect(
+            (await harness.bob.store
+                    .loadProfileKeys('conversation', _conversation))
+                .single
+                .key,
+            key,
+            reason: type.name);
+      }
+    }
+    final accountKeys =
+        await harness.bob.store.loadProfileKeys('account', 'acct_alice');
+    final groupKeys =
+        await harness.bob.store.loadProfileKeys('conversation', _conversation);
+    expect(accountKeys.single.key, key);
+    expect(groupKeys.single.key, key);
+    expect(
+        (await harness.bob.store.loadProfile('account', 'acct_alice'))!
+            .versionFloor,
+        7);
+    final rows = await harness.bobHistory();
+    expect(
+        rows.where((row) => row.kind == LocalMessageKind.action), hasLength(2));
+    expect(rows.where((row) => row.body == 'shared'), hasLength(1));
+  }, skip: skip);
 
   test(
     'C2 a restricted post from a non-admin is dropped; an admin and an '
@@ -689,7 +790,7 @@ class _StandInServer {
 
 /// The real ApiClient; only the read endpoints AppState polls are stubbed,
 /// so commits and envelopes cross real HTTP to [_StandInServer].
-class _StandInApi extends ApiClient {
+class _StandInApi extends ApiClient with LegacySyncPageFake {
   _StandInApi(String baseUrl) : super(baseUrl: baseUrl);
 
   @override

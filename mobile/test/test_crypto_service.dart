@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart'
+    show GovernanceState;
 import 'package:private_messenger/core/sha256.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 
@@ -98,4 +100,7 @@ class TestOnlyCryptoService
 
   @override
   Future<String> deviceLinkLocator(List<int> secret) async => "a" * 64;
+
+  @override
+  GovernanceState? governanceOf(String conversationId) => null;
 }

@@ -8,6 +8,8 @@ $PythonCmd = if (Get-Command py -ErrorAction SilentlyContinue) { "py" } elseif (
 if ($PythonCmd) {
   & $PythonCmd (Join-Path $Root "scripts/check-release-evidence_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/check-rust-audit-policy_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/check-dart-retractions_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/check-ci-evidence_test.py")
@@ -18,7 +20,11 @@ if ($PythonCmd) {
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/l10n-sr-latn_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/passkey-entitlements_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   & $PythonCmd (Join-Path $Root "scripts/check-gradle-inputs_test.py")
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  & $PythonCmd (Join-Path $Root "scripts/build-windows-installer_test.py")
   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } else {
   [Console]::Error.WriteLine("release-policy fixtures need py, python3 or python; none found")

@@ -896,6 +896,72 @@ class AppLocalizationsSr extends AppLocalizations {
   String get profileYourAccount => 'Ваш налог';
 
   @override
+  String get profileDisplaySection => 'Приказно име и слика';
+
+  @override
+  String get profileDisplayNameLabel => 'Приказно име';
+
+  @override
+  String get profileDisplayNameHint =>
+      'Како вас виде људи са којима разговарате';
+
+  @override
+  String get profileDisplayHelp =>
+      'Име и слику виде само људи са којима делите разговор. Сервер их не може прочитати.';
+
+  @override
+  String get profileEditTile => 'Име и слика';
+
+  @override
+  String get profileEditTitle => 'Име и слика';
+
+  @override
+  String get profilePhotoChoose => 'Изабери слику';
+
+  @override
+  String get profilePhotoRemove => 'Уклони слику';
+
+  @override
+  String get profilePhotoUnusable =>
+      'Ова слика се не може користити. Пробајте другу.';
+
+  @override
+  String get profileSave => 'Сачувај';
+
+  @override
+  String get profileSaved => 'Сачувано';
+
+  @override
+  String get profileSaveConflict =>
+      'Овај профил је промењен на другом уређају. Покушајте поново за тренутак.';
+
+  @override
+  String get profileSaveInvalid => 'То име или слика се не могу користити.';
+
+  @override
+  String profileNameTooLong(int max) {
+    return 'Највише $max знакова.';
+  }
+
+  @override
+  String get profileNameInvalid =>
+      'Користите слова и бројеве; без контролних знакова и знакова смера.';
+
+  @override
+  String get groupProfileTitle => 'Име и слика групе';
+
+  @override
+  String get groupProfileNameLabel => 'Име групе';
+
+  @override
+  String get groupProfileHelp =>
+      'Чланови ове групе виде њено име и слику. Сервер их не може прочитати.';
+
+  @override
+  String get profileBlockNote =>
+      'У групама које делите, можда и даље виде ваш профил.';
+
+  @override
   String get profileSectionIdentity => 'Идентитет';
 
   @override
@@ -1932,6 +1998,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatComposerHint => 'Порука';
+
+  @override
+  String get chatPostingRestricted => 'Само администратори могу да објављују';
 
   @override
   String chatComposerCounter(int length, int max) {
@@ -3744,6 +3813,336 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get channelAdminOnly =>
       'Само власници и администратори могу да праве канале.';
+
+  @override
+  String get k1ConfirmTitle => 'Проверите кључ за опоравак';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Унесите га још једном да будете сигурни да га имате. Никад не напушта овај уређај.';
+
+  @override
+  String get k1ConfirmOk => 'То је ваш кључ за опоравак.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Не поклапа се. Ако сте изгубили кључ, направите нови у подешавањима кључа за опоравак.';
+
+  @override
+  String get k1SecondCopyChoose => 'Чувај другу копију у фасцикли';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Друга копија: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Иста закључана копија, сачувана где изаберете. Отвара је само кључ за опоравак.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Последње копирање у ову фасциклу није успело. Проверите фасциклу.';
+
+  @override
+  String get k1SecondCopyOff => 'Заустави другу копију';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Друга копија у фасцикли је доступна на рачунару. Телефони чувају копију само на серверу.';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Пре него што замените кључ за опоравак, можете вратити историју из копија које су направили ваши изгубљени уређаји. Оне се отварају вашим старим кључем, који за њих престаје да важи кад га замените.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Прескочи';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ако прескочите, старије копије постају неупотребљиве чим замените кључ за опоравак. Прескочити ипак?';
+
+  @override
+  String get k1RestoreOpen => 'Врати из резервне копије';
+
+  @override
+  String get k1RestoreTitle => 'Враћање из резервне копије';
+
+  @override
+  String get k1RestoreIntro =>
+      'Изаберите копију коју је направио неки други ваш уређај и унесите кључ за опоравак. Историја се спаја са овом; поруке које већ постоје остају.';
+
+  @override
+  String get k1RestoreLoading => 'Тражим резервне копије…';
+
+  @override
+  String get k1RestoreEmpty => 'Није пронађена копија са другог уређаја.';
+
+  @override
+  String get k1RestoreLoadFailed => 'Списак резервних копија није учитан.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (претходна копија)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'Уређај';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'Овај уређај је уклоњен са вашег налога.';
+
+  @override
+  String get k1RestoreDone => 'Историја је враћена.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'То није исправан кључ за опоравак овог налога.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'Ова копија је закључана другим кључем за опоравак.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'Копија се не може отворити. Можда је оштећена.';
+
+  @override
+  String get k1RestoreNetwork => 'Сервер није доступан. Ништа није промењено.';
+
+  @override
+  String get k1RestoreUnavailable => 'Овај уређај не може да врати копију.';
+
+  @override
+  String get connectSignInPasskey => 'Пријава приступним кључем';
+
+  @override
+  String get passkeySignInFailed =>
+      'Пријава приступним кључем није успела. Покушајте поново или користите лозинку.';
+
+  @override
+  String get passkeyUnavailable =>
+      'Приступни кључеви нису доступни на овом уређају или нису подешени за овај сервер.';
+
+  @override
+  String get passkeyPinRefused =>
+      'Сервер је затражио приступни кључ за другу адресу, па га апликација одбија.';
+
+  @override
+  String get apiErrorPasskeyLimit =>
+      'Достигли сте границу броја приступних кључева. Прво уклоните један.';
+
+  @override
+  String get apiErrorPasskeyExists => 'Овај приступни кључ је већ додат.';
+
+  @override
+  String get apiErrorInvalidPasskey =>
+      'Сервер није могао да провери тај приступни кључ.';
+
+  @override
+  String get apiErrorPasskeysOff => 'Овај сервер не нуди приступне кључеве.';
+
+  @override
+  String get settingsPasskeys => 'Приступни кључеви';
+
+  @override
+  String get settingsPasskeysDetail =>
+      'Пријава закључавањем екрана уместо лозинке';
+
+  @override
+  String get passkeysIntro =>
+      'Приступни кључ вас пријављује на овом уређају уместо лозинке. За промене подешавања и даље се тражи лозинка. Услуга која чува ваш приступни кључ, на пример Google или Apple, сазнаје адресу овог сервера.';
+
+  @override
+  String get passkeysNotOffered =>
+      'Приступни кључеви нису доступни за овај сервер на овом уређају.';
+
+  @override
+  String get passkeysEmpty => 'Још нема приступних кључева.';
+
+  @override
+  String get passkeysAdd => 'Додај приступни кључ';
+
+  @override
+  String get passkeysAdded => 'Приступни кључ је додат.';
+
+  @override
+  String passkeyCreated(String date) {
+    return 'Додат $date';
+  }
+
+  @override
+  String passkeyLastUsed(String date) {
+    return 'Последња употреба $date';
+  }
+
+  @override
+  String get passkeyBackedUp => 'Резервна копија постоји';
+
+  @override
+  String get passkeyRename => 'Преименуј';
+
+  @override
+  String get passkeyRemove => 'Уклони';
+
+  @override
+  String get passkeyNameLabel => 'Назив';
+
+  @override
+  String get passkeyRemoveTitle => 'Уклонити овај приступни кључ?';
+
+  @override
+  String passkeyRemoveBody(String name) {
+    return '„$name” се више неће пријављивати на овај налог. Можете га поново додати касније.';
+  }
+
+  @override
+  String get passkeyRemoved => 'Приступни кључ је уклоњен.';
+
+  @override
+  String get passkeyNoticeAdded =>
+      'Приступни кључ је додат вашем налогу. Нисте ви? Промените лозинку.';
+
+  @override
+  String get passkeyNoticeRemoved =>
+      'Приступни кључ је уклоњен са вашег налога.';
+
+  @override
+  String get passkeyNoticeDismiss => 'Одбаци';
+
+  @override
+  String get passkeyNamePrefix => 'Приступни кључ';
+
+  @override
+  String get settingsAccounts => 'Налози';
+
+  @override
+  String get settingsAccountsDetail =>
+      'Пребацивање између налога на овом уређају';
+
+  @override
+  String get accountsTitle => 'Налози';
+
+  @override
+  String get accountsIntro =>
+      'Један налог је отворен у исто време. Остали су паузирани: за њих не стижу поруке ни обавештења док се на њих не пребаците.';
+
+  @override
+  String get accountsOpenNow => 'Отворен';
+
+  @override
+  String get accountsPending => 'Још није пријављен';
+
+  @override
+  String get accountsRemoving => 'Уклањање…';
+
+  @override
+  String get accountsNewAccount => 'Нови налог';
+
+  @override
+  String get accountsAdd => 'Додај налог';
+
+  @override
+  String accountsFull(String count) {
+    return 'Овај уређај држи $count налога, највише што може. Уклоните један да бисте додали други.';
+  }
+
+  @override
+  String get accountsSameServer =>
+      'Овај сервер може да закључи да су ови налози на истом уређају.';
+
+  @override
+  String get accountsSwitching => 'Пребацивање…';
+
+  @override
+  String accountsSwitchTo(String name) {
+    return 'Пребаци на $name';
+  }
+
+  @override
+  String get accountsRemove => 'Уклони са овог уређаја';
+
+  @override
+  String accountsRemoveTitle(String name) {
+    return 'Уклонити $name са овог уређаја?';
+  }
+
+  @override
+  String get accountsRemoveBody =>
+      'Налог се одјављује, а његове поруке и кључеви бришу са овог уређаја. Налог остаје на свом серверу. Ако више нећете користити овај уређај, уклоните га са листе уређаја налога на другом уређају.';
+
+  @override
+  String get accountsPushFailTitle => 'Ипак пребацити?';
+
+  @override
+  String accountsPushFailBody(String name) {
+    return 'Обавештења за $name нису могла да се искључе. Можда ћете добијати обавештења за овај налог док га поново не отворите.';
+  }
+
+  @override
+  String get accountsSwitchAnyway => 'Ипак пребаци';
+
+  @override
+  String get accountsErrorOpen =>
+      'Тај налог није могао да се отвори. Претходни налог је поново отворен.';
+
+  @override
+  String get accountsErrorRegistry => 'Списак налога није могао да се сачува.';
+
+  @override
+  String get accountsErrorRemove =>
+      'Налог није могао да се уклони. Покушајте поново.';
+
+  @override
+  String get accountsDuplicate =>
+      'Овај уређај већ има тај налог, па је додатна пријава уклоњена. Уклоните вишак уређаја са листе уређаја налога.';
+
+  @override
+  String get accountsBack => 'Назад на моје налоге';
+
+  @override
+  String get settingsSectionUpdates => 'Ажурирања';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Аутоматски проверавај ажурирања';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Проверавај нове верзије при покретању';
+
+  @override
+  String get settingsCheckForUpdates => 'Провери ажурирања';
+
+  @override
+  String get settingsCheckingForUpdates => 'Провера ажурирања…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra је ажурирана';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Верзија $version је доступна';
+  }
+
+  @override
+  String get settingsUpdateError => 'Провера ажурирања није успела';
+
+  @override
+  String get settingsUpdateDisabled =>
+      'Аутоматска провера ажурирања је искључена';
+
+  @override
+  String get settingsScreenGuard => 'Заштита екрана';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Блокирај снимке екрана и читање екрана од стране AI асистената у ћаскањима.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -4636,6 +5035,72 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get profileYourAccount => 'Vaš nalog';
+
+  @override
+  String get profileDisplaySection => 'Prikazno ime i slika';
+
+  @override
+  String get profileDisplayNameLabel => 'Prikazno ime';
+
+  @override
+  String get profileDisplayNameHint =>
+      'Kako vas vide ljudi sa kojima razgovarate';
+
+  @override
+  String get profileDisplayHelp =>
+      'Ime i sliku vide samo ljudi sa kojima delite razgovor. Server ih ne može pročitati.';
+
+  @override
+  String get profileEditTile => 'Ime i slika';
+
+  @override
+  String get profileEditTitle => 'Ime i slika';
+
+  @override
+  String get profilePhotoChoose => 'Izaberi sliku';
+
+  @override
+  String get profilePhotoRemove => 'Ukloni sliku';
+
+  @override
+  String get profilePhotoUnusable =>
+      'Ova slika se ne može koristiti. Probajte drugu.';
+
+  @override
+  String get profileSave => 'Sačuvaj';
+
+  @override
+  String get profileSaved => 'Sačuvano';
+
+  @override
+  String get profileSaveConflict =>
+      'Ovaj profil je promenjen na drugom uređaju. Pokušajte ponovo za trenutak.';
+
+  @override
+  String get profileSaveInvalid => 'To ime ili slika se ne mogu koristiti.';
+
+  @override
+  String profileNameTooLong(int max) {
+    return 'Najviše $max znakova.';
+  }
+
+  @override
+  String get profileNameInvalid =>
+      'Koristite slova i brojeve; bez kontrolnih znakova i znakova smera.';
+
+  @override
+  String get groupProfileTitle => 'Ime i slika grupe';
+
+  @override
+  String get groupProfileNameLabel => 'Ime grupe';
+
+  @override
+  String get groupProfileHelp =>
+      'Članovi ove grupe vide njeno ime i sliku. Server ih ne može pročitati.';
+
+  @override
+  String get profileBlockNote =>
+      'U grupama koje delite, možda i dalje vide vaš profil.';
 
   @override
   String get profileSectionIdentity => 'Identitet';
@@ -5674,6 +6139,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatComposerHint => 'Poruka';
+
+  @override
+  String get chatPostingRestricted => 'Samo administratori mogu da objavljuju';
 
   @override
   String chatComposerCounter(int length, int max) {
@@ -7491,4 +7959,334 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get channelAdminOnly =>
       'Samo vlasnici i administratori mogu da prave kanale.';
+
+  @override
+  String get k1ConfirmTitle => 'Proverite ključ za oporavak';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Unesite ga još jednom da budete sigurni da ga imate. Nikad ne napušta ovaj uređaj.';
+
+  @override
+  String get k1ConfirmOk => 'To je vaš ključ za oporavak.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'Ne poklapa se. Ako ste izgubili ključ, napravite novi u podešavanjima ključa za oporavak.';
+
+  @override
+  String get k1SecondCopyChoose => 'Čuvaj drugu kopiju u fascikli';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Druga kopija: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'Ista zaključana kopija, sačuvana gde izaberete. Otvara je samo ključ za oporavak.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'Poslednje kopiranje u ovu fasciklu nije uspelo. Proverite fasciklu.';
+
+  @override
+  String get k1SecondCopyOff => 'Zaustavi drugu kopiju';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'Druga kopija u fascikli je dostupna na računaru. Telefoni čuvaju kopiju samo na serveru.';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Pre nego što zamenite ključ za oporavak, možete vratiti istoriju iz kopija koje su napravili vaši izgubljeni uređaji. One se otvaraju vašim starim ključem, koji za njih prestaje da važi kad ga zamenite.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Preskoči';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'Ako preskočite, starije kopije postaju neupotrebljive čim zamenite ključ za oporavak. Preskočiti ipak?';
+
+  @override
+  String get k1RestoreOpen => 'Vrati iz rezervne kopije';
+
+  @override
+  String get k1RestoreTitle => 'Vraćanje iz rezervne kopije';
+
+  @override
+  String get k1RestoreIntro =>
+      'Izaberite kopiju koju je napravio neki drugi vaš uređaj i unesite ključ za oporavak. Istorija se spaja sa ovom; poruke koje već postoje ostaju.';
+
+  @override
+  String get k1RestoreLoading => 'Tražim rezervne kopije…';
+
+  @override
+  String get k1RestoreEmpty => 'Nije pronađena kopija sa drugog uređaja.';
+
+  @override
+  String get k1RestoreLoadFailed => 'Spisak rezervnih kopija nije učitan.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (prethodna kopija)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'Uređaj';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'Ovaj uređaj je uklonjen sa vašeg naloga.';
+
+  @override
+  String get k1RestoreDone => 'Istorija je vraćena.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'To nije ispravan ključ za oporavak ovog naloga.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'Ova kopija je zaključana drugim ključem za oporavak.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'Kopija se ne može otvoriti. Možda je oštećena.';
+
+  @override
+  String get k1RestoreNetwork => 'Server nije dostupan. Ništa nije promenjeno.';
+
+  @override
+  String get k1RestoreUnavailable => 'Ovaj uređaj ne može da vrati kopiju.';
+
+  @override
+  String get connectSignInPasskey => 'Prijava pristupnim ključem';
+
+  @override
+  String get passkeySignInFailed =>
+      'Prijava pristupnim ključem nije uspela. Pokušajte ponovo ili koristite lozinku.';
+
+  @override
+  String get passkeyUnavailable =>
+      'Pristupni ključevi nisu dostupni na ovom uređaju ili nisu podešeni za ovaj server.';
+
+  @override
+  String get passkeyPinRefused =>
+      'Server je zatražio pristupni ključ za drugu adresu, pa ga aplikacija odbija.';
+
+  @override
+  String get apiErrorPasskeyLimit =>
+      'Dostigli ste granicu broja pristupnih ključeva. Prvo uklonite jedan.';
+
+  @override
+  String get apiErrorPasskeyExists => 'Ovaj pristupni ključ je već dodat.';
+
+  @override
+  String get apiErrorInvalidPasskey =>
+      'Server nije mogao da proveri taj pristupni ključ.';
+
+  @override
+  String get apiErrorPasskeysOff => 'Ovaj server ne nudi pristupne ključeve.';
+
+  @override
+  String get settingsPasskeys => 'Pristupni ključevi';
+
+  @override
+  String get settingsPasskeysDetail =>
+      'Prijava zaključavanjem ekrana umesto lozinke';
+
+  @override
+  String get passkeysIntro =>
+      'Pristupni ključ vas prijavljuje na ovom uređaju umesto lozinke. Za promene podešavanja i dalje se traži lozinka. Usluga koja čuva vaš pristupni ključ, na primer Google ili Apple, saznaje adresu ovog servera.';
+
+  @override
+  String get passkeysNotOffered =>
+      'Pristupni ključevi nisu dostupni za ovaj server na ovom uređaju.';
+
+  @override
+  String get passkeysEmpty => 'Još nema pristupnih ključeva.';
+
+  @override
+  String get passkeysAdd => 'Dodaj pristupni ključ';
+
+  @override
+  String get passkeysAdded => 'Pristupni ključ je dodat.';
+
+  @override
+  String passkeyCreated(String date) {
+    return 'Dodat $date';
+  }
+
+  @override
+  String passkeyLastUsed(String date) {
+    return 'Poslednja upotreba $date';
+  }
+
+  @override
+  String get passkeyBackedUp => 'Rezervna kopija postoji';
+
+  @override
+  String get passkeyRename => 'Preimenuj';
+
+  @override
+  String get passkeyRemove => 'Ukloni';
+
+  @override
+  String get passkeyNameLabel => 'Naziv';
+
+  @override
+  String get passkeyRemoveTitle => 'Ukloniti ovaj pristupni ključ?';
+
+  @override
+  String passkeyRemoveBody(String name) {
+    return '„$name” se više neće prijavljivati na ovaj nalog. Možete ga ponovo dodati kasnije.';
+  }
+
+  @override
+  String get passkeyRemoved => 'Pristupni ključ je uklonjen.';
+
+  @override
+  String get passkeyNoticeAdded =>
+      'Pristupni ključ je dodat vašem nalogu. Niste vi? Promenite lozinku.';
+
+  @override
+  String get passkeyNoticeRemoved =>
+      'Pristupni ključ je uklonjen sa vašeg naloga.';
+
+  @override
+  String get passkeyNoticeDismiss => 'Odbaci';
+
+  @override
+  String get passkeyNamePrefix => 'Pristupni ključ';
+
+  @override
+  String get settingsAccounts => 'Nalozi';
+
+  @override
+  String get settingsAccountsDetail =>
+      'Prebacivanje između naloga na ovom uređaju';
+
+  @override
+  String get accountsTitle => 'Nalozi';
+
+  @override
+  String get accountsIntro =>
+      'Jedan nalog je otvoren u isto vreme. Ostali su pauzirani: za njih ne stižu poruke ni obaveštenja dok se na njih ne prebacite.';
+
+  @override
+  String get accountsOpenNow => 'Otvoren';
+
+  @override
+  String get accountsPending => 'Još nije prijavljen';
+
+  @override
+  String get accountsRemoving => 'Uklanjanje…';
+
+  @override
+  String get accountsNewAccount => 'Novi nalog';
+
+  @override
+  String get accountsAdd => 'Dodaj nalog';
+
+  @override
+  String accountsFull(String count) {
+    return 'Ovaj uređaj drži $count naloga, najviše što može. Uklonite jedan da biste dodali drugi.';
+  }
+
+  @override
+  String get accountsSameServer =>
+      'Ovaj server može da zaključi da su ovi nalozi na istom uređaju.';
+
+  @override
+  String get accountsSwitching => 'Prebacivanje…';
+
+  @override
+  String accountsSwitchTo(String name) {
+    return 'Prebaci na $name';
+  }
+
+  @override
+  String get accountsRemove => 'Ukloni sa ovog uređaja';
+
+  @override
+  String accountsRemoveTitle(String name) {
+    return 'Ukloniti $name sa ovog uređaja?';
+  }
+
+  @override
+  String get accountsRemoveBody =>
+      'Nalog se odjavljuje, a njegove poruke i ključevi brišu sa ovog uređaja. Nalog ostaje na svom serveru. Ako više nećete koristiti ovaj uređaj, uklonite ga sa liste uređaja naloga na drugom uređaju.';
+
+  @override
+  String get accountsPushFailTitle => 'Ipak prebaciti?';
+
+  @override
+  String accountsPushFailBody(String name) {
+    return 'Obaveštenja za $name nisu mogla da se isključe. Možda ćete dobijati obaveštenja za ovaj nalog dok ga ponovo ne otvorite.';
+  }
+
+  @override
+  String get accountsSwitchAnyway => 'Ipak prebaci';
+
+  @override
+  String get accountsErrorOpen =>
+      'Taj nalog nije mogao da se otvori. Prethodni nalog je ponovo otvoren.';
+
+  @override
+  String get accountsErrorRegistry => 'Spisak naloga nije mogao da se sačuva.';
+
+  @override
+  String get accountsErrorRemove =>
+      'Nalog nije mogao da se ukloni. Pokušajte ponovo.';
+
+  @override
+  String get accountsDuplicate =>
+      'Ovaj uređaj već ima taj nalog, pa je dodatna prijava uklonjena. Uklonite višak uređaja sa liste uređaja naloga.';
+
+  @override
+  String get accountsBack => 'Nazad na moje naloge';
+
+  @override
+  String get settingsSectionUpdates => 'Ažuriranja';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Automatski proveravaj ažuriranja';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Proveravaj nove verzije pri pokretanju';
+
+  @override
+  String get settingsCheckForUpdates => 'Proveri ažuriranja';
+
+  @override
+  String get settingsCheckingForUpdates => 'Provera ažuriranja…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra je ažurirana';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Verzija $version je dostupna';
+  }
+
+  @override
+  String get settingsUpdateError => 'Provera ažuriranja nije uspela';
+
+  @override
+  String get settingsUpdateDisabled =>
+      'Automatska provera ažuriranja je isključena';
+
+  @override
+  String get settingsScreenGuard => 'Zaštita ekrana';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima.';
 }

@@ -1,14 +1,17 @@
 import 'dart:io' show Platform;
 
+import 'package:file_selector/file_selector.dart' show getDirectoryPath;
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/k1_backup.dart';
+import '../../core/k1_second_copy.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/tile_group.dart';
+import 'k1_restore_screen.dart';
 import 'recovery_key_screen.dart';
 
 /// The status line of K1 automatic backups, for the settings tile and the
@@ -119,6 +122,41 @@ class AutoBackupScreen extends StatelessWidget {
                   onPressed: () => _typeKey(context),
                   child: Text(l10n.autoBackupTypeKey),
                 ),
+              if (state.k1ConfirmDue || state.k1ConfirmBadge) ...<Widget>[
+                const SizedBox(height: BoneSpacing.md),
+                TileGroup(
+                  children: <Widget>[
+                    ListTile(
+                      key: const ValueKey<String>('auto-backup-confirm'),
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.k1ConfirmTitle),
+                      subtitle: Text(l10n.k1ConfirmDetail),
+                      onTap: () => _confirmKey(context),
+                    ),
+                    if (state.k1ConfirmDue)
+                      ListTile(
+                        key:
+                            const ValueKey<String>('auto-backup-confirm-later'),
+                        leading: const Icon(Icons.schedule),
+                        title: Text(l10n.autoBackupPromptLater),
+                        onTap: state.postponeK1Confirm,
+                      ),
+                  ],
+                ),
+              ],
+              if (view == K1BackupView.on) ..._secondCopy(context, backup),
+              if (state.k1RestoreSupported) ...<Widget>[
+                const SizedBox(height: BoneSpacing.sm),
+                OutlinedButton(
+                  key: const ValueKey<String>('auto-backup-restore'),
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => K1RestoreScreen(state: state),
+                    ),
+                  ),
+                  child: Text(l10n.k1RestoreOpen),
+                ),
+              ],
               if (view == K1BackupView.noKey)
                 FilledButton(
                   key: const ValueKey<String>('auto-backup-create-key'),
@@ -136,12 +174,71 @@ class AutoBackupScreen extends StatelessWidget {
     );
   }
 
+  List<Widget> _secondCopy(BuildContext context, K1BackupState? backup) {
+    final l10n = context.l10n;
+    if (!k1SecondCopySupported) {
+      return <Widget>[
+        const SizedBox(height: BoneSpacing.md),
+        Text(l10n.k1SecondCopyPhone,
+            style: Theme.of(context).textTheme.bodySmall),
+      ];
+    }
+    final path = backup?.secondCopyPath;
+    final at = backup?.secondCopyAt;
+    return <Widget>[
+      const SizedBox(height: BoneSpacing.md),
+      TileGroup(
+        children: <Widget>[
+          ListTile(
+            key: const ValueKey<String>('auto-backup-second-copy'),
+            leading: Icon(backup?.secondCopyFailed == true
+                ? Icons.warning_amber_outlined
+                : Icons.folder_copy_outlined),
+            title: Text(path == null
+                ? l10n.k1SecondCopyChoose
+                : l10n.k1SecondCopyFolder(path)),
+            subtitle: backup?.secondCopyFailed == true
+                ? Text(l10n.k1SecondCopyFailed)
+                : at != null
+                    ? Text(l10n
+                        .autoBackupLast(formatDateTime(context, at.toLocal())))
+                    : Text(l10n.k1SecondCopyDetail),
+            onTap: () async {
+              final folder = await getDirectoryPath();
+              if (folder != null) await state.setK1SecondCopyFolder(folder);
+            },
+          ),
+          if (path != null)
+            ListTile(
+              key: const ValueKey<String>('auto-backup-second-copy-off'),
+              leading: const Icon(Icons.close),
+              title: Text(l10n.k1SecondCopyOff),
+              onTap: () => state.setK1SecondCopyFolder(null),
+            ),
+        ],
+      ),
+    ];
+  }
+
+  Future<void> _confirmKey(BuildContext context) async {
+    final l10n = context.l10n;
+    final messenger = ScaffoldMessenger.of(context);
+    final typed = await showDialog<String>(
+      context: context,
+      builder: (_) => const RecoveryKeyTypeDialog(),
+    );
+    if (typed == null || typed.trim().isEmpty) return;
+    final ok = await state.confirmK1Key(typed);
+    messenger.showSnackBar(SnackBar(
+        content: Text(ok ? l10n.k1ConfirmOk : l10n.k1ConfirmMismatch)));
+  }
+
   Future<void> _typeKey(BuildContext context) async {
     final l10n = context.l10n;
     final messenger = ScaffoldMessenger.of(context);
     final typed = await showDialog<String>(
       context: context,
-      builder: (_) => const _RecoveryKeyDialog(),
+      builder: (_) => const RecoveryKeyTypeDialog(),
     );
     if (typed == null || typed.trim().isEmpty) return;
     final ok = await state.enableK1BackupsWithKey(typed);
@@ -152,14 +249,14 @@ class AutoBackupScreen extends StatelessWidget {
 
 /// Asks for the recovery key. The typed text cannot be wiped from a Dart
 /// string; the field is cleared when the dialog goes (best effort, K0).
-class _RecoveryKeyDialog extends StatefulWidget {
-  const _RecoveryKeyDialog();
+class RecoveryKeyTypeDialog extends StatefulWidget {
+  const RecoveryKeyTypeDialog();
 
   @override
-  State<_RecoveryKeyDialog> createState() => _RecoveryKeyDialogState();
+  State<RecoveryKeyTypeDialog> createState() => RecoveryKeyTypeDialogState();
 }
 
-class _RecoveryKeyDialogState extends State<_RecoveryKeyDialog> {
+class RecoveryKeyTypeDialogState extends State<RecoveryKeyTypeDialog> {
   final TextEditingController _controller = TextEditingController();
 
   @override

@@ -6,7 +6,7 @@ import 'package:private_messenger/ui/about.dart';
 void main() {
   test('every platform presents the product as Veritra under AGPL', () {
     final pubspec = File('pubspec.yaml').readAsStringSync();
-    expect(pubspec, contains('version: $veritraVersion+'));
+    expect(pubspec, contains('version: $veritraVersion+$veritraBuildNumber'));
     expect(pubspec, isNot(contains('Private Messenger')));
 
     final names = <String, String>{

@@ -40,6 +40,12 @@ screens and plaintext-name removal are still missing. Review fixes protect
 pending rotations and key replies; see
 [`C3 review evidence`](testing/evidence/C3-review-2026-11-09.md).
 
+2026-11-11 F-Droid review: Android has separate `fdroid` (UnifiedPush) and
+`play` flavors; UnifiedPush uses the existing generic push interfaces and
+delivery queues. No migration or counter change was needed. Release gates
+remain closed. Android compilation and dependency exclusion await SDK/CI
+verification; see [`review evidence`](testing/evidence/fdroid-unifiedpush-review.md).
+
 2026-11-09 integration: C1 invite binding v2 merged with schema 32,
 migration 0066 and ABI 21; no counter collisions. Focused checks and full
 Windows test/lint scripts pass. C1 remains partial; see
@@ -49,7 +55,7 @@ Windows test/lint scripts pass. C1 remains partial; see
 
 | Area | State |
 |---|---|
-| 🎯 Current focus | Safer device linking (L0), then message actions (W8), history on a new device (K2), and communities (D50). Order and packages: [Build plan](#build-plan) |
+| 🎯 Current focus | History on a new device (K2), and communities (D50). Order and packages: [Build plan](#build-plan) |
 | 🔒 Public release | 🔴 **NO-GO by design.** Messaging stays off in release builds until the independent crypto review (G25) and signed-device evidence (G24) pass |
 | 🧪 Local demos (real encryption, labelled "unreviewed") | 🟢 Work: server + Linux app run here; Android, iOS, Windows, macOS build in CI |
 | 🧰 Local work queue | 🟡 Build plan round 1 (2026-10-24) landed W2, W5, W6, W8 step 0, W9, W10, B4, B8, B9 and four designs; L0 implemented and verified; W8 client actions pass full Linux checks; the Linux muted-mention notice works end to end, and the phone path (D52) is wired in Dart but stays switched off. K2 has a read-only copied-history view and a verified download client; the transfer itself is not wired yet. Bug hunt (2026-10-25 plan): 106 of 227 tasks fixed (crypto, server HTTP and storage, mobile UI); crypto core now ABI 12 (ABI 12, 2026-11-01: C6 report keys, HPKE seal and open, franking commitment). W1, W3, W4 wait for a run on a real Windows desktop. See [Build plan](#build-plan) and [Open work](#open-work). 2026-11-01: C1-C8 started in parallel: designs and first slices are merged (see [Phase 2](#phase-2-communities-like-discord-d44)); no C package is done. 2026-11-07: second round merged #106-#111 and #114; open PRs #112, #113, #115-#119 (C7 design rev 7, K0-R and C4 and K2 review fixes, server CI timeouts #116, Flutter CI fix #119). Demo e2e sync timeout: root cause found (coordinator pick), fix in #130. PRs #122-#138 open, see Build plan. Merge order: #134 (SDK pins), #135, #130 (e2e fix), docs #129 #131-#133, #138, #123, #125 (schema 19) before #137 (schema 20), #136, then #126, #128, #127, #122, #124 |
@@ -266,6 +272,16 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D102** (2026-11-08, owner via L1-3; #162) | Reverses D100 check 02 (A): the server refuses key packages that a signed L1 list does not name (`key_package_not_listed`), and claims hand out only listed packages. Text from unapproved senders stays dropped; a made-up genesis is never a sticky conflict |
 | **D103** (2026-11-08, coordinator) | Counters after round 5: crypto ABI 19 (K1 renumbered from 16 at integration; L1 and K2 took 14–18), mobile local schema 26, server migration 0060. Reserved: schema 27 for C6; ABI 21, schema 29 and migration 0062 for the C1 invite rebase (#141) |
 | **D104** (2026-11-09, coordinator) | Counters for C1 invite rebase (#141): crypto ABI 21, mobile local schema 32, server migration 0066 |
+| **D105** (2026-11-09, owner) | Strangers' requests show the username and photo but not the display name until accepted |
+| **D106** (2026-11-09, owner) | Group calls, L2, L3 and SDK use all the design defaults in the owner-question sections of [B6](docs/designs/B6-group-calls.md#owner-questions-defaults-in-bold), [L2](docs/designs/L2-server-learns-less.md#open-questions-for-the-owner), [L3](docs/designs/L3-confidential-cloud.md#open-questions-for-the-owner) and [SDK](docs/designs/phase3-client-sdk.md#open-questions-for-the-owner). B6's required fail-closed cryptor settings still apply |
+| **D107** (2026-11-09, owner) | The desktop update check is on by default and can be turned off |
+| **D108** (2026-11-09, owner) | The F-Droid build uses UnifiedPush |
+| **D109** (2026-11-09, owner) | C7 records have `seq <= 2^31`; after a valid record has been seen, the next valid record is at most 1024 above the highest valid sequence seen. A newcomer's first record may be anywhere up to the ceiling (D101; `docs/designs/C7-channel-history.md`) |
+| **D110** (2026-11-09, owner) | Only admins create channels |
+| **D111** (2026-11-09, owner) | Backup space is shared per account |
+| **D112** (2026-11-09, owner) | Phones back up when the app opens |
+| **D113** (2026-11-09, owner) | Desktop message previews are shared across accounts for now |
+| **D114** (2026-11-09, owner) | The owner accepts the recommended defaults for the bug-hunt owner questions: TASK-039 holds application sends until the removal commit applies (D68); TASK-103 flushes drafts before sign-out or expiry clears data (D65); TASK-106 uses the sender's signed expiry and the shorter time (D100); TASK-130-132 verify the signing block, bind policy to the candidate and scope audit exceptions (D100); TASK-201 cancels unfinished approved links at expiry with their keys and membership (D100); check 24 excludes credentials and MLS state from backups (D71/D73). For check 02, D102's signed-L1 server key-package gate remains required; the older quiz's no-server-check recommendation remains superseded |
 
 ## Roadmap
 
@@ -331,7 +347,7 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 | W5 ✅ | Ticks and typing | Sent, delivered and read ticks and a typing line in DMs and small groups, from what the server already stores; one switch turns your own read receipts off | Sonnet — 2026-10-24, server migration 0035; Opus-reviewed, ticks only in conversations of ≤ 20 members |
 | W6 ✅ | Reactions, mute, drafts | Any emoji can react; mute for 8 hours, 1 week or always; drafts survive a restart, kept in the encrypted local database | Opus review — 2026-10-24, local schema 11, server migration 0036; Opus-reviewed, review fixes in |
 | W7 ✅ | Message actions design | One payload design for formatting, mentions, forward, pin, polls and other "messages about a message", recorded in `docs/crypto.md` with its payload version | Opus designs — designed 2026-10-24 in `docs/crypto.md` (payload v2), reviewed; step 0 (receive policy) built and Opus-reviewed |
-| W8 🟡 | Message actions | Formatting, @mentions that alert even in a muted chat, forward with a label and limits, pin with an expiry, star, delete for me, archive and pinned chats, all on the W7 design | Client actions implemented and full Linux checks pass. Linux: a muted chat's mention notifies after decryption (end-to-end test). Phones (D52): notice decisions and background catch-up wired in Dart behind the guard, still switched off; native capture and platform runs open. Pins follow D58 (50 per chat); the admin-only pin switch waits for C4. See [`W8 evidence`](testing/evidence/W8-message-actions.md) |
+| W8 ✅ | Message actions | Formatting, @mentions that alert even in a muted chat, forward with a label and limits, pin with an expiry, star, delete for me, archive and pinned chats, all on the W7 design | Opus review — 2026-10-27, local schema 13; full Linux/Windows checks pass. D52 phone notice path on by default in demo builds (D101), strictly off in release; 50 pins per chat (D58); admin-only pin switch waits for C4. See [`W8 evidence`](testing/evidence/W8-message-actions.md) |
 | W9 ✅ | Desktop feel | Right-click menus, shortcuts (Esc, Up to edit, Ctrl+F), drag-and-drop and paste of files, several files per send | Sonnet — 2026-10-24 with `desktop_drop`/`pasteboard`; several files go as consecutive messages |
 | W10 ✅ | Search on the device | Search finds message text this device holds, through an index inside the encrypted local database; nothing reaches the server | Opus review — 2026-10-24, local schema 12, FTS5 inside the encrypted database; Opus-reviewed, review fixes in |
 | W11 ✅ | Profiles | A display name and photo for people, a name and photo for groups, all encrypted, with the key given only to contacts and group members | Opus designs — designed 2026-10-24 in `docs/designs/W11-profiles.md`, reviewed |
@@ -362,13 +378,13 @@ dependency, with the licence review and `THIRD_PARTY_NOTICES.md` update that
 
 | ID | Package | Done when | Route |
 |---|---|---|---|
-| B1 | Voice notes | Record, send as an encrypted file and play inline; any transcript is made on the device | Owner first (recorder plugin) 2026-11-07: built (#122), CI pending. |
-| B2 | Link previews | The sender's app makes the preview and sends it inside the encrypted message; receivers and the server never fetch it; off for unknown sites by default | Opus review 2026-11-07: built (#124), Opus review fixes in, CI pending. |
-| B3 | Polls | Polls and votes as encrypted messages on the W7 design; apps count the votes | Sonnet 2026-11-07: built (#127), CI pending. |
+| B1 ✅ | Voice notes | Record, send as an encrypted file and play inline; any transcript is made on the device | Owner first (recorder plugin) — 2026-11-07 (#122); verified on main, full checks pass |
+| B2 ✅ | Link previews | The sender's app makes the preview and sends it inside the encrypted message; receivers and the server never fetch it; off for unknown sites by default | Opus review — 2026-11-07 (#124), Opus review fixes in; verified on main, full checks pass |
+| B3 ✅ | Polls | Polls and votes as encrypted messages on the W7 design; apps count the votes | Sonnet — 2026-11-07 (#127), D96 poll close in; verified on main, full checks pass |
 | B4 ✅ | Files | Several files per send, a size cap the operator sets, and phones open more than images | Sonnet — 2026-10-24 with `open_filex`; `PRIVATE_MESSENGER_LIMIT_ATTACHMENT_MIB` |
 | B5 | One-to-one calls | A call screen in demo builds on the existing call service, with media through the relay by default to hide addresses | Opus review |
 | B6 | Group calls and voice rooms | Encrypted voice rooms and screen share modelled on Discord's DAVE: MLS keys, SFrame frames, a forwarding server that cannot read them | Opus designs |
-| B7 | Passkeys and accounts | Passkey sign-in and an in-app account switcher | Opus designs 2026-11-07: designed (#132, D93). |
+| B7 | Passkeys and accounts | Passkey sign-in and an in-app account switcher | Designed (#132, D93). 2026-11-09: S1–S6 implemented; PR #169 phone work ported and independently reviewed, with attachment-removal and push-handoff race fixes. S7 Windows Hello hand run, signed Android/iOS association and ceremony runs, and platform CI evidence remain open. See [`B7 evidence`](testing/evidence/B7-passkeys.md). |
 | B8 ✅ | Safe defaults | Messages from strangers wait as requests, and nothing from them downloads by itself | Sonnet — 2026-10-24, DMs and groups from strangers; acceptance is per device; Opus-reviewed |
 | B9 ✅ | Admin screen | Owners list and suspend accounts and read the audit log, on the existing admin API | Opus review — 2026-10-24; Opus-reviewed |
 

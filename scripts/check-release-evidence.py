@@ -816,7 +816,11 @@ def der_items(buffer: bytes, start: int = 0, end: int | None = None) -> list[tup
             count = first & 0x7F
             if not 1 <= count <= 4 or offset + count > end:
                 raise ValueError("bad DER length")
+            if buffer[offset] == 0:
+                raise ValueError("non-minimal DER length")
             size = int.from_bytes(buffer[offset : offset + count], "big")
+            if size < 0x80:
+                raise ValueError("non-minimal DER length")
             offset += count
         if offset + size > end:
             raise ValueError("DER element out of range")
@@ -920,7 +924,14 @@ def ecdsa_verify(curve: tuple, point: tuple, digest: bytes, signature: bytes) ->
         return False
     if sequence[0] != 0x30 or sequence[2] != len(signature) or len(parts) != 2 or any(part[0] != 0x02 for part in parts):
         return False
-    r, s = (int.from_bytes(signature[part[1] : part[2]], "big") for part in parts)
+    integers = [signature[part[1] : part[2]] for part in parts]
+    if any(
+        not value or value[0] & 0x80
+        or (len(value) > 1 and value[0] == 0 and value[1] < 0x80)
+        for value in integers
+    ):
+        return False
+    r, s = (int.from_bytes(value, "big") for value in integers)
     if not (1 <= r < n and 1 <= s < n):
         return False
     e = int.from_bytes(digest, "big")

@@ -121,6 +121,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    widget.state.enterChatView();
     composer.addListener(_saveDraft);
     _lastTypedText = composer.text;
     composer.addListener(_noticeTyping);
@@ -213,6 +214,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void didUpdateWidget(ChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.state, widget.state)) {
+      oldWidget.state.leaveChatView();
+      widget.state.enterChatView();
+    }
     if (oldWidget.conversationId == widget.conversationId &&
         identical(oldWidget.state, widget.state)) {
       return;
@@ -231,6 +236,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    widget.state.leaveChatView();
     _highlightTimer?.cancel();
     composer.removeListener(_saveDraft);
     composer.removeListener(_noticeTyping);
@@ -348,7 +354,10 @@ class _ChatScreenState extends State<ChatScreen> {
         // K0 step 8: history only, with a notice in place of the composer.
         final readOnly = conversation != null &&
             widget.state.readOnlyWithoutPeer(conversation.id);
-        final replyTarget = readOnly ? null : _replyTarget();
+        final restricted = conversation != null &&
+            !widget.state.mayPost(conversation.id,
+                channelId: widget.state.selectedChannelFor(conversation.id));
+        final replyTarget = (readOnly || restricted) ? null : _replyTarget();
         if (_jumpKey != null) _scheduleJump();
         return ChatShortcuts(
           onEscape: _onEscape,
@@ -366,6 +375,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           conversationAvatar(
                             context,
                             conversation,
+                            profiles: widget.state.profiles,
                             radius: 17,
                             // Only the pushed layout: see conversationAvatar.
                             hero: widget.showBackButton,
@@ -377,7 +387,8 @@ class _ChatScreenState extends State<ChatScreen> {
                               mainAxisSize: MainAxisSize.min,
                               children: <Widget>[
                                 Text(
-                                  conversationTitle(context.l10n, conversation),
+                                  conversationTitle(context.l10n, conversation,
+                                      profiles: widget.state.profiles),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
@@ -450,6 +461,7 @@ class _ChatScreenState extends State<ChatScreen> {
               body: ChatDropZone(
                 enabled: conversation != null &&
                     !readOnly &&
+                    !restricted &&
                     widget.state.attachmentsAvailable,
                 onFiles: _addFiles,
                 child: Column(
@@ -518,16 +530,21 @@ class _ChatScreenState extends State<ChatScreen> {
                         preview: quotedPreview(context.l10n, replyTarget),
                         onCancel: () => _setReplyTarget(null),
                       ),
-                    if (!readOnly && widget.state.attachmentsAvailable)
+                    if (!readOnly &&
+                        !restricted &&
+                        widget.state.attachmentsAvailable)
                       AttachmentTray(tray: _attachments),
-                    if (!readOnly && widget.state.attachmentsAvailable)
+                    if (!readOnly &&
+                        !restricted &&
+                        widget.state.attachmentsAvailable)
                       VoiceRecorderBar(
                         controller: _voice,
                         onStop: _stopVoiceNote,
                       ),
                     if (!readOnly)
                       _Composer(
-                        enabled: conversation != null,
+                        enabled: conversation != null && !restricted,
+                        restricted: restricted,
                         controller: composer,
                         // Scoped to the send operation: an unrelated background task
                         // no longer disables the composer.
@@ -538,23 +555,28 @@ class _ChatScreenState extends State<ChatScreen> {
                                 .sendHeldForRemoval(widget.conversationId),
                         onSend: _send,
                         attaching: widget.state.isBusy(Ops.attachment),
-                        onAttach: widget.state.attachmentsAvailable
-                            ? () => pickAttachmentFiles(
-                                context, widget.state, _attachments)
-                            : null,
-                        onPasteFiles: widget.state.attachmentsAvailable
-                            ? _pasteFiles
-                            : null,
-                        onVoice: widget.state.attachmentsAvailable
-                            ? _startVoiceNote
-                            : null,
+                        onAttach:
+                            !restricted && widget.state.attachmentsAvailable
+                                ? () => pickAttachmentFiles(
+                                    context, widget.state, _attachments)
+                                : null,
+                        onPasteFiles:
+                            !restricted && widget.state.attachmentsAvailable
+                                ? _pasteFiles
+                                : null,
+                        onVoice:
+                            !restricted && widget.state.attachmentsAvailable
+                                ? _startVoiceNote
+                                : null,
                         voiceListenable: _voice,
-                        onEditLast: widget.state.messageActionsAvailable
-                            ? _editLast
-                            : null,
-                        onPoll: widget.state.messageActionsAvailable
-                            ? _createPoll
-                            : null,
+                        onEditLast:
+                            !restricted && widget.state.messageActionsAvailable
+                                ? _editLast
+                                : null,
+                        onPoll:
+                            !restricted && widget.state.messageActionsAvailable
+                                ? _createPoll
+                                : null,
                       ),
                   ],
                 ),
@@ -761,6 +783,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // K0 step 8: in a read-only conversation only what stays on this device
     // (copy, forward elsewhere, star, hide) is offered.
     final sendable = !state.readOnlyWithoutPeer(conversationId);
+    final mayPost = state.mayPost(conversationId,
+        channelId: state.selectedChannelFor(conversationId));
     final action = await showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -791,7 +815,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
               ),
-            if (actionable && sendable)
+            if (actionable && sendable && mayPost)
               ListTile(
                 leading: const Icon(Icons.reply),
                 title: Text(context.l10n.chatReply),
@@ -908,8 +932,9 @@ class _ChatScreenState extends State<ChatScreen> {
                               for (final c in state.conversations)
                                 CheckboxListTile(
                                     value: selected.contains(c.id),
-                                    title: Text(
-                                        conversationTitle(context.l10n, c)),
+                                    title: Text(conversationTitle(
+                                        context.l10n, c,
+                                        profiles: state.profiles)),
                                     onChanged: (v) => setDialogState(() {
                                           if (v == true &&
                                               selected.length <
@@ -1227,7 +1252,10 @@ class _MessageList extends StatelessWidget {
         .membersFor(conversationId)
         .where((item) => item.accountId == accountId)
         .firstOrNull;
-    return accountLabel(accountId, member?.username);
+    // W11: the sender's shared display name first; the username stays what
+    // identifies them (member lists show both).
+    return state.profiles?.account(accountId)?.name ??
+        accountLabel(accountId, member?.username);
   }
 
   @override
@@ -2223,6 +2251,7 @@ class _Composer extends StatelessWidget {
     required this.controller,
     required this.busy,
     required this.onSend,
+    this.restricted = false,
     this.onAttach,
     this.attaching = false,
     this.onPasteFiles,
@@ -2233,6 +2262,7 @@ class _Composer extends StatelessWidget {
   });
 
   final bool enabled;
+  final bool restricted;
   final TextEditingController controller;
 
   /// Opens the new-poll dialog; null where polls are unavailable.
@@ -2307,7 +2337,7 @@ class _Composer extends StatelessWidget {
     final length = text.trim().length;
     final nearLimit = length > maxAppTextLength * 0.9;
     final overLimit = length > maxAppTextLength;
-    final canSend = enabled && !busy && !overLimit;
+    final canSend = enabled && !restricted && !busy && !overLimit;
     return SafeArea(
       top: false,
       child: Padding(
@@ -2327,7 +2357,13 @@ class _Composer extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: <Widget>[
-              if (onAttach == null)
+              if (restricted)
+                IconButton(
+                  onPressed: null,
+                  icon: const Icon(Icons.attach_file),
+                  tooltip: context.l10n.chatPostingRestricted,
+                )
+              else if (onAttach == null)
                 // Attachments need the MLS path (demo builds); elsewhere the
                 // control stays visible but disabled, and the reason is
                 // reachable by focus, tap and screen reader.
@@ -2351,7 +2387,7 @@ class _Composer extends StatelessWidget {
                       ? context.l10n.chatSendingFile
                       : context.l10n.chatAttachFile,
                 ),
-              if (onPoll != null)
+              if (onPoll != null && !restricted)
                 IconButton(
                   onPressed: enabled && !busy ? onPoll : null,
                   icon: const Icon(Icons.poll_outlined),
@@ -2362,7 +2398,7 @@ class _Composer extends StatelessWidget {
                     canSend: canSend,
                     TextField(
                       controller: controller,
-                      enabled: enabled,
+                      enabled: enabled && !restricted,
                       minLines: 1,
                       maxLines: 4,
                       keyboardType: TextInputType.multiline,
@@ -2374,7 +2410,16 @@ class _Composer extends StatelessWidget {
                       // `inputDecorationTheme` would otherwise draw a rounded box
                       // inside a rounded box.
                       decoration: InputDecoration(
-                        hintText: context.l10n.chatComposerHint,
+                        prefixIcon: restricted
+                            ? Icon(
+                                Icons.lock_outline,
+                                size: 20,
+                                color: scheme.onSurfaceVariant,
+                              )
+                            : null,
+                        hintText: restricted
+                            ? context.l10n.chatPostingRestricted
+                            : context.l10n.chatComposerHint,
                         filled: false,
                         isDense: true,
                         border: InputBorder.none,
@@ -2407,7 +2452,7 @@ class _Composer extends StatelessWidget {
                       ),
                     )),
               ),
-              if (onVoice != null && voiceListenable != null)
+              if (onVoice != null && voiceListenable != null && !restricted)
                 ListenableBuilder(
                   listenable: voiceListenable!,
                   builder: (context, _) => IconButton(

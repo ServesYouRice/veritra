@@ -27,6 +27,14 @@ const Duration k1BackupInterval = Duration(hours: 24);
 /// After this long with no success the app warns (design: "a week").
 const Duration k1BackupStaleAfter = Duration(days: 7);
 
+/// Key confirmation (design): 3 days after setup, 14 days after that, then
+/// every 90 days; "Not now" waits 7 days; three misses keep a badge.
+const Duration k1ConfirmFirst = Duration(days: 3);
+const Duration k1ConfirmSecond = Duration(days: 14);
+const Duration k1ConfirmLater = Duration(days: 90);
+const Duration k1ConfirmPostpone = Duration(days: 7);
+const int k1ConfirmBadgeMisses = 3;
+
 /// The onboarding prompt (D49) asks again this long after "Not now".
 const Duration k1KeyPromptSnooze = Duration(days: 3);
 
@@ -96,6 +104,12 @@ class K1BackupState {
     this.nextAttemptAt,
     this.keyPromptSnoozedUntil,
     this.keySetAt,
+    this.confirmDueAt,
+    this.confirmedCount = 0,
+    this.confirmMisses = 0,
+    this.secondCopyPath,
+    this.secondCopyAt,
+    this.secondCopyFailed = false,
   });
 
   final String baseUrl;
@@ -123,7 +137,42 @@ class K1BackupState {
   /// week-without-a-backup warning before any copy succeeded.
   DateTime? keySetAt;
 
+  /// Key confirmation schedule (typed locally, nothing leaves the device).
+  DateTime? confirmDueAt;
+  int confirmedCount;
+  int confirmMisses;
+
+  /// The second copy folder the user picked (desktop), when it was last
+  /// written, and whether the last write failed (a warning of its own; it
+  /// never fails the backup).
+  String? secondCopyPath;
+  DateTime? secondCopyAt;
+  bool secondCopyFailed;
+
   bool get hasKey => rkPub != null && rkId != null;
+
+  /// The user is asked to type the key again.
+  bool confirmDue(DateTime now) {
+    final due = confirmDueAt;
+    return hasKey && due != null && !now.isBefore(due);
+  }
+
+  /// Three misses or postpones: a Settings badge stays until confirmed.
+  bool get confirmBadge => hasKey && confirmMisses >= k1ConfirmBadgeMisses;
+
+  /// The typed key matched: next ask 14 days on after the first, then 90.
+  void recordConfirmed(DateTime now) {
+    confirmedCount++;
+    confirmMisses = 0;
+    confirmDueAt =
+        now.add(confirmedCount == 1 ? k1ConfirmSecond : k1ConfirmLater);
+  }
+
+  /// "Not now": ask again in 7 days.
+  void postponeConfirm(DateTime now) {
+    confirmMisses++;
+    confirmDueAt = now.add(k1ConfirmPostpone);
+  }
 
   bool belongsTo(String baseUrl, String accountId, String deviceId) =>
       this.baseUrl == baseUrl &&
@@ -171,6 +220,9 @@ class K1BackupState {
     keySetAt = at;
     this.rkPub = Uint8List.fromList(rkPub);
     this.rkId = Uint8List.fromList(rkId);
+    confirmedCount = 0;
+    confirmMisses = 0;
+    confirmDueAt = at?.add(k1ConfirmFirst);
     lastError = null;
     failures = 0;
     nextAttemptAt = null;
@@ -200,6 +252,14 @@ class K1BackupState {
         if (nextAttemptAt != null)
           'next_attempt_at': nextAttemptAt!.millisecondsSinceEpoch,
         if (keySetAt != null) 'key_set_at': keySetAt!.millisecondsSinceEpoch,
+        if (confirmDueAt != null)
+          'confirm_due_at': confirmDueAt!.millisecondsSinceEpoch,
+        'confirmed_count': confirmedCount,
+        'confirm_misses': confirmMisses,
+        if (secondCopyPath != null) 'second_copy_path': secondCopyPath,
+        if (secondCopyAt != null)
+          'second_copy_at': secondCopyAt!.millisecondsSinceEpoch,
+        if (secondCopyFailed) 'second_copy_failed': true,
         if (keyPromptSnoozedUntil != null)
           'key_prompt_snoozed_until':
               keyPromptSnoozedUntil!.millisecondsSinceEpoch,
@@ -236,6 +296,20 @@ class K1BackupState {
         nextAttemptAt: _time(json['next_attempt_at']),
         keyPromptSnoozedUntil: _time(json['key_prompt_snoozed_until']),
         keySetAt: _time(json['key_set_at']),
+        confirmDueAt: _time(json['confirm_due_at']),
+        confirmedCount:
+            json['confirmed_count'] is int && json['confirmed_count'] >= 0
+                ? json['confirmed_count'] as int
+                : 0,
+        confirmMisses:
+            json['confirm_misses'] is int && json['confirm_misses'] >= 0
+                ? json['confirm_misses'] as int
+                : 0,
+        secondCopyPath: json['second_copy_path'] is String
+            ? json['second_copy_path'] as String
+            : null,
+        secondCopyAt: _time(json['second_copy_at']),
+        secondCopyFailed: json['second_copy_failed'] == true,
       );
       final rkPub = _bytes(json['rk_pub'], 32),
           rkId = _bytes(json['rk_id'], 16);

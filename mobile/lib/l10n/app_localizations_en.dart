@@ -889,6 +889,71 @@ class AppLocalizationsEn extends AppLocalizations {
   String get profileYourAccount => 'Your account';
 
   @override
+  String get profileDisplaySection => 'Display name and photo';
+
+  @override
+  String get profileDisplayNameLabel => 'Display name';
+
+  @override
+  String get profileDisplayNameHint => 'How people you chat with see you';
+
+  @override
+  String get profileDisplayHelp =>
+      'Only people you share a chat with can see your name and photo. The server can\'t read them.';
+
+  @override
+  String get profileEditTile => 'Name and photo';
+
+  @override
+  String get profileEditTitle => 'Name and photo';
+
+  @override
+  String get profilePhotoChoose => 'Choose photo';
+
+  @override
+  String get profilePhotoRemove => 'Remove photo';
+
+  @override
+  String get profilePhotoUnusable =>
+      'That picture can\'t be used. Try another one.';
+
+  @override
+  String get profileSave => 'Save';
+
+  @override
+  String get profileSaved => 'Saved';
+
+  @override
+  String get profileSaveConflict =>
+      'This profile was changed on another device. Try again in a moment.';
+
+  @override
+  String get profileSaveInvalid => 'That name or photo can\'t be used.';
+
+  @override
+  String profileNameTooLong(int max) {
+    return 'At most $max characters.';
+  }
+
+  @override
+  String get profileNameInvalid =>
+      'Use letters and numbers; no control or direction characters.';
+
+  @override
+  String get groupProfileTitle => 'Group name and photo';
+
+  @override
+  String get groupProfileNameLabel => 'Group name';
+
+  @override
+  String get groupProfileHelp =>
+      'Members of this group can see its name and photo. The server can\'t read them.';
+
+  @override
+  String get profileBlockNote =>
+      'In groups you share, they may still see your profile.';
+
+  @override
   String get profileSectionIdentity => 'Identity';
 
   @override
@@ -1918,6 +1983,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatComposerHint => 'Message';
+
+  @override
+  String get chatPostingRestricted => 'Only admins can post';
 
   @override
   String chatComposerCounter(int length, int max) {
@@ -3730,4 +3798,334 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get channelAdminOnly => 'Only owners and admins can create channels.';
+
+  @override
+  String get k1ConfirmTitle => 'Check your recovery key';
+
+  @override
+  String get k1ConfirmDetail =>
+      'Type it once more to be sure you still have it. It never leaves this device.';
+
+  @override
+  String get k1ConfirmOk => 'That is your recovery key.';
+
+  @override
+  String get k1ConfirmMismatch =>
+      'That does not match. If you lost your key, make a new one in Recovery key settings.';
+
+  @override
+  String get k1SecondCopyChoose => 'Keep a second copy in a folder';
+
+  @override
+  String k1SecondCopyFolder(String folder) {
+    return 'Second copy: $folder';
+  }
+
+  @override
+  String get k1SecondCopyDetail =>
+      'The same locked backup, saved where you choose. Only your recovery key opens it.';
+
+  @override
+  String get k1SecondCopyFailed =>
+      'The last copy to this folder failed. Check the folder.';
+
+  @override
+  String get k1SecondCopyOff => 'Stop the second copy';
+
+  @override
+  String get k1SecondCopyPhone =>
+      'A second copy in a folder is available on desktop. Phones keep the backup on the server only.';
+
+  @override
+  String get recoveryFollowUpRestoreDetail =>
+      'Before you replace your recovery key, you can bring your history back from the backups your lost devices made. They open with your old recovery key, which stops working for them once you replace it.';
+
+  @override
+  String get recoveryFollowUpRestoreSkip => 'Skip';
+
+  @override
+  String get recoveryFollowUpRestoreSkipWarning =>
+      'If you skip, older backups become unusable after you replace your recovery key. Skip anyway?';
+
+  @override
+  String get k1RestoreOpen => 'Restore from a backup';
+
+  @override
+  String get k1RestoreTitle => 'Restore from a backup';
+
+  @override
+  String get k1RestoreIntro =>
+      'Pick a backup made by one of your other devices and type your recovery key. Your history is merged in; messages already here stay.';
+
+  @override
+  String get k1RestoreLoading => 'Looking for backups…';
+
+  @override
+  String get k1RestoreEmpty => 'No backup from another device was found.';
+
+  @override
+  String get k1RestoreLoadFailed => 'The list of backups could not be loaded.';
+
+  @override
+  String k1RestoreEntry(String device, String date) {
+    return '$device · $date';
+  }
+
+  @override
+  String k1RestoreEntryPrevious(String device, String date) {
+    return '$device · $date (the copy before)';
+  }
+
+  @override
+  String get k1RestoreDeviceUnnamed => 'A device';
+
+  @override
+  String get k1RestoreDeviceRevoked =>
+      'This device was removed from your account.';
+
+  @override
+  String get k1RestoreDone => 'History restored.';
+
+  @override
+  String get k1RestoreWrongKey =>
+      'That is not a valid recovery key for this account.';
+
+  @override
+  String get k1RestoreOtherKey =>
+      'This backup was locked with a different recovery key.';
+
+  @override
+  String get k1RestoreCorrupt =>
+      'This backup could not be opened. It may be damaged.';
+
+  @override
+  String get k1RestoreNetwork =>
+      'The server could not be reached. Nothing changed.';
+
+  @override
+  String get k1RestoreUnavailable =>
+      'This device cannot restore from a backup.';
+
+  @override
+  String get connectSignInPasskey => 'Sign in with a passkey';
+
+  @override
+  String get passkeySignInFailed =>
+      'Passkey sign-in failed. Try again, or use your password.';
+
+  @override
+  String get passkeyUnavailable =>
+      'Passkeys are not available on this device, or not set up for this server.';
+
+  @override
+  String get passkeyPinRefused =>
+      'This server asked for a passkey for a different address, so the app refused.';
+
+  @override
+  String get apiErrorPasskeyLimit =>
+      'You have reached the passkey limit. Remove one first.';
+
+  @override
+  String get apiErrorPasskeyExists => 'This passkey is already added.';
+
+  @override
+  String get apiErrorInvalidPasskey =>
+      'The server could not verify that passkey.';
+
+  @override
+  String get apiErrorPasskeysOff => 'This server does not offer passkeys.';
+
+  @override
+  String get settingsPasskeys => 'Passkeys';
+
+  @override
+  String get settingsPasskeysDetail =>
+      'Sign in with your phone\'s screen lock instead of the password';
+
+  @override
+  String get passkeysIntro =>
+      'A passkey signs you in on this device instead of the password. Changing settings still asks for your password. The service that keeps your passkey, such as Google or Apple, learns this server\'s address.';
+
+  @override
+  String get passkeysNotOffered =>
+      'Passkeys are not available for this server on this device.';
+
+  @override
+  String get passkeysEmpty => 'No passkeys yet.';
+
+  @override
+  String get passkeysAdd => 'Add a passkey';
+
+  @override
+  String get passkeysAdded => 'Passkey added.';
+
+  @override
+  String passkeyCreated(String date) {
+    return 'Added $date';
+  }
+
+  @override
+  String passkeyLastUsed(String date) {
+    return 'Last used $date';
+  }
+
+  @override
+  String get passkeyBackedUp => 'Backed up';
+
+  @override
+  String get passkeyRename => 'Rename';
+
+  @override
+  String get passkeyRemove => 'Remove';
+
+  @override
+  String get passkeyNameLabel => 'Name';
+
+  @override
+  String get passkeyRemoveTitle => 'Remove this passkey?';
+
+  @override
+  String passkeyRemoveBody(String name) {
+    return '“$name” will no longer sign in to this account. You can add it again later.';
+  }
+
+  @override
+  String get passkeyRemoved => 'Passkey removed.';
+
+  @override
+  String get passkeyNoticeAdded =>
+      'A passkey was added to your account. Not you? Change your password.';
+
+  @override
+  String get passkeyNoticeRemoved => 'A passkey was removed from your account.';
+
+  @override
+  String get passkeyNoticeDismiss => 'Dismiss';
+
+  @override
+  String get passkeyNamePrefix => 'Passkey';
+
+  @override
+  String get settingsAccounts => 'Accounts';
+
+  @override
+  String get settingsAccountsDetail =>
+      'Switch between the accounts on this device';
+
+  @override
+  String get accountsTitle => 'Accounts';
+
+  @override
+  String get accountsIntro =>
+      'One account is open at a time. The others are paused: no messages or notifications arrive for them until you switch to them.';
+
+  @override
+  String get accountsOpenNow => 'Open now';
+
+  @override
+  String get accountsPending => 'Not signed in yet';
+
+  @override
+  String get accountsRemoving => 'Removing…';
+
+  @override
+  String get accountsNewAccount => 'New account';
+
+  @override
+  String get accountsAdd => 'Add an account';
+
+  @override
+  String accountsFull(String count) {
+    return 'This device holds $count accounts, the most it can. Remove one to add another.';
+  }
+
+  @override
+  String get accountsSameServer =>
+      'This server can tell that these accounts are on the same device.';
+
+  @override
+  String get accountsSwitching => 'Switching…';
+
+  @override
+  String accountsSwitchTo(String name) {
+    return 'Switch to $name';
+  }
+
+  @override
+  String get accountsRemove => 'Remove from this device';
+
+  @override
+  String accountsRemoveTitle(String name) {
+    return 'Remove $name from this device?';
+  }
+
+  @override
+  String get accountsRemoveBody =>
+      'This signs the account out and deletes its messages and keys from this device. The account stays on its server. If you will not use this device again, remove it from the account\'s device list on another device.';
+
+  @override
+  String get accountsPushFailTitle => 'Switch anyway?';
+
+  @override
+  String accountsPushFailBody(String name) {
+    return 'Notifications for $name could not be turned off. You may get notifications for this account until you open it again.';
+  }
+
+  @override
+  String get accountsSwitchAnyway => 'Switch anyway';
+
+  @override
+  String get accountsErrorOpen =>
+      'That account could not be opened. The previous account is open again.';
+
+  @override
+  String get accountsErrorRegistry => 'The account list could not be saved.';
+
+  @override
+  String get accountsErrorRemove =>
+      'The account could not be removed. Try again.';
+
+  @override
+  String get accountsDuplicate =>
+      'This device already has that account, so the extra sign-in was removed. Remove this device\'s extra entry from the account\'s device list.';
+
+  @override
+  String get accountsBack => 'Back to my accounts';
+
+  @override
+  String get settingsSectionUpdates => 'Updates';
+
+  @override
+  String get settingsAutoUpdateCheck => 'Check for updates automatically';
+
+  @override
+  String get settingsAutoUpdateCheckDetail =>
+      'Check for genuine new versions on launch';
+
+  @override
+  String get settingsCheckForUpdates => 'Check for updates';
+
+  @override
+  String get settingsCheckingForUpdates => 'Checking for updates…';
+
+  @override
+  String get settingsUpdateUpToDate => 'Veritra is up to date';
+
+  @override
+  String settingsUpdateAvailable(String version) {
+    return 'Version $version is available';
+  }
+
+  @override
+  String get settingsUpdateError => 'Could not check for updates';
+
+  @override
+  String get settingsUpdateDisabled => 'Automatic update checks are turned off';
+
+  @override
+  String get settingsScreenGuard => 'Screen guard';
+
+  @override
+  String get settingsScreenGuardDetail =>
+      'Block screenshots and AI-assistant screen reading in chats.';
 }

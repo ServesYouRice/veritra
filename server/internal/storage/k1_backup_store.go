@@ -154,20 +154,27 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 	return backup, nil
 }
 
-// enforceK1BackupAllowance checks the account's backup allowance (D91): the
-// current copies of its other active devices plus the new one. This device's
-// copy being replaced, superseded copies (gone within a day) and revoked
-// devices' copies (at most three, for 90 days) do not count. The instance
-// total counts every blob, as for attachments.
+// enforceK1BackupAllowance checks the account's shared storage quota (owner
+// decision 2026-11-11: backups share ACCOUNT_STORAGE_MIB with attachments;
+// migration 0079 counts kind-1 copies in blob_usage_accounts again). The
+// design's formula: usage, less this device's copy that the upload replaces,
+// plus the new size, so a same-size replacement does not need room for two
+// copies. (The replaced copy stays on disk for its day of grace; the quota is
+// checked against the steady state.) Usage is read after the device's older
+// superseded copy was deleted in the same transaction. The instance total
+// counts every blob.
 func (s *Store) enforceK1BackupAllowance(ctx context.Context, tx *sql.Tx, accountID, deviceID string, incoming int64) error {
-	var current, instanceUsage int64
+	var accountUsage, instanceUsage, replaced int64
 	if err := tx.QueryRowContext(ctx, `SELECT
-		COALESCE((SELECT SUM(b.size_bytes) FROM backup_blobs b JOIN devices d ON d.id = b.device_id
-			WHERE b.account_id = ? AND b.kind = 1 AND b.superseded_at IS NULL AND d.revoked_at IS NULL AND b.device_id <> ?), 0),
-		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1)`, accountID, deviceID).Scan(&current, &instanceUsage); err != nil {
+		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?1), 0),
+		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1),
+		COALESCE((SELECT SUM(size_bytes) FROM backup_blobs
+			WHERE account_id = ?1 AND device_id = ?2 AND kind = 1 AND superseded_at IS NULL), 0)`,
+		accountID, deviceID).Scan(&accountUsage, &instanceUsage, &replaced); err != nil {
 		return err
 	}
-	if incoming < 0 || current > s.limits.BackupAllowanceBytes-incoming || instanceUsage > s.limits.InstanceStorageBytes-incoming {
+	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
+	if incoming < 0 || accountUsage-replaced > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
 		return s.refuse(admission.Storage, ErrStorageQuota)
 	}
 	return nil

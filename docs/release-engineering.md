@@ -56,13 +56,27 @@ Known gaps (see the evidence file for what was measured):
 `release/windows/veritra.iss` is an Inno Setup 6 definition: per-user install by
 default, fixed `AppId` so updates replace the old install, Start-menu entry,
 optional desktop shortcut, uninstaller. It packages the folder
-`build.ps1` produced. Build line is in the file header.
+`build.ps1` produced.
 
-**Owner step (left open):** signing. Buy a code-signing certificate, then
-enable the two `SignTool`/`SignedUninstaller` lines and pass the `signtool`
-command on the `iscc` command line. The certificate and password stay outside
-this repository. Without signing, Windows SmartScreen warns on first run; that
-is expected for the unsigned draft.
+Build with `scripts\build-windows-installer.ps1` (or `release\windows\build.ps1`):
+```powershell
+# Build unsigned installer (default)
+.\scripts\build-windows-installer.ps1
+
+# Specify build inputs and outputs
+.\scripts\build-windows-installer.ps1 -AppDir C:\out\app -AppVersion 0.1.0 -OutDir C:\out\dist
+
+# Dry-run check (no iscc needed)
+.\scripts\build-windows-installer.ps1 -DryRun
+```
+
+**Owner step (signing placeholder):** signing. After the owner buys a code-signing
+certificate, pass `-SignToolCommand` to the build script:
+```powershell
+.\scripts\build-windows-installer.ps1 -SignToolCommand 'signtool.exe sign /fd sha256 /tr <timestamp-url> /td sha256 /f <cert> /p <password> $f'
+```
+The certificate and password stay outside this repository. Without signing, Windows
+SmartScreen warns on first run; that is expected for the unsigned draft.
 
 Open questions for the owner: Inno Setup's license (free, custom terms) is
 checked by the owner before first use; an MSIX alternative would need a
@@ -106,10 +120,10 @@ and how it is backed up (rotation would need a second key in the app).
 `release/fdroid/org.veritra.private_messenger.yml` is a draft recipe in
 `fdroiddata` format; nothing is submitted. Blockers, in order:
 
-1. **Firebase.** `mobile/android/app/build.gradle.kts` depends on Google's
-   `firebase-messaging`. F-Droid rejects non-free dependencies. It needs a
-   build flavor with UnifiedPush only (which the app already supports). Not
-   built: it is a code and policy change for the owner.
+1. **Firebase.** Resolved: the Android app has `play` and `fdroid` product
+   flavors (`distribution` dimension). The `fdroid` flavor excludes
+   `firebase-messaging` completely and uses UnifiedPush only, while `play`
+   retains FCM with UnifiedPush fallback, following the owner's F-Droid decision.
 2. **Messaging is off in release builds** until G24/G25.
 3. **Signing key.** Reproducible-build verification (F-Droid builds and compares
    with the developer's signed APK) needs the owner's APK signing key.

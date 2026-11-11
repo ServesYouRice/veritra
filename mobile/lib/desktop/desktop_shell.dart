@@ -194,6 +194,19 @@ class PluginDesktopNotifier implements DesktopNotifier {
   final void Function()? onClick;
 
   bool _ready = false;
+  bool _closed = false;
+  final Set<LocalNotification> _shown = <LocalNotification>{};
+
+  Future<void> clear() async {
+    _closed = true;
+    final shown = _shown.toList();
+    _shown.clear();
+    for (final notification in shown) {
+      try {
+        await notification.close();
+      } catch (_) {}
+    }
+  }
 
   Future<void> _setup() async {
     if (_ready) return;
@@ -212,10 +225,15 @@ class PluginDesktopNotifier implements DesktopNotifier {
   }) async {
     try {
       await _setup();
-      if (stillWanted != null && !stillWanted()) return;
+      if (_closed || (stillWanted != null && !stillWanted())) return;
       final notification = LocalNotification(title: title, body: body);
-      notification.onClick = onClick;
+      notification.onClick = () {
+        if (!_closed) onClick?.call();
+      };
+      _shown.add(notification);
+      notification.onClose = (_) => _shown.remove(notification);
       await notification.show();
+      if (_closed) await notification.close();
     } catch (_) {
       // A notification that cannot be shown is dropped; never log its text.
     }

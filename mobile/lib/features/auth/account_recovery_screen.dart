@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/app_state.dart';
 import 'connect_screen.dart' show exampleServerOrigin;
 import '../../core/server_origin.dart';
+import '../settings/accounts_screen.dart' show AccountsShortcut;
 import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
@@ -295,6 +296,9 @@ class _AccountRecoveryWaitingScreenState
               shrinkWrap: true,
               padding: const EdgeInsets.all(BoneSpacing.xl),
               children: <Widget>[
+                // B7: the other accounts stay reachable while this one's
+                // claim waits; the claim itself is kept.
+                const AccountsShortcut(),
                 Icon(
                     pending?.needsLogin ?? false
                         ? Icons.login

@@ -13,6 +13,8 @@ import 'device_lists.dart' show DeviceListPage;
 import 'membership_models.dart';
 import 'models.dart';
 import 'report_models.dart';
+import 'profile_models.dart';
+import 'passkeys.dart';
 import 'server_origin.dart';
 import 'transport_policy.dart';
 
@@ -64,6 +66,9 @@ class ApiClient {
   /// minutes, a stalled one is cut after this long without a chunk.
   static const defaultTransferIdleTimeout = Duration(seconds: 30);
   static const _maxJsonResponseBytes = 2 * 1024 * 1024;
+
+  /// A profile record is 4 KiB or 256 KiB plus 28 bytes of overhead.
+  static const maxProfileBlobBytes = 256 * 1024 + 64;
 
   /// Cap for replies that carry ciphertext. One item always fits: an MLS
   /// payload is at most 4 MiB (about 5.6 MB as base64) and a message
@@ -524,6 +529,113 @@ class ApiClient {
     );
   }
 
+  // ---------------------------------------------------------- passkeys (B7)
+
+  /// Begins a passkey sign-in. The device ID and secret are checked by the
+  /// server exactly as `login` checks them; no username is sent.
+  Future<PasskeyCeremony> passkeyLoginOptions({
+    required String deviceId,
+    required String deviceSecret,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/auth/passkey/options',
+      body: <String, Object?>{
+        'device_id': deviceId,
+        'device_secret': deviceSecret,
+      },
+    );
+    return _ceremony(json);
+  }
+
+  /// Finishes a passkey sign-in. The answer has the shape of `login`'s and
+  /// grants no recent authentication.
+  Future<Session> passkeyLogin({
+    required String ceremonyId,
+    required String deviceId,
+    required String deviceSecret,
+    required Map<String, Object?> credential,
+    String? fallbackUsername,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/auth/passkey',
+      body: <String, Object?>{
+        'ceremony_id': ceremonyId,
+        'device_id': deviceId,
+        'device_secret': deviceSecret,
+        'credential': credential,
+      },
+    );
+    return _sessionFromAuthJson(
+      json,
+      fallbackUsername: fallbackUsername,
+      fallbackDeviceSecret: deviceSecret,
+    );
+  }
+
+  Future<List<PasskeyRecord>> passkeys(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/account/passkeys', token: token);
+    final raw = json['passkeys'];
+    if (raw == null) return const <PasskeyRecord>[];
+    if (raw is! List || raw.length > 64) throw const ApiResponseException();
+    return <PasskeyRecord>[
+      for (final row in raw)
+        PasskeyRecord.tryParse(row) ?? (throw const ApiResponseException()),
+    ];
+  }
+
+  /// Needs a recent password check on the session.
+  Future<PasskeyCeremony> passkeyRegisterOptions(String token) async {
+    final json = await _jsonRequest('POST', '/api/v1/account/passkeys/options',
+        token: token);
+    return _ceremony(json);
+  }
+
+  /// Returns the new passkey's row ID.
+  Future<String> passkeyRegister(
+    String token, {
+    required String ceremonyId,
+    required String name,
+    required Map<String, Object?> credential,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/account/passkeys',
+      token: token,
+      body: <String, Object?>{
+        'ceremony_id': ceremonyId,
+        'name': name,
+        'credential': credential,
+      },
+    );
+    final id = json['id'];
+    if (id is! String || id.isEmpty) throw const ApiResponseException();
+    return id;
+  }
+
+  Future<void> renamePasskey(String token, String id, String name) async {
+    await _jsonRequest(
+        'PATCH', '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
+        token: token, body: <String, Object?>{'name': name});
+  }
+
+  /// Needs a recent password check on the session.
+  Future<void> deletePasskey(String token, String id) async {
+    await _jsonRequest(
+        'DELETE', '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
+        token: token);
+  }
+
+  PasskeyCeremony _ceremony(Map<String, Object?> json) {
+    final id = json['ceremony_id'];
+    if (id is! String || id.isEmpty || id.length > 256) {
+      throw const ApiResponseException();
+    }
+    return PasskeyCeremony(id: id, publicKey: _object(json, 'public_key'));
+  }
+
   Future<List<Conversation>> conversations(String token) {
     return _collectPages(
       (before) => '/api/v1/conversations?limit=$_listPageSize'
@@ -838,6 +950,7 @@ class ApiClient {
       peerAccountId: conversation.peerAccountId,
       peerUsername: conversation.peerUsername,
       createdBy: conversation.createdBy,
+      postingRestricted: conversation.postingRestricted,
       existedOnServer: true,
     );
   }
@@ -1534,6 +1647,20 @@ class ApiClient {
     return _decode(() => Conversation.fromJson(json));
   }
 
+  Future<Conversation> setPostingPolicy(
+    String token,
+    String conversationId,
+    String policy,
+  ) async {
+    final json = await _jsonRequest(
+      'PUT',
+      '/api/v1/conversations/$conversationId/posting-policy',
+      token: token,
+      body: <String, Object?>{'policy': policy},
+    );
+    return _decode(() => Conversation.fromJson(json));
+  }
+
   Future<void> deleteAccount(String token) async {
     await _jsonRequest('DELETE', '/api/v1/account', token: token);
   }
@@ -1655,6 +1782,51 @@ class ApiClient {
     // idle watchdog re-arms per slice, so a slow link is not cut off.
     final response = await _sendBody(request, k1UploadSlices(ciphertext));
     await _readJsonResponse(response);
+  }
+
+  /// `GET /api/v1/backups`: the account's backups. Rows are the server's
+  /// claims; the restore opens the container to trust anything.
+  Future<List<Map<String, Object?>>> listBackups(String token,
+      {int limit = 100}) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/backups?limit=$limit', token: token);
+    final backups = json['backups'];
+    if (backups is! List) throw const ApiResponseException();
+    return <Map<String, Object?>>[
+      for (final b in backups)
+        if (b is Map) Map<String, Object?>.from(b),
+    ];
+  }
+
+  /// `GET /api/v1/backups/{id}` with the session: the sealed container, or
+  /// the byte range [start]..[end] of it (the header peek). The stream is
+  /// bounded by [k1MaxBackupCiphertextBytes]; the server verifies every
+  /// chunk before sending it.
+  Future<Stream<List<int>>> downloadBackup(String token, String id,
+      {int? start, int? end}) async {
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id) ||
+        (start != null && (start < 0 || (end != null && end < start)))) {
+      throw ArgumentError('invalid backup download');
+    }
+    final request = await _openRequest(
+      'GET',
+      Uri.parse(baseUrl).resolve('/api/v1/backups/$id'),
+    );
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    if (start != null) {
+      request.headers.set('Range', 'bytes=$start-${end ?? ''}');
+    }
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final ranged = start != null;
+    if (response.statusCode != (ranged ? 206 : 200)) {
+      // A 200 for a range is the whole file; a 206 for none is not ours.
+      await _discard(response);
+      throw const ApiResponseException();
+    }
+    return _boundedStream(response, k1MaxBackupCiphertextBytes);
   }
 
   Future<Stream<List<int>>> recoverEncryptedBackup(
@@ -2123,6 +2295,137 @@ class ApiClient {
     return _decode(() => BlockedAccount.fromJson(json));
   }
 
+  // W11 encrypted profiles. The server holds one opaque record per account
+  // and per group; names, photos and keys never reach it.
+
+  Future<ProfileFetch> fetchProfile(
+    String token,
+    String path, {
+    int? ifNoneMatchVersion,
+  }) async {
+    final request = await _openRequest('GET', Uri.parse(baseUrl).resolve(path));
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    if (ifNoneMatchVersion != null) {
+      request.headers
+          .set(HttpHeaders.ifNoneMatchHeader, '"$ifNoneMatchVersion"');
+    }
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode == 304) {
+      await response.drain<void>();
+      return const ProfileFetch.notModified();
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final version = int.tryParse(
+        (response.headers.value(HttpHeaders.etagHeader) ?? '')
+            .replaceAll('"', ''));
+    final keyId = response.headers.value('X-Profile-Key-Id');
+    final blob = await _readBounded(response, maxProfileBlobBytes);
+    if (version == null || version < 1 || keyId == null || blob.isEmpty) {
+      throw const ApiResponseException();
+    }
+    return ProfileFetch.record(version: version, keyId: keyId, blob: blob);
+  }
+
+  Future<ProfileFetch> fetchAccountProfile(String token, String accountId,
+          {int? ifNoneMatchVersion}) =>
+      fetchProfile(
+          token, '/api/v1/profiles/account/${Uri.encodeComponent(accountId)}',
+          ifNoneMatchVersion: ifNoneMatchVersion);
+
+  Future<ProfileFetch> fetchConversationProfile(
+          String token, String conversationId, {int? ifNoneMatchVersion}) =>
+      fetchProfile(token,
+          '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+          ifNoneMatchVersion: ifNoneMatchVersion);
+
+  /// Replaces a record. [ifMatchVersion] is the version being replaced, or
+  /// null for the first write. Throws [ApiException] with kind conflict when
+  /// another device wrote first (412).
+  Future<int> putProfile(
+    String token,
+    String path,
+    Uint8List blob, {
+    required String keyId,
+    int? ifMatchVersion,
+  }) async {
+    if (blob.isEmpty || blob.length > maxProfileBlobBytes) {
+      throw ArgumentError.value(blob.length, 'blob');
+    }
+    final request = await _openRequest('PUT', Uri.parse(baseUrl).resolve(path));
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    request.headers.set('X-Private-Messenger-Encrypted', '1');
+    request.headers.set('X-Profile-Key-Id', keyId);
+    if (ifMatchVersion == null) {
+      request.headers.set(HttpHeaders.ifNoneMatchHeader, '*');
+    } else {
+      request.headers.set(HttpHeaders.ifMatchHeader, '"$ifMatchVersion"');
+    }
+    request.headers.contentType = ContentType.binary;
+    request.contentLength = blob.length;
+    final response = await _sendBody(request, Stream.value(blob));
+    final json = await _readJsonResponse(response);
+    final version = json['version'];
+    if (version is! int || version < 1) throw const ApiResponseException();
+    return version;
+  }
+
+  Future<int> putAccountProfile(String token, Uint8List blob,
+          {required String keyId, int? ifMatchVersion}) =>
+      putProfile(token, '/api/v1/profiles/account/me', blob,
+          keyId: keyId, ifMatchVersion: ifMatchVersion);
+
+  Future<int> putConversationProfile(
+          String token, String conversationId, Uint8List blob,
+          {required String keyId, int? ifMatchVersion}) =>
+      putProfile(
+          token,
+          '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/profile',
+          blob,
+          keyId: keyId,
+          ifMatchVersion: ifMatchVersion);
+
+  /// The current `{version, key_id}` of every subject the caller may read, at
+  /// most 200 of each kind. Unreadable and missing subjects are left out.
+  Future<List<ProfileVersion>> profileVersions(
+    String token, {
+    List<String> accountIds = const <String>[],
+    List<String> conversationIds = const <String>[],
+  }) async {
+    if (accountIds.length > 200 || conversationIds.length > 200) {
+      throw ArgumentError('at most 200 subjects of a kind');
+    }
+    final json = await _jsonRequest('POST', '/api/v1/profiles/versions',
+        token: token,
+        body: <String, Object?>{
+          'account_ids': accountIds,
+          'conversation_ids': conversationIds,
+        });
+    final list = json['versions'];
+    if (list is! List) throw const ApiResponseException();
+    return _decode(() => [
+          for (final item in list)
+            ProfileVersion.fromJson(Map<String, Object?>.from(item as Map)),
+        ]);
+  }
+
+  /// Clears the legacy plaintext title after the group's encrypted profile
+  /// holds the name (owner or admin only).
+  Future<void> clearConversationTitle(
+      String token, String conversationId) async {
+    final request = await _openRequest(
+        'DELETE',
+        Uri.parse(baseUrl).resolve(
+            '/api/v1/conversations/${Uri.encodeComponent(conversationId)}/title'));
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    await response.drain<void>();
+  }
+
   Future<void> unblockAccount(String token, String accountId) async {
     await _jsonRequest(
       'DELETE',
@@ -2161,6 +2464,48 @@ class ApiClient {
           token: token, maxResponseBytes: _maxCiphertextResponseBytes);
     });
     return _rows(json, 'events', SyncEvent.fromJson);
+  }
+
+  /// [syncEvents] with the scan position, asking for the bounded scan
+  /// (TASK-209, D92): the server examines at most a budget of candidates,
+  /// hidden ones included, and reports how far it looked
+  /// ([ConversationSyncPage.scannedThrough]) and whether the budget ended the
+  /// page early ([ConversationSyncPage.truncated]). Both are absent from an
+  /// older server, which also ignores the opt-in. Test fakes that only
+  /// override [syncEvents] mix in [LegacySyncPageFake].
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = Uri(
+        path: '/api/v1/sync/events',
+        queryParameters: <String, String>{
+          'after': after.toString(),
+          'limit': pageLimit.toString(),
+          'scan': 'bounded',
+        },
+      ).toString();
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
+    final events = _rows(json, 'events', SyncEvent.fromJson);
+    return _decode(() {
+      final through = json['scanned_through'];
+      final truncated = json['scan_truncated'];
+      if (through != null && (through is! int || through < 0)) {
+        throw const FormatException();
+      }
+      if (truncated != null && truncated is! bool) {
+        throw const FormatException();
+      }
+      return ConversationSyncPage(
+        events,
+        scannedThrough: through as int?,
+        truncated: truncated == true,
+      );
+    });
   }
 
   /// One conversation's own sync stream (C1 prerequisite 1), in event order.
@@ -2325,6 +2670,7 @@ class ApiClient {
 
   Future<String> registerWebPush(
     String token, {
+    String provider = 'webpush',
     required String endpoint,
     required String publicKey,
     required String authSecret,
@@ -2335,7 +2681,7 @@ class ApiClient {
       '/api/v1/push/subscriptions',
       token: token,
       body: <String, Object?>{
-        'provider': 'webpush',
+        'provider': provider,
         'endpoint': endpoint,
         'public_key': publicKey,
         'auth_secret': authSecret,
@@ -2824,4 +3170,16 @@ class ConversationSyncPage {
   final List<SyncEvent> events;
   final int? scannedThrough;
   final bool truncated;
+}
+
+/// For test fakes that override [ApiClient.syncEvents] only: the page method
+/// answers from it, with no scan position, as an older server would.
+mixin LegacySyncPageFake on ApiClient {
+  @override
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      ConversationSyncPage(await syncEvents(token, after: after, limit: limit));
 }

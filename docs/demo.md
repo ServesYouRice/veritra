@@ -35,6 +35,9 @@ flutter run -t lib/main_demo.dart --dart-define=VERITRA_DEMO=true
 Without `--dart-define=VERITRA_DEMO=true` the demo entry point refuses to
 start.
 
+On Android, also pass `--flavor fdroid` for UnifiedPush, or `--flavor play`
+for the build that supports FCM.
+
 | App | Before `flutter run` | Server URL in the app |
 |---|---|---|
 | Android emulator | `scripts/build-mobile-crypto.sh android`, start the emulator, then `adb reverse tcp:8080 tcp:8080` (the demo script does this if the emulator is already running) | `http://localhost:8080` |
@@ -68,7 +71,7 @@ so a phone or tablet needs no toolchain:
 
 | Artifact | Install |
 |---|---|
-| `veritra-demo-android-…` | `app-debug.apk` for arm64 phones and x86_64 emulators: `adb install app-debug.apk`, or open it on the phone after allowing installs from that source. Then `adb reverse tcp:8080 tcp:8080` so the app reaches the demo server. |
+| `veritra-demo-android-…` | `app-play-debug.apk` for arm64 phones and x86_64 emulators: `adb install app-play-debug.apk`, or open it on the phone after allowing installs from that source. Then `adb reverse tcp:8080 tcp:8080` so the app reaches the demo server. |
 | `veritra-demo-ios-simulator-…` | Unzip, boot a simulator, then `xcrun simctl install booted Runner.app`. The simulator reaches the demo server on `localhost` directly. A real iPhone needs a signed build from Xcode (your own Apple ID is enough for a development build). |
 | `veritra-demo-linux-x64-…`, `veritra-demo-windows-x64-…`, `veritra-demo-macos-…` | Unzip and run the app in the folder (macOS: see the notes above for the first open). |
 
@@ -151,3 +154,23 @@ server again and checks the message arrives. CI runs it on every push.
 Windows crypto DLL and a server on loopback. The `desktop-windows` CI job runs
 it (owner setup, invite, direct message, reply, edit, reaction, delete) before
 building the Windows demo app.
+
+## Passkeys and accounts (B7)
+
+Settings, Accounts adds up to five local accounts. Only the open account
+syncs or receives notices; each account keeps its own keys, drafts and files.
+Two accounts on one server are allowed, with the D93 linkability warning.
+The release entry point keeps unavailable messaging for every slot.
+
+Passkeys require operator opt-in and an already enrolled device. They replace
+the password only at sign-in. Sensitive settings still require the password.
+Linux stays password-only. Apple builds also need their server hostname in
+the signed associated-domains entitlement. Before a team-signed build, run
+`python3 scripts/passkey-entitlements.py 'chat.example.org' mobile/ios/Runner/Runner.entitlements`
+and build with the matching `--dart-define=VERITRA_PASSKEY_DOMAINS=chat.example.org`.
+For macOS, apply the script to `mobile/macos/Runner/DebugProfile.entitlements`
+or `Release.entitlements`, according to the build configuration. Use an empty
+first argument to remove the passkey entitlement again. Default builds have
+no associated-domains entitlement. Keep the hostname list identical in the
+entitlement and Dart define. Android needs the operator's app association
+and signing fingerprint; the app does not enable the passkey plugin's doctor.

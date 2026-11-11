@@ -8,7 +8,7 @@ import 'package:private_messenger/storage/local_store.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   test(
-      'schema 31 upgrades to 32; anchor survives reopen and full wipe clears it',
+      'schema 31 upgrades to current; anchor survives reopen and full wipe clears it',
       () async {
     final dir = await Directory.systemTemp.createTemp('invite-anchor-');
     final file = File('${dir.path}/local.db');
@@ -35,7 +35,7 @@ void main() {
       expect(
           (await db.customSelect('PRAGMA user_version').getSingle())
               .read<int>('user_version'),
-          32);
+          EncryptedLocalDatabase.currentSchemaVersion);
       await db.clearAll();
       expect(await db.readInviteAnchor('group'), isNull);
     } finally {

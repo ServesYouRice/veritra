@@ -2,6 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../storage/profile_scope.dart';
+
 import 'server_origin.dart' show canonicalizeServerOrigin;
 
 /// Custody of an instance owner's report-key seed (C6, D95). The seed opens
@@ -45,8 +47,11 @@ Uint8List? _fromHex(String? text) {
 /// and iOS's backup rules already exclude it from cloud backups of the app's
 /// files; the value is also never written anywhere else.
 class SecureReportSeedStore implements ReportSeedStore {
-  SecureReportSeedStore({FlutterSecureStorage? storage})
-      : _storage = storage ??
+  SecureReportSeedStore(
+      {FlutterSecureStorage? storage,
+      ProfileScope scope = const ProfileScope()})
+      : _scope = scope,
+        _storage = storage ??
             const FlutterSecureStorage(
               // Fail closed (I39): a keystore error must never delete the
               // seed, or the database key that shares the plugin's store.
@@ -60,17 +65,21 @@ class SecureReportSeedStore implements ReportSeedStore {
             );
 
   final FlutterSecureStorage _storage;
+  final ProfileScope _scope;
+
+  String _key(String origin, String accountId) => _scope.secureKey(
+      'report_seed.v1.${canonicalizeServerOrigin(origin)}.$accountId');
 
   @override
   Future<Uint8List?> load(String origin, String accountId) async =>
-      _fromHex(await _storage.read(key: _name(origin, accountId)));
+      _fromHex(await _storage.read(key: _key(origin, accountId)));
 
   @override
   Future<void> save(String origin, String accountId, Uint8List seed) async {
     if (seed.length != reportSeedBytes) {
       throw ArgumentError.value(seed.length, 'seed');
     }
-    final key = _name(origin, accountId);
+    final key = _key(origin, accountId);
     await _storage.write(key: key, value: _hex(seed));
     // A keystore that accepted nothing must not look like custody.
     if (await _storage.read(key: key) != _hex(seed)) {
@@ -80,7 +89,7 @@ class SecureReportSeedStore implements ReportSeedStore {
 
   @override
   Future<void> delete(String origin, String accountId) =>
-      _storage.delete(key: _name(origin, accountId));
+      _storage.delete(key: _key(origin, accountId));
 }
 
 /// Memory only, for tests and builds with no protected storage. A seed here

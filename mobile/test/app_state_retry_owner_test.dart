@@ -127,7 +127,7 @@ Future<void> _waitFor(FutureOr<bool> Function() condition,
 
 /// A server with one pending change per conversation in [pendingAdds]:
 /// add `dev_bob` at the conversation's epoch.
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: _origin);
 
   final Map<String, int> serverEpochs = <String, int>{};

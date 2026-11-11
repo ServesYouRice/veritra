@@ -247,7 +247,11 @@ On success, in one transaction:
      origin, account and device; save the session (the restored history is
      kept); set cursor 0; publish key packages; sync.
    - On `completed` without a token, ask for the password and `login`.
-6. **Forced, before chats open.** `reauth`, then replace the RK (generate,
+6. **Forced, before chats open.** First **restore** from the lost devices' K1
+   backups, or skip with a warning that older backups become unusable (K1-4,
+   built: follow-up step `restore`, persisted, resumes after a crash; the
+   server also keeps a revoked device's copy 90 days across the swap). Then
+   `reauth`, then replace the RK (generate,
    show, confirm by typing, `PUT`), then change the password.
    - The old RK stays valid until it is replaced, so a crash never locks the
      user out.

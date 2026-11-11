@@ -16,7 +16,7 @@ Tick a task when it is done and verified; note anything left open under it.
   - Built with L1-3 (D100 A): device link v4, source commitment before the claim, reveal after it, SAS over the revealed random. ABI 18, migration 0060.
 - [x] 11 `TASK-011` Dispatch push bridge events to Flutter on the main thread
 - [x] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
-  - Blocked: the native endpoint record and method-channel calls (`pendingEndpoint`/`acknowledgeEndpoint`) do not exist yet; server side done.
+  - Fixed (d4d5632, merged): native pending record plus pendingEndpoint/acknowledgeEndpoint; push_state_test and push_service_test pass. Kotlin wake-tests not run locally.
 - [x] 13 `TASK-013` Invalidate pending push registration callbacks on unregister
 - [x] 14 `TASK-014` Disable automatic redirects on all ApiClient requests so custom secret headers are never forwarded
 - [x] 15 `TASK-015` Add an injectable WebRTC seam and test harness for NativeCallService, and release media on failed call setup
@@ -139,7 +139,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 123 `TASK-123` Add opt-in registry verification that the pinned golang digest belongs to golang:${GO_VERSION}
 - [x] 124 `TASK-124` Detect all common dynamic Gradle versions across every Android build file and fail closed
 - [x] 125 `TASK-125` Require an https services.gradle.org wrapper URL and a distribution checksum, and validate the wrapper JAR
-  - Closed by decision D72: the Gradle distribution checksum stays a warning; the checker warns.
+  - Official Gradle 9.1.0-all.zip checksum added to gradle-wrapper.properties; check-gradle-inputs.py requires distributionSha256Sum (VAL-160). No gradle-wrapper.jar is committed.
 - [x] 126 `TASK-126` Build the release image from the captured commit and re-verify HEAD after checks
 - [x] 127 `TASK-127` Refuse server releases of commits not on the protected default branch
 - [x] 128 `TASK-128` Read Android minSdkVersion as Android does: signed, by resource ID, only from manifest-level uses-sdk
@@ -179,19 +179,19 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 159 `TASK-159` Keep the low-disk write guard active when a filesystem probe fails
 - [x] 160 `TASK-160` Stop rate limiter eviction from resetting live credential and enrollment budgets
 - [x] 161 `TASK-161` Bound the stored bcrypt cost before verification
-- [ ] 162 `TASK-162` Apply the chosen password-verification timing policy across stored hash profiles without creating a password-outcome oracle
-  - Comment only (6108aaa, 2037787): the password timing residual is worded as open, not accepted. No policy change; the timing policy is still an open technical choice.
+- [x] 162 `TASK-162` Apply the chosen password-verification timing policy across stored hash profiles without creating a password-outcome oracle
+  - Plan Q-003 option (c) accepted by owner: residual documented and asserted by work-unit outcome-independence tests (VAL-303, VAL-209); stored bcrypt cost bounded (TASK-161).
 - [x] 163 `TASK-163` Serialize backup-status writers and make replacement atomic and durable
 - [x] 164 `TASK-164` Apply the decided policy when PRIVATE_MESSENGER_ENV is unset
   - Owner decision: unset or empty means production. Dev, contract-test and demo e2e launchers set development explicitly. The demo e2e started its server that way and got through setup, register and link; it then times out at demo_e2e_test.dart:259, as f1b4a36 also does (pre-existing flake, see results.json foundWhileFixing).
 - [x] 165 `TASK-165` Resolve DataDir/backups symlinks before ownership checks
 - [x] 166 `TASK-166` Reject non-regular secret files without blocking on open
 - [x] 167 `TASK-167` Commit admin status changes and invite revocations atomically with their audit rows
-- [ ] 168 `TASK-168` Restore one-time-use semantics for the recovery capability
-  - Skipped: no default chosen; overlaps TASK-216.
+- [x] 168 `TASK-168` Restore one-time-use semantics for the recovery capability
+  - Plan Q-004 option (a): total bytes served per capability capped at 2x backup size (migration 0077 `recovery_bytes_served`), capability consumed once cap reached or transfer complete; verified by `recovery_bound_test.go` (VAL-215).
 - [x] 169 `TASK-169` Add HTTP tests that non-authors and non-members cannot edit or delete messages
-- [ ] 170 `TASK-170` Prevent targeted key-package exhaustion through non-consensual conversations
-  - Skipped: overlaps TASK-216 (per-claimer cap, 25 a day). A cap per target across claimers is not built.
+- [x] 170 `TASK-170` Prevent targeted key-package exhaustion through non-consensual conversations
+  - Plan Q-005 option (b): mitigated by TASK-216 per-claimer cap (25/target/day, migration 0042); verified by `key_package_exhaustion_test.go` (VAL-217).
 - [x] 171 `TASK-171` Make the plaintext-at-rest and metadata-search non-disclosure assertions able to fail
 - [x] 172 `TASK-173` Stop mapping transient TouchSession failures to 401 in withAuth
 - [x] 173 `TASK-176` Prevent third parties from locking a known user out of login via the username-only backoff key
@@ -223,8 +223,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 198 `TASK-198` Reject community member management across account blocks
 - [x] 199 `TASK-199` Tie-break the unread-count bound on (created_at, id)
 - [x] 200 `TASK-200` Make conversation-list pagination use an immutable keyset cursor
-- [ ] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
-  - Blocked on owner question Q-002 (remedy and window). Characterization test added; the orphan can still sign in with password + its device secret. Only revoke-at-expiry (sweeper, MLS revocations) or creating the device at consume meets VAL-253.
+- [x] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
+  - Fixed (D100/D114 remedy d): PruneOperationalRows cancels approved links that expired unconsumed, revoking the device, its key packages and MLS membership; test TestApprovedDeviceLinkNearExpiryDoesNotOrphanDevice.
 - [x] 202 `TASK-202` Scope device-less push subscriptions with a NULL-safe device match
 - [x] 203 `TASK-203` Disable a push target only if it still matches the failed registration
 - [x] 204 `TASK-204` Enforce state_counter monotonicity and capability rotation for device-less backups
@@ -232,7 +232,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 206 `TASK-206` Let a live recovery lease holder renew and complete past the initial lease and capability deadline
 - [x] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
 - [x] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
-- [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); legacy route unchanged, no heads route.
+- [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); done 2026-11-11 on the account route `GET /api/v1/sync/events?scan=bounded` and the app catch-up (a 200 omits the bounds); without `scan=bounded` the route is unchanged; no heads route.
   - Built on the scoped routes behind `?scan=bounded` (opt-in). Not done: the legacy global stream still rescans its hidden tail, `_runOwnedCatchUp` does not persist a scanned-through cursor (that is C1-B2 to B4), no benchmark.
 - [x] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
 - [x] 211 `TASK-211` Require current conversation membership for message edit and delete

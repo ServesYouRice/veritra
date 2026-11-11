@@ -113,6 +113,7 @@ class K1Api extends K0Api {
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
   late K0Server server;
   late MemoryLocalStore store;
   late K1Crypto crypto;

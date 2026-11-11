@@ -7,7 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart'
-    show mapEquals, setEquals, visibleForTesting;
+    show defaultTargetPlatform, mapEquals, setEquals, visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
@@ -31,8 +31,8 @@ import '../crypto/native_crypto_bindings.dart'
 import 'device_lists.dart';
 import 'community_info_book.dart';
 import 'community_info_service.dart';
-import 'roles/governance.dart' show GovernanceState;
-import 'roles/posting_verdict.dart' show VerifiedRoleSource;
+import 'k1_restore.dart';
+import 'k1_second_copy.dart';
 import '../crypto/sha256.dart';
 import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
@@ -44,7 +44,8 @@ import '../push/push_service.dart';
 import '../push/background_wake_runner.dart';
 import '../push/notice_decisions.dart';
 import '../push/wake_worker_bridge.dart' show WakeNoticeResult;
-import '../storage/history_snapshot.dart' show HistoryConversation;
+import '../storage/history_snapshot.dart'
+    show HistoryConversation, HistoryImportContext, HistorySnapshot;
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart';
@@ -52,6 +53,8 @@ import '../sync/sync_service.dart';
 import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
 import 'api_client.dart';
+import 'roles/governance.dart';
+import 'roles/posting_verdict.dart';
 import 'attachments.dart';
 import 'client_config.dart';
 import 'device_link_v3_models.dart';
@@ -75,6 +78,11 @@ import '../storage/encrypted_database.dart'
         historyTransferIncoming,
         localStorageErrorCode;
 import 'models.dart';
+import 'profile_models.dart';
+import 'profile_service.dart';
+import '../crypto/profile_record_codec.dart'
+    show ProfileRecordException, ProfilePhoto;
+import 'passkeys.dart';
 import 'receipts_state.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
@@ -82,18 +90,23 @@ import 'typing_state.dart';
 import '../l10n/l10n.dart';
 import 'account_recovery.dart';
 import 'k1_backup.dart';
+import 'screen_guard.dart';
 
 export 'account_recovery.dart';
 export 'membership_invite_link.dart';
 export 'membership_models.dart';
+export 'screen_guard.dart';
 
 part 'app_state_membership.dart';
 part 'app_state_reports.dart';
+part 'app_state_passkeys.dart';
 part 'app_state_recovery.dart';
 part 'app_state_k1_backup.dart';
+part 'app_state_k1_restore.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
 part 'app_state_community_info.dart';
+part 'app_state_profiles.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
 typedef SyncServiceFactory = SyncService Function(String baseUrl, String token);
@@ -126,6 +139,8 @@ class SetupProbeResult {
     required this.state,
     this.setupRequired,
     this.instanceName,
+    this.passkeys,
+    this.origin,
   });
 
   const SetupProbeResult.idle() : this(state: SetupProbeState.idle);
@@ -135,6 +150,12 @@ class SetupProbeResult {
   final SetupProbeState state;
   final bool? setupRequired;
   final String? instanceName;
+
+  /// What the server says about passkeys; null when off or not said (B7).
+  final PasskeyServerInfo? passkeys;
+
+  /// The canonical origin that was probed.
+  final String? origin;
 
   bool get isReachable => state == SetupProbeState.reachable;
 
@@ -214,12 +235,16 @@ class Ops {
   /// C3: background community info sends (keys, requests, announcements).
   static const communityInfo = 'community_info';
   static const blocks = 'blocks';
+  static const profile = 'profile';
   static const mute = 'mute';
 
   /// K0: setting the recovery key (R3), and a recovery claim or its cancel
   /// (R4).
   static const recoveryKey = 'recovery_key';
   static const accountRecovery = 'account_recovery';
+
+  /// B7: the passkey list and its changes.
+  static const passkeys = 'passkeys';
 
   /// K2: the link screen of the existing device, and the claim form of the
   /// new one.
@@ -251,7 +276,8 @@ int passFetchedFloor({
 }) =>
     fetchedGeneration == sessionGeneration ? fetchedThrough : 0;
 
-class AppState extends ChangeNotifier implements ConversationAuthority {
+class AppState extends ChangeNotifier
+    implements ConversationAuthority, VerifiedRoleSource {
   AppState({
     required this.apiClientFactory,
     required this.cryptoService,
@@ -263,10 +289,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     this.config = ClientConfig.production,
     ReceiptPreferences? receiptPreferences,
     ReportSeedStore? reportSeedStore,
+    this.passkeyClient = const UnsupportedPasskeyClient(),
+    PasskeyPlatform? passkeyPlatform,
+    List<String>? passkeyAppleDomains,
+    ScreenGuard? screenGuard,
   })  : reportSeedStore = reportSeedStore ?? MemoryReportSeedStore(),
+        passkeyPlatform =
+            passkeyPlatform ?? passkeyPlatformOf(defaultTargetPlatform),
+        passkeyAppleDomains = passkeyAppleDomains ??
+            parsePasskeyDomains(passkeyAppleDomainsDefine),
         pushService = pushService ?? DisabledMobilePushService(),
         receiptPreferences = receiptPreferences ??
-            ReceiptPreferences(MemoryReceiptPreferenceStore()) {
+            ReceiptPreferences(MemoryReceiptPreferenceStore()),
+        screenGuard = screenGuard ?? const PlatformScreenGuard() {
     composerDrafts.onChanged = _draftChanged;
     if (cryptoService case final ConversationAuthorityConsumer consumer) {
       consumer.conversationAuthority = this;
@@ -287,6 +322,28 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// The "send read receipts" switch (W5).
   final ReceiptPreferences receiptPreferences;
+
+  /// The platform's passkey ceremonies (B7); Linux and tests use the
+  /// unsupported one.
+  final PasskeyClient passkeyClient;
+  final PasskeyPlatform passkeyPlatform;
+
+  /// Screen guard service (e.g. Android FLAG_SECURE).
+  final ScreenGuard screenGuard;
+
+  /// Hostnames compiled into the build's associated domains (iOS, macOS).
+  final List<String> passkeyAppleDomains;
+
+  /// Passkeys of the signed-in account, as last read.
+  List<PasskeyRecord> passkeyList = const <PasskeyRecord>[];
+  bool passkeysLoaded = false;
+
+  /// A passkey was added to or removed from this account somewhere else.
+  PasskeyNotice? passkeyNotice;
+
+  /// Passkey row IDs this device changed itself, so its own sync events do
+  /// not raise a notice.
+  final Set<String> _ownPasskeyChanges = <String>{};
 
   /// The approved-device list pins (L1); null without an L1 engine.
   DeviceListPins? _deviceListPins;
@@ -411,6 +468,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   Map<String, HistoryConversation> _copiedHistory = {};
   bool mentionsInMutedChats = true;
 
+  /// Whether Android FLAG_SECURE protects chats against AI-assistant screen
+  /// reading and screenshots. Stored under `screen_guard_chats`. Defaults to true.
+  bool screenGuardChats = true;
+
+  int _activeChatViews = 0;
+
+  /// Whether the screen guard is currently active (setting enabled and at least
+  /// one chat view active).
+  bool get isScreenGuardActive => screenGuardChats && _activeChatViews > 0;
+
+  @visibleForTesting
+  int get activeChatViewsForTesting => _activeChatViews;
+
   /// Which links this device may fetch to build a preview for a message it
   /// sends (B2). Receivers never fetch. Stored under `b2.link_preview`.
   LinkPreviewMode linkPreviewMode = LinkPreviewMode.allowListed;
@@ -420,11 +490,130 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       LinkPreviewService(thumbnailEncoder: encodePngThumbnail);
   final Set<String> _previewPending = <String>{};
   @override
-  String? roleOf(String conversationId, String accountId) =>
-      membersFor(conversationId)
-          .where((m) => m.accountId == accountId)
-          .firstOrNull
-          ?.role;
+  String? roleOf(String conversationId, String accountId) {
+    final memberRole = membersFor(conversationId)
+        .where((m) => m.accountId == accountId)
+        .firstOrNull
+        ?.role;
+    if (memberRole != null) return memberRole;
+    final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conv != null) {
+      if (conv.createdBy != null && conv.createdBy == accountId) return 'owner';
+      if (conv.communityId != null) {
+        final comm =
+            communities.where((c) => c.id == conv.communityId).firstOrNull;
+        if (comm?.createdBy != null && comm!.createdBy == accountId) {
+          return 'owner';
+        }
+      }
+      if (accountId == session?.accountId) {
+        if (conv.currentRole != null) return conv.currentRole;
+        if (conv.communityId != null) {
+          final commRole = communityRole(conv.communityId!);
+          if (commRole != null) return commRole;
+        }
+      }
+    }
+    return null;
+  }
+
+  @visibleForTesting
+  GovernanceState? Function(String conversationId)?
+      governanceOverrideForTesting;
+
+  @override
+  GovernanceState? governanceOf(String conversationId) {
+    if (governanceOverrideForTesting != null) {
+      final override = governanceOverrideForTesting!(conversationId);
+      if (override != null) return override;
+    }
+    try {
+      return cryptoService.governanceOf(conversationId);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Channel? _findChannel(String? channelId) {
+    if (channelId == null) return null;
+    for (final list in channelsByCommunity.values) {
+      for (final ch in list) {
+        if (ch.id == channelId) return ch;
+      }
+    }
+    return null;
+  }
+
+  @override
+  bool serverRestrictsPosting(String conversationId, String? channelId) {
+    final conv = conversations.where((c) => c.id == conversationId).firstOrNull;
+    if (conv != null && conv.postingRestricted) return true;
+    final chId = channelId ?? conv?.channelId;
+    if (chId != null) {
+      final ch = _findChannel(chId);
+      if (ch != null && ch.kind == 'announcement') return true;
+    }
+    return false;
+  }
+
+  /// C2: reports whether the signed-in user may post in [conversationId]
+  /// (and optional [channelId]). When posting is restricted (announcement
+  /// channel or admin-only posting), only owners and admins may post.
+  bool mayPost(String conversationId, {String? channelId}) {
+    final localAccount = session?.accountId;
+    if (localAccount == null) return true;
+    final record = governanceOf(conversationId);
+    final serverRestricted = serverRestrictsPosting(conversationId, channelId);
+    final restricted = (record?.isRestricted(channelId: channelId) ?? false) ||
+        serverRestricted;
+    if (!restricted) return true;
+
+    // Restricted: only owner and admin may post.
+    if (record != null) {
+      return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
+    }
+    final role = roleOf(conversationId, localAccount);
+    return role == 'owner' || role == 'admin';
+  }
+
+  /// The local account's role in [communityId].
+  String? communityRole(String communityId) {
+    final community = communities.where((c) => c.id == communityId).firstOrNull;
+    if (community != null &&
+        community.createdBy != null &&
+        community.createdBy == session?.accountId) {
+      return 'owner';
+    }
+    if (community?.sharedConversationId != null) {
+      final shared = conversations
+          .where((c) => c.id == community!.sharedConversationId)
+          .firstOrNull;
+      if (shared?.currentRole != null) return shared!.currentRole;
+    }
+    for (final c in conversations) {
+      if (c.communityId == communityId && c.currentRole != null) {
+        return c.currentRole;
+      }
+    }
+    return null;
+  }
+
+  /// Reports whether the signed-in user may create channels in [communityId].
+  /// Only owners and admins may create channels (owner decision).
+  bool canCreateChannel(String communityId) {
+    final localAccount = session?.accountId;
+    if (localAccount == null) return false;
+    final community = communities.where((c) => c.id == communityId).firstOrNull;
+    if (community?.sharedConversationId != null) {
+      final record = governanceOf(community!.sharedConversationId!);
+      if (record != null) {
+        return record.rankOf(localAccount) >= BuiltInRole.admin.rank;
+      }
+    }
+    final role = communityRole(communityId);
+    return role == 'owner' || role == 'admin';
+  }
+
   @override
   Set<String> memberAccounts(String conversationId) =>
       membersFor(conversationId).map((m) => m.accountId).toSet();
@@ -456,6 +645,29 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     mentionsInMutedChats = value;
     await localStore.saveSetting('w8.mentions_muted', '$value');
     notifyListeners();
+  }
+
+  Future<void> setScreenGuardChats(bool value) async {
+    screenGuardChats = value;
+    await localStore.saveSetting('screen_guard_chats', '$value');
+    _updateScreenGuard();
+    notifyListeners();
+  }
+
+  void enterChatView() {
+    _activeChatViews++;
+    _updateScreenGuard();
+  }
+
+  void leaveChatView() {
+    if (_activeChatViews > 0) {
+      _activeChatViews--;
+      _updateScreenGuard();
+    }
+  }
+
+  void _updateScreenGuard() {
+    unawaited(screenGuard.setSecure(isScreenGuardActive));
   }
 
   Future<void> setLinkPreviewMode(LinkPreviewMode mode) async {
@@ -554,6 +766,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   bool _k1Running = false;
   bool _k1RerunRequested = false;
   Timer? _k1Timer;
+
+  /// Where the second copy goes (K1-5); tests replace it.
+  @visibleForTesting
+  K1SecondCopyWriter k1SecondCopyWriter = const FileK1SecondCopyWriter();
 
   /// The clock K1 schedules read; tests move it.
   @visibleForTesting
@@ -670,6 +886,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
 
   /// Server-recorded membership per conversation. Populated on demand by the
   /// details screen; never presented as the MLS roster.
+  /// W11: encrypted display names and photos. Null in a build without the
+  /// native library, and until a session has started.
+  ProfileService? profiles;
+  Timer? _profileTimer;
+
+  /// Whether `conversations` came from the server this session. Before that
+  /// it may be empty only because nothing was read yet.
+  bool _conversationsFromServer = false;
+
   Map<String, List<ConversationMember>> membersByConversation =
       <String, List<ConversationMember>>{};
   List<BlockedAccount> blockedAccounts = <BlockedAccount>[];
@@ -1540,6 +1765,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         state: SetupProbeState.reachable,
         setupRequired: required,
         instanceName: name is String ? name : null,
+        passkeys: PasskeyServerInfo.fromStatus(status),
+        origin: origin,
       );
     } on HandshakeException {
       return const SetupProbeResult(state: SetupProbeState.tlsFailure);
@@ -1696,6 +1923,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
           await localStore.loadSetting('b2.link_preview'));
+      screenGuardChats =
+          await localStore.loadSetting('screen_guard_chats') != 'false';
+      _updateScreenGuard();
       _armMuteTimer();
       final copied = await localStore.loadHistoryNamespace();
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
@@ -1914,7 +2144,18 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         deviceId: deviceId,
         deviceSecret: deviceSecret,
       );
-      final sameIdentity = localSession!.accountId != null &&
+      await _finishDeviceSignIn(localSession!, hadMlsState);
+    });
+  }
+
+  /// The steps after a sign-in on an enrolled device, shared by the password
+  /// and the passkey paths: [session] is the server's answer, [localSession]
+  /// the device identity stored before it, [hadMlsState] whether MLS state
+  /// existed before the answer was saved.
+  Future<void> _finishDeviceSignIn(
+      Session localSession, bool hadMlsState) async {
+    {
+      final sameIdentity = localSession.accountId != null &&
           localSession.baseUrl == session!.baseUrl &&
           localSession.accountId == session!.accountId &&
           localSession.deviceId == session!.deviceId;
@@ -1933,7 +2174,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         await _refreshDevices();
         await _ensureKeyPackageSupply();
       });
-    });
+    }
   }
 
   /// The network steps after a sign-in: [steps] runs once the session is
@@ -2140,20 +2381,25 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final List<LocalConversationPref> prefs;
     final String? mentionsMuted;
     final String? previewMode;
+    final String? screenGuardPref;
     try {
       list = await client.conversations(current.token);
       prefs = await localStore.loadConversationPrefs();
       mentionsMuted = await localStore.loadSetting('w8.mentions_muted');
       previewMode = await localStore.loadSetting('b2.link_preview');
+      screenGuardPref = await localStore.loadSetting('screen_guard_chats');
     } catch (_) {
       if (!_refreshOwned(current, generation)) return;
       rethrow;
     }
     if (!_refreshOwned(current, generation)) return;
     conversations = list;
+    _conversationsFromServer = true;
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
     linkPreviewMode = linkPreviewModeFromName(previewMode);
+    screenGuardChats = screenGuardPref != 'false';
+    _updateScreenGuard();
     await _loadRequestState(grandfather: false);
     if (!_refreshOwned(current, generation)) return;
     // The server's list is the truth: a conversation no longer in it (an
@@ -2350,10 +2596,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (current == null || client == null) {
         return;
       }
+      // W11: a new group's name goes into its encrypted profile, not into
+      // the server's plaintext `title` column.
+      final groupName =
+          kind == 'group' && profiles != null ? title?.trim() : null;
+      final encryptedName = groupName != null && groupName.isNotEmpty;
       created = await client.createConversationDetailed(
         current.token,
         kind: kind,
-        title: title,
+        title: encryptedName ? null : title,
         communityId: communityId,
         channelId: channelId,
         memberAccountIds: memberAccountIds,
@@ -2379,6 +2630,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         ...conversations.where((item) => item.id != conversation.id),
       ];
       if (conversation.isDm) await _acceptConversation(conversation);
+      if (encryptedName && conversation.isGroup) {
+        // Not awaited: the name appears when the upload is accepted, and a
+        // key message that cannot be queued yet is retried by the service.
+        unawaited(profiles!
+            .saveGroupProfile(conversation.id, name: groupName)
+            .catchError((Object _) {}));
+      }
       selectedConversationId = conversation.id;
       messagesByConversation.putIfAbsent(
           conversation.id, () => <ReceivedMessageEnvelope>[]);
@@ -2459,6 +2717,15 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       created = await client.createCommunity(current.token, name);
+      if (created!.createdBy == null) {
+        created = Community(
+          id: created!.id,
+          name: created!.name,
+          createdBy: current.accountId,
+          createdAt: created!.createdAt,
+          sharedConversationId: created!.sharedConversationId,
+        );
+      }
       communities = <Community>[created!, ...communities];
       // A community with the C0 layout starts with its shared group, which
       // this device creates now; channels in it need no group of their own.
@@ -2493,6 +2760,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       final client = api;
       if (current == null || client == null) {
         return;
+      }
+      if (!canCreateChannel(communityId)) {
+        throw ApiException(403,
+            '{"error":"forbidden","message":"Only admins can create channels"}');
       }
       final sharedLayout = communities
               .where((community) => community.id == communityId)
@@ -2717,6 +2988,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     conversations = conversations
         .where((conversation) => conversation.id != conversationId)
         .toList(growable: false);
+    _profileConversationLeft(conversationId);
     // Sends held for a removal there (D68) end: the conversation is gone.
     if (_removalHolds.remove(conversationId) != null) {
       await _saveRemovalHolds();
@@ -3078,7 +3350,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       return;
     }
     await _runScoped(Ops.blocks, () async {
+      final previous = blockedAccounts.map((block) => block.accountId).toSet();
       blockedAccounts = await client.listBlocks(current.token);
+      for (final block in blockedAccounts) {
+        if (!previous.contains(block.accountId)) {
+          _profileAccountBlocked(block.accountId);
+        }
+      }
     });
     blocksLoaded = true;
     notifyListeners();
@@ -3096,6 +3374,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         block,
         ...blockedAccounts.where((item) => item.accountId != accountId),
       ];
+      _profileAccountBlocked(accountId);
       // Blocking hides the peer's future messages server-side, so the
       // conversation list and unread counts change immediately.
       await _refreshConversations(notify: false);
@@ -3301,6 +3580,30 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       );
       conversations =
           conversations.map((c) => c.id == updated.id ? updated : c).toList();
+      notifyListeners();
+    });
+  }
+
+  Future<void> setPostingPolicy(String conversationId, String policy) async {
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) {
+        return;
+      }
+      final updated = await client.setPostingPolicy(
+        current.token,
+        conversationId,
+        policy,
+      );
+      conversations = [
+        for (final c in conversations)
+          if (c.id == updated.id)
+            c.copyWith(postingRestricted: updated.postingRestricted)
+          else
+            c,
+      ];
+      notifyListeners();
     });
   }
 
@@ -3791,6 +4094,11 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final client = api;
     if (service == null || _mlsCrypto == null) return false;
     if (current == null || client == null) return false;
+    if (!mayPost(conversationId, channelId: channelId)) {
+      _opErrors[Ops.attachment] = 'Only admins can post';
+      notifyListeners();
+      return false;
+    }
     final ownerGeneration = _sessionGeneration;
     _busyOps.add(Ops.attachment);
     _opErrors.remove(Ops.attachment);
@@ -3977,6 +4285,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final route = _channelRouteFor(
         conversationId, channelId ?? _selectedChannels[conversationId]);
     if (route == null && _isSharedGroup(conversationId)) return false;
+    final routeChannelId = channelId ?? _selectedChannels[conversationId];
+    if (restrictedPostTypes.contains(type) &&
+        !mayPost(conversationId, channelId: routeChannelId)) {
+      _opErrors[Ops.send] = 'Only admins can post';
+      notifyListeners();
+      return false;
+    }
     // Every send takes its place in its conversation's line, and the next
     // one waits until this one is queued, refused or given up: a send held
     // inside the session queue cannot be overtaken by a later one.
@@ -4298,6 +4613,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         return;
       }
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // W11: this account's profile key (and the group's, once a commit has
+      // added devices) rides along with a post.
+      final sent = mls == null
+          ? body
+          : await _withProfileSidecars(conversation.id, type, body);
+      final carriesKeys = !identical(sent, body);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final MessageEnvelope encrypted;
       // The sender's own expiry goes inside the encrypted payload (TASK-106)
       // when the conversation has a disappearing timer and the service can
@@ -4314,7 +4636,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           senderExpiry != null &&
           expiringService is ExpiringPayloadCryptoService) {
         encrypted = await expiringService.encryptExpiringPayload(
-            conversation.id, type, body,
+            conversation.id, type, sent,
             expiresAt: senderExpiry,
             channelId: route?.channelId,
             layoutGeneration: route?.generation,
@@ -4326,13 +4648,13 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           throw StateError('this crypto service cannot post into a channel');
         }
         encrypted = await service.encryptChannelPayload(
-            conversation.id, type, body,
+            conversation.id, type, sent,
             channelId: route.channelId,
             layoutGeneration: route.generation,
             attachmentRefs: attachmentRefs,
             draftText: draftText);
       } else if (mls != null) {
-        encrypted = await mls.encryptPayload(conversation.id, type, body,
+        encrypted = await mls.encryptPayload(conversation.id, type, sent,
             attachmentRefs: attachmentRefs, draftText: draftText);
       } else if (type == AppPayloadType.text) {
         encrypted = await cryptoService.encrypt(
@@ -4343,6 +4665,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       await localStore.enqueueEnvelope(encrypted, draftText: draftText);
       queued = true;
+      if (carriesKeys) {
+        unawaited(
+            profiles?.sidecarsSent(conversation.id).catchError((Object _) {}));
+      }
       if (mls != null) await refreshHistory(conversation.id);
       final record = (await localStore.pendingEnvelopeRecords())
           .where((item) =>
@@ -4858,6 +5184,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(refreshCommunities());
     unawaited(refreshBlocks());
     unawaited(refreshReadReceiptsSetting());
+    unawaited(_startProfiles(current));
     unawaited(_startPush());
   }
 
@@ -4931,14 +5258,35 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     }
   }
 
-  Future<void> _startPush() async {
+  bool _pushLeaving = false;
+  int _pushGeneration = 0;
+  final Set<Future<bool>> _pushRegistrations = <Future<bool>>{};
+  final Set<Future<void>> _pushStarts = <Future<void>>{};
+  bool _pushTeardownFailed = false;
+
+  bool _pushOwnerActive(Session current, int generation, int pushGeneration) =>
+      !_pushLeaving &&
+      pushGeneration == _pushGeneration &&
+      _syncOwnerActive(current, generation);
+
+  Future<void> _startPush() {
+    if (_pushLeaving || _disposed) return Future.value();
+    final work = _startPushRun();
+    _pushStarts.add(work);
+    unawaited(work.then((_) => _pushStarts.remove(work)));
+    return work;
+  }
+
+  Future<void> _startPushRun() async {
+    if (_pushLeaving || _disposed) return;
+    final pushGeneration = _pushGeneration;
     final current = session;
     final client = api;
     if (current == null || client == null) return;
     final ownerGeneration = _sessionGeneration;
     try {
       final config = await client.pushConfig(current.token);
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       final vapid = config['vapid_public_key'] as String? ?? '';
       final providers = (config['providers'] as List? ?? const <Object?>[])
           .whereType<String>()
@@ -4951,39 +5299,56 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       pushConfigured = true;
       pushProviders = providers;
       notificationPermission = await pushService.notificationPermission();
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       _setPushState(PushState.registering);
       _pushInstance = '${current.accountId}:${current.deviceId}';
       phoneNoticesAllowed = false;
       final installer = phoneNoticeInstaller;
       if (installer != null) {
-        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
         // The worker must be installed, and capture on, before the server is
         // told this device decides mention notices locally.
         var allowed = false;
         try {
           allowed = await installer();
         } catch (_) {}
-        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+          // Installation can finish after a timed-out handoff. The callback
+          // captures this slot, so it cannot uninstall a newer slot's worker.
+          await beforeLocalSessionClear?.call();
+          return;
+        }
         phoneNoticesAllowed = allowed;
         _applyNoticeCapture();
       }
       await _pushSubscription?.cancel();
       _pushSubscription = pushService.events.listen(_handlePushEvent);
       final wakeGeneration = await pushService.pendingWakeGeneration();
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       if (wakeGeneration > 0) {
         _pendingWakeGeneration = max(_pendingWakeGeneration, wakeGeneration);
         unawaited(_catchUpSyncEvents());
       }
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
       await _consumePendingEndpoint(current, client, ownerGeneration);
-      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) return;
+      final instance = _pushInstance!;
       await pushService.register(
-          instance: _pushInstance!, vapid: vapid, providers: providers);
+          instance: instance, vapid: vapid, providers: providers);
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+        try {
+          await pushService
+              .unregister(instance)
+              .timeout(const Duration(seconds: 5));
+        } catch (_) {
+          _pushTeardownFailed = true;
+        }
+        return;
+      }
       notifyListeners();
     } catch (_) {
       // Push is optional; realtime and foreground catch-up remain available.
-      if (pushState == PushState.registering) {
+      if (!_disposed && !_pushLeaving && pushState == PushState.registering) {
         _setPushState(PushState.registrationFailed);
       }
     }
@@ -5053,6 +5418,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   Future<void> _handlePushEvent(PushEvent event) async {
+    if (_pushLeaving || _disposed) return;
     final current = session;
     final client = api;
     if (current == null || client == null) return;
@@ -5068,9 +5434,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         event.instance == _pushInstance) {
       // A UnifiedPush failure means no distributor answered; anything else
       // is a provider refusal. Neither carries platform error text.
-      _setPushState(event.provider == 'webpush'
-          ? PushState.noDistributor
-          : PushState.registrationFailed);
+      _setPushState(
+          event.provider == 'webpush' || event.provider == 'unifiedpush'
+              ? PushState.noDistributor
+              : PushState.registrationFailed);
     } else if (event is PushUnregisteredEvent &&
         event.instance == _pushInstance) {
       final id = _pushSubscriptionId;
@@ -5089,29 +5456,55 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// acknowledges its native record. A failure leaves the record for the
   /// next startup or resume. Registering twice (live and pending) is safe.
   Future<bool> _registerEndpoint(Session current, ApiClient client,
-      int ownerGeneration, PushEndpointEvent event) async {
+      int ownerGeneration, PushEndpointEvent event) {
+    if (_pushLeaving || _disposed) return Future.value(false);
+    final work = _registerEndpointRun(
+        current, client, ownerGeneration, _pushGeneration, event);
+    _pushRegistrations.add(work);
+    unawaited(work.then((_) => _pushRegistrations.remove(work)));
+    return work;
+  }
+
+  Future<bool> _registerEndpointRun(Session current, ApiClient client,
+      int ownerGeneration, int pushGeneration, PushEndpointEvent event) async {
     try {
       // Every rotation carries the mode again: the server resets a
       // subscription registered without it back to the generic mode.
       final mode = phoneNoticesAllowed ? 'local_decrypt_v1' : null;
-      final subscriptionId = event.provider == 'webpush'
-          ? await client.registerWebPush(current.token,
-              endpoint: event.endpoint,
-              publicKey: event.publicKey,
-              authSecret: event.authSecret,
-              notificationMode: mode)
-          : await client.registerNativePush(current.token,
-              provider: event.provider,
-              deviceToken: event.endpoint,
-              notificationMode: mode);
-      if (!_syncOwnerActive(current, ownerGeneration)) return false;
+      final subscriptionId =
+          (event.provider == 'webpush' || event.provider == 'unifiedpush')
+              ? await client.registerWebPush(current.token,
+                  provider: event.provider,
+                  endpoint: event.endpoint,
+                  publicKey: event.publicKey,
+                  authSecret: event.authSecret,
+                  notificationMode: mode)
+              : await client.registerNativePush(current.token,
+                  provider: event.provider,
+                  deviceToken: event.endpoint,
+                  notificationMode: mode);
+      if (!_pushOwnerActive(current, ownerGeneration, pushGeneration)) {
+        // A server registration can commit after teardown started. Use a
+        // fresh transport when the old runtime has already closed its own.
+        final cleanup = apiClientFactory(current.baseUrl);
+        try {
+          await cleanup
+              .disablePush(current.token, subscriptionId)
+              .timeout(const Duration(seconds: 5));
+        } finally {
+          cleanup.close();
+        }
+        return true;
+      }
       _pushSubscriptionId = subscriptionId;
       pushProvider = event.provider;
       _setPushState(PushState.registered);
       notifyListeners();
     } catch (_) {
       // Re-registration on the next startup retries endpoint delivery.
-      _setPushState(PushState.registrationFailed);
+      if (!_pushLeaving && !_disposed) {
+        _setPushState(PushState.registrationFailed);
+      }
       return false;
     }
     if (event.generation > 0) {
@@ -5240,6 +5633,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           await localStore.loadSetting('w8.mentions_muted') != 'false';
       linkPreviewMode = linkPreviewModeFromName(
           await localStore.loadSetting('b2.link_preview'));
+      screenGuardChats =
+          await localStore.loadSetting('screen_guard_chats') != 'false';
+      _updateScreenGuard();
       final cached = await localStore.loadSnapshot();
       if (cached != null) {
         conversations = cached.conversations;
@@ -5525,17 +5921,32 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   }
 
   Future<void> _stopPush(Session? current, ApiClient? client) async {
+    await _stopPushStrict(current, client, attempts: 1);
+  }
+
+  /// Takes the server subscription and the native registration down, trying
+  /// each [attempts] times. Returns whether both are gone (true too when
+  /// nothing was registered). The local push state is cleared either way.
+  Future<bool> _stopPushStrict(Session? current, ApiClient? client,
+      {required int attempts}) async {
+    var gone = true;
+    Future<bool> attempt(Future<void> Function() action) async {
+      for (var i = 0; i < attempts; i++) {
+        try {
+          await action().timeout(const Duration(seconds: 5));
+          return true;
+        } catch (_) {}
+      }
+      return false;
+    }
+
     final id = _pushSubscriptionId;
     final instance = _pushInstance;
     if (id != null && current != null && client != null) {
-      try {
-        await client.disablePush(current.token, id);
-      } catch (_) {}
+      gone = await attempt(() => client.disablePush(current.token, id));
     }
     if (instance != null) {
-      try {
-        await pushService.unregister(instance);
-      } catch (_) {}
+      gone = await attempt(() => pushService.unregister(instance)) && gone;
     }
     await _pushSubscription?.cancel();
     _pushSubscription = null;
@@ -5546,6 +5957,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     pushProviders = const <String>[];
     pushState = PushState.unknown;
     pushTestResult = null;
+    return gone;
   }
 
   Future<void> _catchUpSyncEvents() async {
@@ -5647,15 +6059,46 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           return;
         }
         await wake?.check();
-        final events = await client.syncEvents(
+        final pageStartCursor = pageCursor;
+        final syncPage = await client.syncEventsPage(
           current.token,
           after: pageCursor,
           limit: pageSize,
         );
+        final events = syncPage.events;
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) {
           return;
         }
-        if (events.isEmpty) break;
+        // Moves the persisted cursor to the scan position the server
+        // reported (TASK-209, D92): the hidden run behind the last event is
+        // crossed once, not on every poll. Only once the page is fully
+        // applied: the stored cursor must equal the page's last event (or
+        // the cursor the page started at, when it is empty), so nothing a
+        // failed or held-back event left behind is passed. Never moves back.
+        Future<void> advanceToScan(int appliedThrough) async {
+          final scanned = syncPage.scannedThrough;
+          if (scanned == null) return;
+          final stored = await localStore.loadSyncCursor();
+          if (stored != appliedThrough || scanned <= stored) return;
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          wake?.checkCanCommit();
+          await localStore.saveSyncCursor(scanned);
+          if (_syncFetchedGeneration == ownerGeneration) {
+            _syncFetchedThrough = max(_syncFetchedThrough, scanned);
+          }
+        }
+
+        if (events.isEmpty) {
+          await advanceToScan(pageStartCursor);
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
+          if (!syncPage.truncated) break;
+          pageCursor = await localStore.loadSyncCursor();
+          if (pageCursor <= pageStartCursor) {
+            developer.log('sync_scan_did_not_advance', name: 'veritra.sync');
+            break;
+          }
+          continue;
+        }
         var returnedCursor = pageCursor;
         for (final event in events) {
           if (event.id <= returnedCursor) {
@@ -5793,7 +6236,19 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
           rethrow;
         }
         await _publishReceived(received, current, ownerGeneration);
+        await advanceToScan(events.last.id);
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         pageCursor = await localStore.loadSyncCursor();
+        if (syncPage.truncated) {
+          // The server's scan budget ended this page early, so a short page
+          // is not the end. The cursor must have moved forward, or the same
+          // page would be asked for again.
+          if (pageCursor <= pageStartCursor) {
+            developer.log('sync_scan_did_not_advance', name: 'veritra.sync');
+            break;
+          }
+          continue;
+        }
         if (events.length < pageSize) break;
       }
       // Every event up to the end of the stream is applied.
@@ -6440,6 +6895,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
   /// drained.
   void _enterDamagedStorageRecovery() {
     _sessionGeneration++;
+    _stopProfiles();
     _removalHolds.clear();
     _removalHoldsLoaded = null;
     _removalHoldsSettled();
@@ -6544,6 +7000,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     final receipts = <String>{};
     for (final event in events) {
       final type = event.type;
+      _profileSyncEvent(event);
       if (_isMemberLinkedNotice(type)) {
         // A co-member linked a device and this device may coordinate the
         // group change: run the membership pass now instead of waiting for
@@ -6573,6 +7030,20 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
         } else if (type.startsWith('membership.')) {
           membersByConversation = {};
         }
+        if (type == 'conversation.posting_policy.updated' &&
+            event.payload is Map) {
+          try {
+            final updated = Conversation.fromJson(
+                Map<String, Object?>.from(event.payload as Map));
+            conversations = <Conversation>[
+              for (final c in conversations)
+                if (c.id == updated.id)
+                  c.copyWith(postingRestricted: updated.postingRestricted)
+                else
+                  c,
+            ];
+          } catch (_) {}
+        }
         conversationList = true;
       } else if (type.startsWith('reaction.') ||
           type == 'read_receipt.updated') {
@@ -6597,6 +7068,9 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     if (recoveryStatus) await refreshRecoveryKeyStatus();
     if (conversationList) {
       await _refreshConversations(notify: false, persist: false);
+      // Projection refreshes are batched: reload invalidated rosters once
+      // after the batch, so profile rotation need not wait for the daily check.
+      await _profileLoadRosters();
     }
     if (selectedMessages) {
       await refreshSelectedMessages(notify: false, persist: false);
@@ -6935,6 +7409,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       _history.addAll(histories);
       notifyListeners();
       unawaited(_scheduleExpiryPurge());
+      // A key may have come with these messages (W11).
+      unawaited(profiles?.onKeysMayHaveArrived().catchError((Object _) {}));
       onMessagesPublished?.call(List<ReceivedMessageEnvelope>.of(received));
     }
     received.clear();
@@ -7009,6 +7485,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // (with rk_pub) back into a store this is about to wipe.
     _k1State = null;
     _stopK1Backups();
+    _stopProfiles();
     _syncStartFailed = null;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
@@ -7093,6 +7570,7 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     // backup state survives in memory or is written back after a wipe.
     _k1State = null;
     _stopK1Backups();
+    _conversationsFromServer = false;
     _keyPackagesOwed = true;
     _keyPackageRetryFailures = 0;
     _keyPackageRetryAt = null;
@@ -7100,6 +7578,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
       capture.noticeCaptureEnabled = false;
     }
     _cancelDraftTimers();
+    _activeChatViews = 0;
+    _updateScreenGuard();
     conversations = <Conversation>[];
     conversationsLoaded = false;
     communitiesLoaded = false;
@@ -7109,6 +7589,10 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     devices = <Device>[];
     recoveryKeyStatus = null;
     recoveryFollowUp = null;
+    passkeyList = const <PasskeyRecord>[];
+    passkeysLoaded = false;
+    passkeyNotice = null;
+    _ownPasskeyChanges.clear();
     _passwordLeakDay = null;
     _recoveredDevice = false;
     _recoveredMarkGeneration = -1;
@@ -8940,14 +9424,78 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     return next;
   }
 
+  // ---- B7 account switcher (docs/designs/B7-passkeys.md, S5) ----
+
+  /// Steps 2 and 5 of a switch: writes pending drafts and takes this
+  /// device's push registration down (the server subscription and the native
+  /// registration, each tried up to three times). Returns false when push
+  /// could not be taken down, so the caller can ask before leaving.
+  Future<bool> prepareToLeave() async {
+    var pushGone = true;
+    await _enqueueSessionTransition(() async {
+      await _flushDraftsBeforeSessionEnd();
+      _pushLeaving = true;
+      _pushGeneration++;
+      // Pending registrations may already have committed server-side.
+      var drained = true;
+      try {
+        await Future.wait(_pushStarts.toList())
+            .timeout(const Duration(seconds: 5));
+        drained = (await Future.wait(_pushRegistrations.toList())
+                .timeout(const Duration(seconds: 5)))
+            .every((gone) => gone);
+      } catch (_) {
+        drained = false;
+      }
+      pushGone = await _stopPushStrict(session, api, attempts: 3) &&
+          drained &&
+          !_pushTeardownFailed;
+    });
+    return pushGone;
+  }
+
+  /// The user kept this account open after push could not be taken down:
+  /// register again, as a resume would.
+  void resumeAfterCancelledSwitch() {
+    _pushLeaving = false;
+    _pushTeardownFailed = false;
+    // Let old registrations remove their late subscriptions before a new
+    // registration can reuse the same server-side subscription identity.
+    unawaited(Future.wait<void>([
+      ..._pushStarts,
+      for (final pending in _pushRegistrations) pending.then<void>((_) {}),
+    ]).then((_) {
+      if (session != null && !_disposed && !_pushLeaving) {
+        unawaited(_startPush());
+      }
+    }));
+  }
+
+  /// Steps 4 and 6: stops sync, sockets and timers, advances the session
+  /// generation (the I30 fences then drop any late result), closes the
+  /// crypto handles, and waits for the work that cannot be cancelled.
+  /// The AppState is unusable afterwards.
+  Future<void> closeForSwitch() async {
+    dispose();
+    await _switchResourceClose;
+    // A request that never answers must not hold the switch: the client was
+    // closed above, and the generation fence drops anything that arrives.
+    await backgroundWorkIdle.timeout(const Duration(seconds: 5),
+        onTimeout: () {});
+  }
+
+  Future<void>? _switchResourceClose;
+
   @override
   void dispose() {
     _disposed = true;
+    unawaited(screenGuard.setSecure(false));
     _recoveryPollTimer?.cancel();
     _recoveryPollTimer = null;
     _stopK1Backups();
     _orphanSweeper?.stop();
     _orphanSweeper = null;
+    _stopProfiles();
     _resetDeviceLinkState();
     _receiptsRefreshTimer?.cancel();
     typing.dispose();
@@ -8972,7 +9520,8 @@ class AppState extends ChangeNotifier implements ConversationAuthority {
     unawaited(sync?.dispose());
     unawaited(_pushSubscription?.cancel());
     pushService.dispose();
-    unawaited(_mlsCrypto?.dispose());
+    _switchResourceClose = _mlsCrypto?.dispose();
+    unawaited(_switchResourceClose);
     unawaited(_callSignals.close());
     api?.close();
     super.dispose();

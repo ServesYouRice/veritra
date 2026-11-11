@@ -18,7 +18,7 @@ func (s *Store) PushTargetsForAccount(ctx context.Context, accountID, excludeDev
 		JOIN accounts a ON a.id = ps.account_id
 		LEFT JOIN devices d ON d.id = ps.device_id AND d.account_id = ps.account_id
 		WHERE ps.account_id = ? AND a.status = 'active' AND a.deleted_at IS NULL
-		  AND ps.provider IN ('webpush', 'fcm', 'apns') AND ps.disabled_at IS NULL
+		  AND ps.provider IN ('webpush', 'fcm', 'apns', 'unifiedpush') AND ps.disabled_at IS NULL
 		  AND (ps.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))
 		  AND (? = '' OR ps.device_id IS NULL OR ps.device_id <> ?)
 		ORDER BY ps.id

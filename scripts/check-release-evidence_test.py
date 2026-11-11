@@ -681,6 +681,32 @@ def signature_vector_cases() -> None:
             broken = sig[:position] + bytes([sig[position] ^ 0x01]) + sig[position + 1:]
             assert not checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE, broken), f"{name}: a broken signature verifies"
         assert not checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE, sig + b"\0"), f"{name}: trailing byte verifies"
+        if key.startswith("p"):
+            # DER integers are signed and minimally encoded. Removing a
+            # required sign byte preserves the unsigned magnitude but makes
+            # the signature invalid; adding padding must not verify either.
+            (sequence,) = checker.der_items(sig)
+            parts = checker.der_items(sig, sequence[1], sequence[2])
+            integers = [sig[part[1] : part[2]] for part in parts]
+            for index, integer in enumerate(integers):
+                malformed = [b"", b"\0" + integer]
+                if integer[0] == 0:
+                    malformed.append(integer[1:])
+                for replacement in malformed:
+                    values = integers.copy()
+                    values[index] = replacement
+                    broken = der(0x30, b"".join(der(0x02, value) for value in values))
+                    assert not checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE, broken), f"{name}: invalid DER integer {index} verifies"
+            # Non-minimal DER length encodings preserve every signed value.
+            body = sig[sequence[1] : sequence[2]]
+            malformed_lengths = [b"\x30\x81" + bytes([len(body)]) + body,
+                                 b"\x30\x82\0" + bytes([len(body)]) + body]
+            for index, integer in enumerate(integers):
+                values = [der(0x02, value) for value in integers]
+                values[index] = b"\x02\x81" + bytes([len(integer)]) + integer
+                malformed_lengths.append(der(0x30, b"".join(values)))
+            for broken in malformed_lengths:
+                assert not checker.apk_signature_verifies(algorithm, spki, KAT_MESSAGE, broken), f"{name}: non-minimal DER length verifies"
     # A key of the wrong kind for the algorithm never verifies.
     rsa_spki, ec_spki = bytes.fromhex("".join(KAT_KEYS["rsa"])), bytes.fromhex("".join(KAT_KEYS["p256"]))
     rsa_vector = next(bytes.fromhex("".join(sig)) for alg, key, sig in KAT_SIGNATURES if alg == 0x0103)

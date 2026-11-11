@@ -38,6 +38,11 @@ public final class WakeRulesTest {
         catch (IllegalArgumentException expected) { checks++; }
         // Endpoint record: a newer rotation survives an older acknowledgement.
         check(EndpointRules.nextGeneration(0) == 1 && EndpointRules.nextGeneration(4) == 5);
+        // No in-memory provider list exists on a cold distributor callback.
+        check("unifiedpush".equals(EndpointRules.distributorProvider("acct:dev", "acct:dev", "unifiedpush")));
+        check("webpush".equals(EndpointRules.distributorProvider("acct:dev", "acct:dev", "webpush")));
+        check("webpush".equals(EndpointRules.distributorProvider("acct:dev", null, null)));
+        check("webpush".equals(EndpointRules.distributorProvider("other", "acct:dev", "unifiedpush")));
         CommitStore endpoint = new CommitStore(); endpoint.memory = 3; endpoint.disk = 3;
         endpoint.memory = endpoint.disk = EndpointRules.nextGeneration(3); // rotation while handling 3
         check(!WakeRules.acknowledge(endpoint, 3)); check(endpoint.disk == 4);
@@ -83,6 +88,18 @@ public final class WakeRulesTest {
         check(WakeRules.claimNotice(notices, 101, 102, "demo:new") == WakeRules.NoticeClaim.FULL);
         check(notices.containsKey("demo:first")); // Fresh decisions never evicted.
         check(WakeRules.claimNotice(notices, 102, WakeRules.NOTICE_RETENTION_MS + 1000, "demo:new") == WakeRules.NoticeClaim.NEW);
+        // Screen rules: FLAG_SECURE mask toggling and inspection.
+        check(ScreenRules.FLAG_SECURE == 0x00002000);
+        int baseFlags = 0x00000004; // e.g. some other window flag
+        int secureFlags = ScreenRules.applyFlags(baseFlags, true);
+        check(ScreenRules.isSecure(secureFlags));
+        check(secureFlags == (baseFlags | ScreenRules.FLAG_SECURE));
+        int clearedFlags = ScreenRules.applyFlags(secureFlags, false);
+        check(!ScreenRules.isSecure(clearedFlags));
+        check(clearedFlags == baseFlags);
+        // Repeated apply keeps idempotency
+        check(ScreenRules.applyFlags(secureFlags, true) == secureFlags);
+        check(ScreenRules.applyFlags(clearedFlags, false) == clearedFlags);
         System.out.println("WakeRules: " + checks + " checks passed");
     }
 }

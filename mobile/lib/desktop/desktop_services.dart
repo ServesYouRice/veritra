@@ -6,24 +6,30 @@ import 'package:flutter/widgets.dart';
 import '../core/app_state.dart';
 import '../l10n/l10n.dart';
 import '../ui/about.dart';
+import '../storage/profile_scope.dart';
 import 'desktop_shell.dart';
 import 'message_notifications.dart';
+import 'update_service.dart';
 
 /// The desktop shell features (W3, W4) wired together: tray, closing to the
-/// tray, one window, and notifications for messages that arrive while the
-/// window is not in front. Absent on Android and iOS.
+/// tray, one window, notifications, and update checks (W12). Absent on Android
+/// and iOS.
 class DesktopServices {
   DesktopServices({
     required this.state,
     required this.shell,
     required this.notifier,
     required this.settings,
+    required this.updateSettings,
+    required this.updateService,
   });
 
   final AppState state;
   final DesktopShell shell;
   final DesktopNotifier notifier;
   final NotificationSettings settings;
+  final UpdateSettings updateSettings;
+  final UpdateService updateService;
   late final MessageNotifier _messages = MessageNotifier(
     state: state,
     shell: shell,
@@ -35,7 +41,8 @@ class DesktopServices {
   /// Starts the real shell on Windows, Linux and macOS. Returns null on
   /// other platforms and when the shell cannot start, so the app still runs
   /// as a normal window.
-  static Future<DesktopServices?> startIfSupported(AppState state) async {
+  static Future<DesktopServices?> startIfSupported(AppState state,
+      {ProfileScope scope = const ProfileScope()}) async {
     if (!desktopShellSupported) return null;
     try {
       final shell = PluginDesktopShell();
@@ -45,8 +52,19 @@ class DesktopServices {
         quitLabel: strings.trayQuit,
         tooltip: veritraProductName,
       );
-      final settings = NotificationSettings(SecureNotificationSettingsStore());
+      final settings =
+          NotificationSettings(SecureNotificationSettingsStore(scope: scope));
       unawaited(settings.load());
+      final updateSettings =
+          UpdateSettings(SecureUpdateSettingsStore(scope: scope));
+      await updateSettings.load();
+      final updateService = UpdateService(
+        settings: updateSettings,
+        currentBuild: veritraBuildNumber,
+      );
+      if (updateSettings.autoCheckEnabled) {
+        unawaited(updateService.checkForUpdatesIfEnabled());
+      }
       return DesktopServices(
         state: state,
         shell: shell,
@@ -55,6 +73,8 @@ class DesktopServices {
           onClick: () => unawaited(shell.showWindow()),
         ),
         settings: settings,
+        updateSettings: updateSettings,
+        updateService: updateService,
       );
     } catch (_) {
       return null;
@@ -63,9 +83,13 @@ class DesktopServices {
 
   void attach() => _messages.attach();
 
-  void detach() {
+  Future<void> detach() async {
     _messages.detach();
-    unawaited(shell.dispose());
+    if (notifier case final PluginDesktopNotifier plugin) await plugin.clear();
+    await shell.dispose();
+    settings.dispose();
+    updateSettings.dispose();
+    updateService.dispose();
   }
 }
 
@@ -84,9 +108,16 @@ AppLocalizations deviceL10n() {
   return englishL10n;
 }
 
-/// Offers the notification settings to the settings screen when running on
-/// desktop.
+/// Offers the notification settings and update service to the settings screen
+/// when running on desktop.
 Widget wrapDesktopScope(DesktopServices? desktop, Widget child) {
   if (desktop == null) return child;
-  return NotificationSettingsScope(settings: desktop.settings, child: child);
+  return NotificationSettingsScope(
+    settings: desktop.settings,
+    child: UpdateSettingsScope(
+      settings: desktop.updateSettings,
+      service: desktop.updateService,
+      child: child,
+    ),
+  );
 }

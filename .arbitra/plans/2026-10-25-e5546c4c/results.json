@@ -128,11 +128,11 @@
       "title": "Endpoint rotations are discarded when Flutter is not listening",
       "severity": "high",
       "task": "TASK-012",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/push_state_test.dart (pending record before subscriber; failed registration; stale instance; newer rotation), mobile/test/push_service_test.dart (pendingEndpoint/acknowledgeEndpoint), mobile/android/wake-tests WakeRulesTest (EndpointRules)",
+      "proof": "No failing run was captured first; the new tests use the new pendingEndpoint/acknowledgeEndpoint API, so they do not compile on the old code, and no separate pre-fix run was kept. The defect itself (emit-only callbacks, nullable sink) was confirmed by reading MainActivity.kt and VeritraPushService.kt. Native code is compiled only by CI. Re-verified here: push_state_test and push_service_test pass; the Kotlin wake-tests were not run (native build is not available locally).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-b1f6f8510281",
@@ -524,11 +524,11 @@
       "title": "Removing a member updates server membership only; sends are not held until the MLS removal commit lands",
       "severity": "medium",
       "task": "TASK-039",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/app_state_removal_hold_test.dart, chat_removal_hold_test.dart, removal_hold_review_test.dart",
+      "proof": "Already fixed on this branch (8ad0f01, D68; D114 default): _afterMemberRemoved sets a persisted removal hold that _sendPayload waits on until the removal commit applies; removeConversationMember is gated on membershipChangesAvailable. Re-ran the hold tests here: pass. No pre-fix failing run was captured in this session.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-56e1224e0b73",
@@ -1283,11 +1283,11 @@
       "title": "No coverage for a debounced, unflushed draft edit pending at sign-out or session expiry",
       "severity": "medium",
       "task": "TASK-103",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/drafts_mute_reactions_test.dart (drafts through sign-out and session expiry memory store / encrypted store)",
+      "proof": "Commits 58adb7e, 73c39b8 (D65). Pending debounced drafts flush before sign-out or session expiry clears local data; session expiry preserves drafts under UQ-003, sign-out wipes them.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-cedf62df65e4",
@@ -1316,11 +1316,11 @@
       "title": "Message expiry appears to come from server-stamped envelope metadata; the first own echo is trusted without bounds",
       "severity": "medium",
       "task": "TASK-106",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/message_expiry_test.dart, app_payload_test.dart, app_state_catch_up_test.dart",
+      "proof": "Already fixed on this branch (c0f0b68, D100/D114): the sender-signed expires_at in the payload bounds the server-stamped one and the shorter time wins; no sender expiry falls back to the server time. Re-ran message_expiry_test and app_payload_test here: pass. No pre-fix failing run was captured in this session.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-7a39b59b924a",
@@ -1569,11 +1569,11 @@
       "title": "Gradle wrapper check accepts any scheme or host and does not require a distribution checksum",
       "severity": "medium",
       "task": "TASK-125",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-gradle-inputs_test.py (test_wrapper_must_be_pinned_to_services_gradle_org, test_missing_wrapper_checksum_is_rejected)",
+      "proof": "Commit 6a82720 and subsequent fix. Pinned official distributionSha256Sum b84e04fa845fecba48551f425957641074fcc00a88a84d2aae5808743b35fc85 in gradle-wrapper.properties; scripts/check-gradle-inputs.py requires distributionSha256Sum and pins services.gradle.org. Confirmed no gradle-wrapper.jar is committed (gitignored).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-1b57b9760118",
@@ -1646,33 +1646,33 @@
       "title": "Android tests never check an APK whose signing block names the pinned certificate but whose signature does not verify",
       "severity": "medium",
       "task": "TASK-130",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-release-evidence_test.py",
+      "proof": "Commits 7901973a, 61bac06. Owner decision 2026-11-07 (release Q-1 option a): stdlib verification in check-release-evidence.py; v2/v3 signatures (RSA PKCS#1 v1.5/PSS, ECDSA P-256/P-384), public key matches certificate, and chunked content digests verified over all three APK sections. Negative tests with pinned cert blocked for bad signatures, wrong digests, foreign keys, and post-signing edits in scripts/check-release-evidence_test.py.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-bcd2b9e19b66",
       "title": "Fixture never commits release-policy.json and runs approval positives off the candidate checkout, so no test binds the policy or checkout to the candidate",
       "severity": "medium",
       "task": "TASK-131",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-release-evidence_test.py",
+      "proof": "Commits 7a85f034, 61bac06. Owner decision 2026-11-07 (release Q-2): checker binds the release policy, .go-version, and HEAD checkout to the candidate commit. Fixture commits release-policy.json into candidate commit; negative cases verify checker blocks working-tree policy drift and non-candidate checkouts.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-a378f12b51ca",
       "title": "Each advisory exception requires a 'scope', but the ignore it produces applies to the whole dependency graph",
       "severity": "medium",
       "task": "TASK-132",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "scripts/check-rust-audit-policy_test.py",
+      "proof": "Commits b0ed3efe, 61bac06. Owner decision 2026-11-07 (release Q-4): each cargo-audit exception in crypto/rust/audit-policy.json defines machine-checkable scope {crate, versions, parents, built}, validated over the full dependency graph in Cargo.lock before cargo audit --file. Tests in scripts/check-rust-audit-policy_test.py cover in-scope, out-of-scope normal/dev/build/target/optional paths, extra crate versions, and built=false build-graph checks.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-28c46d206d15",
@@ -2053,11 +2053,11 @@
       "title": "Historical password parameters defeat verification timing equalization",
       "severity": "medium",
       "task": "TASK-162",
-      "result": "no_change_needed",
-      "failedBefore": null,
-      "test": null,
-      "proof": "Comment only (6108aaa, 2037787): the password timing residual is worded as open, not accepted. No policy change; the timing policy is still an open technical choice.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/auth/auth_test.go (TestVerificationWorkUnitsDoNotDependOnOutcome, TestOlderArgon2idParametersAskForRehash)",
+      "proof": "Commits 2037787, 6108aaa and acceptance of plan Q-003 option (c) by owner. Stored bcrypt cost is bounded to MaxBcryptCost (TASK-161); timing policy accepts residual across profiles and proves outcome-independence across match and mismatch (VAL-303, VAL-209).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-79260030c62b",
@@ -2119,11 +2119,11 @@
       "title": "One-time recovery capability can be re-read repeatedly because only a transfer reaching the end consumes it",
       "severity": "medium",
       "task": "TASK-168",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: no default chosen; overlaps TASK-216.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/httpapi/recovery_bound_test.go (TestRecoveryRepeatedRangeReadsConsumeAtBound, TestRecoveryLegitimateResumeAfterInterruption, TestRecoveryEmptyBlobSucceedsAndConsumes)",
+      "proof": "Migration 0077 added recovery_bytes_served. BeginRecoveryTransfer and CompleteRecoveryTransfer enforce plan Q-004 option (a): total bytes served per capability is capped at 2x backup size, consuming the capability once reached to prevent unbounded repeated reads while legitimate resumed downloads still complete (VAL-215).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-64f65ae423ee",
@@ -2141,11 +2141,11 @@
       "title": "Single-use key packages, no tested last-resort package, and non-consensual conversation creation allow targeted key-package exhaustion",
       "severity": "medium",
       "task": "TASK-170",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: overlaps TASK-216 (per-claimer cap, 25 a day). A cap per target across claimers is not built.",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/httpapi/key_package_exhaustion_test.go (TestTargetedKeyPackageExhaustionPreventedByClaimCap, TestTargetedKeyPackageExhaustionCharacterizationDrain)",
+      "proof": "Plan Q-005 option (b): mitigated by TASK-216 per-claimer cap (KeyPackageClaimsPerTarget default 25/day, migration 0042). Repeated non-consensual claims by an attacker hit 429 key_package_claim_limit, leaving key packages available for legitimate third-party conversations (VAL-217).",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-7cefafa11536",
@@ -2504,10 +2504,10 @@
       "title": "Device is created at approval, but the session can only be consumed before the original link expiry, which can orphan the device",
       "severity": "medium",
       "task": "TASK-201",
-      "result": "blocked",
-      "failedBefore": null,
-      "test": "server/internal/storage/device_link_expiry_test.go TestApprovedDeviceLinkPastExpiryLeavesActiveDevice (characterization; passes on current code)",
-      "proof": "Confirmed: after approval and expiry, ConsumeApprovedDeviceLink returns ErrDeviceLinkInvalid while the device stays active with no session and counts toward the device limit. Mitigation found: the device keeps its device secret (issued at claim), so password + device ID + secret sign-in still works. Blocked on Q-002: remedies (a) min consume window at approval, (b) extend expires_at at approval, (c) consume grace period only narrow the window; VAL-253 ('never') needs (d) revoking the device at expiry (revokeDeviceTx with MLS revocations, run from PruneOperationalRows in content_store.go, outside the write scope) or creating the device at consume (API flow change).",
+      "result": "fixed",
+      "failedBefore": true,
+      "test": "server/internal/storage/device_link_expiry_test.go TestApprovedDeviceLinkNearExpiryDoesNotOrphanDevice, TestPruneKeepsApprovedDeviceLinkInsideWindow",
+      "proof": "D100/D114 remedy (d). Before the fix the test failed: after prune active devices=1 key packages=1 link=approved, want 0, 0, revoked. PruneOperationalRows now cancels approved-but-unconsumed expired legacy links (cancelExpiredApprovedDeviceLinks in community_store.go, called from content_store.go, which is outside the prompt write scope): revokeDeviceTx (sessions, device.revoked event, MLS revocations), unclaimed key packages deleted, link revoked. Consume stays refused after expiry. A link still inside its window is untouched. Limits: the change-2 device-list version stays until a listed device repairs the list; the v3 flow creates the device at consume and is unaffected. go vet and go test ./... pass.",
       "checkedEndToEnd": false
     },
     {
@@ -2603,11 +2603,11 @@
       "title": "ListSyncEvents re-scans the entire run of hidden trailing events on every poll",
       "severity": "medium",
       "task": "TASK-209",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": "Skipped: needs an API change on both sides (see STATE.md Open work, hidden tail on every poll).",
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": "Reproduced by timing, not a failing assertion: before the change a poll behind 40,000 hidden events took 231 ms every time and nothing in the response or the cursor could skip them (benchmark BenchmarkSyncHiddenTailPoll/legacy_every_poll; the new API did not exist, so a unit test could not compile against the old code).",
+      "test": "server/internal/storage/sync_bounded_scan_test.go, server/internal/httpapi/sync_bounded_contract_test.go, mobile/test/app_state_catch_up_test.dart (group bounded scan position), server/internal/storage/sync_hidden_run_bench_test.go",
+      "proof": "Opt-in scan=bounded on GET /api/v1/sync/events: scanned_through and scan_truncated (name from the scoped route, D92), hidden-row cursors accepted in the bounded expiry test, SyncBounds not computed for a bounded 200, app pages while scan_truncated and persists the cursor only after the page is applied. Poll behind 40,000 hidden events: 231 ms to 0.36 ms. Evidence: testing/evidence/sync-hidden-tail-poll.md. Q-002 default taken: D92, a block-hidden run the cursor passes is not replayed after an unblock.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-5d54a035cb1c",
@@ -3076,11 +3076,11 @@
       "title": "Backups carry the bearer token, device secret, and the sealed MLS state together with its key, so a backup can clone the device",
       "severity": "medium",
       "task": "check 24",
-      "result": null,
-      "failedBefore": null,
-      "test": null,
-      "proof": null,
-      "checkedEndToEnd": null
+      "result": "fixed",
+      "failedBefore": false,
+      "test": "mobile/test/backup_no_credentials_test.dart, local_store_backup_test.dart, k0_recovery_backup_exclusion_test.dart",
+      "proof": "Already fixed by D71/D73 (D114 default): backup format 6 carries no bearer token, device secret or MLS state; a restore finishes by device link. Re-ran these tests here: pass. No pre-fix failing run was captured in this session.",
+      "checkedEndToEnd": false
     },
     {
       "issue": "C-7bad26b22132",
@@ -3288,7 +3288,7 @@
       "result": "fixed",
       "failedBefore": false,
       "test": "mobile/test/push_state_test.dart (pending record before subscriber; failed registration; stale instance; newer rotation), mobile/test/push_service_test.dart (pendingEndpoint/acknowledgeEndpoint), mobile/android/wake-tests WakeRulesTest (EndpointRules)",
-      "proof": "No failing run was captured first; the new tests use the new pendingEndpoint/acknowledgeEndpoint API, so they do not compile on the old code, and no separate pre-fix run was kept. The defect itself (emit-only callbacks, nullable sink) was confirmed by reading MainActivity.kt and VeritraPushService.kt. Native code is compiled only by CI.",
+      "proof": "No failing run was captured first; the new tests use the new pendingEndpoint/acknowledgeEndpoint API, so they do not compile on the old code, and no separate pre-fix run was kept. The defect itself (emit-only callbacks, nullable sink) was confirmed by reading MainActivity.kt and VeritraPushService.kt. Native code is compiled only by CI. Re-verified here: push_state_test and push_service_test pass; the Kotlin wake-tests were not run (native build is not available locally).",
       "checkedEndToEnd": false
     }
   ],

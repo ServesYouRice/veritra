@@ -70,7 +70,7 @@ func enqueuePushWakeJobs(ctx context.Context, tx *sql.Tx, eventID int64, convers
 		LEFT JOIN devices d ON d.id = ps.device_id AND d.account_id = ps.account_id
 		WHERE m.conversation_id = ?
 		  AND ps.account_id <> ?
-		  AND ps.provider IN ('webpush', 'fcm', 'apns')
+		  AND ps.provider IN ('webpush', 'fcm', 'apns', 'unifiedpush')
 		  AND ps.disabled_at IS NULL
 		  AND (ps.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))
 		  AND NOT EXISTS (

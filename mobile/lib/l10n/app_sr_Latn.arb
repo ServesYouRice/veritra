@@ -251,6 +251,25 @@
   "profileThisInstance": "ova instanca",
   "profileTitle": "Profil",
   "profileYourAccount": "Vaš nalog",
+  "profileDisplaySection": "Prikazno ime i slika",
+  "profileDisplayNameLabel": "Prikazno ime",
+  "profileDisplayNameHint": "Kako vas vide ljudi sa kojima razgovarate",
+  "profileDisplayHelp": "Ime i sliku vide samo ljudi sa kojima delite razgovor. Server ih ne može pročitati.",
+  "profileEditTile": "Ime i slika",
+  "profileEditTitle": "Ime i slika",
+  "profilePhotoChoose": "Izaberi sliku",
+  "profilePhotoRemove": "Ukloni sliku",
+  "profilePhotoUnusable": "Ova slika se ne može koristiti. Probajte drugu.",
+  "profileSave": "Sačuvaj",
+  "profileSaved": "Sačuvano",
+  "profileSaveConflict": "Ovaj profil je promenjen na drugom uređaju. Pokušajte ponovo za trenutak.",
+  "profileSaveInvalid": "To ime ili slika se ne mogu koristiti.",
+  "profileNameTooLong": "Najviše {max} znakova.",
+  "profileNameInvalid": "Koristite slova i brojeve; bez kontrolnih znakova i znakova smera.",
+  "groupProfileTitle": "Ime i slika grupe",
+  "groupProfileNameLabel": "Ime grupe",
+  "groupProfileHelp": "Članovi ove grupe vide njeno ime i sliku. Server ih ne može pročitati.",
+  "profileBlockNote": "U grupama koje delite, možda i dalje vide vaš profil.",
   "profileSectionIdentity": "Identitet",
   "profileNotAvailable": "Nije dostupno",
   "profileCurrentDevice": "Trenutni uređaj",
@@ -516,6 +535,7 @@
   "chatSendingFile": "Slanje datoteke",
   "chatAttachFile": "Priloži datoteku",
   "chatComposerHint": "Poruka",
+  "chatPostingRestricted": "Samo administratori mogu da objavljuju",
   "chatComposerCounter": "{length} / {max}",
   "chatPausedNotice": "Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.",
   "chatSyncPausedNotice": "Poruke u ovom razgovoru su pauzirane: ažuriranje šifrovanja nije moglo da se primeni. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.",
@@ -1042,5 +1062,153 @@
   "channelOpenDisclosure": "Svaki član zajednice vidi ovaj kanal.",
   "channelCreateFailed": "Kanal nije napravljen. Pokušajte ponovo.",
   "channelMembersFailed": "Kanal je napravljen. Neki članovi nisu dodati. Pokušajte ponovo da dodate samo te članove.",
-  "channelAdminOnly": "Samo vlasnici i administratori mogu da prave kanale."
+  "channelAdminOnly": "Samo vlasnici i administratori mogu da prave kanale.",
+  "k1ConfirmTitle": "Proverite ključ za oporavak",
+  "k1ConfirmDetail": "Unesite ga još jednom da budete sigurni da ga imate. Nikad ne napušta ovaj uređaj.",
+  "k1ConfirmOk": "To je vaš ključ za oporavak.",
+  "k1ConfirmMismatch": "Ne poklapa se. Ako ste izgubili ključ, napravite novi u podešavanjima ključa za oporavak.",
+  "k1SecondCopyChoose": "Čuvaj drugu kopiju u fascikli",
+  "k1SecondCopyFolder": "Druga kopija: {folder}",
+  "k1SecondCopyDetail": "Ista zaključana kopija, sačuvana gde izaberete. Otvara je samo ključ za oporavak.",
+  "k1SecondCopyFailed": "Poslednje kopiranje u ovu fasciklu nije uspelo. Proverite fasciklu.",
+  "k1SecondCopyOff": "Zaustavi drugu kopiju",
+  "k1SecondCopyPhone": "Druga kopija u fascikli je dostupna na računaru. Telefoni čuvaju kopiju samo na serveru.",
+  "recoveryFollowUpRestoreDetail": "Pre nego što zamenite ključ za oporavak, možete vratiti istoriju iz kopija koje su napravili vaši izgubljeni uređaji. One se otvaraju vašim starim ključem, koji za njih prestaje da važi kad ga zamenite.",
+  "recoveryFollowUpRestoreSkip": "Preskoči",
+  "recoveryFollowUpRestoreSkipWarning": "Ako preskočite, starije kopije postaju neupotrebljive čim zamenite ključ za oporavak. Preskočiti ipak?",
+  "k1RestoreOpen": "Vrati iz rezervne kopije",
+  "k1RestoreTitle": "Vraćanje iz rezervne kopije",
+  "k1RestoreIntro": "Izaberite kopiju koju je napravio neki drugi vaš uređaj i unesite ključ za oporavak. Istorija se spaja sa ovom; poruke koje već postoje ostaju.",
+  "k1RestoreLoading": "Tražim rezervne kopije…",
+  "k1RestoreEmpty": "Nije pronađena kopija sa drugog uređaja.",
+  "k1RestoreLoadFailed": "Spisak rezervnih kopija nije učitan.",
+  "k1RestoreEntry": "{device} · {date}",
+  "k1RestoreEntryPrevious": "{device} · {date} (prethodna kopija)",
+  "k1RestoreDeviceUnnamed": "Uređaj",
+  "k1RestoreDeviceRevoked": "Ovaj uređaj je uklonjen sa vašeg naloga.",
+  "k1RestoreDone": "Istorija je vraćena.",
+  "k1RestoreWrongKey": "To nije ispravan ključ za oporavak ovog naloga.",
+  "k1RestoreOtherKey": "Ova kopija je zaključana drugim ključem za oporavak.",
+  "k1RestoreCorrupt": "Kopija se ne može otvoriti. Možda je oštećena.",
+  "k1RestoreNetwork": "Server nije dostupan. Ništa nije promenjeno.",
+  "k1RestoreUnavailable": "Ovaj uređaj ne može da vrati kopiju.",
+  "connectSignInPasskey": "Prijava pristupnim ključem",
+  "passkeySignInFailed": "Prijava pristupnim ključem nije uspela. Pokušajte ponovo ili koristite lozinku.",
+  "passkeyUnavailable": "Pristupni ključevi nisu dostupni na ovom uređaju ili nisu podešeni za ovaj server.",
+  "passkeyPinRefused": "Server je zatražio pristupni ključ za drugu adresu, pa ga aplikacija odbija.",
+  "apiErrorPasskeyLimit": "Dostigli ste granicu broja pristupnih ključeva. Prvo uklonite jedan.",
+  "apiErrorPasskeyExists": "Ovaj pristupni ključ je već dodat.",
+  "apiErrorInvalidPasskey": "Server nije mogao da proveri taj pristupni ključ.",
+  "apiErrorPasskeysOff": "Ovaj server ne nudi pristupne ključeve.",
+  "settingsPasskeys": "Pristupni ključevi",
+  "settingsPasskeysDetail": "Prijava zaključavanjem ekrana umesto lozinke",
+  "passkeysIntro": "Pristupni ključ vas prijavljuje na ovom uređaju umesto lozinke. Za promene podešavanja i dalje se traži lozinka. Usluga koja čuva vaš pristupni ključ, na primer Google ili Apple, saznaje adresu ovog servera.",
+  "passkeysNotOffered": "Pristupni ključevi nisu dostupni za ovaj server na ovom uređaju.",
+  "passkeysEmpty": "Još nema pristupnih ključeva.",
+  "passkeysAdd": "Dodaj pristupni ključ",
+  "passkeysAdded": "Pristupni ključ je dodat.",
+  "passkeyCreated": "Dodat {date}",
+  "@passkeyCreated": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "passkeyLastUsed": "Poslednja upotreba {date}",
+  "@passkeyLastUsed": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      }
+    }
+  },
+  "passkeyBackedUp": "Rezervna kopija postoji",
+  "passkeyRename": "Preimenuj",
+  "passkeyRemove": "Ukloni",
+  "passkeyNameLabel": "Naziv",
+  "passkeyRemoveTitle": "Ukloniti ovaj pristupni ključ?",
+  "passkeyRemoveBody": "„{name}” se više neće prijavljivati na ovaj nalog. Možete ga ponovo dodati kasnije.",
+  "@passkeyRemoveBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "passkeyRemoved": "Pristupni ključ je uklonjen.",
+  "passkeyNoticeAdded": "Pristupni ključ je dodat vašem nalogu. Niste vi? Promenite lozinku.",
+  "passkeyNoticeRemoved": "Pristupni ključ je uklonjen sa vašeg naloga.",
+  "passkeyNoticeDismiss": "Odbaci",
+  "passkeyNamePrefix": "Pristupni ključ",
+  "settingsAccounts": "Nalozi",
+  "settingsAccountsDetail": "Prebacivanje između naloga na ovom uređaju",
+  "accountsTitle": "Nalozi",
+  "accountsIntro": "Jedan nalog je otvoren u isto vreme. Ostali su pauzirani: za njih ne stižu poruke ni obaveštenja dok se na njih ne prebacite.",
+  "accountsOpenNow": "Otvoren",
+  "accountsPending": "Još nije prijavljen",
+  "accountsRemoving": "Uklanjanje…",
+  "accountsNewAccount": "Novi nalog",
+  "accountsAdd": "Dodaj nalog",
+  "accountsFull": "Ovaj uređaj drži {count} naloga, najviše što može. Uklonite jedan da biste dodali drugi.",
+  "@accountsFull": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsSameServer": "Ovaj server može da zaključi da su ovi nalozi na istom uređaju.",
+  "accountsSwitching": "Prebacivanje…",
+  "accountsSwitchTo": "Prebaci na {name}",
+  "@accountsSwitchTo": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsRemove": "Ukloni sa ovog uređaja",
+  "accountsRemoveTitle": "Ukloniti {name} sa ovog uređaja?",
+  "@accountsRemoveTitle": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsRemoveBody": "Nalog se odjavljuje, a njegove poruke i ključevi brišu sa ovog uređaja. Nalog ostaje na svom serveru. Ako više nećete koristiti ovaj uređaj, uklonite ga sa liste uređaja naloga na drugom uređaju.",
+  "accountsPushFailTitle": "Ipak prebaciti?",
+  "accountsPushFailBody": "Obaveštenja za {name} nisu mogla da se isključe. Možda ćete dobijati obaveštenja za ovaj nalog dok ga ponovo ne otvorite.",
+  "@accountsPushFailBody": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "accountsSwitchAnyway": "Ipak prebaci",
+  "accountsErrorOpen": "Taj nalog nije mogao da se otvori. Prethodni nalog je ponovo otvoren.",
+  "accountsErrorRegistry": "Spisak naloga nije mogao da se sačuva.",
+  "accountsErrorRemove": "Nalog nije mogao da se ukloni. Pokušajte ponovo.",
+  "accountsDuplicate": "Ovaj uređaj već ima taj nalog, pa je dodatna prijava uklonjena. Uklonite višak uređaja sa liste uređaja naloga.",
+  "accountsBack": "Nazad na moje naloge",
+  "settingsSectionUpdates": "Ažuriranja",
+  "settingsAutoUpdateCheck": "Automatski proveravaj ažuriranja",
+  "settingsAutoUpdateCheckDetail": "Proveravaj nove verzije pri pokretanju",
+  "settingsCheckForUpdates": "Proveri ažuriranja",
+  "settingsCheckingForUpdates": "Provera ažuriranja…",
+  "settingsUpdateUpToDate": "Veritra je ažurirana",
+  "settingsUpdateAvailable": "Verzija {version} je dostupna",
+  "@settingsUpdateAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUpdateError": "Provera ažuriranja nije uspela",
+  "settingsUpdateDisabled": "Automatska provera ažuriranja je isključena",
+  "settingsScreenGuard": "Zaštita ekrana",
+  "settingsScreenGuardDetail": "Blokiraj snimke ekrana i čitanje ekrana od strane AI asistenata u ćaskanjima."
 }

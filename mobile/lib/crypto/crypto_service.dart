@@ -1,14 +1,17 @@
 import 'dart:typed_data';
 
 import '../core/models.dart';
+import '../core/roles/governance.dart' show GovernanceState;
 import '../storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
 import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
 import '../core/device_lists.dart' show DeviceListPins, DeviceListVerifier;
 import 'mls_commit_bundle.dart';
-import 'native_crypto_bindings.dart' show DeviceListBody, DeviceListPair;
+import 'native_crypto_bindings.dart'
+    show BackupHeaderInfo, DeviceListBody, DeviceListPair, OpenedBackup;
 import 'app_payload.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
+import 'profile_record_codec.dart' show ProfileRecordCodec;
 
 class ConversationSafetyNumber {
   const ConversationSafetyNumber({
@@ -33,6 +36,10 @@ abstract class CryptoService {
   Future<MessageEnvelope> encrypt(String conversationId, String plaintext);
   // The v2 link derivation was retired with ABI 18 (L1-3): device links run
   // on K2TransferCryptoService, whose SAS needs the source's committed random.
+
+  /// The verified role record for [conversationId], if this service holds one
+  /// (C4, ABI 20). Returns null without a record or when not supported.
+  GovernanceState? governanceOf(String conversationId) => null;
 }
 
 abstract class MlsConversationCryptoService implements CryptoService {
@@ -239,6 +246,23 @@ abstract interface class BackupSealCryptoService {
 
   /// The largest snapshot [sealK1Backup] takes.
   int get k1BackupMaxPlaintextBytes;
+}
+
+/// Reading a K1 backup (K1-4). Kept apart from [BackupSealCryptoService] so a
+/// build that can only seal, and every test fake, stays as it is.
+abstract interface class BackupOpenCryptoService {
+  /// The unauthenticated header from the first 416 bytes of a container.
+  BackupHeaderInfo peekK1Backup(Uint8List prefix);
+
+  /// Opens a container with the typed recovery key [entropy] (the caller
+  /// wipes it). [sourceDeviceId] pins the device the server row names.
+  /// The caller wipes [OpenedBackup.plaintext].
+  Future<OpenedBackup> openK1Backup({
+    required Uint8List ciphertext,
+    required Uint8List entropy,
+    required String accountId,
+    String? sourceDeviceId,
+  });
 }
 
 /// K0 recovery (docs/designs/K0-recovery-enrollment.md, R3/R4). Kept apart
@@ -468,6 +492,13 @@ abstract interface class CommunityInfoCryptoService {
   CommunityInfoCodec get communityInfoCodec;
 }
 
+/// W11: the service that owns the native library also hands out the profile
+/// record codec, which seals records with the library's chunk AEAD. A build
+/// without it has no profiles.
+abstract interface class ProfileCodecSource {
+  ProfileRecordCodec get profileCodec;
+}
+
 abstract interface class ConversationAuthorityConsumer {
   set conversationAuthority(ConversationAuthority authority);
 }
@@ -585,4 +616,7 @@ class UnavailableCryptoService
       String conversationId, String plaintext) async {
     throw StateError('Production MLS/OpenMLS encryption is not integrated');
   }
+
+  @override
+  GovernanceState? governanceOf(String conversationId) => null;
 }

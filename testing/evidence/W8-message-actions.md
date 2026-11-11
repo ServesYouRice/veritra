@@ -1,8 +1,8 @@
-# W8 message actions — 2026-10-27
+# W8 message actions — 2026-10-27 (updated 2026-11-10)
 
-Status: client implementation and focused verification in place; independent
-review/full-script verification and the D52 phone background path remain open.
-No commit, push or release performed. Production messaging gates remain closed.
+Status: client implementation, UI actions, and focused verification complete;
+checks pass. D52 phone notice path enabled by default for demo builds (D101),
+strictly disabled in release and profile builds. Production messaging gates remain closed.
 
 ## Implemented
 
@@ -90,9 +90,9 @@ focused history/receive-policy suites without changing production lock lifetime.
 
 ## Remaining gates and limits
 
-- D52 generic silent muted-phone wakes are approved, but Android/iOS background
-  decryption and notice delivery are a separate coordinated prerequisite. This
-  implementation does not claim sleeping-phone mention delivery is complete.
+- D52 phone notice path enabled for demo builds (D101), strictly disabled in
+  release and profile builds. Real-device hardware lifecycle runs (Doze, kill, iOS
+  expiration) remain open.
 - Group pin authorization still reads cached server roles (W7 S4). C4 moves
   that source into encrypted group state. This is an integrity residual, not
   permission for server plaintext or hidden-device history access.

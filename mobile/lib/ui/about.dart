@@ -9,6 +9,7 @@ const String veritraProductName = 'Veritra';
 
 /// Kept equal to the `version:` name in `pubspec.yaml` (a test checks it).
 const String veritraVersion = '0.1.0';
+const int veritraBuildNumber = 1;
 
 const String veritraLicenseName = 'AGPL-3.0-or-later';
 const String veritraSourceUrl = 'https://github.com/ServesYouRice/Veritra';

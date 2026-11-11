@@ -186,6 +186,7 @@ def test_wrapper_must_be_pinned_to_services_gradle_org() -> None:
         "malformed checksum (short)": f"{GOOD_URL}\ndistributionSha256Sum={CHECKSUM[1:]}\n",
         "malformed checksum (upper case)": f"{GOOD_URL}\ndistributionSha256Sum={CHECKSUM.upper()[:-1]}A\n",
         "malformed checksum (not hex)": f"{GOOD_URL}\ndistributionSha256Sum={'g' * 64}\n",
+        "missing checksum": f"{WRAPPER_HEAD}{GOOD_URL}\n",
         "empty file": "",
     }
     for name, properties in rejected.items():
@@ -194,11 +195,9 @@ def test_wrapper_must_be_pinned_to_services_gradle_org() -> None:
     assert run_wrapper(None)[0] == 1
 
 
-def test_missing_wrapper_checksum_is_reported() -> None:
-    # Not yet a failure: the repository's properties file has no checksum and
-    # adding it is outside this change. It is reported on every run.
+def test_missing_wrapper_checksum_is_rejected() -> None:
     code, stderr = run_wrapper(f"{WRAPPER_HEAD}{GOOD_URL}\n")
-    assert code == 0, stderr
+    assert code == 1, stderr
     assert "no distributionSha256Sum" in stderr, stderr
     assert "https://services.gradle.org/distributions/gradle-9.1.0-all.zip.sha256" in stderr, stderr
 
@@ -210,5 +209,5 @@ if __name__ == "__main__":
     test_comments_and_code_are_not_versions()
     test_fails_closed()
     test_wrapper_must_be_pinned_to_services_gradle_org()
-    test_missing_wrapper_checksum_is_reported()
+    test_missing_wrapper_checksum_is_rejected()
     print("Gradle input fixture tests passed")

@@ -274,6 +274,33 @@ void main() {
     state.dispose();
   });
 
+  testWidgets('follow-up: skipping the restore warns, then moves on',
+      (tester) async {
+    tall(tester);
+    final state = signedIn()..recoveryFollowUp = RecoveryFollowUpStep.restore;
+    await tester.pumpWidget(app(RecoveryFollowUpScreen(state: state)));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey<String>('follow-up-restore')),
+        findsOneWidget);
+    await tester
+        .tap(find.byKey(const ValueKey<String>('follow-up-restore-skip')));
+    await tester.pumpAndSettle();
+    expect(
+        find.textContaining('older backups become unusable'), findsOneWidget);
+    // Cancel keeps the step.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+    await tester
+        .tap(find.byKey(const ValueKey<String>('follow-up-restore-skip')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+        find.byKey(const ValueKey<String>('follow-up-restore-skip-confirm')));
+    await tester.pumpAndSettle();
+    expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+    state.dispose();
+  });
+
   testWidgets('follow-up: the recovery key step comes first', (tester) async {
     tall(tester);
     final state = signedIn()
@@ -298,7 +325,7 @@ void main() {
         pending: PendingRecoveryRequest(
             id: 'arr_9',
             deviceName: 'Unknown phone',
-            readyAt: DateTime.utc(2026, 11, 8, 10)),
+            readyAt: DateTime.utc(2099, 11, 8, 10)),
       );
     await tester
         .pumpWidget(app(Scaffold(body: AccountRecoveryBanner(state: state))));

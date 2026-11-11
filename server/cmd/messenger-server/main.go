@@ -304,6 +304,7 @@ func serve(ctx context.Context, cfg config.Config) error {
 	}
 	logger := slog.New(handler)
 	logger.Info("security_posture", "version", version, "commit", commit, "environment", cfg.Environment, "trusted_proxy_networks", len(cfg.TrustedProxies), "metrics_enabled", cfg.EnableMetrics, "log_format", cfg.LogFormat)
+	cfg.BuildVersion, cfg.BuildCommit = version, commit
 	application, err := app.New(ctx, cfg, logger)
 	if err != nil {
 		return err

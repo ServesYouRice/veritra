@@ -583,3 +583,14 @@ full-suite cleanup/fsync failures are recorded by L0; they must not be
 mistaken for successful K2 validation. This design reports code inspection,
 not an implemented or tested K2 feature. Claude Opus was unavailable for
 this session; an available independent agent prepared this draft for review.
+
+## Restore from a backup (K1-4)
+
+When the live transfer ends without delivering (the old device is gone, or
+the copy stopped), the "copy ended" notice on the new device offers "Restore
+from a backup". It opens the K1 restore screen, which lists the account's K1
+copies, opens one with the typed recovery key and merges it through this
+design's history-only importer (same ledger, same merge rules). See
+[K1](K1-automatic-backups.md), "Build notes". No ABI, schema or migration
+change was needed for K2's wiring.
+
