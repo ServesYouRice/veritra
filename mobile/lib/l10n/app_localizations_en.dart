@@ -1018,6 +1018,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get channelPrivatePlaceholderName => 'Private channel';
 
   @override
+  String get communityInfoEditFailed => 'Could not save the info. Try again.';
+
+  @override
+  String get communityEditInfo => 'Edit community';
+
+  @override
   String get channelEditInfo => 'Edit channel';
 
   @override

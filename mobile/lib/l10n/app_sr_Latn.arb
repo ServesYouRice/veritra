@@ -287,6 +287,8 @@
   "communityPlaceholderName": "Zajednica",
   "channelPlaceholderName": "Kanal",
   "channelPrivatePlaceholderName": "Privatni kanal",
+  "communityInfoEditFailed": "Nije moguće sačuvati podatke. Pokušajte ponovo.",
+  "communityEditInfo": "Uredi zajednicu",
   "channelEditInfo": "Uredi kanal",
   "channelTopic": "Tema",
   "channelEditFailed": "Kanal nije sačuvan. Pokušajte ponovo.",

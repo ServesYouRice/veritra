@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../crypto/community_info_codec.dart' show infoNameMax, infoTopicMax;
-
 import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../l10n/l10n.dart';
@@ -16,6 +14,7 @@ import '../../ui/widgets/tile_group.dart';
 import '../chat/chat_screen.dart';
 import 'membership_screens.dart';
 import 'create_channel_dialog.dart';
+import 'edit_info_dialog.dart';
 import '../../ui/widgets/refresh_action.dart';
 
 /// Communities: create a community, add channels, and open channel
@@ -325,10 +324,21 @@ class _CommunityCard extends StatelessWidget {
                   : context.l10n.communityChannelCount(channels.length),
             ),
             onTap: onOpenDetails,
-            trailing: IconButton(
-              tooltip: context.l10n.communityNewChannel,
-              onPressed: state.busy ? null : onCreateChannel,
-              icon: const Icon(Icons.add),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (state.mayEditCommunityInfo(community.id, 'community'))
+                  IconButton(
+                    tooltip: context.l10n.communityEditInfo,
+                    onPressed: state.busy ? null : () => _editInfo(context),
+                    icon: const Icon(Icons.edit_outlined),
+                  ),
+                IconButton(
+                  tooltip: context.l10n.communityNewChannel,
+                  onPressed: state.busy ? null : onCreateChannel,
+                  icon: const Icon(Icons.add),
+                ),
+              ],
             ),
           ),
           if (channels.isEmpty)
@@ -353,7 +363,7 @@ class _CommunityCard extends StatelessWidget {
               onEdit: channel.isRouted &&
                       _conversationIdFor(channel) != null &&
                       state.mayEditCommunityInfo(community.id, 'channel')
-                  ? () => _editChannel(context, channel)
+                  ? () => _editInfo(context, channel: channel)
                   : null,
             ),
         ],
@@ -361,60 +371,17 @@ class _CommunityCard extends StatelessWidget {
     );
   }
 
-  /// C3: edits a channel's encrypted name and topic.
-  Future<void> _editChannel(BuildContext context, Channel channel) async {
-    final l10n = context.l10n;
-    final name =
-        TextEditingController(text: state.channelDisplayName(channel) ?? '');
-    final topic =
-        TextEditingController(text: state.channelTopic(channel) ?? '');
-    try {
-      final saved = await showDialog<bool>(
+  /// Keep drafts open until the encrypted write completes successfully.
+  Future<void> _editInfo(BuildContext context, {Channel? channel}) =>
+      showDialog<bool>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(l10n.channelEditInfo),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: <Widget>[
-              TextField(
-                controller: name,
-                autofocus: true,
-                maxLength: infoNameMax,
-                decoration:
-                    InputDecoration(labelText: l10n.communityChannelName),
-              ),
-              TextField(
-                controller: topic,
-                maxLength: infoTopicMax,
-                decoration: InputDecoration(labelText: l10n.channelTopic),
-              ),
-            ],
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: Text(l10n.commonCancel),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: Text(l10n.channelSave),
-            ),
-          ],
+        barrierDismissible: false,
+        builder: (_) => EditInfoDialog(
+          state: state,
+          community: community,
+          channel: channel,
         ),
       );
-      if (saved != true || name.text.trim().isEmpty) return;
-      final ok = await state.publishChannelInfo(channel,
-          name: name.text, topic: topic.text);
-      if (!ok && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.channelEditFailed)),
-        );
-      }
-    } finally {
-      name.dispose();
-      topic.dispose();
-    }
-  }
 
   /// The conversation backing a channel, if this account is a member of it.
   /// A routed channel names its group; a legacy channel has a conversation

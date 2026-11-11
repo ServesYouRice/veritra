@@ -311,6 +311,8 @@
   "communityPlaceholderName": "Заједница",
   "channelPlaceholderName": "Канал",
   "channelPrivatePlaceholderName": "Приватни канал",
+  "communityInfoEditFailed": "Није могуће сачувати податке. Покушајте поново.",
+  "communityEditInfo": "Уреди заједницу",
   "channelEditInfo": "Уреди канал",
   "channelTopic": "Тема",
   "channelEditFailed": "Канал није сачуван. Покушајте поново.",

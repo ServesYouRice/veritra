@@ -388,6 +388,8 @@
   "communityPlaceholderName": "Community",
   "channelPlaceholderName": "Channel",
   "channelPrivatePlaceholderName": "Private channel",
+  "communityInfoEditFailed": "Could not save the info. Try again.",
+  "communityEditInfo": "Edit community",
   "channelEditInfo": "Edit channel",
   "channelTopic": "Topic",
   "channelEditFailed": "Couldn't save the channel. Try again.",

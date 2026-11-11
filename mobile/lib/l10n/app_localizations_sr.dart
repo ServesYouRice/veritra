@@ -1027,6 +1027,13 @@ class AppLocalizationsSr extends AppLocalizations {
   String get channelPrivatePlaceholderName => 'Приватни канал';
 
   @override
+  String get communityInfoEditFailed =>
+      'Није могуће сачувати податке. Покушајте поново.';
+
+  @override
+  String get communityEditInfo => 'Уреди заједницу';
+
+  @override
   String get channelEditInfo => 'Уреди канал';
 
   @override
@@ -4760,6 +4767,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get channelPrivatePlaceholderName => 'Privatni kanal';
+
+  @override
+  String get communityInfoEditFailed =>
+      'Nije moguće sačuvati podatke. Pokušajte ponovo.';
+
+  @override
+  String get communityEditInfo => 'Uredi zajednicu';
 
   @override
   String get channelEditInfo => 'Uredi kanal';

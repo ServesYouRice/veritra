@@ -1815,6 +1815,18 @@ abstract class AppLocalizations {
   /// **'Private channel'**
   String get channelPrivatePlaceholderName;
 
+  /// No description provided for @communityInfoEditFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save the info. Try again.'**
+  String get communityInfoEditFailed;
+
+  /// No description provided for @communityEditInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit community'**
+  String get communityEditInfo;
+
   /// No description provided for @channelEditInfo.
   ///
   /// In en, this message translates to:
