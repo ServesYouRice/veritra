@@ -400,10 +400,11 @@ before the merge.
 Built (earlier): the rules engine and 62 tests (posting, hierarchy as on the server,
 step-down, ownership transfer, seniority, pruning, the D81/D82 handover:
 open, cancel, close, vote, win, claim, electors, `joined`, `owner_rev`; the
-local waits as pure helpers; the commit-level check). Not built: the ABI
-above, wiring into commit processing, local storage (none is
-needed beyond MLS state), UI, and the server half of the ownership rules
-(below).
+local waits as pure helpers; the commit-level check). The ABI 20 carrier,
+command planner and schema 38 local observation storage are now also built
+(see the follow-ups below). Not built: authenticated removal proofs,
+approved-leaf role rosters, coordinated producer/receiver wiring, automatic
+owner cancellation, UI and server succession (below).
 
 ## Server differences to close
 
