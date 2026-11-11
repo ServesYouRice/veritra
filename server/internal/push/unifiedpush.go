@@ -131,7 +131,7 @@ func (p *UnifiedPushProvider) SendEncryptedEventAvailable(ctx context.Context, n
 			Urgency:         webpush.UrgencyNormal,
 		})
 		if err != nil {
-			return err
+			return sanitizeSendError(err)
 		}
 		defer response.Body.Close()
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -170,7 +170,7 @@ func (p *UnifiedPushProvider) SendEncryptedEventAvailable(ctx context.Context, n
 
 	response, err := p.client.Do(req)
 	if err != nil {
-		return err
+		return sanitizeSendError(err)
 	}
 	defer response.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
@@ -245,7 +245,7 @@ func encryptRFC8291(payload []byte, peerPublicKeyB64, authSecretB64 string) ([]b
 	}
 
 	// Delimiter 0x02 for the last record
-	record := append(payload, 0x02)
+	record := append(append(make([]byte, 0, len(payload)+1), payload...), 0x02)
 	ciphertext := gcm.Seal(nil, nonce, record, nil)
 
 	const recordSize uint32 = 4096
@@ -258,4 +258,14 @@ func encryptRFC8291(payload []byte, peerPublicKeyB64, authSecretB64 string) ([]b
 	recordBuf.Write(ciphertext)
 
 	return recordBuf.Bytes(), nil
+}
+
+// sanitizeSendError drops the request URL that net/http embeds in its errors:
+// the endpoint path is a bearer secret and must not reach logs.
+func sanitizeSendError(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return fmt.Errorf("unifiedpush request failed: %w", urlErr.Err)
+	}
+	return err
 }

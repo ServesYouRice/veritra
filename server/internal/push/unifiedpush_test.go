@@ -425,3 +425,18 @@ func TestUnifiedPushRejectsOffCurveKey(t *testing.T) {
 		t.Fatalf("off-curve key accepted: %v", err)
 	}
 }
+
+func TestUnifiedPushErrorOmitsEndpoint(t *testing.T) {
+	provider, err := NewUnifiedPushProvider(UnifiedPushConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := Notification{Provider: "unifiedpush", Endpoint: "https://127.0.0.1:1/secret-token-path"}
+	err = provider.SendEncryptedEventAvailable(context.Background(), target)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "secret-token-path") {
+		t.Fatalf("error leaks the endpoint: %v", err)
+	}
+}
