@@ -678,7 +678,9 @@ class _CommunityDetailsScreenState extends State<CommunityDetailsScreen> {
         final canInvite =
             myRole != null && const <String>{'owner', 'admin'}.contains(myRole);
         return Scaffold(
-          appBar: LargeTitleBar(title: widget.community.name),
+          appBar: LargeTitleBar(
+              title: state.communityDisplayName(widget.community) ??
+                  context.l10n.communityPlaceholderName),
           body: ListView(
             padding: const EdgeInsets.fromLTRB(
               BoneSpacing.gutter,

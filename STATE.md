@@ -7,6 +7,39 @@ in Git history at `d2d9eb8`. Evidence lives in [`testing/evidence/`](testing/evi
 
 **Updated 2026-11-09.**
 
+2026-11-11 C3 independent review: own accepted removal commits now persist
+the info-key rotation watermark atomically, including revocation coordinators
+and lost-response echoes. Key answers stop after an intervening removal and
+remain retryable. C3 remains incomplete; verified C4 roles, encrypted-only
+creation and lifecycle UI are still missing. Arrival ordering also cannot
+establish freshness for a retired key first delivered late; retired-key
+tombstones remain unbounded. Evidence: [`review`](testing/evidence/C3-independent-review-2026-11-11.md).
+
+2026-11-11 C3 topology review: blocked implicit re-encryption of cached
+private-channel info into the community key home after server relabelling.
+Editing and rotation regressions reproduce the leak without the guard.
+C3 remains incomplete (verified C4 roles, remote-removal rotation and encrypted
+creation still missing). Evidence: [`topology review`](testing/evidence/C3-topology-review-2026-11-11.md).
+
+2026-11-11 C3 final review: fixed snapshot edits overwriting unseen metadata,
+rotation completion without an announcement, and unauthorized announcements
+suppressing retries. Full Windows test/lint pass (2,442 Flutter tests).
+C3 remains incomplete. A reproduced key-ordering flaw after bounded key
+pruning can select a retired key again; this and the outstanding integration
+are blockers. See [`review evidence`](testing/evidence/C3-final-review-2026-11-11.md).
+
+2026-11-10 C3 review: fixed stale-record overwrites during key rotation,
+incomplete rotation completion, wrong-key announcements and stale admin
+availability. C3 remains incomplete; production role wiring, remote-removal
+rotation and plaintext-name removal still block completion. See
+[`review evidence`](testing/evidence/C3-review-2026-11-10.md).
+
+2026-11-09 C3 review: sender/fetch/UI slice ported, but C3 remains partial.
+Verified C4 role wiring, remote-removal rotation, private-channel lifecycle
+screens and plaintext-name removal are still missing. Review fixes protect
+pending rotations and key replies; see
+[`C3 review evidence`](testing/evidence/C3-review-2026-11-09.md).
+
 2026-11-11 F-Droid review: Android has separate `fdroid` (UnifiedPush) and
 `play` flavors; UnifiedPush uses the existing generic push interfaces and
 delivery queues. No migration or counter change was needed. Release gates

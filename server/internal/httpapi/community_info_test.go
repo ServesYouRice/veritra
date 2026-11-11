@@ -3,6 +3,7 @@ package httpapi_test
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"private-messenger/server/internal/config"
@@ -16,7 +17,7 @@ func TestCommunityInfoRoutes(t *testing.T) {
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "infomember")
 	strangerToken, _ := registerMemberWithID(t, handler, ownerToken, "infostranger")
 
-	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Club"})
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, body)
 	}
@@ -26,7 +27,7 @@ func TestCommunityInfoRoutes(t *testing.T) {
 	decodeLayoutBody(t, body, &community)
 	channelPath := "/api/v1/communities/" + community.ID + "/channels"
 	channel := func(kind string) string {
-		status, body := doJSON(t, handler, http.MethodPost, channelPath, ownerToken, map[string]interface{}{"name": "c", "kind": kind})
+		status, body := doJSON(t, handler, http.MethodPost, channelPath, ownerToken, map[string]interface{}{"kind": kind})
 		if status != http.StatusCreated {
 			t.Fatalf("create %q channel status=%d body=%s", kind, status, body)
 		}
@@ -153,5 +154,33 @@ func TestCommunityInfoRoutes(t *testing.T) {
 	}
 	if !seen["community:"+community.ID] || !seen["channel:"+open] || seen["channel:"+private] {
 		t.Fatalf("member info events = %v", seen)
+	}
+}
+
+// C3 step 4: the server keeps IDs only and refuses plaintext names.
+func TestCommunityAndChannelCreationRefusePlaintextNames(t *testing.T) {
+	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, func(c *config.Config) { c.CommunityLayout = true })
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Club"})
+	if status != http.StatusBadRequest || !strings.Contains(string(body), "plaintext_name_refused") {
+		t.Fatalf("named community status=%d body=%s", status, body)
+	}
+	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
+	if status != http.StatusCreated || strings.Contains(string(body), `"name"`) {
+		t.Fatalf("unnamed community status=%d body=%s", status, body)
+	}
+	var community struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &community); err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/communities/" + community.ID + "/channels"
+	status, body = doJSON(t, handler, http.MethodPost, path, ownerToken, map[string]interface{}{"name": "general", "kind": "open"})
+	if status != http.StatusBadRequest || !strings.Contains(string(body), "plaintext_name_refused") {
+		t.Fatalf("named channel status=%d body=%s", status, body)
+	}
+	status, body = doJSON(t, handler, http.MethodPost, path, ownerToken, map[string]interface{}{"name": "  ", "kind": "private"})
+	if status != http.StatusCreated || strings.Contains(string(body), `"name"`) || strings.Contains(string(body), `"title"`) {
+		t.Fatalf("unnamed private channel status=%d body=%s", status, body)
 	}
 }

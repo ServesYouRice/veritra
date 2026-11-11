@@ -34,11 +34,11 @@ func newCommunityFixture(t *testing.T, ctx context.Context) communityFixture {
 	}
 	insider := registerTestMember(t, ctx, store, invite.Code, "insider")
 	outsider := registerTestMember(t, ctx, store, invite.Code, "outsider")
-	community, err := store.CreateCommunity(ctx, "Club", owner.Account.ID)
+	community, err := store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatalf("create community: %v", err)
 	}
-	channel, conversation, err := store.CreateChannelWithConversation(ctx, community.ID, "general", "", owner.Account.ID)
+	channel, conversation, err := store.CreateChannelWithConversation(ctx, community.ID, "", owner.Account.ID)
 	if err != nil {
 		t.Fatalf("create channel: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestCreateChannelWithConversationRespectsMemberConversationLimit(t *testing
 	owner := createTestOwner(t, ctx, store)
 	members := registerMembers(t, ctx, store, owner, "busy", "free")
 	busy := members[0]
-	community, err := store.CreateCommunity(ctx, "Club", owner.Account.ID)
+	community, err := store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestCreateChannelWithConversationRespectsMemberConversationLimit(t *testing
 			t.Fatalf("busy group %d: %v", i, err)
 		}
 	}
-	if _, _, err := store.CreateChannelWithConversation(ctx, community.ID, "first", "", owner.Account.ID); err != nil {
+	if _, _, err := store.CreateChannelWithConversation(ctx, community.ID, "", owner.Account.ID); err != nil {
 		t.Fatalf("channel below every member's limit: %v", err)
 	}
 	snapshot := func() [4]int {
@@ -119,7 +119,7 @@ func TestCreateChannelWithConversationRespectsMemberConversationLimit(t *testing
 		return counts
 	}
 	before := snapshot()
-	_, _, err = store.CreateChannelWithConversation(ctx, community.ID, "second", "", owner.Account.ID)
+	_, _, err = store.CreateChannelWithConversation(ctx, community.ID, "", owner.Account.ID)
 	if !errors.Is(err, ErrForbidden) {
 		t.Fatalf("channel that would exceed a member's conversation limit: err = %v, want %v", err, ErrForbidden)
 	}

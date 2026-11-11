@@ -900,6 +900,29 @@ and moves, C4 role state (and its channel-creation rule), C5 deletes
 (`history-hide` in place of redaction), C6 (random `frank_commit` for C7
 types, the report residual).
 
+### Build status (2026-11-11): step 3, first slice
+
+Built behind `PRIVATE_MESSENGER_C7_HISTORY=1` (off by default, so today's
+app, which sends no body, keeps working): the `sealed_body` field on
+`POST /api/v1/messages/envelopes`, migration 0083 (`envelope_bodies`, the
+body removed with its envelope by `ON DELETE CASCADE`), the size rule
+(`server/internal/storage/c7_body_store.go`), the replay comparison, the
+body served with its envelope on both sync routes only (read from
+`envelope_bodies`, never stored in `sync_events`; the single-message GET
+serves no body, so a newcomer cannot fetch a pre-join or hidden body by
+id), and the 409
+`history_route_only` answers for legacy edit, delete and paging in
+community conversations. Off, a body is refused everywhere (400
+`invalid_sealed_body`).
+
+Still left in step 3: the history fetch route, the former-member key
+route, `history-hide`, the group-level exception to C0's channel rule (a
+`history_sync` in the shared group carries no `channel_id`), the C2
+refusal narrowed to envelopes with a `channel_id`, `channel_id` on a
+private channel group's posts, admission limits counting body bytes, and
+the HTTP and storage tests (owner instruction of 2026-11-11: no test
+suites run in this pass).
+
 ## Open questions for the owner
 
 Earlier questions: 1 (off/on) and 2 (server sees the flag) are answered in

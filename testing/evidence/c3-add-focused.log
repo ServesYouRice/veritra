@@ -1,0 +1,54 @@
+00:00 +0: loading C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart
+00:00 +0: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: an adding admin delivers the key and announcements without a request
+00:00 +1: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: add delivery sends a private key only in its owning group
+00:00 +2: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: add delivery waits for a removal and requests a missing key
+00:00 +3: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: failed add delivery can retry without consuming a request allowance
+00:00 +4: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a removal during add delivery cancels its remaining announcements
+00:00 +5: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: add delivery never re-announces a record under a different key
+00:00 +6: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a member delivering a key cannot author community info
+00:00 +7: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: an admin publishes; a member asks for the key, gets it, and shows it
+00:00 +8: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a member who is not an admin never answers
+00:00 +9: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: rotation stays pending until its announcement is queued
+00:00 +10: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: snapshot edits refuse newer metadata, including on conflict retry
+00:00 +11: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: an unauthorized matching announcement cannot suppress healing
+00:00 +12: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: an unrelated member key cannot suppress an admin answer
+00:00 +13: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a failed joiner announcement retries immediately after key delivery
+00:00 +14: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a removal during the answer delay waits for the rotated key
+00:00 +15: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: an answer selects a remote rotation received during its delay
+00:00 +16: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a private channel key never goes into the shared group
+00:00 +17: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a stale If-Match is retried; a 404 never clears what is shown
+00:00 +18: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: rotation: a new key after the removal, records sealed again
+00:00 +19: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: a newer removal cancels a rotation whose key was already sent
+00:00 +20: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: private rotation survives restart and excludes the removed member
+00:00 +21: C:/tmp/vw/wt/c3-rest/mobile/test/c3_community_info_service_test.dart: rotation refreshes a newer remote edit before re-sealing
+00:00 +22: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +23: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +24: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +25: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +26: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +27: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +28: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +29: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +30: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +31: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +32: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +33: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +34: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +35: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +36: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +37: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +38: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +39: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +40: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +41: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +42: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +43: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +44: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +45: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +46: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +47: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +48: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: false)
+00:00 +49: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: app delivers a private info key after merging its accepted add (lost response: true)
+00:00 +50: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: info announcements and requests survive the native MLS send path
+00:00 +51: C:/tmp/vw/wt/c3-rest/mobile/test/c3_native_info_send_test.dart: an info key goes out unfranked and hidden, and both sides keep it
+00:00 +52: All tests passed!

@@ -43,6 +43,7 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
 import 'message_format.dart';
 import 'poll.dart' show pollRowBody;
@@ -56,6 +57,7 @@ class NativeCryptoService
     implements
         BackupSealCryptoService,
         BackupOpenCryptoService,
+        CommunityInfoCryptoService,
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
@@ -93,6 +95,9 @@ class NativeCryptoService
   final DateTime Function() _clock;
   @override
   set conversationAuthority(ConversationAuthority value) => _authority = value;
+
+  @override
+  CommunityInfoCodec get communityInfoCodec => CommunityInfoCodec(bindings);
   ConversationAuthority? _authority;
   NativeCryptoDevice? _device;
 
@@ -1077,6 +1082,7 @@ class NativeCryptoService
         if (!await _isQueuedBundle(item)) return;
         final previous = await _requiredState();
         try {
+          int? infoRemovalEpoch;
           if (bundle.hasCommit) {
             final device = _requiredDevice();
             final ({int epoch, bool pending}) before;
@@ -1096,7 +1102,16 @@ class NativeCryptoService
               );
               return;
             }
-            if (before.pending) device.mergePendingCommit(item.conversationId);
+            if (before.pending) {
+              final outcome = device.c7MergePendingCommit(item.conversationId);
+              try {
+                if (outcome.removedAny && !outcome.removedSelf) {
+                  infoRemovalEpoch = outcome.newEpoch;
+                }
+              } finally {
+                outcome.wipeRoot();
+              }
+            }
             final after = device.groupEpoch(item.conversationId);
             // Fail closed if the group is not where the accepted commit
             // leads: that would mean a fork.
@@ -1109,6 +1124,12 @@ class NativeCryptoService
             expectedCursor: await localStore.loadSyncCursor(),
             state: _sealNext(previous),
             resolvedMlsOutboxKey: item.idempotencyKey,
+            infoRemoval: infoRemovalEpoch == null
+                ? null
+                : (
+                    conversationId: item.conversationId,
+                    epoch: infoRemovalEpoch
+                  ),
           );
           if (bundle.hasCommit) {
             await _rejudgeAfterOwnCommit(item.conversationId);
@@ -1369,8 +1390,17 @@ class NativeCryptoService
               checkCanCommit?.call();
               final device = _requiredDevice();
               final expected = MlsCommitBundle.decode(bundle.payload).epoch + 1;
+              int? infoRemovalEpoch;
               if (device.groupEpoch(message.conversationId).pending) {
-                device.mergePendingCommit(message.conversationId);
+                final outcome =
+                    device.c7MergePendingCommit(message.conversationId);
+                try {
+                  if (outcome.removedAny && !outcome.removedSelf) {
+                    infoRemovalEpoch = outcome.newEpoch;
+                  }
+                } finally {
+                  outcome.wipeRoot();
+                }
               }
               final after = device.groupEpoch(message.conversationId);
               if (after.pending || after.epoch != expected) {
@@ -1385,6 +1415,7 @@ class NativeCryptoService
                 state: _sealNext(previous),
                 cursor: message.syncEventId,
                 resolvedMlsOutboxKey: bundle.idempotencyKey,
+                infoRemovalEpoch: infoRemovalEpoch,
               ));
               await _rejudgeAfterOwnCommit(message.conversationId);
               return;
@@ -1415,6 +1446,7 @@ class NativeCryptoService
             return;
           }
           final device = _requiredDevice();
+          int? infoRemovalEpoch;
           switch (message.kind) {
             case 'welcome':
               if (message.recipientDeviceId != _deviceId) {
@@ -1476,7 +1508,18 @@ class NativeCryptoService
               if (device.groupEpoch(message.conversationId).pending) {
                 device.clearPendingCommit(message.conversationId);
               }
-              device.processCommit(message.conversationId, message.payload);
+              // ABI 13 reports authenticated MLS effects, independent of the
+              // server's membership labels. Persist the rotation obligation
+              // with this transition, including during inbound-only wakes.
+              final outcome = device.c7ProcessCommit(
+                  message.conversationId, message.payload);
+              try {
+                if (outcome.removedAny && !outcome.removedSelf) {
+                  infoRemovalEpoch = outcome.newEpoch;
+                }
+              } finally {
+                outcome.wipeRoot();
+              }
               break;
             default:
               throw StateError('unsupported MLS transport message');
@@ -1506,6 +1549,7 @@ class NativeCryptoService
             state: next,
             cursor: message.syncEventId,
             approvalLeaves: approval,
+            infoRemovalEpoch: infoRemovalEpoch,
           ));
         } catch (_) {
           await _restorePrevious(previous);
@@ -1789,8 +1833,15 @@ class NativeCryptoService
     DateTime? expiresAt,
   }) =>
       _serial(() async {
-        if (!_messageTypes.contains(type)) {
+        final info = infoPayloadTypes.contains(type);
+        if (!_messageTypes.contains(type) && !info) {
           throw ArgumentError.value(type, 'type', 'not a message payload');
+        }
+        // C3 info payloads carry no expiry and are never franked: a report
+        // must never hand an info key to its reader.
+        if (info && expiresAt != null) {
+          throw ArgumentError.value(
+              type, 'type', 'info payloads do not expire');
         }
         await _requireNotPaused(conversationId);
         await _requireApproved(conversationId);
@@ -1813,27 +1864,42 @@ class NativeCryptoService
           // payload and the commitment to it beside the ciphertext. The
           // commitment covers the canonical payload without the key, bound to
           // this conversation, this device and this action.
-          final frankKey = generateFrankKey();
-          final framed = AppPayloadCodec().encodeFranked(
-            type: type,
-            conversationId: conversationId,
-            senderDeviceId: deviceId,
-            actionId: idempotencyKey,
-            body: body,
-            frankKey: frankKey,
-            hidden: type.sendsHidden,
-            channelId: channelId,
-            expiresAtMs: expiresAt?.toUtc().millisecondsSinceEpoch,
-          );
-          final payload = framed.padded;
-          final commit = bindings.frankCommit(
-            key: frankKey,
-            conversationId: conversationId,
-            senderDeviceId: deviceId,
-            actionId: idempotencyKey,
-            payload: framed.canonical,
-          );
-          frankKey.fillRange(0, frankKey.length, 0);
+          final Uint8List payload;
+          final List<int>? commit;
+          if (info) {
+            payload = AppPayloadCodec().encode(
+              type: type,
+              conversationId: conversationId,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              body: body,
+              hidden: true,
+              channelId: channelId,
+            );
+            commit = null;
+          } else {
+            final frankKey = generateFrankKey();
+            final framed = AppPayloadCodec().encodeFranked(
+              type: type,
+              conversationId: conversationId,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              body: body,
+              frankKey: frankKey,
+              hidden: type.sendsHidden,
+              channelId: channelId,
+              expiresAtMs: expiresAt?.toUtc().millisecondsSinceEpoch,
+            );
+            payload = framed.padded;
+            commit = bindings.frankCommit(
+              key: frankKey,
+              conversationId: conversationId,
+              senderDeviceId: deviceId,
+              actionId: idempotencyKey,
+              payload: framed.canonical,
+            );
+            frankKey.fillRange(0, frankKey.length, 0);
+          }
           final device = _requiredDevice();
           final epoch = device.groupEpoch(conversationId).epoch;
           final ciphertext = device.encrypt(conversationId, payload);
@@ -1866,21 +1932,49 @@ class NativeCryptoService
               state: _sealNext(previous),
               envelope: envelope,
               draftText: draftText,
-              messageEffects: messageEffectsFor(
-                DecryptedAppPayload(
-                    type: type,
-                    actionId: idempotencyKey,
-                    body: body,
-                    channelId: channelId),
-                conversationId: conversationId,
-                senderAccountId: _accountId!,
-                senderDeviceId: deviceId,
-                createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
-                state: LocalMessageState.pending,
-                // The sender's own word: the first echo can only shorten it.
-                expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
-                authority: _authority,
-              ),
+              messageEffects: info
+                  ? <MessageEffect>[
+                      InsertMessageEffect(
+                        key: messageKey(deviceId, idempotencyKey),
+                        conversationId: conversationId,
+                        senderAccountId: _accountId!,
+                        senderDeviceId: deviceId,
+                        kind: LocalMessageKind.action,
+                        senderHidden: true,
+                        channelId: channelId,
+                        createdAt:
+                            DateTime.now().toUtc().millisecondsSinceEpoch,
+                        state: LocalMessageState.pending,
+                      ),
+                    ]
+                  : messageEffectsFor(
+                      DecryptedAppPayload(
+                          type: type,
+                          actionId: idempotencyKey,
+                          body: body,
+                          channelId: channelId),
+                      conversationId: conversationId,
+                      senderAccountId: _accountId!,
+                      senderDeviceId: deviceId,
+                      createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
+                      state: LocalMessageState.pending,
+                      // The sender's own word: the first echo can only
+                      // shorten it.
+                      expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
+                      authority: _authority,
+                    ),
+              communityInfo: info
+                  ? <CommunityInfoEvent>[
+                      communityInfoEventFor(
+                        DecryptedAppPayload(
+                            type: type, actionId: idempotencyKey, body: body),
+                        conversationId: conversationId,
+                        senderAccountId: _accountId!,
+                        senderDeviceId: deviceId,
+                        epoch: epoch,
+                      ),
+                    ]
+                  : const <CommunityInfoEvent>[],
             ),
           );
           return envelope;
@@ -2123,6 +2217,12 @@ class NativeCryptoService
                           conversationId: envelope.conversationId,
                           senderAccountId: envelope.senderAccountId,
                           senderDeviceId: envelope.senderDeviceId,
+                          // From the message's own header, never the
+                          // server's `mls_epoch` metadata: decryption
+                          // succeeded, so this epoch is authenticated (it
+                          // selects the epoch secrets and is in the AAD).
+                          epoch: mlsMessageEpoch(
+                              envelope.ciphertext, envelope.conversationId),
                         ),
                       ];
                 reveal = null;
@@ -3551,12 +3651,14 @@ List<MessageEffect> messageEffectsFor(
 
 /// The stored form of a received C3 payload ([infoPayloadTypes]), tied to
 /// the MLS-authenticated sender and the conversation it arrived in. The body
-/// was validated by [AppPayloadCodec].
+/// was validated by [AppPayloadCodec]. [epoch] is the MLS epoch the message
+/// was encrypted in, which only a successful decryption authenticates.
 CommunityInfoEvent communityInfoEventFor(
   DecryptedAppPayload payload, {
   required String conversationId,
   required String senderAccountId,
   required String senderDeviceId,
+  required int? epoch,
 }) {
   final body = payload.body;
   final kind = switch (payload.type) {
@@ -3581,6 +3683,7 @@ CommunityInfoEvent communityInfoEventFor(
     recordSha256: kind == CommunityInfoEventKind.update
         ? body['record_sha256'] as String
         : null,
+    epoch: epoch,
   );
 }
 

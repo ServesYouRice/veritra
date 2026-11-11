@@ -1222,9 +1222,7 @@ func TestListInvitesReturnsOwnInvitesOnly(t *testing.T) {
 
 func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	handler, ownerToken, _ := newTestHandlerWithOwner(t)
-	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{
-		"name": "Neighborhood",
-	})
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, response)
 	}
@@ -1234,9 +1232,7 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	if err := json.Unmarshal(response, &community); err != nil {
 		t.Fatalf("decode community: %v", err)
 	}
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{
-		"name": "general",
-	})
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create channel status=%d body=%s", status, response)
 	}
@@ -1247,14 +1243,14 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	}
 	var communities struct {
 		Communities []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID   string  `json:"id"`
+			Name *string `json:"name"`
 		} `json:"communities"`
 	}
 	if err := json.Unmarshal(response, &communities); err != nil {
 		t.Fatalf("decode communities: %v", err)
 	}
-	if len(communities.Communities) != 1 || communities.Communities[0].Name != "Neighborhood" {
+	if len(communities.Communities) != 1 || communities.Communities[0].ID != community.ID || communities.Communities[0].Name != nil {
 		t.Fatalf("unexpected communities: %#v", communities.Communities)
 	}
 
@@ -1264,13 +1260,14 @@ func TestListCommunitiesAndChannelsScopedToMembership(t *testing.T) {
 	}
 	var channels struct {
 		Channels []struct {
-			Name string `json:"name"`
+			ID   string  `json:"id"`
+			Name *string `json:"name"`
 		} `json:"channels"`
 	}
 	if err := json.Unmarshal(response, &channels); err != nil {
 		t.Fatalf("decode channels: %v", err)
 	}
-	if len(channels.Channels) != 1 || channels.Channels[0].Name != "general" {
+	if len(channels.Channels) != 1 || channels.Channels[0].ID == "" || channels.Channels[0].Name != nil {
 		t.Fatalf("unexpected channels: %#v", channels.Channels)
 	}
 
@@ -1321,7 +1318,7 @@ func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
 		t.Fatalf("moderator demote owner status=%d body=%s", status, response)
 	}
 
-	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{"name": "Kinds"})
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
 	if status != http.StatusCreated {
 		t.Fatalf("create community status=%d body=%s", status, response)
 	}
@@ -1332,7 +1329,6 @@ func TestConversationAndChannelAuthorizationBoundaries(t *testing.T) {
 		t.Fatalf("decode community: %v", err)
 	}
 	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/communities/"+community.ID+"/channels", ownerToken, map[string]interface{}{
-		"name": "bad-kind",
 		"kind": "text",
 	})
 	if status != http.StatusBadRequest {

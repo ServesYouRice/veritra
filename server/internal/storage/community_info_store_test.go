@@ -95,7 +95,7 @@ func TestCommunityInfoIsWrittenByOwnerOrAdminAndReadByMembers(t *testing.T) {
 func TestCategoryIsBoundToItsCommunityByTheFirstWrite(t *testing.T) {
 	ctx := context.Background()
 	f := newLayoutFixture(t, ctx)
-	other, err := f.store.CreateCommunity(ctx, "Other", f.member.Account.ID)
+	other, err := f.store.CreateCommunity(ctx, f.member.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,14 +206,14 @@ func TestLegacyChannelInfoIsReadByItsConversationMembers(t *testing.T) {
 		t.Fatal(err)
 	}
 	outsider := registerTestMember(t, ctx, store, invite.Code, "outsider")
-	community, err := store.CreateCommunity(ctx, "Legacy", owner.Account.ID)
+	community, err := store.CreateCommunity(ctx, owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if community.SharedConversationID != nil {
 		t.Fatal("expected the legacy layout")
 	}
-	channel, _, err := store.CreateChannelWithConversation(ctx, community.ID, "", "", owner.Account.ID)
+	channel, _, err := store.CreateChannelWithConversation(ctx, community.ID, "", owner.Account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -303,5 +303,31 @@ func TestInfoRecordsGoWithWhatTheyDescribe(t *testing.T) {
 	}
 	if got := rows(); got != 0 {
 		t.Fatalf("rows after community delete = %d", got)
+	}
+}
+
+// Owner decision 2026-11-09 (C3): only owners and admins create channels.
+func TestOnlyOwnersAndAdminsCreateChannels(t *testing.T) {
+	ctx := context.Background()
+	f := newLayoutFixture(t, ctx)
+	for _, step := range []struct {
+		role string
+		err  error
+	}{
+		{domain.RoleMember, ErrForbidden},
+		{domain.RoleModerator, ErrForbidden},
+		{domain.RoleAdmin, nil},
+	} {
+		if _, err := f.store.ManageCommunityMember(ctx, f.community.ID, f.owner.Account.ID, f.member.Account.ID, step.role); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := f.store.CreateChannelWithConversation(ctx, f.community.ID, "", f.member.Account.ID)
+		if !errors.Is(err, step.err) {
+			t.Fatalf("%s create err = %v, want %v", step.role, err, step.err)
+		}
+		_, err = f.store.CreateChannel(ctx, f.community.ID, "private", f.member.Account.ID)
+		if !errors.Is(err, step.err) {
+			t.Fatalf("%s legacy create err = %v, want %v", step.role, err, step.err)
+		}
 	}
 }

@@ -65,7 +65,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	}
 	existing, err := scanMessage(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sender_account_id, sender_device_id, idempotency_key, ciphertext, crypto_protocol, crypto_metadata_json, frank_commit, attachment_refs_json, reply_to_id, thread_root_id, created_at, edited_at, deleted_at, expires_at FROM message_envelopes WHERE sender_device_id = ? AND idempotency_key = ?`, envelope.SenderDeviceID, envelope.IdempotencyKey))
 	if err == nil {
-		if !sameIdempotentMessage(existing, envelope) {
+		// C7: the replay compares the stored sealed body too, so a retry
+		// with a different body is a conflict.
+		existing, err = withSealedBody(ctx, tx, existing, nil)
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		if !sameIdempotentMessage(existing, envelope) || !sameSealedBody(existing.SealedBody, envelope.SealedBody) {
 			return domain.MessageEnvelope{}, false, 0, ErrIdempotencyConflict
 		}
 		if err := tx.Commit(); err != nil {
@@ -87,6 +93,11 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	// or announcement channels; elsewhere it must name none.
 	route, err := routeEnvelope(ctx, tx, envelope.ConversationID, envelope.CryptoMetadata)
 	if err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	// C7: a sealed body is required in community conversations and refused
+	// elsewhere (and refused everywhere while C7 is off).
+	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
 	// C2: in an announcement channel or an admins-only group only owners and
@@ -158,6 +169,9 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		if _, err := tx.ExecContext(ctx, `INSERT INTO message_attachments(message_id, attachment_id) VALUES(?, ?)`, envelope.ID, attachmentID); err != nil {
 			return domain.MessageEnvelope{}, false, 0, ErrInvalidInput
 		}
+	}
+	if err := insertSealedBody(ctx, tx, envelope, route.channelID); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
 	}
 	var eventID int64
 	if withSyncEvent {
@@ -315,6 +329,9 @@ func (s *Store) MessageForAccount(ctx context.Context, messageID, accountID stri
 	if message.ExpiresAt != nil && !message.ExpiresAt.After(time.Now().UTC()) {
 		return domain.MessageEnvelope{}, ErrMessageExpired
 	}
+	// C7: no sealed body here. It is served only with its sync event (and,
+	// for pre-join posts, by the history route), so a newcomer cannot fetch
+	// a pre-join or hidden body by id.
 	return message, nil
 }
 
@@ -339,6 +356,11 @@ func (s *Store) updateMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	// C7: in community conversations an envelope is never rewritten in
+	// place; edits and deletes go through history-hide and new envelopes.
+	if err := s.refuseLegacyCommunityMessage(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -397,6 +419,11 @@ func (s *Store) deleteMessageEnvelope(ctx context.Context, messageID, accountID 
 		return domain.MessageEnvelope{}, 0, err
 	}
 	defer tx.Rollback()
+	// C7: in community conversations an envelope is never rewritten in
+	// place; edits and deletes go through history-hide and new envelopes.
+	if err := s.refuseLegacyCommunityMessage(ctx, tx, messageID); err != nil {
+		return domain.MessageEnvelope{}, 0, err
+	}
 	if cryptoMetadata, err = sameChannelAsStored(ctx, tx, messageID, cryptoMetadata); err != nil {
 		return domain.MessageEnvelope{}, 0, err
 	}
@@ -566,6 +593,11 @@ func (s *Store) ListMessages(ctx context.Context, conversationID, accountID stri
 	}
 	if !member {
 		return nil, ErrNotMember
+	}
+	// C7: community history is local, or comes from the history route; the
+	// server serves no paging there.
+	if err := s.refuseLegacyCommunityRoute(ctx, s.db, conversationID); err != nil {
+		return nil, err
 	}
 	limit := opts.Limit
 	if limit <= 0 || limit > 200 {
@@ -960,6 +992,9 @@ func (s *Store) SaveSyncEvent(ctx context.Context, eventType string, accountID *
 // at that event version. A later edit must never make replay fetch a newer
 // representation for an older cursor position.
 func messageSyncEventPayload(envelope domain.MessageEnvelope) map[string]interface{} {
+	// C7: a sealed body is served from envelope_bodies (attachSyncBodies),
+	// never copied into sync_events, so it is pruned with its envelope.
+	envelope.SealedBody = nil
 	return map[string]interface{}{
 		"message_id":      envelope.ID,
 		"conversation_id": envelope.ConversationID,
@@ -1031,6 +1066,9 @@ func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, af
 		if expired {
 			return SyncPage{}, ErrSyncCursorExpired
 		}
+	}
+	if err := s.attachSyncBodies(ctx, s.db, page.Events); err != nil {
+		return SyncPage{}, err
 	}
 	return page, nil
 }
@@ -1417,49 +1455,22 @@ func (s *Store) SearchMetadata(ctx context.Context, accountID, query string, lim
 	if domain.ValidID("acct", query) {
 		exactAccountID = query
 	}
-	prefixPattern := escapeLike(query) + "%"
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT type, id, label
 		FROM (
 			-- Accounts are matched on the exact (case-insensitive) username only.
 			-- Prefix/contains matching here would let any authenticated user walk
 			-- the substring space and enumerate the entire user directory, which
-			-- is a metadata leak for a private messenger. Communities/channels
-			-- below stay prefix/contains because they are scoped to the caller's
-			-- memberships. Prefix-only matching also keeps this endpoint on
-			-- ordinary indexes instead of leading-wildcard scans.
+			-- is a metadata leak for a private messenger. Community and channel
+			-- names are encrypted (C3, migration 0082): the server holds none to
+			-- search, and the app searches its own decrypted records.
 			SELECT 'account' AS type, id, username AS label, 0 AS rank
 			FROM accounts
 			WHERE deleted_at IS NULL AND (username = ? COLLATE NOCASE OR id = ?)
-			UNION ALL
-			SELECT 'community' AS type, c.id, c.name AS label,
-				CASE
-					WHEN c.name = ? COLLATE NOCASE THEN 0
-					ELSE 1
-				END AS rank
-			FROM communities c
-			JOIN memberships m ON m.community_id = c.id
-			WHERE m.account_id = ? AND c.name LIKE ? ESCAPE '\'
-			UNION ALL
-			SELECT 'channel' AS type, ch.id, ch.name AS label,
-				CASE
-					WHEN ch.name = ? COLLATE NOCASE THEN 0
-					ELSE 1
-				END AS rank
-			FROM channels ch
-			JOIN memberships m ON m.community_id = ch.community_id
-			LEFT JOIN community_channel_routes r ON r.channel_id = ch.id
-			WHERE m.account_id = ? AND ch.name LIKE ? ESCAPE '\'
-			  -- A private route is listed only to members of its conversation,
-			  -- as listChannelsQuery does.
-			  AND (r.channel_id IS NULL OR r.access_mode <> 'private'
-			       OR EXISTS (SELECT 1 FROM memberships pm WHERE pm.conversation_id = r.conversation_id AND pm.account_id = ?))
 		)
 		ORDER BY rank, label COLLATE NOCASE, type, id
 		LIMIT ? OFFSET ?`,
 		exact, exactAccountID,
-		exact, accountID, prefixPattern,
-		exact, accountID, prefixPattern, accountID,
 		limit, offset)
 	if err != nil {
 		return nil, err

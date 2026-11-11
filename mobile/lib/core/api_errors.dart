@@ -131,6 +131,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_max_uses': ApiErrorKind.invalidRequest,
   'invalid_member': ApiErrorKind.invalidRequest,
   'invalid_name': ApiErrorKind.invalidRequest,
+  'plaintext_name_refused': ApiErrorKind.invalidRequest,
   'invalid_nonce': ApiErrorKind.invalidRequest,
   'attestation_unavailable': ApiErrorKind.unavailable,
   'invalid_push_subscription': ApiErrorKind.invalidRequest,
@@ -174,6 +175,10 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'device_list_conflict': ApiErrorKind.conflict,
   'invalid_after': ApiErrorKind.invalidRequest,
   'invalid_items': ApiErrorKind.invalidRequest,
+
+  // C7 sealed bodies (server step 3, behind PRIVATE_MESSENGER_C7_HISTORY).
+  'invalid_sealed_body': ApiErrorKind.invalidRequest,
+  'history_route_only': ApiErrorKind.conflict,
 
   // C6 franking and abuse reports.
   'invalid_frank_commit': ApiErrorKind.invalidRequest,
@@ -358,6 +363,8 @@ class ApiException implements Exception {
       case 'invalid_device_name':
         return l10n.apiErrorInvalidDeviceName;
       case 'invalid_name':
+      // C3: an older app sent a community or channel name in the clear.
+      case 'plaintext_name_refused':
         return l10n.apiErrorInvalidName;
       case 'passkey_limit':
         return l10n.apiErrorPasskeyLimit;

@@ -203,14 +203,14 @@ func isTargetMemberTx(ctx context.Context, q queryRower, target MembershipTarget
 	return err == nil, err
 }
 
+// targetNameTx is a group's title, or "" for a community: a community's name
+// is its encrypted info record (C3), which the server cannot read.
 func targetNameTx(ctx context.Context, q queryRower, target MembershipTarget) (string, error) {
-	var name sql.NullString
-	var err error
 	if target.Kind == domain.InviteTargetCommunity {
-		err = q.QueryRowContext(ctx, `SELECT name FROM communities WHERE id = ?`, target.ID).Scan(&name)
-	} else {
-		err = q.QueryRowContext(ctx, `SELECT title FROM conversations WHERE id = ?`, target.ID).Scan(&name)
+		return "", nil
 	}
+	var name sql.NullString
+	err := q.QueryRowContext(ctx, `SELECT title FROM conversations WHERE id = ?`, target.ID).Scan(&name)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -560,10 +560,9 @@ func (s *Store) ListOwnJoinRequests(ctx context.Context, accountID string) ([]do
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT r.id, r.community_id, r.conversation_id,
 		       CASE WHEN r.status = 'pending' AND NOT `+usableInviteSQL+` THEN 'cancelled' ELSE r.status END,
-		       r.created_at, r.decided_at, COALESCE(c.name, g.title, '')
+		       r.created_at, r.decided_at, COALESCE(g.title, '')
 		FROM membership_join_requests r
 		JOIN membership_invites i ON i.id = r.invite_id
-		LEFT JOIN communities c ON c.id = r.community_id
 		LEFT JOIN conversations g ON g.id = r.conversation_id
 		WHERE r.account_id = ?
 		ORDER BY r.created_at DESC, r.id
