@@ -193,6 +193,22 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ваши контакти не могу да додају ваше уређаје у ћаскања док не потврдите који су ваши.';
 
   @override
+  String get settingsRecoveryRetype =>
+      'Поново унесите кључ за опоравак да бисте довршили опоравак';
+
+  @override
+  String get settingsRecoveryRetypeDetail =>
+      'Ваши контакти не могу да додају овај уређај у ћаскања док то не урадите.';
+
+  @override
+  String get settingsRecoveryConfirm =>
+      'Потврдите кључ за опоравак да би опоравак и даље радио';
+
+  @override
+  String get settingsRecoveryConfirmDetail =>
+      'Ваш кључ за опоравак је постављен пре листа одобрених уређаја. Унесите га једном, иначе ће опоравак налога њиме бити одбијен.';
+
+  @override
   String get deviceListReviewTitle => 'Који уређаји су ваши?';
 
   @override
@@ -1917,6 +1933,11 @@ class AppLocalizationsSr extends AppLocalizations {
       'Сакривена је порука са уређаја који није одобрен.';
 
   @override
+  String chatDevicesNotJoined(String name) {
+    return 'Неки уређаји корисника $name се још нису придружили.';
+  }
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Придруживање овом ћаскању није успело. Замолите члана да вас поново дода.';
 
@@ -2893,6 +2914,16 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get recoveryKeyUnreadable =>
       'Тај кључ за опоравак није исправан. Проверите да ли има грешака у куцању.';
+
+  @override
+  String get recoveryKeyNotThisAccount =>
+      'То није кључ за опоравак овог налога. Проверите папир и покушајте поново.';
+
+  @override
+  String get recoveryKeyConfirmedForList => 'Кључ за опоравак је потврђен.';
+
+  @override
+  String get recoveryRetypeDone => 'Опоравак је довршен на овом уређају.';
 
   @override
   String get recoveryClaimRefused =>
@@ -4351,6 +4382,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get settingsDeviceListSetupDetail =>
       'Vaši kontakti ne mogu da dodaju vaše uređaje u ćaskanja dok ne potvrdite koji su vaši.';
+
+  @override
+  String get settingsRecoveryRetype =>
+      'Ponovo unesite ključ za oporavak da biste dovršili oporavak';
+
+  @override
+  String get settingsRecoveryRetypeDetail =>
+      'Vaši kontakti ne mogu da dodaju ovaj uređaj u ćaskanja dok to ne uradite.';
+
+  @override
+  String get settingsRecoveryConfirm =>
+      'Potvrdite ključ za oporavak da bi oporavak i dalje radio';
+
+  @override
+  String get settingsRecoveryConfirmDetail =>
+      'Vaš ključ za oporavak je postavljen pre lista odobrenih uređaja. Unesite ga jednom, inače će oporavak naloga njime biti odbijen.';
 
   @override
   String get deviceListReviewTitle => 'Koji uređaji su vaši?';
@@ -6077,6 +6124,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Sakrivena je poruka sa uređaja koji nije odobren.';
 
   @override
+  String chatDevicesNotJoined(String name) {
+    return 'Neki uređaji korisnika $name se još nisu pridružili.';
+  }
+
+  @override
   String get chatMessageWelcomeUnavailable =>
       'Pridruživanje ovom ćaskanju nije uspelo. Zamolite člana da vas ponovo doda.';
 
@@ -7057,6 +7109,16 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get recoveryKeyUnreadable =>
       'Taj ključ za oporavak nije ispravan. Proverite da li ima grešaka u kucanju.';
+
+  @override
+  String get recoveryKeyNotThisAccount =>
+      'To nije ključ za oporavak ovog naloga. Proverite papir i pokušajte ponovo.';
+
+  @override
+  String get recoveryKeyConfirmedForList => 'Ključ za oporavak je potvrđen.';
+
+  @override
+  String get recoveryRetypeDone => 'Oporavak je dovršen na ovom uređaju.';
 
   @override
   String get recoveryClaimRefused =>

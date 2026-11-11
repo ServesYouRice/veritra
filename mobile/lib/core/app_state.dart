@@ -102,6 +102,7 @@ part 'app_state_k1_backup.dart';
 part 'app_state_k1_restore.dart';
 part 'app_state_link_v3.dart';
 part 'app_state_device_list.dart';
+part 'app_state_l1_joins.dart';
 part 'app_state_profiles.dart';
 
 typedef ApiClientFactory = ApiClient Function(String baseUrl);
@@ -341,6 +342,18 @@ class AppState extends ChangeNotifier
   /// This account has no approved-device list yet (from before L1): its
   /// devices are added to no chat until the user reviews them once.
   bool ownDeviceListMissing = false;
+
+  /// This account's verified head names no recovery key (L1 design,
+  /// "Existing accounts"). With a key the server reports configured, that
+  /// key is from before L1 and must be typed once (see
+  /// [AppStateDeviceList.recoveryKeyNeedsConfirmation]).
+  bool _ownHeadWithoutRecoveryKey = false;
+
+  /// This device was enrolled by recovery, its own verified pin does not
+  /// list it, and no signed recovery version waits to be posted: the held
+  /// seed is gone or does not match, so the recovery key must be typed again
+  /// (L1 design, "Recovery when every device is lost", step 4).
+  bool recoveryListNeedsRetype = false;
 
   /// The last restore list held old-format (VBK2) copies, which are never
   /// opened (K1-6). Only the screen's note reads it.
@@ -935,6 +948,19 @@ class AppState extends ChangeNotifier
   int _catchUpRetryAttempt = 0;
   final Set<String> _failedMlsConversations = <String>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
+
+  /// L1 complete-adds audit and incomplete-join clocks (app_state_l1_joins).
+  final _L1JoinAudit _l1Joins = _L1JoinAudit();
+
+  /// How often one held group is audited for approved devices that are not
+  /// leaves when the server reports no change for it (L1).
+  @visibleForTesting
+  Duration l1JoinAuditInterval = const Duration(minutes: 15);
+
+  /// How long an approved device may stay out of a group before the chat
+  /// says so (L1 design, "Sending adds").
+  @visibleForTesting
+  Duration l1IncompleteJoinGrace = const Duration(hours: 1);
   final Set<String> _mlsReconcileNow = <String>{};
   bool _mlsReconcileRequested = true;
 
@@ -6110,6 +6136,14 @@ class AppState extends ChangeNotifier
           }
           if (!_syncOwnerActive(current, ownerGeneration)) return;
         }
+        // L1: groups the server reports no change for are still checked
+        // against their members' signed lists (bounded per pass).
+        try {
+          await _auditCompleteAdds(current, ownerGeneration);
+        } catch (err) {
+          if (err is ApiException && err.statusCode == 401) rethrow;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         try {
           await _maybeSelfUpdate(current, ownerGeneration);
         } catch (err) {
@@ -7420,6 +7454,7 @@ class AppState extends ChangeNotifier
     _cancelCatchUpRetry();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
+    _l1Joins.clear();
     _mlsReconcileNow.clear();
     _mlsReconcileRequested = true;
     _manualRetryKey = null;
@@ -8076,6 +8111,11 @@ class AppState extends ChangeNotifier
     final holdSeq = _removalHoldSeq;
     final changes = await client.mlsPendingChanges(current.token);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _l1Joins.reported = <String>{
+      for (final change in changes) change.conversationId,
+    };
+    await _loadMissingJoins(current);
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
     final stillPending = <String>{};
     var staged = false;
@@ -8112,10 +8152,12 @@ class AppState extends ChangeNotifier
             ? mls as ApprovedDeviceDiscoveryCryptoService
             : null;
         List<MlsDeviceRef>? discovered;
+        var discoveryComplete = false;
         if (discovery != null) {
           try {
             discovered = await _discoverApprovedAdds(
                 current, client, discovery, change.conversationId);
+            discoveryComplete = true;
           } catch (err) {
             if (err is ApiException && err.statusCode == 401) rethrow;
             if (change.remove.isEmpty) rethrow;
@@ -8125,6 +8167,10 @@ class AppState extends ChangeNotifier
           }
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (discoveryComplete && discovered!.isEmpty) {
+          // Every approved device is a leaf already: no gap to report.
+          await _noteMissingJoins(change.conversationId, const <String>{}, now);
+        }
         final approvedAdds = discovered == null
             ? await _approvedForAdd(change.add)
             : [for (final ref in discovered) ref.deviceId];
@@ -8143,6 +8189,10 @@ class AppState extends ChangeNotifier
               );
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (discovered != null) _checkDiscoveredPackages(discovered, adds);
+        if (discovered != null && discoveryComplete) {
+          await _noteMissingJoins(change.conversationId,
+              AppStateL1Joins._unresolvedAccounts(discovered, adds), now);
+        }
         if (adds.isEmpty && change.remove.isEmpty) continue;
         await mls.stageMembershipChange(change.conversationId,
             adds: adds, removes: change.remove);

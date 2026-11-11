@@ -684,6 +684,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  /// A member's display name, as message senders are labelled. Server-
+  /// supplied metadata, not a verified identity claim.
+  String _memberName(String conversationId, String accountId) {
+    final state = widget.state;
+    final member = state
+        .membersFor(conversationId)
+        .where((item) => item.accountId == accountId)
+        .firstOrNull;
+    return state.profiles?.account(accountId)?.name ??
+        accountLabel(accountId, member?.username);
+  }
+
   /// Message area for the selected conversation. Failures get an explicit
   /// error + retry instead of masquerading as "No messages yet".
   Widget _messagesPane(
@@ -709,8 +721,18 @@ class _ChatScreenState extends State<ChatScreen> {
         message: context.l10n.chatEmptyMessage,
       );
     }
+    final notJoined = widget.state.incompleteJoinAccounts(conversationId);
     return Column(
       children: <Widget>[
+        // L1: an approved device of a member has stayed out of the group
+        // for an hour (the server gave no key package, or kept it out).
+        for (final accountId in notJoined)
+          MaterialBanner(
+            content: Text(context.l10n
+                .chatDevicesNotJoined(_memberName(conversationId, accountId))),
+            leading: const Icon(Icons.devices_other_outlined),
+            actions: const <Widget>[SizedBox.shrink()],
+          ),
         if (loadError != null)
           MaterialBanner(
             content: Text(loadError),

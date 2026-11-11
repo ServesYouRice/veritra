@@ -457,6 +457,17 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L1 complete adds, join notice, recovery retype and pre-L1 RK
+  confirmation (2026-11-11):** held groups the server reports no change
+  for are audited against signed lists (bounded, after the reconcile
+  fallback). Accounts with an approved device left out for an hour are
+  shown in the chat, and the clock persists in settings. A recovered device
+  with no usable held seed signs change 4 from the retyped key through the
+  same native call. A pre-L1 key is confirmed by `rk_id` and set again with
+  change 5. No ABI, schema, migration or dependency change. Design:
+  [`L1-approved-devices.md`](designs/L1-approved-devices.md). Not yet
+  covered by tests; needs the independent review.
+
 - **L1 signed-list add discovery (2026-11-11):** creation and reported pending
   membership changes derive device candidates from verified account lists,
   subtract the native roster and claim explicit IDs. Claim answers must be a

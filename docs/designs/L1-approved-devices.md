@@ -57,6 +57,54 @@ reported change remains, and the one-hour incomplete-join notice remain open.
 The account membership roster itself still belongs to C1/C4; this does not
 turn the server's account roster into cryptographic authorization.
 
+### Complete adds without a reported change (2026-11-11)
+
+A server can omit a conversation from `GET /mls/pending-changes` entirely, so
+discovery cannot run only on reported changes. After each catch-up, the app
+audits conversations it holds a group for that the last pending-change read
+did not report: at most 8 per pass, each at most every 15 minutes, oldest
+first. An audit runs the same signed-list discovery as above. A gap must last
+the reconcile fallback (3 minutes) before this device claims and stages,
+which gives an honest server's pending change and its coordinator the first
+turn. Two devices that act together race on the epoch; the loser's bundle is
+refused and dropped as today, at a cost of one claimed package per missing
+device. A failed audit waits a full interval. The audit runs on catch-up,
+with no timer of its own.
+
+### Incomplete-join notice (2026-11-11)
+
+Each discovery pass that completes (reported change or audit) records, per
+conversation, the accounts that still have an approved device outside the
+tree after the claim. The first time a gap was seen is kept and persisted in
+settings (`l1.missing_joins`, conversation, then account, then milliseconds).
+A restart therefore cannot reset the clock. A pass that finds an account
+complete clears it, and a failed discovery leaves the record unchanged.
+After 1 hour the chat shows "Some of <name>'s devices haven't joined yet".
+Missing or conflicting lists authorize no adds and produce no notice; the
+approval hold and the list states cover those. No schema change is needed.
+
+### Recovery retype and pre-L1 recovery-key confirmation (2026-11-11)
+
+The held seed can be gone (an unreadable pending state), or the head's
+recovery key can differ from it. In either case `pm_crypto_l1_sign_recovery`
+refuses and K0-R completion posts nothing. A recovered device whose own
+verified pin does not list it then shows "Type your recovery key again to
+finish recovery" in Settings. The typed key is decoded and passed as entropy
+to the same native call, which still checks the body, the chain step and the
+head's recovery key. Nothing derived from it is kept, and the entropy is
+wiped after the call. The signed statement goes through the existing
+store-then-post retry path.
+
+An account whose verified head names no recovery key, while the server
+reports one configured, has a pre-L1 key, and recovery is refused for it. In
+that case Settings shows "Confirm your recovery key to keep recovery
+working". The typed key's `rk_id` is compared in constant time with the
+server's, and a mismatch sends nothing. On a match, the app sends
+`PUT /account/recovery-key` with the same `rk_auth_pub` and `rk_id` and a
+change-5 version naming `rk_list_pub`, with recent auth. The same `rk_id`
+keeps K1 backups. This reuses existing routes and calls, and needs no
+counter.
+
 ### Durable enrollment anchors (review follow-up)
 
 Before saving a new setup/registration session, write its locally signed
@@ -130,9 +178,10 @@ and self-updates stop. Check incoming removed verdicts and that an MLS removal
 releases the hold. Run inherited Rust VDL1/key-binding tests, server signed-list
 and honest-server gates, Flutter pin/store/gate tests, and repository checks.
 
-The full L1 package remains partial: discovery when the server withholds an
-entire pending conversation, incomplete-join retry/notice,
-recovery-key retype/legacy confirmation UI, removed-message
-UI, chains beyond the bounded limits and independent security review/demo
-evidence still need work. Work is performed alone as explicitly requested;
-no independent review is claimed.
+The full L1 package remains partial. Still to do: the removed-sender
+marker ("sent from a device <name> removed"), which must be recorded at
+entry, and probably needs a local schema bump; chains beyond the bounded
+limits; tests for the audit, notice, retype and confirmation flows (not
+written or run in that session, on the owner's instruction); adversarial
+demo evidence; and the independent security review. No independent review
+is claimed.

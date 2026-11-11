@@ -429,6 +429,30 @@ abstract class AppLocalizations {
   /// **'Your contacts can\'t add your devices to chats until you confirm which ones are yours.'**
   String get settingsDeviceListSetupDetail;
 
+  /// No description provided for @settingsRecoveryRetype.
+  ///
+  /// In en, this message translates to:
+  /// **'Type your recovery key again to finish recovery'**
+  String get settingsRecoveryRetype;
+
+  /// No description provided for @settingsRecoveryRetypeDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your contacts can\'t add this device to chats until you do.'**
+  String get settingsRecoveryRetypeDetail;
+
+  /// No description provided for @settingsRecoveryConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm your recovery key to keep recovery working'**
+  String get settingsRecoveryConfirm;
+
+  /// No description provided for @settingsRecoveryConfirmDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Your recovery key was set before approved-device lists. Type it once, or recovering your account with it will be refused.'**
+  String get settingsRecoveryConfirmDetail;
+
   /// No description provided for @deviceListReviewTitle.
   ///
   /// In en, this message translates to:
@@ -3165,6 +3189,12 @@ abstract class AppLocalizations {
   /// **'A message from a device that isn\'t approved was hidden.'**
   String get chatMessageUnapprovedDevice;
 
+  /// No description provided for @chatDevicesNotJoined.
+  ///
+  /// In en, this message translates to:
+  /// **'Some of {name}\'s devices haven\'t joined yet.'**
+  String chatDevicesNotJoined(String name);
+
   /// No description provided for @chatMessageWelcomeUnavailable.
   ///
   /// In en, this message translates to:
@@ -4724,6 +4754,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'That recovery key is not valid. Check it for a typo.'**
   String get recoveryKeyUnreadable;
+
+  /// No description provided for @recoveryKeyNotThisAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'That isn\'t this account\'s recovery key. Check your paper and try again.'**
+  String get recoveryKeyNotThisAccount;
+
+  /// No description provided for @recoveryKeyConfirmedForList.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery key confirmed.'**
+  String get recoveryKeyConfirmedForList;
+
+  /// No description provided for @recoveryRetypeDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery finished on this device.'**
+  String get recoveryRetypeDone;
 
   /// No description provided for @recoveryClaimRefused.
   ///
