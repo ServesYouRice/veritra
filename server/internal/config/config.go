@@ -73,6 +73,17 @@ type Config struct {
 	// (D49, D78). Zero means the default.
 	RecoveryActiveWindow time.Duration
 	RecoveryWait         time.Duration
+	// Attestation is the L3 proof hook: "" or "none" (default, route is
+	// 404) or "configfs-tsm". AttestationTLSCert is the PEM certificate
+	// whose key the report is bound to; the mode needs it. ImageDigest is
+	// the operator's claim of the running image, shown as claimed_build.
+	Attestation        string
+	AttestationTLSCert string
+	ImageDigest        string
+	// BuildVersion and BuildCommit are set by main from the link-time
+	// version and commit; they are the server's own claim.
+	BuildVersion string
+	BuildCommit  string
 }
 
 const (
@@ -169,6 +180,19 @@ func Load() (Config, error) {
 		PublicOrigin:            strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_PUBLIC_ORIGIN")),
 		RecoveryActiveWindow:    DefaultRecoveryActiveWindow,
 		RecoveryWait:            DefaultRecoveryWait,
+		Attestation:             strings.ToLower(strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_ATTESTATION"))),
+		AttestationTLSCert:      strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_ATTESTATION_TLS_CERT")),
+		ImageDigest:             strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_IMAGE_DIGEST")),
+	}
+	switch cfg.Attestation {
+	case "", "none":
+		cfg.Attestation = ""
+	case "configfs-tsm":
+		if cfg.AttestationTLSCert == "" {
+			return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ATTESTATION=configfs-tsm needs PRIVATE_MESSENGER_ATTESTATION_TLS_CERT")
+		}
+	default:
+		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ATTESTATION must be none or configfs-tsm")
 	}
 	if cfg.Environment != "development" && cfg.Environment != "production" {
 		return Config{}, fmt.Errorf("PRIVATE_MESSENGER_ENV must be development or production")

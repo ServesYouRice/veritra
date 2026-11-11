@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/admission"
+	"private-messenger/server/internal/attest"
 	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/domain"
 	"private-messenger/server/internal/messaging"
@@ -80,6 +81,11 @@ type API struct {
 	// ScopedSync turns on the per-scope sync routes (scoped_sync_handlers.go).
 	// Off, they are not registered and answer 404.
 	ScopedSync bool
+	// Attest is the L3 proof hook. Nil (the default) leaves
+	// GET /api/v1/attestation unregistered, so it answers 404.
+	Attest       attest.Provider
+	TLSKeyHash   [32]byte
+	ClaimedBuild ClaimedBuild
 }
 
 // passwordService returns the account password verifier. PasswordCost is the
@@ -100,6 +106,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.readiness)
 	mux.HandleFunc("GET /api/v1/health", a.health)
+	if a.Attest != nil && a.Attest.Kind() != "none" {
+		mux.HandleFunc("GET /api/v1/attestation", a.attestation)
+	}
 	mux.HandleFunc("GET /setup", a.setupPage)
 	mux.HandleFunc("GET /api/v1/setup/status", a.setupStatus)
 	mux.HandleFunc("GET /api/v1/recovery", a.recoverBackup)

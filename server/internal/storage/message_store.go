@@ -997,12 +997,26 @@ func insertSyncEvent(ctx context.Context, execer syncEventExecer, eventType stri
 // pruned an event after afterID that the device could have been sent
 // (syncCursorExpired).
 func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+	page, err := s.ListSyncPage(ctx, accountID, deviceID, afterID, limit, false)
+	return page.Events, err
+}
+
+// ListSyncPage is ListSyncEvents with the scan position (D92, TASK-209). Only
+// when bounded (the client opted in with ?scan=bounded) does a scan budget
+// apply and a cursor naming a hidden row of the device's own scope count as
+// not expired; otherwise the scan, the response and the expiry test are the
+// unbounded ones. ScannedThrough is the last candidate read, hidden rows
+// included, and never below the cursor; Truncated says the budget ended the
+// page before the stream did. Hidden rows it passes stay hidden (the MLS
+// join filter only grows, dead envelopes stay dead) or are block-hidden,
+// which D92 lets the cursor pass.
+func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	events, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit)
+	page, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit, bounded)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	// The expiry check runs after the page, which is one statement and so
 	// one snapshot: a prune that removed events the page lacks committed
@@ -1010,46 +1024,57 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 	// first, a prune landing between the check and the page would leave a
 	// silent gap. Only a cursor past the start can have expired.
 	if afterID > 0 {
-		expired, err := s.syncCursorExpired(ctx, accountID, deviceID, afterID)
+		expired, err := s.syncCursorExpired(ctx, accountID, deviceID, afterID, bounded)
 		if err != nil {
-			return nil, err
+			return SyncPage{}, err
 		}
 		if expired {
-			return nil, ErrSyncCursorExpired
+			return SyncPage{}, ErrSyncCursorExpired
 		}
 	}
-	return events, nil
+	return page, nil
 }
 
-func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int) ([]domain.SyncEvent, error) {
+func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
 	// The query streams candidates in id order and has no LIMIT, since
 	// hidden ones do not count towards the page: the page ends here, after
 	// limit visible events, and closing rows stops the merge.
 	rows, err := s.db.QueryContext(ctx, listSyncEventsQuery, accountID, afterID, deviceID)
 	if err != nil {
-		return nil, err
+		return SyncPage{}, err
 	}
 	defer rows.Close()
 	var events []domain.SyncEvent
 	candidate := &syncCandidateScanner{rows: rows}
 	last := afterID
+	scanned := 0
+	truncated := false
 	for len(events) < limit && rows.Next() {
+		if bounded && scanned >= scopedSyncScanBudget {
+			// A candidate exists beyond the budget: stop before it.
+			truncated = true
+			break
+		}
+		scanned++
 		event, err := scanSyncEvent(candidate)
 		if err != nil {
-			return nil, err
+			return SyncPage{}, err
 		}
 		// The merge has no outer ORDER BY: it relies on SQLite emitting
 		// the queue in id order. Clients refuse a page out of order, so
 		// fail the page here rather than send one.
 		if event.ID <= last {
-			return nil, fmt.Errorf("sync merge emitted event %d after %d", event.ID, last)
+			return SyncPage{}, fmt.Errorf("sync merge emitted event %d after %d", event.ID, last)
 		}
 		last = event.ID
 		if candidate.visible {
 			events = append(events, event)
 		}
 	}
-	return events, rows.Err()
+	if err := rows.Err(); err != nil {
+		return SyncPage{}, err
+	}
+	return SyncPage{Events: events, ScannedThrough: last, Truncated: truncated}, nil
 }
 
 // syncCursorExpired reports whether retention pruned an event after afterID
@@ -1065,7 +1090,7 @@ func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID stri
 //     existed, also gets the old test (legacySyncCursorExpiredQuery).
 //
 // It errs only towards expired; docs/operations.md lists when.
-func (s *Store) syncCursorExpired(ctx context.Context, accountID, deviceID string, afterID int64) (bool, error) {
+func (s *Store) syncCursorExpired(ctx context.Context, accountID, deviceID string, afterID int64, bounded bool) (bool, error) {
 	var legacyThrough, prunedThrough int64
 	err := s.db.QueryRowContext(ctx, `SELECT legacy_through, pruned_through FROM sync_prune_state WHERE id = 1`).Scan(&legacyThrough, &prunedThrough)
 	known := err == nil
@@ -1084,11 +1109,32 @@ func (s *Store) syncCursorExpired(ctx context.Context, accountID, deviceID strin
 	if expired || (known && afterID >= legacyThrough) {
 		return expired, nil
 	}
+	if bounded {
+		// A cursor that names a row of the device's own scope is not behind
+		// a pruned prefix (retention removes the lowest ids first), whether
+		// or not the device may see that row: this is how the scanned-through
+		// position, which can point at a hidden row, is accepted. The legacy
+		// test below would call it expired when no visible row precedes it.
+		var inScope bool
+		if err := s.db.QueryRowContext(ctx, syncCursorInScopeQuery, accountID, afterID, deviceID).Scan(&inScope); err != nil {
+			return false, err
+		}
+		if inScope {
+			return false, nil
+		}
+	}
 	if err := s.db.QueryRowContext(ctx, legacySyncCursorExpiredQuery, accountID, afterID).Scan(&expired); err != nil {
 		return false, err
 	}
 	return expired, nil
 }
+
+// syncCursorInScopeQuery is true when event ?2 is a candidate of account ?1
+// and device ?3 in listSyncEventsQuery: an account event for every device or
+// ?3, or an event of a conversation the account is a member of.
+const syncCursorInScopeQuery = `SELECT EXISTS (SELECT 1 FROM sync_events se
+	WHERE se.id = ?2 AND ((se.account_id = ?1 AND (se.device_id IS NULL OR se.device_id = ?3))
+	  OR (+se.account_id IS NULL AND EXISTS (SELECT 1 FROM memberships m WHERE m.account_id = ?1 AND m.conversation_id = se.conversation_id))))`
 
 // syncPruneMarksExpiredQuery is true when a pruned event after cursor ?2
 // could have gone to device ?3 of account ?1: its account's events for every
@@ -1334,6 +1380,13 @@ func scanStorageKeys(rows rowIterator) ([]string, error) {
 		return nil, err
 	}
 	return keys, nil
+}
+
+// SyncEpoch is the instance's sync epoch, the cheap part of SyncBounds.
+func (s *Store) SyncEpoch(ctx context.Context) (string, error) {
+	var epoch string
+	err := s.db.QueryRowContext(ctx, `SELECT epoch FROM sync_state WHERE id = 1`).Scan(&epoch)
+	return epoch, err
 }
 
 func (s *Store) SyncBounds(ctx context.Context, accountID string) (string, int64, int64, error) {

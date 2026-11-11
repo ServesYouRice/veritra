@@ -1653,6 +1653,51 @@ class ApiClient {
     await _readJsonResponse(response);
   }
 
+  /// `GET /api/v1/backups`: the account's backups. Rows are the server's
+  /// claims; the restore opens the container to trust anything.
+  Future<List<Map<String, Object?>>> listBackups(String token,
+      {int limit = 100}) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/backups?limit=$limit', token: token);
+    final backups = json['backups'];
+    if (backups is! List) throw const ApiResponseException();
+    return <Map<String, Object?>>[
+      for (final b in backups)
+        if (b is Map) Map<String, Object?>.from(b),
+    ];
+  }
+
+  /// `GET /api/v1/backups/{id}` with the session: the sealed container, or
+  /// the byte range [start]..[end] of it (the header peek). The stream is
+  /// bounded by [k1MaxBackupCiphertextBytes]; the server verifies every
+  /// chunk before sending it.
+  Future<Stream<List<int>>> downloadBackup(String token, String id,
+      {int? start, int? end}) async {
+    if (!RegExp(r'^[A-Za-z0-9_-]{1,128}$').hasMatch(id) ||
+        (start != null && (start < 0 || (end != null && end < start)))) {
+      throw ArgumentError('invalid backup download');
+    }
+    final request = await _openRequest(
+      'GET',
+      Uri.parse(baseUrl).resolve('/api/v1/backups/$id'),
+    );
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+    if (start != null) {
+      request.headers.set('Range', 'bytes=$start-${end ?? ''}');
+    }
+    final response = await request.close().timeout(_requestTimeout);
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw await _apiError(response);
+    }
+    final ranged = start != null;
+    if (response.statusCode != (ranged ? 206 : 200)) {
+      // A 200 for a range is the whole file; a 206 for none is not ours.
+      await _discard(response);
+      throw const ApiResponseException();
+    }
+    return _boundedStream(response, k1MaxBackupCiphertextBytes);
+  }
+
   Future<Stream<List<int>>> recoverEncryptedBackup(
     List<int> recoveryToken, {
     int? startOffset,
@@ -2332,6 +2377,48 @@ class ApiClient {
     return _rows(json, 'events', SyncEvent.fromJson);
   }
 
+  /// [syncEvents] with the scan position, asking for the bounded scan
+  /// (TASK-209, D92): the server examines at most a budget of candidates,
+  /// hidden ones included, and reports how far it looked
+  /// ([ConversationSyncPage.scannedThrough]) and whether the budget ended the
+  /// page early ([ConversationSyncPage.truncated]). Both are absent from an
+  /// older server, which also ignores the opt-in. Test fakes that only
+  /// override [syncEvents] mix in [LegacySyncPageFake].
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async {
+    final json = await _shrinkingPage(limit, (pageLimit) {
+      final path = Uri(
+        path: '/api/v1/sync/events',
+        queryParameters: <String, String>{
+          'after': after.toString(),
+          'limit': pageLimit.toString(),
+          'scan': 'bounded',
+        },
+      ).toString();
+      return _jsonRequest('GET', path,
+          token: token, maxResponseBytes: _maxCiphertextResponseBytes);
+    });
+    final events = _rows(json, 'events', SyncEvent.fromJson);
+    return _decode(() {
+      final through = json['scanned_through'];
+      final truncated = json['scan_truncated'];
+      if (through != null && (through is! int || through < 0)) {
+        throw const FormatException();
+      }
+      if (truncated != null && truncated is! bool) {
+        throw const FormatException();
+      }
+      return ConversationSyncPage(
+        events,
+        scannedThrough: through as int?,
+        truncated: truncated == true,
+      );
+    });
+  }
+
   /// One conversation's own sync stream (C1 prerequisite 1), in event order.
   /// The server serves it only when the operator turned scoped sync on, and
   /// answers 404 otherwise. A conversation whose retention was pruned past
@@ -2994,4 +3081,16 @@ class ConversationSyncPage {
   final List<SyncEvent> events;
   final int? scannedThrough;
   final bool truncated;
+}
+
+/// For test fakes that override [ApiClient.syncEvents] only: the page method
+/// answers from it, with no scan position, as an older server would.
+mixin LegacySyncPageFake on ApiClient {
+  @override
+  Future<ConversationSyncPage> syncEventsPage(
+    String token, {
+    int after = 0,
+    int limit = 100,
+  }) async =>
+      ConversationSyncPage(await syncEvents(token, after: after, limit: limit));
 }

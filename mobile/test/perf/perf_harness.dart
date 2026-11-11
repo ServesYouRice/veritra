@@ -292,7 +292,7 @@ class BenchMlsCrypto implements MlsConversationCryptoService {
 }
 
 /// Answers every request the measured flows make, without a network.
-class BenchApi extends ApiClient {
+class BenchApi extends ApiClient with LegacySyncPageFake {
   BenchApi({List<Conversation>? conversationList})
       : conversationList = conversationList ?? benchConversations(20),
         super(baseUrl: benchSession.baseUrl);

@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"private-messenger/server/internal/admission"
+	"private-messenger/server/internal/attest"
 	"private-messenger/server/internal/backupstatus"
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/httpapi"
@@ -233,6 +234,19 @@ func (a *App) Handler() http.Handler {
 	api := &httpapi.API{Store: a.Store, Hub: a.Hub, Blobs: a.Blobs, Push: a.Push, PushProviders: pushProviders, VAPIDPublicKey: a.Config.VAPIDPublicKey, TURNURLs: a.Config.TURNURLs, TURNSharedSecret: a.Config.TURNSharedSecret, RoomMedia: roomMedia(a.Config), Log: a.Log, SetupToken: a.Config.SetupToken, DefaultInstanceName: a.Config.InstanceName, PasswordCost: a.Config.PasswordCost, Messages: messaging.New(a.Store), ClientIdentities: a.limiter.clientIdentities, LoginBackoff: a.loginBackoff, Ready: a.ready.Load,
 		Budget: a.budget, Admission: a.Store.AdmissionCounters(), LowDisk: a.lowDisk.Load, MaxAttachmentBytes: a.Store.Limits().AttachmentBytes,
 		ScopedSync: a.Config.ScopedSync, PublicOrigin: a.Config.PublicOrigin, RecoveryActiveWindow: a.Config.RecoveryActiveWindow, RecoveryWait: a.Config.RecoveryWait}
+	if a.Config.Attestation != "" {
+		provider, err := attest.New(a.Config.Attestation)
+		if err == nil {
+			api.TLSKeyHash, err = attest.TLSKeyHashFromCertFile(a.Config.AttestationTLSCert)
+		}
+		if err != nil {
+			// Off is the safe state: no route, no report.
+			a.Log.Error("attestation_setup_failed", "err", err)
+		} else {
+			api.Attest = provider
+			api.ClaimedBuild = httpapi.ClaimedBuild{Version: a.Config.BuildVersion, Commit: a.Config.BuildCommit, ImageDigest: a.Config.ImageDigest}
+		}
+	}
 	if passkeys, err := httpapi.NewPasskeyService(a.Config.Passkeys); err != nil {
 		a.Log.Error("passkeys_setup_failed", "err", err)
 	} else {

@@ -301,9 +301,11 @@ Where the build differs from the text above, and why:
   24-hour grace, so a loop of uploads cannot pile up copies the allowance
   does not count. Each device's highest counter is kept in
   `k1_backup_counters`, so a counter is never accepted twice, even after its
-  copies were deleted. The allowance is `2 × 64 MiB` plus framing, so two
-  full-size copies fit; it counts the current copies of the account's
-  active devices.
+  copies were deleted. Owner decision 2026-11-11 (question 3b, migration 0079): backup
+  space is shared per account. Copies count in the account's storage
+  quota with attachments (`ACCOUNT_STORAGE_MIB`); the separate allowance
+  and `BACKUP_ALLOWANCE_MIB` are gone. A replacement counts the copy it
+  replaces for up to a day, as the design says.
 - **One setting per identity.** The device state is one JSON setting,
   `k1.state|<server>|<account>|<device>`, instead of separate `k1.*` keys, so
   it is written at once and another account on the same device never
@@ -319,7 +321,25 @@ Where the build differs from the text above, and why:
   this.
 - **Phones** say "when you open the app, at most once a day", never
   "daily" (D91).
-- **Still to do:** restore (K1-4), the confirmation schedule and the second
+- **Restore (K1-4, built).** Settings > Automatic backups > "Restore from a
+  backup" lists the K1 copies of the account's other devices (own copies are
+  left off: the importer refuses a source equal to the receiver). The typed
+  key's `rk_id` is compared with the row's before any download; the first
+  416 bytes are peeked (account, device, counter, `rk_id`) before the body;
+  the body's size and SHA-256 are checked against the row; Rust opens it
+  pinned to the row's device; the K2 importer merges it (`transferId` is the
+  backup id, `digest` the SHA-256, so a repeat is a no-op). The importer
+  context takes counter and time from the decoded snapshot (inside the
+  authenticated container), not from the seal header: the snapshot keeps its
+  own namespace counter. A typed key that is also the account's current key
+  turns backups on here. Phones back up when the app opens or resumes (owner
+  decision, so design question 7 is answered: no phone background jobs in
+  this build).
+- **K0-R follow-up reorder (built).** After a recovery the forced steps are
+  now restore (or a warned skip), new recovery key, new password; the step
+  is persisted. The old "start from the restored session" entry and the
+  banner restore action stay until VBK2 is retired (K1-6).
+- **Still to do:** the confirmation schedule and the second
   copy (K1-5), background runs and retiring VBK2 and the recovery-token
   route (K1-6, after K1-4, so a restore path always exists).
 

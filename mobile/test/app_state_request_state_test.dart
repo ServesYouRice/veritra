@@ -41,7 +41,7 @@ Conversation _group(String id, String createdBy) => Conversation(
       createdAt: DateTime.utc(2026, 6, 1),
     );
 
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: 'https://localhost:8080');
 
   List<Conversation> list = <Conversation>[];

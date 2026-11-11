@@ -187,7 +187,7 @@ Future<void> _waitFor(FutureOr<bool> Function() condition,
 
 /// A server that lists a removal of `dev_bob` for each conversation in
 /// [pendingRemovals] until a commit bundle for it is accepted.
-class _Api extends ApiClient {
+class _Api extends ApiClient with LegacySyncPageFake {
   _Api() : super(baseUrl: _origin);
 
   final Map<String, int> serverEpochs = <String, int>{};
