@@ -26,7 +26,7 @@ pub mod report;
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 23;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 24;
 
 #[cfg(test)]
 mod test_memory;

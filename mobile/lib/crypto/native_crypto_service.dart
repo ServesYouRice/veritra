@@ -1380,7 +1380,9 @@ class NativeCryptoService
                   adds: approved,
                   removes: proven,
                   record: await _plannedRecord(conversationId,
-                      adds: approved, removes: proven));
+                      adds: approved, removes: proven),
+                  leaveStatements:
+                      await _leaveStatementsFor(conversationId, proven));
               await localStore.commitOutgoingMlsTransition(
                 OutgoingMlsStateTransition(
                   expectedCounter: previous.counter,
@@ -1697,6 +1699,7 @@ class NativeCryptoService
     List<MlsDeviceRef> removes = const <MlsDeviceRef>[],
     String? revocationDeviceId,
     GovernanceState? record,
+    List<Uint8List> leaveStatements = const <Uint8List>[],
   }) {
     final keyedAdds = [
       for (final add in adds)
@@ -1715,13 +1718,31 @@ class NativeCryptoService
         ),
     ];
     // C4: a commit whose record must change carries it ([_plannedRecord]).
-    final staged = record == null
+    ({List<int> commit, List<int> welcome, int epoch}) plain() => record == null
         ? device.stageCommitKeyed(conversationId,
             adds: keyedAdds, removes: keyedRemoves)
         : device.stageCommitWithRoles(conversationId,
             record: encodeGovernance(record),
             adds: keyedAdds,
             removes: keyedRemoves);
+    // C4 leave proof in the commit (ABI 24): the leavers' own statements
+    // ride in the commit's authenticated data. Best effort: a list Rust
+    // refuses is dropped and the commit goes as before.
+    ({List<int> commit, List<int> welcome, int epoch}) staged;
+    if (leaveStatements.isEmpty || keyedRemoves.isEmpty) {
+      staged = plain();
+    } else {
+      try {
+        staged = device.stageCommitProven(conversationId,
+            record: record == null ? null : encodeGovernance(record),
+            leaveStatements: leaveStatements,
+            adds: keyedAdds,
+            removes: keyedRemoves);
+      } on NativeCryptoException catch (error) {
+        if (error.kind != NativeCryptoError.invalidArgument) rethrow;
+        staged = plain();
+      }
+    }
     return MlsCommitBundle(
       epoch: staged.epoch,
       commit: staged.commit,
@@ -1793,12 +1814,27 @@ class NativeCryptoService
   /// caller's): its own `member_leave` in this group since it was last
   /// added, or its own approved-device list having removed every leaf it
   /// has in [leaves]. A list that cannot be read now is retried later.
+  ///
+  /// [provenLeaves] (C4 leave proof in the commit, ABI 24) are the removed
+  /// leaves whose own signed statement the commit carries, verified by Rust
+  /// against the tree before it: one of them that is a leaf of [account]
+  /// its list approves proves the leave, as its `member_leave` would (owner
+  /// decision B: a removed leaf proves nothing).
   Future<bool> _removalProven(
-      String groupId, String account, List<LeafPair> leaves) async {
+      String groupId, String account, List<LeafPair> leaves,
+      {List<LeafPair> provenLeaves = const <LeafPair>[]}) async {
     if (await localStore
             .loadSetting(governanceLeaveSetting(groupId, account)) !=
         null) {
       return true;
+    }
+    for (final leaf in provenLeaves) {
+      if (_utf8OrNull(leaf.accountId) != account) continue;
+      final verdict = await _judgeLeaf(leaf);
+      if (verdict == LeafVerdict.checking) {
+        throw TimeoutException('approved-device list unavailable');
+      }
+      if (verdict == LeafVerdict.approved) return true;
     }
     final own = leaves.where((leaf) => _utf8OrNull(leaf.accountId) == account);
     if (own.isEmpty) return false;
@@ -1837,6 +1873,46 @@ class NativeCryptoService
       for (final remove in removes)
         if (!unproven.contains(remove.accountId)) remove,
     ];
+  }
+
+  /// The proof settings a removal spends or a re-add voids for [account].
+  static Map<String, String?> _leaveProofsCleared(
+          String groupId, String account) =>
+      <String, String?>{
+        governanceLeaveSetting(groupId, account): null,
+        governanceLeaveSignedSetting(groupId, account): null,
+      };
+
+  /// The signed leave statements this device holds for the accounts
+  /// [removes] takes out of the record group [groupId] (C4 leave proof in
+  /// the commit): at most one per leaf, at most 16. Rust keeps only those
+  /// that still verify and name a leaf the commit removes.
+  Future<List<Uint8List>> _leaveStatementsFor(
+      String groupId, List<MlsDeviceRef> removes) async {
+    if (removes.isEmpty || governanceOf(groupId) == null) {
+      return const <Uint8List>[];
+    }
+    final out = <Uint8List>[];
+    final leaves = <int>{};
+    for (final account
+        in _accountsLeaving(_requiredDevice(), groupId, removes)) {
+      final stored = await localStore
+          .loadSetting(governanceLeaveSignedSetting(groupId, account));
+      if (stored == null) continue;
+      final Uint8List statement;
+      try {
+        statement = base64.decode(stored);
+      } on FormatException {
+        continue;
+      }
+      if (!isLeaveStatement(statement) ||
+          !leaves.add(leaveStatementLeaf(statement))) {
+        continue;
+      }
+      out.add(statement);
+      if (out.length == leaveStatementsMax) break;
+    }
+    return out;
   }
 
   /// The record this device's own commit must carry, or null when the group
@@ -1956,7 +2032,8 @@ class NativeCryptoService
         // Held, never refused: the other members hold the proof this
         // device may lack (a newcomer's Welcome carries none), and the
         // proof or the leaver's list may still arrive.
-        if (!await _removalProven(groupId, gone, leaves)) {
+        if (!await _removalProven(groupId, gone, leaves,
+            provenLeaves: review.provenLeaves)) {
           throw const GovernanceHeldException('removal_unproven');
         }
       }
@@ -1977,10 +2054,9 @@ class NativeCryptoService
       // A proof is spent by the removal it proves and void once the
       // account is added again.
       settings: <String, String?>{
-        for (final account in leaving)
-          governanceLeaveSetting(groupId, account): null,
+        for (final account in leaving) ..._leaveProofsCleared(groupId, account),
         for (final account in after.difference(before))
-          governanceLeaveSetting(groupId, account): null,
+          ..._leaveProofsCleared(groupId, account),
         // C4 server succession: a won election or claim (the owner set by a
         // commit that is not the owner's). The app then asks the server to
         // move its owner row too; the record has already decided.
@@ -2008,15 +2084,21 @@ class NativeCryptoService
     } on Object {
       record = null;
     }
+    // C4 leave proof in the commit: this device's own self-update gives it
+    // a new leaf, which voids any leave statement it signed before.
+    final updated = <String, String?>{
+      if (bundle.isUpdateOnly) governanceLeaveSignedOutSetting(groupId): null,
+    };
     if (record == null) {
-      return (observation: null, settings: const <String, String?>{});
+      return (observation: null, settings: updated);
     }
     final settings = <String, String?>{
+      ...updated,
       for (final add in bundle.added)
-        governanceLeaveSetting(groupId, add.accountId): null,
+        ..._leaveProofsCleared(groupId, add.accountId),
       for (final remove in bundle.removed)
         if (roster != null && !roster.contains(remove.accountId))
-          governanceLeaveSetting(groupId, remove.accountId): null,
+          ..._leaveProofsCleared(groupId, remove.accountId),
     };
     GovernanceObservationChange? observation;
     try {
@@ -2280,8 +2362,11 @@ class NativeCryptoService
                       device.groupRoleState(message.conversationId).accounts;
                   commitSettings = <String, String?>{
                     for (final account in roster ?? const <String>{})
-                      governanceLeaveSetting(message.conversationId, account):
-                          null,
+                      ..._leaveProofsCleared(message.conversationId, account),
+                    // A statement this device signed in an earlier
+                    // membership names a leaf that is gone.
+                    governanceLeaveSignedOutSetting(message.conversationId):
+                        null,
                   };
                   commitObservation = GovernanceObservationChange(
                     groupId: message.conversationId,
@@ -2438,6 +2523,8 @@ class NativeCryptoService
             revocationDeviceId: revocation.revokedDeviceId,
             record: await _plannedRecord(revocation.conversationId,
                 removes: removes),
+            leaveStatements:
+                await _leaveStatementsFor(revocation.conversationId, removes),
           );
           await localStore.commitOutgoingMlsTransition(
             OutgoingMlsStateTransition(
@@ -2697,7 +2784,7 @@ class NativeCryptoService
         final info = infoPayloadTypes.contains(type);
         // C4: a leave proof is hidden and never franked, like an info
         // payload, but changes no community info.
-        final leaveProof = type == AppPayloadType.memberLeave;
+        final leaveProof = leaveNoticePayloadTypes.contains(type);
         // C6: a report key announcement or request is hidden and never
         // franked either, and changes no community info.
         final reportKey = reportKeyPayloadTypes.contains(type);
@@ -2723,10 +2810,21 @@ class NativeCryptoService
         }
         await _requireNotPaused(conversationId);
         if (!deviceAlert) await _requireApproved(conversationId);
+        final signedLeave = type == AppPayloadType.memberLeaveSigned;
+        if (signedLeave && governanceOf(conversationId) == null) {
+          throw ArgumentError.value(type, 'type', 'only in a record group');
+        }
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
         if (!await localStore.hasOutboxCapacity()) {
           throw const OutboxFullException();
+        }
+        if (signedLeave) {
+          // Written before the statement exists: if the leave does not go
+          // through, the app voids it with a self-update (C4 leave proof in
+          // the commit). A leftover after a failed send costs one update.
+          await localStore.saveSetting(
+              governanceLeaveSignedOutSetting(conversationId), '1');
         }
         final sharedGroup =
             _authority?.conversationKind(conversationId) == 'community_shared';
@@ -2759,9 +2857,15 @@ class NativeCryptoService
               actionId: idempotencyKey,
               // The proof names the epoch it is encrypted in, which the
               // receiver reads from the authenticated MLS header too.
-              body: leaveProof
-                  ? <String, Object?>{'epoch': groupEpoch.epoch}
-                  : body,
+              // The signed statement is made now, for this leaf as it is.
+              body: signedLeave
+                  ? <String, Object?>{
+                      'statement': base64
+                          .encode(_requiredDevice().signLeave(conversationId)),
+                    }
+                  : leaveProof
+                      ? <String, Object?>{'epoch': groupEpoch.epoch}
+                      : body,
               hidden: true,
               channelId: channelId,
             );
@@ -3294,6 +3398,31 @@ class NativeCryptoService
               // C4: the sender's own leave proof (docs/crypto.md, "C4 app
               // wiring"). Kept only in a record group, and only when the
               // epoch it names is the one MLS authenticated for it.
+              // C4 leave proof in the commit (ABI 24): the sender's signed
+              // statement, kept under the same rules (record group, approved
+              // leaf) for a commit that removes it.
+              if (payload.type == AppPayloadType.memberLeaveSigned) {
+                effects = <MessageEffect>[
+                  _placeholderRow(
+                    envelope,
+                    messageKey(
+                        envelope.senderDeviceId, envelope.idempotencyKey),
+                    LocalMessageKind.action,
+                    senderHidden: true,
+                    channelId: payload.channelId,
+                  ),
+                ];
+                if (senderVerdict == LeafVerdict.approved &&
+                    governanceOf(envelope.conversationId) != null) {
+                  settings = <String, String?>{
+                    governanceLeaveSignedSetting(
+                            envelope.conversationId, envelope.senderAccountId):
+                        payload.body['statement'] as String,
+                  };
+                }
+                reveal = null;
+                break;
+              }
               if (payload.type == AppPayloadType.memberLeave) {
                 effects = <MessageEffect>[
                   _placeholderRow(
@@ -4845,7 +4974,8 @@ List<MessageEffect> messageEffectsFor(
     AppPayloadType.infoKeyRequest ||
     AppPayloadType.infoUpdate =>
       throw const FormatException('community info payloads are not messages'),
-    AppPayloadType.memberLeave =>
+    AppPayloadType.memberLeave ||
+    AppPayloadType.memberLeaveSigned =>
       throw const FormatException('leave proofs are not messages'),
     AppPayloadType.deviceListAlert =>
       throw const FormatException('device list alerts are not messages'),

@@ -311,6 +311,24 @@ typedef _StageWithRolesDart = int Function(
     Pointer<_PmOwnedBuffer>,
     Pointer<_PmOwnedBuffer>,
     Pointer<Uint64>);
+typedef _StageProvenNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _StageProvenDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
 typedef _RecoveryProofNative = Int32 Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _RecoveryProofDart = int Function(_PmByteSlice, _PmByteSlice,
@@ -530,6 +548,11 @@ class NativeCryptoBindings {
                 'pm_crypto_group_discard_incoming_commit'),
         _groupRoleState = library.lookupFunction<_HandleSliceOutputNative,
             _HandleSliceOutputDart>('pm_crypto_group_role_state'),
+        _groupStageProven =
+            library.lookupFunction<_StageProvenNative, _StageProvenDart>(
+                'pm_crypto_group_stage_commit_proven'),
+        _c4SignLeave = library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_c4_sign_leave'),
         _memberSignatureKey =
             library.lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
                 'pm_crypto_group_member_signature_key'),
@@ -592,7 +615,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 23) {
+    if (_abiVersion() != 24) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -672,6 +695,8 @@ class NativeCryptoBindings {
   final _L1ProcessDart _groupMergeIncoming;
   final _GroupDeleteDart _groupDiscardIncoming;
   final _HandleSliceOutputDart _groupRoleState;
+  final _StageProvenDart _groupStageProven;
+  final _HandleSliceOutputDart _c4SignLeave;
   final _RemoveMemberDart _memberSignatureKey;
 
   /// K0 recovery key entropy length (ABI 11).
@@ -1895,6 +1920,34 @@ class NativeCryptoDevice implements Finalizable {
   /// The group's role record and account roster (C4, ABI 20); see
   /// `c4_roles.dart`.
   GroupRoleState groupRoleState(String groupId) => _groupRoleStateImpl(groupId);
+
+  /// [stageCommitWithRoles] with the record optional and the leave
+  /// statements the app holds for the devices it removes in the commit's
+  /// authenticated data (C4 leave proof in the commit, ABI 24); see
+  /// `c4_roles.dart`.
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommitProven(
+    String groupId, {
+    List<int>? record,
+    required List<Uint8List> leaveStatements,
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) =>
+      _stageCommitProvenImpl(groupId,
+          record: record,
+          leaveStatements: leaveStatements,
+          adds: adds,
+          removes: removes);
+
+  /// This device's signed leave statement for [groupId] (C4, ABI 24); see
+  /// `c4_roles.dart`.
+  Uint8List signLeave(String groupId) => _signLeaveImpl(groupId);
 
   NativeCryptoDevice._(this._bindings, this._handle) {
     _bindings._deviceFinalizer.attach(this, _handle.cast(), detach: this);

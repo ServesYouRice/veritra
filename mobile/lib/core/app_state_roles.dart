@@ -356,6 +356,66 @@ extension RoleActions on AppState {
       throw const UserFacingException(
           'Could not tell the group you are leaving. Try again.');
     }
+    // C4 leave proof in the commit (ABI 24): the signed statement a
+    // committer carries in the removal for members that join after this.
+    // Best effort: the member_leave above is the proof today's members
+    // hold, and the leave goes on without it.
+    try {
+      if (await _sendPayload(
+          group, AppPayloadType.memberLeaveSigned, const <String, Object?>{},
+          channelId: channelId)) {
+        await _flushOutbox();
+      }
+    } catch (err) {
+      developer.log('c4_leave_signed_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }
+  }
+
+  void _voidCancelledLeavesSoon() {
+    final current = session;
+    if (current == null) return;
+    unawaited(_voidCancelledLeaves(current, _sessionGeneration)
+        .catchError((Object err) {
+      developer.log('c4_leave_void_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }));
+  }
+
+  /// C4 leave proof in the commit: a leave this device signed that did not
+  /// go through (the server refused it, the app stopped) leaves a statement
+  /// any committer could use for as long as this leaf is unchanged. A
+  /// self-update voids it; until one of this device's self-updates merges
+  /// in that group (which clears the marker), every sync pass tries again.
+  Future<void> _voidCancelledLeaves(
+      Session current, int ownerGeneration) async {
+    final service = cryptoService;
+    final crypto = service is MlsSelfUpdateCryptoService
+        ? service as MlsSelfUpdateCryptoService
+        : null;
+    if (crypto == null) return;
+    for (final conversation in conversations.toList()) {
+      final id = conversation.id;
+      if (!(conversation.isGroup || conversation.isCommunityShared) ||
+          _leavingRecordGroups.contains(id)) {
+        continue;
+      }
+      if (await localStore.loadSetting(governanceLeaveSignedOutSetting(id)) ==
+          null) {
+        continue;
+      }
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      // A self-update already queued there settles it once it merges.
+      if (await _hasPendingMlsWork(id)) continue;
+      try {
+        await crypto.stageSelfUpdate(id);
+      } catch (err) {
+        developer.log('c4_leave_void_failed ${err.runtimeType}',
+            name: 'veritra.sync');
+        continue;
+      }
+      await _flushMlsOutbox();
+    }
   }
 
   /// D81: the owner's app cancels an election by itself, after a random

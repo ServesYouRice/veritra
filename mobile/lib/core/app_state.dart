@@ -470,6 +470,11 @@ class AppState extends ChangeNotifier
   /// delay, by record group ([RoleActions]).
   final Map<String, Timer> _ownerCancelTimers = <String, Timer>{};
 
+  /// C4 leave proof in the commit: record groups this device is leaving
+  /// right now (between its signed leave statement and the server's
+  /// answer), which the sync pass must not void with a self-update.
+  final Set<String> _leavingRecordGroups = <String>{};
+
   /// C6: this account's report public key on this device (canonical base64,
   /// '' when it holds no seed), cached per server and account so a sync
   /// pass reads the keystore once. Cleared when the seed changes.
@@ -3003,30 +3008,39 @@ class AppState extends ChangeNotifier
 
   /// Leaves a conversation and drops its local state.
   Future<bool> leaveConversation(String conversationId) async {
-    // C4: before the leave, outside the members op (it sends).
-    final owner = session;
-    if (owner != null) {
-      try {
-        await _beforeLeavingRecordGroup(owner, conversationId);
-      } on UserFacingException catch (err) {
-        _opErrors[Ops.members] = err.message;
-        notifyListeners();
-        return false;
+    final group = recordGroupFor(conversationId) ?? conversationId;
+    _leavingRecordGroups.add(group);
+    try {
+      // C4: before the leave, outside the members op (it sends).
+      final owner = session;
+      if (owner != null) {
+        try {
+          await _beforeLeavingRecordGroup(owner, conversationId);
+        } on UserFacingException catch (err) {
+          _opErrors[Ops.members] = err.message;
+          notifyListeners();
+          return false;
+        }
       }
+      return await _runScoped(Ops.members, () async {
+        final current = session;
+        final client = api;
+        if (current == null || client == null) {
+          return;
+        }
+        final leaveEventId = await client.removeConversationMember(
+          current.token,
+          conversationId,
+          'me',
+        );
+        await _dropLeftConversationLocally(
+            current, conversationId, leaveEventId);
+      });
+    } finally {
+      _leavingRecordGroups.remove(group);
+      // A leave that did not go through voids its signed statement.
+      _voidCancelledLeavesSoon();
     }
-    return _runScoped(Ops.members, () async {
-      final current = session;
-      final client = api;
-      if (current == null || client == null) {
-        return;
-      }
-      final leaveEventId = await client.removeConversationMember(
-        current.token,
-        conversationId,
-        'me',
-      );
-      await _dropLeftConversationLocally(current, conversationId, leaveEventId);
-    });
   }
 
   /// Drops the local state of a conversation the server has just taken this
@@ -6431,6 +6445,7 @@ class AppState extends ChangeNotifier
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         try {
+          await _voidCancelledLeaves(current, ownerGeneration);
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
           await reconcileServerOwners();

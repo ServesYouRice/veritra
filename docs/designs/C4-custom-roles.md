@@ -545,6 +545,6 @@ two-phase receiver, observations, the owner's automatic cancel (random delay
 up to 24 hours), the `role_change` bundle flag and a roles screen are wired.
 DMs carry no record (decision taken for the open question). Rules and
 residuals: `docs/crypto.md`, "C4 app wiring". Server succession is built
-(2026-11-11). Still open: the leave proof in the commit (designed and
-owner-approved, ABI 25, not built), an independent review, and more tests of
-the wiring.
+(2026-11-11). The leave proof in the commit is built at crypto ABI 24
+(2026-11-11; `docs/crypto.md`, "C4 leave proof in the commit"). Still open:
+an independent review of it, and more tests of the wiring.

@@ -880,8 +880,13 @@ fn review_and_state_encodings_are_exact() {
         roster_after: vec![b"a".to_vec(), b"b".to_vec()],
         record_before: None,
         record_after: Some(b"RR".to_vec()),
+        proven: vec![LeafPair {
+            account_id: b"c".to_vec(),
+            device_id: b"f".to_vec(),
+            signing_key: vec![0xCC; 32],
+        }],
     };
-    let mut expected = vec![1, 2 | 8 | 32, 1, 2, 3, 4, 5, 6, 7, 8];
+    let mut expected = vec![2, 2 | 8 | 32, 1, 2, 3, 4, 5, 6, 7, 8];
     expected.extend_from_slice(&[0, 1, b'a', 0, 1, b'd']);
     expected.extend_from_slice(&[0xAA; 32]);
     expected.extend_from_slice(&[0, 1, 0, 1, b'b', 0, 1, b'e']);
@@ -890,6 +895,8 @@ fn review_and_state_encodings_are_exact() {
     expected.extend_from_slice(&[0, 2, 0, 1, b'a', 0, 1, b'b']);
     expected.extend_from_slice(&[0, 0, 0, 0]);
     expected.extend_from_slice(&[0, 0, 0, 2, b'R', b'R']);
+    expected.extend_from_slice(&[0, 1, 0, 1, b'c', 0, 1, b'f']);
+    expected.extend_from_slice(&[0xCC; 32]);
     assert_eq!(review.encode().unwrap(), expected);
 
     assert_eq!(

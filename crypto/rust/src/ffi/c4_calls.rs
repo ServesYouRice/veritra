@@ -14,7 +14,7 @@ use super::{
     MEMBERSHIP_CHANGES_VERSION_KEYED, PM_CRYPTO_ERROR, PM_CRYPTO_INVALID_ARGUMENT,
 };
 use crate::{
-    mls::{encode_role_state, MAX_ROLE_RECORD_BYTES},
+    mls::{encode_role_state, leave_proof, MAX_ROLE_RECORD_BYTES},
     PmByteSlice,
 };
 
@@ -70,12 +70,128 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit_with_roles(
     out_epoch: *mut u64,
 ) -> i32 {
     ffi_call(|| {
+        let record = unsafe { borrowed(record, MAX_ROLE_RECORD_BYTES)? };
+        unsafe {
+            stage_keyed(
+                handle,
+                group_id,
+                changes,
+                Some(record),
+                None,
+                out_commit,
+                out_welcome,
+                out_epoch,
+            )
+        }
+    })
+}
+
+/// ABI 24 (C4 leave proof in the commit, `docs/crypto.md`): stages a
+/// commit as [`pm_crypto_group_stage_commit_with_roles`] does, with the
+/// leave statements the app holds for the devices it removes in the
+/// commit's authenticated data. `record` may be empty: the commit then
+/// carries no record proposal and must add or remove someone. `changes` is
+/// version 2 only. `leave_proofs` is a `VCL1` list (`"VCL1" || u8 count
+/// (1..16) || { u32 leaf || u16 64 || signature }*`, distinct leaves); a
+/// malformed or empty list is `PM_CRYPTO_INVALID_ARGUMENT`. Statements that
+/// name a leaf the commit keeps, or that no longer verify (the leaf changed
+/// since it signed), are dropped; with none left the commit carries no AAD.
+/// Settle it with the usual merge or clear calls.
+///
+/// # Safety
+/// `handle` must be live, slices readable, and all outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_group_stage_commit_proven(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    changes: PmByteSlice,
+    record: PmByteSlice,
+    leave_proofs: PmByteSlice,
+    out_commit: *mut PmOwnedBuffer,
+    out_welcome: *mut PmOwnedBuffer,
+    out_epoch: *mut u64,
+) -> i32 {
+    ffi_call(|| {
+        let record = if record.len == 0 {
+            None
+        } else {
+            Some(unsafe { borrowed(record, MAX_ROLE_RECORD_BYTES)? })
+        };
+        let proofs = unsafe {
+            borrowed(
+                leave_proofs,
+                5 + leave_proof::MAX_STATEMENTS * leave_proof::STATEMENT_BYTES,
+            )?
+        };
+        if leave_proof::parse_aad(proofs).is_none() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        unsafe {
+            stage_keyed(
+                handle,
+                group_id,
+                changes,
+                record,
+                Some(proofs),
+                out_commit,
+                out_welcome,
+                out_epoch,
+            )
+        }
+    })
+}
+
+/// ABI 24: this device's signed leave statement for `group_id`
+/// (`u32 leaf_index || u16 64 || signature`, 70 bytes): RFC 9420
+/// SignWithLabel with its leaf signature key, label `"VeritraC4Leave1"`,
+/// over the group id, its leaf index and its leaf encryption key now. It
+/// is valid until this leaf changes; a cancelled leave self-updates.
+///
+/// # Safety
+/// `handle` must be live, `group_id` readable and `out_statement` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_c4_sign_leave(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    out_statement: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_statement.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        unsafe { out_statement.write(PmOwnedBuffer::default()) };
+        let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
+        let statement = unsafe {
+            with_device(handle, |device| {
+                let group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
+                device.sign_leave(&group).map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        unsafe { output(out_statement, statement) }
+    })
+}
+
+/// The body of the keyed staging calls: change list version 2 only.
+/// # Safety
+/// As the public staging calls: `handle` live, slices readable, outputs
+/// writable.
+#[allow(clippy::too_many_arguments)]
+unsafe fn stage_keyed(
+    handle: *mut PmCryptoHandle,
+    group_id: PmByteSlice,
+    changes: PmByteSlice,
+    record: Option<&[u8]>,
+    leave_proofs: Option<&[u8]>,
+    out_commit: *mut PmOwnedBuffer,
+    out_welcome: *mut PmOwnedBuffer,
+    out_epoch: *mut u64,
+) -> Result<(), i32> {
+    {
         if out_commit.is_null() || out_welcome.is_null() || out_epoch.is_null() {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
         let group_id = unsafe { borrowed(group_id, MAX_ID_BYTES)? };
         let changes = unsafe { borrowed(changes, MAX_HANDSHAKE_BYTES)? };
-        let record = unsafe { borrowed(record, MAX_ROLE_RECORD_BYTES)? };
         // Version 2 only: no new path that skips the L1 key check.
         if changes.first() != Some(&MEMBERSHIP_CHANGES_VERSION_KEYED) {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
@@ -85,12 +201,13 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit_with_roles(
             with_device(handle, |device| {
                 let mut group = device.load_group(group_id).map_err(|_| PM_CRYPTO_ERROR)?;
                 device
-                    .stage_commit_with_record(
+                    .stage_commit_proven(
                         &mut group,
                         &changes.adds,
                         &changes.expected_keys,
                         &changes.removes,
-                        Some(record),
+                        record,
+                        leave_proofs,
                     )
                     .map_err(|_| PM_CRYPTO_ERROR)
             })?
@@ -107,7 +224,7 @@ pub unsafe extern "C" fn pm_crypto_group_stage_commit_with_roles(
             out_epoch.write(staged.epoch);
         }
         Ok(())
-    })
+    }
 }
 
 /// ABI 20 (C4 item 4, phase one): processes a remote commit up to its

@@ -44,14 +44,30 @@ func TestLeaveNoticePassesPostingRulesInTheSharedGroup(t *testing.T) {
 	if _, err := f.post(ctx, f.shared, f.member, "leave1", notice); err != nil {
 		t.Fatalf("leave notice refused: %v", err)
 	}
-	// Its retry answers; a second notice inside the interval does not.
+	// Its retry answers and does not count twice; a second notice (the
+	// signed statement, ABI 24) is allowed; a third inside the interval is
+	// not.
 	if _, err := f.post(ctx, f.shared, f.member, "leave1", notice); err != nil {
 		t.Fatalf("leave notice replay: %v", err)
 	}
-	_, err := f.post(ctx, f.shared, f.member, "leave2", notice)
+	if _, err := f.post(ctx, f.shared, f.member, "leave2", notice); err != nil {
+		t.Fatalf("second notice: %v", err)
+	}
+	_, err := f.post(ctx, f.shared, f.member, "leave2b", notice)
 	var limited LeaveNoticeLimitedError
 	if !errors.Is(err, ErrLeaveNoticeLimited) || !errors.As(err, &limited) || limited.Wait <= 0 || limited.Wait > LeaveNoticeInterval {
-		t.Fatalf("second notice: %v wait=%v", err, limited.Wait)
+		t.Fatalf("third notice: %v wait=%v", err, limited.Wait)
+	}
+	// The wait runs from the oldest notice in the window.
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE memberships SET created_at = ? WHERE conversation_id = ? AND account_id = ?`, formatTime(time.Now().Add(-2*LeaveNoticeInterval)), f.shared, f.member.Account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE message_envelopes SET created_at = ? WHERE sender_account_id = ? AND idempotency_key = ?`, formatTime(time.Now().Add(-3*LeaveNoticeInterval/4)), f.member.Account.ID, "leave1"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.post(ctx, f.shared, f.member, "leave2c", notice)
+	if !errors.As(err, &limited) || limited.Wait < LeaveNoticeInterval/4-time.Minute || limited.Wait > LeaveNoticeInterval/4+time.Minute {
+		t.Fatalf("wait from the oldest: %v wait=%v", err, limited.Wait)
 	}
 	// Once the interval is over, another is allowed.
 	if _, err := f.store.db.ExecContext(ctx, `UPDATE message_envelopes SET created_at = ? WHERE sender_account_id = ?`, formatTime(time.Now().Add(-2*LeaveNoticeInterval)), f.member.Account.ID); err != nil {
@@ -71,8 +87,14 @@ func TestLeaveNoticeMarkIsNarrow(t *testing.T) {
 			t.Fatalf("mark %v: %v", value, err)
 		}
 	}
+	// A repeated key is refused: with an epoch by the epoch rule (review
+	// L2), which runs first, and without one by the mark's own rule.
 	repeated := json.RawMessage(`{"protocol_version":1,"mls_epoch":1,"channel_id":"` + f.announcement.ID + `","community_layout_generation":1,"c4_leave":true,"c4_leave":true}`)
-	if _, err := f.post(ctx, f.shared, f.member, "rep", repeated); !errors.Is(err, ErrInvalidChannelRoute) {
+	if _, err := f.post(ctx, f.shared, f.member, "rep", repeated); !errors.Is(err, ErrInvalidEpochMetadata) {
+		t.Fatalf("repeated mark with an epoch: %v", err)
+	}
+	repeated = json.RawMessage(`{"protocol_version":1,"channel_id":"` + f.announcement.ID + `","community_layout_generation":1,"c4_leave":true,"c4_leave":true}`)
+	if _, err := f.post(ctx, f.shared, f.member, "rep2", repeated); !errors.Is(err, ErrInvalidChannelRoute) {
 		t.Fatalf("repeated mark: %v", err)
 	}
 	// Nothing rides along: no franking commitment, no reply or thread.
