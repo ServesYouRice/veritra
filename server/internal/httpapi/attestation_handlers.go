@@ -37,6 +37,7 @@ func (a *API) attestation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "attestation_unavailable")
 		return
 	}
+	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"format":        attest.UserDataLabel,
 		"kind":          ev.Kind,

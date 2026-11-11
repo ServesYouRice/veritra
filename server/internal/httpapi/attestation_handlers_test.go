@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -84,5 +85,34 @@ func TestAttestationRejectsBadNonce(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("nonce %q: status %d, want 400", n, rec.Code)
 		}
+	}
+}
+
+type errProvider struct{ err error }
+
+func (e errProvider) Kind() string { return "tdx" }
+func (e errProvider) Report(context.Context, [64]byte) (attest.Evidence, error) {
+	return attest.Evidence{}, e.err
+}
+
+func TestAttestationErrorsLeakNothing(t *testing.T) {
+	nonce := "?nonce=" + strings.Repeat("ab", 32)
+	for _, tc := range []struct {
+		err  error
+		code int
+	}{{attest.ErrNotConfigured, http.StatusNotFound}, {errors.New("open /sys/kernel/secret-path: denied"), http.StatusServiceUnavailable}} {
+		rec := httptest.NewRecorder()
+		attestMux(&API{Attest: errProvider{tc.err}, Log: slog.Default()}).ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/attestation"+nonce, nil))
+		if rec.Code != tc.code || strings.Contains(rec.Body.String(), "secret-path") {
+			t.Fatalf("err %v: status %d body %s", tc.err, rec.Code, rec.Body)
+		}
+	}
+}
+
+func TestAttestationResponseIsNotCached(t *testing.T) {
+	rec := httptest.NewRecorder()
+	attestMux(&API{Attest: &fakeProvider{}, Log: slog.Default()}).ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/attestation?nonce="+strings.Repeat("01", 32), nil))
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("status %d cache %q", rec.Code, rec.Header().Get("Cache-Control"))
 	}
 }

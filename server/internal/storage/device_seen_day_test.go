@@ -70,3 +70,40 @@ func TestLastSeenMigrationRoundsToTheDay(t *testing.T) {
 		t.Fatalf("migrated last_seen_at = %q", seen)
 	}
 }
+
+// A device really seen inside the recovery window is stored as its UTC day
+// start, up to a day earlier. It must still count as active (D77-D79), and a
+// device seen well outside the window must not.
+func TestRecoveryActiveWindowAllowsDayPrecision(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		age    time.Duration
+		active bool
+	}{
+		{"seen 6d23h ago stored as day start", 7*24*time.Hour + 23*time.Hour, true},
+		{"seen just now", time.Hour, true},
+		{"seen long ago", 9 * 24 * time.Hour, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, _ := newTestStore(t, ctx)
+			defer store.Close()
+			owner := createTestOwner(t, ctx, store)
+			seen := formatTime(time.Now().UTC().Add(-tc.age))
+			if _, err := store.db.ExecContext(ctx, `UPDATE devices SET last_seen_at = ? WHERE id = ?`, seen, owner.Device.ID); err != nil {
+				t.Fatal(err)
+			}
+			now := formatTime(time.Now().UTC())
+			later := formatTime(time.Now().UTC().Add(time.Hour))
+			if _, err := store.db.ExecContext(ctx, `INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES('seen-day-test', ?, ?, ?, ?, ?, ?, ?)`,
+				owner.Account.ID, owner.Device.ID, later, now, now, now, later); err != nil {
+				t.Fatal(err)
+			}
+			claim := claimTestRecovery(t, ctx, store, owner, time.Hour)
+			waited := claim.request.ReadyAt.Sub(claim.request.CreatedAt) >= time.Hour
+			if waited != tc.active {
+				t.Fatalf("wait applied = %v, want %v", waited, tc.active)
+			}
+		})
+	}
+}
