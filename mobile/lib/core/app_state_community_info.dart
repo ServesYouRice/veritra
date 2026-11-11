@@ -6,7 +6,7 @@ part of 'app_state.dart';
 /// The rules live in [CommunityInfoService]; this part only connects it to
 /// the session, the server, the send path and the community lists. Names
 /// are shown from the accepted encrypted record, else a placeholder (the
-/// screen's). The server keeps no names (step 4, migration 0080): a name
+/// screen's). The server keeps no names (step 4, migration 0082): a name
 /// typed at creation goes only into the encrypted record.
 ///
 /// What other members' devices may set is checked against the community's

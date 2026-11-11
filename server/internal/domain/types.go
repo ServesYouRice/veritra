@@ -164,7 +164,7 @@ type Invite struct {
 }
 
 // Community and Channel carry IDs only: names, topics and icons are the
-// apps' encrypted info records (C3, migration 0080).
+// apps' encrypted info records (C3, migration 0082).
 type Community struct {
 	ID        string    `json:"id"`
 	CreatedBy string    `json:"created_by"`

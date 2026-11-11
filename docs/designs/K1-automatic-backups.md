@@ -349,12 +349,16 @@ Where the build differs from the text above, and why:
   macOS; its failure is a warning of its own and never fails the backup.
   Not built: Android (picked document tree, native channel) and the iOS
   manual export; phones say the second copy is a desktop feature.
-- **Still to do (K1-6):** background runs on phones and retiring VBK2 and the
-  recovery-token route. Phone background runs stay out by the owner's
-  decision (backups when the app opens). Retiring VBK2 touches the legacy
-  restore, sync-recovery choices, the demo e2e, the smoke client and about
-  thirty tests on both sides; it is its own package. Until then K0-R keeps
-  its "restored session" entry and the banner restore action.
+- **K1-6 (built): VBK2 and the token route retired.** Owner question 1
+  (D91): no compatibility path. `POST /backups` without a K1 `kind` and
+  `GET /recovery` answer 410 `backup_format_retired` and
+  `recovery_route_retired`; migration 0081 clears every stored capability
+  (columns stay, unused). The client lost `BackupService`, the manual backup
+  screen, the connect-screen restore, the sync-recovery restore choice and
+  format-6 `exportBackup`/`restoreBackup`. Old VBK2 copies stay on the server
+  until deleted and are refused with a note on the restore screen. K0-R's
+  "restored session" entry and the banner restore action are gone.
+  Phone background runs stay out (owner decision: backup on app open).
 
 ## Threats
 

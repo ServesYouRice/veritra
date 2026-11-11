@@ -375,7 +375,7 @@ Overlapping removals now invalidate the older rotation's token before further
 re-sealing, even if its new key was already delivered. The newer mark retains
 its own fresh key and is not delayed by the abandoned pass's backoff.
 
-**Step 4 and category/icon screens (2026-11-11):** migration 0080 drops
+**Step 4 and category/icon screens (2026-11-11):** migration 0082 drops
 `communities.name`, `channels.name` and their search indexes and clears
 community channel titles. Creation answers `400 plaintext_name_refused` to a
 non-empty name; the app sends none and shows only the encrypted record or a

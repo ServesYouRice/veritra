@@ -296,27 +296,15 @@ void main() {
       });
 
       test(
-          'backups and K2 exclude device notice state; every restore and logout clears it',
+          'K2 excludes device notice state; logout clears it',
           () async {
         await commit(store, [effect('a')], [ref(1, 'a')]);
         final item =
             (await store.pendingNoticeReferences(owner, now: now)).single;
         final decision =
             (await store.freezeNoticeDecision(owner, [item.id], now: now))!;
-        final backup = await store.exportBackup();
-        expect(utf8.decode(backup), isNot(contains(decision.id)));
         expect(utf8.decode(await store.exportHistorySnapshot()),
             isNot(contains(decision.id)));
-        await store.restoreBackup(backup);
-        // A restore leaves no device or MLS state (D71, D73): enroll again,
-        // at the cursor the next reference below expects.
-        await store.saveSession(session);
-        await store.saveCryptoState(
-            StoredCryptoState(
-                counter: 1, stateKey: List.filled(32, 7), sealedState: [8]),
-            1);
-        expect(await store.pendingNoticeReferences(owner, now: now), isEmpty);
-        expect(await store.pendingNoticeDecision(owner, now: now), isNull);
         await commit(store, [effect('b')], [ref(2, 'b')]);
         await store.clearCachedState(preserveOutbox: true, keepDrafts: true);
         expect(await store.pendingNoticeReferences(owner, now: now), isEmpty);

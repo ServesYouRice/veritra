@@ -85,9 +85,9 @@ func redact(value string) string {
 
 // String keeps accidental fmt output of a Config free of secrets.
 func (c Config) String() string {
-	return fmt.Sprintf("Config{Addr:%q DataDir:%q DatabasePath:%q StoragePath:%q Environment:%q SetupToken:%q VAPIDPrivateKey:%q FCMPrivateKey:%q APNsPrivateKey:%q TURNSharedSecret:%q}",
+	return fmt.Sprintf("Config{Addr:%q DataDir:%q DatabasePath:%q StoragePath:%q Environment:%q SetupToken:%q VAPIDPrivateKey:%q FCMPrivateKey:%q APNsPrivateKey:%q TURNSharedSecret:%q SFUAPISecret:%q}",
 		c.Addr, c.DataDir, c.DatabasePath, c.StoragePath, c.Environment,
-		redact(c.SetupToken), redact(c.VAPIDPrivateKey), redact(c.FCMPrivateKey), redact(c.APNsPrivateKey), redact(c.TURNSharedSecret))
+		redact(c.SetupToken), redact(c.VAPIDPrivateKey), redact(c.FCMPrivateKey), redact(c.APNsPrivateKey), redact(c.TURNSharedSecret), redact(c.SFUAPISecret))
 }
 
 // GoString covers %#v, which would otherwise print every field.
@@ -103,5 +103,6 @@ func (c Config) LogValue() slog.Value {
 		slog.String("environment", c.Environment),
 		slog.Bool("setup_token_set", c.SetupToken != ""),
 		slog.Bool("turn_configured", c.TURNSharedSecret != ""),
+		slog.Bool("sfu_configured", c.SFUAPISecret != ""),
 	)
 }

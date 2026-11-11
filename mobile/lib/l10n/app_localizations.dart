@@ -5505,6 +5505,108 @@ abstract class AppLocalizations {
   /// **'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.'**
   String get callNoticeFailed;
 
+  /// No description provided for @roomStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Group call'**
+  String get roomStart;
+
+  /// No description provided for @roomTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Group call'**
+  String get roomTitle;
+
+  /// No description provided for @roomJoining.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining…'**
+  String get roomJoining;
+
+  /// No description provided for @roomConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'In the call'**
+  String get roomConnected;
+
+  /// No description provided for @roomEncryptedNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice and video are end-to-end encrypted. The server passes them on but cannot listen.'**
+  String get roomEncryptedNote;
+
+  /// No description provided for @roomLeave.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave'**
+  String get roomLeave;
+
+  /// No description provided for @roomYou.
+  ///
+  /// In en, this message translates to:
+  /// **'You'**
+  String get roomYou;
+
+  /// No description provided for @roomMute.
+  ///
+  /// In en, this message translates to:
+  /// **'Mute'**
+  String get roomMute;
+
+  /// No description provided for @roomUnmute.
+  ///
+  /// In en, this message translates to:
+  /// **'Unmute'**
+  String get roomUnmute;
+
+  /// No description provided for @roomShareScreen.
+  ///
+  /// In en, this message translates to:
+  /// **'Share screen'**
+  String get roomShareScreen;
+
+  /// No description provided for @roomStopSharing.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop sharing'**
+  String get roomStopSharing;
+
+  /// No description provided for @roomFailedFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This call is full.'**
+  String get roomFailedFull;
+
+  /// No description provided for @roomFailedUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Group calls are not set up on this server.'**
+  String get roomFailedUnavailable;
+
+  /// No description provided for @roomFailedWelcome.
+  ///
+  /// In en, this message translates to:
+  /// **'Joining safely was not possible. Try again.'**
+  String get roomFailedWelcome;
+
+  /// No description provided for @roomFailedOther.
+  ///
+  /// In en, this message translates to:
+  /// **'The call could not continue.'**
+  String get roomFailedOther;
+
+  /// No description provided for @roomFailedCryptor.
+  ///
+  /// In en, this message translates to:
+  /// **'This device cannot protect call media, so it did not join.'**
+  String get roomFailedCryptor;
+
+  /// No description provided for @roomPeople.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, =1{1 person} other{{count} people}}'**
+  String roomPeople(int count);
+
   /// No description provided for @moderationTitle.
   ///
   /// In en, this message translates to:
@@ -6368,6 +6470,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No backup from another device was found.'**
   String get k1RestoreEmpty;
+
+  /// No description provided for @k1RestoreLegacyRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.'**
+  String get k1RestoreLegacyRefused;
 
   /// No description provided for @k1RestoreLoadFailed.
   ///

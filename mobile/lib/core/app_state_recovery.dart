@@ -304,16 +304,8 @@ extension AccountRecoveryActions on AppState {
           // https://host[:port] this app talks to, which is what the server's
           // PRIVATE_MESSENGER_PUBLIC_ORIGIN must be.
           final origin = client.baseUrl;
-          final restored = await localStore.loadSession();
           final reservation =
               await client.reserveAccountRecovery(username.trim());
-          if (restored != null &&
-              isRestoredAccountSession(restored) &&
-              (canonicalizeServerOrigin(restored.baseUrl) != origin ||
-                  restored.accountId != reservation.accountId)) {
-            // Going on would silently drop the restored history.
-            throw UserFacingException(l10n.recoveryBackupOtherAccount);
-          }
           enrolling = true;
           final credential =
               await cryptoService.createEnrollmentCredential(reservation);
@@ -368,18 +360,6 @@ extension AccountRecoveryActions on AppState {
           }
         }
       });
-
-  /// The account a backup restore left on this device, to prefill the
-  /// recovery form; null when there is none.
-  Future<Session?> restoredAccountForRecovery() async {
-    if (session != null) return null;
-    try {
-      final stored = await localStore.loadSession();
-      return stored != null && isRestoredAccountSession(stored) ? stored : null;
-    } catch (_) {
-      return null;
-    }
-  }
 
   /// Asks the server about the waiting claim now. Completes it when ready.
   Future<bool> checkAccountRecovery() => _runRecovery(_pollAccountRecovery);

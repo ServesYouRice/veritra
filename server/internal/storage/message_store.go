@@ -1424,7 +1424,7 @@ func (s *Store) SearchMetadata(ctx context.Context, accountID, query string, lim
 			-- Prefix/contains matching here would let any authenticated user walk
 			-- the substring space and enumerate the entire user directory, which
 			-- is a metadata leak for a private messenger. Community and channel
-			-- names are encrypted (C3, migration 0080): the server holds none to
+			-- names are encrypted (C3, migration 0082): the server holds none to
 			-- search, and the app searches its own decrypted records.
 			SELECT 'account' AS type, id, username AS label, 0 AS rank
 			FROM accounts

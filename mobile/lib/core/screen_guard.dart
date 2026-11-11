@@ -35,6 +35,8 @@ class PlatformScreenGuard implements ScreenGuard {
       // Platform does not support it or UI is unavailable.
     } on MissingPluginException catch (_) {
       // Channel not registered (e.g. in non-Android or unit test environments).
+    } on FlutterError catch (_) {
+      // No ServicesBinding yet (plain unit tests): nothing to guard.
     }
   }
 
@@ -47,6 +49,8 @@ class PlatformScreenGuard implements ScreenGuard {
     } on PlatformException catch (_) {
       return false;
     } on MissingPluginException catch (_) {
+      return false;
+    } on FlutterError catch (_) {
       return false;
     }
   }

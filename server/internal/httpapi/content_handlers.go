@@ -2,15 +2,12 @@ package httpapi
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"private-messenger/server/internal/config"
@@ -159,37 +156,10 @@ func (a *API) uploadBackup(w http.ResponseWriter, r *http.Request, principal dom
 		a.uploadK1Backup(w, r, principal, metadata)
 		return
 	}
-	metadata, ok := canonicalBackupCryptoMetadata(metadata)
-	if !ok {
-		writeError(w, http.StatusBadRequest, "invalid_key_derivation_metadata")
-		return
-	}
-	recoveryToken, err := base64.RawURLEncoding.DecodeString(r.Header.Get("X-Recovery-Token"))
-	if err != nil || len(recoveryToken) != 32 {
-		writeError(w, http.StatusBadRequest, "recovery_token_required")
-		return
-	}
-	recoveryTokenHash := sha256.Sum256(recoveryToken)
-	blob, err := a.Blobs.PutEncryptedBlob(r.Context(), http.MaxBytesReader(w, r.Body, 100<<20))
-	if err != nil {
-		var maxErr *http.MaxBytesError
-		if errors.As(err, &maxErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "upload_too_large")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "backup_upload_failed")
-		return
-	}
-	if err := a.Store.CreateBackupBlobWithChunkDigests(r.Context(), principal.AccountID, principal.DeviceID, blob.StorageKey, blob.SHA256, blob.Size, blob.ChunkDigests, metadata, recoveryTokenHash[:]); err != nil {
-		a.cleanupUncommittedBlob(r.Context(), blob.StorageKey)
-		if errors.Is(err, storage.ErrStorageQuota) {
-			handleStorageError(w, err)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "backup_record_failed")
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{"storage_key": blob.StorageKey, "ciphertext_sha256": blob.SHA256, "size_bytes": blob.Size})
+	// VBK2 (the old format with a 15-minute recovery token) is retired
+	// (K1-6, D91). Old clients get a typed error they can show, never a
+	// crash, and nothing is stored.
+	writeError(w, http.StatusGone, "backup_format_retired")
 }
 
 // isK1BackupMetadata reports whether a backup's metadata names a kind, which
@@ -289,137 +259,12 @@ func (a *API) uploadK1Backup(w http.ResponseWriter, r *http.Request, principal d
 	})
 }
 
-// backupCryptoMetadata is the key derivation metadata of an encrypted backup.
-type backupCryptoMetadata struct {
-	Version      int    `json:"version"`
-	Algorithm    string `json:"algorithm"`
-	ChunkSize    int    `json:"chunk_size"`
-	StateCounter int64  `json:"state_counter"`
-}
-
-// canonicalBackupCryptoMetadata validates backup key derivation metadata and
-// returns it re-encoded. Each field is read from its exact lowercase key:
-// encoding/json matches struct fields case-insensitively, and storage reads
-// the counter back with json_extract('$.state_counter'), so a document with
-// "STATE_COUNTER" (or a repeated key) could pass validation with one counter
-// and be stored with another. The re-encoded document is what is stored.
-func canonicalBackupCryptoMetadata(raw json.RawMessage) (json.RawMessage, bool) {
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil || len(fields) != 4 {
-		return nil, false
-	}
-	var metadata backupCryptoMetadata
-	for key, target := range map[string]interface{}{
-		"version": &metadata.Version, "algorithm": &metadata.Algorithm,
-		"chunk_size": &metadata.ChunkSize, "state_counter": &metadata.StateCounter,
-	} {
-		value, ok := fields[key]
-		if !ok || json.Unmarshal(value, target) != nil {
-			return nil, false
-		}
-	}
-	if metadata.Version != 1 || metadata.Algorithm != "AES-256-GCM-chunked" ||
-		metadata.ChunkSize != 1024*1024 || metadata.StateCounter <= 0 {
-		return nil, false
-	}
-	canonical, err := json.Marshal(metadata)
-	if err != nil {
-		return nil, false
-	}
-	return canonical, true
-}
-
+// recoverBackup answers the retired 15-minute recovery-token route (K1-6,
+// D91). It reads no token and touches no backup: restore now follows
+// enrollment and uses the authenticated download.
 func (a *API) recoverBackup(w http.ResponseWriter, r *http.Request) {
-	token, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(r.Header.Get("X-Recovery-Token")))
-	if err != nil || len(token) != 32 {
-		writeError(w, http.StatusNotFound, "not_found")
-		return
-	}
-	hash := sha256.Sum256(token)
-	start, err := recoveryRangeStart(r)
-	if err != nil {
-		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_recovery_range")
-		return
-	}
-	transfer, err := a.Store.BeginRecoveryTransfer(r.Context(), hash[:], start)
-	if err != nil {
-		if errors.Is(err, storage.ErrRecoveryBusy) {
-			writeError(w, http.StatusConflict, "recovery_transfer_in_progress")
-			return
-		}
-		if errors.Is(err, storage.ErrRecoveryRange) {
-			writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_recovery_range")
-			return
-		}
-		handleStorageError(w, err)
-		return
-	}
-	start, end, err := recoveryRange(r, transfer.Backup.SizeBytes)
-	if err != nil {
-		_ = finalizeRecoveryTransfer(r, a.Store, transfer, 0, 0)
-		writeError(w, http.StatusRequestedRangeNotSatisfiable, "invalid_recovery_range")
-		return
-	}
-	a.serveRecoveryBlob(w, r, transfer, end-start+1)
-}
-
-func recoveryRange(r *http.Request, size int64) (int64, int64, error) {
-	if size < 0 {
-		return 0, 0, errors.New("invalid recovery size")
-	}
-	start, err := recoveryRangeStart(r)
-	if err != nil {
-		return 0, 0, err
-	}
-	if strings.TrimSpace(r.Header.Get("Range")) == "" {
-		if size == 0 {
-			return 0, -1, nil
-		}
-		return 0, size - 1, nil
-	}
-	header := strings.TrimSpace(r.Header.Get("Range"))
-	spec := strings.TrimSpace(strings.TrimPrefix(header, "bytes="))
-	if strings.Contains(spec, ",") {
-		return 0, 0, errors.New("multiple recovery ranges are not supported")
-	}
-	parts := strings.Split(spec, "-")
-	if len(parts) != 2 || parts[0] == "" {
-		return 0, 0, errors.New("invalid recovery range")
-	}
-	if start >= size {
-		return 0, 0, errors.New("invalid recovery range")
-	}
-	end := size - 1
-	if strings.TrimSpace(parts[1]) != "" {
-		end, err = strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
-		if err != nil || end < start || end >= size {
-			return 0, 0, errors.New("invalid recovery range")
-		}
-	}
-	return start, end, nil
-}
-
-func recoveryRangeStart(r *http.Request) (int64, error) {
-	header := strings.TrimSpace(r.Header.Get("Range"))
-	if header == "" {
-		return 0, nil
-	}
-	if !strings.HasPrefix(header, "bytes=") {
-		return 0, errors.New("invalid recovery range")
-	}
-	spec := strings.TrimSpace(strings.TrimPrefix(header, "bytes="))
-	if strings.Contains(spec, ",") {
-		return 0, errors.New("multiple recovery ranges are not supported")
-	}
-	parts := strings.Split(spec, "-")
-	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" {
-		return 0, errors.New("invalid recovery range")
-	}
-	start, err := strconv.ParseInt(strings.TrimSpace(parts[0]), 10, 64)
-	if err != nil || start < 0 {
-		return 0, errors.New("invalid recovery range")
-	}
-	return start, nil
+	w.Header().Set("Cache-Control", "no-store")
+	writeError(w, http.StatusGone, "recovery_route_retired")
 }
 
 // blobResponseWriter carries a verified blob through http.ServeContent.
@@ -435,52 +280,7 @@ type blobResponseWriter struct {
 	status          int
 	written         int64
 	integrityFailed bool
-
-	// confirmFlush makes the writer flush every recoveryFlushInterval bytes
-	// and at the end (flushAll). flushed is the body byte count the last
-	// successful flush covered: bytes still in the server's buffers are not
-	// progress, because a dropped connection never delivers them.
-	confirmFlush bool
-	flushed      int64
-	// flushUnsupported records that the response chain cannot flush, so
-	// nothing can be confirmed and written is used as before.
-	flushUnsupported bool
-	flushErr         error
-	// cutOff is set from another goroutine to stop a stream whose recovery
-	// lease was lost. It is never set for ordinary downloads.
-	cutOff atomic.Bool
 }
-
-// recoveryFlushInterval is how many body bytes a recovery download writes
-// between confirming flushes.
-const recoveryFlushInterval = 1 << 20
-
-// flushAll flushes the response and records how far that confirmed.
-func (w *blobResponseWriter) flushAll() {
-	if !w.confirmFlush || w.flushErr != nil || w.flushUnsupported {
-		return
-	}
-	err := http.NewResponseController(w.ResponseWriter).Flush()
-	switch {
-	case err == nil:
-		w.flushed = w.written
-	case errors.Is(err, http.ErrNotSupported):
-		w.flushUnsupported = true
-	default:
-		w.flushErr = err
-	}
-}
-
-// confirmed is the number of body bytes progress may count.
-func (w *blobResponseWriter) confirmed() int64 {
-	if !w.confirmFlush || w.flushUnsupported {
-		return w.written
-	}
-	return w.flushed
-}
-
-// errTransferCutOff ends a stream that no longer holds its recovery lease.
-var errTransferCutOff = errors.New("recovery transfer lease lost")
 
 func (w *blobResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
@@ -511,16 +311,8 @@ func (w *blobResponseWriter) Write(p []byte) (int, error) {
 	if w.integrityFailed {
 		return 0, uploads.ErrBlobIntegrity
 	}
-	if w.cutOff.Load() {
-		return 0, errTransferCutOff
-	}
 	n, err := w.ResponseWriter.Write(p)
 	w.written += int64(n)
-	if err == nil && w.confirmFlush && w.written-w.flushed >= recoveryFlushInterval {
-		if w.flushAll(); w.flushErr != nil {
-			return n, w.flushErr
-		}
-	}
 	return n, err
 }
 
@@ -565,122 +357,6 @@ func (a *API) finishBlobResponse(r *http.Request, ref uploads.BlobRef, blob uplo
 		return true
 	}
 	return false
-}
-
-func (a *API) serveRecoveryBlob(w http.ResponseWriter, r *http.Request, transfer storage.RecoveryTransfer, expected int64) {
-	ref := backupBlobRef(transfer.Backup)
-	blob, ok := a.openBlob(w, r, ref)
-	if !ok {
-		_ = finalizeRecoveryTransfer(r, a.Store, transfer, 0, 0)
-		return
-	}
-	defer blob.Close()
-	w.Header().Set("Cache-Control", "no-store, private")
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if transfer.Backup.CiphertextSHA256 != "" {
-		w.Header().Set("ETag", `"sha256-`+transfer.Backup.CiphertextSHA256+`"`)
-	}
-	tracked := &blobResponseWriter{ResponseWriter: w, blob: blob, confirmFlush: true}
-	request := r.Clone(r.Context())
-	request.Header.Del("If-Match")
-	request.Header.Del("If-None-Match")
-	request.Header.Del("If-Modified-Since")
-	request.Header.Del("If-Unmodified-Since")
-	request.Header.Del("If-Range")
-	// The lease is renewed until the final flush is done: a client that stalls
-	// there must not let it lapse, or the completion below is refused and the
-	// capability stays usable.
-	stopRenewing := a.renewRecoveryLease(r.Context(), tracked, transfer)
-	defer stopRenewing()
-	http.ServeContent(tracked, request, "encrypted.bin", time.Time{}, blob)
-	validResponse := !tracked.integrityFailed && (tracked.status == http.StatusOK || tracked.status == http.StatusPartialContent)
-	if r.Header.Get("Range") != "" {
-		validResponse = validResponse && tracked.status == http.StatusPartialContent &&
-			w.Header().Get("Content-Range") == "bytes "+strconv.FormatInt(transfer.StartOffset, 10)+"-"+
-				strconv.FormatInt(transfer.StartOffset+expected-1, 10)+"/"+strconv.FormatInt(transfer.Backup.SizeBytes, 10)
-	} else {
-		validResponse = validResponse && tracked.status == http.StatusOK
-	}
-	if contentLength, err := strconv.ParseInt(w.Header().Get("Content-Length"), 10, 64); err != nil || contentLength != expected {
-		validResponse = false
-	}
-	// Only verified bytes that a flush pushed to the connection count: Write
-	// succeeds long before a client has the data, and a drop during the
-	// final flush must not consume the capability. A flush only reaches the
-	// kernel, so delivery is still not proven (see the recovery
-	// acknowledgement question); a mid-stream failure records progress up to
-	// the last confirmed flush.
-	if validResponse {
-		tracked.flushAll()
-	}
-	written := tracked.confirmed()
-	stopRenewing()
-	if !validResponse || written > expected {
-		written = 0
-	}
-	abort := a.finishBlobResponse(r, ref, blob, tracked)
-	if err := finalizeRecoveryTransfer(r, a.Store, transfer, written, expected); err != nil {
-		// No lease id, token or range goes into the log.
-		a.warn("recovery_transfer_completion_failed", "lease_lost", errors.Is(err, storage.ErrRecoveryBusy))
-	}
-	if abort {
-		panic(http.ErrAbortHandler)
-	}
-}
-
-// recoveryLeaseRenewInterval is well below storage.RecoveryLeaseLifetime, so
-// two renewals can fail before a lease lapses.
-var recoveryLeaseRenewInterval = storage.RecoveryLeaseLifetime / 3
-
-// renewRecoveryLease keeps transfer's lease alive while its body streams, so a
-// slow download is not taken over by a second caller and can still record its
-// progress. The stream ends with the request, whose deadline bounds the whole
-// transfer. If the lease cannot be renewed (it lapsed or was taken over) the
-// writer is cut off: the capability may already be in other hands. A failed
-// renewal for any other reason is retried at the next tick. The returned
-// function stops the renewal and waits for it.
-func (a *API) renewRecoveryLease(ctx context.Context, w *blobResponseWriter, transfer storage.RecoveryTransfer) (stop func()) {
-	done := make(chan struct{})
-	finished := make(chan struct{})
-	go func() {
-		defer close(finished)
-		ticker := time.NewTicker(recoveryLeaseRenewInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-			}
-			renewCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			err := a.Store.RenewRecoveryTransfer(renewCtx, transfer.LeaseID)
-			cancel()
-			switch {
-			case err == nil:
-			case errors.Is(err, storage.ErrRecoveryBusy):
-				a.warn("recovery_transfer_lease_lost")
-				w.cutOff.Store(true)
-				return
-			default:
-				a.warn("recovery_transfer_lease_renew_failed")
-			}
-		}
-	}()
-	var once sync.Once
-	return func() {
-		once.Do(func() { close(done) })
-		<-finished
-	}
-}
-
-func finalizeRecoveryTransfer(r *http.Request, store *storage.Store, transfer storage.RecoveryTransfer, written, expected int64) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
-	defer cancel()
-	return store.CompleteRecoveryTransfer(ctx, transfer.LeaseID, transfer.StartOffset, written, expected)
 }
 
 func (a *API) listBackups(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

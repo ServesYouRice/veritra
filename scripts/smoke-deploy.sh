@@ -14,8 +14,8 @@
 # ports, a localhost `tls internal` Caddyfile derived from
 # deploy/caddy/Caddyfile, and coturn). Then, through Caddy:
 #   startup and health, owner setup with the file-mounted setup token,
-#   login, attachment upload/download, a 96 MiB encrypted backup and its
-#   recovery download, WebSocket upgrade with Origin checks, a Web Push test
+#   login, attachment upload/download, the retired VBK2 backup routes answering 410,
+#   WebSocket upgrade with Origin checks, a Web Push test
 #   wake (to an unresolvable endpoint: real delivery needs a device, G24),
 #   TURN credential issuance and a relay allocation on coturn with it;
 # then the backup job with an off-host directory, verify-backup of the

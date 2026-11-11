@@ -298,12 +298,9 @@ void main() {
         expect(await store.loadPins('conv'), isEmpty);
         expect(await store.loadStarred(), isEmpty);
         expect(await store.searchMessages('text'), isEmpty);
-        expect(utf8.decode(await store.exportBackup()),
-            isNot(contains('resurrected')));
       });
 
-      test('51 simultaneous pins evict the first and ordering survives backup',
-          () async {
+      test('51 simultaneous pins evict the first', () async {
         final now = DateTime.now().millisecondsSinceEpoch;
         await _commit(store,
             [for (var i = 0; i <= pinLimitPerChat; i++) _text('dev:$i')]);
@@ -313,17 +310,6 @@ void main() {
         expect(pinLimitPerChat, 50);
         expect((await store.loadPins('conv')).map((p) => p.targetKey),
             [for (var i = pinLimitPerChat; i >= 1; i--) 'dev:$i']);
-        final before = await store.loadPins('conv');
-        await _restoreAndReenroll(store, await store.exportBackup());
-        expect(await store.loadPins('conv'), before);
-        await store.setStarred('dev:2', true);
-        await store.saveConversationPref(const LocalConversationPref(
-            conversationId: 'conv', archivedAt: 1, pinnedAt: 2));
-        final backup = await store.exportBackup();
-        expect((jsonDecode(utf8.decode(backup)) as Map)['version'], 6);
-        await store.restoreBackup(backup);
-        expect(await store.loadStarred(), {'dev:2'});
-        expect((await store.loadConversationPrefs()).single.archivedAt, 1);
       });
 
       test('pin expiry is capped and attachment deletion clears key and extras',
@@ -360,32 +346,7 @@ void main() {
             (await store.loadPins('conv')).map((p) => p.targetKey), ['dev:t']);
       });
 
-      test(
-          'old backup history receives safe defaults and local pin limit is five',
-          () async {
-        await _commit(store, [_text('dev:t')]);
-        final root = jsonDecode(utf8.decode(await store.exportBackup()))
-            as Map<String, dynamic>;
-        root['version'] = 3;
-        // Versions 1 to 5 carried the device's session, bound to it.
-        root
-          ..['session'] = <String, Object?>{
-            'base_url': 'https://example.test',
-            'token': 'token',
-            'account_id': 'alice',
-            'device_id': 'dev',
-          }
-          ..['account_id'] = 'alice'
-          ..['device_id'] = 'dev';
-        for (final message in root['history'] as List) {
-          (message as Map).remove('senderHidden');
-        }
-        root.remove('pins');
-        root.remove('pending_pins');
-        root.remove('starred');
-        root.remove('conversation_prefs');
-        await store.restoreBackup(utf8.encode(jsonEncode(root)));
-        expect((await store.loadMessages('conv')).single.senderHidden, false);
+      test('local pin limit is five', () async {
         for (var i = 0; i < 5; i++) {
           await store.saveConversationPref(
               LocalConversationPref(conversationId: 'c$i', pinnedAt: i));
@@ -528,21 +489,6 @@ PinMessageEffect _pin(String key,
         pinned: pinned,
         durationSeconds: 86400,
         channelId: channel);
-
-/// Restores [backup] into [store] and enrolls the same device again, as a
-/// restore now leaves no device or MLS state (D71, D73).
-Future<void> _restoreAndReenroll(LocalStore store, List<int> backup) async {
-  await store.restoreBackup(backup);
-  await store.saveSession(const Session(
-      baseUrl: 'https://example.test',
-      token: 'token',
-      accountId: 'alice',
-      deviceId: 'dev'));
-  await store.saveCryptoState(
-      StoredCryptoState(
-          counter: 1, stateKey: List.filled(32, 1), sealedState: [1]),
-      0);
-}
 
 Future<void> _commit(LocalStore store, List<MessageEffect> effects) async {
   final state = (await store.loadCryptoState())!,

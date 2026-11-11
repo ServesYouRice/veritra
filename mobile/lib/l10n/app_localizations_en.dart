@@ -3334,6 +3334,68 @@ class AppLocalizationsEn extends AppLocalizations {
       'The call could not connect. Calls need the server\'s relay (TURN) service to be set up.';
 
   @override
+  String get roomStart => 'Group call';
+
+  @override
+  String get roomTitle => 'Group call';
+
+  @override
+  String get roomJoining => 'Joining…';
+
+  @override
+  String get roomConnected => 'In the call';
+
+  @override
+  String get roomEncryptedNote =>
+      'Voice and video are end-to-end encrypted. The server passes them on but cannot listen.';
+
+  @override
+  String get roomLeave => 'Leave';
+
+  @override
+  String get roomYou => 'You';
+
+  @override
+  String get roomMute => 'Mute';
+
+  @override
+  String get roomUnmute => 'Unmute';
+
+  @override
+  String get roomShareScreen => 'Share screen';
+
+  @override
+  String get roomStopSharing => 'Stop sharing';
+
+  @override
+  String get roomFailedFull => 'This call is full.';
+
+  @override
+  String get roomFailedUnavailable =>
+      'Group calls are not set up on this server.';
+
+  @override
+  String get roomFailedWelcome => 'Joining safely was not possible. Try again.';
+
+  @override
+  String get roomFailedOther => 'The call could not continue.';
+
+  @override
+  String get roomFailedCryptor =>
+      'This device cannot protect call media, so it did not join.';
+
+  @override
+  String roomPeople(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count people',
+      one: '1 person',
+    );
+    return '$_temp0';
+  }
+
+  @override
   String get moderationTitle => 'Moderation';
 
   @override
@@ -3862,6 +3924,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get k1RestoreEmpty => 'No backup from another device was found.';
+
+  @override
+  String get k1RestoreLegacyRefused =>
+      'Backups in the old format (made before automatic backups) can no longer be restored. They were never changed, but the app will not open them.';
 
   @override
   String get k1RestoreLoadFailed => 'The list of backups could not be loaded.';

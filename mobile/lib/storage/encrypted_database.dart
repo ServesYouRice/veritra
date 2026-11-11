@@ -136,54 +136,6 @@ abstract final class LocalMessageState {
   static const restored = 'restored';
 }
 
-/// Backup history without the outgoing rows still [LocalMessageState.pending]
-/// and the reactions, pins and stars on them. A restore drops the outboxes
-/// and the MLS state (D71, D73), so such a row could never be sent or
-/// resolve. Edits, deletes and reactions a pending action already applied to
-/// other rows stay, as in a history snapshot (`captureHistory`).
-({
-  List<LocalMessage> history,
-  List<LocalMessageReaction> reactions,
-  List<LocalPin> pins,
-  Map<String, int> starred,
-}) withoutPendingHistory({
-  required List<LocalMessage> history,
-  required List<LocalMessageReaction> reactions,
-  required List<LocalPin> pins,
-  required Map<String, int> starred,
-}) {
-  final dropped = <String>{
-    for (final message in history)
-      if (message.state == LocalMessageState.pending) message.key
-  };
-  if (dropped.isEmpty) {
-    return (
-      history: history,
-      reactions: reactions,
-      pins: pins,
-      starred: starred
-    );
-  }
-  return (
-    history: [
-      for (final message in history)
-        if (message.state != LocalMessageState.pending) message
-    ],
-    reactions: [
-      for (final reaction in reactions)
-        if (!dropped.contains(reaction.targetKey)) reaction
-    ],
-    pins: [
-      for (final pin in pins)
-        if (!dropped.contains(pin.targetKey)) pin
-    ],
-    starred: {
-      for (final entry in starred.entries)
-        if (!dropped.contains(entry.key)) entry.key: entry.value
-    },
-  );
-}
-
 final class InsertMessageEffect extends MessageEffect {
   const InsertMessageEffect({
     required this.key,
@@ -646,7 +598,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   static const outboxDraftPrefix = 'outbox.draft.';
   static const syncLeaseName = 'sync.owner.lease';
   static const syncRecoveryName = 'sync.recovery';
-  static const lastBackupName = 'backup.last_created_at';
 
   static const historyTables = [
     'local_history_conversations',
@@ -1083,7 +1034,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           ..where((table) => table.name.isIn(<String>[
                 syncLeaseName,
                 syncRecoveryName,
-                lastBackupName,
               ])))
         .go();
     await delete(localCryptoStates).go();
@@ -1200,134 +1150,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         .getSingleOrNull();
     return row?.sessionJson;
   }
-
-  Future<void> restoreBackupState({
-    required String sessionJson,
-    required List<({String id, String payloadJson})> conversations,
-    required List<
-            ({
-              String id,
-              String conversationId,
-              int position,
-              String payloadJson
-            })>
-        envelopes,
-    List<LocalMessage> history = const <LocalMessage>[],
-    List<LocalMessageReaction> reactions = const <LocalMessageReaction>[],
-    List<LocalPin> pins = const [],
-    Map<String, int> starred = const {},
-    List<LocalConversationPref> conversationPrefs = const [],
-    HistoryNamespace? historyNamespace,
-    // Only history entries whose JSON lacks the expiry key (a backup from
-    // before it travelled with the history) take it from their envelope. An
-    // entry that carries the key is taken as it is, and the envelopes in the
-    // backup never set it.
-    Set<String> backfillExpiryFor = const <String>{},
-  }) =>
-      transaction(() async {
-        final kept = withoutPendingHistory(
-            history: history,
-            reactions: reactions,
-            pins: pins,
-            starred: starred);
-        history = kept.history;
-        reactions = kept.reactions;
-        pins = kept.pins;
-        starred = kept.starred;
-        await clearNoticeOutbox();
-        final previousSession = await readSessionJson();
-        final replacementNamespace =
-            historyNamespace?.copy() ?? HistoryNamespace();
-        if (previousSession != null) {
-          final previous = jsonDecode(previousSession) as Map;
-          final replacement = jsonDecode(sessionJson) as Map;
-          if (['base_url', 'account_id', 'device_id'].every((key) =>
-              previous[key] != null && previous[key] == replacement[key])) {
-            final retained = (await readHistoryNamespace()).counter;
-            if (replacementNamespace.counter < retained)
-              replacementNamespace.counter = retained;
-          }
-        }
-        await delete(localMlsTransitions).go();
-        await delete(localMlsOutboxEntries).go();
-        await delete(localPeerVerifications).go();
-        await delete(localDrafts).go();
-        await delete(localConversationMutes).go();
-        // Decrypted history travels in the backup (D27, I45); a version 1
-        // backup without it restores an empty history. The MLS state, its
-        // outbox and the plain outbox do not (D71, D73): the device starts
-        // like a freshly linked one, with no group state and cursor 0.
-        await _clearHistoryNamespace();
-        await _clearFrankReveals();
-        await _clearDeviceLists();
-        await _clearCommunityInfo();
-        await _clearInviteAnchors();
-        await _clearProfiles();
-        await delete(localMessages).go();
-        await delete(localMessageReactions).go();
-        await delete(localPins).go();
-        await delete(localPendingPins).go();
-        await delete(localStarred).go();
-        await delete(localConversationPrefs).go();
-        for (final message in history) {
-          // The index numbers are this database's own (W10): the insert
-          // trigger assigns them, and a backup's would collide.
-          await into(localMessages).insert(
-              message.toCompanion(false).copyWith(searchId: const Value(null)));
-        }
-        await writeHistoryNamespace(replacementNamespace);
-        for (final reaction in reactions) {
-          await into(localMessageReactions).insert(reaction);
-        }
-        for (final pin in pins) {
-          await into(localPins).insert(pin);
-        }
-        for (final entry in starred.entries) {
-          await into(localStarred).insert(LocalStarredCompanion.insert(
-              messageKey: entry.key, starredAt: entry.value));
-        }
-        for (final pref in conversationPrefs) {
-          await into(localConversationPrefs).insert(pref);
-        }
-        await delete(localOutboxEntries).go();
-        await delete(localCiphertextEnvelopes).go();
-        await delete(localConversations).go();
-        await delete(localCryptoStates).go();
-        await delete(localCryptoRecords).go();
-        await _clearConversationPauses();
-        // Transfers go with the MLS state that holds their native half. The
-        // promotion ledger and a pending enrollment stay: a restored device
-        // must still never reactivate an identity it already promoted.
-        await _clearHistoryTransfers();
-        await delete(localAccounts).go();
-        await into(localAccounts).insert(
-          LocalAccountsCompanion.insert(
-              singleton: const Value(1), sessionJson: Value(sessionJson)),
-        );
-        for (var index = 0; index < conversations.length; index++) {
-          final item = conversations[index];
-          await into(localConversations).insert(
-              LocalConversationsCompanion.insert(
-                  id: item.id, position: index, payloadJson: item.payloadJson));
-        }
-        for (final item in envelopes) {
-          await into(localCiphertextEnvelopes).insert(
-              LocalCiphertextEnvelopesCompanion.insert(
-                  id: item.id,
-                  conversationId: item.conversationId,
-                  position: item.position,
-                  payloadJson: item.payloadJson,
-                  expiresAt: Value(envelopeExpiryMillis(item.payloadJson))));
-        }
-        if (backfillExpiryFor.isNotEmpty) {
-          await _backfillExpiry(onlyMessages: backfillExpiryFor);
-        }
-        await _purgeExpiredInTransaction(
-            DateTime.now().toUtc().millisecondsSinceEpoch);
-        await into(localSyncStates).insertOnConflictUpdate(
-            LocalSyncStatesCompanion.insert(
-                singleton: const Value(1), cursor: const Value(0)));
-      });
 
   Future<int> readCursor() async {
     final row = await (select(localSyncStates)

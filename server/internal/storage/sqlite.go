@@ -43,8 +43,6 @@ var (
 	ErrSyncCursorExpired   = errors.New("sync cursor is older than retained history")
 	ErrMessageExpired      = errors.New("message envelope has expired")
 	ErrEnrollmentInvalid   = errors.New("enrollment reservation is invalid, expired, or already used")
-	ErrRecoveryBusy        = errors.New("recovery transfer is already in progress")
-	ErrRecoveryRange       = errors.New("recovery range is not the next approved range")
 
 	// ErrDeviceLinkVerificationFailed is returned when the approver does not
 	// supply the same credential-bound transcript hash committed by the claimant.

@@ -111,7 +111,7 @@ void main() {
     expect(back[1].formatJson, isNull);
   });
 
-  test('a backup of thousands of previewed rows stays under the cap', () async {
+  test('a stored history snapshot of thousands of previewed rows stays under the cap', () async {
     final store = MemoryLocalStore();
     await store.saveSession(const Session(
       baseUrl: 'https://chat.example.org',
@@ -153,12 +153,10 @@ void main() {
       cursor: 11,
       messageEffects: effects,
     ));
-    final backup = await store.exportBackup();
+    final backup = await store.exportHistorySnapshot();
     expect(backup.length, lessThan(_cap));
     expect(utf8.decode(backup), isNot(contains('link_preview')));
-    final target = MemoryLocalStore();
-    await target.restoreBackup(backup);
-    final restored = await target.loadMessages('conv');
+    final restored = HistorySnapshot.decode(backup).messages;
     expect(restored.length, _rows);
     final byKey = {for (final m in restored) m.key: m};
     expect(byKey['dev:m0']!.formatJson, contains('"entities"'));
