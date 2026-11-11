@@ -655,12 +655,11 @@ class NativeCryptoService
     final pin = await localStore.loadDeviceListPin(account);
     if (pin == null) return true;
     final alerter = utf8.encode(alerted.deviceId);
-    if (pin.keys.any(
-        (key) => _sameBytes(key.deviceId, alerter) && key.removedVersion != 0)) {
+    if (pin.keys.any((key) =>
+        _sameBytes(key.deviceId, alerter) && key.removedVersion != 0)) {
       return false;
     }
-    return pin.version < alerted.head ||
-        _hex(pin.listId) != alerted.listId;
+    return pin.version < alerted.head || _hex(pin.listId) != alerted.listId;
   }
 
   /// L2-5 receive: an approved device of [accountId] says the account's
