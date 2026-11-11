@@ -62,11 +62,12 @@ class CommunityInfoEvent {
   final int? revision;
   final String? recordSha256;
 
-  /// Arrival order, set by the store on read (null on a new event). Later
+  /// Arrival order, retained even after key bytes are evicted. Later
   /// rows have larger numbers.
   final int? seq;
 
-  CommunityInfoEvent _withSeq(int value) => CommunityInfoEvent(
+  CommunityInfoEvent _withSeq(int value, {bool evictKey = false}) =>
+      CommunityInfoEvent(
         kind: kind,
         subjectKind: subjectKind,
         subjectId: subjectId,
@@ -74,7 +75,7 @@ class CommunityInfoEvent {
         senderAccountId: senderAccountId,
         senderDeviceId: senderDeviceId,
         keyId: keyId,
-        key: key,
+        key: evictKey ? null : key,
         revision: revision,
         recordSha256: recordSha256,
         seq: value,
@@ -143,8 +144,11 @@ class AcceptedCommunityInfo {
   String toString() => 'AcceptedCommunityInfo($subjectKind, $subjectId)';
 }
 
-/// The bounded per-subject rule both stores apply: a repeat is ignored, and
-/// past the limit the oldest rows of that kind and subject go.
+/// Both stores bound retained key material, announcements and requests.
+/// Evicted keys leave identity/order tombstones for replay protection; these
+/// contain no key bytes and survive until the local MLS state is cleared.
+/// Tombstone count grows with distinct received keys, rather than key replays.
+/// A repeat is ignored; requests instead move to their latest arrival.
 List<CommunityInfoEvent> addCommunityInfoEvent(
     List<CommunityInfoEvent> rows, CommunityInfoEvent event,
     {Set<String> protectedKeyIds = const <String>{}}) {
@@ -171,16 +175,25 @@ List<CommunityInfoEvent> addCommunityInfoEvent(
           r.conversationId == event.conversationId &&
           r.senderAccountId == event.senderAccountId &&
           !(r.kind == CommunityInfoEventKind.key &&
-              protectedKeyIds.contains(r.keyId)))
+              (r.key == null || protectedKeyIds.contains(r.keyId))))
       .toList();
   final drop = same.length - event._limit;
   if (drop <= 0) return next;
   final gone = same.take(drop).map((r) => r.ident).toSet();
-  return next.where((r) => !gone.contains(r.ident)).toList();
+  // Keep first-arrival identities after destroying retired key material.
+  // Otherwise a replay after eviction gets a new sequence and wins rotation.
+  return [
+    for (final row in next)
+      if (!gone.contains(row.ident))
+        row
+      else if (row.kind == CommunityInfoEventKind.key)
+        row._withSeq(row.seq!, evictKey: true),
+  ];
 }
 
 /// Rows eviction may take: never a key an accepted record uses.
-const String _unprotected = "NOT (kind = 'key' AND key_id IN "
+const String _unprotected =
+    "(kind != 'key' OR info_key IS NOT NULL) AND NOT (kind = 'key' AND key_id IN "
     '(SELECT key_id FROM local_info_records))';
 
 extension CommunityInfoSql on EncryptedLocalDatabase {
@@ -234,7 +247,7 @@ extension CommunityInfoSql on EncryptedLocalDatabase {
             event.recordSha256,
           ]);
       await customStatement(
-          'DELETE FROM local_info_events WHERE kind = ?1 AND subject_kind = ?2 '
+          '${event.kind == CommunityInfoEventKind.key ? 'UPDATE local_info_events SET info_key = NULL' : 'DELETE FROM local_info_events'} WHERE kind = ?1 AND subject_kind = ?2 '
           'AND subject_id = ?3 AND conversation_id = ?4 '
           'AND sender_account_id = ?5 AND $_unprotected '
           'AND seq NOT IN (SELECT seq FROM local_info_events '

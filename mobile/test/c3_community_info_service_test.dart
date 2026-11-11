@@ -880,6 +880,47 @@ void main() {
     expect((await admin.service.currentKey(home, _community))!.keyId, k2.keyId);
   }, skip: skip);
 
+  test('retired key replay after eviction and service restart cannot win',
+      () async {
+    final verifiedAdmins = GovernanceState(
+        rev: 1,
+        owner: 'acct_admin',
+        ownerRev: 1,
+        admins: const {'acct_member': 1},
+        joined: const {'acct_admin': 0, 'acct_member': 1});
+    final admin =
+        device('admin', {_shared}, admin: true, verified: verifiedAdmins);
+    final stale =
+        device('member', {_shared}, admin: true, verified: verifiedAdmins);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    final retired = (await admin.service.currentKey(home, _community))!;
+    // Evict K0 from both senders, including the accepted-record protection.
+    for (var i = 0; i < 7; i++) {
+      await admin.service.markRotationDue(home, _community);
+      expect(await admin.service.runRotations((_, __) => [community]), 1);
+    }
+    final latest = (await admin.service.currentKey(home, _community))!;
+    final rows = await admin.store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, infoKindCommunity, _community);
+    expect(rows.firstWhere((k) => k.keyId == retired.keyId).key, isNull);
+    final restarted = device('admin', {_shared},
+        admin: true, verified: verifiedAdmins, store: admin.store);
+    await net.deliver(
+        stale,
+        _shared,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'community',
+            subjectId: _community,
+            key: retired.key!));
+    expect((await restarted.service.currentKey(home, _community))!.keyId,
+        latest.keyId);
+    await restarted.service
+        .publish(community, (r) => named('After removal', r));
+    expect(server.records['community|$_community']!.keyId, latest.keyId);
+  }, skip: skip);
+
   test('rotation marks survive an unknown topology and a blocked pass',
       () async {
     final admin = device('admin', {_shared, _privateConv}, admin: true);

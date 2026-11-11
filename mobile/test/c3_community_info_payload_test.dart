@@ -229,8 +229,11 @@ void main() {
             communityInfo: events));
       }
 
-      Future<List<CommunityInfoEvent>> keys() => store.loadCommunityInfoEvents(
-          CommunityInfoEventKind.key, 'community', _community);
+      Future<List<CommunityInfoEvent>> keys() async =>
+          (await store.loadCommunityInfoEvents(
+                  CommunityInfoEventKind.key, 'community', _community))
+              .where((k) => k.key != null)
+              .toList();
 
       test('events commit with the MLS state; repeats are one row', () async {
         await commit([
@@ -264,6 +267,22 @@ void main() {
           await commit([_event(CommunityInfoEventKind.key, n: n)]);
         }
         expect((await keys()).map((k) => k.key!.first), [3, 4, 5, 6]);
+      });
+
+      test(
+          'eviction keeps ordering, destroys bytes, and replay cannot resurrect',
+          () async {
+        await commit([_event(CommunityInfoEventKind.key, n: 1)]);
+        final first = (await keys()).single.seq;
+        for (var n = 2; n <= 8; n++) {
+          await commit([_event(CommunityInfoEventKind.key, n: n)]);
+        }
+        await commit([_event(CommunityInfoEventKind.key, n: 1)]);
+        final history = await store.loadCommunityInfoEvents(
+            CommunityInfoEventKind.key, 'community', _community);
+        expect(history.first.seq, first);
+        expect(history.first.key, isNull);
+        expect((await keys()).map((k) => k.key!.first), [5, 6, 7, 8]);
       });
 
       test('another sender flooding keys never pushes out the real key',
@@ -374,6 +393,33 @@ void main() {
       });
     });
   }
+
+  test('SQLite key ordering tombstones survive a database reopen', () async {
+    final dir = await Directory.systemTemp.createTemp('veritra-c3-order-');
+    final file = File('${dir.path}/order.db');
+    var db = EncryptedLocalDatabase(NativeDatabase(file));
+    try {
+      for (var n = 1; n <= 8; n++) {
+        await db.writeCommunityInfoEvents(
+            [_event(CommunityInfoEventKind.key, n: n)]);
+      }
+      final before = await db.readCommunityInfoEvents(
+          CommunityInfoEventKind.key, 'community', _community);
+      await db.close();
+      db = EncryptedLocalDatabase(NativeDatabase(file));
+      await db
+          .writeCommunityInfoEvents([_event(CommunityInfoEventKind.key, n: 1)]);
+      final after = await db.readCommunityInfoEvents(
+          CommunityInfoEventKind.key, 'community', _community);
+      expect(after.map((k) => k.seq), before.map((k) => k.seq));
+      expect(after.first.key, isNull);
+      expect(after.where((k) => k.key != null).map((k) => k.key!.first),
+          [5, 6, 7, 8]);
+    } finally {
+      await db.close();
+      await dir.delete(recursive: true);
+    }
+  });
 
   test('schema 26 upgrades to the current schema with the C3 tables', () async {
     final dir = await Directory.systemTemp.createTemp('veritra-c3-schema-');
