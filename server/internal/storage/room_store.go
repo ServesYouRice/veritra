@@ -49,7 +49,9 @@ type RoomParticipant struct {
 	OfferKeyPackage []byte `json:"offer_key_package,omitempty"`
 	OfferSignature  []byte `json:"offer_signature,omitempty"`
 	OfferExpiresAt  int64  `json:"offer_expires_at,omitempty"`
-	InGroup         bool   `json:"in_group"`
+	// OfferNonce is the join nonce the signature binds (only with an offer).
+	OfferNonce string `json:"offer_nonce,omitempty"`
+	InGroup    bool   `json:"in_group"`
 }
 
 type RoomJoin struct {
@@ -369,7 +371,7 @@ func liveRoomForDevice(ctx context.Context, tx *sql.Tx, roomID, deviceID string)
 }
 
 func roomParticipants(ctx context.Context, tx *sql.Tx, roomID string) ([]RoomParticipant, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT device_id, account_id, joined_at, offer_key_package, offer_signature, COALESCE(offer_expires_at, 0), in_group FROM call_room_participants WHERE room_id = ? AND left_at IS NULL ORDER BY joined_at, identity`, roomID)
+	rows, err := tx.QueryContext(ctx, `SELECT device_id, account_id, joined_at, offer_key_package, offer_signature, COALESCE(offer_expires_at, 0), CASE WHEN offer_key_package IS NULL THEN '' ELSE nonce END, in_group FROM call_room_participants WHERE room_id = ? AND left_at IS NULL ORDER BY joined_at, identity`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -378,7 +380,7 @@ func roomParticipants(ctx context.Context, tx *sql.Tx, roomID string) ([]RoomPar
 	for rows.Next() {
 		var p RoomParticipant
 		var joined string
-		if err := rows.Scan(&p.DeviceID, &p.AccountID, &joined, &p.OfferKeyPackage, &p.OfferSignature, &p.OfferExpiresAt, &p.InGroup); err != nil {
+		if err := rows.Scan(&p.DeviceID, &p.AccountID, &joined, &p.OfferKeyPackage, &p.OfferSignature, &p.OfferExpiresAt, &p.OfferNonce, &p.InGroup); err != nil {
 			return nil, err
 		}
 		p.JoinedAt = parseTime(joined)
@@ -418,7 +420,7 @@ func (s *Store) SetRoomOffer(ctx context.Context, roomID, deviceID, nonce string
 	if _, err := liveRoomForDevice(ctx, tx, roomID, deviceID); err != nil {
 		return err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE call_room_participants SET offer_key_package = ?, offer_signature = ?, offer_expires_at = ?, nonce = '' WHERE room_id = ? AND device_id = ? AND left_at IS NULL AND in_group = 0 AND nonce = ? AND nonce_expires_at > ?`, keyPackage, signature, expiresAt, roomID, deviceID, nonce, formatTime(now))
+	res, err := tx.ExecContext(ctx, `UPDATE call_room_participants SET offer_key_package = ?, offer_signature = ?, offer_expires_at = ? WHERE room_id = ? AND device_id = ? AND left_at IS NULL AND in_group = 0 AND offer_key_package IS NULL AND nonce = ? AND nonce_expires_at > ?`, keyPackage, signature, expiresAt, roomID, deviceID, nonce, formatTime(now))
 	if err != nil {
 		return err
 	}
