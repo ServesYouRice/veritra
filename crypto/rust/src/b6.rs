@@ -1,4 +1,4 @@
-//! B6 (group calls, ABI 28): the media-key schedule and the join signature
+//! B6 (group calls, ABI 22): the media-key schedule and the join signature
 //! domain. See `docs/designs/B6-group-calls.md`.
 //!
 //! The call group's MLS exporter gives one secret `E` per epoch. `E` never

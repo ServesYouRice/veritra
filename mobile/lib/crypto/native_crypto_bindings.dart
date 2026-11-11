@@ -557,7 +557,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 28) {
+    if (_abiVersion() != 22) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {

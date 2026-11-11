@@ -1,6 +1,6 @@
 # B6: group calls and voice rooms
 
-**Status: S2 (crypto core, ABI 28) built 2026-11-11; S3 to S7 not yet built. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
+**Status: S2 (crypto core, ABI 22) built 2026-11-11; S3 to S7 not yet built. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
 had one independent review (key schedule, frame encryption, threats); its
 five blocking points are fixed here. Needs the independent crypto review
 before S2 lands.
@@ -11,7 +11,7 @@ before S2 lands.
   read them."
 - **Owner approval:** one new server-side component (the SFU, O1) and
   possibly one Flutter client package for it. Neither is covered by D89.
-- **Counters:** crypto ABI 28 (S2, used), server migration 0083 (S3, not
+- **Counters:** crypto ABI 22 (S2, used), server migration 0078 (S3, not
   yet used), local schema 49 (reserved, unused so far). No local schema change
   (call state lives in memory only). No W7 payload type.
 

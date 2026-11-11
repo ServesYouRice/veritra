@@ -1935,7 +1935,7 @@ pub unsafe extern "C" fn pm_crypto_c7_verify(
     })
 }
 
-/// ABI 28 (B6): the 32-byte media key `K(s,t)` of the call group's current
+/// ABI 22 (B6): the 32-byte media key `K(s,t)` of the call group's current
 /// epoch for the sender at `leaf_index` and stream slot `stream` (0 voice,
 /// 1 camera, 2 screen, 3 screen audio): `HKDF-SHA256(salt =
 /// "veritra-b6-sender-v1", ikm = MLS-Exporter("veritra-b6-media-v1",

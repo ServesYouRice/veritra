@@ -47,7 +47,7 @@ fn build() -> Value {
         .collect();
     json!({
         "version": 1,
-        "description": "B6 media keys and join signature (docs/designs/B6-group-calls.md, ABI 28). E is an input; the real exporter is tied to it in crypto/rust/src/mls.rs tests. Regenerate: cargo test --lib b6::tests::print_vector -- --ignored --nocapture.",
+        "description": "B6 media keys and join signature (docs/designs/B6-group-calls.md, ABI 22). E is an input; the real exporter is tied to it in crypto/rust/src/mls.rs tests. Regenerate: cargo test --lib b6::tests::print_vector -- --ignored --nocapture.",
         "inputs": {
             "exporter_label": EXPORTER_LABEL,
             "sender_salt": String::from_utf8_lossy(SENDER_SALT),

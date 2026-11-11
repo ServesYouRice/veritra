@@ -457,7 +457,7 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
-- **B6, group-call media keys: ABI 28 (2026-11-11):** one new call and one
+- **B6, group-call media keys: ABI 22 (2026-11-11):** one new call and one
   new signing domain, for [`B6-group-calls.md`](designs/B6-group-calls.md)
   (S2). `pm_crypto_group_b6_media_key(handle, group_id, call_id, leaf, stream)`
   returns `K(s,t) = HKDF-SHA256(salt "veritra-b6-sender-v1", ikm =
@@ -474,7 +474,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   a valid MLS, C7, invite or L1 signature. Vector
   `testing/vectors/b6-media-v1.json`, checked by Rust and Go
   (`server/internal/b6vector`); the Dart check and binding come with S5. The
-  version gap 22 to 27 belongs to other packages. Needs the independent
+  number is the next free one above integ (renumbered from the first assignment, 28). Needs the independent
   crypto review before release (design S2). Not built yet: the call-group
   context extension check.
 - **C3, encrypted community info: records, payloads, local schema 31

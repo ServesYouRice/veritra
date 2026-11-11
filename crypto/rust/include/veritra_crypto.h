@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (28u)
+#define PM_CRYPTO_ABI_VERSION (22u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -405,7 +405,7 @@ int32_t pm_crypto_group_member_signature_key(PmCryptoHandle *handle,
                                              PmByteSlice account_id,
                                              PmByteSlice device_id,
                                              PmOwnedBuffer *out_key);
-/* ABI 28 (B6): media key K(s,t) of the call group's current epoch for the
+/* ABI 22 (B6): media key K(s,t) of the call group's current epoch for the
  * sender at leaf_index and stream slot (0 voice, 1 camera, 2 screen, 3 screen
  * audio): HKDF-SHA256(salt "veritra-b6-sender-v1", ikm MLS-Exporter(
  * "veritra-b6-media-v1", lp(call_id) | u64(epoch), 32), info u32(leaf) |

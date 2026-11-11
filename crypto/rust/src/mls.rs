@@ -805,7 +805,7 @@ impl MlsDevice {
             .map_err(|_| MlsError::GroupOperation)
     }
 
-    /// B6 (ABI 28): the media key `K(s,t)` of the call group's current epoch
+    /// B6 (ABI 22): the media key `K(s,t)` of the call group's current epoch
     /// for the sender at `leaf_index` and stream slot `stream`. The exporter
     /// secret `E` stays here; only the derived key leaves.
     pub fn b6_media_key(
@@ -2576,7 +2576,7 @@ mod tests {
         }]
     }
 
-    // ---- B6 (ABI 28): media keys of a call group ----
+    // ---- B6 (ABI 22): media keys of a call group ----
 
     #[test]
     fn b6_media_keys_follow_the_epoch_and_leave_with_the_removed_member() {
