@@ -53,7 +53,7 @@ change, sign-out of other devices and device removal revoke both tokens.
 The 15-minute recovery-token route (`GET /api/v1/recovery`) and the VBK2 backup
 upload (a `POST /api/v1/backups` whose metadata has no `kind`) are retired
 (K1-6, D91). Both answer `410` with the typed codes `recovery_route_retired`
-and `backup_format_retired`, read no token and store nothing; migration 0080
+and `backup_format_retired`, read no token and store nothing; migration 0081
 cleared every stored capability. Old VBK2 copies stay listed until their owner
 deletes them and are never restorable. Backups are K1 copies, downloaded with
 a session through `GET /api/v1/backups/{id}`. A backup holds the

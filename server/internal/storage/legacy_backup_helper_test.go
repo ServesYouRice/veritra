@@ -25,7 +25,7 @@ func insertLegacyBackup(ctx context.Context, s *Store, accountID, deviceID, stor
 	return err
 }
 
-// Migration 0080 clears every stored recovery capability (K1-6).
+// Migration 0081 clears every stored recovery capability (K1-6).
 func TestRetireMigrationClearsRecoveryCapabilities(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newTestStore(t, ctx)
@@ -39,7 +39,7 @@ func TestRetireMigrationClearsRecoveryCapabilities(t *testing.T) {
 		bytes.Repeat([]byte{9}, 32), formatTime(time.Now().Add(time.Hour)), formatTime(time.Now().Add(time.Hour))); err != nil {
 		t.Fatal(err)
 	}
-	script, err := os.ReadFile("../../migrations/0080_retire_backup_recovery_tokens.sql")
+	script, err := os.ReadFile("../../migrations/0081_retire_backup_recovery_tokens.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
