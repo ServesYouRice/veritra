@@ -1751,6 +1751,72 @@ void main() {
     expect(server.records[community.key]!.keyId, rotated);
   }, skip: skip);
 
+  test(
+      'a moderator removes from a private channel: one admin rotates its '
+      'key, the other adopts it', () async {
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final devices = <String, _Device>{
+      for (final name in ['admin', 'second', 'mod'])
+        name: device(name, {_privateConv}, admin: true, verified: staff),
+    };
+    final owner = devices['admin']!;
+    await owner.service.publish(
+        private,
+        (r) => CommunityInfoRecord(
+            kind: infoKindChannel,
+            subjectId: _private,
+            revision: r,
+            name: 'Secret',
+            privatePlace: const InfoPrivatePlace(position: 0)),
+        mint: true);
+    final home = owner.service.homeOf(private)!;
+    expect(home.conversationId, _privateConv);
+    final key = (await owner.service.currentKey(home, _community))!;
+    await net.deliver(
+        owner,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    // The moderator's removal commit, merged everywhere.
+    for (final d in devices.values) {
+      await d.service.refresh(private);
+      expect(d.service.shown(infoKindChannel, _private)?.name, 'Secret');
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    int rank(_Device d) => remoteRotationRank(
+        rotators: verifiedRotators(staff),
+        accountId: d.service.accountId,
+        home: home,
+        epoch: 2);
+    final admins = [devices['admin']!, devices['second']!]
+      ..sort((a, b) => rank(a).compareTo(rank(b)));
+    final before = {for (final d in devices.values) d: keysSent(d)};
+    final old = server.records[private.key]!.keyId;
+    now = now.add(remoteRotationBase + remoteRotationJitter);
+    expect(await devices['mod']!.service.runRotations((_, __) => [private]), 0);
+    expect(await admins[1].service.runRotations((_, __) => [private]), 0);
+    expect(await admins[0].service.runRotations((_, __) => [private]), 1);
+    final rotated = server.records[private.key]!.keyId;
+    expect(rotated, isNot(old));
+    final puts = server.puts;
+    expect(await admins[1].service.runRotations((_, __) => [private]), 1);
+    expect(await devices['mod']!.service.runRotations((_, __) => [private]), 1);
+    expect(server.puts, puts);
+    expect(keysSent(admins[0]), before[admins[0]]! + 1);
+    expect(keysSent(admins[1]), before[admins[1]]);
+    expect(keysSent(devices['mod']!), before[devices['mod']!]);
+    // Every key went only into the private channel's own group.
+    for (final d in devices.values) {
+      expect(
+          d.sent
+              .where((e) => e.$2 == AppPayloadType.infoKey)
+              .every((e) => e.$1 == _privateConv),
+          isTrue);
+    }
+  }, skip: skip);
+
   test('with the first admin offline, the next one rotates after its turn',
       () async {
     final devices = await staffAfterRemoval(['admin', 'second', 'third']);
@@ -1840,9 +1906,21 @@ void main() {
     pastTurn();
     expect(await restarted.service.runRotations((_, __) => [community]), 1);
     expect(keysSent(restarted), 1);
+    final sentKey = restarted.sent
+        .lastWhere((e) => e.$2 == AppPayloadType.infoKey)
+        .$3['key_id'];
+    expect(server.records[community.key]!.keyId, sentKey);
     final current = (await member.service.currentKey(home, _community))!;
-    expect(current.keyId, server.records[community.key]!.keyId);
+    expect(current.keyId, sentKey);
     expect(await member.service.runRotations((_, __) => [community]), 1);
+    // The orphan never wins on the admin either: its later edits are sealed
+    // under the key the others hold.
+    expect(
+        (await restarted.service.currentKey(home, _community))!.keyId, sentKey);
+    await restarted.service.publish(community, (r) => named('After', r));
+    expect(server.records[community.key]!.keyId, sentKey);
+    expect(await member.service.refresh(community), isA<InfoAccepted>());
+    expect(member.service.shown(infoKindCommunity, _community)?.name, 'After');
   }, skip: skip);
 
   test(
