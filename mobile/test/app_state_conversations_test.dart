@@ -29,7 +29,7 @@ String _owner(String token) => token == _bob.token ? 'bob' : 'alice';
 
 /// Answers per token. A gate set for a token holds that call until it is
 /// completed, so a response can land after the session changed.
-class _RefreshApi extends ApiClient {
+class _RefreshApi extends ApiClient with LegacySyncPageFake {
   _RefreshApi() : super(baseUrl: 'https://localhost:8080');
 
   final Map<String, Completer<void>> conversationGate = {};

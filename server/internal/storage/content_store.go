@@ -847,6 +847,9 @@ func (s *Store) PruneOperationalRows(ctx context.Context, now time.Time) (int64,
 	if err := retireHistoryTransfers(ctx, tx, `link_id IN (SELECT link_id FROM device_history_transfers WHERE state='active' AND expires_at<=? ORDER BY expires_at LIMIT 500)`, "expired", formatTime(now.UTC())); err != nil {
 		return 0, err
 	}
+	if err := cancelExpiredApprovedDeviceLinks(ctx, tx, now); err != nil {
+		return 0, err
+	}
 	cutoff := formatTime(now.UTC().Add(-OperationalRowRetention))
 	queries := []struct {
 		query string

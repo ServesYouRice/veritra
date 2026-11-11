@@ -828,7 +828,7 @@ class _Harness {
   void dispose() => state.dispose();
 }
 
-class _ScriptedApi extends ApiClient {
+class _ScriptedApi extends ApiClient with LegacySyncPageFake {
   _ScriptedApi() : super(baseUrl: 'https://localhost:8080');
 
   List<SyncEvent> events = <SyncEvent>[];

@@ -230,3 +230,61 @@ func BenchmarkSyncHiddenRun(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkSyncHiddenTailPoll is TASK-209: one poll behind a trailing run of
+// blocked events, as a device sees it on every wake. The legacy poll walks
+// the whole run each time; once a bounded client has moved its cursor to the
+// scan position, a poll scans nothing, so its cost no longer depends on the
+// run's length.
+//
+// Run: go test -run '^$' -bench SyncHiddenTailPoll ./internal/storage
+func BenchmarkSyncHiddenTailPoll(b *testing.B) {
+	ctx := context.Background()
+	for _, n := range []int{10_000, 40_000} {
+		store := newBenchStore(b, ctx)
+		ds := seedHiddenRun(b, ctx, store, 10, hiddenBlocked)
+		var cursor int64
+		if err := store.db.QueryRowContext(ctx, `SELECT MAX(id) FROM sync_events WHERE conversation_id = 'conv_hr_open' AND +account_id IS NULL AND event_type = 'message.envelope.created'`).Scan(&cursor); err != nil {
+			b.Fatal(err)
+		}
+		tx, err := store.db.BeginTx(ctx, nil)
+		if err != nil {
+			b.Fatal(err)
+		}
+		payload := `{"message_id":"msg_hr_conv_hr_hidden_0","conversation_id":"conv_hr_hidden","envelope":{"id":"msg_hr_conv_hr_hidden_0"}}`
+		for i := 0; i < n; i++ {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO sync_events(event_type, account_id, conversation_id, payload_json, created_at) VALUES('message.envelope.created', NULL, 'conv_hr_hidden', ?, '2026-01-01T00:00:00Z')`, payload); err != nil {
+				b.Fatal(err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			b.Fatal(err)
+		}
+		b.Run(fmt.Sprintf("%d/legacy_every_poll", n), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := store.ListSyncPage(ctx, ds.Account, ds.Device, cursor, 100, false); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+		// The first bounded polls cross the run once, a budget at a time.
+		bounded := cursor
+		for {
+			page, err := store.ListSyncPage(ctx, ds.Account, ds.Device, bounded, 100, true)
+			if err != nil {
+				b.Fatal(err)
+			}
+			bounded = page.ScannedThrough
+			if !page.Truncated {
+				break
+			}
+		}
+		b.Run(fmt.Sprintf("%d/bounded_after_first", n), func(b *testing.B) {
+			for b.Loop() {
+				if _, err := store.ListSyncPage(ctx, ds.Account, ds.Device, bounded, 100, true); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}

@@ -181,7 +181,7 @@ class _QuietSync implements SyncService {
   Future<void> dispose() => _controller.close();
 }
 
-class _ListApi extends ApiClient {
+class _ListApi extends ApiClient with LegacySyncPageFake {
   _ListApi(this.bindings) : super(baseUrl: _origin);
 
   final NativeCryptoBindings bindings;

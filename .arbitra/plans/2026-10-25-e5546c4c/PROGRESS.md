@@ -16,7 +16,7 @@ Tick a task when it is done and verified; note anything left open under it.
   - Built with L1-3 (D100 A): device link v4, source commitment before the claim, reveal after it, SAS over the revealed random. ABI 18, migration 0060.
 - [x] 11 `TASK-011` Dispatch push bridge events to Flutter on the main thread
 - [x] 12 `TASK-012` Persist push endpoint rotations until the app acknowledges a successful re-registration
-  - Blocked: the native endpoint record and method-channel calls (`pendingEndpoint`/`acknowledgeEndpoint`) do not exist yet; server side done.
+  - Fixed (d4d5632, merged): native pending record plus pendingEndpoint/acknowledgeEndpoint; push_state_test and push_service_test pass. Kotlin wake-tests not run locally.
 - [x] 13 `TASK-013` Invalidate pending push registration callbacks on unregister
 - [x] 14 `TASK-014` Disable automatic redirects on all ApiClient requests so custom secret headers are never forwarded
 - [x] 15 `TASK-015` Add an injectable WebRTC seam and test harness for NativeCallService, and release media on failed call setup
@@ -223,8 +223,8 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 198 `TASK-198` Reject community member management across account blocks
 - [x] 199 `TASK-199` Tie-break the unread-count bound on (created_at, id)
 - [x] 200 `TASK-200` Make conversation-list pagination use an immutable keyset cursor
-- [ ] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
-  - Blocked on owner question Q-002 (remedy and window). Characterization test added; the orphan can still sign in with password + its device secret. Only revoke-at-expiry (sweeper, MLS revocations) or creating the device at consume meets VAL-253.
+- [x] 201 `TASK-201` Prevent approved device links from orphaning devices at link expiry
+  - Fixed (D100/D114 remedy d): PruneOperationalRows cancels approved links that expired unconsumed, revoking the device, its key packages and MLS membership; test TestApprovedDeviceLinkNearExpiryDoesNotOrphanDevice.
 - [x] 202 `TASK-202` Scope device-less push subscriptions with a NULL-safe device match
 - [x] 203 `TASK-203` Disable a push target only if it still matches the failed registration
 - [x] 204 `TASK-204` Enforce state_counter monotonicity and capability rotation for device-less backups
@@ -232,7 +232,7 @@ Tick a task when it is done and verified; note anything left open under it.
 - [x] 206 `TASK-206` Let a live recovery lease holder renew and complete past the initial lease and capability deadline
 - [x] 207 `TASK-207` Make syncEventBlockedFor fail closed for message events whose envelope row is gone
 - [x] 208 `TASK-208` Stop replaying expired or removed envelope payloads from sync_events and redact them at rest
-- [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); legacy route unchanged, no heads route.
+- [x] 209 `TASK-209` Opt-in bounded sync paging: report the scanned-through cursor, accept it in expiry checks, and page across budget-limited results in the AppState catch-up owner — done 2026-11-07 on the scoped routes (`scanned_through`, `scan_truncated`, hidden-row cursors accepted); done 2026-11-11 on the account route `GET /api/v1/sync/events?scan=bounded` and the app catch-up (a 200 omits the bounds); without `scan=bounded` the route is unchanged; no heads route.
   - Built on the scoped routes behind `?scan=bounded` (opt-in). Not done: the legacy global stream still rescans its hidden tail, `_runOwnedCatchUp` does not persist a scanned-through cursor (that is C1-B2 to B4), no benchmark.
 - [x] 210 `TASK-210` Exclude blocking accounts from the realtime recipient snapshot of new envelopes
 - [x] 211 `TASK-211` Require current conversation membership for message edit and delete
