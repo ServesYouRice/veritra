@@ -3166,7 +3166,8 @@ vector `testing/vectors/c4-governance-record-v2.json`.
 u8  version = 2
 u64 rev
 u64 owner_rev                                  never above rev
-u8  flags            bit 0 admins_only_posting, bit 1 election present; rest zero
+u8  flags            bit 0 admins_only_posting, bit 1 election present,
+                     bit 2 timeouts present (C5, below); rest zero
 u16 owner_len || owner                         0 = no owner
 u16 admin_count     { u16 len || account || u64 since_rev || u8 admin_flags }*
                                                admin_flags bit 0: elector; rest zero
@@ -3177,6 +3178,9 @@ if flags bit 1:
   u64 opened                                   never above rev
   u16 electorate_count { u16 len || account }* at least one
   u16 vote_count       { u16 len || voter || u16 len || candidate }*
+if flags bit 2:
+  u16 timeout_count    { u16 len || account || u64 epoch || u64 from_ms || u64 until_ms }*
+                                               at least one ("C5 timeouts in the record")
 ```
 
 Every list is sorted by the UTF-8 bytes of its key with no duplicates; ids
@@ -3339,6 +3343,15 @@ A bundle that carries a record is marked `role_change: true`; the server
 (`CreateMLSCommitBundle`) does not count such a commit as a self-update, so
 it is neither rate-limited as one nor held behind a pending removal. The
 flag is unverifiable, like `added` and `removed`; receivers judge the record.
+So that the flag is no way around the self-update interval, a role-only
+bundle (role_change, adding and removing no one) has its own interval: one
+per device and conversation per `MLSRoleChangeInterval` (one minute,
+`conversation_mls_devices.last_role_change_at`, migration 0087), refused
+with the self-update limit's 429 and Retry-After. A role change is one
+commit a person makes (a grant, a vote, a claim, a cancel), so the interval
+costs it nothing; a server role is not checked, because plain members make
+legitimate role commits (votes, the claim) and server roles can differ from
+the record.
 
 **Receiving.** Every remote commit is staged (`stageIncomingCommit`),
 judged, then merged (`mergeIncomingCommit`) or discarded. A discard is
@@ -3355,7 +3368,8 @@ I33). In a record group the judgment is:
    (a role decision), is an owner commit cancelling an election, or is
    justified as a kick (below), the committer's leaf must be `approved` by
    its account's L1 list. `checking` (the list cannot be read now) retries
-   the commit later; anything else refuses it. This narrows D94 ("a commit
+   the commit later; anything else holds it (*held commits*, below). This
+   narrows D94 ("a commit
    is never refused for a list reason") for these commits only: an
    unapproved leaf can carry any account's id (ABI 20 review note), so it
    must never act with that account's role. Other commits keep D94.
@@ -3363,7 +3377,7 @@ I33). In a record group the judgment is:
    and that `removalNeedsProof` (admin, moderator, elector, in an open
    election's electorate, a voter or a voted-for candidate; never the owner,
    never a plain member), one of these must hold, else the commit is
-   refused:
+   held (below):
    - *kick*: the approved committer `mayActOn` the account under the record
      before the commit;
    - *leave*: this device holds the account's own `member_leave` from this
@@ -3375,6 +3389,28 @@ Producers apply the same test to their own removals and leave out those
 they cannot prove; the server keeps them pending for a device that can (the
 kicker, or any member once the proof or the list arrives).
 
+**Held commits** (review fix, 2026-11-11). Steps 3 and 4 depend on
+evidence a device may not have *yet*: a newcomer's Welcome deletes every
+leave proof and the server never serves it the pre-join `member_leave`, and
+a pin fetched less than `minForcedRefresh` ago may not know a device linked
+since. Refusing such a commit paused the conversation for good while every
+other member had merged it. Such a commit is now *held*, never refused:
+`GovernanceHeldException` (`committer_unapproved`, `removal_unproven`)
+pauses only that conversation as `SyncFailureKind.governanceHeld`, the chat
+says it is waiting for a confirmation, and sync replays it by itself
+(`heldRetryDelay`: one minute, doubling per hold, at most six hours; any
+other pause still waits for the user). A replay applies the same events in
+order from the same committed state, so the commit merges once the list
+approves the leaf or the proof is held, and nothing is merged unverified or
+skipped. Leaving the conversation stays offered. Residuals: a commit from a
+leaf its list has `removed` (a phone replaced after it committed, seen by a
+member that was offline) stays held, because L1 list rows carry no removal
+version that could order the removal against the commit (decision B keeps
+such a leaf from acting with its role); and a newcomer holds an honest
+leave-proven removal for good until the leave proof travels in the commit
+itself (*leave proof in the commit*, below). The step-3 `checking` case
+still stalls device sync as a transient error, as before.
+
 **`member_leave`** (app payload v2, hidden, never franked, never reported:
 `{"epoch": n}`). A governing member's app sends it to the record group
 before it asks the server to leave, and waits until the server holds it.
@@ -3384,6 +3420,24 @@ epoch MLS authenticated for the message, in the setting
 deleted when its removal merges, when the account is added again, and for
 every current member on a Welcome. The owner cannot leave (D81): the app
 refuses until it has transferred.
+
+*Leave notice* (review fix, 2026-11-11). The proof goes through the
+server's posting checks, so a moderator in an admins-only group, a voter in
+an announcement channel, or a timed-out or slow-moded member could not
+leave. The envelope now carries the clear metadata mark `"c4_leave": true`
+(`leaveNoticeMetadataKey`, server `EnvelopeLeaveNoticeKey`), and the server
+exempts a marked envelope from C2, the C5 timeout and slow mode
+(`server/internal/storage/leave_notice.go`), only: in a record group (kind
+`group` outside a community, or a community's shared conversation); with no
+attachments, reply, thread, expiry or franking commitment; and at most one
+per sender account and membership per hour (`leave_notice_limited`, 429
+with Retry-After). The mark is unverifiable, so receivers turn any marked
+envelope whose payload is not a `member_leave` into an invalid row: a
+marked post never shows. In a shared group the envelope still names a
+channel, because C0 routing requires one there (only a C7 group-level body
+of a history_sync size may name none); the exemption makes the channel's
+rules irrelevant to it. The server learns that an envelope is a leave
+notice; it already learns of the leave itself moments later.
 
 **Observations.** Accepted commits, Welcomes and application messages in a
 record group update `local_governance_observations` (schema 36) in the same
@@ -3412,9 +3466,24 @@ sender (`mayActOn`); the effect carries the set of accounts the deleter does
 not outrank (`DeleteMessageEffect.moderatorProtects`) and the store checks
 the target's sender against it. Without a record only the author's own
 delete applies, as before. A moderator delete whose target has not arrived
-yet is deferred as the author's own and so never applies (safe side). In a
+yet is deferred with its reach (`DeferredHistoryEffect.protects`, written
+in the local deferred-effects journal only when set; a journal entry from
+before has none and stays the author's own), and applies when the target
+arrives if its sender is not protected. In a
 community with C7 the app also calls the server's history hide, which
 checks the server's moderator role.
+
+**Owner decision B (2026-11-11): a removed leaf has no role.** A leaf whose
+device its own account's L1 list marks `removed` (a stolen or replaced
+phone that is still in the tree) keeps the ordinary handling of its
+messages but never acts with its account's role: its `delete` is the
+author's own only (`messageEffectsFor(senderActsWithRole: false)`), its C3
+`info_key` and `info_update` are ignored (an `info_key_request` is not a
+role action), its post where posting is restricted is dropped
+(`shouldDropRestrictedPost(senderRemoved: true)`), and its pin uses no
+community role. Role-record commits already required an `approved`
+committer (step 3) and are held otherwise; C5 timeouts and C2 powers in the
+record are record changes, so the same rule covers them.
 
 **Residuals.**
 - A plain member's forced removal needs no proof; it moves only `joined`,
@@ -3426,9 +3495,170 @@ checks the server's moderator role.
   at a role, which the record does not grant) yields kicks no receiver
   accepts; they stay pending until the role is also set in the record.
 - Server succession (moving the server's owner row after a won election) is
-  not built; apps never read that row for roles.
+  built (docs/designs/C4-custom-roles.md, "Server succession"; migration
+  0087). The server cannot verify an election, so it moves its owner row
+  only when the owner has been quiet in the group or community for 37 days
+  by its own clock (UTC days of envelopes and commits) and a majority of
+  the current admins asked for the same admin after that activity; with no
+  admins, only the longest-serving member may claim it for itself, and an
+  ask from the owner is a transfer. Residuals: a colluding admin majority
+  can move the row after 37 days of silence (the record, which apps use,
+  does not follow); a large or inactive admin set may never reach quorum;
+  apps never read that row for roles.
 
 **Using it.** C2: a post is accepted where `mayPost` holds, and posting is
 restricted where this record or the server says so. C1/C5: `mayActOn`. A
 group without the extension (demo groups made before it) has no verified
 roles: every account is a member to the app.
+
+### C5 timeouts in the record (2026-11-11)
+
+The server refuses a timed-out member's envelopes, edits and reactions
+(`memberships.timeout_until`, community scope), but a server can be wrong
+or hostile, and before this the apps showed whatever it delivered. A
+timeout is now also in the verified C4 record of the community's shared
+group, and receiving apps judge each post by it the way the server decides.
+
+**Format.** Record version 2, flags bit 2 (`_flagTimeouts`); a record
+without timeouts is byte for byte as before. When the bit is set the
+record ends with:
+
+```
+u16 timeout_count (at least 1) { u16 len || account || u64 epoch || u64 from_ms || u64 until_ms }*
+```
+
+sorted by account like every list; every timed-out account is in the MLS
+roster; `from_ms < until_ms` and `until_ms - from_ms` at most 28 days
+(`maxTimeoutMillis`, the server's `domain.MaxTimeout`). `from_ms` and
+`until_ms` are the server's clock (its `timeout_until` and that minus the
+length, Unix milliseconds); `epoch` is the MLS epoch the setting commit
+produces. Vectors: `testing/vectors/c4-governance-record-v2.json`
+(`with_timeouts`, `timeouts_flag_without_body`,
+`timeouts_flag_with_empty_list`; the unknown-flag vector now uses bit 3).
+
+**Rules** (`validateTransition`). Setting, replacing or lifting a timeout
+needs a moderator or above who outranks the member under the record before
+the commit (`mayActOn`; never oneself, never the owner); a set entry must
+name the epoch the commit produces (`GovernanceCommands(epoch:)`,
+`validateCommit(epoch:)`, else `badShape`); a removal prunes the leaver's
+entry (`requiredRecord`); a win or claim leaves timeouts unchanged. Only
+rev moves; `owner_rev` does not.
+
+**App.** `timeoutCommunityMember` sets the server's timeout first (its
+answer gives `timeout_until`), then commits the record entry to the shared
+group; a lift commits the record first, then the server.
+
+**Receiving** (`shouldDropTimedOutPost`, `mobile/lib/core/roles/timeout_verdict.dart`).
+For a text, reply, attachment, poll, edit, reaction, poll vote, poll close
+or pin (`timeoutRefusedTypes`; control payloads and `member_leave` are
+never judged) from an account with an entry, the post is judged at
+`min(server time, this device's receive time + 1 hour)`: hidden (a hidden
+action row, like the C2 drop) if that is inside `[from, until)`; shown at
+or after `until`; and before `from` hidden only when the post's
+authenticated MLS epoch (record group only) is at or after the entry's
+epoch, so a server cannot backdate a post sent after the timeout began.
+
+**Residuals.** A server can hold a timed-out post back until the timeout
+has ended and deliver it then; a post in the last hour of a timeout may
+show (the clock tolerance); a receiving clock more than an hour slow can
+hide an honest post sent just after the end; a post sent at an older epoch
+by a sender that had not merged the timeout commit is judged by time only
+(bounded by OpenMLS's two past epochs); a private channel's posts are judged
+by time only (their group carries no record). Builds older than this refuse
+a record with timeouts (unknown flag bit) and their sync of that group
+stops until they update.
+
+### C4 leave proof in the commit (design, owner-approved 2026-11-11; not built)
+
+**Problem.** A governing member's departure is proven by its own
+`member_leave`, which only the members of that moment hold. A newcomer
+never has it (the Welcome deletes proofs; the server withholds pre-join
+events, which it could not decrypt anyway), so an honest leave-proven
+removal committed after it joined is held for good on its device (held
+commits, above). The lasting fix is that the proof travels in the commit.
+
+**Options weighed.**
+- *SelfRemove proposal by reference* (RFC 9420 extension; OpenMLS 0.9.2
+  `leave_group_via_self_remove`). Ruled out twice: OpenMLS refuses it under
+  the pure-ciphertext wire policy Veritra uses
+  (`LeaveGroupError::CannotSelfRemoveWithPureCiphertext`, `membership.rs`),
+  so it would go out as a PublicMessage; and a proposal by reference must
+  be committed in its own epoch, so a leave sent before the newcomer joined
+  could never be referenced by the commit that removes the leaver.
+- *A field in the C4 record.* Encrypted, but every older build refuses a
+  record with an unknown flag bit, and the record is Dart-encoded and
+  opaque to Rust, where the signature must be checked.
+- *Signed leave bytes in the commit's authenticated data* (chosen).
+  OpenMLS 0.9.2 sets it for the next outgoing message (`MlsGroup::set_aad`,
+  reset after each message) and gives it on receipt
+  (`ProcessedMessage::aad`). Older builds never read it, so they behave
+  exactly as now.
+
+**What the server learns.** A PrivateMessage's `authenticated_data` is not
+encrypted: the server sees the statements (a signature by the leaver's leaf
+key over the group id, the leaf index, the leaf's HPKE key and an epoch).
+It learns that this leaf consented to leaving, which it already knows from
+the leave request it served. It is stored as part of the commit bytes and
+never logged. This is a server-visible plaintext path and a protocol
+change: it needs an independent second opinion (AGENTS.md) before it is
+built.
+
+**Statement (v1).** Signed by the leaver's Rust device with its leaf
+signature key, `SignWithLabel(sig_key, "VeritraC4Leave1", LeaveTBS)`:
+
+```
+struct {
+  opaque group_id<V>;
+  uint32 leaf_index;          // the leaver's leaf now
+  HPKEPublicKey encryption_key; // the leaver's leaf encryption key now
+  uint64 epoch;               // the epoch it is signed in
+} LeaveTBS;
+```
+
+Binding the leaf's encryption key, not only its signature key, stops a
+replay: the device credential (and so the signature key) survives a leave
+and re-add, but a re-add makes a new leaf with a new encryption key, so an
+old statement never verifies against the new leaf.
+
+**Carrier.** The leaver sends it in a new hidden payload type
+`member_leave_signed` (`{"epoch": n, "statement": b64}`), next to the
+existing `member_leave` (whose decoder refuses any extra key, so the
+statement cannot ride in it; older receivers store the new type as a hidden
+unsupported row). Both carry the leave-notice mark; the server's limit
+becomes two marked envelopes per membership per hour. Receivers keep the
+statement with the proof setting. A committer that proves a removal by
+leave sets the commit's AAD to:
+
+```
+"VCL1" || u8 count (1..16) { u32 leaf_index || u64 epoch || u16 len || signature }*
+```
+
+**Verification (Rust, phase one).** `stage_incoming_commit` parses the AAD
+when it starts with `VCL1`; for each statement whose leaf the commit
+removes, it rebuilds `LeaveTBS` from the tree *before* the commit (that
+leaf's encryption key, the group id) and verifies the signature with that
+leaf's signature key. The review gains `proven_leaves` (the LeafPairs that
+verified). Anything malformed, another version, a leaf not removed, or a
+bad signature proves nothing and is never a refusal: the commit is judged
+as without it (so held where proof is needed). Dart's step 4 accepts an
+account whose every removed leaf is in `proven_leaves`.
+
+**ABI.** One new call to sign (`pm_c4_sign_leave(device, group) ->
+statement`), the AAD as a new parameter of the staging calls that remove
+(or a new variant of them), and `proven_leaves` in the review: ABI 25 (the
+order may be renumbered at integration). Vectors for the statement and the
+AAD encoding in Rust and Dart (and Go only if the server ever checks it,
+which this design does not need).
+
+**Versioning.** Old builds: ignore the AAD and the new payload type; they
+judge as now. New receivers of an old committer's commit: no AAD, so held
+where they lack the proof, as now. New committers always attach the
+statements they hold. Once every supported build sends
+`member_leave_signed`, the old `member_leave` can stop being sent (its own
+decision).
+
+**Residuals.** A leaver that updates its own leaf after signing (a
+self-update between the proof and the server leave) invalidates its own
+statement; its removal then needs the old proof, as now. A leaver that
+never sent the signed statement (an older build) cannot be proven to a
+newcomer.

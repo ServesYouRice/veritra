@@ -2,9 +2,12 @@
 
 **Status: rules engine, codec, ABI 20 carrier, command planner, schema 36
 observation storage and the app wiring (producers, two-phase receiver,
-removal proofs, L1 gate, roles screen, owner cancel) are built; not yet
-covered by tests or independently reviewed; server succession is not
-built.** Rescoped
+removal proofs, L1 gate, roles screen, owner cancel) are built; server
+succession is built (migration 0087, 2026-11-11, "Server succession" in
+`docs/crypto.md`, "C4 app wiring"); review fixes 2026-11-11 (held commits,
+leave notice, role-only interval, owner decision B); the leave proof in the
+commit is designed, approved and not built; the wiring is not yet
+independently reviewed.** Rescoped
 2026-11-01 after the owner chose built-in roles only (D80). The custom-role
 design (switches, ranks, channel overrides) it replaces is in Git history at
 `5304eac`. Code: `mobile/lib/core/roles/governance.dart`, tests
@@ -418,8 +421,10 @@ except as the owner's transfer to a current admin (the old owner becomes an
 admin), and anyone may step down (the owner must transfer first). Community
 membership rows follow the same rules (a second unique index; the community's
 creator is kept when fixing up old data). Review finding: option (a) taken
-because the community's role copies into channel conversations. Still open: no succession on the server, and
-account deletion of an owner (a follow-up). Apps never read these rows for
+because the community's role copies into channel conversations. Server
+succession is built (migration 0087: 37 quiet days by the server's clock and
+a majority of the current admins; see `docs/crypto.md`, "C4 app wiring").
+Still open: account deletion of an owner (a follow-up). Apps never read these rows for
 roles, so the server and the signed record may still disagree safely.
 
 ## Owner questions
@@ -539,6 +544,7 @@ owner's cancel and a kick need an L1-approved committer. Producers, the
 two-phase receiver, observations, the owner's automatic cancel (random delay
 up to 24 hours), the `role_change` bundle flag and a roles screen are wired.
 DMs carry no record (decision taken for the open question). Rules and
-residuals: `docs/crypto.md`, "C4 app wiring". Still open: server
-succession after a won election, an independent review, and tests of the
-wiring.
+residuals: `docs/crypto.md`, "C4 app wiring". Server succession is built
+(2026-11-11). Still open: the leave proof in the commit (designed and
+owner-approved, ABI 25, not built), an independent review, and more tests of
+the wiring.
