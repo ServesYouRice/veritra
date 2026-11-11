@@ -404,8 +404,13 @@ void main() {
     final track = a.sfu.remote['TR_sfu_b_0']!;
     expect(a.media.boundTracks, {'TR_sfu_b_0': 'acct_b/dev_b:0'});
     expect(track.playing, isTrue);
-    expect(a.sfu.receiverFor('TR_sfu_b_0')!.participantId, 'acct_b/dev_b:0');
+    // One receiver cryptor per track, keyed by its alias, which holds b's
+    // voice key of this epoch.
+    expect(a.sfu.receiverFor('TR_sfu_b_0')!.participantId, 'rx:TR_sfu_b_0');
     expect(a.sfu.receiverFor('TR_sfu_b_0')!.enabled, isTrue);
+    expect(a.provider.keys['rx:TR_sfu_b_0@1'], isNotNull);
+    expect(a.provider.keys['rx:TR_sfu_b_0@1'],
+        a.provider.keys['acct_b/dev_b:0@1']);
     expect(b2.media.boundTracks, {'TR_sfu_a_0': 'acct_a/dev_a:0'});
     // The data the SFU carried names no account or device.
     for (final data in [...a.sfu.sent, ...b2.sfu.sent]) {
@@ -437,8 +442,12 @@ void main() {
     await a.settle();
     expect(a.media.boundTracks, isEmpty);
     expect(claimed.playing, isFalse);
-    expect(
-        a.sfu.receiverFor('TR_sfu_b_0')!.participantId, startsWith('unbound:'));
+    // The claimed track's cryptor holds no key of b's.
+    final cryptors = a.sfu.cryptors
+        .where((c) => c.participantId == 'rx:TR_sfu_b_0' && !c.disposed);
+    expect(cryptors, hasLength(1));
+    expect(a.provider.keys['rx:TR_sfu_b_0@1'],
+        isNot(a.provider.keys['acct_b/dev_b:0@1']));
     await end([a, b2]);
   });
 
@@ -457,6 +466,55 @@ void main() {
     expect(a.sfu.remote['TR_sfu_b_0']!.playing, isFalse,
         reason: 'frames from a removed member are never played');
     await end([a, b2]);
+  });
+
+  // Review MEDIUM (round 7): the receiver cryptor was disposed and created
+  // again on the same RTP receiver at every bind. Now one per track, and
+  // binding moves keys, not cryptors.
+  test(
+      'one receiver cryptor per track through bind, epoch change and unbind; '
+      'keys follow the binding', () async {
+    final a = await start('a');
+    final b2 = await start('b');
+    await admit(a, b2);
+    int made() => a.sfu.log
+        .where((l) => l.startsWith('receiver cryptor TR_sfu_b_0 '))
+        .length;
+    Uint8List? at(String id, int index) => a.provider.keys['$id@$index'];
+    const rx = 'rx:TR_sfu_b_0';
+    expect(a.media.boundTracks['TR_sfu_b_0'], 'acct_b/dev_b:0');
+    expect(made(), 1);
+    expect(at(rx, 1), at('acct_b/dev_b:0', 1));
+    // c joins: a new epoch's key is mirrored, and ten seconds later the old
+    // one is gone from the alias as from b's own slot.
+    final c = await start('c');
+    await admit(a, c, others: [b2]);
+    expect(a.engine.epoch, 2);
+    expect(at(rx, 2), at('acct_b/dev_b:0', 2));
+    final before = Uint8List.fromList(at(rx, 1)!);
+    await clock.advance(const Duration(seconds: 11));
+    await a.settle();
+    expect(at(rx, 1), isNot(before), reason: 'the 10 s wipe covers it');
+    expect(at(rx, 1), isNot(at('acct_b/dev_b:0', 2)));
+    expect(made(), 1);
+    // b leaves the parent: unbound, its keys junk at once, same cryptor.
+    final key2 = Uint8List.fromList(at(rx, 2)!);
+    parent.list.removeWhere((m) => m.id == b2.self.id);
+    a.engine.refresh();
+    await a.settle();
+    await clock.advance(const Duration(milliseconds: 250));
+    await a.settle();
+    expect(a.media.boundTracks.containsKey('TR_sfu_b_0'), isFalse);
+    expect(a.sfu.remote['TR_sfu_b_0']!.playing, isFalse);
+    expect(at(rx, 2), isNot(key2));
+    expect(at(rx, 3), isNull, reason: 'nothing mirrored after the unbind');
+    expect(made(), 1);
+    expect(a.sfu.receiverFor('TR_sfu_b_0')!.disposed, isFalse);
+    // c's track was bound to c the whole time, with its own single cryptor.
+    expect(a.media.boundTracks['TR_sfu_c_0'], 'acct_c/dev_c:0');
+    expect(a.provider.keys['rx:TR_sfu_c_0@3'],
+        a.provider.keys['acct_c/dev_c:0@3']);
+    await end([a, b2, c]);
   });
 
   test('a receiver cryptor that will not enable unsubscribes the track',

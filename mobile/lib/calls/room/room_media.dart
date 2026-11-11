@@ -14,12 +14,15 @@ import 'webrtc_frame_keys.dart';
 ///    its frame cryptor is attached and enabled, the send key index is set,
 ///    and only then is the track enabled; a cryptor that cannot be enabled
 ///    ends the call;
-///  - every subscribed track gets a receiver cryptor at once and stays
-///    silent until it is bound. A track is bound to `account/device:slot`
-///    only by a track announcement its sender sealed in the call group (an
-///    MLS application message), never by the SFU's names; a track with no
-///    binding keeps a cryptor with no key, so its frames are dropped and
-///    never played in clear;
+///  - every subscribed track gets one receiver cryptor at once, keyed by
+///    `rx:<track sid>` and kept until the track goes, and stays silent
+///    until it is bound. A track is bound to `account/device:slot` only by
+///    a track announcement its sender sealed in the call group (an MLS
+///    application message), never by the SFU's names: binding copies that
+///    member's slot keys into the track's alias ([WebRtcFrameKeys.bindAlias])
+///    and unbinding overwrites them with random bytes, so the cryptor on the
+///    RTP receiver is never disposed or recreated. A track with no binding
+///    has no key, so its frames are dropped and never played in clear;
 ///  - announcements are sent again in every epoch, so newcomers learn them
 ///    and members that left cannot read them.
 
@@ -112,11 +115,13 @@ class _Sender {
 }
 
 class _Receiver {
-  _Receiver(this.track, this.cryptor, this.boundTo);
+  _Receiver(this.track, this.cryptor);
   final SfuRemoteTrack track;
-  RoomFrameCryptor cryptor;
 
-  /// `account/device:slot`, or null while unbound (a cryptor with no key).
+  /// Keyed by [RoomMediaSession.receiverKeyId] for the track's whole life.
+  final RoomFrameCryptor cryptor;
+
+  /// `account/device:slot`, or null while unbound (no key).
   String? boundTo;
 }
 
@@ -291,7 +296,10 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
         await _subscribed(track);
       case SfuTrackUnsubscribed(:final sid):
         final receiver = _receivers.remove(sid);
-        await receiver?.cryptor.dispose();
+        if (receiver != null) {
+          keys.unbindAlias(receiverKeyId(sid));
+          await receiver.cryptor.dispose();
+        }
       case SfuData(:final participant, :final data):
         await _announcement(participant, data);
       case SfuDisconnected():
@@ -299,14 +307,20 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     }
   }
 
-  String _unbound(String sid) => 'unbound:$sid';
+  /// The key provider id of a remote track's receiver cryptor: an alias
+  /// that mirrors the bound member's slot keys, and holds none unbound.
+  static String receiverKeyId(String sid) => 'rx:$sid';
 
   Future<void> _subscribed(SfuRemoteTrack track) async {
     final RoomFrameCryptor cryptor;
     try {
       // A track that cannot be muted is never kept.
       await track.setPlaying(false);
-      cryptor = await sfu.receiverCryptor(track, _unbound(track.sid));
+      // A track the SFU subscribes again under the same sid keeps no key
+      // from before.
+      keys.unbindAlias(receiverKeyId(track.sid));
+      await _receivers.remove(track.sid)?.cryptor.dispose();
+      cryptor = await sfu.receiverCryptor(track, receiverKeyId(track.sid));
       if (!await cryptor.setEnabled(true)) {
         await cryptor.dispose();
         throw StateError('receiver cryptor did not enable');
@@ -316,7 +330,7 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
       await track.unsubscribe();
       return;
     }
-    final receiver = _Receiver(track, cryptor, null);
+    final receiver = _Receiver(track, cryptor);
     _receivers[track.sid] = receiver;
     await _rebind(receiver);
   }
@@ -356,8 +370,8 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
     }
   }
 
-  /// Puts the cryptor [receiver] should have in place: bound to the member
-  /// and slot its sender announced, or unbound (no key, frames dropped).
+  /// Puts the keys [receiver]'s cryptor should have in place: the member and
+  /// slot its sender announced, or none (frames dropped). The cryptor stays.
   Future<void> _rebind(_Receiver receiver) async {
     final binding = _bindings[receiver.track.sid];
     final target = binding != null &&
@@ -367,21 +381,24 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
         ? '${binding.member}:${binding.slot}'
         : null;
     if (target == receiver.boundTo) return;
-    // Silent while the cryptor is swapped, so no frame plays without one.
+    // Silent while the keys change, so nothing plays under the wrong ones.
     await receiver.track.setPlaying(false);
-    await receiver.cryptor.dispose();
-    final cryptor = await sfu.receiverCryptor(
-        receiver.track, target ?? _unbound(receiver.track.sid));
-    receiver.cryptor = cryptor;
     receiver.boundTo = null;
-    if (!await cryptor.setEnabled(true)) {
-      _receivers.remove(receiver.track.sid);
-      await cryptor.dispose();
-      await receiver.track.unsubscribe();
+    final alias = receiverKeyId(receiver.track.sid);
+    if (target == null) {
+      keys.unbindAlias(alias);
+      await keys.idle;
+      notifyListeners();
+      return;
+    }
+    keys.bindAlias(alias, target);
+    await keys.idle;
+    // A key the provider refused ends the call ([_onKeysFailed]).
+    if (keys.failed.value || _receivers[receiver.track.sid] != receiver) {
       return;
     }
     receiver.boundTo = target;
-    if (target != null) await receiver.track.setPlaying(true);
+    await receiver.track.setPlaying(true);
     notifyListeners();
   }
 
@@ -435,10 +452,11 @@ class RoomMediaSession extends ChangeNotifier implements RoomMediaControls {
         await sfu.unpublish(voice.track);
       } catch (_) {}
     }
-    for (final receiver in _receivers.values) {
+    for (final entry in _receivers.entries) {
       try {
-        await receiver.track.setPlaying(false);
-        await receiver.cryptor.dispose();
+        await entry.value.track.setPlaying(false);
+        keys.unbindAlias(receiverKeyId(entry.key));
+        await entry.value.cryptor.dispose();
       } catch (_) {}
     }
     _receivers.clear();
