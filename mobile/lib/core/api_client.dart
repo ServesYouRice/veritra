@@ -12,6 +12,7 @@ import 'device_link_v3_models.dart';
 import 'device_lists.dart' show DeviceListPage;
 import 'membership_models.dart';
 import 'models.dart';
+import 'passkeys.dart';
 import 'report_models.dart';
 import 'server_origin.dart';
 import 'transport_policy.dart';
@@ -522,6 +523,113 @@ class ApiClient {
       fallbackUsername: username,
       fallbackDeviceSecret: deviceSecret,
     );
+  }
+
+  // ---------------------------------------------------------- passkeys (B7)
+
+  /// Begins a passkey sign-in. The device ID and secret are checked by the
+  /// server exactly as `login` checks them; no username is sent.
+  Future<PasskeyCeremony> passkeyLoginOptions({
+    required String deviceId,
+    required String deviceSecret,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/auth/passkey/options',
+      body: <String, Object?>{
+        'device_id': deviceId,
+        'device_secret': deviceSecret,
+      },
+    );
+    return _ceremony(json);
+  }
+
+  /// Finishes a passkey sign-in. The answer has the shape of `login`'s and
+  /// grants no recent authentication.
+  Future<Session> passkeyLogin({
+    required String ceremonyId,
+    required String deviceId,
+    required String deviceSecret,
+    required Map<String, Object?> credential,
+    String? fallbackUsername,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/auth/passkey',
+      body: <String, Object?>{
+        'ceremony_id': ceremonyId,
+        'device_id': deviceId,
+        'device_secret': deviceSecret,
+        'credential': credential,
+      },
+    );
+    return _sessionFromAuthJson(
+      json,
+      fallbackUsername: fallbackUsername,
+      fallbackDeviceSecret: deviceSecret,
+    );
+  }
+
+  Future<List<PasskeyRecord>> passkeys(String token) async {
+    final json =
+        await _jsonRequest('GET', '/api/v1/account/passkeys', token: token);
+    final raw = json['passkeys'];
+    if (raw == null) return const <PasskeyRecord>[];
+    if (raw is! List || raw.length > 64) throw const ApiResponseException();
+    return <PasskeyRecord>[
+      for (final row in raw)
+        PasskeyRecord.tryParse(row) ?? (throw const ApiResponseException()),
+    ];
+  }
+
+  /// Needs a recent password check on the session.
+  Future<PasskeyCeremony> passkeyRegisterOptions(String token) async {
+    final json = await _jsonRequest('POST', '/api/v1/account/passkeys/options',
+        token: token);
+    return _ceremony(json);
+  }
+
+  /// Returns the new passkey's row ID.
+  Future<String> passkeyRegister(
+    String token, {
+    required String ceremonyId,
+    required String name,
+    required Map<String, Object?> credential,
+  }) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/account/passkeys',
+      token: token,
+      body: <String, Object?>{
+        'ceremony_id': ceremonyId,
+        'name': name,
+        'credential': credential,
+      },
+    );
+    final id = json['id'];
+    if (id is! String || id.isEmpty) throw const ApiResponseException();
+    return id;
+  }
+
+  Future<void> renamePasskey(String token, String id, String name) async {
+    await _jsonRequest(
+        'PATCH', '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
+        token: token, body: <String, Object?>{'name': name});
+  }
+
+  /// Needs a recent password check on the session.
+  Future<void> deletePasskey(String token, String id) async {
+    await _jsonRequest(
+        'DELETE', '/api/v1/account/passkeys/${Uri.encodeComponent(id)}',
+        token: token);
+  }
+
+  PasskeyCeremony _ceremony(Map<String, Object?> json) {
+    final id = json['ceremony_id'];
+    if (id is! String || id.isEmpty || id.length > 256) {
+      throw const ApiResponseException();
+    }
+    return PasskeyCeremony(id: id, publicKey: _object(json, 'public_key'));
   }
 
   Future<List<Conversation>> conversations(String token) {

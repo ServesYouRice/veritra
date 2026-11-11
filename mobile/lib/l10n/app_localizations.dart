@@ -6092,6 +6092,318 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Not now'**
   String get autoBackupPromptLater;
+
+  /// No description provided for @connectSignInPasskey.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with a passkey'**
+  String get connectSignInPasskey;
+
+  /// No description provided for @passkeySignInFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey sign-in failed. Try again, or use your password.'**
+  String get passkeySignInFailed;
+
+  /// No description provided for @passkeyUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkeys are not available on this device, or not set up for this server.'**
+  String get passkeyUnavailable;
+
+  /// No description provided for @passkeyPinRefused.
+  ///
+  /// In en, this message translates to:
+  /// **'This server asked for a passkey for a different address, so the app refused.'**
+  String get passkeyPinRefused;
+
+  /// No description provided for @apiErrorPasskeyLimit.
+  ///
+  /// In en, this message translates to:
+  /// **'You have reached the passkey limit. Remove one first.'**
+  String get apiErrorPasskeyLimit;
+
+  /// No description provided for @apiErrorPasskeyExists.
+  ///
+  /// In en, this message translates to:
+  /// **'This passkey is already added.'**
+  String get apiErrorPasskeyExists;
+
+  /// No description provided for @apiErrorInvalidPasskey.
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not verify that passkey.'**
+  String get apiErrorInvalidPasskey;
+
+  /// No description provided for @apiErrorPasskeysOff.
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not offer passkeys.'**
+  String get apiErrorPasskeysOff;
+
+  /// No description provided for @settingsPasskeys.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkeys'**
+  String get settingsPasskeys;
+
+  /// No description provided for @settingsPasskeysDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign in with your phone\'s screen lock instead of the password'**
+  String get settingsPasskeysDetail;
+
+  /// No description provided for @passkeysIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'A passkey signs you in on this device instead of the password. Changing settings still asks for your password. The service that keeps your passkey, such as Google or Apple, learns this server\'s address.'**
+  String get passkeysIntro;
+
+  /// No description provided for @passkeysNotOffered.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkeys are not available for this server on this device.'**
+  String get passkeysNotOffered;
+
+  /// No description provided for @passkeysEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No passkeys yet.'**
+  String get passkeysEmpty;
+
+  /// No description provided for @passkeysAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a passkey'**
+  String get passkeysAdd;
+
+  /// No description provided for @passkeysAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey added.'**
+  String get passkeysAdded;
+
+  /// No description provided for @passkeyCreated.
+  ///
+  /// In en, this message translates to:
+  /// **'Added {date}'**
+  String passkeyCreated(String date);
+
+  /// No description provided for @passkeyLastUsed.
+  ///
+  /// In en, this message translates to:
+  /// **'Last used {date}'**
+  String passkeyLastUsed(String date);
+
+  /// No description provided for @passkeyBackedUp.
+  ///
+  /// In en, this message translates to:
+  /// **'Backed up'**
+  String get passkeyBackedUp;
+
+  /// No description provided for @passkeyRename.
+  ///
+  /// In en, this message translates to:
+  /// **'Rename'**
+  String get passkeyRename;
+
+  /// No description provided for @passkeyRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get passkeyRemove;
+
+  /// No description provided for @passkeyNameLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get passkeyNameLabel;
+
+  /// No description provided for @passkeyRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove this passkey?'**
+  String get passkeyRemoveTitle;
+
+  /// No description provided for @passkeyRemoveBody.
+  ///
+  /// In en, this message translates to:
+  /// **'“{name}” will no longer sign in to this account. You can add it again later.'**
+  String passkeyRemoveBody(String name);
+
+  /// No description provided for @passkeyRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey removed.'**
+  String get passkeyRemoved;
+
+  /// No description provided for @passkeyNoticeAdded.
+  ///
+  /// In en, this message translates to:
+  /// **'A passkey was added to your account. Not you? Change your password.'**
+  String get passkeyNoticeAdded;
+
+  /// No description provided for @passkeyNoticeRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'A passkey was removed from your account.'**
+  String get passkeyNoticeRemoved;
+
+  /// No description provided for @passkeyNoticeDismiss.
+  ///
+  /// In en, this message translates to:
+  /// **'Dismiss'**
+  String get passkeyNoticeDismiss;
+
+  /// No description provided for @passkeyNamePrefix.
+  ///
+  /// In en, this message translates to:
+  /// **'Passkey'**
+  String get passkeyNamePrefix;
+
+  /// No description provided for @settingsAccounts.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get settingsAccounts;
+
+  /// No description provided for @settingsAccountsDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch between the accounts on this device'**
+  String get settingsAccountsDetail;
+
+  /// No description provided for @accountsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Accounts'**
+  String get accountsTitle;
+
+  /// No description provided for @accountsIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'One account is open at a time. The others are paused: no messages or notifications arrive for them until you switch to them.'**
+  String get accountsIntro;
+
+  /// No description provided for @accountsOpenNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Open now'**
+  String get accountsOpenNow;
+
+  /// No description provided for @accountsPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Not signed in yet'**
+  String get accountsPending;
+
+  /// No description provided for @accountsRemoving.
+  ///
+  /// In en, this message translates to:
+  /// **'Removing…'**
+  String get accountsRemoving;
+
+  /// No description provided for @accountsNewAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'New account'**
+  String get accountsNewAccount;
+
+  /// No description provided for @accountsAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add an account'**
+  String get accountsAdd;
+
+  /// No description provided for @accountsFull.
+  ///
+  /// In en, this message translates to:
+  /// **'This device holds {count} accounts, the most it can. Remove one to add another.'**
+  String accountsFull(String count);
+
+  /// No description provided for @accountsSameServer.
+  ///
+  /// In en, this message translates to:
+  /// **'This server can tell that these accounts are on the same device.'**
+  String get accountsSameServer;
+
+  /// No description provided for @accountsSwitching.
+  ///
+  /// In en, this message translates to:
+  /// **'Switching…'**
+  String get accountsSwitching;
+
+  /// No description provided for @accountsSwitchTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch to {name}'**
+  String accountsSwitchTo(String name);
+
+  /// No description provided for @accountsRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove from this device'**
+  String get accountsRemove;
+
+  /// No description provided for @accountsRemoveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove {name} from this device?'**
+  String accountsRemoveTitle(String name);
+
+  /// No description provided for @accountsRemoveBody.
+  ///
+  /// In en, this message translates to:
+  /// **'This signs the account out and deletes its messages and keys from this device. The account stays on its server. If you will not use this device again, remove it from the account\'s device list on another device.'**
+  String get accountsRemoveBody;
+
+  /// No description provided for @accountsPushFailTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch anyway?'**
+  String get accountsPushFailTitle;
+
+  /// No description provided for @accountsPushFailBody.
+  ///
+  /// In en, this message translates to:
+  /// **'Notifications for {name} could not be turned off. You may get notifications for this account until you open it again.'**
+  String accountsPushFailBody(String name);
+
+  /// No description provided for @accountsSwitchAnyway.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch anyway'**
+  String get accountsSwitchAnyway;
+
+  /// No description provided for @accountsErrorOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'That account could not be opened. The previous account is open again.'**
+  String get accountsErrorOpen;
+
+  /// No description provided for @accountsErrorRegistry.
+  ///
+  /// In en, this message translates to:
+  /// **'The account list could not be saved.'**
+  String get accountsErrorRegistry;
+
+  /// No description provided for @accountsErrorRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'The account could not be removed. Try again.'**
+  String get accountsErrorRemove;
+
+  /// No description provided for @accountsDuplicate.
+  ///
+  /// In en, this message translates to:
+  /// **'This device already has that account, so the extra sign-in was removed. Remove this device\'s extra entry from the account\'s device list.'**
+  String get accountsDuplicate;
+
+  /// No description provided for @accountsBack.
+  ///
+  /// In en, this message translates to:
+  /// **'Back to my accounts'**
+  String get accountsBack;
 }
 
 class _AppLocalizationsDelegate

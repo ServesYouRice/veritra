@@ -1,0 +1,88 @@
+{
+  "contract_version": 1,
+  "list": {
+    "passkeys": [
+      {
+        "created_at": "2026-11-08T08:49:15Z",
+        "id": "pk_fc09984160c581edfd312358d35b044c",
+        "last_used_at": null,
+        "name": "Passkey 1",
+        "synced": false
+      }
+    ]
+  },
+  "login": {
+    "account_id": "acct_152e297e3dd83e9beabbf1efd6b1e768",
+    "device_id": "dev_f712b49f215a30a45113e86f4ac34b06",
+    "role": "owner",
+    "token": "token-from-passkey"
+  },
+  "login_options": {
+    "ceremony_id": "1siaE25Qep5ioCbOcuonM13HDmD-Me1b1mLojYO1Q6E",
+    "public_key": {
+      "allowCredentials": [
+        {
+          "id": "hot-wHTFrcIfVO_jfj_621cPU6LQ9-8-QueT0pb5rtk",
+          "transports": [
+            "internal"
+          ],
+          "type": "public-key"
+        }
+      ],
+      "challenge": "5oxJxOReLysqQ5UGBYRz53O9bLGtVS5VwtdOs1Yc77o",
+      "rpId": "chat.example.com",
+      "timeout": 180000,
+      "userVerification": "required"
+    }
+  },
+  "note": "Shapes the Go server tests produce (server/internal/httpapi/passkey_test.go); ids and tokens are placeholders.",
+  "register_options": {
+    "ceremony_id": "x4IavhvG91SNSlq6PM498FoGXn_-uwvf5wb-7Hh-hio",
+    "public_key": {
+      "attestation": "none",
+      "authenticatorSelection": {
+        "requireResidentKey": true,
+        "residentKey": "required",
+        "userVerification": "required"
+      },
+      "challenge": "rEWunq82e3XErOo1P0vL-vP6aEA1Okbm5ZFUafYB0BE",
+      "pubKeyCredParams": [
+        {
+          "alg": -8,
+          "type": "public-key"
+        },
+        {
+          "alg": -7,
+          "type": "public-key"
+        },
+        {
+          "alg": -257,
+          "type": "public-key"
+        }
+      ],
+      "rp": {
+        "id": "chat.example.com",
+        "name": "Veritra"
+      },
+      "timeout": 180000,
+      "user": {
+        "displayName": "owner",
+        "id": "3AH4l6JIeT_YLeAtTgK19tPkvxkhvcr7C8XHuJhtzyk",
+        "name": "owner"
+      }
+    }
+  },
+  "register_response": {
+    "id": "pk_fc09984160c581edfd312358d35b044c"
+  },
+  "setup_status": {
+    "instance_name": "Test Messenger",
+    "max_attachment_bytes": 50331648,
+    "passkeys": {
+      "android": true,
+      "apple": true,
+      "rp_id": "chat.example.com"
+    },
+    "setup_required": false
+  }
+}

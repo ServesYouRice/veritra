@@ -61,18 +61,41 @@ Future<void> openAttachment(
 /// Phones hand a decrypted file to whichever app handles its type.
 bool get _opensInOtherApp => Platform.isAndroid || Platform.isIOS;
 
-/// Folder in the app cache that holds files decrypted for other apps.
-Future<Directory> _openedFilesDirectory() async {
+/// The subfolder of the opened-files cache this slot uses (B7): each account
+/// slot has its own, so a switch can purge one slot's decrypted copies
+/// without touching another's. The primary slot is `primary`.
+String _openedScope = 'primary';
+
+void useOpenedFilesScope(String? folder) {
+  final clean = (folder ?? '').toLowerCase().replaceAll(
+        RegExp(r'[^a-z0-9-]'),
+        '',
+      );
+  _openedScope = clean.isEmpty ? 'primary' : clean;
+}
+
+/// Folder in the app cache that holds files decrypted for other apps, for
+/// every slot.
+Future<Directory> _openedFilesRoot() async {
   final cache = await getTemporaryDirectory();
   return Directory('${cache.path}${Platform.pathSeparator}veritra-open');
 }
 
-/// Deletes decrypted files left by earlier opens. Call at startup, and
-/// before each open; the viewer app may still be reading the file right
-/// after it launches, so a file is never deleted at once.
-Future<void> purgeOpenedAttachments() async {
+/// Folder in the app cache that holds this slot's decrypted files.
+Future<Directory> openedFilesDirectory() async {
+  final root = await _openedFilesRoot();
+  return Directory('${root.path}${Platform.pathSeparator}$_openedScope');
+}
+
+/// Deletes decrypted files left by earlier opens: every slot's, or with
+/// [thisSlotOnly] this slot's (a switch purges the slot it leaves). Call at
+/// startup, at every switch and before each open; the viewer app may still
+/// be reading the file right after it launches, so a file is never deleted
+/// at once.
+Future<void> purgeOpenedAttachments({bool thisSlotOnly = false}) async {
   try {
-    final directory = await _openedFilesDirectory();
+    final directory =
+        thisSlotOnly ? await openedFilesDirectory() : await _openedFilesRoot();
     if (await directory.exists()) await directory.delete(recursive: true);
   } on FileSystemException {
     // Best effort: the cache is cleared by the system.
@@ -126,7 +149,7 @@ Future<void> openAttachmentExternally(
   File? created;
   try {
     await purgeOpenedAttachments();
-    final directory = await _openedFilesDirectory();
+    final directory = await openedFilesDirectory();
     created = await newOpenedCopy(directory, entry.fileName);
     await state.saveAttachment(
       entry,

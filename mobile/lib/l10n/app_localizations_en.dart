@@ -3703,4 +3703,190 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get autoBackupPromptLater => 'Not now';
+
+  @override
+  String get connectSignInPasskey => 'Sign in with a passkey';
+
+  @override
+  String get passkeySignInFailed =>
+      'Passkey sign-in failed. Try again, or use your password.';
+
+  @override
+  String get passkeyUnavailable =>
+      'Passkeys are not available on this device, or not set up for this server.';
+
+  @override
+  String get passkeyPinRefused =>
+      'This server asked for a passkey for a different address, so the app refused.';
+
+  @override
+  String get apiErrorPasskeyLimit =>
+      'You have reached the passkey limit. Remove one first.';
+
+  @override
+  String get apiErrorPasskeyExists => 'This passkey is already added.';
+
+  @override
+  String get apiErrorInvalidPasskey =>
+      'The server could not verify that passkey.';
+
+  @override
+  String get apiErrorPasskeysOff => 'This server does not offer passkeys.';
+
+  @override
+  String get settingsPasskeys => 'Passkeys';
+
+  @override
+  String get settingsPasskeysDetail =>
+      'Sign in with your phone\'s screen lock instead of the password';
+
+  @override
+  String get passkeysIntro =>
+      'A passkey signs you in on this device instead of the password. Changing settings still asks for your password. The service that keeps your passkey, such as Google or Apple, learns this server\'s address.';
+
+  @override
+  String get passkeysNotOffered =>
+      'Passkeys are not available for this server on this device.';
+
+  @override
+  String get passkeysEmpty => 'No passkeys yet.';
+
+  @override
+  String get passkeysAdd => 'Add a passkey';
+
+  @override
+  String get passkeysAdded => 'Passkey added.';
+
+  @override
+  String passkeyCreated(String date) {
+    return 'Added $date';
+  }
+
+  @override
+  String passkeyLastUsed(String date) {
+    return 'Last used $date';
+  }
+
+  @override
+  String get passkeyBackedUp => 'Backed up';
+
+  @override
+  String get passkeyRename => 'Rename';
+
+  @override
+  String get passkeyRemove => 'Remove';
+
+  @override
+  String get passkeyNameLabel => 'Name';
+
+  @override
+  String get passkeyRemoveTitle => 'Remove this passkey?';
+
+  @override
+  String passkeyRemoveBody(String name) {
+    return '“$name” will no longer sign in to this account. You can add it again later.';
+  }
+
+  @override
+  String get passkeyRemoved => 'Passkey removed.';
+
+  @override
+  String get passkeyNoticeAdded =>
+      'A passkey was added to your account. Not you? Change your password.';
+
+  @override
+  String get passkeyNoticeRemoved => 'A passkey was removed from your account.';
+
+  @override
+  String get passkeyNoticeDismiss => 'Dismiss';
+
+  @override
+  String get passkeyNamePrefix => 'Passkey';
+
+  @override
+  String get settingsAccounts => 'Accounts';
+
+  @override
+  String get settingsAccountsDetail =>
+      'Switch between the accounts on this device';
+
+  @override
+  String get accountsTitle => 'Accounts';
+
+  @override
+  String get accountsIntro =>
+      'One account is open at a time. The others are paused: no messages or notifications arrive for them until you switch to them.';
+
+  @override
+  String get accountsOpenNow => 'Open now';
+
+  @override
+  String get accountsPending => 'Not signed in yet';
+
+  @override
+  String get accountsRemoving => 'Removing…';
+
+  @override
+  String get accountsNewAccount => 'New account';
+
+  @override
+  String get accountsAdd => 'Add an account';
+
+  @override
+  String accountsFull(String count) {
+    return 'This device holds $count accounts, the most it can. Remove one to add another.';
+  }
+
+  @override
+  String get accountsSameServer =>
+      'This server can tell that these accounts are on the same device.';
+
+  @override
+  String get accountsSwitching => 'Switching…';
+
+  @override
+  String accountsSwitchTo(String name) {
+    return 'Switch to $name';
+  }
+
+  @override
+  String get accountsRemove => 'Remove from this device';
+
+  @override
+  String accountsRemoveTitle(String name) {
+    return 'Remove $name from this device?';
+  }
+
+  @override
+  String get accountsRemoveBody =>
+      'This signs the account out and deletes its messages and keys from this device. The account stays on its server. If you will not use this device again, remove it from the account\'s device list on another device.';
+
+  @override
+  String get accountsPushFailTitle => 'Switch anyway?';
+
+  @override
+  String accountsPushFailBody(String name) {
+    return 'Notifications for $name could not be turned off. You may get notifications for this account until you open it again.';
+  }
+
+  @override
+  String get accountsSwitchAnyway => 'Switch anyway';
+
+  @override
+  String get accountsErrorOpen =>
+      'That account could not be opened. The previous account is open again.';
+
+  @override
+  String get accountsErrorRegistry => 'The account list could not be saved.';
+
+  @override
+  String get accountsErrorRemove =>
+      'The account could not be removed. Try again.';
+
+  @override
+  String get accountsDuplicate =>
+      'This device already has that account, so the extra sign-in was removed. Remove this device\'s extra entry from the account\'s device list.';
+
+  @override
+  String get accountsBack => 'Back to my accounts';
 }

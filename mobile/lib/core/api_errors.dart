@@ -348,6 +348,14 @@ class ApiException implements Exception {
         return l10n.apiErrorInvalidDeviceName;
       case 'invalid_name':
         return l10n.apiErrorInvalidName;
+      case 'passkey_limit':
+        return l10n.apiErrorPasskeyLimit;
+      case 'passkey_exists':
+        return l10n.apiErrorPasskeyExists;
+      case 'invalid_passkey':
+        return l10n.apiErrorInvalidPasskey;
+      case 'passkeys_not_configured':
+        return l10n.apiErrorPasskeysOff;
       case 'invalid_max_uses':
         return l10n.apiErrorInvalidMaxUses;
       case 'invalid_expires_at':

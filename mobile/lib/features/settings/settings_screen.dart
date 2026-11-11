@@ -25,10 +25,13 @@ import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
 import '../../ui/widgets/tile_group.dart';
 import '../reports/owner_reports_screen.dart';
+import '../../core/account_host.dart';
+import 'accounts_screen.dart';
 import 'admin_screen.dart';
 import 'blocked_accounts_screen.dart';
 import 'device_link_screen.dart';
 import 'invite_screen.dart';
+import 'passkeys_screen.dart';
 import 'profile_screen.dart';
 import 'recovery_key_screen.dart';
 
@@ -122,6 +125,30 @@ class SettingsScreen extends StatelessWidget {
                       onTap: () => Navigator.of(context).push(
                         sharedAxisRoute<void>(
                           (_) => AutoBackupScreen(state: state),
+                        ),
+                      ),
+                    ),
+                  if (AccountHostScope.maybeOf(context) case final host?)
+                    ListTile(
+                      key: const ValueKey<String>('settings-accounts'),
+                      leading: const Icon(Icons.switch_account_outlined),
+                      title: Text(l10n.settingsAccounts),
+                      subtitle: Text(l10n.settingsAccountsDetail),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => AccountsScreen(host: host),
+                        ),
+                      ),
+                    ),
+                  if (state.passkeyClient.platformSupported)
+                    ListTile(
+                      key: const ValueKey<String>('settings-passkeys'),
+                      leading: const Icon(Icons.fingerprint),
+                      title: Text(l10n.settingsPasskeys),
+                      subtitle: Text(l10n.settingsPasskeysDetail),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => PasskeysScreen(state: state),
                         ),
                       ),
                     ),

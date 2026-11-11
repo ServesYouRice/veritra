@@ -2834,6 +2834,9 @@ class SecureLocalStore implements LocalStore {
   final MlsCommitFailureInjector? _mlsCommitFailureInjector;
   final BackupExclusion? _backupExclusion;
   Future<EncryptedLocalDatabase>? _openingDatabase;
+
+  /// Set by [close]; the store never opens its database again.
+  bool _closed = false;
   String? _databasePath;
   String? _syncLeaseKey;
 
@@ -3898,6 +3901,11 @@ class SecureLocalStore implements LocalStore {
   }
 
   Future<Directory> _profileDirectory({bool existingOnly = false}) async {
+    // Every open and every reset comes through here (see [close]).
+    if (_closed) {
+      throw const LocalStoreUnavailableException(
+          LocalStoreFailureKind.profileLocked);
+    }
     final base = await _directoryProvider();
     final directory = _namespace.isEmpty
         ? base
@@ -4248,6 +4256,31 @@ class SecureLocalStore implements LocalStore {
     _instanceLocks.clear();
     for (final handle in handles) {
       await handle.close();
+    }
+  }
+
+  /// Closes this store's database and gives up its profile's instance lock,
+  /// so the account switcher can open another slot (B7). The close is final:
+  /// work of the torn-down account that outlives its drain gets
+  /// [LocalStoreUnavailableException] and never reopens, or after a removal
+  /// recreates, that slot's database. A slot opened again gets a new store.
+  Future<void> close() async {
+    _closed = true;
+    final opening = _openingDatabase;
+    _openingDatabase = null;
+    if (opening != null) {
+      try {
+        await (await opening).close();
+      } catch (_) {
+        // An open that failed holds nothing to close.
+      }
+    }
+    final path = _databasePath;
+    if (path != null) {
+      final directory = File(path).parent.path;
+      final handle = _instanceLocks
+          .remove('$directory${Platform.pathSeparator}veritra-instance.lock');
+      await handle?.close();
     }
   }
 
