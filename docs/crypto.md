@@ -587,6 +587,19 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `ALTER TABLE`). Evidence:
   [`C3-key-freshness-2026-11-11.md`](../testing/evidence/C3-key-freshness-2026-11-11.md).
 
+- **C3 remote-removal dedup (2026-11-11, owner decision):** no ABI,
+  schema or wire change. Only owners and admins under the verified C4 record
+  rotate info keys (a moderator never does; the server's role is used only
+  without a record). A device that did not make the removal waits 15 s +
+  30 s per rank + a device jitter (rank from a SHA-256 order of the verified
+  owner and admins per key home and removal epoch, capped at 8), counted
+  from the later of observation and session start. An obligation ends
+  without a new key when the current fresh key was delivered by another
+  device of a verified owner or admin; this device's own stored copies and
+  moderators' keys never count. Non-admins then complete too. The schedule
+  only changes timing; it cannot end an obligation. See the C3 design,
+  "Remote removals: who rotates".
+
 - **C3 remote-removal obligations (2026-11-11):** no ABI, schema or wire
   change. The remote commit path uses ABI 13's authenticated removal outcome
   and wipes its unused exporter root. Surviving devices persist the removal

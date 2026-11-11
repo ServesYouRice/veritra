@@ -198,20 +198,21 @@ final class InvalidAppPayload extends AppPayloadOutcome {
 /// [unfrankedPayloadTypes]. The C7 hidden types (`history_change`,
 /// `history_sync`, `history_sync_request`) are never franked, because a
 /// `frank` member would push them out of the 512-byte bucket (C6 design,
-/// open item 9). Today they decode as unsupported hidden payloads; when C7
-/// makes them known types, [unfrankedPayloadTypes] keeps them exempt only if
-/// it holds their `AppPayloadType.name`, so the C7 merge must keep the two in
-/// step. Every other message type this app sends, pins included, is franked
-/// and is never exempt.
+/// open item 9). They are known types now, so [unfrankedPayloadTypes] keeps
+/// them exempt by their `AppPayloadType.name` (not their wire name): the two
+/// must stay in step. Every other message type this app sends, pins
+/// included, is franked and is never exempt.
 class FrankingPolicy {
   const FrankingPolicy({this.acceptUnfranked = true});
 
   /// Payload types that are never franked (C6 design, open item 9), by
   /// `AppPayloadType.name`.
   static const Set<String> unfrankedPayloadTypes = {
-    'history_change',
-    'history_sync',
-    'history_sync_request',
+    // C7 hidden types (`history_change`, `history_sync`,
+    // `history_sync_request` on the wire).
+    'historyChange',
+    'historySync',
+    'historySyncRequest',
     // C3: an info key must never be reportable, since a report hands the
     // payload to its reader. Receivers keep no reveal for these types even
     // when one is franked.

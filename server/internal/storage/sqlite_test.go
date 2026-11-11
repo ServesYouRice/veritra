@@ -584,51 +584,73 @@ func TestMetadataSearchRanksAndPaginatesAllowedLabelsOnly(t *testing.T) {
 	store, _ := newTestStore(t, ctx)
 	defer store.Close()
 	owner := createTestOwner(t, ctx, store)
-
-	alphaCommunity, err := store.CreateCommunity(ctx, owner.Account.ID)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 2, nil)
 	if err != nil {
-		t.Fatalf("create alpha community: %v", err)
+		t.Fatalf("create invite: %v", err)
 	}
-	if _, err := store.CreateChannel(ctx, alphaCommunity.ID, "private", owner.Account.ID); err != nil {
-		t.Fatalf("create alpine channel: %v", err)
+	alpha := registerTestMember(t, ctx, store, invite.Code, "alpha")
+	registerTestMember(t, ctx, store, invite.Code, "alphateam")
+
+	community, err := store.CreateCommunity(ctx, owner.Account.ID)
+	if err != nil {
+		t.Fatalf("create community: %v", err)
 	}
-	if _, err := store.CreateCommunity(ctx, owner.Account.ID); err != nil {
-		t.Fatalf("create team alpha community: %v", err)
+	channel, err := store.CreateChannel(ctx, community.ID, "private", owner.Account.ID)
+	if err != nil {
+		t.Fatalf("create private channel: %v", err)
+	}
+	second, err := store.CreateCommunity(ctx, owner.Account.ID)
+	if err != nil {
+		t.Fatalf("create second community: %v", err)
 	}
 
-	firstPage, err := store.SearchMetadata(ctx, owner.Account.ID, "alpha", 2, 0)
+	// Only accounts are labels the server may return; C3 (migration 0082)
+	// removed community and channel names, so none of their rows may appear.
+	accountsOnly := func(q string, results []domain.MetadataSearchResult) {
+		t.Helper()
+		for _, r := range results {
+			if r.Type != "account" {
+				t.Fatalf("search %q returned a %s row: %#v", q, r.Type, r)
+			}
+		}
+	}
+
+	// The exact (case-insensitive) username matches, and pagination pages it.
+	firstPage, err := store.SearchMetadata(ctx, owner.Account.ID, "ALPHA", 1, 0)
 	if err != nil {
 		t.Fatalf("first page metadata search: %v", err)
 	}
-	if len(firstPage) != 1 {
-		t.Fatalf("first page len=%d want 1: %#v", len(firstPage), firstPage)
+	if len(firstPage) != 1 || firstPage[0].Type != "account" || firstPage[0].ID != alpha.Account.ID || firstPage[0].Label != "alpha" {
+		t.Fatalf("exact username first page: %#v", firstPage)
 	}
-	if firstPage[0].Type != "community" || firstPage[0].Label != "Alpha" {
-		t.Fatalf("exact match should rank first: %#v", firstPage)
-	}
-
-	secondPage, err := store.SearchMetadata(ctx, owner.Account.ID, "alpha", 2, 2)
+	secondPage, err := store.SearchMetadata(ctx, owner.Account.ID, "alpha", 1, 1)
 	if err != nil {
 		t.Fatalf("second page metadata search: %v", err)
 	}
 	if len(secondPage) != 0 {
 		t.Fatalf("unexpected second page results: %#v", secondPage)
 	}
-
-	teamPrefixResults, err := store.SearchMetadata(ctx, owner.Account.ID, "team", 10, 0)
+	byID, err := store.SearchMetadata(ctx, owner.Account.ID, alpha.Account.ID, 10, 0)
 	if err != nil {
-		t.Fatalf("team prefix metadata search: %v", err)
+		t.Fatalf("account id metadata search: %v", err)
 	}
-	if len(teamPrefixResults) != 1 || teamPrefixResults[0].Label != "Team Alpha" {
-		t.Fatalf("prefix query should find Team Alpha: %#v", teamPrefixResults)
+	if len(byID) != 1 || byID[0].ID != alpha.Account.ID {
+		t.Fatalf("exact account id search: %#v", byID)
 	}
 
-	prefixResults, err := store.SearchMetadata(ctx, owner.Account.ID, "alp", 10, 0)
-	if err != nil {
-		t.Fatalf("prefix metadata search: %v", err)
-	}
-	if len(prefixResults) < 2 || prefixResults[0].Label != "Alpha" || prefixResults[1].Label != "Alpine" {
-		t.Fatalf("prefix results not ranked by label: %#v", prefixResults)
+	// No prefix matching, and nothing about communities or channels, for any
+	// query: their ids, kinds or plausible names.
+	for _, q := range []string{"alp", "team", "private", community.ID, channel.ID, second.ID, "Alpha community", "general"} {
+		results, err := store.SearchMetadata(ctx, owner.Account.ID, q, 50, 0)
+		if err != nil {
+			t.Fatalf("search %q: %v", q, err)
+		}
+		accountsOnly(q, results)
+		if q == "alp" || q == "team" {
+			if len(results) != 0 {
+				t.Fatalf("prefix query %q matched: %#v", q, results)
+			}
+		}
 	}
 
 	ciphertextResults, err := store.SearchMetadata(ctx, owner.Account.ID, "ciphertext", 10, 0)

@@ -169,7 +169,12 @@ void main() {
     expect(find.text('No reports'), findsOneWidget);
     expect(
         find.textContaining('This device has no report key'), findsOneWidget);
-    expect(find.textContaining('Not available yet'), findsOneWidget);
+    // Community reports go to each community's moderators (C6, one sealed
+    // copy per verified moderator), not to this inbox.
+    expect(
+        find.text('Reports about a community go to its moderators. '
+            'A moderator opens them from the community.'),
+        findsOneWidget);
 
     await tester.tap(find.text('Create report key'));
     await tester.pumpAndSettle();
@@ -209,7 +214,11 @@ void main() {
     await tester.pumpWidget(_app(ReportMessageScreen(
         state: h.state, conversationId: 'conv_1', messageKey: 'dev:a')));
     await tester.pumpAndSettle();
-    expect(find.text('Reports to community moderators are not available yet.'),
+    // Without a verified role record (C4) the app cannot tell who the
+    // moderators are, so nothing can be sealed.
+    expect(
+        find.text('This community has no verified roles, so the app can\'t '
+            'tell who its moderators are.'),
         findsOneWidget);
     expect(find.text('Send report'), findsNothing);
     expect(h.api.filed, 0);

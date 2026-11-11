@@ -110,6 +110,7 @@ added tests for the acceptance criteria that had none and fixed what they found.
 | Dependency fixes | intl held at 0.20.2 for Flutter 3.44.0 (the #90 bump broke `flutter pub get`); ctutils 0.4.5 for RUSTSEC-2026-0385 | CI |
 | Round 4 (2026-11-07) | Scoped sync on by default (#140, D98); L1-1 Rust device list and L1-2 server (#142, #144); bug-hunt tidy and quiz (#143); L1-3 phone device list and v4 device link with commit-then-reveal (#160) | `docs/crypto.md` |
 | Round 5 (2026-11-08) | Designs L2/L3/SDK (#145), B6 group calls (#146); W11 profiles first slice (#150); W12 release drafts (#147, Linux bundle not yet reproducible: 12 of 30 files differ); TASK-012 push rotations (#148); B7 server passkeys (#154); C4 roles, C2 admin-only posting, C5 moderation server half (#155–157); stricter release checks TASK-130–132 (#159); K1-1 backup container, ABI 19 (#149); B5 one-to-one calls for demo builds (#158); Q-1 key-package gate (#162). Open: C1 invite rebase (#141), C6 (#151), C7 (#153), W8 phones (#152), B7 phone steps S3–S6 | PRs |
+| Round 6 (2026-11-11) | `ai/integ` landed on main untested (C3–C7, L1, K1-6, B6 slices; see `HANDOVER.md`); fixed after: 3 server and 24 app tests, two app bugs (C4 role calls on wrapped devices, D95 C7 exemptions by wire name), community search on the device, layout on by default (D116), admin rekey after moderator removals (D115), Go 1.26.11 for GO-2026-6859 | PR |
 
 Earlier work (I01–I28, the Stage 0–5 demo work, T43C, T44A–C, T46 base,
 T48A/B, T49A/B misses 1–5) is recorded in Git history and in the evidence
@@ -190,7 +191,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | D05/D20 | Production stays fail-closed until an independent external review; review, signing and device evidence wait until all three phases are done |
 | D06/D10/D21 | One product, one repo, three phases; local demos first on Android, iOS, Windows, Linux; the Flutter app in `mobile/` serves every platform; desktop is never a fork |
 | D11/D12 | Demo builds use the real MLS path only via `main_demo.dart`, labelled "Demo · unreviewed crypto"; `http://` only for loopback |
-| D14/D15 | Go: latest 1.26 patch (1.26.10). Flutter 3.44.0; `sqlite3` held at 3.5.x until the Flutter pin moves |
+| D14/D15 | Go: latest 1.26 patch (1.26.11). Flutter 3.44.0; `sqlite3` held at 3.5.x until the Flutter pin moves |
 | D18 | Coverage floors only move up (Go 50%, Flutter 43%; measured 60%) |
 | D19 | Embedded chat stays end-to-end encrypted, so phase 3 ships a client SDK |
 | D22/D23/D25 | Message actions are MLS payloads; decrypted text persists at decrypt time; sender credential bound to the envelope (ABI v5) |
@@ -282,6 +283,9 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D112** (2026-11-09, owner) | Phones back up when the app opens |
 | **D113** (2026-11-09, owner) | Desktop message previews are shared across accounts for now |
 | **D114** (2026-11-09, owner) | The owner accepts the recommended defaults for the bug-hunt owner questions: TASK-039 holds application sends until the removal commit applies (D68); TASK-103 flushes drafts before sign-out or expiry clears data (D65); TASK-106 uses the sender's signed expiry and the shorter time (D100); TASK-130-132 verify the signing block, bind policy to the candidate and scope audit exceptions (D100); TASK-201 cancels unfinished approved links at expiry with their keys and membership (D100); check 24 excludes credentials and MLS state from backups (D71/D73). For check 02, D102's signed-L1 server key-package gate remains required; the older quiz's no-server-check recommendation remains superseded |
+| **D115** (2026-11-11, owner; C3) | Moderators may remove members from private channels; only owners and admins (by the verified C4 record) rotate the channel or community info key. The device that made the removal rotates at once; other owner or admin devices that observe it rotate after 15 s + 30 s × rank + 0–10 s jitter (rank from a per-removal hash order of the verified owner and admins, capped at 8, about 4.5 min at most), unless another owner or admin device has already delivered a fresh key, which ends the obligation for every device. The schedule changes timing only and never ends an obligation; with no admin online the saved obligation waits for one ([C3](docs/designs/C3-private-channels-and-info.md)) |
+| **D116** (2026-11-11, owner) | `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` is on by default (servers and demos); `0`/`false` turns it off and any other value refuses to start. Community and channel names are searched on the device only, since the server holds none (C3) |
+| **D117** (2026-11-11, coordinator) | Counters after the `ai/integ` round: crypto ABI 22, mobile local schema 36, server migration 0084 |
 
 ## Roadmap
 

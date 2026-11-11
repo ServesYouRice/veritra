@@ -13,6 +13,8 @@ import '../storage/local_store.dart'
         LocalStore,
         communityInfoRemovalSetting;
 import 'community_info_book.dart';
+import 'roles/governance.dart';
+import 'sha256.dart';
 
 /// C3 senders and the fetch loop (docs/designs/C3-private-channels-and-info.md,
 /// "Keys", "Key delivery", "Private channel lifecycle").
@@ -93,6 +95,85 @@ class InfoRotationPending implements Exception {
   const InfoRotationPending();
 }
 
+/// C3 remote-removal schedule (docs/designs/C3-private-channels-and-info.md,
+/// "Remote removals: who rotates"). An owner or admin device that observes a
+/// removal it did not make waits [remoteRotationBase] plus one
+/// [remoteRotationSlot] per rank plus a per-device jitter, then rotates only
+/// if no other owner or admin device has delivered a fresh key meanwhile.
+///
+/// The schedule changes timing only. Nothing in it (rank, jitter, the
+/// server's labels) can cancel an obligation; only this device's completed
+/// pass or an MLS-authenticated fresh key from a verified owner or admin
+/// device ends it.
+const remoteRotationBase = Duration(seconds: 15);
+const remoteRotationSlot = Duration(seconds: 30);
+const remoteRotationJitter = Duration(seconds: 10);
+const remoteRotationMaxRank = 8;
+
+List<int> _rotationDigest(String label, List<String> parts) =>
+    sha256(utf8.encode(<String>[label, ...parts].join('\u0000')));
+
+/// This account's place in the order in which the verified owners and admins
+/// ([rotators]) rotate after the removal at [epoch] in [home]. The order is a
+/// hash of the home, the epoch and each account, so every member computes
+/// the same order and no single admin (an often-offline owner, say) is
+/// always first. Capped at [remoteRotationMaxRank]. An account missing from
+/// [rotators] (no verified record; the server's word let it rotate) is 0.
+int remoteRotationRank({
+  required Iterable<String> rotators,
+  required String accountId,
+  required InfoKeyHome home,
+  required int epoch,
+}) {
+  String order(String account) =>
+      _rotationDigest('veritra-c3-rotation-rank-v1', [
+        home.conversationId,
+        home.keySubjectKind,
+        home.keySubjectId,
+        '$epoch',
+        account,
+      ]).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+  final sorted = rotators.toSet().toList()
+    ..sort((a, b) {
+      final byHash = order(a).compareTo(order(b));
+      return byHash != 0 ? byHash : a.compareTo(b);
+    });
+  final rank = sorted.indexOf(accountId);
+  return rank < 0 ? 0 : min(rank, remoteRotationMaxRank);
+}
+
+/// How long a device of rank [rank] waits after observing the removal at
+/// [epoch] before rotating. The jitter is derived from the device id, so a
+/// restart computes the same wait and two devices of one account spread out.
+Duration remoteRotationDelay({
+  required int rank,
+  required String deviceId,
+  required InfoKeyHome home,
+  required int epoch,
+}) {
+  final digest = _rotationDigest('veritra-c3-rotation-jitter-v1', [
+    deviceId,
+    home.conversationId,
+    home.keySubjectKind,
+    home.keySubjectId,
+    '$epoch',
+  ]);
+  final spread =
+      ((digest[0] << 24) | (digest[1] << 16) | (digest[2] << 8) | digest[3]) %
+          remoteRotationJitter.inMilliseconds;
+  return remoteRotationBase +
+      remoteRotationSlot * min(max(rank, 0), remoteRotationMaxRank) +
+      Duration(milliseconds: spread);
+}
+
+/// The accounts that may rotate under a verified role record: its owner
+/// (while in the roster) and its admins. Moderators never rotate.
+Set<String> verifiedRotators(GovernanceState roles) => <String>{
+      if (roles.owner case final owner?)
+        if (roles.joined.isEmpty || roles.joined.containsKey(owner)) owner,
+      ...roles.admins.keys,
+    };
+
 /// One info subject: its kind, id, and the community it belongs to.
 class InfoSubject {
   const InfoSubject(this.kind, this.id, this.communityId);
@@ -121,12 +202,15 @@ class CommunityInfoService {
     required this.deviceId,
     this.onChanged,
     this.epochOf,
+    this.verifiedRolesOf,
     DateTime Function()? clock,
     Duration Function()? answerDelay,
     String settingPrefix = 'c3',
   })  : _clock = clock ?? DateTime.now,
         _answerDelay = answerDelay ?? _randomDelay,
-        _rotationSetting = '$settingPrefix.rotation_due.$accountId';
+        _rotationSetting = '$settingPrefix.rotation_due.$accountId' {
+    _startedAt = _clock();
+  }
 
   final LocalStore store;
   final InfoApi api;
@@ -141,6 +225,17 @@ class CommunityInfoService {
   /// The local MLS epoch of a conversation's group, or null when unknown.
   /// A key this device makes is stamped with it (see [currentKey]).
   final Future<int?> Function(String conversationId)? epochOf;
+
+  /// The community's verified C4 role record, or null while none is held.
+  /// With a record, only its owner and admins rotate, whatever the server
+  /// says; without one, the server's word ([InfoTopology.serverSaysAdmin])
+  /// stands in, as before C4.
+  final GovernanceState? Function(String communityId)? verifiedRolesOf;
+
+  /// When this service started: a deferred rotation's wait counts from here
+  /// at the earliest, so a restarted device catches up on what other admins
+  /// sent before it decides to rotate itself.
+  late final DateTime _startedAt;
   final DateTime Function() _clock;
   final Duration Function() _answerDelay;
   final String _rotationSetting;
@@ -329,11 +424,21 @@ class CommunityInfoService {
         if (epoch <= completed) return;
         final due = await _dueRotations();
         final id = '${home.keySubjectKind}|${home.keySubjectId}';
-        if (due[id]?['e'] == epoch) return;
+        final held = due[id];
+        if (held?['e'] == epoch) return;
+        final now = _clock();
         due[id] = <String, Object?>{
           'c': communityId,
           'e': epoch,
-          't': '${_clock().microsecondsSinceEpoch}.${_marks++}',
+          't': '${now.microsecondsSinceEpoch}.${_marks++}',
+          // A removal this device did not ask for waits its turn (see
+          // [remoteRotationDelay]). A mark this device made for its own
+          // removal ([markRotationDue]) stays immediate when the commit's
+          // epoch arrives, and covers any later removal too.
+          if (held == null || held['d'] == true) ...{
+            'd': true,
+            'o': now.microsecondsSinceEpoch,
+          },
         };
         await _saveDue(due);
         _backoff.remove(id);
@@ -879,13 +984,122 @@ class CommunityInfoService {
   ///
   /// - A mark whose group or community this device cannot place yet stays.
   /// - A group still holding sends for the removal is skipped and stays.
-  /// - Only owners and admins (server's word) rotate; other devices keep
-  ///   the mark in case this account is promoted later.
+  /// - Only owners and admins rotate: by the verified role record when one
+  ///   is held (a moderator never rotates, whatever the server says), else
+  ///   by the server's word.
+  /// - A removal this device did not ask for waits its turn
+  ///   ([remoteRotationDelay]); its own removals rotate at once.
+  /// - A fresh key another owner or admin device already delivered ends the
+  ///   obligation without a new key ([_rotatedElsewhere]): any device then
+  ///   completes; an owner or admin first seals again, under that key, any
+  ///   record still under a retired one, once its own turn has come.
+  /// - Other devices keep the mark in case this account is promoted later.
   /// - A retry reuses the key it already made and sent; failures back off.
   Future<int> runRotations(
           List<InfoSubject> Function(InfoKeyHome home, String communityId)
               subjectsUnder) =>
       _serializeWrites(() => _runRotations(subjectsUnder));
+
+  /// Where a due mark's key lives now, or null while topology cannot place
+  /// it.
+  InfoKeyHome? _homeOfMark(String id, String communityId) {
+    final parts = id.split('|');
+    if (parts.length != 2) return null;
+    if (parts[0] == infoKindCommunity) {
+      return homeOf(InfoSubject(infoKindCommunity, communityId, communityId));
+    }
+    // A private channel's key lives in its own group only: never fall back
+    // to the community's.
+    final conversation = topology.privateConversationOf(parts[1]);
+    return conversation == null
+        ? null
+        : InfoKeyHome(
+            keySubjectKind: infoKindChannel,
+            keySubjectId: parts[1],
+            conversationId: conversation);
+  }
+
+  /// Whether this account may rotate keys in [communityId]: owner or admin
+  /// in the verified record when one is held, else by the server's word.
+  bool _mayRotate(String communityId) {
+    final roles = verifiedRolesOf?.call(communityId);
+    if (roles != null) return roles.rankOf(accountId) >= BuiltInRole.admin.rank;
+    return topology.serverSaysAdmin(communityId) == true;
+  }
+
+  /// When a deferred mark's turn comes, or null for a mark that runs at
+  /// once (this device's own removal, or a pass that already made its key).
+  DateTime? _turnOf(
+      Map<String, Object?> mark, InfoKeyHome home, String communityId) {
+    if (mark['d'] != true || mark['k'] is String) return null;
+    final observed = DateTime.fromMicrosecondsSinceEpoch(mark['o'] as int? ?? 0,
+        isUtc: true);
+    final from = observed.isAfter(_startedAt) ? observed : _startedAt;
+    final epoch = mark['e'] as int? ?? 0;
+    final roles = verifiedRolesOf?.call(communityId);
+    final rank = roles == null
+        ? 0
+        : remoteRotationRank(
+            rotators: verifiedRotators(roles),
+            accountId: accountId,
+            home: home,
+            epoch: epoch);
+    return from.add(remoteRotationDelay(
+        rank: rank, deviceId: deviceId, home: home, epoch: epoch));
+  }
+
+  /// The current key when another device already rotated it for the last
+  /// removal: [currentKey] (so fresher than that removal) and delivered in
+  /// the owning group by a device other than this one, from an owner or
+  /// admin under the verified record. Null otherwise.
+  ///
+  /// This device's own copies never count: a key it made and stored but
+  /// crashed before sending must not stand in for a delivery. A moderator's
+  /// key never counts, not even one from this account's other device.
+  Future<CommunityInfoEvent?> _rotatedElsewhere(
+      InfoKeyHome home, String communityId) async {
+    final current = await currentKey(home, communityId);
+    if (current == null) return null;
+    final policy = policyFor(communityId);
+    final keys = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    final delivered = keys.any((k) =>
+        k.keyId == current.keyId &&
+        k.conversationId == home.conversationId &&
+        k.senderDeviceId != deviceId &&
+        policy.mayEdit(k.senderAccountId, infoKindCommunity));
+    return delivered ? current : null;
+  }
+
+  /// The earliest time a deferred rotation this device would run becomes
+  /// due, or null when none waits. Passes are event driven; the app sets a
+  /// timer for this.
+  Future<DateTime?> nextDeferredRotation() async {
+    final due = await _locked(_dueRotations);
+    final now = _clock();
+    DateTime? next;
+    for (final entry in due.entries) {
+      final communityId = entry.value['c'] as String;
+      if (!_mayRotate(communityId)) continue;
+      final home = _homeOfMark(entry.key, communityId);
+      if (home == null) continue;
+      final turn = _turnOf(entry.value, home, communityId);
+      if (turn == null || !turn.isAfter(now)) continue;
+      if (next == null || turn.isBefore(next)) next = turn;
+    }
+    return next;
+  }
+
+  Future<void> _complete(InfoKeyHome home, String id, Object? token,
+      Map<String, Object?> mark) async {
+    await _checkWritable(home, rotationToken: token);
+    // A later removal writes another epoch independently; completing this
+    // pass never acknowledges that later obligation.
+    await store.saveSetting(
+        _rotatedSetting(home), (mark['e'] as int? ?? 0).toString());
+    await _updateMark(id, token, (_) => null);
+    _backoff.remove(id);
+  }
 
   Future<int> _runRotations(
       List<InfoSubject> Function(InfoKeyHome home, String communityId)
@@ -897,30 +1111,34 @@ class CommunityInfoService {
       final mark = entry.value;
       final token = mark['t'];
       final communityId = mark['c'] as String;
-      final parts = id.split('|');
-      if (parts.length != 2 || topology.communityGone(communityId)) {
+      if (id.split('|').length != 2 || topology.communityGone(communityId)) {
         await _updateMark(id, token, (_) => null);
         continue;
       }
-      final InfoKeyHome? home;
-      if (parts[0] == infoKindCommunity) {
-        home = homeOf(InfoSubject(infoKindCommunity, communityId, communityId));
-      } else {
-        // A private channel's key lives in its own group only: never fall
-        // back to the community's.
-        final conversation = topology.privateConversationOf(parts[1]);
-        home = conversation == null
-            ? null
-            : InfoKeyHome(
-                keySubjectKind: infoKindChannel,
-                keySubjectId: parts[1],
-                conversationId: conversation);
-      }
+      final home = _homeOfMark(id, communityId);
       if (home == null || topology.sendHeld(home.conversationId)) continue;
-      // An unknown role or a non-admin keeps the mark. A later promotion
-      // must not allow edits under a key still known to a removed member.
-      final admin = topology.serverSaysAdmin(communityId);
-      if (admin != true) continue;
+      // A pass that already made its key finishes with it; otherwise another
+      // owner or admin device's delivered rotation may already cover this.
+      final adopted = mark['k'] is String
+          ? null
+          : await _rotatedElsewhere(home, communityId);
+      if (!_mayRotate(communityId)) {
+        // An unknown role or a non-admin never makes a key. It completes
+        // once an owner or admin has rotated (its edits then use that key);
+        // until then it keeps the mark, also for a later promotion.
+        if (adopted == null) continue;
+        try {
+          await _complete(home, id, token, mark);
+          done++;
+        } on InfoRotationPending {
+          // A newer removal arrived meanwhile: its own mark decides.
+        }
+        continue;
+      }
+      final turn = _turnOf(mark, home, communityId);
+      final early = turn != null && _clock().isBefore(turn);
+      // Not this device's turn yet, and nobody else has rotated: wait.
+      if (early && adopted == null) continue;
       final wait = _backoff[id];
       if (wait != null && _clock().isBefore(wait.next)) continue;
       try {
@@ -943,6 +1161,30 @@ class CommunityInfoService {
         // A newer removal invalidates this pass: its key may already be
         // known to the newly removed member. Never publish under that key.
         await _checkWritable(home, rotationToken: token);
+        if (adopted != null) {
+          // Another device rotated: no second key. Records it has not sealed
+          // again yet (it may still be doing so, or have stopped for good)
+          // are sealed under its key once this device's turn has come.
+          final stale = <InfoSubject, CommunityInfoRecord>{};
+          for (final record in records.entries) {
+            final accepted = await store.loadAcceptedCommunityInfo(
+                record.key.kind, record.key.id);
+            if (accepted?.keyId != adopted.keyId) {
+              stale[record.key] = record.value;
+            }
+          }
+          if (stale.isNotEmpty && early) continue;
+          for (final record in stale.entries) {
+            await _publish(
+                record.key, (revision) => _copy(record.value, revision),
+                withKey: adopted,
+                rotationToken: token,
+                expectedRevision: record.value.revision);
+          }
+          await _complete(home, id, token, mark);
+          done++;
+          continue;
+        }
         // The key this mark already made, if any; otherwise a new one.
         final made = mark['k'] is String
             ? await _ownKey(home, mark['k'] as String)
@@ -971,13 +1213,7 @@ class CommunityInfoService {
               rotationToken: token,
               expectedRevision: record.value.revision);
         }
-        await _checkWritable(home, rotationToken: token);
-        // A later removal writes another epoch independently; completing
-        // this pass never acknowledges that later obligation.
-        await store.saveSetting(
-            _rotatedSetting(home), (mark['e'] as int? ?? 0).toString());
-        await _updateMark(id, token, (_) => null);
-        _backoff.remove(id);
+        await _complete(home, id, token, mark);
         done++;
       } catch (_) {
         // A superseded pass must not delay the newer removal's rotation.

@@ -542,6 +542,44 @@ class _FaultyDevice implements NativeCryptoDevice {
   @override
   bool deleteGroup(String groupId) => _plain(() => real.deleteGroup(groupId));
 
+  // C4 (ABI 20) role-record calls, now device members.
+  @override
+  void createGroupWithRoles(String groupId, List<int> genesisRecord) =>
+      _plain(() => real.createGroupWithRoles(groupId, genesisRecord));
+
+  @override
+  ({List<int> commit, List<int> welcome, int epoch}) stageCommitWithRoles(
+    String groupId, {
+    required List<int> record,
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) =>
+      _plain(() => real.stageCommitWithRoles(groupId,
+          record: record, adds: adds, removes: removes));
+
+  @override
+  IncomingCommitReview stageIncomingCommit(String groupId, List<int> commit) =>
+      _plain(() => real.stageIncomingCommit(groupId, commit));
+
+  @override
+  CommitPairs mergeIncomingCommit(String groupId, List<int> commit) =>
+      _plain(() => real.mergeIncomingCommit(groupId, commit));
+
+  @override
+  bool discardIncomingCommit(String groupId) =>
+      _plain(() => real.discardIncomingCommit(groupId));
+
+  @override
+  GroupRoleState groupRoleState(String groupId) =>
+      _plain(() => real.groupRoleState(groupId));
+
   @override
   void close() => real.close();
 

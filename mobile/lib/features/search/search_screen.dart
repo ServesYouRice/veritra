@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
+import '../../core/community_name_search.dart';
 import '../../core/models.dart';
 import '../../storage/message_search.dart';
 import '../../ui/avatar.dart';
@@ -21,11 +22,14 @@ import '../../l10n/l10n.dart';
 /// Messages (the default) searches the text this device holds, in the
 /// encrypted local database (W10): the query is never sent anywhere.
 ///
-/// People and communities is the metadata search over what the server
-/// actually indexes: accounts by exact username, plus communities and
-/// channels by name. Message contents are ciphertext on the server and cannot
-/// be searched there by design, and account lookup stays exact-match so the
-/// user directory cannot be enumerated. Only this mode sends the query.
+/// People and communities finds communities and channels by name on this
+/// device, in the encrypted records it decrypted (C3: the server keeps no
+/// names since migration 0082), and accounts through the server, by exact
+/// username or account ID only so the user directory cannot be enumerated.
+/// Only this mode sends the query, and only when it could be a username or
+/// an account ID ([mayMatchAccount]): a multi-word name stays on the device.
+/// Message contents are ciphertext on the server and cannot be searched
+/// there by design.
 class SearchScreen extends StatefulWidget {
   const SearchScreen({required this.state, super.key});
 
@@ -121,6 +125,16 @@ class _SearchScreenState extends State<SearchScreen> {
       }
       return;
     }
+    // Communities and channels: this device's decrypted names, shown at
+    // once. Accounts: the server, only for a query that could be one.
+    final local = widget.state.searchCommunityNamesLocally(trimmed);
+    setState(() {
+      results = local;
+      searched = true;
+      // A lookup for older text may still be running; its answer is dropped.
+      searching = false;
+    });
+    if (!mayMatchAccount(trimmed)) return;
     setState(() => searching = true);
     try {
       final found = await widget.state.searchMetadata(trimmed);
@@ -128,13 +142,18 @@ class _SearchScreenState extends State<SearchScreen> {
         return;
       }
       setState(() {
-        results = found;
-        searched = true;
+        // The server finds accounts only (C3); anything else it answered is
+        // not trusted over the device's own records.
+        results = <MetadataSearchResult>[
+          ...found.where((result) => result.type == 'account'),
+          ...local,
+        ];
       });
     } catch (err) {
       if (!mounted || generation != _generation) {
         return;
       }
+      // The local hits stay; only the account lookup failed.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(err.toString())),
       );
@@ -181,8 +200,9 @@ class _SearchScreenState extends State<SearchScreen> {
               onSubmitted: _search,
               style: theme.textTheme.bodyMedium,
               decoration: InputDecoration(
-                // The server searches accounts, communities, and channels
-                // only; messages are searched here. Each hint says which.
+                // Messages, communities and channels are searched on this
+                // device; only an account lookup goes to the server. Each
+                // hint says what its mode finds.
                 hintText: mode == _SearchMode.messages
                     ? context.l10n.searchMessagesHint
                     : context.l10n.searchHint,
@@ -411,10 +431,10 @@ class _SearchScreenState extends State<SearchScreen> {
                       ),
                       // Explains inert rows instead of leaving a dead tap
                       // target unexplained; silent when the row works.
-                      subtitle: reason == null
+                      subtitle: (reason ?? result.detail) == null
                           ? null
                           : Text(
-                              reason,
+                              (reason ?? result.detail)!,
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: scheme.onSurfaceVariant,
                               ),
@@ -467,23 +487,21 @@ class _SearchScreenState extends State<SearchScreen> {
       };
     }
     if (result.type == 'channel') {
-      final matches = widget.state.conversations
-          .where((conversation) => conversation.channelId == result.id);
-      if (matches.isEmpty) return null;
-      return () => _open(matches.first.id);
+      final channel = widget.state.channelsByCommunity.values
+          .expand((channels) => channels)
+          .where((channel) => channel.id == result.id)
+          .firstOrNull;
+      return channel == null ? null : _openChannelAction(channel);
     }
     if (result.type == 'community') {
       final channels =
           widget.state.channelsByCommunity[result.id] ?? const <Channel>[];
       // A community is not a conversation. Navigate to a channel of it when
-      // one is known; otherwise the row stays explicitly inert instead of
-      // looking tappable and doing nothing.
+      // one is open to this account; otherwise the row stays explicitly
+      // inert instead of looking tappable and doing nothing.
       for (final channel in channels) {
-        final matches = widget.state.conversations
-            .where((conversation) => conversation.channelId == channel.id);
-        if (matches.isNotEmpty) {
-          return () => _open(matches.first.id);
-        }
+        final action = _openChannelAction(channel);
+        if (action != null) return action;
       }
       return null;
     }
@@ -494,6 +512,23 @@ class _SearchScreenState extends State<SearchScreen> {
       return () => _open(matches.first.id);
     }
     return null;
+  }
+
+  /// Opens [channel] as the community screen does, or null when this
+  /// account is in no conversation for it. Open and announcement channels
+  /// share the community's group, so the chat is told which one to show; a
+  /// private channel is a group of its own.
+  VoidCallback? _openChannelAction(Channel channel) {
+    final conversationId =
+        channelConversationId(channel, widget.state.conversations);
+    if (conversationId == null) return null;
+    return () {
+      widget.state.selectChannel(
+        conversationId,
+        channel.isRouted && channel.kind != 'private' ? channel.id : null,
+      );
+      _open(conversationId);
+    };
   }
 
   void _open(String conversationId) {
@@ -519,7 +554,7 @@ class _SearchScreenState extends State<SearchScreen> {
       case 'community':
         return context.l10n.searchNoOpenChannel;
       case 'channel':
-        return context.l10n.searchJoinCommunity;
+        return context.l10n.communityNotMember;
       default:
         return null;
     }

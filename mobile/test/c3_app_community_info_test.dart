@@ -151,9 +151,13 @@ class _RosterApi extends _Api {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('names fall back to the legacy server name, then to none', () {
+  test('names come only from the encrypted record, never the server name', () {
     final state = _state();
-    expect(state.communityDisplayName(state.communities[0]), 'Club');
+    // C3 step 4: the server keeps no name, so a legacy plaintext name is
+    // never shown; without an accepted record the screen shows a
+    // placeholder.
+    expect(state.communities[0].name, 'Club');
+    expect(state.communityDisplayName(state.communities[0]), isNull);
     expect(state.communityDisplayName(state.communities[1]), isNull);
     final channel =
         Channel(id: 'chan', communityId: 'comm', name: ' ', kind: 'private');

@@ -271,8 +271,9 @@ big community", not "an icon"; a tiny icon may stay in the small one.
   - Rotation (D80): every removal, kick or ban marks the key the
     conversation carries as due, kept across restarts (a setting with a
     token per mark, changed under a lock, so a mark made during a pass
-    survives it). Only owners and admins (server's word) rotate. A pass
-    skips a group still holding sends for the removal (D68), makes a new key
+    survives it). Only owners and admins rotate (since 2026-11-11 by the
+    verified record; see "Remote removals: who rotates"). A pass skips a
+    group still holding sends for the removal (D68), makes a new key
     (a retry reuses it), sends it into the owning group, and seals every
     record under it again. A mark is kept while its group cannot be placed
     and dropped only when its community is known gone; failures back off
@@ -299,10 +300,82 @@ foreground refresh places it in the shared or private info key home and
 runs rotation. Edits, answers and add delivery also check the durable
 watermark, so they cannot reuse the old key before refresh places the mark.
 Completion acknowledges only that pass's epoch; a later removal invalidates
-the pass. Non-admins retain the obligation for a later promotion. This
+the pass. Non-admins retain the obligation for a later promotion (until
+an owner or admin rotates; see below). This
 includes device removals conservatively. C4 verified role integration still
 blocks production acceptance and publication; the native/removal and service
 tests do not establish the complete production C3 flow.
+
+### Remote removals: who rotates (owner decision 2026-11-11)
+
+**Decision.** In private channels (and the shared group), moderators may
+remove members, but only owners and admins rotate the info key. When a
+moderator removes someone, an owner or admin device that sees a removal it
+did not make rotates the key by itself (option (a) above).
+
+**Who may rotate.** The community's verified C4 record decides: its owner
+(while in the roster) and its admins. A moderator never makes or sends a
+rotation key, whatever the server says; receivers already trust a key only
+from this account or from an owner or admin (key freshness), so a
+moderator's key would be ignored anyway. Only a community with no verified
+record still falls back to the server's role, as before C4.
+
+**When.** The device that made the removal rotates at once (its own mark;
+the merged commit's epoch, observed later, does not defer it). Every other
+owner or admin device waits its turn after observing the removal:
+
+- wait = 15 s + 30 s x rank + jitter (0-10 s), rank capped at 8, so at most
+  about 4.5 minutes;
+- rank is the account's place among the verified owner and admins, sorted
+  by SHA-256 of ("veritra-c3-rotation-rank-v1", conversation, key subject,
+  removal epoch, account). Every member computes the same order, and the
+  order changes with each removal, so an often-offline owner is not always
+  first;
+- the jitter is SHA-256 of the device id with the same home and epoch: two
+  devices of one account spread out, and a restart computes the same wait;
+- the wait counts from the later of the observation (kept in the durable
+  mark) and the app session's start, so a restarted device first catches up
+  on what other admins sent.
+
+Rank 0 also waits the 15 s base: the commit is processed in the middle of
+a sync batch, and the rest of the batch may already hold another admin's
+key. The app sets a foreground-only timer for the next turn (passes are
+otherwise event driven); a background wake never sends.
+
+**Dedup rule.** A due obligation ends without a new key when the current
+key (fresher than the last removal, "C3 key freshness") was delivered in the
+owning group by a device other than this one, from an owner or admin under
+the verified record. This device's own copies never count (a key it stored
+but crashed before sending must not stand in for a delivery), and a
+moderator's key never counts. Then:
+
+- a non-admin or moderator device completes at once, and its edits use that
+  key (this ends the earlier gap where a non-admin could never edit channel
+  info again after a removal);
+- an owner or admin device completes at once when every record under the
+  key home is already sealed under that key; records still under a retired
+  key are sealed again, under the delivered key and with no second key,
+  only once its own turn has come (the rotating device may still be busy).
+
+**Why the wait is safe.** D80 says "at once". The wait costs edit latency
+only: until the obligation completes, this device refuses every edit, key
+answer and add delivery under the old key, and the removed member is out of
+the MLS group from the removal epoch, so it gets no message sent after. The
+schedule changes timing only; nothing in it (rank, jitter, the server's
+labels or ordering) can end an obligation. Only this device's completed pass
+or an MLS-authenticated fresh key from a verified owner or admin device ends
+it. A hostile server can at most delay a rotation by the turns it shifts.
+
+**No admin online.** The obligation is the durable native watermark plus
+the due mark. An owner or admin device that comes online later processes the
+removal commit, observes it, and after its turn either adopts a key another
+admin sent meanwhile or rotates. Until then, every device keeps refusing
+edits under the old key.
+
+**Residuals.** Two admins whose turns overlap (clock skew, slow delivery,
+differing record views) may both rotate; the existing freshness rule makes
+that converge (more churn, no leak). Dedup does not authenticate topology
+(see the residuals below).
 
 ### Local port and verification (2026-11-09)
 
@@ -380,10 +453,12 @@ its own fresh key and is not delayed by the abandoned pass's backoff.
 community channel titles. Creation answers `400 plaintext_name_refused` to a
 non-empty name; the app sends none and shows only the encrypted record or a
 placeholder. The server's name search and community names in invite previews
-are gone. Consequence: with `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` off (the
-default, and the demos), a new community has no shared group, so no info key
-home and only placeholders. Turning the layout on by default is an owner
-decision tied to the app's release (operations.md). A "Categories and icon"
+are gone. Consequence: with `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` off, a new
+community has no shared group, so no info key home and only placeholders.
+The owner turned the layout on by default (2026-11-11), demos included;
+`PRIVATE_MESSENGER_COMMUNITY_LAYOUT=0` turns it off (operations.md). The app
+searches community and channel names in its own decrypted records; the
+server's metadata search finds accounts only. A "Categories and icon"
 screen sets the community icon, creates and renames categories, and places
 channels (open: community record; private: the channel's own record); the
 community card groups channels by category. Key freshness: see docs/crypto.md
@@ -397,8 +472,9 @@ tombstone; a new category reuses a tombstoned id first (the bound below).
 and MLS group move, not built; it is C7's `move`, decision 11, and needs
 C7's records first); and app-to-app acceptance evidence with production C4 role records. Until the
 app holds a verified role record, nothing another account wrote is shown.
-After any removal a non-admin's rotation obligation never completes, so it
-cannot edit channel info again (contrary to D80's "any member"). Rules from the first review that still bind:
+A non-admin's rotation obligation completes only once an owner or admin
+has delivered a fresh key ("Remote removals: who rotates"); until then it
+cannot edit channel info. Rules from the first review that still bind:
 
 - Reuse a tombstoned category ID before minting a new one: the server's
   200-binding bound is for the community's whole life.

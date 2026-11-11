@@ -58,6 +58,9 @@ extension CommunityInfoActions on AppState {
       codec: crypto.communityInfoCodec,
       policyFor: (communityId) =>
           GovernanceInfoEditPolicy(verifiedCommunityRoles(communityId)),
+      // Who rotates after a removal: the verified record's owner and
+      // admins, never a moderator, whatever the server says.
+      verifiedRolesOf: verifiedCommunityRoles,
       accountId: accountId,
       deviceId: deviceId,
       onChanged: () {
@@ -620,12 +623,39 @@ extension CommunityInfoActions on AppState {
               ],
             ]);
       } while (_infoRefreshAgain && _sameSession(current));
+      if (_sameSession(current)) {
+        _scheduleInfoRotation(await service.nextDeferredRotation(), current);
+      }
     } catch (err) {
       developer.log('c3_refresh_failed ${err.runtimeType}',
           name: 'veritra.sync');
     } finally {
       _infoRefreshRunning = false;
     }
+  }
+
+  /// Runs the info pass again when a deferred remote-removal rotation's
+  /// turn comes ([CommunityInfoService.nextDeferredRotation]). Passes are
+  /// otherwise event driven, and a deferred mark has no event of its own.
+  /// Foreground only: a background wake never sends info keys, and the next
+  /// foreground catch-up runs the pass anyway.
+  void _scheduleInfoRotation(DateTime? at, Session owner) {
+    _infoRotationTimer?.cancel();
+    _infoRotationTimer = null;
+    if (at == null || _disposed) return;
+    final generation = _sessionGeneration;
+    var wait = at.difference(DateTime.now()) + const Duration(seconds: 1);
+    if (wait.isNegative) wait = Duration.zero;
+    _infoRotationTimer = Timer(wait, () {
+      _infoRotationTimer = null;
+      if (_disposed ||
+          generation != _sessionGeneration ||
+          !_sameSession(owner) ||
+          !_isForeground) {
+        return;
+      }
+      unawaited(refreshCommunityInfo());
+    });
   }
 
   Future<void> _refreshOneCommunity(CommunityInfoService service,

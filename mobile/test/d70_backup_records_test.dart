@@ -174,7 +174,8 @@ void main() {
     LocalStore store(String namespace) =>
         memory ? MemoryLocalStore() : createStore(namespace);
 
-    test('the history snapshot holds no root, record or state key ($label)', () async {
+    test('the history snapshot holds no root, record or state key ($label)',
+        () async {
       final text = utf8.decode(await sourceSnapshot(store('source')));
       for (final needle in _forbidden()) {
         expect(text, isNot(contains(needle)), reason: needle);

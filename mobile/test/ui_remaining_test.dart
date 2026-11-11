@@ -303,10 +303,18 @@ void main() {
 
     testWidgets('a remove control is hidden when the actor cannot use it',
         (tester) async {
+      // The signed-in account (acct_owner) is a moderator here. The roster
+      // names its role too: C4 reads the actor's role from it (roleOf) ahead
+      // of the conversation's currentRole.
       final api = _FakeApi()
         ..members = <ConversationMember>[
           ConversationMember(
             accountId: 'acct_owner',
+            role: 'moderator',
+            username: 'me',
+          ),
+          ConversationMember(
+            accountId: 'acct_boss',
             role: 'owner',
             username: 'owner',
           ),
@@ -326,9 +334,12 @@ void main() {
       ));
       await tester.pumpAndSettle();
 
-      // A moderator outranks neither an owner nor an admin.
+      // A moderator outranks neither an owner nor an admin, and never
+      // removes itself here.
+      expect(find.text('@owner'), findsOneWidget);
       expect(find.byTooltip('Remove @alice'), findsNothing);
       expect(find.byTooltip('Remove @owner'), findsNothing);
+      expect(find.byTooltip('Remove @me'), findsNothing);
     });
 
     testWidgets('an owner can remove a ranked-below member', (tester) async {

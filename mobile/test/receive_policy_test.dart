@@ -620,11 +620,12 @@ void main() {
                 .processApplicationMessage(unfrankedWithCommit, ++pair.events),
             isNull);
 
-        // A hidden payload this app does not understand is never franked
-        // (design item 9, the C7 hidden types): exempt after decoding.
+        // A hidden payload this app does not understand (a newer app's
+        // hidden type) is exempt after decoding. The C7 types it once stood
+        // in for are known types now, exempt by name (c6_report_body_pins).
         final hidden = jsonEncode(<String, Object?>{
           ..._head(2, 's4'),
-          'type': 'history_change',
+          'type': 'future_hidden_type',
           'hidden': true,
           'body': <String, Object?>{'x': 1},
         });

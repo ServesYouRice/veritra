@@ -1422,13 +1422,13 @@ abstract class AppLocalizations {
   /// No description provided for @searchIntroTitle.
   ///
   /// In en, this message translates to:
-  /// **'Search metadata'**
+  /// **'Search people and communities'**
   String get searchIntroTitle;
 
   /// No description provided for @searchIntroMessage.
   ///
   /// In en, this message translates to:
-  /// **'Find people by exact username, plus communities and channels by name. Message contents are end-to-end encrypted and never searchable on the server.'**
+  /// **'Communities and channels are found by name on this device. People are found on the server by exact username only. Message contents are end-to-end encrypted and never searchable on the server.'**
   String get searchIntroMessage;
 
   /// No description provided for @searchNoResultsTitle.
@@ -1440,7 +1440,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchNoResultsMessage.
   ///
   /// In en, this message translates to:
-  /// **'Nothing matched. Usernames must match exactly, and message contents are never searchable.'**
+  /// **'Nothing matched. Usernames must match exactly, and only communities and channels whose names this device holds can be found.'**
   String get searchNoResultsMessage;
 
   /// No description provided for @searchNoOpenChannel.
@@ -1448,12 +1448,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No channel you can open yet'**
   String get searchNoOpenChannel;
-
-  /// No description provided for @searchJoinCommunity.
-  ///
-  /// In en, this message translates to:
-  /// **'Join the community to open it'**
-  String get searchJoinCommunity;
 
   /// No description provided for @searchTypeConversation.
   ///

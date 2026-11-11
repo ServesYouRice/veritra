@@ -213,19 +213,35 @@ class FakeFeatureApiClient extends ApiClient with LegacySyncPageFake {
     return <Invite>[];
   }
 
+  // Like the server, communities and channels created here are listed
+  // afterwards: the app refreshes communities right after creating one (C3).
+  final List<Community> _communities = <Community>[];
+  final Map<String, List<Channel>> _channels = <String, List<Channel>>{};
+
   @override
   Future<List<Community>> listCommunities(String token) async {
-    return <Community>[];
+    return List<Community>.of(_communities);
   }
 
   @override
   Future<List<Channel>> listChannels(String token, String communityId) async {
-    return <Channel>[];
+    return List<Channel>.of(_channels[communityId] ?? const <Channel>[]);
+  }
+
+  @override
+  Future<List<ConversationMember>> communityMembers(
+      String token, String communityId) async {
+    return <ConversationMember>[
+      if (_communities.any((c) => c.id == communityId))
+        ConversationMember(accountId: 'acct_owner', role: 'owner'),
+    ];
   }
 
   @override
   Future<Community> createCommunity(String token, String name) async {
-    return Community(id: 'comm_1', name: name);
+    final community = Community(id: 'comm_1', name: name);
+    _communities.add(community);
+    return community;
   }
 
   @override
@@ -241,6 +257,7 @@ class FakeFeatureApiClient extends ApiClient with LegacySyncPageFake {
       name: name,
       kind: kind,
     );
+    (_channels[communityId] ??= <Channel>[]).add(channel);
     return ChannelCreation(
       channel: channel,
       conversation: Conversation(

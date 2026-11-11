@@ -310,7 +310,10 @@ void main() {
 
     test('completion enrolls this device with the claimed identity', () async {
       await store.saveSession(Session(
-          baseUrl: k0Origin, token: '', accountId: 'acct_me', username: 'alice'));
+          baseUrl: k0Origin,
+          token: '',
+          accountId: 'acct_me',
+          username: 'alice'));
       await claim();
       server.statusAnswers.add(const AccountRecoveryStatus(
         phase: AccountRecoveryPhase.completed,
@@ -500,7 +503,10 @@ void main() {
 
     test('completion promotes in one step with a ledger row', () async {
       await store.saveSession(Session(
-          baseUrl: k0Origin, token: '', accountId: 'acct_me', username: 'alice'));
+          baseUrl: k0Origin,
+          token: '',
+          accountId: 'acct_me',
+          username: 'alice'));
       await completeRecovery();
       expect(promoting.promotions, [EnrollmentPromotionOutcome.promoted]);
       expect(promoting.activated, isEmpty);

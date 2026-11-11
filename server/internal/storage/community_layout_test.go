@@ -553,36 +553,39 @@ func TestActiveLayoutRefusesARepeatedChannelKey(t *testing.T) {
 func TestActiveLayoutSearchHidesPrivateChannelsFromNonMembers(t *testing.T) {
 	ctx := context.Background()
 	f := newLayoutFixture(t, ctx)
-	search := func(who AccountDevice) string {
-		results, err := f.store.SearchMetadata(ctx, who.Account.ID, "sec", 20, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var out []string
-		for _, r := range results {
-			if r.Type == "channel" {
-				out = append(out, r.ID+":"+r.Label)
+	// C3 (migration 0082) removed community and channel names from the
+	// server, so metadata search returns accounts only: no community or
+	// channel row may come back for anyone, member or not, before or after
+	// joining a private channel, whatever the query (ids, kinds, prefixes).
+	queries := []string{
+		f.community.ID, f.private.ID, f.open.ID, f.announcement.ID,
+		f.privateConv, f.shared, "private", "sec", "secret", "gen", "general", "announcement",
+	}
+	assertNoCommunityRows := func(stage string) {
+		t.Helper()
+		for _, who := range []AccountDevice{f.owner, f.member, f.outsider} {
+			for _, q := range queries {
+				results, err := f.store.SearchMetadata(ctx, who.Account.ID, q, 50, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, r := range results {
+					if r.Type != "account" {
+						t.Fatalf("%s: search %q by %s returned a %s row: %+v", stage, q, who.Account.Username, r.Type, r)
+					}
+				}
 			}
 		}
-		return strings.Join(out, ",")
 	}
-	want := f.private.ID + ":secret"
-	if got := search(f.member); got != "" {
-		t.Fatalf("a member's search found the private channel: %q", got)
-	}
-	if got := search(f.owner); got != want {
-		t.Fatalf("the private channel's member search = %q, want %q", got, want)
-	}
+	assertNoCommunityRows("before joining")
 	if _, err := f.store.ManageConversationMember(ctx, f.privateConv, f.owner.Account.ID, f.member.Account.ID, domain.RoleMember); err != nil {
 		t.Fatal(err)
 	}
-	if got := search(f.member); got != want {
-		t.Fatalf("search after joining = %q, want %q", got, want)
-	}
-	// Open channels stay searchable by every community member.
-	results, err := f.store.SearchMetadata(ctx, f.member.Account.ID, "gen", 20, 0)
-	if err != nil || len(results) != 1 || results[0].ID != f.open.ID {
-		t.Fatalf("open channel search = %+v err=%v", results, err)
+	assertNoCommunityRows("after joining")
+	// Exact username lookup still works inside a community.
+	results, err := f.store.SearchMetadata(ctx, f.member.Account.ID, "outsider", 20, 0)
+	if err != nil || len(results) != 1 || results[0].Type != "account" || results[0].ID != f.outsider.Account.ID {
+		t.Fatalf("exact username search = %+v err=%v", results, err)
 	}
 }
 

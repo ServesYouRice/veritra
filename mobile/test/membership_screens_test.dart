@@ -321,7 +321,11 @@ void main() {
       expect(find.text('@owner banned @bob'), findsOneWidget);
       expect(find.text('Invitation links work normally.'), findsOneWidget);
 
-      await tester.tap(find.text('general'));
+      // C3 step 4: the server's plaintext channel name is never shown; with
+      // no accepted encrypted record the channel shows the placeholder.
+      expect(find.text('general'), findsNothing);
+      expect(find.text('Channel'), findsOneWidget);
+      await tester.tap(find.text('Channel'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('5 min'));
       await tester.pumpAndSettle();
