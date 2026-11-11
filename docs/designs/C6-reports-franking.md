@@ -512,8 +512,9 @@ channels) are unchanged.
   community member is in the shared conversation, and in each channel of a
   legacy community, so this narrows private channels only.
 - **Residuals.** A private channel with no moderator-or-above member who
-  published a key cannot take reports (the reporter is told no moderator
-  can receive it). A moderator added to the channel later gets none of the
+  published a key cannot take reports: the app finds no recipient
+  (`ReportFailure.noRecipients`), or the server answers
+  `report_inbox_unavailable` when no member of the channel listed a key. A moderator added to the channel later gets none of the
   earlier reports. A moderator removed from the channel keeps the copies
   they already have, as in "Departed moderators".
 - Tests: `c6_private_channel_reports_test.dart`,
