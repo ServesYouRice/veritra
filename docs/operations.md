@@ -774,7 +774,7 @@ operator can turn proxy logs back on, for abuse handling for example, and that
 is their choice. The live connection still shows the address in memory, and a
 network path or VPS provider may keep its own flow logs.
 
-`devices.last_seen_at` is stored as the UTC day (migration 0079) and written
+`devices.last_seen_at` is stored as the UTC day (migration 0078) and written
 at most once per device per day. Account recovery widens its activity window
 by one day to match, so an active device is never counted as idle.
 
