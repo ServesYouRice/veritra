@@ -3335,6 +3335,8 @@ class SecureLocalStore implements LocalStore {
           String origin, String accountId, String messageKey) async =>
       (await _database()).writeReportFiled(origin, accountId, messageKey,
           DateTime.now().toUtc().millisecondsSinceEpoch);
+
+  @override
   Future<List<StoredProfileKey>> loadProfileKeys(
           String kind, String subjectId) async =>
       (await _database()).readProfileKeys(kind, subjectId);
