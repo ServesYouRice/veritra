@@ -5,10 +5,9 @@ part of 'app_state.dart';
 ///
 /// The rules live in [CommunityInfoService]; this part only connects it to
 /// the session, the server, the send path and the community lists. Names
-/// are shown in this order: the accepted encrypted record, then the legacy
-/// server name, then a placeholder (the screen's). The plaintext name is
-/// still sent at creation until step 4 (it needs C4's role wiring first, or
-/// every community would go nameless).
+/// are shown from the accepted encrypted record, else a placeholder (the
+/// screen's). The server keeps no names (step 4, migration 0080): a name
+/// typed at creation goes only into the encrypted record.
 ///
 /// What other members' devices may set is checked against the community's
 /// verified C4 role state ([VerifiedRoleSource]); until the app holds one,
@@ -118,20 +117,15 @@ extension CommunityInfoActions on AppState {
         ?.id;
   }
 
-  /// The name to show for a community: the accepted encrypted one, else the
-  /// legacy server name; null when neither (the screen shows a placeholder).
-  String? communityDisplayName(Community community) {
-    final name = _info?.shown(infoKindCommunity, community.id)?.name;
-    if (name != null) return name;
-    return community.name.trim().isEmpty ? null : community.name;
-  }
+  /// The name to show for a community: the accepted encrypted record's, or
+  /// null (the screen shows a placeholder). The server keeps no name (C3
+  /// step 4), so there is no plaintext fallback.
+  String? communityDisplayName(Community community) =>
+      _info?.shown(infoKindCommunity, community.id)?.name;
 
   /// The name to show for a channel, as [communityDisplayName].
-  String? channelDisplayName(Channel channel) {
-    final name = _info?.shown(infoKindChannel, channel.id)?.name;
-    if (name != null) return name;
-    return channel.name.trim().isEmpty ? null : channel.name;
-  }
+  String? channelDisplayName(Channel channel) =>
+      _info?.shown(infoKindChannel, channel.id)?.name;
 
   /// A channel's encrypted topic, or null.
   String? channelTopic(Channel channel) {

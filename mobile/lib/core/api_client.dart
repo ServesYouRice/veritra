@@ -1300,16 +1300,20 @@ class ApiClient {
     return _rows(json, 'channels', Channel.fromJson);
   }
 
+  /// [name] never leaves the device: the server keeps IDs only and refuses a
+  /// plaintext name (C3). It goes into the encrypted community record.
   Future<Community> createCommunity(String token, String name) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/communities',
       token: token,
-      body: <String, Object?>{'name': name},
+      body: const <String, Object?>{},
     );
     return _decode(() => Community.fromJson(json));
   }
 
+  /// As [createCommunity]: [name] is never sent; it goes into the encrypted
+  /// channel record.
   Future<ChannelCreation> createChannel(
     String token,
     String communityId,
@@ -1320,7 +1324,7 @@ class ApiClient {
       'POST',
       '/api/v1/communities/$communityId/channels',
       token: token,
-      body: <String, Object?>{'name': name, 'kind': kind},
+      body: <String, Object?>{'kind': kind},
     );
     return _decode(() => ChannelCreation.fromJson(json));
   }

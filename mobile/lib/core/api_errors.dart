@@ -124,6 +124,7 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_max_uses': ApiErrorKind.invalidRequest,
   'invalid_member': ApiErrorKind.invalidRequest,
   'invalid_name': ApiErrorKind.invalidRequest,
+  'plaintext_name_refused': ApiErrorKind.invalidRequest,
   'invalid_push_subscription': ApiErrorKind.invalidRequest,
   'invalid_recovery_range': ApiErrorKind.invalidRequest,
   'multiple_ranges_not_supported': ApiErrorKind.invalidRequest,
@@ -347,6 +348,8 @@ class ApiException implements Exception {
       case 'invalid_device_name':
         return l10n.apiErrorInvalidDeviceName;
       case 'invalid_name':
+      // C3: an older app sent a community or channel name in the clear.
+      case 'plaintext_name_refused':
         return l10n.apiErrorInvalidName;
       case 'passkey_limit':
         return l10n.apiErrorPasskeyLimit;
