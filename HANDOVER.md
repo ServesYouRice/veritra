@@ -2,7 +2,7 @@
 
 The work was built by Codex, Gemini and Claude agents. It is 185 commits ahead of `main` and not merged.
 
-**First:** run `.claude/hooks/check.sh`. The last rounds skipped tests and reviews on the owner's instruction. Then fix what fails, get the reviews below done, and open a PR to `main`.
+**Update 2026-11-11:** `ai/integ` was pushed to `main` directly. The gate failures it brought (3 server tests, 24 app tests, contract drift, gofmt, GO-2026-6859) are fixed on `fix/main-green`, with D115 (admin rekey after moderator removals) and D116 (layout on by default). The reviews below are still needed.
 
 Counters: crypto ABI 22, local schema 36, server migration 0084.
 
@@ -25,7 +25,9 @@ Counters: crypto ABI 22, local schema 36, server migration 0084.
 - B6: media transport (`livekit_client` needs licence review) and the demo factory that sets `AppState.roomSession`.
 - L2: padding (needs an ABI bump), sealed sender, own-device alert. L3: `verify-attestation.sh` and a tested confidential-VM recipe.
 - `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` is on by default (owner decision, 2026-11-11), demos included; `0` turns it off, and new communities then show placeholder names only.
-- STATE.md is not updated for this round. The per-task reports are not in the repo.
+- STATE.md has D115–D117 and a Round 6 row. The per-task reports are not in the repo.
+- Search: a one-word community name that also looks like a username (e.g. `chess`) is still sent to the server as an account lookup; a local-only "Communities" search mode would close that.
+- Review needed: the D95 franking-policy fix and the C4 role calls moved onto `NativeCryptoDevice` (`fix/app-tests`), and D115.
 
 ## Release blockers outside code
 G25 independent crypto review, G24 signed-device evidence, G27 upstream advisory. Also the owner's accounts: VPS, DNS, R2, GHCR, TURN, and branch protection.
