@@ -459,8 +459,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 
 - **B6, group-call media keys: ABI 22 (2026-11-11):** one new call and one
   new signing domain, for [`B6-group-calls.md`](designs/B6-group-calls.md)
-  (S2). `pm_crypto_group_b6_media_key(handle, group_id, call_id, leaf, stream)`
-  returns `K(s,t) = HKDF-SHA256(salt "veritra-b6-sender-v1", ikm =
+  (S2). `pm_crypto_group_b6_media_key(handle, group_id, call_id, account_id, device_id, stream)`
+  returns (the sender leaf is found from its identity; a device in no leaf or in two refuses) `K(s,t) = HKDF-SHA256(salt "veritra-b6-sender-v1", ikm =
   MLS-Exporter("veritra-b6-media-v1", lp(call_id) | u64(epoch), 32),
   info = u32(leaf) | u8(stream))` for the group's current epoch (stream 0
   voice, 1 camera, 2 screen, 3 screen audio). The exporter secret never

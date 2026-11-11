@@ -192,6 +192,16 @@ typedef _C7MemberKeyNative = Int32 Function(Pointer<_PmCryptoHandle>,
     _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _C7MemberKeyDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _B6MediaKeyNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Uint8,
+    Pointer<_PmOwnedBuffer>);
+typedef _B6MediaKeyDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, int, Pointer<_PmOwnedBuffer>);
 typedef _SealNative = Int32 Function(
     Pointer<_PmCryptoHandle>, _PmByteSlice, Uint64, Pointer<_PmOwnedBuffer>);
 typedef _SealDart = int Function(
@@ -553,6 +563,9 @@ class NativeCryptoBindings {
         _c7MemberKey =
             library.lookupFunction<_C7MemberKeyNative, _C7MemberKeyDart>(
                 'pm_crypto_group_member_signature_key'),
+        _b6MediaKey =
+            library.lookupFunction<_B6MediaKeyNative, _B6MediaKeyDart>(
+                'pm_crypto_group_b6_media_key'),
         _attachmentEncrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
@@ -1236,6 +1249,7 @@ class NativeCryptoBindings {
   final _C7MergeDart _c7MergePending;
   final _C7DecryptDart _c7GroupDecrypt;
   final _C7MemberKeyDart _c7MemberKey;
+  final _B6MediaKeyDart _b6MediaKey;
   final _AttachmentChunkDart _attachmentEncrypt;
   final _AttachmentChunkDart _attachmentDecrypt;
   late final NativeFinalizer _deviceFinalizer;
@@ -2249,6 +2263,43 @@ class NativeCryptoDevice implements Finalizable {
       (slices) => _bindings._output(
           (out) => _bindings._c7MemberKey(
               _liveHandle, slices[0], slices[1], slices[2], out),
+          maximum: 32),
+    );
+    if (key.length != 32) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(key);
+  }
+
+  /// B6 (ABI 22): the 32-byte media key `K(s,t)` of the call group
+  /// [groupId] at its current epoch, for the sender device and stream
+  /// slot [stream] (0 voice, 1 camera, 2 screen, 3 screen audio). The
+  /// exporter secret stays in the core. Hand the key to the frame cryptor
+  /// and drop it; never store or log it.
+  Uint8List b6MediaKey({
+    required String groupId,
+    required String callId,
+    required String senderAccountId,
+    required String senderDeviceId,
+    required int stream,
+  }) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    _bindings._bounded(callId.codeUnits, 128);
+    _bindings._bounded(senderAccountId.codeUnits, 128);
+    _bindings._bounded(senderDeviceId.codeUnits, 128);
+    if (stream < 0 || stream > 3) {
+      throw ArgumentError('stream out of range');
+    }
+    final key = _bindings._withByteLists(
+      [
+        groupId.codeUnits,
+        callId.codeUnits,
+        senderAccountId.codeUnits,
+        senderDeviceId.codeUnits
+      ],
+      (slices) => _bindings._output(
+          (out) => _bindings._b6MediaKey(_liveHandle, slices[0], slices[1],
+              slices[2], slices[3], stream, out),
           maximum: 32),
     );
     if (key.length != 32) {

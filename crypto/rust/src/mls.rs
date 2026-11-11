@@ -806,21 +806,26 @@ impl MlsDevice {
     }
 
     /// B6 (ABI 22): the media key `K(s,t)` of the call group's current epoch
-    /// for the sender at `leaf_index` and stream slot `stream`. The exporter
+    /// for the sender device (found by identity, so the app never guesses a
+    /// leaf index across blank leaves) and stream slot `stream`. The exporter
     /// secret `E` stays here; only the derived key leaves.
     pub fn b6_media_key(
         &self,
         group: &MlsGroup,
         call_id: &[u8],
-        leaf_index: u32,
+        sender_account_id: &[u8],
+        sender_device_id: &[u8],
         stream: u8,
     ) -> Result<tls_codec::SecretVLBytes, MlsError> {
         let context = crate::b6::exporter_context(call_id, group.epoch().as_u64())
             .map_err(|_| MlsError::InvalidMessage)?;
-        if !group
+        let identity = encode_device_identity(sender_account_id, sender_device_id)?;
+        let mut leaves = group
             .members()
-            .any(|member| member.index.u32() == leaf_index)
-        {
+            .filter(|member| member.credential.serialized_content() == identity)
+            .map(|member| member.index.u32());
+        let leaf_index = leaves.next().ok_or(MlsError::InvalidIdentity)?;
+        if leaves.next().is_some() {
             return Err(MlsError::InvalidIdentity);
         }
         let secret = tls_codec::SecretVLBytes::new(
@@ -2583,9 +2588,18 @@ mod tests {
         let ([alice, bob, carol], [mut alice_group, bob_group, carol_group]) =
             three_members(b"call_group_b6");
         let call = b"call_b6";
+        // Senders by identity; leaves are alice 0, bob 1, carol 2.
+        let who = |leaf: u32| -> (&'static [u8], &'static [u8]) {
+            match leaf {
+                0 => (b"acct_alice", b"dev_alice"),
+                1 => (b"acct_bob", b"dev_bob"),
+                _ => (b"acct_carol", b"dev_carol"),
+            }
+        };
         let key = |device: &MlsDevice, group: &MlsGroup, leaf: u32, stream: u8| {
+            let (account, dev) = who(leaf);
             device
-                .b6_media_key(group, call, leaf, stream)
+                .b6_media_key(group, call, account, dev, stream)
                 .unwrap()
                 .as_slice()
                 .to_vec()
@@ -2617,13 +2631,17 @@ mod tests {
         assert_ne!(
             a0,
             alice
-                .b6_media_key(&alice_group, b"call_other", 0, 0)
+                .b6_media_key(&alice_group, b"call_other", b"acct_alice", b"dev_alice", 0)
                 .unwrap()
                 .as_slice()
         );
-        // A leaf that is not in the group and a bad stream are refused.
-        assert!(alice.b6_media_key(&alice_group, call, 9, 0).is_err());
-        assert!(alice.b6_media_key(&alice_group, call, 0, 4).is_err());
+        // A device that is not in the group and a bad stream are refused.
+        assert!(alice
+            .b6_media_key(&alice_group, call, b"acct_zed", b"dev_zed", 0)
+            .is_err());
+        assert!(alice
+            .b6_media_key(&alice_group, call, b"acct_alice", b"dev_alice", 4)
+            .is_err());
         // The exporter label is the only secret that matches: the C7 label gives another.
         let c7_root = exported_root(&alice, &alice_group);
         assert_ne!(
