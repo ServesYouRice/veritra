@@ -1002,6 +1002,32 @@ class CommunityInfoService {
               subjectsUnder) =>
       _serializeWrites(() => _runRotations(subjectsUnder));
 
+  /// The private channels' conversations whose due rotation no device can
+  /// run: under the verified role record, none of the owner and admins is a
+  /// member of the channel's MLS group ([membersOf], from the group's own
+  /// tree). Moderators may remove members but never rotate (D115), so the
+  /// obligation waits until an owner or admin joins; the app tells the
+  /// channel so. Marks without a verified record, an unplaced channel or an
+  /// unknown roster are left out (nothing is known to be stuck).
+  Future<Set<String>> rotationsWithoutRotator(
+      Set<String>? Function(String conversationId) membersOf) async {
+    final due = await _locked(_dueRotations);
+    final stuck = <String>{};
+    for (final entry in due.entries) {
+      final parts = entry.key.split('|');
+      if (parts.length != 2 || parts[0] != infoKindChannel) continue;
+      final roles = verifiedRolesOf?.call(entry.value['c'] as String);
+      if (roles == null) continue;
+      final conversation = topology.privateConversationOf(parts[1]);
+      if (conversation == null) continue;
+      final members = membersOf(conversation);
+      if (members == null) continue;
+      if (verifiedRotators(roles).any(members.contains)) continue;
+      stuck.add(conversation);
+    }
+    return stuck;
+  }
+
   /// Where a due mark's key lives now, or null while topology cannot place
   /// it.
   InfoKeyHome? _homeOfMark(String id, String communityId) {

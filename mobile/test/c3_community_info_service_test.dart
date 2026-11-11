@@ -1596,6 +1596,57 @@ void main() {
         boss.sent.where((s) => s.$2 == AppPayloadType.infoKey), hasLength(1));
   }, skip: skip);
 
+  test('a private channel mark with no verified admin in its group is reported',
+      () async {
+    final verified = GovernanceState(
+      rev: 2,
+      owner: 'acct_admin',
+      ownerRev: 2,
+      admins: const {'acct_boss': 2},
+      moderators: const {'acct_mod'},
+      joined: const {'acct_admin': 0, 'acct_mod': 1, 'acct_boss': 2},
+    );
+    final mod =
+        device('mod', {_shared, _privateConv}, admin: true, verified: verified);
+    const home = InfoKeyHome(
+        keySubjectKind: infoKindChannel,
+        keySubjectId: 'chan_00000000000000000000000000000003',
+        conversationId: _privateConv);
+    await mod.service.markRotationDue(home, _community);
+    await mod.service
+        .markRotationDue(mod.service.homeOf(community)!, _community);
+    // Only the moderator and a member are left in the private group.
+    expect(
+        await mod.service
+            .rotationsWithoutRotator((_) => {'acct_mod', 'acct_member'}),
+        {_privateConv});
+    // An admin or the owner in the group can renew it.
+    expect(
+        await mod.service
+            .rotationsWithoutRotator((_) => {'acct_mod', 'acct_boss'}),
+        isEmpty);
+    expect(await mod.service.rotationsWithoutRotator((_) => {'acct_admin'}),
+        isEmpty);
+    // An unknown roster says nothing.
+    expect(await mod.service.rotationsWithoutRotator((_) => null), isEmpty);
+    // The moderator itself never rotates, whatever the server says.
+    pastTurn();
+    expect(await mod.service.runRotations((_, __) => []), 0);
+    expect(await mod.service.dueRotations(), hasLength(2));
+    expect(mod.sent.where((s) => s.$2 == AppPayloadType.infoKey), isEmpty);
+  }, skip: skip);
+
+  test('without a verified record no mark is reported as stuck', () async {
+    final member = device('member', {_shared, _privateConv}, noRecord: true);
+    await member.service.markRotationDue(
+        const InfoKeyHome(
+            keySubjectKind: infoKindChannel,
+            keySubjectId: 'chan_00000000000000000000000000000003',
+            conversationId: _privateConv),
+        _community);
+    expect(await member.service.rotationsWithoutRotator((_) => {}), isEmpty);
+  }, skip: skip);
+
   test('an own record whose announcement could not go out is announced later',
       () async {
     final admin = device('admin', {_shared}, admin: true);

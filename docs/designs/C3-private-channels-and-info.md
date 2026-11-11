@@ -372,6 +372,20 @@ removal commit, observes it, and after its turn either adopts a key another
 admin sent meanwhile or rotates. Until then, every device keeps refusing
 edits under the old key.
 
+**Known limitation: a private channel with no admin in it.** A moderator may
+remove members from a private channel that has no owner or admin among its
+members (by the verified record, against the channel group's MLS roster).
+Then no device in the channel may rotate its key, and moderators still do
+not (the owner has not decided otherwise), so the obligation stays pending
+until an owner or admin joins the channel and takes its turn. Until then
+every device in the channel refuses channel-info edits and key answers under
+the old key; the removed member is out of the MLS group and gets nothing
+new. The channel shows "No admin in this channel can renew its key; ask an
+admin to join" (`CommunityInfoService.rotationsWithoutRotator`, checked after
+each info pass; built 2026-11-11). Letting moderators rotate, or making an
+admin a required member of every private channel, are the owner's options
+to close it.
+
 **Residuals.** Two admins whose turns overlap (clock skew, slow delivery,
 differing record views) may both rotate; the existing freshness rule makes
 that converge (more churn, no leak). Dedup does not authenticate topology

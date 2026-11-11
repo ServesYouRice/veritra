@@ -1957,6 +1957,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Сакривена је порука са уређаја који није одобрен.';
 
   @override
+  String get chatKeyRenewalNoAdmin =>
+      'Ниједан администратор у овом каналу не може да обнови његов кључ; замолите администратора да се придружи.';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Неки уређаји корисника $name се још нису придружили.';
   }
@@ -6312,6 +6316,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatMessageUnapprovedDevice =>
       'Sakrivena je poruka sa uređaja koji nije odobren.';
+
+  @override
+  String get chatKeyRenewalNoAdmin =>
+      'Nijedan administrator u ovom kanalu ne može da obnovi njegov ključ; zamolite administratora da se pridruži.';
 
   @override
   String chatDevicesNotJoined(String name) {

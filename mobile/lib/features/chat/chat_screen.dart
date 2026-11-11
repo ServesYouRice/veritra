@@ -705,25 +705,41 @@ class _ChatScreenState extends State<ChatScreen> {
   ) {
     final loading = widget.state.isLoadingMessages(conversationId);
     final loadError = widget.state.messageLoadError(conversationId);
+    // C3 (D115): a removal left this private channel's key due for renewal,
+    // and no owner or admin is in the channel to renew it. Moderators never
+    // do; until an admin joins, its info cannot be edited.
+    final renewalStuck = widget.state.channelKeyRenewalStuck(conversationId);
+    final renewalBanner = renewalStuck
+        ? MaterialBanner(
+            key: const ValueKey<String>('channel-key-renewal-no-admin'),
+            content: Text(context.l10n.chatKeyRenewalNoAdmin),
+            leading: const Icon(Icons.key_off_outlined),
+            actions: const <Widget>[SizedBox.shrink()],
+          )
+        : null;
     if (messages.isEmpty && pending.isEmpty) {
+      final Widget empty;
       if (loading) {
-        return const Center(child: CircularProgressIndicator());
-      }
-      if (loadError != null) {
-        return _MessageLoadError(
+        empty = const Center(child: CircularProgressIndicator());
+      } else if (loadError != null) {
+        empty = _MessageLoadError(
           message: loadError,
           onRetry: () => widget.state.loadMessages(conversationId),
         );
+      } else {
+        empty = EmptyState(
+          icon: Icons.lock_outline,
+          title: context.l10n.chatEmptyTitle,
+          message: context.l10n.chatEmptyMessage,
+        );
       }
-      return EmptyState(
-        icon: Icons.lock_outline,
-        title: context.l10n.chatEmptyTitle,
-        message: context.l10n.chatEmptyMessage,
-      );
+      if (renewalBanner == null) return empty;
+      return Column(children: <Widget>[renewalBanner, Expanded(child: empty)]);
     }
     final notJoined = widget.state.incompleteJoinAccounts(conversationId);
     return Column(
       children: <Widget>[
+        if (renewalBanner != null) renewalBanner,
         // L1: an approved device of a member has stayed out of the group
         // for an hour (the server gave no key package, or kept it out).
         for (final accountId in notJoined)
@@ -1219,6 +1235,7 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.conversationPauseFor(conversationId)?.generation,
     state.readOnlyWithoutPeer(conversationId),
     state.sendHeldForRemoval(conversationId),
+    state.channelKeyRenewalStuck(conversationId),
     state.isBusy(Ops.send),
     state.isBusy(Ops.attachment),
     state.attachmentsAvailable,

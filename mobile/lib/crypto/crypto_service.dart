@@ -502,6 +502,13 @@ abstract interface class CommunityInfoCryptoService {
   CommunityInfoCodec get communityInfoCodec;
 }
 
+/// The accounts in a conversation's MLS group, read from the group's own
+/// tree (never the server's member list). Null when the group is unknown.
+/// C3 uses it to tell when no owner or admin is in a private channel.
+abstract interface class MlsRosterSource {
+  Set<String>? groupMemberAccounts(String conversationId);
+}
+
 /// W11: the service that owns the native library also hands out the profile
 /// record codec, which seals records with the library's chunk AEAD. A build
 /// without it has no profiles.

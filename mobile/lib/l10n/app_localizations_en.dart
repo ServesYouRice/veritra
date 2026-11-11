@@ -1943,6 +1943,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'A message from a device that isn\'t approved was hidden.';
 
   @override
+  String get chatKeyRenewalNoAdmin =>
+      'No admin in this channel can renew its key; ask an admin to join.';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Some of $name\'s devices haven\'t joined yet.';
   }

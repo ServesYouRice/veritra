@@ -678,6 +678,7 @@
   "chatMessageInvalid": "A message could not be read",
   "chatMessageUndecryptable": "Couldn't unlock this message",
   "chatMessageUnapprovedDevice": "A message from a device that isn't approved was hidden.",
+  "chatKeyRenewalNoAdmin": "No admin in this channel can renew its key; ask an admin to join.",
   "chatDevicesNotJoined": "Some of {name}'s devices haven't joined yet.",
   "@chatDevicesNotJoined": {"placeholders": {"name": {"type": "String"}}},
   "chatMessageWelcomeUnavailable": "Couldn't join this chat. Ask a member to add you again.",

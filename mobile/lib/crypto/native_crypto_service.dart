@@ -62,6 +62,7 @@ class NativeCryptoService
         BackupSealCryptoService,
         BackupOpenCryptoService,
         CommunityInfoCryptoService,
+        MlsRosterSource,
         BoundedMlsConversationCryptoService,
         ChannelRoutedCryptoService,
         ConversationAuthorityConsumer,
@@ -151,6 +152,20 @@ class NativeCryptoService
       final record = state.record;
       if (record == null) return null;
       return decodeGovernance(record);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  @override
+  Set<String>? groupMemberAccounts(String conversationId) {
+    final device = _device;
+    if (device == null) return null;
+    try {
+      return <String>{
+        for (final leaf in device.groupMembers(conversationId))
+          utf8.decode(leaf.accountId),
+      };
     } catch (_) {
       return null;
     }
