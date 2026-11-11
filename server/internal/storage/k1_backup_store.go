@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"private-messenger/server/internal/admission"
 	"private-messenger/server/internal/domain"
 )
 
@@ -123,7 +122,7 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 		return domain.BackupBlob{}, err
 	}
 	removed = append(removed, older...)
-	if err := s.enforceK1BackupAllowance(ctx, tx, in.AccountID, in.DeviceID, in.SizeBytes); err != nil {
+	if err := s.enforceK1BackupAllowance(ctx, tx, in.AccountID, in.SizeBytes); err != nil {
 		return domain.BackupBlob{}, err
 	}
 	stamp := formatTime(now)
@@ -154,23 +153,14 @@ func (s *Store) CreateK1Backup(ctx context.Context, in K1BackupUpload) (domain.B
 	return backup, nil
 }
 
-// enforceK1BackupAllowance checks the account's backup allowance (D91): the
-// current copies of its other active devices plus the new one. This device's
-// copy being replaced, superseded copies (gone within a day) and revoked
-// devices' copies (at most three, for 90 days) do not count. The instance
-// total counts every blob, as for attachments.
-func (s *Store) enforceK1BackupAllowance(ctx context.Context, tx *sql.Tx, accountID, deviceID string, incoming int64) error {
-	var current, instanceUsage int64
-	if err := tx.QueryRowContext(ctx, `SELECT
-		COALESCE((SELECT SUM(b.size_bytes) FROM backup_blobs b JOIN devices d ON d.id = b.device_id
-			WHERE b.account_id = ? AND b.kind = 1 AND b.superseded_at IS NULL AND d.revoked_at IS NULL AND b.device_id <> ?), 0),
-		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1)`, accountID, deviceID).Scan(&current, &instanceUsage); err != nil {
-		return err
-	}
-	if incoming < 0 || current > s.limits.BackupAllowanceBytes-incoming || instanceUsage > s.limits.InstanceStorageBytes-incoming {
-		return s.refuse(admission.Storage, ErrStorageQuota)
-	}
-	return nil
+// enforceK1BackupAllowance checks the account's shared storage quota (owner
+// decision 2026-11-11: backups share ACCOUNT_STORAGE_MIB with attachments;
+// migration 0079 counts kind-1 copies in blob_usage_accounts again). Usage is
+// read after this device's older superseded copy was deleted in the same
+// transaction, so a replacement counts the copy it replaces once, for the
+// day it stays downloadable. The instance total counts every blob too.
+func (s *Store) enforceK1BackupAllowance(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
+	return s.enforceBlobQuotaBytes(ctx, tx, accountID, incoming)
 }
 
 // k1PruneCondition selects the kind-1 rows a prune deletes: superseded more

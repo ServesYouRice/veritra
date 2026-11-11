@@ -1137,15 +1137,8 @@ func (s *Store) BackupForRecoveryToken(ctx context.Context, recoveryTokenHash []
 // files on disk: every blob takes at least one 4 KiB block. One error covers
 // every storage limit.
 func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
-	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
-	var accountUsage, instanceUsage int64
-	if err := tx.QueryRowContext(ctx, `SELECT
-		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0),
-		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1)`, accountID).Scan(&accountUsage, &instanceUsage); err != nil {
+	if err := s.enforceBlobQuotaBytes(ctx, tx, accountID, incoming); err != nil {
 		return err
-	}
-	if incoming < 0 || accountUsage > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
-		return s.refuse(admission.Storage, ErrStorageQuota)
 	}
 	blobs, err := countRows(ctx, tx, `SELECT
 		(SELECT COUNT(*) FROM attachment_envelopes WHERE owner_account_id = ?) +
@@ -1157,6 +1150,22 @@ func (s *Store) enforceBlobQuota(ctx context.Context, tx *sql.Tx, accountID stri
 	}
 	if blobs >= s.limits.AccountBlobs {
 		return s.refuse(admission.Blobs, ErrStorageQuota)
+	}
+	return nil
+}
+
+// enforceBlobQuotaBytes is the byte part of enforceBlobQuota: the account's
+// and the instance's usage counters against their limits.
+func (s *Store) enforceBlobQuotaBytes(ctx context.Context, tx *sql.Tx, accountID string, incoming int64) error {
+	accountLimit, instanceLimit := s.limits.AccountStorageBytes, s.limits.InstanceStorageBytes
+	var accountUsage, instanceUsage int64
+	if err := tx.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT size_bytes FROM blob_usage_accounts WHERE account_id = ?), 0),
+		(SELECT size_bytes FROM blob_usage_instance WHERE id = 1)`, accountID).Scan(&accountUsage, &instanceUsage); err != nil {
+		return err
+	}
+	if incoming < 0 || accountUsage > accountLimit-incoming || instanceUsage > instanceLimit-incoming {
+		return s.refuse(admission.Storage, ErrStorageQuota)
 	}
 	return nil
 }
