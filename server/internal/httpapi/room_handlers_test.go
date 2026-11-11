@@ -221,3 +221,39 @@ func TestRoomWebhookChecksSignatureAndEndsSeats(t *testing.T) {
 		t.Fatalf("rejoin=%+v", again)
 	}
 }
+
+func TestRoomOfferNeedsTheIssuedNonceAndIsListedForMembers(t *testing.T) {
+	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, withSFU)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "offermember")
+	conversationID := roomDM(t, handler, ownerToken, memberID)
+	owner := joinRoom(t, handler, ownerToken, conversationID)
+	member := joinRoom(t, handler, memberToken, conversationID)
+	path := "/api/v1/rooms/" + owner.CallID + "/offer"
+	offer := func(nonce string) int {
+		code, _ := doJSON(t, handler, http.MethodPost, path, memberToken, map[string]any{
+			"nonce": nonce, "key_package": bytes.Repeat([]byte{7}, 80), "signature": bytes.Repeat([]byte{8}, 64),
+			"expires_at": time.Now().Add(30 * time.Second).Unix(),
+		})
+		return code
+	}
+	if code := offer("n_wrong"); code != http.StatusBadRequest {
+		t.Fatalf("wrong nonce status=%d", code)
+	}
+	if code := offer(member.Nonce); code != http.StatusNoContent {
+		t.Fatalf("offer status=%d", code)
+	}
+	if code := offer(member.Nonce); code != http.StatusBadRequest {
+		t.Fatalf("nonce reuse status=%d", code)
+	}
+	status, response := doJSON(t, handler, http.MethodGet, "/api/v1/rooms/"+owner.CallID, ownerToken, nil)
+	if status != http.StatusOK || !bytes.Contains(response, []byte("offer_key_package")) || !bytes.Contains(response, []byte("group_id")) {
+		t.Fatalf("state status=%d body=%s", status, response)
+	}
+	// The creator is in the group from the start; the joiner waits until a commit adds it.
+	status, _ = doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+owner.CallID+"/commit", ownerToken, map[string]any{
+		"expected_epoch": 0, "commit": []byte{1}, "welcome": []byte{2}, "added_device_ids": []string{"any"},
+	})
+	if status != http.StatusOK {
+		t.Fatalf("commit status=%d", status)
+	}
+}

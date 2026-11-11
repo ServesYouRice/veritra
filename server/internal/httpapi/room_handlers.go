@@ -81,17 +81,12 @@ func (a *API) joinRoom(w http.ResponseWriter, r *http.Request, principal domain.
 		return
 	}
 	a.publishRoomUpdate(r, req.ConversationID, join.Room, len(join.Participants))
-	nonce, err := domain.NewID("n")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error")
-		return
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"call_id": join.Room.ID, "conversation_id": join.Room.ConversationID,
-		"epoch": join.Room.Epoch, "created": join.Created,
+		"epoch": join.Room.Epoch, "created": join.Created, "group_id": join.Room.GroupID,
 		"participants": join.Participants,
 		"sfu_url":      a.RoomMedia.URL(), "sfu_token": token, "token_expires_at": now.Add(roomTokenTTL),
-		"nonce": nonce, "nonce_expires_at": now.Add(60 * time.Second),
+		"nonce": join.Nonce, "nonce_expires_at": join.NonceExpires,
 		"max_devices": storage.RoomMaxDevices,
 	})
 }
@@ -102,7 +97,7 @@ func (a *API) roomState(w http.ResponseWriter, r *http.Request, principal domain
 		a.roomErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"call_id": room.ID, "conversation_id": room.ConversationID, "epoch": room.Epoch, "participants": participants})
+	writeJSON(w, http.StatusOK, map[string]any{"call_id": room.ID, "conversation_id": room.ConversationID, "group_id": room.GroupID, "epoch": room.Epoch, "participants": participants})
 }
 
 func (a *API) roomCommits(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
@@ -123,12 +118,14 @@ func (a *API) roomCommit(w http.ResponseWriter, r *http.Request, principal domai
 		ExpectedEpoch int64  `json:"expected_epoch"`
 		Commit        []byte `json:"commit"`
 		Welcome       []byte `json:"welcome,omitempty"`
+		// Devices this commit adds (bookkeeping: they stop waiting).
+		AddedDeviceIDs []string `json:"added_device_ids,omitempty"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
 	id := r.PathValue("id")
-	epoch, err := a.Store.CommitRoom(r.Context(), id, principal.DeviceID, req.ExpectedEpoch, req.Commit, req.Welcome, time.Now().UTC())
+	epoch, err := a.Store.CommitRoom(r.Context(), id, principal.DeviceID, req.ExpectedEpoch, req.Commit, req.Welcome, req.AddedDeviceIDs, time.Now().UTC())
 	if err != nil {
 		a.roomErr(w, err)
 		return
@@ -137,6 +134,33 @@ func (a *API) roomCommit(w http.ResponseWriter, r *http.Request, principal domai
 		a.publishRoomUpdate(r, conversationID, storage.Room{ID: id, Epoch: epoch}, -1)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"epoch": epoch})
+}
+
+// roomOffer stores a joiner's call-only KeyPackage and its signature for the
+// members to check and add. Opaque to the server.
+func (a *API) roomOffer(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
+	var req struct {
+		Nonce      string `json:"nonce"`
+		KeyPackage []byte `json:"key_package"`
+		Signature  []byte `json:"signature"`
+		ExpiresAt  int64  `json:"expires_at"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := a.Store.SetRoomOffer(r.Context(), id, principal.DeviceID, req.Nonce, req.KeyPackage, req.Signature, req.ExpiresAt, time.Now().UTC()); err != nil {
+		if errors.Is(err, storage.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid_join_offer")
+			return
+		}
+		a.roomErr(w, err)
+		return
+	}
+	if conversationID, err := a.Store.RoomConversation(r.Context(), id); err == nil {
+		a.publishRoomUpdate(r, conversationID, storage.Room{ID: id}, -1)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *API) leaveRoom(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

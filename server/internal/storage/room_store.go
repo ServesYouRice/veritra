@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"errors"
 	"time"
@@ -25,12 +26,15 @@ const (
 	RoomEndedRetention = time.Hour
 	// RoomMaxCommitBytes caps one commit or Welcome.
 	RoomMaxCommitBytes = 96 << 10
+	// RoomOfferWindow is how long a join nonce lives (design: at most 60 s).
+	RoomOfferWindow = 60 * time.Second
 )
 
 type Room struct {
 	ID             string     `json:"call_id"`
 	ConversationID string     `json:"conversation_id"`
 	SFURoom        string     `json:"-"`
+	GroupID        []byte     `json:"group_id"`
 	Epoch          int64      `json:"epoch"`
 	CreatedAt      time.Time  `json:"created_at"`
 	EndedAt        *time.Time `json:"ended_at,omitempty"`
@@ -40,11 +44,19 @@ type RoomParticipant struct {
 	DeviceID  string    `json:"device_id"`
 	AccountID string    `json:"account_id"`
 	JoinedAt  time.Time `json:"joined_at"`
+	// Offer fields are set while the device waits to be added to the call
+	// group (B6 S5); members check the signature, the server does not.
+	OfferKeyPackage []byte `json:"offer_key_package,omitempty"`
+	OfferSignature  []byte `json:"offer_signature,omitempty"`
+	OfferExpiresAt  int64  `json:"offer_expires_at,omitempty"`
+	InGroup         bool   `json:"in_group"`
 }
 
 type RoomJoin struct {
 	Room         Room
 	Identity     string
+	Nonce        string
+	NonceExpires time.Time
 	Created      bool
 	Participants []RoomParticipant
 }
@@ -88,7 +100,7 @@ func (s *Store) JoinRoom(ctx context.Context, conversationID, accountID, deviceI
 	if err := checkNotTimedOutTx(ctx, tx, conversationID, accountID, now); err != nil {
 		return RoomJoin{}, err
 	}
-	room, err := scanRoom(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sfu_room, epoch, created_at, ended_at FROM call_rooms WHERE conversation_id = ? AND ended_at IS NULL`, conversationID))
+	room, err := scanRoom(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sfu_room, group_id, epoch, created_at, ended_at FROM call_rooms WHERE conversation_id = ? AND ended_at IS NULL`, conversationID))
 	created := false
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -100,8 +112,12 @@ func (s *Store) JoinRoom(ctx context.Context, conversationID, accountID, deviceI
 		if idErr != nil {
 			return RoomJoin{}, idErr
 		}
-		room = Room{ID: id, ConversationID: conversationID, SFURoom: sfu, CreatedAt: now.UTC()}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO call_rooms(id, conversation_id, sfu_room, epoch, created_at) VALUES(?, ?, ?, 0, ?)`, room.ID, conversationID, sfu, formatTime(now)); err != nil {
+		groupID := make([]byte, 32)
+		if _, err := rand.Read(groupID); err != nil {
+			return RoomJoin{}, err
+		}
+		room = Room{ID: id, ConversationID: conversationID, SFURoom: sfu, GroupID: groupID, CreatedAt: now.UTC()}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO call_rooms(id, conversation_id, sfu_room, group_id, epoch, created_at) VALUES(?, ?, ?, ?, 0, ?)`, room.ID, conversationID, sfu, groupID, formatTime(now)); err != nil {
 			return RoomJoin{}, err
 		}
 		created = true
@@ -124,7 +140,13 @@ func (s *Store) JoinRoom(ctx context.Context, conversationID, accountID, deviceI
 	if err != nil {
 		return RoomJoin{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO call_room_participants(room_id, identity, device_id, account_id, joined_at) VALUES(?, ?, ?, ?, ?)`, room.ID, identity, deviceID, accountID, formatTime(now)); err != nil {
+	nonceID, err := domain.NewID("n")
+	if err != nil {
+		return RoomJoin{}, err
+	}
+	nonceExpires := now.Add(RoomOfferWindow)
+	// The creator of a room is the call group's first member.
+	if _, err := tx.ExecContext(ctx, `INSERT INTO call_room_participants(room_id, identity, device_id, account_id, joined_at, nonce, nonce_expires_at, in_group) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`, room.ID, identity, deviceID, accountID, formatTime(now), nonceID, formatTime(nonceExpires), created); err != nil {
 		return RoomJoin{}, err
 	}
 	participants, err := roomParticipants(ctx, tx, room.ID)
@@ -134,7 +156,7 @@ func (s *Store) JoinRoom(ctx context.Context, conversationID, accountID, deviceI
 	if err := tx.Commit(); err != nil {
 		return RoomJoin{}, err
 	}
-	return RoomJoin{Room: room, Identity: identity, Created: created, Participants: participants}, nil
+	return RoomJoin{Room: room, Identity: identity, Nonce: nonceID, NonceExpires: nonceExpires, Created: created, Participants: participants}, nil
 }
 
 // RoomState returns the room and its live devices to a device that is in it.
@@ -155,7 +177,7 @@ func (s *Store) RoomState(ctx context.Context, roomID, deviceID string) (Room, [
 // CommitRoom stores one commit (and the Welcome that goes with it) if it is
 // based on the room's current epoch. Exactly one commit per epoch wins;
 // every other gets ErrRoomEpochCAS (409). The bytes are opaque.
-func (s *Store) CommitRoom(ctx context.Context, roomID, deviceID string, expectedEpoch int64, commit, welcome []byte, now time.Time) (int64, error) {
+func (s *Store) CommitRoom(ctx context.Context, roomID, deviceID string, expectedEpoch int64, commit, welcome []byte, added []string, now time.Time) (int64, error) {
 	if len(commit) == 0 || len(commit) > RoomMaxCommitBytes || len(welcome) > RoomMaxCommitBytes || expectedEpoch < 0 {
 		return 0, ErrInvalidInput
 	}
@@ -181,6 +203,13 @@ func (s *Store) CommitRoom(ctx context.Context, roomID, deviceID string, expecte
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO call_room_commits(room_id, epoch, committer_device_id, commit_bytes, welcome_bytes, created_at) VALUES(?, ?, ?, ?, ?, ?)`, roomID, next, deviceID, commit, w, formatTime(now)); err != nil {
 		return 0, err
+	}
+	// Bookkeeping only: the devices this commit added no longer wait. The
+	// members decide who is really in the group from the commit itself.
+	for _, id := range added {
+		if _, err := tx.ExecContext(ctx, `UPDATE call_room_participants SET in_group = 1 WHERE room_id = ? AND device_id = ? AND left_at IS NULL`, roomID, id); err != nil {
+			return 0, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
@@ -319,7 +348,7 @@ func endRoomIfEmpty(ctx context.Context, tx *sql.Tx, roomID string, now time.Tim
 }
 
 func liveRoomForDevice(ctx context.Context, tx *sql.Tx, roomID, deviceID string) (Room, error) {
-	room, err := scanRoom(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sfu_room, epoch, created_at, ended_at FROM call_rooms WHERE id = ?`, roomID))
+	room, err := scanRoom(tx.QueryRowContext(ctx, `SELECT id, conversation_id, sfu_room, group_id, epoch, created_at, ended_at FROM call_rooms WHERE id = ?`, roomID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Room{}, ErrNotFound
 	}
@@ -340,7 +369,7 @@ func liveRoomForDevice(ctx context.Context, tx *sql.Tx, roomID, deviceID string)
 }
 
 func roomParticipants(ctx context.Context, tx *sql.Tx, roomID string) ([]RoomParticipant, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT device_id, account_id, joined_at FROM call_room_participants WHERE room_id = ? AND left_at IS NULL ORDER BY joined_at, identity`, roomID)
+	rows, err := tx.QueryContext(ctx, `SELECT device_id, account_id, joined_at, offer_key_package, offer_signature, COALESCE(offer_expires_at, 0), in_group FROM call_room_participants WHERE room_id = ? AND left_at IS NULL ORDER BY joined_at, identity`, roomID)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +378,7 @@ func roomParticipants(ctx context.Context, tx *sql.Tx, roomID string) ([]RoomPar
 	for rows.Next() {
 		var p RoomParticipant
 		var joined string
-		if err := rows.Scan(&p.DeviceID, &p.AccountID, &joined); err != nil {
+		if err := rows.Scan(&p.DeviceID, &p.AccountID, &joined, &p.OfferKeyPackage, &p.OfferSignature, &p.OfferExpiresAt, &p.InGroup); err != nil {
 			return nil, err
 		}
 		p.JoinedAt = parseTime(joined)
@@ -362,7 +391,7 @@ func scanRoom(row *sql.Row) (Room, error) {
 	var r Room
 	var created string
 	var ended sql.NullString
-	if err := row.Scan(&r.ID, &r.ConversationID, &r.SFURoom, &r.Epoch, &created, &ended); err != nil {
+	if err := row.Scan(&r.ID, &r.ConversationID, &r.SFURoom, &r.GroupID, &r.Epoch, &created, &ended); err != nil {
 		return Room{}, err
 	}
 	r.CreatedAt = parseTime(created)
@@ -371,4 +400,30 @@ func scanRoom(row *sql.Row) (Room, error) {
 		r.EndedAt = &t
 	}
 	return r, nil
+}
+
+// SetRoomOffer stores the join offer of a device that waits to be added:
+// the call-only KeyPackage and the signature over it. The nonce must be the
+// one the join route issued, unexpired and unused. The server cannot check
+// the signature (it holds no keys of the call group); every member does.
+func (s *Store) SetRoomOffer(ctx context.Context, roomID, deviceID, nonce string, keyPackage, signature []byte, expiresAt int64, now time.Time) error {
+	if nonce == "" || len(keyPackage) == 0 || len(keyPackage) > 48<<10 || len(signature) != 64 || expiresAt <= now.Unix() || expiresAt > now.Add(2*RoomOfferWindow).Unix() {
+		return ErrInvalidInput
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := liveRoomForDevice(ctx, tx, roomID, deviceID); err != nil {
+		return err
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE call_room_participants SET offer_key_package = ?, offer_signature = ?, offer_expires_at = ?, nonce = '' WHERE room_id = ? AND device_id = ? AND left_at IS NULL AND in_group = 0 AND nonce = ? AND nonce_expires_at > ?`, keyPackage, signature, expiresAt, roomID, deviceID, nonce, formatTime(now))
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrInvalidInput
+	}
+	return tx.Commit()
 }

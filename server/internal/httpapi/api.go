@@ -170,6 +170,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/rooms/{id}", a.withAuth(a.roomState))
 	mux.HandleFunc("GET /api/v1/rooms/{id}/commits", a.withAuth(a.roomCommits))
 	mux.HandleFunc("POST /api/v1/rooms/{id}/commit", a.withAuth(a.withWriteBudget(a.roomCommit)))
+	mux.HandleFunc("POST /api/v1/rooms/{id}/offer", a.withAuth(a.withWriteBudget(a.roomOffer)))
 	mux.HandleFunc("POST /api/v1/rooms/{id}/leave", a.withAuth(a.withWriteBudget(a.leaveRoom)))
 	mux.HandleFunc("POST /api/v1/rooms/webhook", a.roomWebhook)
 	mux.HandleFunc("GET /api/v1/sync/ws", a.syncWebSocket)
