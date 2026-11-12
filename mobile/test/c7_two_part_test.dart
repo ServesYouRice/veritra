@@ -130,7 +130,7 @@ void main() {
       for (final stored in <String?>[
         null,
         'not json',
-        '{"v":2,"floor":1}',
+        '{"v":3,"floor":1}',
         '{"v":1,"floor":-1}',
       ]) {
         final state = C7GroupState.decode(stored);

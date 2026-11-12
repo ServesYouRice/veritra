@@ -246,6 +246,39 @@ final class C7RecordContext {
 /// A record as it travels in its channel message (143 bytes; a move adds
 /// `lp(close_group_id)` and a 128-byte wrap).
 final class C7CompactRecord {
+  /// A record this device proposes. [key] is the new `CHK` when [mode] is
+  /// `full`, else 32 random bytes; a move also carries [closeGroupId] and the
+  /// 128-byte [wrap].
+  C7CompactRecord({
+    required this.seq,
+    required List<int> prev,
+    required this.mode,
+    required this.reason,
+    required this.closeEpoch,
+    required List<int> key,
+    required List<int> sig,
+    List<int>? closeGroupId,
+    List<int>? wrap,
+  })  : prev = Uint8List.fromList(prev),
+        key = Uint8List.fromList(key),
+        sig = Uint8List.fromList(sig),
+        closeGroupId =
+            closeGroupId == null ? null : Uint8List.fromList(closeGroupId),
+        wrap = wrap == null ? null : Uint8List.fromList(wrap) {
+    if (seq < 0 ||
+        seq >= c7SeqLimit ||
+        mode > c7ModeFull ||
+        reason > c7ReasonMove ||
+        this.prev.length != 32 ||
+        this.key.length != 32 ||
+        this.sig.length != 64 ||
+        (reason == c7ReasonMove) != (this.closeGroupId != null) ||
+        (reason == c7ReasonMove) != (this.wrap != null) ||
+        (this.wrap != null && this.wrap!.length != c7MoveWrapBytes)) {
+      throw const FormatException('invalid compact C7 record');
+    }
+  }
+
   C7CompactRecord._({
     required this.seq,
     required this.prev,
@@ -303,6 +336,26 @@ final class C7CompactRecord {
       closeGroupId: closeGroupId,
       wrap: wrap,
     );
+  }
+
+  /// `u8 version | u32 seq | prev | u8 mode | u8 reason | u64 close_epoch |
+  /// key | sig`, and for a move `lp(close_group_id) | wrap`.
+  Uint8List encode() {
+    final out = BytesBuilder(copy: false)..addByte(1);
+    _putU32(out, seq);
+    out
+      ..add(prev)
+      ..addByte(mode)
+      ..addByte(reason);
+    _putU64(out, closeEpoch);
+    out
+      ..add(key)
+      ..add(sig);
+    if (reason == c7ReasonMove) {
+      _putLp(out, closeGroupId!);
+      out.add(wrap!);
+    }
+    return out.takeBytes();
   }
 
   /// Rebuilds the full form; the signature is checked by the caller against
@@ -404,6 +457,22 @@ final class C7ChannelState {
     required this.status,
     required this.missEpoch,
   });
+
+  /// A stored state (`c7_channel_book.dart`); [kept] must hold [head].
+  factory C7ChannelState.restore({
+    required C7Entry? head,
+    required Map<int, C7Entry> kept,
+    required int highestSeq,
+    required C7Status status,
+    required int missEpoch,
+  }) =>
+      C7ChannelState._(
+        head: head,
+        kept: Map<int, C7Entry>.unmodifiable(kept),
+        highestSeq: highestSeq,
+        status: status,
+        missEpoch: missEpoch,
+      );
 
   /// The implicit genesis: no record held means `members_from_join` with no
   /// head, so nothing is sealed under a history key.
@@ -592,6 +661,19 @@ final class C7ChannelState {
   C7ChannelState keyArrived(int forEpoch) => status == C7Status.keyless
       ? _copy(status: forEpoch > missEpoch ? C7Status.ok : C7Status.unsure)
       : this;
+
+  /// A valid slot in a `history_sync` for [forEpoch] reported this device's
+  /// own head (row 2) and, for a `full` channel, its own current key: an
+  /// `unsure` channel is `ok` again when [forEpoch] is above its miss epoch
+  /// (decision 5, "Unsure"). Other statuses are unchanged.
+  C7ChannelState slotConfirmed(int forEpoch) =>
+      status == C7Status.unsure && forEpoch > missEpoch
+          ? _copy(status: C7Status.ok)
+          : this;
+
+  /// The channel drops its records (a re-add wipe is done by the caller by
+  /// deleting the whole state; this is for a move's old group).
+  C7ChannelState withStatus(C7Status next) => _copy(status: next);
 }
 
 int _min(int a, int b) => a < b ? a : b;

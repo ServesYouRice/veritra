@@ -370,6 +370,14 @@ class EnrollmentPromotion {
 /// (`mobile/lib/crypto/c7_group_state.dart`).
 String c7GroupSetting(String conversationId) => 'c7.group.$conversationId';
 
+/// The sealed setting that holds one channel's C7 chain in one group
+/// (`mobile/lib/crypto/c7_channel_book.dart`).
+String c7ChannelSetting(String conversationId, String channelId) =>
+    'c7.chan.$conversationId|$channelId';
+
+/// Every C7 setting starts with this; the leak tests scan for it.
+const String c7SettingPrefix = 'c7.';
+
 String communityInfoRemovalSetting(String conversationId) =>
     'c3.removal_epoch.$conversationId';
 
@@ -557,6 +565,7 @@ class OutgoingApplicationStateTransition {
     this.governanceObservation,
     this.messageEffects = const <MessageEffect>[],
     this.communityInfo = const <CommunityInfoEvent>[],
+    this.c7Settings = const <String, String?>{},
   });
 
   final int expectedCounter;
@@ -565,6 +574,11 @@ class OutgoingApplicationStateTransition {
   final MessageEnvelope envelope;
   final String? draftText;
   final GovernanceObservationChange? governanceObservation;
+
+  /// C7 state that sending this message changes (an own pending record, a
+  /// settled `history_sync` duty), in the same transaction as the outbox
+  /// entry.
+  final Map<String, String?> c7Settings;
 
   /// This device's own copy of what it sent, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
@@ -602,6 +616,7 @@ class SyncEventCommit {
     this.ownMessageKey,
     this.allowOwnPinEffect = false,
     this.checkCanCommit,
+    this.c7Settings = const <String, String?>{},
   });
 
   final String eventKey;
@@ -617,6 +632,10 @@ class SyncEventCommit {
   /// Current cached authority rechecked at echo processing time (W7).
   final bool allowOwnPinEffect;
   final void Function()? checkCanCommit;
+
+  /// C7 state written with this event (this device's own record coming back
+  /// in sync order), in the same transaction as the cursor.
+  final Map<String, String?> c7Settings;
 }
 
 class LocalSyncLease {
@@ -810,6 +829,11 @@ abstract class LocalStore {
   /// Small local settings (the encrypted `local_metadata` key-value table).
   Future<String?> loadSetting(String name);
   Future<void> saveSetting(String name, String value);
+
+  /// C7: a newcomer's imported history (decision 10) and the C7 state that
+  /// records the import, in one transaction. No MLS state or cursor moves.
+  Future<void> importC7History(List<MessageEffect> effects,
+      {Map<String, String?> c7Settings = const <String, String?>{}});
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
@@ -1083,6 +1107,13 @@ class MemoryLocalStore implements LocalStore {
   @override
   Future<void> saveSetting(String name, String value) async =>
       _settings[name] = value;
+
+  @override
+  Future<void> importC7History(List<MessageEffect> effects,
+      {Map<String, String?> c7Settings = const <String, String?>{}}) async {
+    _applyHistoryEffects(effects);
+    _applyC7Settings(c7Settings);
+  }
 
   @override
   Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
@@ -1866,6 +1897,7 @@ class MemoryLocalStore implements LocalStore {
     commit.checkCanCommit?.call();
     _history = nextHistory;
     _historyNamespace = nextNamespace;
+    _applyC7Settings(commit.c7Settings);
     _processedMlsMessages.add(commit.eventKey);
     if (replay) {
       _pauses[commit.conversationId] =
@@ -1957,6 +1989,7 @@ class MemoryLocalStore implements LocalStore {
     }
     _applyHistoryEffects(transition.messageEffects);
     _applyGovernanceObservation(transition.governanceObservation);
+    _applyC7Settings(transition.c7Settings);
     final protectedKeyIds = {
       for (final record in _acceptedCommunityInfo.values) record.keyId
     };
@@ -3022,6 +3055,11 @@ class SecureLocalStore implements LocalStore {
       (await _database()).writeMetadata('setting:$name', value);
 
   @override
+  Future<void> importC7History(List<MessageEffect> effects,
+          {Map<String, String?> c7Settings = const <String, String?>{}}) async =>
+      (await _database()).importC7History(effects, c7Settings: c7Settings);
+
+  @override
   Future<List<ConversationPause>> loadConversationPauses() async =>
       (await _database()).readConversationPauses();
 
@@ -3484,6 +3522,7 @@ class SecureLocalStore implements LocalStore {
       allowOwnPinEffect: commit.allowOwnPinEffect,
       checkCanCommit: commit.checkCanCommit,
       leaseKey: _syncLeaseKey,
+      c7Settings: commit.c7Settings,
     );
   }
 
@@ -3590,6 +3629,7 @@ class SecureLocalStore implements LocalStore {
         communityInfo: transition.communityInfo,
         recordChanges: _recordWrites(transition.state),
         leaseKey: _syncLeaseKey,
+        c7Settings: transition.c7Settings,
       );
     } on StateError catch (error) {
       if (error.message == 'outbox_full') {

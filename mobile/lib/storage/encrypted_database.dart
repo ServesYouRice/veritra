@@ -1744,6 +1744,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     bool allowOwnPinEffect = false,
     String? leaseKey,
     void Function()? checkCanCommit,
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) =>
       transaction(() async {
         checkCanCommit?.call();
@@ -1752,6 +1753,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               ..where((table) => table.messageId.equals(eventKey)))
             .getSingleOrNull();
         if (processed != null) return;
+        await _writeC7SettingsInTransaction(c7Settings);
         if (ownMessageKey != null && envelope != null) {
           final echo = jsonDecode(envelope.payloadJson) as Map;
           final echoMetadata = echo['crypto_metadata'];
@@ -2001,6 +2003,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     GovernanceObservationChange? governanceObservation,
     String? leaseKey,
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) =>
       transaction(() async {
         await _assertSyncLeaseInTransaction(leaseKey);
@@ -2015,6 +2018,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter != expectedCounter + 1) {
           throw StateError('stale outgoing application MLS transition');
         }
+        await _writeC7SettingsInTransaction(c7Settings);
         // Nothing is encrypted for a paused conversation (C1 P1).
         await _assertConversationNotPausedInTransaction(conversationId);
         if (await (select(localOutboxEntries)
@@ -2449,6 +2453,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   Future<void> applyMessageEffects(List<MessageEffect> effects) =>
       transaction(() => _applyMessageEffects(effects));
+
+  /// C7: a newcomer's imported history and its C7 state, in one
+  /// transaction (no MLS state or cursor moves).
+  Future<void> importC7History(List<MessageEffect> effects,
+          {Map<String, String?> c7Settings = const <String, String?>{}}) =>
+      transaction(() async {
+        await _applyMessageEffects(effects);
+        await _writeC7SettingsInTransaction(c7Settings);
+      });
 
   Future<void> _applyMessageEffects(List<MessageEffect> effects) async {
     HistoryNamespace? historyNamespace;
