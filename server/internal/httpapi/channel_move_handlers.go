@@ -32,6 +32,11 @@ func (a *API) moveChannel(w http.ResponseWriter, r *http.Request, principal doma
 		return
 	}
 	move := result.Move
+	if result.Replayed {
+		// Review L-6: the actor's own move again; its events went out then.
+		writeJSON(w, http.StatusOK, map[string]interface{}{"move": move, "conversation": result.Conversation})
+		return
+	}
 	now := time.Now().UTC()
 	a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), move.FromConversationID), realtime.Event{Version: "v1", Type: storage.ChannelMovedEventType, ID: result.FromEventID, ConversationID: move.FromConversationID, Payload: move, CreatedAt: now})
 	a.publishCommittedEvent(r.Context(), a.conversationMemberIDs(r.Context(), move.ToConversationID), realtime.Event{Version: "v1", Type: storage.ChannelMovedEventType, ID: result.ToEventID, ConversationID: move.ToConversationID, Payload: move, CreatedAt: now})

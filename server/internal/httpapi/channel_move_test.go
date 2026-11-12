@@ -79,27 +79,52 @@ func TestChannelMoveRoute(t *testing.T) {
 			t.Fatalf("move answer = %s", body)
 		}
 		// Carol, in the shared conversation only, hears of it there; the
-		// owner in both.
-		for client, want := range map[interface{ Send() <-chan []byte }]int{carolLive: 1, ownerLive: 2} {
+		// owner in both. The event names who moved it (review L-6).
+		frames := func(client interface{ Send() <-chan []byte }) int {
 			got := 0
 			deadline := time.After(50 * time.Millisecond)
-		drain:
 			for {
 				select {
 				case raw := <-client.Send():
 					var event struct {
-						Type string `json:"type"`
+						Type    string `json:"type"`
+						Payload struct {
+							MovedBy string `json:"moved_by"`
+						} `json:"payload"`
 					}
 					if json.Unmarshal(raw, &event) == nil && event.Type == "conversation.channel_moved" {
+						if event.Payload.MovedBy != ownerID {
+							t.Fatalf("c7=%v: moved frame names %q, want %q", c7, event.Payload.MovedBy, ownerID)
+						}
 						got++
 					}
 				case <-deadline:
-					break drain
+					return got
 				}
 			}
-			if got != want {
+		}
+		for client, want := range map[interface{ Send() <-chan []byte }]int{carolLive: 1, ownerLive: 2} {
+			if got := frames(client); got != want {
 				t.Fatalf("c7=%v: %d moved frames, want %d", c7, got, want)
 			}
+		}
+		// A replay (review L-6) answers the same move and publishes nothing.
+		status, replayed := doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, map[string]interface{}{"access_mode": "private"})
+		if status != http.StatusOK {
+			t.Fatalf("replay status=%d body=%s", status, replayed)
+		}
+		var again struct {
+			Move struct {
+				To      string `json:"to_conversation_id"`
+				MovedBy string `json:"moved_by"`
+			} `json:"move"`
+		}
+		decodeLayoutBody(t, replayed, &again)
+		if again.Move.To != moved.Move.To || again.Move.MovedBy != ownerID {
+			t.Fatalf("replay answer = %s", replayed)
+		}
+		if got := frames(ownerLive); got != 0 {
+			t.Fatalf("c7=%v: a replay published %d moved frames", c7, got)
 		}
 		history := "/api/v1/channels/" + channel + "/moves/" + community.SharedConversationID + "/history?stream=" + channel
 		status, body = doJSON(t, handler, http.MethodGet, history, ownerToken, nil)

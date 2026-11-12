@@ -315,6 +315,35 @@ func TestC7DeclaredEpochMustBeOneTheSenderIsIn(t *testing.T) {
 	}
 }
 
+// Review L-9: in a group the server tracks, a sender device with no live
+// roster row (removed, or never added) declares no epoch it is in; a
+// conversation whose group the server does not track is left alone.
+func TestC7DeclaredEpochNeedsALiveRosterRow(t *testing.T) {
+	ctx := context.Background()
+	f := newC7Fixture(t, ctx)
+	f.inGroup(t, ctx, f.shared, f.owner, 0, 0)
+	f.atEpoch(t, ctx, f.shared, 2)
+	// Never added to the shared group.
+	if _, _, err := f.postBody(ctx, f.shared, f.member, "absent", f.epochMetadata(f.open.ID, 1, 1), c7Body(c7PostBytes, 1)); !errors.Is(err, ErrEpochOutOfRange) {
+		t.Fatalf("a device not in the roster: %v", err)
+	}
+	// Removed from it.
+	f.inGroup(t, ctx, f.shared, f.member, 0, 1)
+	if _, _, err := f.postBody(ctx, f.shared, f.member, "live", f.epochMetadata(f.open.ID, 1, 2), c7Body(c7PostBytes, 2)); err != nil {
+		t.Fatalf("a live roster device: %v", err)
+	}
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE conversation_mls_devices SET removed_after_event_id = 1 WHERE conversation_id = ? AND device_id = ?`, f.shared, f.member.Device.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.postBody(ctx, f.shared, f.member, "removed", f.epochMetadata(f.open.ID, 1, 2), c7Body(c7PostBytes, 3)); !errors.Is(err, ErrEpochOutOfRange) {
+		t.Fatalf("a removed device: %v", err)
+	}
+	// No tracked group: allowed as before.
+	if _, _, err := f.postBody(ctx, f.privateConv, f.owner, "untracked", f.epochMetadata(f.private.ID, 1, 4), c7Body(c7PostBytes, 4)); err != nil {
+		t.Fatalf("an untracked group: %v", err)
+	}
+}
+
 // Residual (d): a history_sync whose sealed body0 or any slot is all zero
 // bytes is junk (each part is AEAD output, never all zero when sealed
 // honestly). It is refused before it can mark the newcomer's epoch

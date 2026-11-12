@@ -72,8 +72,9 @@ func TestC3ChannelMoveRoutesAndMovedHistory(t *testing.T) {
 	if _, _, err := f.postBody(ctx, f.shared, f.owner, "late", route(1), c7Body(c7PostBytes, 3)); !errors.Is(err, ErrInvalidChannelRoute) {
 		t.Fatalf("post to the old route: %v", err)
 	}
-	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID); !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("second move to private: %v", err)
+	// The same request again is a replay (review L-6): the same move.
+	if again, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID); err != nil || !again.Replayed || again.Move.ToConversationID != private {
+		t.Fatalf("second move to private: %+v %v", again, err)
 	}
 	// A history_sync of the old group after the move is past the cutoff.
 	f.membershipEpoch(t, ctx, f.shared, 2)
