@@ -86,9 +86,13 @@ void main() {
   final skip = nativeCryptoSkip();
   late NativeCryptoBindings bindings;
 
-  Future<_Client> client(String name, {Set<String>? admins}) async {
+  /// A device of account `acct_[name]`; [device] names a second device of
+  /// the same account.
+  Future<_Client> client(String name,
+      {Set<String>? admins, String? device}) async {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
-    final c = await _Client.enroll(bindings, 'acct_$name', 'dev_$name');
+    final c =
+        await _Client.enroll(bindings, 'acct_$name', 'dev_${device ?? name}');
     addTearDown(c.service.dispose);
     c.service.conversationAuthority = _Authority(admins ?? const {'acct_bob'});
     c.service.c7SealedBodies = true;
@@ -378,6 +382,82 @@ void main() {
     }
     expect((await alice.view())!.ownNotice, isNull);
   }, skip: skip);
+  test(
+      'a message passed over as expired makes the group unsure in the same '
+      'commit as its tombstone', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    expect((await bob.view())!.status, 'ok');
+    final cursor = await bob.store.loadSyncCursor();
+    final event = bob.nextEvent();
+    await bob.service.c7CommitExpiredSkip(SyncEventCommit(
+      eventKey: 'expired:$event:srv_gone',
+      conversationId: _conversation,
+      expectedCursor: cursor,
+      cursor: event,
+    ));
+    expect(await bob.store.loadSyncCursor(), event);
+    expect((await bob.view())!.status, 'unsure');
+    final random = await bob.send('after the gap');
+    expect(await alice.sealedUnderChannelKey(random), isFalse);
+    // Alice met no gap: she still seals under the generation key.
+    final keyed = await alice.send('no gap here');
+    expect(await bob.sealedUnderChannelKey(keyed), isTrue);
+  }, skip: skip);
+
+  test(
+      "a second device of the same account applies the first's record as a "
+      'live record, and its own proposal for the same seq loses', () async {
+    final alice = await client('alice');
+    final phone = await client('alice', device: 'alice_phone');
+    final bob = await client('bob');
+    await group(alice, [phone, bob]);
+    // The phone creates the channel full: Alice's desktop takes it live.
+    await propose(phone, [alice, bob], full: true, create: true);
+    for (final device in [alice, phone, bob]) {
+      final view = (await device.view())!;
+      expect(view.full, isTrue);
+      expect(view.status, 'ok');
+      expect(view.pending, isFalse);
+    }
+    final post = await alice.send('from the desktop');
+    expect(await phone.sealedUnderChannelKey(post), isTrue);
+    await phone.receive(alice, post);
+    await bob.receive(alice, post);
+    // Both devices switch the setting off at once; the phone's record is
+    // sequenced first. On the desktop it is a live record from another
+    // device (not an own echo): it applies, and the desktop's own proposal
+    // for the same seq is lost at once; its echo later changes nothing.
+    final fromDesktop = await alice.service
+        .c7ProposeRecord(_conversation, _channel, full: false);
+    await alice.store.removePendingEnvelope(fromDesktop.idempotencyKey);
+    final fromPhone = await phone.service
+        .c7ProposeRecord(_conversation, _channel, full: false);
+    await phone.store.removePendingEnvelope(fromPhone.idempotencyKey);
+    expect((await alice.view())!.pending, isTrue);
+    await alice.receive(phone, fromPhone);
+    final taken = (await alice.view())!;
+    expect(taken.full, isFalse);
+    expect(taken.pending, isFalse);
+    expect(taken.ownNotice, 'lost');
+    await phone.receive(phone, fromPhone);
+    await bob.receive(phone, fromPhone);
+    await alice.receive(alice, fromDesktop);
+    await phone.receive(alice, fromDesktop);
+    await bob.receive(alice, fromDesktop);
+    final desktop = (await alice.view())!;
+    expect(desktop.pending, isFalse);
+    expect(desktop.ownNotice, 'lost');
+    final head = (await phone.book()).headBytes;
+    for (final device in [alice, phone, bob]) {
+      expect((await device.view())!.full, isFalse);
+      expect((await device.book()).headBytes, head);
+    }
+    expect((await phone.view())!.ownNotice, isNull);
+  }, skip: skip);
+
   test(
       'in a shared group, records name their channel, one history_sync '
       'covers every channel, and a newcomer adopts each', () async {

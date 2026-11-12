@@ -589,7 +589,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `history_sync`'s body0 is a VAP1 padded to exactly `P(N)` and its slots
   follow it under the reference's hash, so the sealed body is
   `P(N) + 124 + 700 N` bytes (vector `testing/vectors/c7-sync-v1.json`,
-  from an independent Python generator, checked by Rust, Go and Dart).
+  from an independent Python generator, opened by Dart, Go and Rust; Rust
+  checks the signature over hand-built fields, deviation 8).
   Receivers now accept a group-level two-part message only as a
   `history_sync` or its request. Deviations, residuals and what is not
   built (the newcomer's import and backward walk, the app wiring, C3

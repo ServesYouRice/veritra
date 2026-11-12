@@ -7555,13 +7555,21 @@ class AppState extends ChangeNotifier
   Future<void> _commitExpiredTombstone(
       SyncEvent event, String targetId, WakeRunContext? wake) async {
     final cursor = await localStore.loadSyncCursor();
-    await localStore.commitSyncEvent(SyncEventCommit(
+    final tombstone = SyncEventCommit(
       eventKey: 'expired:${event.id}:$targetId',
       conversationId: event.conversationId ?? '',
       expectedCursor: cursor,
       cursor: event.id,
       checkCanCommit: wake?.checkCanCommit,
-    ));
+    );
+    // C7: a message passed over as expired turns the group's full channels
+    // unsure, in the same transaction (decision 5).
+    final crypto = cryptoService;
+    if (crypto is C7HistoryService) {
+      await (crypto as C7HistoryService).c7CommitExpiredSkip(tombstone);
+      return;
+    }
+    await localStore.commitSyncEvent(tombstone);
   }
 
   ReceivedMessageEnvelope? _envelopeFromSyncEvent(SyncEvent event) {

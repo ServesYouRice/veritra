@@ -6,7 +6,8 @@ import '../core/roles/governance_commands.dart'
     show GovernanceCommands, GovernanceObservations;
 import '../storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
-import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
+import '../storage/local_store.dart'
+    show PendingMlsMessage, StoredCryptoState, SyncEventCommit;
 import '../core/device_lists.dart' show DeviceListPins, DeviceListVerifier;
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart'
@@ -647,6 +648,12 @@ abstract interface class C7HistoryService {
   /// Sends a due `history_sync` or request; returns the envelope it queued,
   /// or null when nothing was owed any more.
   Future<MessageEnvelope?> c7Send(C7Due due);
+
+  /// Commits [tombstone], sync passing over a message of its conversation
+  /// that its expiry proves gone (I33), with every `full` channel of that
+  /// group marked `unsure` in the same transaction (decision 5: a message
+  /// passed over as expired is one this device could not fully apply).
+  Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone);
 }
 
 /// Off by default. AppState enables this only for the current verified

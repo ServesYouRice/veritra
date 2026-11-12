@@ -159,6 +159,22 @@ class NativeCryptoService
             due, 'due', 'the app proposes a stale record again'),
       });
 
+  @override
+  Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone) =>
+      _serial(() async {
+        final miss = tombstone.conversationId.isEmpty
+            ? _c7None
+            : await _c7Miss(tombstone.conversationId);
+        await localStore.commitSyncEvent(SyncEventCommit(
+          eventKey: tombstone.eventKey,
+          conversationId: tombstone.conversationId,
+          expectedCursor: tombstone.expectedCursor,
+          cursor: tombstone.cursor,
+          checkCanCommit: tombstone.checkCanCommit,
+          c7Settings: <String, String?>{...tombstone.c7Settings, ...miss},
+        ));
+      });
+
   String? _c7PrivateChannel(String conversationId) => switch (_authority) {
         final ConversationCommunitySource source =>
           source.privateGroupChannel(conversationId),

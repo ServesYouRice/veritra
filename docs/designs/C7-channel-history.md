@@ -1021,10 +1021,13 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
   committer at once, others after 20 s plus up to 2 s per member, at most
   10 min, unless a `history_sync` carrying their own snapshot arrives).
   Own removal and a Welcome delete the group's C7 state (Trace 4).
-- **Unsure**: an undecryptable message (D54), an unapproved sender, a
-  missing or damaged body, a ratchet-advanced message, an invalid payload
-  and a misrouted C7 type mark every `full` channel of the group with the
-  group's current epoch. The `gen` trigger is below. `unsure` clears by a
+- **Unsure**: an undecryptable message (D54, which includes one beyond
+  the past-epoch window), an unapproved sender, a missing or damaged body,
+  a ratchet-advanced message (`SENDER_REMOVED` included), an invalid
+  payload, a misrouted C7 type, and a message or call signal sync passes
+  over as expired (I33's tombstone, committed by
+  `C7HistoryService.c7CommitExpiredSkip` in the same transaction) mark
+  every `full` channel of the group with the group's current epoch. The `gen` trigger is below. `unsure` clears by a
   record above the miss epoch or by a `history_sync` slot, for a later
   membership epoch, with the device's own head and current key.
 - **`history_sync`**: built from the snapshot fixed at merge, naming the
@@ -1043,8 +1046,12 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
   random key.
 - **Vector**: `testing/vectors/c7-sync-v1.json`, one whole `history_sync`
   as sent, made by an independent Python implementation
-  (`testing/vectors/c7-sync-v1.py`) and opened by Rust, Go (with the
-  server's size rule) and Dart.
+  (`testing/vectors/c7-sync-v1.py`). Dart opens it as sync does and
+  verifies its signature; Go checks the sealed length against the
+  server's size rule; Rust checks the layout, the AEAD of body0 and of
+  every slot, and the signature over fields it builds by hand (its
+  production `post_signed_fields` refuses the empty channel, deviation
+  8).
 
 **Deviations and interpretations (for the crypto review):**
 
@@ -1086,9 +1093,8 @@ the prefetch depth (owner question 1), the app wiring (a create record
 from `createChannel`, a work pass
 calling `c7DueWork` and `c7Send` after sync, the setting toggle and its
 system line), C3 conversion (`move`, its wrap, the server route and
-migrations 0088-0089), targeted-action sealing under generation keys, and
-the gaps in decision 5's skip list (a message passed over as expired is
-not yet an `unsure` trigger).
+migrations 0088-0089), and targeted-action sealing under generation
+keys.
 
 ## Open questions for the owner
 
