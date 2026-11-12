@@ -1,0 +1,265 @@
+{
+  "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+  "conversation_id": "conv_dv_vector",
+  "description": "L2-3 designated-verifier franking of a sealed message (owner decision 2026-11-12, crypto ABI 26): the X25519 static-DH tag of a franking commitment for each pinned owner report key, its kid, HKDF key and HMAC tag, designations sorted by kid, verify verdicts (1 valid, 0 mismatch, 2 not designated) and the public keys every implementation refuses (low-order points and non-canonical spellings). Every secret is a fixed test value. Rules: docs/crypto.md, Franking a sealed message. Checked by crypto/rust/src/l2_frank_tests.rs, server/internal/sealedsender/frank_dv_test.go (independent: Go x/crypto/curve25519 and the standard library) and mobile/test/l2_frank_dv_native_test.dart (FFI).",
+  "designations": [
+    {
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604",
+      "name": "one owner",
+      "owner_public_keys": [
+        "99953f4171f9c2778ffd929868c99a6baac1506e7278e212183a53578f516101"
+      ]
+    },
+    {
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "name": "three owners, given unsorted",
+      "owner_public_keys": [
+        "050d70e9855d9393fa93af79aecbf7040fbbfc9663bdd11155393267534ab85d",
+        "99953f4171f9c2778ffd929868c99a6baac1506e7278e212183a53578f516101",
+        "fefda884b60b88944ea7cacd12cd207fcf83dc46d6dc188a9fd1bfce8ff6db7a"
+      ]
+    },
+    {
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "name": "three owners with an all-zero and a low-order key skipped",
+      "owner_public_keys": [
+        "050d70e9855d9393fa93af79aecbf7040fbbfc9663bdd11155393267534ab85d",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "99953f4171f9c2778ffd929868c99a6baac1506e7278e212183a53578f516101",
+        "fefda884b60b88944ea7cacd12cd207fcf83dc46d6dc188a9fd1bfce8ff6db7a",
+        "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800"
+      ]
+    }
+  ],
+  "key_label": "veritra-frank-dv-v1 key",
+  "kid_label": "veritra-frank-dv-kid-v1",
+  "label": "veritra-frank-dv-v1",
+  "owners": [
+    {
+      "k": "233b0b5c6f50cd57fc63f06f13f3c6525347f5964fba2df53c9d1102a33432e7",
+      "kid": "6eb66d94ec64c9b3811bfcbbfac672f7",
+      "report_public": "99953f4171f9c2778ffd929868c99a6baac1506e7278e212183a53578f516101",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "tag": "090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604",
+      "tag_input": "766572697472612d6672616e6b2d64762d7631000e636f6e765f64765f766563746f72000e616363745f64765f73656e646572000d6465765f64765f73656e6465726eb66d94ec64c9b3811bfcbbfac672f7e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "x25519_secret": "e3280079ee64b950a6bcbf1a47fce2373f578db2017093cd402c72cc96c8942d",
+      "z": "956e75fbddde15daf55f74432b93d34e1a9baf1d2d0b357c6ce5a69f2b42935b"
+    },
+    {
+      "k": "b89b1660e04b735ee85824cdd15f5431fcac0d5ef0f9acd135270f175a35e741",
+      "kid": "c1d7f35e520718b25194c19827f0c2b3",
+      "report_public": "fefda884b60b88944ea7cacd12cd207fcf83dc46d6dc188a9fd1bfce8ff6db7a",
+      "report_seed": "3232323232323232323232323232323232323232323232323232323232323232",
+      "tag": "14ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608",
+      "tag_input": "766572697472612d6672616e6b2d64762d7631000e636f6e765f64765f766563746f72000e616363745f64765f73656e646572000d6465765f64765f73656e646572c1d7f35e520718b25194c19827f0c2b3e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "x25519_secret": "e6ca8e41c4ece2b2c735efebd42a3471be161bfbb73f9fbb483faf5b8f31e5a0",
+      "z": "7ccf2b569f0845be88a4487f29c19e4d2e891b94b085ea79e787510a2a72e46f"
+    },
+    {
+      "k": "712e9ce13c1af4bcbd16be1c823a03f07ce7fa5061e810883b900f75dd7414bc",
+      "kid": "ea24124554bc9ed5f97030e0bc970efb",
+      "report_public": "050d70e9855d9393fa93af79aecbf7040fbbfc9663bdd11155393267534ab85d",
+      "report_seed": "3333333333333333333333333333333333333333333333333333333333333333",
+      "tag": "2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "tag_input": "766572697472612d6672616e6b2d64762d7631000e636f6e765f64765f766563746f72000e616363745f64765f73656e646572000d6465765f64765f73656e646572ea24124554bc9ed5f97030e0bc970efbe84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "x25519_secret": "84a7b7eed3c60aac4c48ebaee2afbbc07ab5a0821e8a8e79a99dab46cbff5403",
+      "z": "6b0afcaedc728bbc869341c7a78a96223f9c7fe1828a82dd7ea61a887fe2585d"
+    }
+  ],
+  "refused_public_keys": [
+    {
+      "key": "0000000000000000000000000000000000000000000000000000000000000000",
+      "kind": "low_order"
+    },
+    {
+      "key": "0000000000000000000000000000000000000000000000000000000000000080",
+      "kind": "low_order"
+    },
+    {
+      "key": "0100000000000000000000000000000000000000000000000000000000000000",
+      "kind": "low_order"
+    },
+    {
+      "key": "0100000000000000000000000000000000000000000000000000000000000080",
+      "kind": "low_order"
+    },
+    {
+      "key": "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b800",
+      "kind": "low_order"
+    },
+    {
+      "key": "e0eb7a7c3b41b8ae1656e3faf19fc46ada098deb9c32b1fd866205165f49b880",
+      "kind": "low_order"
+    },
+    {
+      "key": "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157",
+      "kind": "low_order"
+    },
+    {
+      "key": "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f11d7",
+      "kind": "low_order"
+    },
+    {
+      "key": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "kind": "low_order"
+    },
+    {
+      "key": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "kind": "low_order"
+    },
+    {
+      "key": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "kind": "low_order"
+    },
+    {
+      "key": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "kind": "low_order"
+    },
+    {
+      "key": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+      "kind": "low_order"
+    },
+    {
+      "key": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "kind": "low_order"
+    },
+    {
+      "key": "99953f4171f9c2778ffd929868c99a6baac1506e7278e212183a53578f516181",
+      "kind": "non_canonical"
+    },
+    {
+      "key": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268ac4",
+      "kind": "non_canonical"
+    }
+  ],
+  "sender": {
+    "account_id": "acct_dv_sender",
+    "device_id": "dev_dv_sender",
+    "frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44",
+    "frank_secret": "2121212121212121212121212121212121212121212121212121212121212121"
+  },
+  "verify_cases": [
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "valid owner 1",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 1,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "valid owner 2",
+      "report_seed": "3232323232323232323232323232323232323232323232323232323232323232",
+      "result": 1,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "valid owner 3",
+      "report_seed": "3333333333333333333333333333333333333333333333333333333333333333",
+      "result": 1,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "not designated (rotated owner key)",
+      "report_seed": "3434343434343434343434343434343434343434343434343434343434343434",
+      "result": 2,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7080fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "tampered tag",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 0,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_other",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "other account",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 0,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_other",
+      "name": "other device",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 0,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_other",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "other conversation",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 0,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e94e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "other commitment",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 0,
+      "sender_frank_public": "7d34a4815fa6b982535e60af3bd9b49556816080f1641ff81d2b7c8ae8268a44"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "other sender key",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 0,
+      "sender_frank_public": "0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"
+    },
+    {
+      "account_id": "acct_dv_sender",
+      "commit": "e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a",
+      "conversation_id": "conv_dv_vector",
+      "d": "6eb66d94ec64c9b3811bfcbbfac672f7090fc7fd46c7baf1701f96237fa8aa10b4bf0450d0c8da3645ef2a97e9493604c1d7f35e520718b25194c19827f0c2b314ecd8c595e3ea7773c9fc41b439cd950f02de20189ae132e754bb44e97b0608ea24124554bc9ed5f97030e0bc970efb2a8b2b9163fccb7f7f1c9f73a1ce8e32f3b89769292d1883bab64099489eef11",
+      "device_id": "dev_dv_sender",
+      "name": "low-order sender key",
+      "report_seed": "3131313131313131313131313131313131313131313131313131313131313131",
+      "result": 0,
+      "sender_frank_public": "5f9c95bca3508c24b1d0b1559c83ef5b04445cc4581c8e86d8224eddd09f1157"
+    }
+  ],
+  "version": 1
+}

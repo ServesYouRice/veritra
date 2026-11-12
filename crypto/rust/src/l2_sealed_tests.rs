@@ -1,5 +1,4 @@
 use super::*;
-use crate::mls::{MemberAdd, MlsDevice};
 use rand_core::OsRng;
 use voprf::{BlindedElement, PoprfServer};
 
@@ -248,148 +247,11 @@ fn shared_vector_exchange_and_key_id() {
     assert_eq!(&state[5..37], pk.as_slice());
 }
 
-#[test]
-fn shared_vector_frank_signature() {
-    let vector = vector();
-    let case = &vector["frank_sig"];
-    let input = frank_sig_input(
-        case["conversation_id"].as_str().unwrap().as_bytes(),
-        case["account_id"].as_str().unwrap().as_bytes(),
-        case["device_id"].as_str().unwrap().as_bytes(),
-        &unhex(case["commit"].as_str().unwrap()),
-    )
-    .unwrap();
-    assert_eq!(hex(&input), case["input"].as_str().unwrap());
-    let key = unhex(case["signing_key"].as_str().unwrap());
-    let signature = unhex(case["signature"].as_str().unwrap());
-    let check = |conversation: &str, account: &str, device: &str, signature: &[u8]| {
-        frank_verify(
-            &key,
-            conversation.as_bytes(),
-            account.as_bytes(),
-            device.as_bytes(),
-            &unhex(case["commit"].as_str().unwrap()),
-            signature,
-        )
-        .unwrap()
-    };
-    let conversation = case["conversation_id"].as_str().unwrap();
-    let account = case["account_id"].as_str().unwrap();
-    let device = case["device_id"].as_str().unwrap();
-    assert!(check(conversation, account, device, &signature));
-    // Another claimed sender, another conversation, a damaged signature.
-    assert!(!check(conversation, account, "dev_other", &signature));
-    assert!(!check(conversation, "acct_other", device, &signature));
-    assert!(!check("conv_other", account, device, &signature));
-    let mut bad = signature.clone();
-    bad[0] ^= 1;
-    assert!(!check(conversation, account, device, &bad));
-    assert_eq!(
-        frank_verify(&key, b"c", b"a", b"d", &[0u8; 31], &signature),
-        Err(SealedError::InvalidInput)
-    );
-}
-
-fn device(account: &str, device: &str) -> MlsDevice {
-    MlsDevice::new(account.as_bytes(), device.as_bytes()).unwrap()
-}
-
-/// C6 still works with sealed sender: a member's sealed message is signed
-/// by its own leaf key, the receiver finds that key from MLS, and a member
-/// who tries to frame another cannot produce the victim's signature.
-#[test]
-fn sealed_frank_binds_the_real_sender_and_framing_fails() {
-    let alice = device("acct_fs_alice", "dev_fs_alice");
-    let bob = device("acct_fs_bob", "dev_fs_bob");
-    let mallory = device("acct_fs_mallory", "dev_fs_mallory");
-    let conversation = b"conv_fs";
-    let mut group = alice.create_group(conversation).unwrap();
-    let bob_package = bob.create_key_package().unwrap();
-    let mallory_package = mallory.create_key_package().unwrap();
-    let staged = alice
-        .stage_membership_commit(
-            &mut group,
-            &[
-                MemberAdd {
-                    key_package: &bob_package,
-                    account_id: b"acct_fs_bob",
-                    device_id: b"dev_fs_bob",
-                },
-                MemberAdd {
-                    key_package: &mallory_package,
-                    account_id: b"acct_fs_mallory",
-                    device_id: b"dev_fs_mallory",
-                },
-            ],
-            &[],
-        )
-        .unwrap();
-    alice.merge_pending_commit(&mut group).unwrap();
-    let mut bob_group = bob.join_group(conversation, &staged.welcome).unwrap();
-    let mut mallory_group = mallory.join_group(conversation, &staged.welcome).unwrap();
-
-    // Alice sends sealed: commitment and signature ride inside MLS.
-    let commit = [0x42u8; 32];
-    let signature = alice.l2_frank_sign(conversation, &commit).unwrap();
-    let ciphertext = alice.encrypt(&mut group, b"payload").unwrap();
-    let (_, account, device_id) = bob.decrypt_sealed(&mut bob_group, &ciphertext).unwrap();
-    let key = bob
-        .member_signature_key(&bob_group, &account, &device_id)
-        .unwrap();
-    assert_eq!(key, alice.signing_public_key());
-    assert!(frank_verify(
-        &key,
-        conversation,
-        &account,
-        &device_id,
-        &commit,
-        &signature
-    )
-    .unwrap());
-
-    // Mallory frames Alice: her commitment names Alice, but only her own
-    // key signs. Receivers find Mallory's key from MLS; a verifier holding
-    // Alice's listed key refuses the reveal.
-    let framed = mallory.l2_frank_sign(conversation, &commit).unwrap();
-    let ciphertext = mallory.encrypt(&mut mallory_group, b"payload").unwrap();
-    let (_, account, device_id) = bob.decrypt_sealed(&mut bob_group, &ciphertext).unwrap();
-    assert_eq!(account, b"acct_fs_mallory");
-    let mallory_key = bob
-        .member_signature_key(&bob_group, &account, &device_id)
-        .unwrap();
-    // Signed over Mallory's own identity: never valid for Alice's.
-    assert!(!frank_verify(
-        &mallory_key,
-        conversation,
-        b"acct_fs_alice",
-        b"dev_fs_alice",
-        &commit,
-        &framed
-    )
-    .unwrap());
-    assert!(!frank_verify(
-        alice.signing_public_key(),
-        conversation,
-        b"acct_fs_alice",
-        b"dev_fs_alice",
-        &commit,
-        &framed
-    )
-    .unwrap());
-    // A member not in the tree has no key.
-    assert!(bob
-        .member_signature_key(&bob_group, b"acct_fs_nobody", b"dev_x")
-        .is_err());
-    // Wrong commitment length is refused at signing.
-    assert!(alice.l2_frank_sign(conversation, &[0u8; 31]).is_err());
-}
-
 /// Writes `testing/vectors/l2-sealed-v1.json` (run once with --ignored;
 /// the committed file is what every language checks).
 #[test]
 #[ignore]
 fn generate_vector() {
-    use ed25519_dalek::{Signer, SigningKey};
     let seed = [0x5cu8; 32];
     let key_info = "veritra-l2-vector";
     let server = PoprfServer::<Ristretto255>::new_from_seed(&seed, key_info.as_bytes()).unwrap();
@@ -399,16 +261,6 @@ fn generate_vector() {
     let request = token_request(&pk, conversation.as_bytes(), epoch, 2, &mut OsRng).unwrap();
     let response = evaluate(&server, &request.request, &info);
     let tokens = token_finalize(&request.state, &response).unwrap();
-    let commit = unhex("e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a");
-    let signing = SigningKey::from_bytes(&[0x11u8; 32]);
-    let input = frank_sig_input(
-        conversation.as_bytes(),
-        b"acct_l2_vector",
-        b"dev_l2_vector",
-        &commit,
-    )
-    .unwrap();
-    let signature = signing.sign(&input).to_bytes();
     let rfc = serde_json::json!({
         "seed": "a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3a3",
         "key_info": "74657374206b6579",
@@ -430,7 +282,7 @@ fn generate_vector() {
         ]
     });
     let out = serde_json::json!({
-        "description": "L2-3 sealed sender (D122): RFC 9497 POPRF ristretto255-SHA512 token exchange, info layout, key id, the RFC's own POPRF vectors, and the franking signature of a sealed message. Rules: docs/crypto.md, Sealed sender with VOPRF tokens.",
+        "description": "L2-3 sealed sender (D122): RFC 9497 POPRF ristretto255-SHA512 token exchange, info layout, key id and the RFC's own POPRF vectors (sealed franking is l2-frank-dv-v1.json). Rules: docs/crypto.md, Sealed sender with VOPRF tokens.",
         "suite": SUITE,
         "server_seed": hex(&seed),
         "key_info": key_info,
@@ -447,16 +299,6 @@ fn generate_vector() {
             "request": hex(&request.request),
             "response": hex(&response),
             "tokens": hex(&tokens),
-        },
-        "frank_sig": {
-            "conversation_id": conversation,
-            "account_id": "acct_l2_vector",
-            "device_id": "dev_l2_vector",
-            "commit": hex(&commit),
-            "signing_seed": hex(&[0x11u8; 32]),
-            "signing_key": hex(signing.verifying_key().as_bytes()),
-            "input": hex(&input),
-            "signature": hex(&signature),
         },
         "rfc9497_poprf_ristretto255": rfc,
     });

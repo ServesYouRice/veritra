@@ -1526,6 +1526,7 @@ dependencies = [
  "sha2 0.11.1",
  "tls_codec",
  "voprf",
+ "x25519-dalek 3.0.0",
 ]
 
 [[package]]
@@ -2108,6 +2109,7 @@ checksum = "e7e8131a03190127fb2263afc72b322ecadae46b6ff8c6f399ff5d02f5559af6"
 dependencies = [
  "curve25519-dalek 5.0.0",
  "rand_core 0.10.1",
+ "zeroize",
 ]
 
 [[package]]

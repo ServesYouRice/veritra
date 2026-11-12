@@ -33,6 +33,7 @@ if grep -Eq '^openmls[[:space:]]*=' "$ROOT/crypto/rust/Cargo.toml"; then
   check_notice "tls_codec"
   check_notice "voprf"
   check_notice "rand_core"
+  check_notice "x25519-dalek"
 fi
 
 if grep -Eq '^[[:space:]]+flutter_secure_storage:' "$ROOT/mobile/pubspec.yaml"; then

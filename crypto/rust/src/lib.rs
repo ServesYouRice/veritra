@@ -16,6 +16,7 @@ pub mod c7;
 mod ffi;
 pub mod l1;
 pub mod l2;
+pub mod l2_frank;
 pub mod l2_sealed;
 // K2 primitives are internal until the complete reviewed transfer path is wired.
 #[allow(dead_code)]

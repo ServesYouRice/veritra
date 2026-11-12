@@ -1,13 +1,13 @@
 //! L2-3 sealed sender (D122, ABI 26): the client half of the RFC 9497 POPRF
-//! tokens a device spends to post without naming itself, and the franking
-//! signature that keeps a sealed message reportable.
+//! tokens a device spends to post without naming itself. What keeps a
+//! sealed message reportable is designated-verifier franking, in
+//! `crate::l2_frank` (there is no franking signature).
 //!
 //! Rules: `docs/crypto.md`, "Sealed sender with VOPRF tokens". The server
 //! half (Go, `server/internal/sealedsender`) evaluates the blinded nonces
 //! under `info` and later recomputes the output of a spent nonce; neither
 //! side can link the two. Vectors: `testing/vectors/l2-sealed-v1.json`.
 
-use ed25519_dalek::{Signature, VerifyingKey};
 use voprf::{EvaluationElement, Group, PoprfClient, Proof, Ristretto255};
 
 type Suite = Ristretto255;
@@ -18,10 +18,6 @@ pub const SUITE: &str = "ristretto255-SHA512";
 pub const INFO_LABEL: &[u8] = b"veritra-l2-sealed-v1";
 /// Prefix hashed with the server's public key into its `key_id`.
 pub const KEY_ID_LABEL: &[u8] = b"veritra-l2-key-v1";
-/// Prefix of the bytes a sender signs over a franking commitment. ASCII
-/// `v` read as an RFC 9420 varint opens a two-byte length that would have
-/// to be followed by `MLS 1.0 `, so this can never be an MLS SignContent.
-pub const FRANK_SIG_LABEL: &[u8] = b"veritra-frank-sig-v1";
 /// The state blob's magic.
 pub const STATE_MAGIC: &[u8; 4] = b"VLT1";
 
@@ -34,9 +30,6 @@ pub const PROOF_BYTES: usize = 64;
 pub const KEY_ID_BYTES: usize = 16;
 pub const CLIENT_STATE_BYTES: usize = 64;
 pub const TOKEN_BYTES: usize = NONCE_BYTES + OUTPUT_BYTES;
-pub const COMMIT_BYTES: usize = 32;
-pub const SIGNATURE_BYTES: usize = 64;
-pub const SIGNING_KEY_BYTES: usize = 32;
 /// Conversation, account and device ids, as everywhere at this boundary.
 pub const MAX_ID_BYTES: usize = 128;
 
@@ -197,59 +190,6 @@ pub fn token_finalize(state: &[u8], response: &[u8]) -> Result<Vec<u8>, SealedEr
         tokens.extend_from_slice(&output);
     }
     Ok(tokens)
-}
-
-fn push_id(out: &mut Vec<u8>, id: &[u8]) -> Result<(), SealedError> {
-    if id.is_empty() || id.len() > MAX_ID_BYTES {
-        return Err(SealedError::InvalidInput);
-    }
-    out.extend_from_slice(&(id.len() as u16).to_be_bytes());
-    out.extend_from_slice(id);
-    Ok(())
-}
-
-/// The bytes a sealed sender signs over its franking commitment:
-/// `label || lp(conversation) || lp(account) || lp(device) || commit`.
-pub fn frank_sig_input(
-    conversation_id: &[u8],
-    account_id: &[u8],
-    device_id: &[u8],
-    commit: &[u8],
-) -> Result<Vec<u8>, SealedError> {
-    if commit.len() != COMMIT_BYTES {
-        return Err(SealedError::InvalidInput);
-    }
-    let mut out = FRANK_SIG_LABEL.to_vec();
-    push_id(&mut out, conversation_id)?;
-    push_id(&mut out, account_id)?;
-    push_id(&mut out, device_id)?;
-    out.extend_from_slice(commit);
-    Ok(out)
-}
-
-/// Strict Ed25519 verification of a franking signature. `Ok(false)` for a
-/// signature or key that does not verify; an error only for wrong lengths.
-pub fn frank_verify(
-    signing_key: &[u8],
-    conversation_id: &[u8],
-    account_id: &[u8],
-    device_id: &[u8],
-    commit: &[u8],
-    signature: &[u8],
-) -> Result<bool, SealedError> {
-    let input = frank_sig_input(conversation_id, account_id, device_id, commit)?;
-    let key: &[u8; SIGNING_KEY_BYTES] = signing_key
-        .try_into()
-        .map_err(|_| SealedError::InvalidInput)?;
-    let signature: &[u8; SIGNATURE_BYTES] = signature
-        .try_into()
-        .map_err(|_| SealedError::InvalidInput)?;
-    let Ok(key) = VerifyingKey::from_bytes(key) else {
-        return Ok(false);
-    };
-    Ok(key
-        .verify_strict(&input, &Signature::from_bytes(signature))
-        .is_ok())
 }
 
 #[cfg(test)]

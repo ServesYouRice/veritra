@@ -1818,77 +1818,136 @@ pub unsafe extern "C" fn pm_crypto_l2_token_finalize(
     })
 }
 
-/// ABI 26: this device's Ed25519 signature (its MLS signing key) over
-/// `"veritra-frank-sig-v1" || lp(conversation_id) || lp(own account id) ||
-/// lp(own device id) || commit` for a sealed message's 32-byte franking
-/// commitment. The identity is always the device's own.
+/// ABI 26 (L2-3): this device's 32-byte X25519 franking public key, the key
+/// its own L1 entry must list (change 7) for its sealed messages to be
+/// provable to an owner. Public; the secret never leaves Rust.
 ///
 /// # Safety
-/// `handle` must be live, slices readable and `out_signature` writable.
+/// `handle` must be live and `out_key` writable.
 #[no_mangle]
-pub unsafe extern "C" fn pm_crypto_l2_frank_sign(
+pub unsafe extern "C" fn pm_crypto_l2_frank_public_key(
     handle: *mut PmCryptoHandle,
-    conversation_id: PmByteSlice,
-    commit: PmByteSlice,
-    out_signature: *mut PmOwnedBuffer,
+    out_key: *mut PmOwnedBuffer,
 ) -> i32 {
     ffi_call(|| {
-        if out_signature.is_null() {
+        if out_key.is_null() {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
-        let conversation_id = unsafe { borrowed(conversation_id, crate::l2_sealed::MAX_ID_BYTES)? };
-        let commit = unsafe { borrowed(commit, crate::l2_sealed::COMMIT_BYTES)? };
-        if commit.len() != crate::l2_sealed::COMMIT_BYTES {
-            return Err(PM_CRYPTO_INVALID_ARGUMENT);
-        }
-        let signature = unsafe {
-            with_device(handle, |device| {
-                device
-                    .l2_frank_sign(conversation_id, commit)
-                    .map_err(|_| PM_CRYPTO_ERROR)
-            })?
-        };
-        unsafe { output(out_signature, signature) }
+        let key = unsafe { with_device(handle, |device| Ok(device.l2_frank_public_key()))? };
+        unsafe { output(out_key, key.to_vec()) }
     })
 }
 
-/// ABI 26: strict Ed25519 check of a sealed message's franking signature
-/// under `signing_key`. Writes 1 or 0 to `out_valid`; wrong lengths are
+/// ABI 26 (L2-3): the designated-verifier franking `d` of a sealed message
+/// (`docs/crypto.md`, "Franking a sealed message"): one 48-byte entry
+/// (`kid || tag`) per owner report key in `owner_keys` (`n × 32` bytes,
+/// `1 ≤ n ≤ 16`), sorted by kid, over this device's own identity and the
+/// 32-byte `commit`. `listed_key` is the franking key this device's own L1
+/// entry lists; any other key is `PM_CRYPTO_ERROR` and nothing is made.
+/// Owner keys that are not canonical, low-order or give an all-zero shared
+/// secret are skipped, so `out_designation` holds `m × 48` bytes with
+/// `m ≤ n`; with `m = 0` it is the empty buffer (the plain form).
+///
+/// # Safety
+/// `handle` must be live, slices readable and `out_designation` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_l2_frank_designate(
+    handle: *mut PmCryptoHandle,
+    conversation_id: PmByteSlice,
+    commit: PmByteSlice,
+    listed_key: PmByteSlice,
+    owner_keys: PmByteSlice,
+    out_designation: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_designation.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let conversation_id = unsafe { borrowed(conversation_id, crate::l2_frank::MAX_ID_BYTES)? };
+        let commit = unsafe { borrowed(commit, crate::l2_frank::COMMIT_BYTES)? };
+        let listed_key = unsafe { borrowed(listed_key, crate::l2_frank::KEY_BYTES)? };
+        let owner_keys = unsafe {
+            borrowed(
+                owner_keys,
+                crate::l2_frank::MAX_VERIFIERS * crate::l2_frank::KEY_BYTES,
+            )?
+        };
+        if commit.len() != crate::l2_frank::COMMIT_BYTES
+            || listed_key.len() != crate::l2_frank::KEY_BYTES
+            || !owner_keys.len().is_multiple_of(crate::l2_frank::KEY_BYTES)
+        {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let designation = unsafe {
+            with_device(handle, |device| {
+                device
+                    .l2_frank_designate(conversation_id, commit, listed_key, owner_keys)
+                    .map_err(|error| match error {
+                        MlsError::InvalidMessage => PM_CRYPTO_INVALID_ARGUMENT,
+                        _ => PM_CRYPTO_ERROR,
+                    })
+            })?
+        };
+        // An empty designation is a valid answer (no usable owner key).
+        // SAFETY: checked non-null above.
+        unsafe { out_designation.write(into_owned(designation)) };
+        Ok(())
+    })
+}
+
+/// ABI 26 (L2-3): an owner's check of a sealed report's designation `d`
+/// with its C6 report `seed` (the X25519 pair is derived inside; no call
+/// returns the private key). `sender_frank_key` must be the claimed
+/// device's franking key from the claimed account's L1 list. Writes to
+/// `out_result`: 1 the tag for this owner's key checks, 0 it does not (or
+/// the designation or the sender key is unusable), 2 the designation has no
+/// entry for this owner's key. Wrong id, seed or commitment lengths are
 /// `PM_CRYPTO_INVALID_ARGUMENT`.
 ///
 /// # Safety
-/// Every slice must be readable and `out_valid` writable.
+/// Every slice must be readable and `out_result` writable.
 #[no_mangle]
-pub unsafe extern "C" fn pm_crypto_l2_frank_verify(
-    signing_key: PmByteSlice,
+pub unsafe extern "C" fn pm_crypto_l2_frank_dv_verify(
+    seed: PmByteSlice,
+    sender_frank_key: PmByteSlice,
     conversation_id: PmByteSlice,
     account_id: PmByteSlice,
     device_id: PmByteSlice,
     commit: PmByteSlice,
-    signature: PmByteSlice,
-    out_valid: *mut u8,
+    designation: PmByteSlice,
+    out_result: *mut u8,
 ) -> i32 {
     ffi_call(|| {
-        if out_valid.is_null() {
+        if out_result.is_null() {
             return Err(PM_CRYPTO_INVALID_ARGUMENT);
         }
-        let signing_key = unsafe { borrowed(signing_key, 64)? };
-        let conversation_id = unsafe { borrowed(conversation_id, crate::l2_sealed::MAX_ID_BYTES)? };
-        let account_id = unsafe { borrowed(account_id, crate::l2_sealed::MAX_ID_BYTES)? };
-        let device_id = unsafe { borrowed(device_id, crate::l2_sealed::MAX_ID_BYTES)? };
+        let seed = unsafe { borrowed(seed, report::SEED_BYTES)? };
+        let sender_frank_key = unsafe { borrowed(sender_frank_key, 64)? };
+        let conversation_id = unsafe { borrowed(conversation_id, crate::l2_frank::MAX_ID_BYTES)? };
+        let account_id = unsafe { borrowed(account_id, crate::l2_frank::MAX_ID_BYTES)? };
+        let device_id = unsafe { borrowed(device_id, crate::l2_frank::MAX_ID_BYTES)? };
         let commit = unsafe { borrowed(commit, 64)? };
-        let signature = unsafe { borrowed(signature, 128)? };
-        let valid = crate::l2_sealed::frank_verify(
-            signing_key,
+        let designation = unsafe {
+            borrowed(
+                designation,
+                (crate::l2_frank::MAX_VERIFIERS + 1) * crate::l2_frank::ENTRY_BYTES,
+            )?
+        };
+        let verdict = crate::l2_frank::verify_with_report_seed(
+            seed,
+            sender_frank_key,
             conversation_id,
             account_id,
             device_id,
             commit,
-            signature,
+            designation,
         )
-        .map_err(sealed_error)?;
+        .map_err(|error| match error {
+            crate::l2_frank::DvError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
+            crate::l2_frank::DvError::Crypto => PM_CRYPTO_ERROR,
+        })?;
         // SAFETY: checked non-null above; the caller provides one byte.
-        unsafe { out_valid.write(u8::from(valid)) };
+        unsafe { out_result.write(verdict as u8) };
         Ok(())
     })
 }
@@ -2445,6 +2504,10 @@ mod l1_tests;
 #[cfg(test)]
 #[path = "ffi/c4_tests.rs"]
 mod c4_tests;
+
+#[cfg(test)]
+#[path = "ffi/l2_frank_tests.rs"]
+mod l2_frank_tests;
 
 #[cfg(test)]
 mod tests {

@@ -77,6 +77,49 @@ pub(crate) fn decode_held_section(bytes: &[u8]) -> Result<Option<SecretVLBytes>,
     Ok(Some(SecretVLBytes::new(bytes[5..].to_vec())))
 }
 
+/// L2-3 (ABI 26): the sealed record's franking-key section, after the held
+/// seed: `"VFK1" | u8 1 | [32] secret`. A record written before it has
+/// none, and the device makes its key when it is restored.
+pub(crate) const FRANK_SECTION_MAGIC: &[u8; 4] = b"VFK1";
+pub(crate) const FRANK_SECTION_BYTES: usize = 4 + 1 + 32;
+
+pub(crate) fn encode_frank_section(secret: &[u8; 32]) -> SecretVLBytes {
+    let mut out = SecretVLBytes::new(Vec::with_capacity(FRANK_SECTION_BYTES));
+    for byte in FRANK_SECTION_MAGIC
+        .iter()
+        .chain([1u8].iter())
+        .chain(secret.iter())
+    {
+        out.push(*byte);
+    }
+    out
+}
+
+/// The device record's sections after the transfers: an optional held
+/// seed, then an optional franking secret, in that order and nothing else.
+pub(crate) fn decode_device_sections(
+    bytes: &[u8],
+) -> Result<(Option<SecretVLBytes>, Option<x25519_dalek::StaticSecret>), MlsError> {
+    let (held, frank) = if bytes.starts_with(HELD_SECTION_MAGIC) {
+        if bytes.len() < HELD_SECTION_BYTES {
+            return Err(MlsError::InvalidState);
+        }
+        bytes.split_at(HELD_SECTION_BYTES)
+    } else {
+        (&bytes[..0], bytes)
+    };
+    let held = decode_held_section(held)?;
+    if frank.is_empty() {
+        return Ok((held, None));
+    }
+    if frank.len() != FRANK_SECTION_BYTES || &frank[..4] != FRANK_SECTION_MAGIC || frank[4] != 1 {
+        return Err(MlsError::InvalidState);
+    }
+    let secret =
+        crate::l2_frank::secret_from_bytes(&frank[5..]).map_err(|_| MlsError::InvalidState)?;
+    Ok((held, Some(secret)))
+}
+
 impl MlsDevice {
     /// Signs a device-list body as this device (signer kind 1) and returns
     /// the 64-byte signature over

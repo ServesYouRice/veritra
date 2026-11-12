@@ -2,7 +2,6 @@ package sealedsender
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"os"
@@ -27,16 +26,6 @@ type vector struct {
 		Response string `json:"response"`
 		Tokens   string `json:"tokens"`
 	} `json:"exchange"`
-	FrankSig struct {
-		ConversationID string `json:"conversation_id"`
-		AccountID      string `json:"account_id"`
-		DeviceID       string `json:"device_id"`
-		Commit         string `json:"commit"`
-		SigningSeed    string `json:"signing_seed"`
-		SigningKey     string `json:"signing_key"`
-		Input          string `json:"input"`
-		Signature      string `json:"signature"`
-	} `json:"frank_sig"`
 	RFC struct {
 		Seed    string `json:"seed"`
 		KeyInfo string `json:"key_info"`
@@ -217,33 +206,5 @@ func TestEpoch(t *testing.T) {
 	}
 	if got := Epoch(time.Unix(20405*86400, 0)); got != 20405 {
 		t.Fatalf("epoch %d", got)
-	}
-}
-
-func TestVectorFrankSignature(t *testing.T) {
-	f := loadVector(t).FrankSig
-	commit := unhex(t, f.Commit)
-	input, err := FrankSignatureInput(f.ConversationID, f.AccountID, f.DeviceID, commit)
-	if err != nil || hex.EncodeToString(input) != f.Input {
-		t.Fatalf("input %x (%v)", input, err)
-	}
-	priv := ed25519.NewKeyFromSeed(unhex(t, f.SigningSeed))
-	if hex.EncodeToString(priv.Public().(ed25519.PublicKey)) != f.SigningKey {
-		t.Fatal("signing key mismatch")
-	}
-	if hex.EncodeToString(ed25519.Sign(priv, input)) != f.Signature {
-		t.Fatal("signature mismatch")
-	}
-	key, sig := unhex(t, f.SigningKey), unhex(t, f.Signature)
-	if !VerifyFrankSignature(key, f.ConversationID, f.AccountID, f.DeviceID, commit, sig) {
-		t.Fatal("vector signature does not verify")
-	}
-	if VerifyFrankSignature(key, f.ConversationID, f.AccountID, "dev_other", commit, sig) ||
-		VerifyFrankSignature(key, f.ConversationID, "acct_other", f.DeviceID, commit, sig) ||
-		VerifyFrankSignature(key, "conv_other", f.AccountID, f.DeviceID, commit, sig) {
-		t.Fatal("signature verified for another identity")
-	}
-	if _, err := FrankSignatureInput(f.ConversationID, f.AccountID, f.DeviceID, commit[:31]); err == nil {
-		t.Fatal("short commit accepted")
 	}
 }
