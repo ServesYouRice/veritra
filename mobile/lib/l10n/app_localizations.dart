@@ -7293,6 +7293,24 @@ abstract class AppLocalizations {
   /// **'People who join later won\'t see earlier posts. Members who already have them keep them.'**
   String get channelHistoryOffConfirm;
 
+  /// No description provided for @channelHistoryProofConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.'**
+  String get channelHistoryProofConfirm;
+
+  /// No description provided for @channelHistoryProofLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Posts can be proven to be their author\'s'**
+  String get channelHistoryProofLine;
+
+  /// No description provided for @channelHistoryProofAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on'**
+  String get channelHistoryProofAccept;
+
   /// No description provided for @channelHistoryLineFull.
   ///
   /// In en, this message translates to:

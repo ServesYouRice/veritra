@@ -6,6 +6,7 @@ import '../../crypto/crypto_service.dart' show C7ChannelView;
 import '../../crypto/community_info_codec.dart';
 import '../../crypto/profile_record_codec.dart';
 import '../../l10n/l10n.dart';
+import 'channel_history_warning.dart';
 
 /// Edits through encrypted records only. Failed saves keep the draft open.
 class EditInfoDialog extends StatefulWidget {
@@ -162,31 +163,14 @@ class _ChannelHistorySettingState extends State<ChannelHistorySetting> {
       widget.state.channelHistory(widget.channel);
   bool _sending = false;
 
-  void _reload() =>
-      setState(() => _view = widget.state.channelHistory(widget.channel));
+  // A block, not an arrow: setState must not be handed the Future.
+  void _reload() => setState(() {
+        _view = widget.state.channelHistory(widget.channel);
+      });
 
   Future<void> _change(bool full) async {
-    final l10n = context.l10n;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(l10n.channelHistoryTitle),
-        content: Text(full
-            ? l10n.channelHistoryOnConfirm
-            : l10n.channelHistoryOffConfirm),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(l10n.commonCancel),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(l10n.commonContinue),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+    final confirmed = await confirmChannelHistory(context, full: full);
+    if (!confirmed || !mounted) return;
     setState(() => _sending = true);
     await widget.state.setChannelHistory(widget.channel, full: full);
     if (!mounted) return;
@@ -214,7 +198,9 @@ class _ChannelHistorySettingState extends State<ChannelHistorySetting> {
         return SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: Text(l10n.channelHistoryFullLabel),
-          subtitle: note == null ? null : Text(note),
+          subtitle: Text(note == null
+              ? l10n.channelHistoryProofLine
+              : '${l10n.channelHistoryProofLine}\n$note'),
           value: view.full,
           onChanged: _sending || view.pending ? null : _change,
         );

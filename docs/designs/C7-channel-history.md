@@ -803,6 +803,19 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   sees no difference, and it can already delete bodies.
 - Until L1, a server that adds a hidden device can read new live posts and
   forge history from that device: the same limit as live groups today.
+- **Posts in a `full` channel are not deniable** (owner answer 2026-11-12,
+  "Stronger warning"). Each post's body carries its sender's signature
+  (decision 8) so that newcomers can check it, and the body is sealed
+  under a long-lived generation key that every later member receives.
+  Anyone who holds the stored body and that key (the server's copy plus
+  the key from one member's device, a newcomer, a leaked backup) can show
+  a third party that the post was signed by its author's device. The app
+  says so: turning full history on, in channel settings or when creating
+  a channel, asks first with that warning
+  (`channel_history_warning.dart`, `channelHistoryProofConfirm`), and the
+  switch carries the line "Posts can be proven to be their author's"
+  (`channelHistoryProofLine`). Widget test:
+  `mobile/test/c7_history_proof_warning_test.dart`.
 
 ## What it does not give
 

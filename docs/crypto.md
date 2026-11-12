@@ -614,6 +614,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   longer receive other members' slots (C7 design, "Targeted
   `history_sync` delivery", deviation 9). No ABI, payload, local schema
   or server migration change. Needs the independent review.
+- **C7 `full` channels are not deniable (2026-11-12, owner answer
+  "Stronger warning"):** a post's body is signed by its sender's device so
+  newcomers can verify it, and is sealed under a generation key every
+  later member receives, so the stored body plus that key proves
+  authorship to anyone. No protocol change; the app warns before full
+  history is turned on and labels the setting. C7 design, Trust limits.
 - **C7 newcomer keeps asking (2026-11-12, owner answer; review H2, M3,
   L1, L3; server migration 0088):** a newcomer marks its join synced only
   when a `history_sync` from an approved leaf leaves every channel it knows

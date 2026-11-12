@@ -4421,6 +4421,17 @@ class AppLocalizationsEn extends AppLocalizations {
       'People who join later won\'t see earlier posts. Members who already have them keep them.';
 
   @override
+  String get channelHistoryProofConfirm =>
+      'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Posts can be proven to be their author\'s';
+
+  @override
+  String get channelHistoryProofAccept => 'Turn on';
+
+  @override
   String get channelHistoryLineFull =>
       'New posts can be read by people who join later';
 

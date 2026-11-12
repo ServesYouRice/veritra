@@ -4438,6 +4438,17 @@ class AppLocalizationsSr extends AppLocalizations {
       'Људи који се придруже касније неће видети раније објаве. Чланови који их већ имају задржавају их.';
 
   @override
+  String get channelHistoryProofConfirm =>
+      'Објаве у овом каналу се потписују да би људи који се придруже касније могли да провере ко их је написао. То значи да се може доказати ко је написао објаву: свако ко добије историју овог канала, на пример копију са сервера заједно са кључем са уређаја једног члана, може да покаже ко је написао сваку објаву. Аутори не могу да порекну своје објаве.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Може се доказати ко је написао сваку објаву';
+
+  @override
+  String get channelHistoryProofAccept => 'Укључи';
+
+  @override
   String get channelHistoryLineFull =>
       'Нове објаве могу да читају и људи који се придруже касније';
 
@@ -8907,6 +8918,17 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get channelHistoryOffConfirm =>
       'Ljudi koji se pridruže kasnije neće videti ranije objave. Članovi koji ih već imaju zadržavaju ih.';
+
+  @override
+  String get channelHistoryProofConfirm =>
+      'Objave u ovom kanalu se potpisuju da bi ljudi koji se pridruže kasnije mogli da provere ko ih je napisao. To znači da se može dokazati ko je napisao objavu: svako ko dobije istoriju ovog kanala, na primer kopiju sa servera zajedno sa ključem sa uređaja jednog člana, može da pokaže ko je napisao svaku objavu. Autori ne mogu da poreknu svoje objave.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Može se dokazati ko je napisao svaku objavu';
+
+  @override
+  String get channelHistoryProofAccept => 'Uključi';
 
   @override
   String get channelHistoryLineFull =>

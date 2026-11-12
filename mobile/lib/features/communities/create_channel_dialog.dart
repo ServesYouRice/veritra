@@ -4,6 +4,7 @@ import '../../core/app_state.dart';
 import '../../core/models.dart';
 import '../../l10n/l10n.dart';
 import '../../ui/validation.dart';
+import 'channel_history_warning.dart';
 
 /// Creates once, then retries only member additions that did not succeed.
 /// Membership still goes through AppState's ordinary MLS reconciliation.
@@ -151,10 +152,18 @@ class _CreateChannelDialogState extends State<CreateChannelDialog> {
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: Text(l10n.channelHistoryFullLabel),
+                    subtitle: Text(l10n.channelHistoryProofLine),
                     value: _fullHistory,
                     onChanged: fixed
                         ? null
-                        : (value) => setState(() => _fullHistory = value),
+                        : (value) async {
+                            if (value &&
+                                !await confirmChannelHistory(context,
+                                    full: true)) {
+                              return;
+                            }
+                            if (mounted) setState(() => _fullHistory = value);
+                          },
                   ),
                 if (_loading)
                   const Center(child: CircularProgressIndicator())
