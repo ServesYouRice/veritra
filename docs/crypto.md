@@ -681,8 +681,9 @@ first sealed token pass, which runs only with the switch on. Tests:
 on, the genesis re-signed from its parsed body to the same bytes).
 
 **Downgrade (not gated).** The `VFK1` record section is written into every
-device record this build seals (`crypto/rust/src/mls/records.rs`, `device_plaintext`), switch
-or not: the franking secret must be sealed before any list could name it.
+device record this build seals (`crypto/rust/src/mls/records.rs`,
+`device_plaintext`), switch or not: the franking secret must be sealed
+before any list could name it.
 A crypto core of ABI 25 or earlier refuses such a record (trailing bytes),
 so an app downgraded to such a core cannot open the device record and
 loses its MLS state: it must be linked again or recovered. Never ship an
