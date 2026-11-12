@@ -839,6 +839,17 @@ abstract class LocalStore {
   /// records the import, in one transaction. No MLS state or cursor moves.
   Future<void> importC7History(List<MessageEffect> effects,
       {Map<String, String?> c7Settings = const <String, String?>{}});
+  /// C3 conversion: this device's rows of a moved channel follow it from
+  /// [fromConversationId] (channel [fromChannelId], or null in a private
+  /// channel's own conversation) to [toConversationId] and [toChannelId], so
+  /// the earlier posts show in the new channel (owner answer 2026-11-12).
+  /// Idempotent; returns the rows moved.
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  });
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
@@ -1121,6 +1132,26 @@ class MemoryLocalStore implements LocalStore {
       {Map<String, String?> c7Settings = const <String, String?>{}}) async {
     _applyHistoryEffects(effects);
     _applyC7Settings(c7Settings);
+  }
+
+  @override
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  }) async {
+    var moved = 0;
+    for (final row in _history._messages.values.toList()) {
+      if (row.conversationId != fromConversationId ||
+          row.channelId != fromChannelId) {
+        continue;
+      }
+      _history._messages[row.key] = row.copyWith(
+          conversationId: toConversationId, channelId: Value(toChannelId));
+      moved++;
+    }
+    return moved;
   }
 
   @override
@@ -3072,6 +3103,19 @@ class SecureLocalStore implements LocalStore {
           {Map<String, String?> c7Settings =
               const <String, String?>{}}) async =>
       (await _database()).importC7History(effects, c7Settings: c7Settings);
+
+  @override
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  }) async =>
+      (await _database()).moveChannelRows(
+          fromConversationId: fromConversationId,
+          fromChannelId: fromChannelId,
+          toConversationId: toConversationId,
+          toChannelId: toChannelId);
 
   @override
   Future<List<ConversationPause>> loadConversationPauses() async =>

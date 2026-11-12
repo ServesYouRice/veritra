@@ -14,6 +14,7 @@ import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart'
     show BackupHeaderInfo, DeviceListBody, DeviceListPair, OpenedBackup;
 import 'app_payload.dart';
+import 'c7_move.dart' show C7Move;
 import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'profile_record_codec.dart' show ProfileRecordCodec;
 
@@ -599,6 +600,17 @@ final class C7DueRepropose extends C7Due {
   final bool full;
 }
 
+/// C3 conversion (decision 11): this device moved [channelId] here from
+/// [fromConversationId] and owes its `move` record, now that the new
+/// group's epoch is above 0. The app proposes it
+/// ([C7HistoryService.c7ProposeMove]) with the channel's layout generation.
+final class C7DueMove extends C7Due {
+  const C7DueMove(
+      super.conversationId, this.channelId, this.fromConversationId);
+  final String channelId;
+  final String fromConversationId;
+}
+
 /// One body the history route served (C7, decision 10): a body sync did
 /// not give this device, in its conversation's stream for [channelId] (null:
 /// the group-level stream, which holds `history_sync` messages and their
@@ -803,6 +815,45 @@ abstract interface class C7HistoryService {
   /// [channelId] (owner answer Q1), or null: the channel is not `full` here,
   /// the import has not run, or the route has nothing older.
   Future<String?> c7EarlierCursor(String conversationId, String channelId);
+
+  /// C3 conversion (decision 11): the server moved [channelId] from
+  /// [fromConversationId] to [toConversationId]. [own]: this device made
+  /// the move and owes its `move` record ([C7DueMove]). Idempotent.
+  Future<void> c7NoteMove({
+    required String channelId,
+    required String fromConversationId,
+    required String toConversationId,
+    required bool own,
+  });
+
+  /// Proposes the `move` record [due] owes: it continues the channel's
+  /// chain from the old group and, when both modes are `full` and this
+  /// device holds the old key, wraps the old group's current generation.
+  /// Null when nothing is owed any more.
+  Future<MessageEnvelope?> c7ProposeMove(C7DueMove due,
+      {int? layoutGeneration});
+
+  /// The moves whose earlier posts this device has yet to import: a `move`
+  /// record with a fitting wrap reached it, live or in its own import, and
+  /// it does not hold the old group itself. The app fetches the old
+  /// conversation's channel stream and group-level stream up to the
+  /// server's cutoff and the old posters' keys, then calls
+  /// [c7ImportMoved].
+  Future<List<C7Move>> c7MovedImportsDue();
+
+  /// Imports the old group's posts of [move] into its new conversation:
+  /// the wrap's generation and the earlier ones the old group's stored
+  /// slots name ([groupLevel]), each body opened and its signature checked
+  /// with the old group's ids and route epoch, inside the wrap's window.
+  /// A sender key comes from the new group's tree, else from [keys] (the
+  /// server's list for the old conversation; such posts are marked like a
+  /// former member's). Marks the move imported. Returns the posts imported.
+  Future<int> c7ImportMoved(
+    C7Move move, {
+    required C7HistoryPage channel,
+    required C7HistoryPage groupLevel,
+    List<C7FormerKey> keys = const <C7FormerKey>[],
+  });
 }
 
 /// Off by default. AppState enables this only for the current verified

@@ -51,6 +51,7 @@ import 'c7_group_state.dart';
 import 'c7_history.dart';
 import 'c7_import.dart';
 import 'c7_keys.dart';
+import 'c7_move.dart';
 import 'c7_sync.dart';
 import 'c7_two_part.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
@@ -160,7 +161,70 @@ class NativeCryptoService
         C7DueRequest(:final conversationId) => _c7SendRequest(conversationId),
         C7DueRepropose() => throw ArgumentError.value(
             due, 'due', 'the app proposes a stale record again'),
+        C7DueMove() => throw ArgumentError.value(
+            due, 'due', 'the app proposes a move with its layout generation'),
       });
+
+  @override
+  Future<void> c7NoteMove({
+    required String channelId,
+    required String fromConversationId,
+    required String toConversationId,
+    required bool own,
+  }) =>
+      _serial(() async {
+        if (fromConversationId == toConversationId) return;
+        final moves = await _c7LoadMoves();
+        final noted = _c7NotedMove(
+            moves,
+            C7Move(
+              channelId: channelId,
+              fromConversationId: fromConversationId,
+              toConversationId: toConversationId,
+              owed: own,
+              // The mover holds the posts and moves its own rows.
+              imported: own,
+            ),
+            own: own);
+        if (noted == null) return;
+        await localStore.saveSetting(c7MovesSetting, noted);
+      });
+
+  @override
+  Future<MessageEnvelope?> c7ProposeMove(C7DueMove due,
+          {int? layoutGeneration}) =>
+      _serial(() async {
+        final move = (await _c7LoadMoves())
+            .where((m) =>
+                m.owed &&
+                m.channelId == due.channelId &&
+                m.fromConversationId == due.fromConversationId &&
+                m.toConversationId == due.conversationId)
+            .firstOrNull;
+        if (move == null || !_c7Active(due.conversationId)) return null;
+        final from = await _c7LoadBook(due.fromConversationId, due.channelId);
+        return _c7Propose(due.conversationId, due.channelId,
+            full: from.mode == c7ModeFull,
+            create: false,
+            layoutGeneration: layoutGeneration,
+            moveFrom: due.fromConversationId);
+      });
+
+  @override
+  Future<List<C7Move>> c7MovedImportsDue() async => <C7Move>[
+        for (final move in await _c7LoadMoves())
+          if (move.importDue && _c7Active(move.toConversationId)) move,
+      ];
+
+  @override
+  Future<int> c7ImportMoved(
+    C7Move move, {
+    required C7HistoryPage channel,
+    required C7HistoryPage groupLevel,
+    List<C7FormerKey> keys = const <C7FormerKey>[],
+  }) =>
+      _serial(() => _c7ImportMoved(move,
+          channel: channel, groupLevel: groupLevel, keys: keys));
 
   @override
   Future<Map<String, bool>> c7HistoryLines(String conversationId) async {
@@ -5486,6 +5550,98 @@ extension _C7Engine on NativeCryptoService {
         _ => null,
       };
 
+  Future<List<C7Move>> _c7LoadMoves() async =>
+      C7Move.decodeAll(await localStore.loadSetting(c7MovesSetting));
+
+  /// [moves] with [move] noted, encoded, or null when nothing changes. A
+  /// move this device made replaces an earlier one of the same channel
+  /// between the same conversations (the server made a new one); one a
+  /// server event names is noted once.
+  String? _c7NotedMove(List<C7Move> moves, C7Move move, {required bool own}) {
+    if (!own && moves.any(move.same)) return null;
+    return C7Move.encodeAll(<C7Move>[
+      for (final known in moves)
+        if (!known.same(move)) known,
+      move,
+    ]);
+  }
+
+  /// The settings that record what a `move` record of [channelId] from
+  /// [from] into [to] gave this device: its wrap (a generation to import
+  /// under, unless this device holds the old group and so its posts), or,
+  /// for this device's own move, that it is no longer owed. Empty when
+  /// nothing changes.
+  Future<Map<String, String?>> _c7MoveApplied({
+    required String channelId,
+    required String from,
+    required String to,
+    required C7MoveWrap? wrap,
+    required bool own,
+  }) async {
+    final moves = await _c7LoadMoves();
+    final probe = C7Move(
+        channelId: channelId, fromConversationId: from, toConversationId: to);
+    final known = moves.where(probe.same).firstOrNull;
+    final C7Move next;
+    if (own) {
+      if (known == null || !known.owed) return const <String, String?>{};
+      next = known.copyWith(owed: false, imported: true);
+    } else {
+      // The first wrap that reached this device wins; one already imported
+      // is never imported again.
+      if (known != null && (known.wrapKey != null || known.imported)) {
+        return const <String, String?>{};
+      }
+      if (wrap == null) return const <String, String?>{};
+      next = (known ?? probe).copyWith(
+        wrapEpoch: wrap.prevEpoch,
+        wrapKey: wrap.prevKey,
+        wrapClose: wrap.prevCloseEpoch,
+        // A member of the old group holds its posts and moves its rows.
+        imported: _c7EpochOf(from) != null,
+      );
+    }
+    return <String, String?>{
+      c7MovesSetting: C7Move.encodeAll(<C7Move>[
+        for (final m in moves)
+          if (!m.same(next)) m,
+        next,
+      ]),
+    };
+  }
+
+  /// [moves] with the wrap of a `move` record that a newcomer's import
+  /// reached (option A), unless the move is already known with a wrap or
+  /// imported.
+  List<C7Move> _c7MovesWithWrap(
+      List<C7Move> moves, C7Move probe, C7MoveWrap wrap) {
+    final known = moves.where(probe.same).firstOrNull;
+    if (known != null && (known.wrapKey != null || known.imported)) {
+      return moves;
+    }
+    final next = (known ?? probe).copyWith(
+      wrapEpoch: wrap.prevEpoch,
+      wrapKey: wrap.prevKey,
+      wrapClose: wrap.prevCloseEpoch,
+      imported: _c7EpochOf(probe.fromConversationId) != null,
+    );
+    return <C7Move>[
+      for (final m in moves)
+        if (!m.same(next)) m,
+      next,
+    ];
+  }
+
+  /// This device's epoch in [conversationId]'s group, or null when it holds
+  /// no such group.
+  int? _c7EpochOf(String conversationId) {
+    try {
+      return _requiredDevice().groupEpoch(conversationId).epoch;
+    } on Object {
+      return null;
+    }
+  }
+
   Future<C7GroupState> _c7LoadGroup(String conversationId) async =>
       C7GroupState.decode(
           await localStore.loadSetting(c7GroupSetting(conversationId)));
@@ -5817,8 +5973,10 @@ extension _C7Engine on NativeCryptoService {
     } on Object {
       return _c7None;
     }
-    // A move is C3's conversion, not built: it stays an invalid record.
-    if (record.reason == c7ReasonMove) return _c7None;
+    // A move (C3 conversion, decision 11) comes from another group.
+    final move = record.reason == c7ReasonMove;
+    final from = move ? utf8.decode(record.closeGroupId) : null;
+    if (move && (from == conversationId || from!.isEmpty)) return _c7None;
     final group = await _c7LoadGroup(conversationId);
     if (record.epoch < group.floor) return _c7None;
     if (!_c7MayRecord(conversationId, envelope.senderAccountId)) {
@@ -5834,10 +5992,25 @@ extension _C7Engine on NativeCryptoService {
     final step = book.applyRecord(record, record.encode(),
         source: C7Source.proposalLive, key: compact.key);
     if (step.row == C7Row.invalid) return _c7None;
-    return _c7Put(conversationId, group, <C7ChannelBook>[
-      book.lineAfter(_c7CatchUp(step.book, group, community),
-          messageKey(envelope.senderDeviceId, envelope.idempotencyKey)),
-    ]);
+    final next = _c7CatchUp(step.book, group, community);
+    final applied = step.row == C7Row.adopt ||
+        step.row == C7Row.apply ||
+        step.row == C7Row.recover;
+    return <String, String?>{
+      ..._c7Put(conversationId, group, <C7ChannelBook>[
+        book.lineAfter(
+            next, messageKey(envelope.senderDeviceId, envelope.idempotencyKey)),
+      ]),
+      // A wrap is taken only from a move this device applied into `full`.
+      if (move && applied && next.mode == c7ModeFull)
+        ...await _c7MoveApplied(
+          channelId: channel,
+          from: from!,
+          to: conversationId,
+          wrap: C7MoveWrap.decodeFor(compact),
+          own: false,
+        ),
+    };
   }
 
   /// This device's own record came back in sync order ([actionId]): it is
@@ -5864,13 +6037,26 @@ extension _C7Engine on NativeCryptoService {
         }
         final step = rest.applyRecord(record, late.record,
             source: C7Source.proposalLive, key: late.key);
-        return _c7Put(conversationId, group, <C7ChannelBook>[
-          rest.lineAfter(
-              community == null
-                  ? step.book
-                  : _c7CatchUp(step.book, group, community),
-              messageKey(_deviceId!, actionId)),
-        ]);
+        return <String, String?>{
+          ..._c7Put(conversationId, group, <C7ChannelBook>[
+            rest.lineAfter(
+                community == null
+                    ? step.book
+                    : _c7CatchUp(step.book, group, community),
+                messageKey(_deviceId!, actionId)),
+          ]),
+          if (record.reason == c7ReasonMove &&
+              (step.row == C7Row.adopt ||
+                  step.row == C7Row.apply ||
+                  step.row == C7Row.recover))
+            ...await _c7MoveApplied(
+              channelId: channel,
+              from: utf8.decode(record.closeGroupId),
+              to: conversationId,
+              wrap: null,
+              own: true,
+            ),
+        };
       }
       final pending = book.pending;
       if (pending == null || pending.actionId != actionId) continue;
@@ -5887,13 +6073,25 @@ extension _C7Engine on NativeCryptoService {
       }
       final step = book.applyRecord(record, pending.record,
           source: C7Source.proposalLive, key: pending.key, ownProposal: true);
-      return _c7Put(conversationId, group, <C7ChannelBook>[
-        book.lineAfter(
-            community == null
-                ? step.book
-                : _c7CatchUp(step.book, group, community),
-            messageKey(_deviceId!, actionId)),
-      ]);
+      return <String, String?>{
+        ..._c7Put(conversationId, group, <C7ChannelBook>[
+          book.lineAfter(
+              community == null
+                  ? step.book
+                  : _c7CatchUp(step.book, group, community),
+              messageKey(_deviceId!, actionId)),
+        ]),
+        // An own move that came back applied is no longer owed.
+        if (record.reason == c7ReasonMove &&
+            step.book.lastOwn == C7OwnOutcome.applied)
+          ...await _c7MoveApplied(
+            channelId: channel,
+            from: utf8.decode(record.closeGroupId),
+            to: conversationId,
+            wrap: null,
+            own: true,
+          ),
+      };
     }
     // Review M1: an own record this device released (cancelled while it
     // was being sent, or given up after a refusal) came back after all.
@@ -5994,8 +6192,7 @@ extension _C7Engine on NativeCryptoService {
       if (utf8.decode(record.channelId) != slot.channelId ||
           utf8.decode(record.communityId) != community ||
           utf8.decode(record.groupId) != conversationId ||
-          record.epoch > forEpoch ||
-          record.reason == c7ReasonMove) {
+          record.epoch > forEpoch) {
         continue;
       }
       final book = await _c7LoadBook(conversationId, slot.channelId);
@@ -6223,9 +6420,13 @@ extension _C7Engine on NativeCryptoService {
     required bool full,
     required bool create,
     required int? layoutGeneration,
+    String? moveFrom,
   }) async {
     if (!_c7Active(conversationId)) {
       throw StateError('C7 is off for this conversation');
+    }
+    if (moveFrom == conversationId) {
+      throw StateError('a move comes from another conversation');
     }
     final community = _c7CommunityOf(conversationId);
     if (community == null) throw StateError('C7 needs the community');
@@ -6267,21 +6468,45 @@ extension _C7Engine on NativeCryptoService {
     if (book.late.length >= c7LateProposalLimit) {
       throw StateError('too many history changes are waiting for the server');
     }
-    final head = book.headRecord;
-    if (create != (head == null && book.chain.highestSeq < 0)) {
+    final device = _requiredDevice();
+    // C3 conversion (decision 11): a move continues the channel's chain
+    // from the old group, above every seq either group has seen, so the new
+    // group adopts it (row 1) or takes it over a stale head (row 5).
+    final C7ChannelBook? old =
+        moveFrom == null ? null : await _c7LoadBook(moveFrom, channelId);
+    final oldEpoch = moveFrom == null ? null : _c7EpochOf(moveFrom);
+    if (moveFrom != null && oldEpoch == null) {
+      throw StateError('a move needs the old group');
+    }
+    final head = old != null ? old.headRecord : book.headRecord;
+    if (old == null && create != (head == null && book.chain.highestSeq < 0)) {
       throw StateError(create
           ? 'this channel already has a history record'
           : 'a switch needs the record before it');
     }
     // A closed channel recovers with a switch above every seq seen,
     // chained from its own head (decision 4, row 3 or 5).
-    final seq = create
-        ? 0
-        : (book.status == C7Status.closed
-            ? book.chain.highestSeq + 1
-            : head!.seq + 1);
+    final seq = old != null
+        ? max(1, max(old.chain.highestSeq, book.chain.highestSeq) + 1)
+        : create
+            ? 0
+            : (book.status == C7Status.closed
+                ? book.chain.highestSeq + 1
+                : head!.seq + 1);
     final key = Uint8List.fromList(_randomBytes(32));
-    final device = _requiredDevice();
+    // The wrap: the old group's current generation, when both modes are
+    // `full` and this device holds its key; else 128 random bytes.
+    final oldGen = old == null || !full ? null : old.sealGenAt(oldEpoch!);
+    final Uint8List? wrap = old == null
+        ? null
+        : oldGen != null
+            ? C7MoveWrap(
+                prevEpoch: oldGen.epoch,
+                prevKey: oldGen.key!,
+                prevGroupId: utf8.encode(moveFrom!),
+                prevCloseEpoch: oldEpoch!,
+              ).encode()
+            : Uint8List.fromList(_randomBytes(c7MoveWrapBytes));
     C7Record? signed;
     final sent = await _c7SendHidden(
       conversationId,
@@ -6299,11 +6524,13 @@ extension _C7Engine on NativeCryptoService {
           seq: seq,
           prev: head?.hash() ?? Uint8List(32),
           mode: full ? c7ModeFull : c7ModeMembersFromJoin,
-          reason: create ? c7ReasonCreate : c7ReasonSwitch,
+          reason: old != null
+              ? c7ReasonMove
+              : (create ? c7ReasonCreate : c7ReasonSwitch),
           groupId: utf8.encode(conversationId),
           epoch: epoch,
-          closeGroupId: utf8.encode(conversationId),
-          closeEpoch: epoch,
+          closeGroupId: utf8.encode(moveFrom ?? conversationId),
+          closeEpoch: oldEpoch ?? epoch,
           chkCommit: full ? c7ChkCommitOf(key) : Uint8List(32),
           actorDeviceId: utf8.encode(_deviceId!),
           sig: Uint8List(64),
@@ -6320,7 +6547,7 @@ extension _C7Engine on NativeCryptoService {
           groupId: unsigned.groupId,
           epoch: epoch,
           closeGroupId: unsigned.closeGroupId,
-          closeEpoch: epoch,
+          closeEpoch: unsigned.closeEpoch,
           chkCommit: unsigned.chkCommit,
           actorDeviceId: unsigned.actorDeviceId,
           sig: sig,
@@ -6330,9 +6557,11 @@ extension _C7Engine on NativeCryptoService {
           prev: unsigned.prev,
           mode: unsigned.mode,
           reason: unsigned.reason,
-          closeEpoch: epoch,
+          closeEpoch: unsigned.closeEpoch,
           key: key,
           sig: sig,
+          closeGroupId: old == null ? null : unsigned.closeGroupId,
+          wrap: wrap,
         );
         return (
           vap1: AppPayloadCodec().encode(
@@ -6536,6 +6765,8 @@ extension _C7Engine on NativeCryptoService {
     final changedBooks = <C7ChannelBook>[];
     final cursors = <String, String?>{...state.cursors};
     final candidates = <String, List<C7Gen>>{...state.candidates};
+    final movesBefore = await _c7LoadMoves();
+    var moves = movesBefore;
     // Pass one: every opened, verified post and action, oldest first.
     final posts = <({String key, String account, InsertMessageEffect row})>[];
     final actions = <List<MessageEffect>>[];
@@ -6651,6 +6882,28 @@ extension _C7Engine on NativeCryptoService {
         );
         if (outcome is! DecodedAppPayload) continue;
         final payload = outcome.payload;
+        if (payload.type == AppPayloadType.historyChange) {
+          // C3 conversion, option A: a `move` record message in the
+          // channel's own stream hands over the old group's generation. It
+          // is never applied as a record here; only its wrap is kept, when
+          // the record's signature checks with its actor's key in the
+          // current tree (a former member's key is for posts only) and the
+          // actor may record now.
+          final wrapped = tree == null
+              ? null
+              : _c7HistoryMove(payload,
+                  communityId: community,
+                  channelId: channel,
+                  conversationId: conversationId,
+                  epoch: epoch,
+                  actorDeviceId: row.senderDeviceId,
+                  signer: signer,
+                  account: account);
+          if (wrapped != null) {
+            moves = _c7MovesWithWrap(moves, wrapped.probe, wrapped.wrap);
+          }
+          continue;
+        }
         final isPost = c7HistoryPostTypes.contains(payload.type);
         if (!isPost && !c7TargetedTypes.contains(payload.type)) continue;
         // C2, as live: a restricted post from a sender below admin.
@@ -6754,6 +7007,278 @@ extension _C7Engine on NativeCryptoService {
         ..._c7Put(conversationId,
             first ? group.copyWith(imported: true) : group, changedBooks),
       c7ImportSetting(conversationId): next.encode(),
+      if (!identical(moves, movesBefore))
+        c7MovesSetting: C7Move.encodeAll(moves),
+    });
+    return posts.where((post) => !deleted.contains(post.key)).length;
+  }
+
+  /// The move and wrap of a `history_change` [payload] fetched from
+  /// [channelId]'s stream of [conversationId] (option A), or null: not a
+  /// `full` move, a wrap that does not fit, a record signature that does
+  /// not check with [signer], or an actor who may not record.
+  ({C7Move probe, C7MoveWrap wrap})? _c7HistoryMove(
+    DecryptedAppPayload payload, {
+    required String communityId,
+    required String channelId,
+    required String conversationId,
+    required int epoch,
+    required String actorDeviceId,
+    required Uint8List signer,
+    required String account,
+  }) {
+    try {
+      final compact =
+          C7CompactRecord.decode(base64Decode(payload.body['r']! as String));
+      if (compact.reason != c7ReasonMove || compact.mode != c7ModeFull) {
+        return null;
+      }
+      final record = compact.expand(C7RecordContext(
+        communityId: utf8.encode(communityId),
+        channelId: utf8.encode(channelId),
+        groupId: utf8.encode(conversationId),
+        epoch: epoch,
+        actorDeviceId: utf8.encode(actorDeviceId),
+      ));
+      final from = utf8.decode(record.closeGroupId);
+      final wrap = C7MoveWrap.decodeFor(compact);
+      if (wrap == null ||
+          from == conversationId ||
+          !c7VerifyRecord(bindings, record, signer) ||
+          !_c7MayRecord(conversationId, account)) {
+        return null;
+      }
+      return (
+        probe: C7Move(
+            channelId: channelId,
+            fromConversationId: from,
+            toConversationId: conversationId),
+        wrap: wrap,
+      );
+    } on Object {
+      return null;
+    }
+  }
+
+  /// The import of a move's earlier posts (see [c7ImportMoved]). Like
+  /// [_c7Import], but every check names the old group: its ids in the body
+  /// key, the AAD and the signed fields, its route epochs, inside the wrap's
+  /// window (`E_prev <= epoch <= close_epoch`, the server's cutoff bounding
+  /// it too) and the earlier generations its own stored slots name. The
+  /// rows land in the new conversation. Only posts and the actions that
+  /// target them are taken; nothing else in an old stream is applied.
+  Future<int> _c7ImportMoved(
+    C7Move move, {
+    required C7HistoryPage channel,
+    required C7HistoryPage groupLevel,
+    required List<C7FormerKey> keys,
+  }) async {
+    // The wrap is the one this device stored when the record reached it;
+    // [move] only names which move to import.
+    final known = (await _c7LoadMoves()).where(move.same).firstOrNull;
+    if (known == null || !known.importDue) return 0;
+    final to = known.toConversationId;
+    final from = known.fromConversationId;
+    final channelId = known.channelId;
+    final wrapKey = known.wrapKey;
+    final wrapEpoch = known.wrapEpoch;
+    final wrapClose = known.wrapClose;
+    if (!_c7Active(to) ||
+        wrapKey == null ||
+        wrapEpoch == null ||
+        wrapClose == null) {
+      return 0;
+    }
+    final community = _c7CommunityOf(to);
+    if (community == null) return 0;
+    // The new home's book must still hold the move's period: a channel
+    // that left `full` since keeps nothing it would have sealed.
+    final home = await _c7LoadBook(to, channelId);
+    if (home.mode != c7ModeFull) return 0;
+    final toShared = _authority?.conversationKind(to) == 'community_shared';
+    // The old conversation's kind is the move's other side.
+    final fromShared = !toShared;
+    final former = <String, C7FormerKey>{
+      for (final key in keys) key.deviceId: key,
+    };
+    final proven = <String, bool>{};
+    final authority = _authority;
+    final VerifiedRoleSource? roles = authority is VerifiedRoleSource
+        ? authority as VerifiedRoleSource
+        : null;
+    final c7keys = C7Keys(bindings);
+    final gens = c7WalkMoved(
+      bindings: bindings,
+      start: C7Gen(
+          epoch: wrapEpoch, groupId: from, key: wrapKey, close: wrapClose + 1),
+      syncs: groupLevel.rows,
+      communityId: community,
+      fromConversationId: from,
+      channelId: channelId,
+    );
+    final posts = <({String key, String account, InsertMessageEffect row})>[];
+    final actions = <List<MessageEffect>>[];
+    for (final row in channel.rows.reversed) {
+      if (row.channelId != channelId) continue;
+      final epoch = row.epoch;
+      if (epoch == null || epoch > wrapClose) continue;
+      final gen = gens.where((g) => g.covers(from, epoch)).lastOrNull;
+      final chk = gen?.key;
+      if (gen == null || chk == null || gen.epoch == 0) continue;
+      final aad = C7Keys.bodyAad(
+        conversationId: from,
+        channelId: channelId,
+        senderDeviceId: row.senderDeviceId,
+        actionId: row.actionId,
+      );
+      final bodyKey = c7keys.postBodyKey(
+        chk: chk,
+        communityId: community,
+        channelId: channelId,
+        senderDeviceId: row.senderDeviceId,
+        actionId: row.actionId,
+      );
+      ({Uint8List signature, Uint8List paddedVap1})? opened;
+      try {
+        opened = c7keys.openBody(bodyKey: bodyKey, aad: aad, sealed: row.body);
+      } on Object {
+        opened = null;
+      } finally {
+        bodyKey.fillRange(0, bodyKey.length, 0);
+      }
+      if (opened == null) continue;
+      // Decision 8 in the new group: a key in its tree wins over anything
+      // the server lists for the same device.
+      final tree = _c7TreeKey(to, row.senderDeviceId);
+      final listed = tree == null ? former[row.senderDeviceId] : null;
+      final signer = tree?.key ?? listed?.signingKey;
+      final account = tree?.accountId ?? listed?.accountId;
+      if (signer == null || account == null) continue;
+      bool valid;
+      try {
+        valid = bindings.c7Verify(
+          domain: c7PostSignatureDomain,
+          publicKey: signer,
+          message: c7PostSignedFields(
+            communityId: community,
+            channelId: channelId,
+            actionId: row.actionId,
+            groupId: from,
+            epoch: epoch,
+            senderDeviceId: row.senderDeviceId,
+            generation: gen.epoch,
+            paddedVap1: opened.paddedVap1,
+          ),
+          signature: opened.signature,
+        );
+      } on Object {
+        valid = false;
+      }
+      if (!valid) continue;
+      final outcome = AppPayloadCodec().classify(
+        opened.paddedVap1,
+        conversationId: from,
+        senderDeviceId: row.senderDeviceId,
+        actionId: row.actionId,
+        communityShared: fromShared,
+        channelId: channelId,
+      );
+      if (outcome is! DecodedAppPayload) continue;
+      final sent = outcome.payload;
+      final isPost = c7HistoryPostTypes.contains(sent.type);
+      if (!isPost && !c7TargetedTypes.contains(sent.type)) continue;
+      // Rehomed: the new conversation names the channel only when it is a
+      // shared group.
+      final payload = DecryptedAppPayload(
+        type: sent.type,
+        actionId: sent.actionId,
+        body: sent.body,
+        channelId: toShared ? channelId : null,
+        expiresAtMs: sent.expiresAtMs,
+      );
+      if (roles != null &&
+          restrictedPostTypes.contains(payload.type) &&
+          shouldDropRestrictedPost(
+            record: roles.governanceOf(to),
+            sender: account,
+            channelId: payload.channelId,
+            serverRestricts:
+                roles.serverRestrictsPosting(to, payload.channelId),
+            senderRemoved: listed != null,
+          )) {
+        continue;
+      }
+      final List<MessageEffect> effects;
+      try {
+        effects = messageEffectsFor(
+          payload,
+          conversationId: to,
+          senderAccountId: account,
+          senderDeviceId: row.senderDeviceId,
+          serverMessageId: row.messageId,
+          createdAt: row.createdAt.millisecondsSinceEpoch,
+          state: LocalMessageState.received,
+          expiresAt: effectiveExpiryMillis(
+              senderMs: payload.expiresAtMs, serverMs: null),
+          authority: authority,
+          senderActsWithRole: listed == null,
+        );
+      } on Object {
+        continue;
+      }
+      final key = messageKey(row.senderDeviceId, row.actionId);
+      if (isPost) {
+        for (final effect in effects) {
+          if (effect is! InsertMessageEffect || effect.key != key) continue;
+          var insert = effect.withC7Gen(c7GenTag(chk));
+          if (listed != null) {
+            final named = proven[row.senderDeviceId] ??=
+                await _c7FormerProven(account, row.senderDeviceId, signer);
+            insert = insert.markedC7Former(named: named);
+          }
+          if (payload.type == AppPayloadType.attachmentManifest) {
+            insert = insert.withBody(c7HiddenAttachmentBody);
+          }
+          posts.add((key: key, account: account, row: insert));
+        }
+      } else {
+        actions.add(<MessageEffect>[
+          for (final effect in effects)
+            if (effect is! ProfileKeyEffect) effect,
+        ]);
+      }
+    }
+    final authors = <String, String>{
+      for (final post in posts) post.key: post.account,
+    };
+    final deleted = <String>{
+      for (final action in actions)
+        for (final effect in action)
+          if (effect is DeleteMessageEffect &&
+              authors[effect.targetKey] == effect.deleterAccountId)
+            effect.targetKey,
+    };
+    String? targetOf(MessageEffect effect) => switch (effect) {
+          EditMessageEffect(:final targetKey) => targetKey,
+          DeleteMessageEffect(:final targetKey) => targetKey,
+          ReactionEffect(:final targetKey) => targetKey,
+          PinMessageEffect(:final targetKey) => targetKey,
+          PollVoteEffect(:final targetKey) => targetKey,
+          PollCloseEffect(:final targetKey) => targetKey,
+          _ => null,
+        };
+    final ordered = <MessageEffect>[
+      for (final post in posts)
+        if (!deleted.contains(post.key)) post.row,
+      for (final action in actions)
+        for (final effect in action)
+          if (!deleted.contains(targetOf(effect))) effect,
+    ];
+    final moves = await _c7LoadMoves();
+    await localStore.importC7History(ordered, c7Settings: <String, String?>{
+      c7MovesSetting: C7Move.encodeAll(<C7Move>[
+        for (final m in moves) m.same(move) ? m.copyWith(imported: true) : m,
+      ]),
     });
     return posts.where((post) => !deleted.contains(post.key)).length;
   }
@@ -6761,6 +7286,7 @@ extension _C7Engine on NativeCryptoService {
   Future<List<C7Due>> _c7Due(Iterable<String> conversationIds) async {
     final now = _c7NowMs();
     final out = <C7Due>[];
+    final moves = await _c7LoadMoves();
     for (final conversationId in conversationIds) {
       if (!_c7Active(conversationId)) continue;
       final group = await _c7LoadGroup(conversationId);
@@ -6779,10 +7305,25 @@ extension _C7Engine on NativeCryptoService {
       for (final channel in group.channels) {
         final book = await _c7LoadBook(conversationId, channel);
         final pending = book.pending;
-        if (book.ownNotice == 'stale' && pending != null) {
+        // A stale own move is proposed again as a move ([C7DueMove]).
+        if (book.ownNotice == 'stale' &&
+            pending != null &&
+            pending.full.reason != c7ReasonMove) {
           out.add(C7DueRepropose(conversationId, channel,
               full: pending.full.mode == c7ModeFull));
         }
+      }
+      // C3 conversion: an own move is owed once the new group's epoch is
+      // above 0, so its message seals under the key it opens and a later
+      // newcomer can read it (a group of one has nobody to tell anyway).
+      for (final move in moves) {
+        if (!move.owed || move.toConversationId != conversationId) continue;
+        if ((_c7EpochOf(conversationId) ?? 0) == 0) continue;
+        final book = await _c7LoadBook(conversationId, move.channelId)
+            .then((book) => book.expirePending(now));
+        if (book.pending != null && book.ownNotice != 'stale') continue;
+        out.add(
+            C7DueMove(conversationId, move.channelId, move.fromConversationId));
       }
     }
     return out;

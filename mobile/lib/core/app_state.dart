@@ -39,6 +39,7 @@ import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
 import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
+import '../crypto/c7_move.dart' show C7Move;
 import '../crypto/c7_import.dart'
     show c7FirstPageBytes, c7FirstPagePosts, c7HistoryRequestLimit;
 import 'mls_self_update_policy.dart';
@@ -283,6 +284,10 @@ int passFetchedFloor({
   required int sessionGeneration,
 }) =>
     fetchedGeneration == sessionGeneration ? fetchedThrough : 0;
+
+/// C3 conversion: the stored event, ids only, that tells the members of
+/// both conversations a channel moved (server `ChannelMovedEventType`).
+const String channelMovedEventType = 'conversation.channel_moved';
 
 class AppState extends ChangeNotifier
     implements
@@ -4491,6 +4496,13 @@ class AppState extends ChangeNotifier
               layoutGeneration:
                   _c7LayoutGeneration(due.conversationId, due.channelId));
           queued = true;
+        } else if (due is C7DueMove) {
+          // C3 conversion: the `move` record this device owes.
+          queued = await c7.c7ProposeMove(due,
+                      layoutGeneration: _c7LayoutGeneration(
+                          due.conversationId, due.channelId)) !=
+                  null ||
+              queued;
         } else {
           if (due is C7DueSync &&
               await _c7SyncDelivered(
@@ -4527,6 +4539,30 @@ class AppState extends ChangeNotifier
               .add(delay > c7ImportBackoffCap ? c7ImportBackoffCap : delay),
         );
         developer.log('c7_import_failed ${err.runtimeType}',
+            name: 'private_messenger.c7');
+      }
+    }
+    // C3 conversion: the earlier posts a move's wrap opens, fetched from
+    // the old conversation up to the server's cutoff.
+    for (final move in await c7.c7MovedImportsDue()) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      final id = 'move:${move.channelId}:${move.fromConversationId}:'
+          '${move.toConversationId}';
+      final wait = _c7ImportBackoff[id];
+      if (wait != null && c7Clock().isBefore(wait.nextAt)) continue;
+      try {
+        await _c7ImportMovedPosts(current, c7, move);
+        _c7ImportBackoff.remove(id);
+      } catch (err) {
+        if (err is ApiException && err.statusCode == 401) rethrow;
+        final failures = (wait?.failures ?? 0) + 1;
+        final delay = c7ImportBackoffBase * (1 << min(failures - 1, 6));
+        _c7ImportBackoff[id] = (
+          failures: failures,
+          nextAt: c7Clock()
+              .add(delay > c7ImportBackoffCap ? c7ImportBackoffCap : delay),
+        );
+        developer.log('c7_moved_import_failed ${err.runtimeType}',
             name: 'private_messenger.c7');
       }
     }
@@ -4578,7 +4614,7 @@ class AppState extends ChangeNotifier
   /// every mode. A malformed row is skipped.
   Future<C7HistoryPage> _c7FetchPage(
       Session current, String conversationId, String? channelId,
-      {String? before}) async {
+      {String? before, C7Move? moved}) async {
     final client = api;
     if (client == null) throw StateError('no server');
     final rows = <C7HistoryRow>[];
@@ -4587,8 +4623,12 @@ class AppState extends ChangeNotifier
     var cursor = before;
     while (true) {
       final want = min(c7HistoryRequestLimit, c7FirstPagePosts - count);
-      final batch = await client.historyBodies(current.token, conversationId,
-          channelId: channelId, beforeId: cursor, limit: want);
+      final batch = moved == null
+          ? await client.historyBodies(current.token, conversationId,
+              channelId: channelId, beforeId: cursor, limit: want)
+          : await client.movedHistoryBodies(
+              current.token, moved.channelId, moved.fromConversationId,
+              group: channelId == null, beforeId: cursor, limit: want);
       for (final raw in batch) {
         count++;
         final id = raw['message_id'];
@@ -4628,6 +4668,29 @@ class AppState extends ChangeNotifier
         groupLevel: groupLevel, channels: channels, formerKeys: former);
     if (_history.containsKey(conversationId)) {
       await refreshHistory(conversationId);
+    }
+  }
+
+  /// C3 conversion: the first page of the old conversation's channel stream
+  /// and group-level stream, and the keys of the devices that posted there,
+  /// in one import into the new conversation.
+  Future<void> _c7ImportMovedPosts(
+      Session current, C7HistoryService c7, C7Move move) async {
+    final client = api;
+    if (client == null) return;
+    final from = move.fromConversationId;
+    final groupLevel = await _c7FetchPage(current, from, null, moved: move);
+    final channel =
+        await _c7FetchPage(current, from, move.channelId, moved: move);
+    final keys = <C7FormerKey>[
+      for (final raw
+          in await client.movedMemberKeys(current.token, move.channelId, from))
+        if (C7FormerKey.tryParse(raw) case final key?) key,
+    ];
+    await c7.c7ImportMoved(move,
+        channel: channel, groupLevel: groupLevel, keys: keys);
+    if (_history.containsKey(move.toConversationId)) {
+      await refreshHistory(move.toConversationId);
     }
   }
 
@@ -7598,9 +7661,15 @@ class AppState extends ChangeNotifier
     var conversationList = false;
     var selectedMessages = false;
     final receipts = <String>{};
+    final moves = <({String channel, String from, String to, bool private})>[];
     for (final event in events) {
       final type = event.type;
       _profileSyncEvent(event);
+      if (type == channelMovedEventType) {
+        // C3 conversion: ids only. Handled after the conversation list is
+        // read again, so the new home is known.
+        if (_channelMoveOf(event.payload) case final move?) moves.add(move);
+      }
       if (_isMemberLinkedNotice(type)) {
         // A co-member linked a device and this device may coordinate the
         // group change: run the membership pass now instead of waiting for
@@ -7672,12 +7741,134 @@ class AppState extends ChangeNotifier
       // after the batch, so profile rotation need not wait for the daily check.
       await _profileLoadRosters();
     }
+    for (final move in moves) {
+      await _followChannelMove(move);
+    }
+    if (moves.isNotEmpty) unawaited(refreshCommunities());
     if (selectedMessages) {
       await refreshSelectedMessages(notify: false, persist: false);
     }
     for (final conversationId in receipts) {
       unawaited(refreshReceipts(conversationId));
     }
+  }
+
+  static ({String channel, String from, String to, bool private})?
+      _channelMoveOf(Object? payload) {
+    if (payload is! Map) return null;
+    final channel = payload['channel_id'];
+    final from = payload['from_conversation_id'];
+    final to = payload['to_conversation_id'];
+    final access = payload['access_mode'];
+    if (channel is! String ||
+        from is! String ||
+        to is! String ||
+        access is! String ||
+        from == to ||
+        channel.isEmpty) {
+      return null;
+    }
+    return (channel: channel, from: from, to: to, private: access == 'private');
+  }
+
+  /// C3 conversion: [move] happened on the server. This device's rows of
+  /// the channel follow it when it is a member of the new home (earlier
+  /// posts carry over, owner answer 2026-11-12), and C7 notes it, so a
+  /// `move` record's wrap can open the old posts for a member who never
+  /// held them.
+  Future<void> _followChannelMove(
+      ({String channel, String from, String to, bool private}) move) async {
+    if (conversations.any((c) => c.id == move.to)) {
+      await localStore.moveChannelRows(
+        fromConversationId: move.from,
+        fromChannelId: move.private ? move.channel : null,
+        toConversationId: move.to,
+        toChannelId: move.private ? null : move.channel,
+      );
+      _history.remove(move.from);
+      _history.remove(move.to);
+    }
+    await _c7?.c7NoteMove(
+        channelId: move.channel,
+        fromConversationId: move.from,
+        toConversationId: move.to,
+        own: false);
+  }
+
+  /// C3 conversion: turns [channel] private ([toPrivate]) or a private one
+  /// open. Owners and admins only; the server re-routes it. Earlier posts
+  /// carry over (rows here; the `move` record's wrap for members who never
+  /// held them), and the name and topic are published again in the new
+  /// home: a private channel under a key of its own, an open one under the
+  /// community's. A private-to-open conversion is confirmed in the UI
+  /// first (`confirmChannelConversion`).
+  Future<bool> convertChannel(Channel channel,
+      {required bool toPrivate}) async {
+    final name = channelDisplayName(channel);
+    final topic = channelTopic(channel) ?? '';
+    final from = channel.conversationId;
+    Channel? moved;
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) return;
+      if (from == null || (channel.kind == 'private') == toPrivate) {
+        throw StateError('this channel cannot be converted that way');
+      }
+      final result = await client.moveChannel(
+          current.token, channel.id, toPrivate ? 'private' : 'open');
+      final conversation = result.conversation;
+      if (!conversation.isCommunityShared) {
+        await _setUpConversationGroup(conversation.id, kind: conversation.kind);
+      }
+      final layout = result.move['layout_generation'];
+      final next = Channel(
+        id: channel.id,
+        communityId: channel.communityId,
+        name: channel.name,
+        kind: toPrivate ? 'private' : 'open',
+        conversationId: conversation.id,
+        layoutGeneration: layout is int ? layout : channel.layoutGeneration,
+      );
+      moved = next;
+      channelsByCommunity = <String, List<Channel>>{
+        ...channelsByCommunity,
+        channel.communityId: <Channel>[
+          for (final c
+              in channelsByCommunity[channel.communityId] ?? const <Channel>[])
+            c.id == channel.id ? next : c,
+        ],
+      };
+      if (!conversations.any((c) => c.id == conversation.id)) {
+        conversations = <Conversation>[conversation, ...conversations];
+      }
+      await localStore.moveChannelRows(
+        fromConversationId: from,
+        fromChannelId: toPrivate ? channel.id : null,
+        toConversationId: conversation.id,
+        toChannelId: toPrivate ? null : channel.id,
+      );
+      _history.remove(from);
+      _history.remove(conversation.id);
+      await _c7?.c7NoteMove(
+          channelId: channel.id,
+          fromConversationId: from,
+          toConversationId: conversation.id,
+          own: true);
+    });
+    final next = moved;
+    if (error != null || next == null) return false;
+    unawaited(() async {
+      if (name != null) {
+        await publishChannelInfo(next,
+            name: name, topic: topic, mint: toPrivate);
+      }
+      await publishCommunityInfo(next.communityId);
+      await refreshCommunities();
+      final current = session;
+      if (current != null) await _c7WorkPass(current, _sessionGeneration);
+    }());
+    return true;
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {

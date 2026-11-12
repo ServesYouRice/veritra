@@ -6,6 +6,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/roles/governance.dart';
+import 'package:private_messenger/crypto/c7_move.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -235,6 +236,51 @@ class _C7Crypto extends UnavailableCryptoService
   Future<String?> c7EarlierCursor(
           String conversationId, String channelId) async =>
       conversationId == 'conv_shared' ? earlier[channelId] : null;
+
+  final notes = <({String channel, String from, String to, bool own})>[];
+  final moveProposals = <(C7DueMove, int?)>[];
+  List<C7Move> movesDue = const <C7Move>[];
+  final movedImports = <({
+    C7Move move,
+    C7HistoryPage channel,
+    C7HistoryPage groupLevel,
+    List<C7FormerKey> keys,
+  })>[];
+
+  @override
+  Future<void> c7NoteMove({
+    required String channelId,
+    required String fromConversationId,
+    required String toConversationId,
+    required bool own,
+  }) async =>
+      notes.add((
+        channel: channelId,
+        from: fromConversationId,
+        to: toConversationId,
+        own: own,
+      ));
+
+  @override
+  Future<MessageEnvelope?> c7ProposeMove(C7DueMove due,
+      {int? layoutGeneration}) async {
+    moveProposals.add((due, layoutGeneration));
+    return _envelope(due.conversationId);
+  }
+
+  @override
+  Future<List<C7Move>> c7MovedImportsDue() async => movesDue;
+
+  @override
+  Future<int> c7ImportMoved(C7Move move,
+      {required C7HistoryPage channel,
+      required C7HistoryPage groupLevel,
+      List<C7FormerKey> keys = const <C7FormerKey>[]}) async {
+    movedImports.add(
+        (move: move, channel: channel, groupLevel: groupLevel, keys: keys));
+    movesDue = const <C7Move>[];
+    return channel.rows.length;
+  }
 }
 
 /// [count] history rows of [stream], newest first.

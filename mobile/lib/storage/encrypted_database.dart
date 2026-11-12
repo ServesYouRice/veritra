@@ -2561,6 +2561,24 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _writeC7SettingsInTransaction(c7Settings);
       });
 
+  /// C3 conversion ([LocalStore.moveChannelRows]).
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  }) =>
+      (update(localMessages)
+            ..where((t) =>
+                t.conversationId.equals(fromConversationId) &
+                (fromChannelId == null
+                    ? t.channelId.isNull()
+                    : t.channelId.equals(fromChannelId))))
+          .write(LocalMessagesCompanion(
+        conversationId: Value(toConversationId),
+        channelId: Value(toChannelId),
+      ));
+
   Future<void> _applyMessageEffects(List<MessageEffect> effects) async {
     HistoryNamespace? historyNamespace;
     Future<HistoryNamespace> history() async =>
