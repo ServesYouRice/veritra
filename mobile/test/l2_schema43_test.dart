@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:drift/drift.dart' hide isNull;
+import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
@@ -205,6 +205,60 @@ void main() {
       ownMessageKey: 'dev_alice:key_1',
     );
     expect(await db.readSealedOwnPostDigest('conv_1', 'key_1'), isNull);
+  });
+
+  test('only a queued sealed entry is replaced, and its own post goes',
+      () async {
+    // Review M2: the identified re-encryption takes the sealed entry's
+    // place, resets its failure, and drops the digest and the plaintext.
+    final db = EncryptedLocalDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    var counter = 0;
+    Future<void> commit(String payloadJson,
+            {bool replace = false, SealedOwnPost? ownPost}) =>
+        db.commitOutgoingApplicationTransition(
+          expectedCounter: counter,
+          expectedCursor: 0,
+          counter: ++counter,
+          stateKey: List<int>.filled(32, 1),
+          sealedState: const <int>[1],
+          idempotencyKey: 'key_1',
+          conversationId: 'conv_1',
+          payloadJson: payloadJson,
+          draftText: null,
+          maxEntries: 10,
+          sealedOwnPost: ownPost,
+          replacesSealedEntry: replace,
+        );
+    // Nothing queued: nothing to replace.
+    await expectLater(commit('{"x":1}', replace: true), throwsStateError);
+    counter = 0;
+    await commit('{"identified":true}');
+    // An identified entry is not replaced either.
+    await expectLater(commit('{"x":2}', replace: true), throwsStateError);
+    counter = 1;
+    await db.deleteOutbox('key_1');
+    await commit('{"l2_sealed_token":{}}',
+        ownPost: SealedOwnPost(
+            conversationId: 'conv_1',
+            idempotencyKey: 'key_1',
+            ciphertextSha256: List<int>.filled(32, 7),
+            fallbackJson: '{"type":"text"}'));
+    expect(await db.readSealedOwnPostFallback('conv_1', 'key_1'), isNotNull);
+    await (db.update(db.localOutboxEntries)
+          ..where((table) => table.idempotencyKey.equals('key_1')))
+        .write(const LocalOutboxEntriesCompanion(
+            attemptCount: Value(3),
+            terminal: Value(true),
+            failureClass: Value('terminal:409:sealed_not_eligible')));
+    await commit('{"identified":2}', replace: true);
+    final entry = await db.select(db.localOutboxEntries).getSingle();
+    expect(entry.payloadJson, '{"identified":2}');
+    expect(entry.attemptCount, 0);
+    expect(entry.terminal, isFalse);
+    expect(entry.failureClass, isNull);
+    expect(await db.readSealedOwnPostDigest('conv_1', 'key_1'), isNull);
+    expect(await db.readSealedOwnPostFallback('conv_1', 'key_1'), isNull);
   });
 
   test('a pin refuses malformed keys', () async {

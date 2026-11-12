@@ -496,6 +496,15 @@ abstract interface class SealedReportCryptoService {
 abstract interface class SealedSendingCryptoService {
   set sealedTokenSource(SealedTokenSource? source);
 
+  /// L2-3 (review M2): encrypts the queued sealed message [sealed] again, as
+  /// a fresh identified message under the same idempotency key (a new MLS
+  /// ciphertext and franking key, no token, no sealed signature), and puts
+  /// it in that outbox entry's place. Only for the one answer that proves
+  /// the sealed route stored nothing under the key (`sealed_not_eligible`).
+  /// Null when the message cannot be sent identified (its plaintext is no
+  /// longer kept, or the entry is gone); the caller then fails it.
+  Future<MessageEnvelope?> reencryptSealedAsIdentified(MessageEnvelope sealed);
+
   /// Applies a `message.sealed.created` envelope ([envelope] must be
   /// sealed; its server sender fields are ignored). Returns the envelope
   /// with the sender MLS authenticated, this device's own for its own post,

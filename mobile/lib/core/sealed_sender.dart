@@ -70,8 +70,15 @@ SealedPostOutcome sealedPostOutcome(Object error) {
 }
 
 /// Posts [envelope], a message chosen to go sealed, on [poster]. It is
-/// never sent identified, whatever the answer: once a sealed attempt may
-/// have landed, an identified copy would be a second message. A refused
+/// never sent identified, whatever the answer, with one exception: once a
+/// sealed attempt may have landed, an identified copy would be a second
+/// message. The exception is a 409 `sealed_not_eligible`, which the server
+/// answers only after finding nothing stored under the key (review M2):
+/// then [sendIdentified], when given, encrypts the message afresh as an
+/// identified one and sends it, and its answer is the message's. It returns
+/// false when it cannot, and the refusal fails the message. A 404 means the
+/// server's sealed routes are off: the message waits (a retryable 503
+/// class) rather than fail. A refused
 /// token is replaced from [tokens] and the same message (same idempotency
 /// key and bytes) posted again, after [rewrite] keeps the new token in its
 /// outbox entry; the server answers a post it already stored with 200
@@ -86,6 +93,7 @@ Future<void> postSealedMessage({
   required SealedSender? tokens,
   required Future<bool> Function(MessageEnvelope envelope) rewrite,
   bool Function()? owned,
+  Future<bool> Function(MessageEnvelope sealed)? sendIdentified,
 }) async {
   if (!envelope.sealed) throw StateError('not a sealed envelope');
   var attempt = envelope;
@@ -95,12 +103,18 @@ Future<void> postSealedMessage({
       return;
     } on ApiException catch (error) {
       if (owned != null && !owned()) rethrow;
+      // Review low (a): the routes answer 404 while the switch is off.
+      if (error.statusCode == 404) throw sealedUnavailable();
       switch (sealedPostOutcome(error)) {
         case SealedPostOutcome.retry:
           rethrow;
         case SealedPostOutcome.terminal:
-          if (error.serverCode == 'sealed_not_eligible') {
+          if (error.statusCode == 409 &&
+              error.serverCode == 'sealed_not_eligible') {
             await tokens?.notEligible(envelope.conversationId);
+            if (sendIdentified != null && await sendIdentified(attempt)) {
+              return;
+            }
           }
           rethrow;
         case SealedPostOutcome.replaceToken:
@@ -122,6 +136,12 @@ Future<void> postSealedMessage({
 /// (a 503 class) until a token pass refills.
 ApiException sealedTokenNeeded() =>
     ApiException(503, '{"error":"sealed_token_needed"}');
+
+/// The server's sealed routes are off (they answer 404): the message stays
+/// queued and retrying (a 503 class) until they are back. It is never sent
+/// identified for it.
+ApiException sealedUnavailable() =>
+    ApiException(503, '{"error":"sealed_unavailable"}');
 
 /// Posts sealed messages. Its [HttpClient] is its own: the session client's
 /// pooled TLS connection would tie the post to the session, and nothing

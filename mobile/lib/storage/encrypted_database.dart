@@ -2081,7 +2081,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             failureClass: const Value(null),
             terminal: const Value(false),
           ));
-          await _clearSealedFallbackInTransaction(idempotencyKey);
+          // The sealed copy was never stored: its digest and plaintext go.
+          await _deleteSealedOwnPostInTransaction(
+              conversationId, idempotencyKey);
         } else {
           await into(localOutboxEntries).insert(
             LocalOutboxEntriesCompanion.insert(

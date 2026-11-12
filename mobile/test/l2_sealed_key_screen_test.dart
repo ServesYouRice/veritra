@@ -90,6 +90,10 @@ class _NoCrypto implements SealedSendingCryptoService {
   @override
   set sealedTokenSource(SealedTokenSource? source) {}
   @override
+  Future<MessageEnvelope?> reencryptSealedAsIdentified(
+          MessageEnvelope sealed) =>
+      throw UnimplementedError();
+  @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
           ReceivedMessageEnvelope envelope, int syncEventId,
           {void Function()? checkCanCommit}) =>

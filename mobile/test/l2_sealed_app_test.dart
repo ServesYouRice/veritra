@@ -165,6 +165,98 @@ void main() {
       expect(server.requests, hasLength(1));
     });
 
+    test('not eligible, and only that, may send the message identified',
+        () async {
+      // Review M2: the server answers sealed_not_eligible only after
+      // finding nothing stored under the key.
+      final poster = SealedPostClient(baseUrl: server.origin);
+      addTearDown(poster.close);
+      final store = MemoryLocalStore();
+      final tokens = _tokens(store: store);
+      await tokens.debugTrust(store, _conversation);
+      final envelope = _envelope(_token(1));
+      final asked = <MessageEnvelope>[];
+      Future<bool> identified(MessageEnvelope sealed) async {
+        asked.add(sealed);
+        return true;
+      }
+
+      server.refuseNext.add('sealed_not_eligible');
+      await postSealedMessage(
+          poster: poster,
+          envelope: envelope,
+          tokens: tokens,
+          rewrite: (_) async => true,
+          sendIdentified: identified);
+      expect(asked.single.idempotencyKey, envelope.idempotencyKey);
+      expect(server.stored, isEmpty);
+      expect(tokens.activeIn(_conversation), isFalse);
+
+      // Without a fallback to offer, the refusal fails the message.
+      server.refuseNext.add('sealed_not_eligible');
+      await expectLater(
+          postSealedMessage(
+              poster: poster,
+              envelope: envelope,
+              tokens: tokens,
+              rewrite: (_) async => true,
+              sendIdentified: (_) async => false),
+          throwsA(isA<ApiException>()
+              .having((e) => e.serverCode, 'code', 'sealed_not_eligible')));
+
+      // Every other answer keeps it sealed: it waits or fails, never goes
+      // identified.
+      asked.clear();
+      for (final refusal in <String>[
+        '409:idempotency_conflict',
+        '400:invalid_encrypted_envelope',
+        '403:forbidden',
+        '404:not_found',
+        '429:rate_limited',
+        '503:unavailable',
+        '400:sealed_not_eligible',
+      ]) {
+        server.refuseNext.add(refusal);
+        await expectLater(
+            postSealedMessage(
+                poster: poster,
+                envelope: _envelope(_token(2)),
+                tokens: _tokens(),
+                rewrite: (_) async => true,
+                sendIdentified: identified),
+            throwsA(isA<ApiException>()),
+            reason: refusal);
+      }
+      // A refused token with none to replace it waits too.
+      server.refuseNext.add('sealed_token_spent');
+      await expectLater(
+          postSealedMessage(
+              poster: poster,
+              envelope: _envelope(_token(2)),
+              tokens: _tokens(),
+              rewrite: (_) async => true,
+              sendIdentified: identified),
+          throwsA(isA<ApiException>()));
+      expect(asked, isEmpty);
+      expect(server.stored, isEmpty);
+    });
+
+    test('a 404 from the sealed routes waits instead of failing', () async {
+      // Review low (a): the routes answer 404 while the switch is off.
+      final poster = SealedPostClient(baseUrl: server.origin);
+      addTearDown(poster.close);
+      server.refuseNext.add('404:not_found');
+      await expectLater(
+          postSealedMessage(
+              poster: poster,
+              envelope: _envelope(_token(1)),
+              tokens: _tokens(),
+              rewrite: (_) async => true),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'status', 503)
+              .having((e) => e.serverCode, 'code', 'sealed_unavailable')));
+    });
+
     test('outcomes', () {
       SealedPostOutcome of(int status, String code) =>
           sealedPostOutcome(ApiException(status, '{"error":"$code"}'));
@@ -363,6 +455,11 @@ class _FakeCrypto implements SealedSendingCryptoService {
   set sealedTokenSource(SealedTokenSource? source) {}
 
   @override
+  Future<MessageEnvelope?> reencryptSealedAsIdentified(
+          MessageEnvelope sealed) =>
+      throw UnimplementedError();
+
+  @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
           ReceivedMessageEnvelope envelope, int syncEventId,
           {void Function()? checkCanCommit}) =>
@@ -487,8 +584,15 @@ class _Loopback {
         return;
       }
       if (refuseNext.isNotEmpty) {
-        final code = refuseNext.removeAt(0);
-        response.statusCode = code == 'sealed_token_invalid' ? 403 : 409;
+        var code = refuseNext.removeAt(0);
+        var status = code == 'sealed_token_invalid' ? 403 : 409;
+        // 'status:code' names the status too.
+        final colon = code.indexOf(':');
+        if (colon > 0) {
+          status = int.parse(code.substring(0, colon));
+          code = code.substring(colon + 1);
+        }
+        response.statusCode = status;
         response.write('{"error":"$code"}');
         await response.close();
         return;

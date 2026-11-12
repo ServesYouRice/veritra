@@ -89,9 +89,11 @@ func sealedEligible(ctx context.Context, q sealedQuerier, conversationID string,
 
 // sealedMembersCapable reports whether every live device of every member of
 // the conversation reads sealed events (sealed_capable_devices). Issuance
-// needs it; redemption does not, so a device linked after tokens were issued
-// does not turn a sender's queued post into a failure (that device misses
-// the post instead, docs/crypto.md "As built").
+// and redemption both need it (review M2): a device linked, or a member
+// added on an older app, after tokens were issued would otherwise miss
+// every sealed post made with them. Redemption checks it after the
+// idempotent retry, so its refusal proves nothing was stored, and the app
+// may then send that message identified instead.
 func sealedMembersCapable(ctx context.Context, q sealedQuerier, conversationID string) (bool, error) {
 	var capable bool
 	err := q.QueryRowContext(ctx, `
@@ -264,6 +266,15 @@ func (s *Store) SaveSealedEnvelope(ctx context.Context, envelope domain.SealedMe
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return domain.SealedMessageEnvelope{}, false, 0, nil, err
 	}
+	if eligible {
+		if eligible, err = sealedMembersCapable(ctx, tx, envelope.ConversationID); err != nil {
+			return domain.SealedMessageEnvelope{}, false, 0, nil, err
+		}
+	}
+	// ErrSealedNotEligible is answered only here, after the retry lookup and
+	// the identified-key check: it proves no envelope is stored under this
+	// (conversation, key), which is what lets the app fall back to an
+	// identified send of the same message (docs/crypto.md, the invariant).
 	if !eligible {
 		return domain.SealedMessageEnvelope{}, false, 0, nil, ErrSealedNotEligible
 	}

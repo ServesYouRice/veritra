@@ -8211,7 +8211,7 @@ class AppState extends ChangeNotifier
       notifyListeners();
       try {
         if (envelope.sealed) {
-          await _postSealed(current, envelope, ownerGeneration);
+          await _postSealed(current, client, envelope, ownerGeneration);
         } else {
           await client.sendEnvelope(current.token, envelope);
         }
@@ -8235,21 +8235,44 @@ class AppState extends ChangeNotifier
   }
 
   /// L2-3: posts a message chosen to go sealed, on the sealed client. It is
-  /// never sent identified, whatever the answer: once a sealed attempt may
+  /// never sent identified, with one exception: once a sealed attempt may
   /// have landed, an identified copy would be a second message. A refused
   /// token is replaced and the same message (same idempotency key and
   /// bytes) posted again; the server answers a post it already stored with
-  /// 200 whatever token comes with it. With no token to replace it, the
-  /// message waits (retrying) for the next token pass. A refusal that
-  /// stored nothing (not eligible, malformed) fails the message.
-  Future<void> _postSealed(
-          Session current, MessageEnvelope envelope, int ownerGeneration) =>
+  /// 200 whatever token comes with it. With no token to replace it, or
+  /// while the sealed routes are off, the message waits (retrying). The
+  /// exception (review M2) is `sealed_not_eligible`, which proves nothing is
+  /// stored under the key: the message is encrypted afresh, identified,
+  /// under the same key, in its outbox entry's place, and sent. Any other
+  /// refusal fails the message.
+  Future<void> _postSealed(Session current, ApiClient client,
+          MessageEnvelope envelope, int ownerGeneration) =>
       postSealedMessage(
         poster: _sealedPostClient(current.baseUrl),
         envelope: envelope,
         tokens: sealedSender,
         rewrite: localStore.rewriteQueuedEnvelope,
         owned: () => _syncOwnerActive(current, ownerGeneration),
+        sendIdentified: (sealed) async {
+          final crypto = switch (cryptoService) {
+            final SealedSendingCryptoService sealing => sealing,
+            _ => null,
+          };
+          if (crypto == null) return false;
+          // An MLS control message queued since keeps the fresh encrypt
+          // waiting, as the flush does (I34); the sealed entry stays.
+          if ((await localStore.pendingMlsMessages()).any(
+              (message) => message.conversationId == sealed.conversationId)) {
+            throw ApiException(503, '{"error":"mls_control_pending"}');
+          }
+          final identified = await crypto.reencryptSealedAsIdentified(sealed);
+          if (identified == null || identified.sealed) return false;
+          if (!_syncOwnerActive(current, ownerGeneration)) {
+            throw ApiException(503, '{"error":"session_changed"}');
+          }
+          await client.sendEnvelope(current.token, identified);
+          return true;
+        },
       );
 
   /// Builds the sealed post client (tests use a loopback server).

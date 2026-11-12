@@ -2,6 +2,7 @@ package httpapi_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -188,5 +189,71 @@ func TestSealedRetryOfAStoredPostOutlivesEligibility(t *testing.T) {
 	changed := sealedPostBody(conversationID, tokens[1], sealedKey1, []byte("other bytes"), commitOf(0x11))
 	if status, response := postSealed(t, handler, changed); status != http.StatusConflict || !strings.Contains(string(response), "idempotency_conflict") {
 		t.Fatalf("changed retry status=%d body=%s", status, response)
+	}
+}
+
+// Review M2: redemption checks the issuance gate too. A device that cannot
+// read sealed events (linked, or an older app, after the tokens were
+// issued) closes it: a new sealed post is refused with sealed_not_eligible
+// and stores, spends and syncs nothing, so the app may send that message
+// identified; a post stored before still answers its retry with 200.
+func TestSealedRedemptionWaitsForEveryMemberDevice(t *testing.T) {
+	handler, ownerToken, dbPath, _ := sealedHandler(t, nil)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedgate2")
+	conversationID := createConversation(t, handler, ownerToken)
+	addMember(t, handler, ownerToken, conversationID, memberID)
+	sealedReaders(t, handler, ownerToken, memberToken)
+	_, info := sealedInfo(t, handler, memberToken, conversationID)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 2)
+	if status != http.StatusOK {
+		t.Fatalf("tokens status=%d body=%s", status, body)
+	}
+	stored := sealedPostBody(conversationID, tokens[0], sealedKey1, []byte("before the gate"), nil)
+	if status, response := postSealed(t, handler, stored); status != http.StatusCreated {
+		t.Fatalf("post status=%d body=%s", status, response)
+	}
+	// The owner's device stops counting as one that reads sealed events.
+	db := openSQLite(t, dbPath)
+	if _, err := db.Exec(`DELETE FROM sealed_capable_devices WHERE device_id IN (SELECT d.id FROM devices d JOIN memberships m ON m.account_id = d.account_id WHERE m.conversation_id = ? AND m.role = 'owner')`, conversationID); err != nil {
+		t.Fatal(err)
+	}
+	if status, retry := postSealed(t, handler, stored); status != http.StatusOK {
+		t.Fatalf("retry of a stored post status=%d body=%s", status, retry)
+	}
+	var eventsBefore int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sync_events WHERE event_type = 'message.sealed.created'`).Scan(&eventsBefore); err != nil {
+		t.Fatal(err)
+	}
+	fresh := sealedPostBody(conversationID, tokens[1], "sealed-key-000000000000077", []byte("after the gate"), nil)
+	if status, response := postSealed(t, handler, fresh); status != http.StatusConflict || !strings.Contains(string(response), "sealed_not_eligible") {
+		t.Fatalf("post with the gate closed status=%d body=%s", status, response)
+	}
+	var envelopes, spent, events int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sealed_message_envelopes WHERE idempotency_key = 'sealed-key-000000000000077'`).Scan(&envelopes); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sealed_spent_tokens`).Scan(&spent); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sync_events WHERE event_type = 'message.sealed.created'`).Scan(&events); err != nil {
+		t.Fatal(err)
+	}
+	if envelopes != 0 || spent != 1 || events != eventsBefore {
+		t.Fatalf("refused post left envelopes=%d spent=%d events=%d (was %d)", envelopes, spent, events, eventsBefore)
+	}
+	// The same message may now go identified under the same key.
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", memberToken, map[string]interface{}{
+		"conversation_id": conversationID,
+		"idempotency_key": "sealed-key-000000000000077",
+		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("identified now")),
+		"crypto_protocol": "mls10-openmls-v1",
+	})
+	if status != http.StatusCreated {
+		t.Fatalf("identified fallback status=%d body=%s", status, response)
+	}
+	// And a delayed sealed copy of it can no longer land.
+	sealedReaders(t, handler, ownerToken)
+	if status, response := postSealed(t, handler, fresh); status != http.StatusConflict || !strings.Contains(string(response), "idempotency_conflict") {
+		t.Fatalf("late sealed copy status=%d body=%s", status, response)
 	}
 }

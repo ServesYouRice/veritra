@@ -2876,6 +2876,45 @@ class NativeCryptoService
           routeGeneration: layoutGeneration,
           expiresAt: expiresAt);
 
+  @override
+  Future<MessageEnvelope?> reencryptSealedAsIdentified(
+      MessageEnvelope sealed) async {
+    if (!sealed.sealed) return null;
+    final raw = await localStore.loadSealedOwnPostFallback(
+        sealed.conversationId, sealed.idempotencyKey);
+    if (raw == null) return null;
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(raw);
+    } on FormatException {
+      return null;
+    }
+    if (decoded is! Map) return null;
+    final typeName = decoded['type'];
+    final body = decoded['body'];
+    final expiresAtMs = decoded['expires_at_ms'];
+    final type = AppPayloadType.values
+        .where((candidate) => candidate.wireName == typeName)
+        .firstOrNull;
+    if (type == null ||
+        body is! Map ||
+        (expiresAtMs != null && expiresAtMs is! int)) {
+      return null;
+    }
+    return _encryptPayload(
+      sealed.conversationId,
+      type,
+      Map<String, Object?>.from(body),
+      attachmentRefs: const <String>[],
+      draftText: null,
+      expiresAt: expiresAtMs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(expiresAtMs as int,
+              isUtc: true),
+      replaceSealedKey: sealed.idempotencyKey,
+    );
+  }
+
   /// [routeChannelId] and [routeGeneration] are given exactly for a post in a
   /// community's shared group; any other pairing fails before anything is
   /// encrypted, so a post can neither lose its channel nor gain one.
@@ -2888,8 +2927,19 @@ class NativeCryptoService
     String? routeChannelId,
     int? routeGeneration,
     DateTime? expiresAt,
+    String? replaceSealedKey,
   }) =>
       _serial(() async {
+        // L2-3 (M2): [replaceSealedKey] re-encrypts that queued sealed
+        // message identified, under its own key, in its entry's place: its
+        // own copy is already stored, so no effect is written again.
+        final replacing = replaceSealedKey != null;
+        if (replacing &&
+            (!sealedPayloadTypes.contains(type) ||
+                attachmentRefs.isNotEmpty ||
+                routeChannelId != null)) {
+          throw ArgumentError.value(type, 'type', 'not a sealed message');
+        }
         final info = infoPayloadTypes.contains(type);
         // C4: a leave proof is hidden and never franked, like an info
         // payload, but changes no community info.
@@ -2925,7 +2975,7 @@ class NativeCryptoService
         }
         final previous = await _requiredState();
         final cursor = await localStore.loadSyncCursor();
-        if (!await localStore.hasOutboxCapacity()) {
+        if (!replacing && !await localStore.hasOutboxCapacity()) {
           throw const OutboxFullException();
         }
         if (signedLeave ||
@@ -2965,9 +3015,12 @@ class NativeCryptoService
             !sharedGroup &&
             c7Private == null &&
             (kind == 'dm' || kind == 'group');
+        if (replacing && !sealable) {
+          throw StateError('the queued sealed message is no longer sealable');
+        }
         final source = sealedTokenSource;
         SealedToken? sealedToken;
-        if (sealable && source != null) {
+        if (sealable && source != null && !replacing) {
           sealedToken = await source.takeFor(conversationId);
           if (sealedToken != null &&
               (sealedToken.conversationId != conversationId ||
@@ -2976,7 +3029,7 @@ class NativeCryptoService
           }
         }
         try {
-          final idempotencyKey = _randomIdempotencyKey();
+          final idempotencyKey = replaceSealedKey ?? _randomIdempotencyKey();
           final deviceId = _deviceId!;
           // C6: every message carries a franking key inside its encrypted
           // payload and the commitment to it beside the ciphertext. The
@@ -3115,45 +3168,58 @@ class NativeCryptoService
               expectedCursor: cursor,
               state: _sealNext(previous),
               envelope: envelope,
-              draftText: draftText,
+              draftText: replacing ? null : draftText,
+              replacesSealedEntry: replacing,
               sealedOwnPost: sealedToken == null
                   ? null
                   : SealedOwnPost(
                       conversationId: conversationId,
                       idempotencyKey: idempotencyKey,
-                      ciphertextSha256: sha256(ciphertext)),
-              messageEffects: info || leaveProof || reportKey || deviceAlert
-                  ? <MessageEffect>[
-                      InsertMessageEffect(
-                        key: messageKey(deviceId, idempotencyKey),
-                        conversationId: conversationId,
-                        senderAccountId: _accountId!,
-                        senderDeviceId: deviceId,
-                        kind: LocalMessageKind.action,
-                        senderHidden: true,
-                        channelId: channelId,
-                        createdAt:
-                            DateTime.now().toUtc().millisecondsSinceEpoch,
-                        state: LocalMessageState.pending,
-                      ),
-                    ]
-                  : messageEffectsFor(
-                      DecryptedAppPayload(
-                          type: type,
-                          actionId: idempotencyKey,
-                          body: body,
-                          channelId: channelId),
-                      conversationId: conversationId,
-                      senderAccountId: _accountId!,
-                      senderDeviceId: deviceId,
-                      createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
-                      state: LocalMessageState.pending,
-                      // The sender's own word: the first echo can only
-                      // shorten it.
-                      expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
-                      authority: _authority,
-                    ),
-              communityInfo: info
+                      ciphertextSha256: sha256(ciphertext),
+                      // Kept only while queued, for the one fallback
+                      // (review M2); never sent anywhere.
+                      fallbackJson: jsonEncode(<String, Object?>{
+                        'type': type.wireName,
+                        'body': body,
+                        if (expiresAt != null)
+                          'expires_at_ms':
+                              expiresAt.toUtc().millisecondsSinceEpoch,
+                      })),
+              messageEffects: replacing
+                  ? const <MessageEffect>[]
+                  : info || leaveProof || reportKey || deviceAlert
+                      ? <MessageEffect>[
+                          InsertMessageEffect(
+                            key: messageKey(deviceId, idempotencyKey),
+                            conversationId: conversationId,
+                            senderAccountId: _accountId!,
+                            senderDeviceId: deviceId,
+                            kind: LocalMessageKind.action,
+                            senderHidden: true,
+                            channelId: channelId,
+                            createdAt:
+                                DateTime.now().toUtc().millisecondsSinceEpoch,
+                            state: LocalMessageState.pending,
+                          ),
+                        ]
+                      : messageEffectsFor(
+                          DecryptedAppPayload(
+                              type: type,
+                              actionId: idempotencyKey,
+                              body: body,
+                              channelId: channelId),
+                          conversationId: conversationId,
+                          senderAccountId: _accountId!,
+                          senderDeviceId: deviceId,
+                          createdAt:
+                              DateTime.now().toUtc().millisecondsSinceEpoch,
+                          state: LocalMessageState.pending,
+                          // The sender's own word: the first echo can only
+                          // shorten it.
+                          expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
+                          authority: _authority,
+                        ),
+              communityInfo: info && !replacing
                   ? <CommunityInfoEvent>[
                       communityInfoEventFor(
                         DecryptedAppPayload(

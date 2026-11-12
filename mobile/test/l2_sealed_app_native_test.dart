@@ -113,7 +113,7 @@ void main() {
     expect(bob.tokens.asked, 0);
   }, skip: skip);
 
-  test('the sending device recognises its own sealed post by its key',
+  test('the sending device recognises its own sealed post by its ciphertext',
       () async {
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
@@ -294,6 +294,62 @@ void main() {
         throwsFormatException);
     expect(await alice.store.loadSyncCursor(), cursor);
     expect(await alice.history(), isEmpty);
+  }, skip: skip);
+
+  // Review M2: on sealed_not_eligible (nothing stored under the key) the
+  // queued sealed message is encrypted afresh, identified, in its place.
+  test('a refused sealed message is re-encrypted identified, afresh', () async {
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    bob.tokens.add(_token());
+    const words = 'kept only on this device';
+    final sent =
+        await bob.send(AppPayloadType.text, <String, Object?>{'text': words});
+    expect(sent.sealed, isTrue);
+    // The plaintext kept for the fallback is never in the outbox JSON.
+    expect(jsonEncode(sent.toJson()), isNot(contains(words)));
+    expect(
+        await bob.store
+            .loadSealedOwnPostFallback('conv_1', sent.idempotencyKey),
+        contains(words));
+    await bob.store.recordOutboxFailure(sent.idempotencyKey,
+        failureClass: 'terminal:409:sealed_not_eligible',
+        terminal: true,
+        nextAttemptAt: null);
+
+    final again = await bob.service.reencryptSealedAsIdentified(sent);
+    expect(again, isNotNull);
+    expect(again!.sealed, isFalse);
+    expect(again.idempotencyKey, sent.idempotencyKey);
+    expect(again.ciphertext, isNot(sent.ciphertext));
+    expect(again.frankCommit, isNot(sent.frankCommit));
+    expect(bob.tokens.taken, 1);
+    // What goes on the wire carries no token and no plaintext.
+    final wire = jsonEncode(again.toJson());
+    expect(wire, isNot(contains(words)));
+    expect(wire, isNot(contains('l2_sealed_token')));
+    // It took the sealed entry's place, failure cleared.
+    final queued = (await bob.store.pendingEnvelopeRecords()).single;
+    expect(queued.envelope.sealed, isFalse);
+    expect(queued.envelope.ciphertext, again.ciphertext);
+    expect(queued.terminal, isFalse);
+    expect(queued.attemptCount, 0);
+    expect(
+        await bob.store.loadSealedOwnPostDigest('conv_1', sent.idempotencyKey),
+        isNull);
+    // One message only, still pending.
+    expect(await bob.history(), hasLength(1));
+    // There is nothing left to fall back with.
+    expect(await bob.service.reencryptSealedAsIdentified(sent), isNull);
+    expect(await bob.service.reencryptSealedAsIdentified(again), isNull);
+
+    // The other member reads it identified: no sealed signature inside.
+    await alice.receive(bob, again);
+    final row = (await alice.history()).single;
+    expect(row.body, words);
+    expect(row.senderDeviceId, 'dev_bob');
+    expect((await alice.store.loadFrankReveal(row.key))!.sealed, isFalse);
   }, skip: skip);
 
   test('a token taken for a send that fails goes back', () async {
