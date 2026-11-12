@@ -4,6 +4,7 @@ go 1.26.11
 
 require (
 	github.com/SherClockHolmes/webpush-go v1.4.0
+	github.com/cloudflare/circl v1.6.5
 	github.com/go-webauthn/webauthn v0.18.2
 	golang.org/x/crypto v0.58.0
 	golang.org/x/sys v0.49.0
@@ -11,6 +12,7 @@ require (
 )
 
 require (
+	github.com/bwesterb/go-ristretto v1.2.4 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
