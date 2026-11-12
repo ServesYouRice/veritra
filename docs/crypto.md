@@ -714,7 +714,9 @@ is refused is skipped, never fatal.
   since the screen showed it. Only `report_inbox_unavailable` reads as "no
   owner has a key"; any other error records nothing. Tests:
   `mobile/test/l2_owner_key_tofu_test.dart` (AppState, native engine),
-  `l2_sealed_key_screen_test.dart`.
+  `l2_sealed_key_screen_test.dart`. The pass runs only while the server's
+  `sealed_sender` switch is on; with it off, owner keys are pinned only as
+  D95 describes (a person compares codes while reporting).
 - **What the server can do before the first pin (accepted with
   first-use pinning).** It chooses when the first sight happens (it can
   answer `report_inbox_unavailable` until it is ready; meanwhile sealed
