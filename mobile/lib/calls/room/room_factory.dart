@@ -88,8 +88,11 @@ class RoomCallFactory {
         RoomMediaSession(engine: engine, keys: keys, sfu: connectSfu(keys))
           ..start();
 
+    // Null (the L1 judgment not loaded yet) reads as its own roster, so the
+    // engine refreshes once it loads.
     String rosterOf() =>
-        (parent.members(conversationId).map((m) => m.id).toList()..sort())
+        (parent.members(conversationId)?.map((m) => m.id).toList() ?? ['?']
+              ..sort())
             .join(',');
     var lastRoster = rosterOf();
     void onRoster() {

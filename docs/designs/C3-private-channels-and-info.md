@@ -394,14 +394,28 @@ read as "moderator member":
   stay preferred whenever any is a member;
 - key freshness ("C3 key freshness"): in a private channel, when no key from
   this account or an owner or admin is fresher than the last removal, the
-  freshest verified moderator's key is current. That keeps the moderator's
-  key usable after an owner or admin joins (the adder hands it over and the
-  admin edits and answers under it) until an owner or admin rotates at the
-  next removal; otherwise the joined admin and every member would hold no
-  key at all. A moderator's key outside the no-admin case is still only a
-  stand-in for sealing, never a delivery, so the owner or admin still
-  rotates its own key and wins on the next pass (owner and admin keys are
-  chosen first).
+  freshest verified moderator's key is current. The adder hands it to an
+  owner or admin who joins, so the admin and every member can read what is
+  sealed under it; otherwise they would hold no key at all;
+- an owner or admin who joins mints its own key (owner decision B,
+  2026-11-11; before, it edited and answered under the moderator's key
+  until the next removal). An owner or admin device that is a member, holds
+  the moderator's key and finds no owner's or admin's key current marks the
+  channel key due (`CommunityInfoService.replaceModeratorKey`, called on
+  each info pass before key requests are answered). The mark runs as a
+  removal this device did not make: it waits its turn over the verified
+  owners and admins, so of several joining owner and admin devices one
+  mints and the others adopt its key; the moderator's key never counts as
+  that delivery. While the mark is due the device neither edits nor answers
+  requests under the moderator's key; the pass seals every channel record
+  again under the new key, which goes into the channel's group only. A
+  moderator's key outside the no-admin case is thus only a stand-in for
+  reading and for the short wait before that pass, never a delivery (owner
+  and admin keys are chosen first). A joined admin the adder did not hand
+  the key to has nothing to seal again with and marks nothing (as before:
+  it asks, and only owners and admins answer while one is a member). Test:
+  `c3_community_info_service_test.dart` ("an admin who joins later replaces
+  its key").
 
 A moderator re-seals channel records under its new key. The server lets any
 channel reader write a channel record, and D80 lets any member edit channel

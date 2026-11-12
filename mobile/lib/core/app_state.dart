@@ -475,6 +475,13 @@ class AppState extends ChangeNotifier
   /// answer), which the sync pass must not void with a self-update.
   final Set<String> _leavingRecordGroups = <String>{};
 
+  /// C4: when each group's next void of a cancelled leave may be tried
+  /// (`_voidCancelledLeaves`). In memory: a restart tries again at once.
+  final Map<String, DateTime> _leaveVoidNotBefore = <String, DateTime>{};
+
+  /// The spacing between two tries to void one cancelled leave.
+  static const leaveVoidRetry = Duration(minutes: 10);
+
   /// C6: this account's report public key on this device (canonical base64,
   /// '' when it holds no seed), cached per server and account so a sync
   /// pass reads the keystore once. Cleared when the seed changes.
@@ -1041,6 +1048,10 @@ class AppState extends ChangeNotifier
   Timer? _outboxRetryTimer;
   bool _flushingMlsOutbox = false;
   bool _flushMlsOutboxRequested = false;
+
+  /// Completes when the MLS outbox pass running now (with the repeats asked
+  /// for while it ran) ends; null while none runs.
+  Completer<void>? _mlsOutboxPassDone;
   Timer? _mlsOutboxRetryTimer;
   Timer? _catchUpRetryTimer;
   Timer? _expiryTimer;
@@ -8243,6 +8254,7 @@ class AppState extends ChangeNotifier
       return;
     }
     _flushingMlsOutbox = true;
+    final done = _mlsOutboxPassDone = Completer<void>();
     try {
       do {
         _flushMlsOutboxRequested = false;
@@ -8258,6 +8270,8 @@ class AppState extends ChangeNotifier
       } while (_flushMlsOutboxRequested && !_disposed);
     } finally {
       _flushingMlsOutbox = false;
+      _mlsOutboxPassDone = null;
+      done.complete();
       unawaited(_scheduleMlsOutboxRetry());
       // Application messages held behind a control message may go now.
       unawaited(_flushOutbox());
@@ -8491,6 +8505,10 @@ class AppState extends ChangeNotifier
       if (_mlsChangeWaiting(change.conversationId, change.epoch, now)) {
         continue;
       }
+      // C4: a commit of this device's own while it leaves would void the
+      // leave proof it just sent (receivers drop it on the leaver's next
+      // commit). Another member commits it, or the next pass does.
+      if (_leavingRecordGroups.contains(change.conversationId)) continue;
       // The device that made the change commits it too, without waiting.
       final coordinator = change.coordinatorDeviceId == null ||
           change.coordinatorDeviceId == current.deviceId ||
@@ -9611,6 +9629,14 @@ class AppState extends ChangeNotifier
     if (conversation == null || !conversation.isDm) return conversation != null;
     final peer = conversation.peerAccountId;
     return blocksLoaded && peer != null && !isBlocked(peer);
+  }
+
+  /// Sends what the MLS outbox holds and waits for it, including a pass
+  /// that was already running (a second flush only asks it to go again).
+  Future<void> _settleMlsOutbox() async {
+    await _flushMlsOutbox();
+    final running = _mlsOutboxPassDone;
+    if (running != null) await running.future;
   }
 
   /// Whether MLS work for [conversationId] must wait: control messages

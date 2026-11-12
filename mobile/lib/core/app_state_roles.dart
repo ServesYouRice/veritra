@@ -329,6 +329,17 @@ extension RoleActions on AppState {
           'Transfer ownership to an admin before you leave.');
     }
     if (!removalNeedsProof(view.record, self)) return;
+    // C4 (review MEDIUM, round 7): members drop this account's leave proof
+    // when one of its leaves commits after it arrived (that is how a
+    // cancelled leave is voided). A commit of this device's still queued
+    // must therefore go before the proof, or it would void a real leave.
+    // Nothing is sent until the queue is empty, so a refusal here costs no
+    // leave notice.
+    await _settleMlsOutbox();
+    if (await _hasPendingMlsWork(group)) {
+      throw const UserFacingException(
+          'Could not tell the group you are leaving. Try again.');
+    }
     String? channelId;
     final conversation = conversations.where((c) => c.id == group).firstOrNull;
     if (conversation != null && conversation.isCommunityShared) {
@@ -404,20 +415,23 @@ extension RoleActions on AppState {
           await localStore.loadSetting(governanceLeaveSignedOutSetting(id));
       if (marker == null || marker.isEmpty) continue;
       if (!_syncOwnerActive(current, ownerGeneration)) return;
-      // A self-update already queued there settles it once it merges; one
-      // the server refused (its self-update interval) waits out the
-      // policy's backoff, as a periodic one does.
-      final policy = await _selfUpdates(current);
+      // A self-update already queued there settles it once it merges. The
+      // void has its own spacing, not the periodic policy's backoff: the
+      // server lets it past the self-update interval for an hour after the
+      // leave notice (owner decision A), so a backoff left by an unrelated
+      // periodic refusal must not hold it back. A refused or failed void
+      // waits [AppState.leaveVoidRetry] before the next try.
       final now = DateTime.now().toUtc();
+      final notBefore = _leaveVoidNotBefore[id];
       if (await _hasPendingMlsWork(id) ||
-          (policy?.backingOff(id, now) ?? false)) {
+          (notBefore != null && notBefore.isAfter(now))) {
         continue;
       }
+      _leaveVoidNotBefore[id] = now.add(AppState.leaveVoidRetry);
       try {
         await crypto.stageSelfUpdate(id);
       } catch (err) {
-        policy?.recordBackoff(id, now, MlsSelfUpdatePolicy.failureBackoff);
-        await _saveSelfUpdates();
+        _leaveVoidNotBefore[id] = now.add(MlsSelfUpdatePolicy.failureBackoff);
         developer.log('c4_leave_void_failed ${err.runtimeType}',
             name: 'veritra.sync');
         continue;

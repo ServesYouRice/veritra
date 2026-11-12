@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart' as rtc;
 import 'package:private_messenger/calls/room/room_engine.dart';
 import 'package:private_messenger/calls/room/room_ports.dart';
 
@@ -345,14 +346,25 @@ class FakeCrypto implements CallGroupCrypto {
   }
 }
 
+/// The parent group's approved leaves ([list]), its leaves the L1 judgment
+/// does not approve ([unapproved]), and whether that judgment is loaded
+/// ([known]).
 class FakeParent implements ParentGroupView {
   FakeParent(List<CallMember> members) : list = List.of(members);
   final List<CallMember> list;
+  final List<CallMember> unapproved = [];
+  bool known = true;
   @override
-  bool hasMember(String conversationId, CallMember member) => list
-      .any((m) => m.id == member.id && s(m.signingKey) == s(member.signingKey));
+  bool hasMember(String conversationId, CallMember member) =>
+      known &&
+      list.any(
+          (m) => m.id == member.id && s(m.signingKey) == s(member.signingKey));
   @override
-  List<CallMember> members(String conversationId) => List.of(list);
+  List<CallMember>? members(String conversationId) =>
+      known ? List.of(list) : null;
+  @override
+  Future<bool> allApproved(String conversationId) async =>
+      known && unapproved.isEmpty;
 }
 
 class FakeKeys implements FrameKeySink {
@@ -404,4 +416,33 @@ class Device {
   final FakeKeys keys;
   late final FakeApi api;
   late final RoomEngine engine;
+}
+
+/// The frame cryptor's key provider, recording every key it is given.
+class FakeKeyProvider implements rtc.KeyProvider {
+  final Map<String, Uint8List> keys = {};
+  bool refuse = false;
+  bool disposed = false;
+  final List<String> log;
+  FakeKeyProvider(this.log);
+
+  @override
+  String get id => 'kp';
+
+  @override
+  Future<bool> setKey(
+      {required String participantId,
+      required int index,
+      required Uint8List key}) async {
+    if (refuse) return false;
+    keys['$participantId@$index'] = Uint8List.fromList(key);
+    log.add('key $participantId@$index');
+    return true;
+  }
+
+  @override
+  Future<void> dispose() async => disposed = true;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

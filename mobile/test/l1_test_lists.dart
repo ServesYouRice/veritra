@@ -40,6 +40,10 @@ class TestDeviceLists extends DeviceListPins {
   void markRemoved(String accountId, String deviceId) =>
       _removed.add(_key(accountId, deviceId));
 
+  /// Undoes [markRemoved] (for the shared list, which outlives one test).
+  void unmarkRemoved(String accountId, String deviceId) =>
+      _removed.remove(_key(accountId, deviceId));
+
   @override
   Future<Uint8List?> approvedKey(String accountId, String deviceId) async =>
       unavailable.contains(accountId) ||

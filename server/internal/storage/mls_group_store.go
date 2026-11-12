@@ -465,9 +465,49 @@ func (s *Store) checkMLSSelfUpdate(ctx context.Context, tx *sql.Tx, conversation
 	}
 	next := parseTime(last.String).Add(time.Duration(s.limits.MLSSelfUpdateMinutes) * time.Minute)
 	if now.Before(next) {
+		voids, err := leaveVoidExempt(ctx, tx, conversationID, deviceID, last.String, now)
+		if err != nil {
+			return err
+		}
+		if voids {
+			return nil
+		}
 		return s.refuse(admission.SelfUpdates, mlsSelfUpdateLimitError{retryAfter: next.Sub(now)})
 	}
 	return nil
+}
+
+// LeaveVoidWindow is how long after a C4 leave notice its device's next
+// update-only commit in that conversation passes the self-update interval
+// (owner decision A, 2026-11-11, docs/crypto.md "C4 leave proof in the
+// commit"). A device whose leave did not go through voids the statement it
+// signed with a self-update; the interval must not keep that statement
+// usable for up to an hour (or the operator's longer setting).
+const LeaveVoidWindow = time.Hour
+
+// leaveVoidExempt reports whether an update-only commit from deviceID is the
+// void of a cancelled leave: the same device sent a leave notice (the
+// c4_leave mark) in this conversation within LeaveVoidWindow, after its last
+// self-update. The sender is still an active member (the caller checked the
+// roster and that no removal is pending), so the leave did not go through.
+// The exempt commit moves last_self_update_at past the notice, so each
+// notice buys at most one; notices are bounded by LeaveNoticesPerInterval.
+// The server cannot tell a void from any other self-update, so this is a
+// budget, not a proof: at most that many extra epochs an hour per device.
+func leaveVoidExempt(ctx context.Context, tx *sql.Tx, conversationID, deviceID, lastSelfUpdate string, now time.Time) (bool, error) {
+	since := formatTime(now.Add(-LeaveVoidWindow))
+	if lastSelfUpdate > since {
+		since = lastSelfUpdate
+	}
+	var exempt bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM message_envelopes
+		WHERE conversation_id = ? AND sender_device_id = ?
+		  AND json_extract(crypto_metadata_json, '$.c4_leave') = 1
+		  AND created_at > ? AND created_at <= ?)`,
+		conversationID, deviceID, since, formatTime(now)).Scan(&exempt); err != nil {
+		return false, err
+	}
+	return exempt, nil
 }
 
 // MLSRoleChangeInterval is the shortest time between two role-only commits

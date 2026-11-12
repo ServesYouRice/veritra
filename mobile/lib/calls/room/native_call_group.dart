@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import '../../crypto/native_crypto_bindings.dart';
 import '../../crypto/sha256.dart';
+import '../../storage/device_list_records.dart';
 import 'room_ports.dart';
 
 /// B6 (ABI 22) join signature domain; Rust prepends it to the message.
@@ -210,37 +211,97 @@ class NativeCallGroupCrypto implements CallGroupCrypto {
   }
 }
 
-/// [ParentGroupView] on the parent conversation's native MLS group.
+/// [ParentGroupView] on the parent conversation's native MLS group, filtered
+/// by this device's L1 verdicts: only a leaf whose stored judgment is
+/// `approved`, with the same signing key, counts (an unapproved leaf can
+/// carry any account's id).
 class NativeParentGroupView implements ParentGroupView {
-  NativeParentGroupView(NativeCryptoDevice device) : _device = (() => device);
+  /// [judged] returns the stored verdicts of a conversation's leaves, or
+  /// null while they are not loaded; [load] loads them.
+  NativeParentGroupView(NativeCryptoDevice device,
+      {required List<ApprovalLeaf>? Function(String conversationId) judged,
+      required Future<List<ApprovalLeaf>?> Function(String conversationId)
+          load})
+      : this.live(() => device, judged: judged, load: load);
 
   /// Reads the device [current] returns at each call, so a replaced or
   /// closed handle is never used; null lists nobody (fail closed: no one
   /// can be added).
-  NativeParentGroupView.live(NativeCryptoDevice? Function() current)
-      : _device = current;
+  NativeParentGroupView.live(NativeCryptoDevice? Function() current,
+      {required List<ApprovalLeaf>? Function(String conversationId) judged,
+      required Future<List<ApprovalLeaf>?> Function(String conversationId)
+          load})
+      : _device = current,
+        _judged = judged,
+        _load = load;
   final NativeCryptoDevice? Function() _device;
+  final List<ApprovalLeaf>? Function(String conversationId) _judged;
+  final Future<List<ApprovalLeaf>?> Function(String conversationId) _load;
 
-  @override
-  List<CallMember> members(String conversationId) {
+  /// Every leaf of the parent with whether it is approved; empty for an
+  /// unknown group or no device, null while the verdicts are not loaded.
+  List<(CallMember, bool)>? _leaves(
+      String conversationId, List<ApprovalLeaf>? verdicts) {
     final device = _device();
     if (device == null) return const [];
+    final List<LeafPair> tree;
     try {
-      return device.groupMembers(conversationId).map(_member).toList();
+      tree = device.groupMembers(conversationId);
+    } catch (_) {
+      return const [];
+    }
+    if (verdicts == null) return null;
+    try {
+      return [
+        for (final leaf in tree)
+          (
+            _member(leaf),
+            verdicts.any((row) =>
+                row.verdict == LeafVerdict.approved &&
+                row.sameLeaf(leaf.accountId, leaf.deviceId) &&
+                _sameBytes(row.signingKey, leaf.signingKey)),
+          ),
+      ];
     } catch (_) {
       return const [];
     }
   }
 
   @override
+  List<CallMember>? members(String conversationId) {
+    if (_device() == null) return const [];
+    final leaves = _leaves(conversationId, _judged(conversationId));
+    if (leaves == null) return null;
+    return [
+      for (final (member, approved) in leaves)
+        if (approved) member,
+    ];
+  }
+
+  @override
   bool hasMember(String conversationId, CallMember member) {
-    for (final candidate in members(conversationId)) {
+    for (final candidate in members(conversationId) ?? const <CallMember>[]) {
       if (candidate.id == member.id &&
           _sameBytes(candidate.signingKey, member.signingKey)) {
         return true;
       }
     }
     return false;
+  }
+
+  @override
+  Future<bool> allApproved(String conversationId) async {
+    if (_device() == null) return false;
+    final List<ApprovalLeaf>? verdicts;
+    try {
+      verdicts = _judged(conversationId) ?? await _load(conversationId);
+    } on Object {
+      return false;
+    }
+    final leaves = _leaves(conversationId, verdicts);
+    return leaves != null &&
+        leaves.isNotEmpty &&
+        leaves.every((leaf) => leaf.$2);
   }
 }
 

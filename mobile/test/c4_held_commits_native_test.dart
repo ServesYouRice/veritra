@@ -200,9 +200,17 @@ void main() {
               .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
           signed ? isNotNull : isNull);
     }
+    // The plain member_leave sets the marker too (round 7): it is a proof on
+    // its own, and the signed statement after it is best effort.
     expect(
         await bob.store.loadSetting(governanceLeaveSignedOutSetting('conv_1')),
-        signed ? '1' : isNull);
+        '1');
+    for (final member in [alice, carol]) {
+      expect(
+          await member.store
+              .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+          isNotNull);
+    }
     if (cancel) {
       // The server refused Bob's leave: his self-update voids the statement
       // and, once merged, clears his marker.
@@ -261,20 +269,54 @@ void main() {
     expect(alice, isNotNull);
   }, skip: skip);
 
-  test('a cancelled leave voids its statement with a self-update', () async {
+  // Review MEDIUM (round 7): a leave proof was kept until a removal, a
+  // re-add or a Welcome, so a cancelled leave left every member holding
+  // the leaver's consent to be removed for as long as it stayed. Now the
+  // leaver's next commit (the void self-update) drops both proofs.
+  test('leaver commits after member_leave: proof gone', () async {
     final (:alice, :bob, :carol, :dave) = await adminLeaves(cancel: true);
-    // Carol still holds the old statement and attaches it; Rust drops it
-    // (Bob's leaf changed), so Dave cannot verify the removal and holds it.
-    await carol.service.stageMembershipChange('conv_1',
-        removes: [(accountId: bob.account, deviceId: bob.device)]);
-    final removal = await _complete(carol);
+    for (final member in [alice, carol, dave]) {
+      expect(
+          await member.store
+              .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+          isNull,
+          reason: 'the member_leave is void');
+      expect(
+          await member.store
+              .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
+          isNull,
+          reason: 'the signed statement is void');
+    }
+    // So no plain member can remove Bob on it any more: the removal stays
+    // pending for a device that can prove it (or the owner, who may kick).
     await expectLater(
-        dave.applyCommit(carol, removal),
-        throwsA(isA<GovernanceHeldException>()
-            .having((e) => e.reason, 'reason', 'removal_unproven')));
-    // Today's members still merge it with the member_leave they hold.
-    await alice.applyCommit(carol, removal);
-    expect(bob, isNotNull);
+        carol.service.stageMembershipChange('conv_1',
+            removes: [(accountId: bob.account, deviceId: bob.device)]),
+        throwsA(isA<GovernanceRemovalUnprovenException>()));
+    expect(await carol.store.pendingMlsMessages(), isEmpty);
+  }, skip: skip);
+
+  test('a commit from a leaf its list does not approve voids nothing',
+      () async {
+    final (:alice, :bob, :carol, :dave) = await adminLeaves();
+    // Carol's pin no longer lists Bob's leaf: a leaf under Bob's id that
+    // her list does not approve may be anyone's, so its commit must not
+    // void Bob's honest leave on her device. (Alice's list approves it.)
+    carol.lists.remove(bob.account, bob.device);
+    await bob.service.stageSelfUpdate('conv_1');
+    await _deliver(bob, members: [alice, carol, dave]);
+    expect(
+        await alice.store
+            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+        isNull);
+    expect(
+        await carol.store
+            .loadSetting(governanceLeaveSetting('conv_1', bob.account)),
+        isNotNull);
+    expect(
+        await carol.store
+            .loadSetting(governanceLeaveSignedSetting('conv_1', bob.account)),
+        isNotNull);
   }, skip: skip);
 
   test('a leaver on an older build sends no statement: newcomers hold',

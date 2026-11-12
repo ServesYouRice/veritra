@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/calls/room/native_call_group.dart';
 import 'package:private_messenger/calls/room/room_ports.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+import 'package:private_messenger/storage/device_list_records.dart';
 
 import 'native_test_env.dart';
 
@@ -80,8 +81,78 @@ void main() {
       );
     });
 
+    // Review MEDIUM (round 7): the parent's MLS tree is not the roster; only
+    // leaves this device's L1 judgment approves are.
+    test('the parent view lists only leaves the L1 judgment approves',
+        () async {
+      final alice = bindings.createDevice('acct_alice', 'dev_alice');
+      final bob = bindings.createDevice('acct_bob', 'dev_bob');
+      alice.createGroup('conv_parent');
+      final parentAdd = alice.addMember(
+          'conv_parent', bob.createKeyPackage(), 'acct_bob', 'dev_bob');
+      bob.joinGroup('conv_parent', parentAdd.welcome);
+      ApprovalLeaf row(LeafPair leaf, LeafVerdict verdict) => ApprovalLeaf(
+            conversationId: 'conv_parent',
+            accountId: leaf.accountId,
+            deviceId: leaf.deviceId,
+            signingKey: leaf.signingKey,
+            verdict: verdict,
+            updatedAt: 0,
+          );
+      final leaves = alice.groupMembers('conv_parent');
+      bool isBob(LeafPair l) => utf8.decode(l.deviceId) == 'dev_bob';
+      List<ApprovalLeaf>? judged;
+      final parent = NativeParentGroupView(alice,
+          judged: (_) => judged, load: (_) async => judged);
+      // Not loaded yet: unknown, never empty (an empty roster would remove
+      // everyone from the call), and nobody is a member.
+      expect(parent.members('conv_parent'), isNull);
+      expect(await parent.allApproved('conv_parent'), isFalse);
+      for (final verdict in [
+        LeafVerdict.checking,
+        LeafVerdict.removed,
+        LeafVerdict.unapproved,
+      ]) {
+        judged = [
+          for (final leaf in leaves)
+            row(leaf, isBob(leaf) ? verdict : LeafVerdict.approved),
+        ];
+        final listed = parent.members('conv_parent')!;
+        expect(listed.map((m) => m.id), ['acct_alice/dev_alice'],
+            reason: '$verdict');
+        final bobLeaf = leaves.firstWhere(isBob);
+        expect(
+            parent.hasMember('conv_parent',
+                CallMember('acct_bob', 'dev_bob', bobLeaf.signingKey)),
+            isFalse,
+            reason: '$verdict');
+        expect(await parent.allApproved('conv_parent'), isFalse,
+            reason: '$verdict');
+      }
+      // An approved row with another key approves nothing.
+      judged = [
+        for (final leaf in leaves)
+          isBob(leaf)
+              ? ApprovalLeaf(
+                  conversationId: 'conv_parent',
+                  accountId: leaf.accountId,
+                  deviceId: leaf.deviceId,
+                  signingKey: Uint8List(32),
+                  verdict: LeafVerdict.approved,
+                  updatedAt: 0)
+              : row(leaf, LeafVerdict.approved),
+      ];
+      expect(parent.members('conv_parent')!, hasLength(1));
+      expect(await parent.allApproved('conv_parent'), isFalse);
+      judged = [for (final leaf in leaves) row(leaf, LeafVerdict.approved)];
+      expect(parent.members('conv_parent')!, hasLength(2));
+      expect(await parent.allApproved('conv_parent'), isTrue);
+      alice.close();
+      bob.close();
+    });
+
     test('two devices share the same media key, a join and a removal move it',
-        () {
+        () async {
       final alice = bindings.createDevice('acct_alice', 'dev_alice');
       final bob = bindings.createDevice('acct_bob', 'dev_bob');
       // The parent conversation.
@@ -89,14 +160,30 @@ void main() {
       final parentAdd = alice.addMember(
           'conv_parent', bob.createKeyPackage(), 'acct_bob', 'dev_bob');
       bob.joinGroup('conv_parent', parentAdd.welcome);
-      final parent = NativeParentGroupView(alice);
+      // Alice's L1 judgment of the parent's leaves: both approved.
+      final verdicts = <String, List<ApprovalLeaf>>{
+        'conv_parent': [
+          for (final leaf in alice.groupMembers('conv_parent'))
+            ApprovalLeaf(
+              conversationId: 'conv_parent',
+              accountId: leaf.accountId,
+              deviceId: leaf.deviceId,
+              signingKey: leaf.signingKey,
+              verdict: LeafVerdict.approved,
+              updatedAt: 0,
+            ),
+        ],
+      };
+      final parent = NativeParentGroupView(alice,
+          judged: (c) => verdicts[c], load: (c) async => verdicts[c]);
+      expect(await parent.allApproved('conv_parent'), isTrue);
       final aliceCall = NativeCallGroupCrypto(alice, bindings);
       final bobCall = NativeCallGroupCrypto(bob, bindings);
       final groupId = Uint8List.fromList(List.generate(32, (i) => i + 1));
 
       aliceCall.createGroup(groupId);
       final bobMember = parent
-          .members('conv_parent')
+          .members('conv_parent')!
           .firstWhere((m) => m.deviceId == 'dev_bob');
       expect(parent.hasMember('conv_parent', bobMember), isTrue);
       expect(
@@ -120,7 +207,7 @@ void main() {
       expect(verify(bobMember, 'nonce-2', groupId), isFalse);
       expect(verify(bobMember, 'nonce-1', Uint8List(32)), isFalse);
       final aliceMember = parent
-          .members('conv_parent')
+          .members('conv_parent')!
           .firstWhere((m) => m.deviceId == 'dev_alice');
       expect(verify(aliceMember, 'nonce-1', groupId), isFalse);
 

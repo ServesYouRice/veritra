@@ -2005,8 +2005,8 @@ void main() {
 
   test(
       'with no owner or admin in a private channel, one moderator member '
-      'rotates, the other adopts, and an admin who joins later uses its key',
-      () async {
+      'rotates, the other adopts, and an admin who joins later replaces its '
+      'key', () async {
     final private = InfoSubject(infoKindChannel, _private, _community);
     final devices = <String, _Device>{
       for (final name in ['admin', 'mod', 'mod2', 'member'])
@@ -2071,8 +2071,9 @@ void main() {
                 .loadAcceptedCommunityInfo(infoKindChannel, _private))
             ?.keyId,
         rotated);
-    // An admin joins and is handed the moderator's key: it edits under it
-    // instead of holding no key until the next removal.
+    // An admin joins and is handed the moderator's key, so it can read
+    // what is sealed under it. Owner decision B (2026-11-11): it then mints
+    // its own key instead of editing under the moderator's.
     final second =
         device('second', {}, admin: true, verified: modStaff, roster: true);
     second.members.add(_privateConv);
@@ -2080,16 +2081,52 @@ void main() {
         isTrue);
     expect(await second.service.refresh(private), isA<InfoAccepted>());
     expect((await second.service.currentKey(home, _community))?.keyId, rotated);
-    // With an admin in the group, the admin answers a joiner, the
-    // moderators no longer do.
+    // A moderator never replaces a key; the admin marks once.
+    expect(
+        await mods[0].service.replaceModeratorKey(home, _community), isFalse);
+    expect(await member.service.replaceModeratorKey(home, _community), isFalse);
+    expect(await second.service.replaceModeratorKey(home, _community), isTrue);
+    expect(await second.service.replaceModeratorKey(home, _community), isFalse);
+    expect(await second.service.dueRotations(), {'channel|$_private'});
+    // While the mark is due it does not edit under the moderator's key.
+    await expectLater(
+        second.service.publish(private, (r) => secret('Early', r)),
+        throwsA(isA<InfoRotationPending>()));
+    // It waits its turn, as after a removal it did not make.
+    final sentBefore = keysSent(second);
+    expect(await second.service.nextDeferredRotation(), isNotNull);
+    expect(await second.service.runRotations((_, __) => [private]), 0);
+    expect(keysSent(second), sentBefore);
+    pastTurn();
+    expect(await second.service.runRotations((_, __) => [private]), 1);
+    final minted = server.records[private.key]!.keyId;
+    expect(minted, isNot(rotated));
+    expect(keysSent(second), sentBefore + 1);
+    expect(
+        second.sent
+            .where((e) => e.$2 == AppPayloadType.infoKey)
+            .every((e) => e.$1 == _privateConv),
+        isTrue,
+        reason: 'the key goes only into the private channel\'s group');
+    expect(await second.service.dueRotations(), isEmpty);
+    for (final d in [mod, mod2, member, second]) {
+      expect((await d.service.currentKey(home, _community))?.keyId, minted);
+      expect(await d.service.refresh(private), isNot(isA<InfoNeedsKey>()));
+    }
+    // Its own key current, it marks nothing more.
+    expect(await second.service.replaceModeratorKey(home, _community), isFalse);
+    // With an admin in the group, the admin answers a joiner with its key,
+    // the moderators no longer do.
     final late = device('late', {}, verified: modStaff, roster: true);
     late.members.add(_privateConv);
     expect(await late.service.requestKey(home), isTrue);
     expect(await mods[0].service.answerRequests(home, _community), 0);
     expect(await mods[1].service.answerRequests(home, _community), 0);
     expect(await second.service.answerRequests(home, _community), 1);
+    expect((await late.service.currentKey(home, _community))?.keyId, minted);
+    expect(await late.service.refresh(private), isA<InfoAccepted>());
     await second.service.publish(private, (r) => secret('Renamed', r));
-    expect(server.records[private.key]!.keyId, rotated);
+    expect(server.records[private.key]!.keyId, minted);
   }, skip: skip);
 
   test(

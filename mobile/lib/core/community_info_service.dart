@@ -1005,6 +1005,57 @@ class CommunityInfoService {
         _backoff.remove('${home.keySubjectKind}|${home.keySubjectId}');
       });
 
+  /// Owner decision B (2026-11-11): an owner or admin who is a member of a
+  /// private channel's group, and finds only a moderator's key current there
+  /// (the second choice in [currentKey]), mints its own. This marks [home]'s
+  /// key due and returns true; the pass then runs as for a removal this
+  /// device did not make: it waits its turn ([remoteRotationDelay], over the
+  /// verified owners and admins), so of several owner and admin devices that
+  /// joined, one mints and the others adopt its key ([_rotatedElsewhere],
+  /// where a moderator's key never counts while an owner or admin is a
+  /// member). While the mark is due this device neither edits nor answers
+  /// requests under the moderator's key ([_checkWritable]).
+  ///
+  /// Nothing is marked for the community key, without a verified record or
+  /// a known roster, for a device not holding the moderator's key (it could
+  /// not seal the records again), while an owner's or admin's key (this
+  /// account's included) is current, or while a mark for [home] is already
+  /// due (that pass mints, as the moderator's key does not end it).
+  Future<bool> replaceModeratorKey(InfoKeyHome home, String communityId) async {
+    if (home.keySubjectKind != infoKindChannel) return false;
+    final roles = verifiedRolesOf?.call(communityId);
+    final members = membersOf?.call(home.conversationId);
+    if (roles == null ||
+        members == null ||
+        !members.contains(accountId) ||
+        roles.rankOf(accountId) < BuiltInRole.admin.rank) {
+      return false;
+    }
+    final keys = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    final policy = policyFor(communityId);
+    bool admin(String account) =>
+        account == accountId || policy.mayEdit(account, infoKindCommunity);
+    if (await _freshest(home, keys, admin) != null) return false;
+    if (await currentKey(home, communityId) == null) return false;
+    return _locked(() async {
+      final due = await _dueRotations();
+      final id = '${home.keySubjectKind}|${home.keySubjectId}';
+      if (due.containsKey(id)) return false;
+      final now = _clock();
+      due[id] = <String, Object?>{
+        'c': communityId,
+        'e': await _removalEpoch(home),
+        't': '${now.microsecondsSinceEpoch}.${_marks++}',
+        'd': true,
+        'o': now.microsecondsSinceEpoch,
+      };
+      await _saveDue(due);
+      _backoff.remove(id);
+      return true;
+    });
+  }
+
   int _marks = 0;
   Future<void> _lock = Future<void>.value();
   final Map<String, ({int failures, DateTime next})> _backoff = {};

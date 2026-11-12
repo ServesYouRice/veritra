@@ -206,9 +206,15 @@ class NativeCryptoService
   final Map<String, List<ApprovalLeaf>> _verdictCache =
       <String, List<ApprovalLeaf>>{};
 
+  /// Verdict writes per conversation, so a load that a write overtook is
+  /// not cached (it would hold the rows from before that write).
+  final Map<String, int> _verdictWrites = <String, int>{};
+
   Future<void> _warmVerdicts(String conversationId) async {
+    final writes = _verdictWrites[conversationId] ?? 0;
     try {
       final rows = await localStore.loadApprovalLeaves(conversationId);
+      if ((_verdictWrites[conversationId] ?? 0) != writes) return;
       _verdictCache.putIfAbsent(conversationId, () => rows);
     } on Object {
       // Asked again on the next call.
@@ -216,6 +222,8 @@ class NativeCryptoService
   }
 
   void _rememberVerdicts(ApprovalLeafChange change) {
+    _verdictWrites.update(change.conversationId, (n) => n + 1,
+        ifAbsent: () => 1);
     if (change.replaceAll) {
       _verdictCache[change.conversationId] =
           List<ApprovalLeaf>.of(change.leaves);
@@ -1885,6 +1893,15 @@ class NativeCryptoService
     ];
   }
 
+  /// Whether this device holds a leave proof of [account] in [groupId]
+  /// (its `member_leave`, or its signed statement).
+  Future<bool> _holdsLeaveProof(String groupId, String account) async =>
+      await localStore.loadSetting(governanceLeaveSetting(groupId, account)) !=
+          null ||
+      await localStore
+              .loadSetting(governanceLeaveSignedSetting(groupId, account)) !=
+          null;
+
   /// The proof settings a removal spends or a re-add voids for [account].
   static Map<String, String?> _leaveProofsCleared(
           String groupId, String account) =>
@@ -2048,6 +2065,15 @@ class NativeCryptoService
         }
       }
     }
+    // C4 (review MEDIUM, round 7): a leave proof is consent to a removal
+    // now, not forever. A commit from one of the leaving account's own
+    // approved leaves after its proof arrived means the leave did not go
+    // through (a cancelled leave voids its statement with a self-update), so
+    // both proofs are dropped. A leaf its list does not approve proves
+    // nothing either way (it may carry any account's id), so it cannot void
+    // an honest leave.
+    final voided =
+        await _holdsLeaveProof(groupId, committer) && await committerApproved();
     var senderApproved = true;
     if (committer == prev.owner || committer == next.owner) {
       final judged = verdict ?? await _judgeLeaf(review.committer);
@@ -2064,6 +2090,7 @@ class NativeCryptoService
       // A proof is spent by the removal it proves and void once the
       // account is added again.
       settings: <String, String?>{
+        if (voided) ..._leaveProofsCleared(groupId, committer),
         for (final account in leaving) ..._leaveProofsCleared(groupId, account),
         for (final account in after.difference(before))
           ..._leaveProofsCleared(groupId, account),
@@ -2829,10 +2856,15 @@ class NativeCryptoService
         if (!await localStore.hasOutboxCapacity()) {
           throw const OutboxFullException();
         }
-        if (signedLeave) {
+        if (signedLeave ||
+            (type == AppPayloadType.memberLeave &&
+                governanceOf(conversationId) != null)) {
           // Written before the statement exists: if the leave does not go
           // through, the app voids it with a self-update (C4 leave proof in
           // the commit). A leftover after a failed send costs one update.
+          // The plain member_leave sets it too: it is a proof on its own
+          // (receivers drop it on this leaf's next commit), and the signed
+          // statement after it is best effort.
           await localStore.saveSetting(
               governanceLeaveSignedOutSetting(conversationId), '1');
         }
@@ -4508,8 +4540,23 @@ class NativeCryptoService
       });
 
   @override
-  ParentGroupView get parentGroups =>
-      NativeParentGroupView.live(() => _pendingEnrollment ? null : _device);
+  ParentGroupView get parentGroups => NativeParentGroupView.live(
+        () => _pendingEnrollment ? null : _device,
+        // B6 (review MEDIUM, round 7): only leaves this device's L1
+        // judgment approves may be in a call, as for [_approvedAccountsOf].
+        judged: (conversationId) {
+          final verdicts = _verdictCache[conversationId];
+          if (verdicts == null) unawaited(_warmVerdicts(conversationId));
+          return verdicts;
+        },
+        load: (conversationId) async {
+          // A load a verdict write overtook caches nothing; try again.
+          for (var i = 0; i < 3 && _verdictCache[conversationId] == null; i++) {
+            await _warmVerdicts(conversationId);
+          }
+          return _verdictCache[conversationId];
+        },
+      );
 
   NativeCryptoDevice _requiredDevice() {
     final device = _device;
