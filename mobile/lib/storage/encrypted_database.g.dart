@@ -3481,12 +3481,12 @@ class $LocalMessagesTable extends LocalMessages
   static const VerificationMeta _c7FormerMeta =
       const VerificationMeta('c7Former');
   @override
-  late final GeneratedColumn<bool> c7Former = GeneratedColumn<bool>(
+  late final GeneratedColumn<int> c7Former = GeneratedColumn<int>(
       'c7_former', aliasedName, true,
-      type: DriftSqlType.bool,
-      requiredDuringInsert: false,
-      defaultConstraints:
-          GeneratedColumn.constraintIsAlways('CHECK ("c7_former" IN (0, 1))'));
+      check: () =>
+          c7Former.isIn(const [C7FormerMark.named, C7FormerMark.unnamed]),
+      type: DriftSqlType.int,
+      requiredDuringInsert: false);
   @override
   List<GeneratedColumn> get $columns => [
         key,
@@ -3692,7 +3692,7 @@ class $LocalMessagesTable extends LocalMessages
       c7Gen: attachedDatabase.typeMapping
           .read(DriftSqlType.string, data['${effectivePrefix}c7_gen']),
       c7Former: attachedDatabase.typeMapping
-          .read(DriftSqlType.bool, data['${effectivePrefix}c7_former']),
+          .read(DriftSqlType.int, data['${effectivePrefix}c7_former']),
     );
   }
 
@@ -3751,9 +3751,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
   /// in the group. The chat marks it "From a former member", and it never
   /// acts with a role. Unlike every other C7 state this travels in history
   /// snapshots (owner, 2026-11-12: keep labels in backups), so a restored or
-  /// linked device never shows such a post unmarked. Null and false mean
-  /// unmarked. Edits never clear it.
-  final bool? c7Former;
+  /// linked device never shows such a post unmarked. A [C7FormerMark]
+  /// value; null is unmarked. Edits never clear it.
+  final int? c7Former;
   const LocalMessage(
       {required this.key,
       this.serverMessageId,
@@ -3830,7 +3830,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       map['c7_gen'] = Variable<String>(c7Gen);
     }
     if (!nullToAbsent || c7Former != null) {
-      map['c7_former'] = Variable<bool>(c7Former);
+      map['c7_former'] = Variable<int>(c7Former);
     }
     return map;
   }
@@ -3914,7 +3914,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       senderHidden: serializer.fromJson<bool?>(json['senderHidden']),
       senderRemoved: serializer.fromJson<bool?>(json['senderRemoved']),
       c7Gen: serializer.fromJson<String?>(json['c7Gen']),
-      c7Former: serializer.fromJson<bool?>(json['c7Former']),
+      c7Former: serializer.fromJson<int?>(json['c7Former']),
     );
   }
   @override
@@ -3942,7 +3942,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       'senderHidden': serializer.toJson<bool?>(senderHidden),
       'senderRemoved': serializer.toJson<bool?>(senderRemoved),
       'c7Gen': serializer.toJson<String?>(c7Gen),
-      'c7Former': serializer.toJson<bool?>(c7Former),
+      'c7Former': serializer.toJson<int?>(c7Former),
     };
   }
 
@@ -3968,7 +3968,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           Value<bool?> senderHidden = const Value.absent(),
           Value<bool?> senderRemoved = const Value.absent(),
           Value<String?> c7Gen = const Value.absent(),
-          Value<bool?> c7Former = const Value.absent()}) =>
+          Value<int?> c7Former = const Value.absent()}) =>
       LocalMessage(
         key: key ?? this.key,
         serverMessageId: serverMessageId.present
@@ -4142,7 +4142,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
   final Value<bool?> senderHidden;
   final Value<bool?> senderRemoved;
   final Value<String?> c7Gen;
-  final Value<bool?> c7Former;
+  final Value<int?> c7Former;
   final Value<int> rowid;
   const LocalMessagesCompanion({
     this.key = const Value.absent(),
@@ -4222,7 +4222,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     Expression<bool>? senderHidden,
     Expression<bool>? senderRemoved,
     Expression<String>? c7Gen,
-    Expression<bool>? c7Former,
+    Expression<int>? c7Former,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -4274,7 +4274,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       Value<bool?>? senderHidden,
       Value<bool?>? senderRemoved,
       Value<String?>? c7Gen,
-      Value<bool?>? c7Former,
+      Value<int?>? c7Former,
       Value<int>? rowid}) {
     return LocalMessagesCompanion(
       key: key ?? this.key,
@@ -4370,7 +4370,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       map['c7_gen'] = Variable<String>(c7Gen.value);
     }
     if (c7Former.present) {
-      map['c7_former'] = Variable<bool>(c7Former.value);
+      map['c7_former'] = Variable<int>(c7Former.value);
     }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
@@ -8493,7 +8493,7 @@ typedef $$LocalMessagesTableCreateCompanionBuilder = LocalMessagesCompanion
   Value<bool?> senderHidden,
   Value<bool?> senderRemoved,
   Value<String?> c7Gen,
-  Value<bool?> c7Former,
+  Value<int?> c7Former,
   Value<int> rowid,
 });
 typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
@@ -8519,7 +8519,7 @@ typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
   Value<bool?> senderHidden,
   Value<bool?> senderRemoved,
   Value<String?> c7Gen,
-  Value<bool?> c7Former,
+  Value<int?> c7Former,
   Value<int> rowid,
 });
 
@@ -8599,7 +8599,7 @@ class $$LocalMessagesTableFilterComposer
   ColumnFilters<String> get c7Gen => $composableBuilder(
       column: $table.c7Gen, builder: (column) => ColumnFilters(column));
 
-  ColumnFilters<bool> get c7Former => $composableBuilder(
+  ColumnFilters<int> get c7Former => $composableBuilder(
       column: $table.c7Former, builder: (column) => ColumnFilters(column));
 }
 
@@ -8681,7 +8681,7 @@ class $$LocalMessagesTableOrderingComposer
   ColumnOrderings<String> get c7Gen => $composableBuilder(
       column: $table.c7Gen, builder: (column) => ColumnOrderings(column));
 
-  ColumnOrderings<bool> get c7Former => $composableBuilder(
+  ColumnOrderings<int> get c7Former => $composableBuilder(
       column: $table.c7Former, builder: (column) => ColumnOrderings(column));
 }
 
@@ -8757,7 +8757,7 @@ class $$LocalMessagesTableAnnotationComposer
   GeneratedColumn<String> get c7Gen =>
       $composableBuilder(column: $table.c7Gen, builder: (column) => column);
 
-  GeneratedColumn<bool> get c7Former =>
+  GeneratedColumn<int> get c7Former =>
       $composableBuilder(column: $table.c7Former, builder: (column) => column);
 }
 
@@ -8810,7 +8810,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<bool?> senderHidden = const Value.absent(),
             Value<bool?> senderRemoved = const Value.absent(),
             Value<String?> c7Gen = const Value.absent(),
-            Value<bool?> c7Former = const Value.absent(),
+            Value<int?> c7Former = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion(
@@ -8860,7 +8860,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<bool?> senderHidden = const Value.absent(),
             Value<bool?> senderRemoved = const Value.absent(),
             Value<String?> c7Gen = const Value.absent(),
-            Value<bool?> c7Former = const Value.absent(),
+            Value<int?> c7Former = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion.insert(

@@ -7364,6 +7364,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'From a former member'**
   String get channelHistoryFormerMember;
+
+  /// No description provided for @channelHistoryFormerMemberUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Former member'**
+  String get channelHistoryFormerMemberUnnamed;
 }
 
 class _AppLocalizationsDelegate

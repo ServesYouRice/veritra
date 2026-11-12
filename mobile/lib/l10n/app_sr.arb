@@ -1276,5 +1276,6 @@
   "channelHistoryPaused": "Историја за нове чланове је паузирана до следеће промене чланства.",
   "channelHistoryEarlier": "Учитај раније објаве",
   "channelHistoryAttachmentHidden": "Прилог од пре него што си се придружио",
-  "channelHistoryFormerMember": "Од бившег члана"
+  "channelHistoryFormerMember": "Од бившег члана",
+  "channelHistoryFormerMemberUnnamed": "Бивши члан"
 }

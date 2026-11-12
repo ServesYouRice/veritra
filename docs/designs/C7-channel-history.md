@@ -786,6 +786,17 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   who holds old keys, can insert backdated posts in a former member's
   name into a generation that member could read; they show "from a
   former member".
+- **The server plus any holder of `CHK_g` can forge marked posts as a
+  device not in the tree** (review M2). The former-member key comes from
+  the server, so the server can list a key of its own for any device id
+  outside the tree and, with a generation key from any member (or a
+  removed one), seal and sign a post under it that a newcomer imports as
+  a former member's. Such a post is always marked, and since 2026-11-12
+  ("Hide unproven names") it carries an account's name only when the
+  newcomer holds a signed device list of that account listing that
+  device with that key; otherwise it shows as "Former member" with no
+  name. The words can still be forged; whom they are pinned on cannot,
+  short of a compromised device list.
 - **A device that never sees a record stays out of step.** If the server
   withholds a whole envelope (a switch off, say) from one device, nothing
   triggers `unsure`: no message failed. That device keeps sealing under
@@ -1323,12 +1334,21 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     generation's `E_g`, this group and the route epoch. The signer is the
     device's key in the current tree when it has a leaf there, even if the
     server lists another key for it; otherwise the server's former-member
-    key, and the post is then marked "From a former member" and never
-    acts with a role. A device with neither is dropped. The mark is on the
-    row (**local schema 42**, `local_messages.c7_former`; owner answer
+    key, and the post is then marked as a former member's and never acts
+    with a role. A device with neither is dropped. **Owner answer
+    2026-11-12, "Hide unproven names" (review M2):** the account the
+    server names for a former device is shown ("From a former member",
+    with the name) only when this device's signed device list of that
+    account lists the device with the key that verified the post, now or
+    once (`LeafVerdict.approved` or `removed` from the pins, refreshed when
+    the stored pin does not already say so). Otherwise, and when the list
+    cannot be fetched or verified, the post shows as "Former member" with
+    no name. The mark is on the
+    row (**local schema 42**, `local_messages.c7_former`, 1 named and 2
+    unnamed, `C7FormerMark`; owner answer
     2026-11-12, "keep labels in backups"), so it lives exactly as long as
     the row, the re-add wipe leaves it, edits never clear it, and history
-    snapshots carry it (`c7Former: true`, written only when set, so an
+    snapshots carry it (`c7Former: 1` or `2`, written only when set, so an
     unmarked snapshot stays readable by an older importer): a restored or
     linked device shows those posts marked. It is the only C7 state in a
     snapshot; it names no key. The upgrade step is idempotent and gated on

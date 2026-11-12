@@ -591,7 +591,12 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   device's posts from before its replacement are not imported (deviation
   10: the tree key always wins, and the server lists only devices outside
   the roster). Former-member marks are a row column (local schema 42,
-  `c7_former`) that K1 backups and K2 bundles carry; the pre-join
+  `c7_former`: 1 named, 2 unnamed) that K1 backups and K2 bundles carry;
+  the server-named account is shown only when the newcomer's signed device
+  list of that account has (or had) the device with the verifying key
+  (owner answer "Hide unproven names", review M2), since the server plus
+  any `CHK_g` holder can forge a marked post as a device outside the
+  tree; the pre-join
   attachment placeholder travels as itself (the snapshot reader accepts
   exactly that marker body). A failing import backs off (1 min to 1 h).
   The server also refuses a `history_sync` tagged with an epoch

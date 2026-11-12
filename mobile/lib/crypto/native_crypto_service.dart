@@ -6442,6 +6442,18 @@ extension _C7Engine on NativeCryptoService {
     );
   }
 
+  /// Review M2: whether this device can prove that former device
+  /// [deviceId], whose post verified under [signingKey], was [account]'s: a
+  /// signed device list of that account (the stored pin, refreshed when it
+  /// does not already say so) lists it with that key now or did once. A
+  /// device list that cannot be fetched or verified proves nothing.
+  Future<bool> _c7FormerProven(
+      String account, String deviceId, Uint8List signingKey) async {
+    final verdict = await _judgeLeaf(
+        LeafPair(idBytes(account), idBytes(deviceId), signingKey));
+    return verdict == LeafVerdict.approved || verdict == LeafVerdict.removed;
+  }
+
   /// A newcomer's request for the `history_sync` of its join, repeated with
   /// backoff until a usable one arrives.
   Future<MessageEnvelope?> _c7SendRequest(String conversationId) async {
@@ -6511,6 +6523,8 @@ extension _C7Engine on NativeCryptoService {
     final former = <String, C7FormerKey>{
       for (final key in keptKeys) key.deviceId: key,
     };
+    // Per former device: whether its account's name may be shown.
+    final proven = <String, bool>{};
     final privateChannel = _c7PrivateChannel(conversationId);
     final shared =
         _authority?.conversationKind(conversationId) == 'community_shared';
@@ -6650,8 +6664,16 @@ extension _C7Engine on NativeCryptoService {
             if (effect is! InsertMessageEffect || effect.key != key) continue;
             var insert = effect.withC7Gen(c7GenTag(chk));
             // A former member's post is marked on its row (schema 42), so
-            // the mark travels with it into K1 backups and K2 bundles.
-            if (listed != null) insert = insert.markedC7Former();
+            // the mark travels with it into K1 backups and K2 bundles. The
+            // server named its account; the name is shown only when this
+            // device's signed device list of that account lists, or once
+            // listed, the device with the key that verified it (owner
+            // answer "Hide unproven names", review M2).
+            if (listed != null) {
+              final named = proven[row.senderDeviceId] ??=
+                  await _c7FormerProven(account, row.senderDeviceId, signer);
+              insert = insert.markedC7Former(named: named);
+            }
             if (payload.type == AppPayloadType.attachmentManifest) {
               // Owner answer Q2: never offered, so never stored.
               insert = insert.withBody(c7HiddenAttachmentBody);

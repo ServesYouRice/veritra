@@ -25,7 +25,7 @@ void main() {
   final shared = Conversation(
       id: conversation, kind: 'community_shared', communityId: 'comm_1');
 
-  InsertMessageEffect post(String key, {String? body, bool former = false}) {
+  InsertMessageEffect post(String key, {String? body, int? former}) {
     final effect = InsertMessageEffect(
       key: 'dev_bob:$key',
       serverMessageId: 'hist_$key',
@@ -38,7 +38,9 @@ void main() {
       state: LocalMessageState.received,
       channelId: channel,
     );
-    return former ? effect.markedC7Former() : effect;
+    return former == null
+        ? effect
+        : effect.markedC7Former(named: former == C7FormerMark.named);
   }
 
   Future<Directory> tempDir() async {
@@ -99,7 +101,8 @@ void main() {
       final source = await openStore(sqlite, 'dev_dave');
       await source.importC7History(<MessageEffect>[
         post('text'),
-        post('former', former: true),
+        post('former', former: C7FormerMark.unnamed),
+        post('named', former: C7FormerMark.named),
         post('file', body: c7HiddenAttachmentBody),
       ]);
       // An edit never clears the mark.
@@ -121,7 +124,8 @@ void main() {
           .cast<Map<String, dynamic>>();
       Map<String, dynamic> raw(String key) =>
           rows.firstWhere((r) => r['key'] == 'dev_bob:$key');
-      expect(raw('former')['c7Former'], isTrue);
+      expect(raw('former')['c7Former'], C7FormerMark.unnamed);
+      expect(raw('named')['c7Former'], C7FormerMark.named);
       // An unmarked row stays readable by an importer from before 42.
       expect(raw('text').containsKey('c7Former'), isFalse);
       expect(raw('file')['body'], c7HiddenAttachmentBody);
@@ -131,16 +135,17 @@ void main() {
       final restored = {
         for (final m in await target.loadMessages(conversation)) m.key: m,
       };
-      expect(restored['dev_bob:former']!.c7Former, isTrue);
+      expect(restored['dev_bob:former']!.c7Former, C7FormerMark.unnamed);
+      expect(restored['dev_bob:named']!.c7Former, C7FormerMark.named);
       expect(restored['dev_bob:former']!.body, 'edited');
-      expect(restored['dev_bob:text']!.c7Former, isNot(isTrue));
+      expect(restored['dev_bob:text']!.c7Former, isNull);
       expect(restored['dev_bob:file']!.body, c7HiddenAttachmentBody);
       expect(restored['dev_bob:file']!.kind, LocalMessageKind.attachment);
     });
   }
 
-  test('a snapshot mark is true or absent, nothing else', () {
-    LocalMessage message(String key, {bool? former}) => LocalMessage(
+  test('a snapshot mark is 1 (named), 2 (unnamed) or absent, nothing else', () {
+    LocalMessage message(String key, {int? former}) => LocalMessage(
         key: 'dev:$key',
         conversationId: 'conv',
         senderAccountId: 'bob',
@@ -157,14 +162,14 @@ void main() {
         counter: 1,
         createdAt: 2,
         conversations: const [HistoryConversation('conv', 'dm')],
-        messages: [message('marked', former: true)],
+        messages: [message('marked', former: C7FormerMark.unnamed)],
         reactions: const [],
         pins: const [],
         starred: const {},
         preferences: const []).encode();
     final root = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
     final marked = (root['messages'] as List).single as Map<String, dynamic>;
-    for (final bad in <Object>[false, 'yes', 1]) {
+    for (final bad in <Object>[false, true, 'yes', 0, 3, '2']) {
       marked['c7Former'] = bad;
       expect(() => HistorySnapshot.decode(utf8.encode(jsonEncode(root))),
           throwsFormatException);
@@ -213,10 +218,10 @@ void main() {
               .read<int>('user_version'),
           EncryptedLocalDatabase.currentSchemaVersion);
       await database.applyMessageEffects(
-          [post('new', former: true).withC7Gen('ab' * 32)]);
+          [post('new', former: C7FormerMark.unnamed).withC7Gen('ab' * 32)]);
       final marked = (await database.readMessages(conversation))
           .firstWhere((m) => m.key == 'dev_bob:new');
-      expect(marked.c7Former, isTrue);
+      expect(marked.c7Former, C7FormerMark.unnamed);
       expect(marked.c7Gen, 'ab' * 32);
     });
   }
@@ -224,17 +229,18 @@ void main() {
   test('the upgrade step runs again harmlessly (renumbering-safe)', () async {
     final file = File('${(await tempDir()).path}/local.db');
     var database = EncryptedLocalDatabase(NativeDatabase(file));
-    await database.applyMessageEffects([post('a', former: true)]);
+    await database.applyMessageEffects([post('a', former: C7FormerMark.named)]);
     // The columns are there already; an older version number reruns it.
     await database.customStatement('PRAGMA user_version = 40');
     await database.close();
     database = EncryptedLocalDatabase(NativeDatabase(file));
-    expect((await database.readMessages(conversation)).single.c7Former, isTrue);
+    expect((await database.readMessages(conversation)).single.c7Former,
+        C7FormerMark.named);
     await database.close();
     final raw = sqlite3.open(file.path);
     try {
       expect(raw.select('SELECT c7_former FROM local_messages').single[0], 1);
-      expect(() => raw.execute('UPDATE local_messages SET c7_former = 2'),
+      expect(() => raw.execute('UPDATE local_messages SET c7_former = 3'),
           throwsA(anything));
     } finally {
       raw.close();

@@ -23,7 +23,7 @@ import '../../crypto/link_preview.dart';
 import '../../crypto/message_format.dart'
     show decodeDecoration, unapprovedSenderKeyPrefix;
 import '../../storage/encrypted_database.dart'
-    show LocalMessage, LocalMessageKind, LocalMessageState;
+    show C7FormerMark, LocalMessage, LocalMessageKind, LocalMessageState;
 import '../../l10n/l10n.dart';
 import '../../sync/sync_recovery.dart' show SyncRecoveryChoice;
 import '../../ui/format.dart';
@@ -1483,7 +1483,7 @@ class _MessageList extends StatelessWidget {
                 local: local,
                 copiedHistory: local?.state == LocalMessageState.restored ||
                     (local != null && history.copiedKeys.contains(local.key)),
-                formerMember: local?.c7Former == true,
+                formerMember: local?.c7Former != null,
                 replyPreview: local?.replyTo == null
                     ? null
                     : quotedPreview(context.l10n, replyTarget),
@@ -1532,7 +1532,11 @@ class _MessageList extends StatelessWidget {
                         local.hiddenAt != null
                     ? null
                     : () => onMessageActions!(local, mine),
-                senderLabel: _senderLabel(senderAccountId),
+                // Review M2: a former member's name only when this device
+                // proved the device was that account's.
+                senderLabel: local?.c7Former == C7FormerMark.unnamed
+                    ? context.l10n.channelHistoryFormerMemberUnnamed
+                    : _senderLabel(senderAccountId),
                 onLoadVoiceNote: state.attachmentsAvailable
                     ? (entry) => decryptVoiceNote(state, entry,
                         conversationId: conversationId)

@@ -4479,6 +4479,9 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get channelHistoryFormerMember => 'Од бившег члана';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Бивши члан';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8961,4 +8964,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get channelHistoryFormerMember => 'Od bivšeg člana';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Bivši član';
 }

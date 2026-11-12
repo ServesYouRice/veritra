@@ -713,8 +713,9 @@ const _messageFields = {
   'senderHidden'
 };
 
-/// Fields a snapshot row may also carry. `senderRemoved` (L1, schema 40) and
-/// `c7Former` (C7, schema 42) are written only when true, so a snapshot
+/// Fields a snapshot row may also carry. `senderRemoved` (L1, schema 40) is
+/// written only when true and `c7Former` (C7, schema 42: 1 named, 2 unnamed,
+/// [C7FormerMark]) only when set, so a snapshot
 /// without such a message stays one an older importer reads; a marked
 /// message is never copied unmarked.
 const _readMessageFields = {..._messageFields, 'senderRemoved', 'c7Former'};
@@ -729,7 +730,7 @@ Map<String, Object?> _messageJson(LocalMessage m) {
   };
   json['formatJson'] = formatJsonWithoutPreview(json['formatJson'] as String?);
   if (m.senderRemoved == true) json['senderRemoved'] = true;
-  if (m.c7Former == true) json['c7Former'] = true;
+  if (m.c7Former case final mark?) json['c7Former'] = mark;
   return json;
 }
 
@@ -757,7 +758,9 @@ LocalMessage _readMessage(Object? raw) {
       }.contains(j['kind']) ||
       (j['senderHidden'] != null && j['senderHidden'] is! bool) ||
       (j['senderRemoved'] != null && j['senderRemoved'] != true) ||
-      (j['c7Former'] != null && j['c7Former'] != true) ||
+      (j['c7Former'] != null &&
+          j['c7Former'] != C7FormerMark.named &&
+          j['c7Former'] != C7FormerMark.unnamed) ||
       (j['forwardHops'] != null &&
           (j['forwardHops'] is! int ||
               (j['forwardHops'] as int) < 0 ||
@@ -874,7 +877,7 @@ LocalMessage historyMessageFromInsert(InsertMessageEffect effect) =>
         senderHidden: effect.senderHidden,
         senderRemoved: effect.senderRemoved ? true : null,
         c7Gen: effect.c7Gen,
-        c7Former: effect.c7Former ? true : null);
+        c7Former: effect.c7Former);
 
 HistorySnapshot captureHistory(
     {required Session session,

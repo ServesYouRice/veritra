@@ -18,7 +18,7 @@ import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/core/attachments.dart';
 import 'package:private_messenger/crypto/c7_import.dart';
 import 'package:private_messenger/storage/encrypted_database.dart'
-    show LocalMessage, LocalMessageKind, LocalMessageState;
+    show C7FormerMark, LocalMessage, LocalMessageKind, LocalMessageState;
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'l1_test_lists.dart';
@@ -830,7 +830,10 @@ void main() {
         .stageMembershipChange(_conversation, adds: [await erin.keyPackage()]);
     await _accept(alice, [erin], [bob, carol]);
     final added = await alice.epoch();
-    served(await syncFor(added), alice.deviceId);
+    final addSync = await syncFor(added);
+    served(addSync, alice.deviceId);
+    // Erin takes the key, so her post is one a former member's key opens.
+    await erin.receive(alice, addSync);
     final inWindow = await bob.send('second epoch of the window');
     served(inWindow, bob.deviceId);
     // Signed at `added`, served as the window's other epoch: dropped.
@@ -918,10 +921,18 @@ void main() {
         _channel: C7HistoryPage(channel, complete: false),
       },
       formerKeys: <C7FormerKey>[
+        // Review M2: the server names Alice as the owner of Carol's device.
+        // The post verifies under that key, but no signed list of Alice's
+        // has the device, so it shows with no name.
         C7FormerKey(
             deviceId: carol.deviceId,
-            accountId: carol.accountId,
+            accountId: alice.accountId,
             signingKey: carolKey),
+        // Erin's own list has her device with this key: named.
+        C7FormerKey(
+            deviceId: erin.deviceId,
+            accountId: erin.accountId,
+            signingKey: await erin.service.currentSigningKey()),
         // The server lists a key for a device in the tree: never used.
         C7FormerKey(
             deviceId: bob.deviceId,
@@ -943,12 +954,12 @@ void main() {
     expect(text(bob, inWindow), 'second epoch of the window');
     expect(text(alice, last), 'last generation');
     expect(text(carol, fromCarol), 'from carol');
-    expect(imported, 5);
+    expect(text(erin, fromErin), 'from erin');
+    expect(imported, 6);
     for (final (from, sent) in <(_Client, MessageEnvelope)>[
       (alice, before), // before the period: no key opens it
       (bob, relabelled), // its signed epoch is not the route's
       (bob, closing), // served in its generation's closing epoch
-      (erin, fromErin), // no key: neither in the tree nor listed
       (bob, gone), // deleted by its author
       (alice, record), // a record is never applied from history
     ]) {
@@ -966,13 +977,15 @@ void main() {
       expect(row.body ?? '', isNot(contains('blob_pre_join')));
       expect(row.state, LocalMessageState.received);
     }
-    // The former member's post is marked on its row (schema 42); no other
-    // row is.
+    // The former members' posts are marked on their rows (schema 42); no
+    // other row is. Erin's name is proven by her signed list; the account
+    // the server named for Carol's device is not (review M2).
     expect({
       for (final row in byKey.values)
-        if (row.c7Former == true) row.key
+        if (row.c7Former != null) row.key: row.c7Former
     }, {
-      keyOf(carol, fromCarol)
+      keyOf(carol, fromCarol): C7FormerMark.unnamed,
+      keyOf(erin, fromErin): C7FormerMark.named,
     });
     // Paging: the channel is full and the page was cut short.
     expect(await dave.service.c7EarlierCursor(_conversation, _channel),
@@ -992,7 +1005,7 @@ void main() {
           _channel: C7HistoryPage(channel, complete: true),
         },
         first: false);
-    expect(again, 5);
+    expect(again, 6);
     expect((await dave.rows()).length, byKey.length);
     expect(await dave.service.c7EarlierCursor(_conversation, _channel), isNull);
   }, skip: skip);

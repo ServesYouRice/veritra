@@ -4463,4 +4463,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get channelHistoryFormerMember => 'From a former member';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Former member';
 }

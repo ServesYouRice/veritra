@@ -98,6 +98,21 @@ String? bodyAfterUnsupportedDelete(String? rawJson) {
 }
 
 /// Kinds stored in [LocalMessages.kind].
+/// [LocalMessages.c7Former]: how an imported post from a device no longer
+/// in the group is shown (C7 decision 8; owner answer 2026-11-12, "Hide
+/// unproven names", review M2). The server names the account a former
+/// device belonged to, and the server and any holder of the generation key
+/// could forge such a post, so the account's name is shown only when this
+/// device holds a signed device list of that account that lists (or once
+/// listed) the device with the key that verified the post.
+abstract final class C7FormerMark {
+  /// "From a former member", with the account's name.
+  static const int named = 1;
+
+  /// "Former member", with no name.
+  static const int unnamed = 2;
+}
+
 abstract final class LocalMessageKind {
   /// A visible message with [LocalMessages.body] text.
   static const text = 'text';
@@ -157,7 +172,7 @@ final class InsertMessageEffect extends MessageEffect {
     this.senderHidden = false,
     this.senderRemoved = false,
     this.c7Gen,
-    this.c7Former = false,
+    this.c7Former,
   });
 
   final String key;
@@ -189,8 +204,9 @@ final class InsertMessageEffect extends MessageEffect {
   final String? c7Gen;
 
   /// C7 (schema 42): an imported post verified with a former member's key
-  /// from the server ([LocalMessages.c7Former]).
-  final bool c7Former;
+  /// from the server, as a [C7FormerMark] value ([LocalMessages.c7Former]);
+  /// null for any other row.
+  final int? c7Former;
 
   /// This row, marked as sent from a removed device.
   InsertMessageEffect markedSenderRemoved() => _with(senderRemoved: true);
@@ -198,15 +214,17 @@ final class InsertMessageEffect extends MessageEffect {
   /// This row, recorded as sealed under the C7 generation [gen].
   InsertMessageEffect withC7Gen(String gen) => _with(c7Gen: gen);
 
-  /// This row, marked "from a former member" (C7 decision 8).
-  InsertMessageEffect markedC7Former() => _with(c7Former: true);
+  /// This row, marked as a former member's (C7 decision 8). [named] when
+  /// this device proved the signing device was its account's (review M2).
+  InsertMessageEffect markedC7Former({required bool named}) =>
+      _with(c7Former: named ? C7FormerMark.named : C7FormerMark.unnamed);
 
   /// This row with [value] as its body (C7: a pre-join attachment's
   /// manifest is never stored).
   InsertMessageEffect withBody(String value) => _with(body: value);
 
   InsertMessageEffect _with(
-          {bool? senderRemoved, String? c7Gen, String? body, bool? c7Former}) =>
+          {bool? senderRemoved, String? c7Gen, String? body, int? c7Former}) =>
       InsertMessageEffect(
         key: key,
         conversationId: conversationId,
@@ -594,9 +612,11 @@ class LocalMessages extends Table {
   /// in the group. The chat marks it "From a former member", and it never
   /// acts with a role. Unlike every other C7 state this travels in history
   /// snapshots (owner, 2026-11-12: keep labels in backups), so a restored or
-  /// linked device never shows such a post unmarked. Null and false mean
-  /// unmarked. Edits never clear it.
-  BoolColumn get c7Former => boolean().nullable()();
+  /// linked device never shows such a post unmarked. A [C7FormerMark]
+  /// value; null is unmarked. Edits never clear it.
+  IntColumn get c7Former => integer()
+      .nullable()
+      .check(c7Former.isIn(const [C7FormerMark.named, C7FormerMark.unnamed]))();
 
   @override
   Set<Column<Object>> get primaryKey => {key};
@@ -1129,7 +1149,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         .get();
     if (columns.any((row) => row.read<String>('name') == 'c7_former')) return;
     await customStatement('ALTER TABLE local_messages ADD COLUMN c7_former '
-        'INTEGER CHECK (c7_former IN (0, 1))');
+        'INTEGER CHECK (c7_former IN (1, 2))');
   }
 
   /// Adds `local_messages.sender_removed` unless it is there already.
