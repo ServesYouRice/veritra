@@ -1094,6 +1094,11 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
    64 bytes). No wire, ABI or vector change: `post_signed_fields` has no
    C ABI caller, the bytes Dart sent were already the bytes the vector
    pins, and the Rust vector test now uses the production function.
+9. A `history_sync` reaches only the devices its commit added (owner
+   answer Q3, 2026-11-12), so members no longer clear `unsure` or fill a
+   missing key from one, and the review's finding 4 (members check each
+   other's slots) applies to newcomers only. See "Targeted `history_sync`
+   delivery" in the next build status.
 
 **Not built (left for the next slices):** the newcomer's import (backward
 walk through stored `history_sync` slots, the per-channel and group-level
@@ -1153,6 +1158,54 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   check). Upgrade step first in the transaction, idempotent, tested from
   40, 36 and 12; both stores; the native test covers the same-epoch
   off-and-on case.
+- **Targeted `history_sync` delivery (owner answer Q3), behind the
+  server's C7 flag.** Every group-level message now names its type and
+  epoch in clear metadata: a `history_sync` carries `c7_sync_for_epoch`
+  (the `for_epoch` of its body0), a request carries
+  `c7_sync_request_for_epoch` (its sender's own join epoch). While C7 is
+  on, the server refuses a group-level envelope without exactly one of
+  them, a key on the wrong body size (a sync needs a `history_sync` size,
+  a request a channel size), a key anywhere else (a channel post, a
+  conversation outside the layout, C7 off), a request whose epoch is not
+  the sender device's `joined_epoch`, and a `history_sync` in a group
+  with no roster (400 `invalid_history_sync_target`). A `history_sync`
+  for epoch E goes, in sync, live and as a push wake, only to the group's
+  devices whose `joined_epoch` is E (the server wrote it with the commit:
+  the epoch MLS reports after it, and the Welcome's) and to its sender
+  device (the echo); the sender's other devices and every other member get
+  nothing. The live frame to those accounts carries neither ciphertext
+  nor body, only the event. A second `history_sync` for E is refused (409
+  `history_sync_delivered`) until a request for E arrives after the last
+  one. Members, who never see it, ask first:
+  `GET /api/v1/conversations/{id}/history-sync?for_epoch=E` answers
+  `{"delivered": bool}` (member devices in the roster only; 404 while C7
+  is off), and a delivered answer settles the duty with nothing sent
+  (`c7SyncDelivered`); a 409 on the send drops the queued envelope (its
+  duty settled when it was queued). Storage and the history route are
+  unchanged, so a later newcomer's walk still reads every earlier
+  `history_sync`, and an existing member is never served one there (it
+  is after its join). No migration: the check reads the group-level
+  stream through the existing `envelope_bodies_fetch` index. The private
+  group's one-channel sizes and the shared group's sizes are handled
+  alike.
+  **What members lose (deviation 9):** a member no longer clears `unsure`
+  or fills a missing key from another member's `history_sync`, since it
+  never receives one; the only paths left to a member are its own
+  records and rekeys. A removal-only commit's `history_sync` reaches no
+  device but its sender's echo, and is still sent and stored, because a
+  later newcomer's backward walk may need the wrap it carries. Finding 4
+  of the review (members check each other's slots) no longer applies:
+  only newcomers check slots. Two members whose fallbacks race can both
+  pass the check; the server's dedup then refuses the later one, and
+  both being stored at once (two transactions that read before either
+  wrote) would only send the newcomers a duplicate. A request reopens the
+  epoch for every member at once: the first fallback after it is
+  accepted and the rest are refused.
+  **Found, not fixed (outside C7):** every realtime frame for a message
+  carries the whole envelope, `sealed_body` included, to every connected
+  device of every member account, whatever the I51 join filter would
+  serve that device in sync. The app only uses a frame as a signal to
+  sync, so the frame could carry the event alone.
 
 ## Open questions for the owner
 

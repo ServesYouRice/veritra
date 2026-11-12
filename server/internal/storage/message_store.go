@@ -111,6 +111,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	// C7 (owner answer Q3): a group-level envelope says whether it is a
+	// history_sync or its request, and for which epoch; a history_sync goes
+	// only to the devices that joined at that epoch (c7_sync_target.go).
+	syncTag, err := s.checkC7SyncTag(ctx, tx, envelope.ConversationID, envelope.SenderDeviceID, envelope.CryptoMetadata, envelope.SealedBody, layout && route.channelID == "")
+	if err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
 	// C4: a governing member's own leave proof passes the posting rules
 	// below, within the limits checkLeaveNoticeTx sets (leave_notice.go).
 	leaveNotice, err := metadataLeaveNotice(envelope.CryptoMetadata)
@@ -224,7 +231,12 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		if envelope.ExpiresAt != nil && envelope.ExpiresAt.Before(wakeExpiresAt) {
 			wakeExpiresAt = envelope.ExpiresAt.UTC()
 		}
-		if err := enqueuePushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt)); err != nil {
+		if syncTag.kind == c7SyncBody {
+			err = enqueueTargetedPushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt), syncTag.epoch)
+		} else {
+			err = enqueuePushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt))
+		}
+		if err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}
 	}
@@ -233,7 +245,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err := insertSealedBody(ctx, tx, envelope, route.channelID, eventID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	if recipients != nil && withSyncEvent {
+	if recipients != nil && withSyncEvent && syncTag.kind == c7SyncBody {
+		accounts, err := c7SyncRecipientAccounts(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, syncTag.epoch)
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		*recipients = append(*recipients, accounts...)
+	} else if recipients != nil && withSyncEvent {
 		// Accounts that blocked the sender never see the envelope, on any read
 		// path, so they are not sent it live either.
 		rows, err := tx.QueryContext(ctx, `

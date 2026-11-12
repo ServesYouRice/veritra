@@ -194,6 +194,10 @@ class NativeCryptoService
   }
 
   @override
+  Future<void> c7SyncDelivered(String conversationId, int forEpoch) =>
+      _serial(() => _c7SyncDelivered(conversationId, forEpoch));
+
+  @override
   Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone) =>
       _serial(() async {
         final miss = tombstone.conversationId.isEmpty
@@ -5424,6 +5428,12 @@ const Set<AppPayloadType> c7TargetedTypes = <AppPayloadType>{
 
 const Map<String, String?> _c7None = <String, String?>{};
 
+/// Clear metadata of a group-level C7 message (owner answer Q3): the epoch a
+/// `history_sync` answers, which the server delivers only to the devices that
+/// joined at it, and the epoch a newcomer's request asks for (its own join).
+const String c7SyncForEpochKey = 'c7_sync_for_epoch';
+const String c7SyncRequestForEpochKey = 'c7_sync_request_for_epoch';
+
 extension _C7Engine on NativeCryptoService {
   bool _c7Active(String conversationId) =>
       c7SealedBodies &&
@@ -6029,6 +6039,7 @@ extension _C7Engine on NativeCryptoService {
     required Map<String, String?> Function(String actionId, int epoch)
         settingsFor,
     ({Uint8List chk, int generation})? seal,
+    Map<String, Object?> target = const <String, Object?>{},
   }) async {
     await _requireNotPaused(conversationId);
     await _requireApproved(conversationId);
@@ -6081,6 +6092,10 @@ extension _C7Engine on NativeCryptoService {
           if (channelId != null && sharedGroup)
             'community_layout_generation': layoutGeneration,
           'mls_epoch': epoch,
+          // Owner answer Q3: a group-level message names which type it is
+          // and for which epoch, so the server delivers a history_sync only
+          // to the devices that commit added (and dedups it).
+          ...target,
         },
         frankCommit: _randomBytes(32),
         sealedBody: sealed.sealedBody,
@@ -6285,6 +6300,28 @@ extension _C7Engine on NativeCryptoService {
       },
       settingsFor: (_, __) =>
           _c7Put(conversationId, settled, const <C7ChannelBook>[]),
+      target: <String, Object?>{c7SyncForEpochKey: forEpoch},
+    );
+  }
+
+  /// The server reports a `history_sync` for [forEpoch] already delivered
+  /// (to the devices that commit added, which this device is not): the duty
+  /// is settled with nothing sent.
+  Future<void> _c7SyncDelivered(String conversationId, int forEpoch) async {
+    if (!_c7Active(conversationId)) return;
+    final group = await _c7LoadGroup(conversationId);
+    final duty = group.duties[forEpoch];
+    if (duty == null || duty.settled) return;
+    final previous = await _requiredState();
+    await localStore.commitLocalMlsState(
+      expectedCounter: previous.counter,
+      expectedCursor: await localStore.loadSyncCursor(),
+      state: _sealNext(previous),
+      c7Settings: _c7Put(
+          conversationId,
+          group.withDuty(
+              forEpoch, C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true)),
+          const <C7ChannelBook>[]),
     );
   }
 
@@ -6311,6 +6348,7 @@ extension _C7Engine on NativeCryptoService {
       ),
       settingsFor: (_, __) => _c7Put(conversationId,
           group.copyWith(clearRequest: true), const <C7ChannelBook>[]),
+      target: <String, Object?>{c7SyncRequestForEpochKey: joinEpoch},
     );
   }
 

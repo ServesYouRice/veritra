@@ -873,7 +873,9 @@ func (s *Store) ClaimDeviceKeyPackages(ctx context.Context, conversationID, requ
 //
 // An application envelope also names the epoch it was encrypted in; one from
 // an epoch before the device joined is withheld even when it was stored
-// later, because the device cannot decrypt it.
+// later, because the device cannot decrypt it. A targeted C7 history_sync
+// goes only to the devices that joined at its epoch and to its sender
+// (c7SyncTargetFilter).
 func mlsJoinFilterEventFor(device string) string {
 	return `(
 	NOT EXISTS (SELECT 1 FROM conversation_mls_groups jg WHERE jg.conversation_id = se.conversation_id)
@@ -883,7 +885,8 @@ func mlsJoinFilterEventFor(device string) string {
 		AND (jd.removed_after_event_id IS NULL OR se.id <= jd.removed_after_event_id)
 		AND (se.event_type NOT LIKE 'message.envelope.%'
 			OR json_type(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') IS NOT 'integer'
-			OR json_extract(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') >= jd.joined_epoch))
+			OR json_extract(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') >= jd.joined_epoch)
+		AND ` + c7SyncTargetFilter + `)
 )`
 }
 

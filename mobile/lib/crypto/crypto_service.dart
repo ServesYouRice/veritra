@@ -656,6 +656,11 @@ abstract interface class C7HistoryService {
   /// or null when nothing was owed any more.
   Future<MessageEnvelope?> c7Send(C7Due due);
 
+  /// The server says a `history_sync` for [forEpoch] was already delivered
+  /// to the devices its commit added (owner answer Q3: members never see
+  /// it): this device's duty for it is settled with nothing sent.
+  Future<void> c7SyncDelivered(String conversationId, int forEpoch);
+
   /// Commits [tombstone], sync passing over a message of its conversation
   /// that its expiry proves gone (I33), with every `full` channel of that
   /// group marked `unsure` in the same transaction (decision 5: a message

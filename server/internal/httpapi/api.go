@@ -579,6 +579,10 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "mls_not_in_group")
 	case errors.Is(err, storage.ErrInvalidChannelRoute), errors.Is(err, storage.ErrInvalidEpochMetadata):
 		writeError(w, http.StatusBadRequest, "invalid_crypto_metadata")
+	case errors.Is(err, storage.ErrInvalidHistorySyncTarget):
+		writeError(w, http.StatusBadRequest, "invalid_history_sync_target")
+	case errors.Is(err, storage.ErrHistorySyncDelivered):
+		writeError(w, http.StatusConflict, "history_sync_delivered")
 	case errors.Is(err, storage.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid_input")
 	case errors.Is(err, storage.ErrLastOwner):

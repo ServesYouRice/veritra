@@ -629,6 +629,42 @@ void main() {
   }, skip: skip);
 
   test(
+      'a history_sync and its request name their epoch for the server, and '
+      'a member settles its duty when the server says the newcomers have '
+      'one (owner answer Q3)', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    await group(alice, [bob]);
+    await alice.service
+        .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
+    await _accept(alice, [dave], [bob]);
+    final joined = await dave.epoch();
+    final sync = (await alice.service.c7Send(
+        (await alice.service.c7DueWork([_conversation])).single))!;
+    await alice.store.removePendingEnvelope(sync.idempotencyKey);
+    expect(sync.cryptoMetadata[c7SyncForEpochKey], joined);
+    expect(sync.cryptoMetadata.containsKey(c7SyncRequestForEpochKey), isFalse);
+    expect(sync.cryptoMetadata.containsKey('channel_id'), isFalse);
+    // Bob never receives it; the server's answer settles his duty.
+    expect(await bob.service.c7NextDueAt([_conversation]), isNotNull);
+    await bob.service.c7SyncDelivered(_conversation, joined);
+    expect(await bob.service.c7NextDueAt([_conversation]), isNull);
+    _skew = c7FallbackCap + const Duration(seconds: 1);
+    expect(await bob.service.c7DueWork([_conversation]), isEmpty);
+    // An epoch without a duty, or one already settled, changes nothing.
+    await bob.service.c7SyncDelivered(_conversation, joined + 5);
+    await bob.service.c7SyncDelivered(_conversation, joined);
+    expect(await bob.service.c7DueWork([_conversation]), isEmpty);
+    // Dave's request names his own join epoch.
+    final request = (await dave.service.c7Send(
+        (await dave.service.c7DueWork([_conversation])).single))!;
+    await dave.store.removePendingEnvelope(request.idempotencyKey);
+    expect(request.cryptoMetadata[c7SyncRequestForEpochKey], joined);
+    expect(request.cryptoMetadata.containsKey(c7SyncForEpochKey), isFalse);
+  }, skip: skip);
+
+  test(
       'in a shared group, records name their channel, one history_sync '
       'covers every channel, and a newcomer adopts each', () async {
     final alice = await client('alice');

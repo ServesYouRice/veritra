@@ -4469,6 +4469,14 @@ class AppState extends ChangeNotifier
                   _c7LayoutGeneration(due.conversationId, due.channelId));
           queued = true;
         } else {
+          if (due is C7DueSync &&
+              await _c7SyncDelivered(
+                  current, due.conversationId, due.forEpoch)) {
+            // Owner answer Q3: the newcomers already have it; members never
+            // receive a history_sync, so the server says so instead.
+            await c7.c7SyncDelivered(due.conversationId, due.forEpoch);
+            continue;
+          }
           queued = await c7.c7Send(due) != null || queued;
         }
       } on StateError {
@@ -4485,6 +4493,21 @@ class AppState extends ChangeNotifier
     if (queued) unawaited(_flushOutbox());
     _armC7Timer(await c7.c7NextDueAt(ids));
     notifyListeners();
+  }
+
+  /// Whether the server already holds a `history_sync` for [forEpoch] that
+  /// no request reopened. Unknown (offline, an older server) counts as no:
+  /// the send that follows is refused if one arrived meanwhile.
+  Future<bool> _c7SyncDelivered(
+      Session current, String conversationId, int forEpoch) async {
+    final client = api;
+    if (client == null) return false;
+    try {
+      return await client.historySyncDelivered(
+          current.token, conversationId, forEpoch);
+    } on Object {
+      return false;
+    }
   }
 
   /// Runs the C7 work pass now, as a finished sync pass does.
@@ -8326,6 +8349,15 @@ class AppState extends ChangeNotifier
         _selfUpdatePolicyFor(current)?.recordSent(envelope.conversationId);
       } catch (err) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (err is ApiException &&
+            err.statusCode == 409 &&
+            err.serverCode == 'history_sync_delivered') {
+          // C7 (owner answer Q3): another member's history_sync reached
+          // the newcomers first. Its duty settled when it was queued, so
+          // the envelope is simply dropped, never left as a failed send.
+          await _removeFromOutbox(envelope);
+          continue;
+        }
         await _recordOutboxFailure(envelope, err, record.attemptCount);
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(

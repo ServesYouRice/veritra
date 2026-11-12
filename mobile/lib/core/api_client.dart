@@ -1826,6 +1826,24 @@ class ApiClient {
         .toList());
   }
 
+  /// C7 (owner answer Q3): whether a `history_sync` for [forEpoch] is already
+  /// delivered in [conversationId] and not reopened by a newcomer's request.
+  /// A member asks before its fallback send, since it never receives the
+  /// newcomers' `history_sync` itself. 404 while the server has C7 off.
+  Future<bool> historySyncDelivered(
+      String token, String conversationId, int forEpoch) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+            '/history-sync',
+        queryParameters: <String, String>{'for_epoch': '$forEpoch'},
+      ).toString(),
+      token: token,
+    );
+    return _decode(() => json['delivered'] as bool);
+  }
+
   /// C7: marks a community post `history_hidden`, so the history route never
   /// serves it to a newcomer. The author's or a moderator's delete sends it
   /// with the W7 delete.

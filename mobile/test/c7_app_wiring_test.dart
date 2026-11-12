@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
+import 'package:private_messenger/core/api_errors.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/roles/governance.dart';
@@ -35,6 +36,30 @@ class _QuietSync implements SyncService {
 
 class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://example.test');
+
+  /// Epochs the server reports a history_sync delivered for.
+  final delivered = <(String, int)>{};
+  final asked = <(String, int)>[];
+
+  /// What a send of each envelope answers; absent is success.
+  final refusals = <String, ApiException>{};
+  final sentKeys = <String>[];
+
+  @override
+  Future<bool> historySyncDelivered(
+      String token, String conversationId, int forEpoch) async {
+    asked.add((conversationId, forEpoch));
+    return delivered.contains((conversationId, forEpoch));
+  }
+
+  @override
+  Future<MessageEnvelope> sendEnvelope(
+      String token, MessageEnvelope envelope) async {
+    sentKeys.add(envelope.idempotencyKey);
+    final refusal = refusals[envelope.idempotencyKey];
+    if (refusal != null) throw refusal;
+    return envelope;
+  }
 
   @override
   Future<ChannelCreation> createChannel(
@@ -71,7 +96,9 @@ class _C7Crypto extends UnavailableCryptoService
   bool c7SealedBodies = true;
   final proposals = <_Proposal>[];
   final sent = <C7Due>[];
+  final settled = <(String, int)>[];
   final asked = <List<String>>[];
+  LocalStore? outbox;
   List<C7Due> due = const <C7Due>[];
   DateTime? next;
   Map<String, bool> lines = const <String, bool>{};
@@ -114,7 +141,14 @@ class _C7Crypto extends UnavailableCryptoService
   @override
   Future<MessageEnvelope?> c7Send(C7Due due) async {
     sent.add(due);
-    return _envelope(due.conversationId);
+    final envelope = _envelope(due.conversationId);
+    await outbox?.enqueueEnvelope(envelope);
+    return envelope;
+  }
+
+  @override
+  Future<void> c7SyncDelivered(String conversationId, int forEpoch) async {
+    settled.add((conversationId, forEpoch));
   }
 
   @override
@@ -128,13 +162,15 @@ class _C7Crypto extends UnavailableCryptoService
   Future<DateTime?> c7NextDueAt(Iterable<String> conversationIds) async => next;
 }
 
-(AppState, _C7Crypto) _app() {
+(AppState, _C7Crypto) _app() => _appWith(_Api());
+
+(AppState, _C7Crypto) _appWith(_Api api) {
   final crypto = _C7Crypto();
-  final api = _Api();
+  final store = MemoryLocalStore();
   final state = AppState(
       apiClientFactory: (_) => api,
       syncServiceFactory: (_, __) => _QuietSync(),
-      localStore: MemoryLocalStore(),
+      localStore: store,
       cryptoService: crypto);
   addTearDown(state.dispose);
   state.session = _session;
@@ -254,6 +290,48 @@ void main() {
     expect(state.channelHistoryLine('conv_shared', 'dev_bob:act'), isTrue);
     expect(state.channelHistoryLine('conv_shared', 'dev_bob:other'), isNull);
     expect(state.c7TimerArmed, isTrue);
+  });
+
+  test(
+      'a member asks the server first: a history_sync the newcomers already '
+      'have settles its duty unsent; one they lack is sent', () async {
+    final api = _Api()..delivered.add(('conv_shared', 4));
+    final (state, crypto) = _appWith(api);
+    crypto.due = <C7Due>[
+      const C7DueSync('conv_shared', 4),
+      const C7DueSync('conv_private', 2),
+      const C7DueRequest('conv_private', 3),
+    ];
+    await state.c7WorkPassForTesting();
+    expect(api.asked, [('conv_shared', 4), ('conv_private', 2)]);
+    expect(crypto.settled, [('conv_shared', 4)]);
+    expect(crypto.sent.map((d) => (d.conversationId, d.runtimeType)),
+        [('conv_private', C7DueSync), ('conv_private', C7DueRequest)]);
+  });
+
+  test(
+      "a history_sync the server refuses as delivered leaves the outbox; "
+      'any other refusal stays as a failed send', () async {
+    final api = _Api();
+    final (state, crypto) = _appWith(api);
+    crypto.outbox = state.localStore;
+    crypto.due = <C7Due>[
+      const C7DueSync('conv_shared', 4),
+      const C7DueSync('conv_private', 2),
+    ];
+    api.refusals['action-1'] =
+        ApiException(409, '{"error":"history_sync_delivered"}');
+    api.refusals['action-2'] =
+        ApiException(409, '{"error":"idempotency_conflict"}');
+    await state.c7WorkPassForTesting();
+    for (var i = 0; i < 100 && api.sentKeys.length < 2; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(api.sentKeys, containsAll(<String>['action-1', 'action-2']));
+    final left = await state.localStore.pendingEnvelopeRecords();
+    expect(left.map((r) => r.envelope.idempotencyKey), ['action-2']);
+    expect(left.single.terminal, isTrue);
   });
 
   test('the switch proposes a switch, or a create for a channel with none',

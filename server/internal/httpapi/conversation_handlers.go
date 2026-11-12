@@ -259,8 +259,26 @@ func (a *API) conversationSubroute(w http.ResponseWriter, r *http.Request, princ
 	}
 	conversationID := parts[0]
 	switch {
-	case (parts[1] == "history" || parts[1] == "former-member-keys") && r.Method == http.MethodGet && !a.C7History:
+	case (parts[1] == "history" || parts[1] == "former-member-keys" || parts[1] == "history-sync") && r.Method == http.MethodGet && !a.C7History:
 		writeError(w, http.StatusNotFound, "not_found")
+	case parts[1] == "history-sync" && r.Method == http.MethodGet:
+		// C7 (owner answer Q3): a member's check before a fallback
+		// history_sync, which it never receives itself.
+		if principal.DeviceID == "" {
+			writeError(w, http.StatusBadRequest, "device_session_required")
+			return
+		}
+		forEpoch, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("for_epoch")), 10, 64)
+		if err != nil || forEpoch < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_for_epoch")
+			return
+		}
+		delivered, err := a.Store.HistorySyncDelivered(r.Context(), principal.AccountID, principal.DeviceID, conversationID, forEpoch)
+		if err != nil {
+			handleStorageError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"delivered": delivered})
 	case parts[1] == "history" && r.Method == http.MethodGet:
 		// C7: the only route that serves pre-join sealed bodies.
 		if principal.DeviceID == "" {
@@ -601,7 +619,15 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		return
 	}
 	if !result.Duplicate {
-		a.publishCommittedEvent(r.Context(), result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: result.Envelope, CreatedAt: time.Now().UTC()})
+		live := result.Envelope
+		if storage.C7TargetedSync(live.CryptoMetadata) {
+			// C7: a targeted history_sync's frame only says to sync; its
+			// recipients are the newcomers' accounts and the sender's, whose
+			// other devices must not get the slots this way.
+			live.Ciphertext = nil
+			live.SealedBody = nil
+		}
+		a.publishCommittedEvent(r.Context(), result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: live, CreatedAt: time.Now().UTC()})
 	}
 	status := http.StatusCreated
 	if result.Duplicate {

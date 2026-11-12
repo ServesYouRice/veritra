@@ -573,6 +573,22 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C7 targeted `history_sync` delivery (2026-11-12, owner answer Q3):**
+  wire change in clear metadata only, behind the server's
+  `PRIVATE_MESSENGER_C7_HISTORY`. A group-level C7 message names its type
+  and epoch: `c7_sync_for_epoch` on a `history_sync` (its `for_epoch`),
+  `c7_sync_request_for_epoch` on a request (the sender's own join epoch,
+  checked by the server against the roster). The server delivers a
+  `history_sync` only to the devices whose roster `joined_epoch` is that
+  epoch and to the sender's device, live frames without ciphertext or
+  body, push wakes to those devices only; it refuses a second one for the
+  same epoch until a request reopens it, and answers members'
+  `GET .../history-sync?for_epoch=` check. What the server learns is what
+  it already knew: it wrote each device's join epoch with the commit, and
+  the body size already tells a `history_sync` from a request. Members no
+  longer receive other members' slots (C7 design, "Targeted
+  `history_sync` delivery", deviation 9). No ABI, payload, local schema
+  or server migration change. Needs the independent review.
 - **C7 targeted actions follow their target (2026-11-12, local schema
   41):** `local_messages.c7_gen` (nullable text) records the generation a
   post's body was sealed under, as the lowercase hex of the generation's
