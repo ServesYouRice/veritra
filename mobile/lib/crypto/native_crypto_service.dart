@@ -6757,10 +6757,6 @@ extension _C7Engine on NativeCryptoService {
     final privateChannel = _c7PrivateChannel(conversationId);
     final shared =
         _authority?.conversationKind(conversationId) == 'community_shared';
-    final authority = _authority;
-    final VerifiedRoleSource? roles = authority is VerifiedRoleSource
-        ? authority as VerifiedRoleSource
-        : null;
     final keys = C7Keys(bindings);
     final changedBooks = <C7ChannelBook>[];
     final cursors = <String, String?>{...state.cursors};
@@ -6768,7 +6764,7 @@ extension _C7Engine on NativeCryptoService {
     final movesBefore = await _c7LoadMoves();
     var moves = movesBefore;
     // Pass one: every opened, verified post and action, oldest first.
-    final posts = <({String key, String account, InsertMessageEffect row})>[];
+    final posts = <_C7Post>[];
     final actions = <List<MessageEffect>>[];
     for (final MapEntry(key: channel, value: page) in channels.entries) {
       // A shared group's channels, or a private group's own channel.
@@ -6811,77 +6807,18 @@ extension _C7Engine on NativeCryptoService {
                 (candidate.close == null || epoch < candidate.close!))
               candidate,
         ];
-        final aad = C7Keys.bodyAad(
-          conversationId: conversationId,
-          channelId: channel,
-          senderDeviceId: row.senderDeviceId,
-          actionId: row.actionId,
-        );
-        C7Gen? gen;
-        ({Uint8List signature, Uint8List paddedVap1})? opened;
-        for (final candidate in tries) {
-          final key = candidate.key;
-          if (key == null || candidate.epoch == 0) continue;
-          final bodyKey = keys.postBodyKey(
-            chk: key,
+        final opened = _c7OpenHistoryRow(row,
+            tries: tries,
+            keys: keys,
             communityId: community,
             channelId: channel,
-            senderDeviceId: row.senderDeviceId,
-            actionId: row.actionId,
-          );
-          try {
-            opened =
-                keys.openBody(bodyKey: bodyKey, aad: aad, sealed: row.body);
-          } on Object {
-            opened = null;
-          } finally {
-            bodyKey.fillRange(0, bodyKey.length, 0);
-          }
-          if (opened != null) {
-            gen = candidate;
-            break;
-          }
-        }
-        final chk = gen?.key;
-        if (gen == null || chk == null || opened == null) continue;
-        // Decision 8: a key in the current tree wins over anything the
-        // server lists for the same device.
-        final tree = _c7TreeKey(conversationId, row.senderDeviceId);
-        final listed = tree == null ? former[row.senderDeviceId] : null;
-        final signer = tree?.key ?? listed?.signingKey;
-        final account = tree?.accountId ?? listed?.accountId;
-        if (signer == null || account == null) continue;
-        bool valid;
-        try {
-          valid = bindings.c7Verify(
-            domain: c7PostSignatureDomain,
-            publicKey: signer,
-            message: c7PostSignedFields(
-              communityId: community,
-              channelId: channel,
-              actionId: row.actionId,
-              groupId: conversationId,
-              epoch: epoch,
-              senderDeviceId: row.senderDeviceId,
-              generation: gen.epoch,
-              paddedVap1: opened.paddedVap1,
-            ),
-            signature: opened.signature,
-          );
-        } on Object {
-          valid = false;
-        }
-        if (!valid) continue;
-        final outcome = AppPayloadCodec().classify(
-          opened.paddedVap1,
-          conversationId: conversationId,
-          senderDeviceId: row.senderDeviceId,
-          actionId: row.actionId,
-          communityShared: shared,
-          channelId: channel,
-        );
-        if (outcome is! DecodedAppPayload) continue;
-        final payload = outcome.payload;
+            groupId: conversationId,
+            epoch: epoch,
+            treeConversationId: conversationId,
+            former: former,
+            communityShared: shared);
+        if (opened == null) continue;
+        final payload = opened.payload;
         if (payload.type == AppPayloadType.historyChange) {
           // C3 conversion, option A: a `move` record message in the
           // channel's own stream hands over the old group's generation. It
@@ -6889,7 +6826,7 @@ extension _C7Engine on NativeCryptoService {
           // the record's signature checks with its actor's key in the
           // current tree (a former member's key is for posts only) and the
           // actor may record now.
-          final wrapped = tree == null
+          final wrapped = !opened.inTree
               ? null
               : _c7HistoryMove(payload,
                   communityId: community,
@@ -6897,109 +6834,21 @@ extension _C7Engine on NativeCryptoService {
                   conversationId: conversationId,
                   epoch: epoch,
                   actorDeviceId: row.senderDeviceId,
-                  signer: signer,
-                  account: account);
+                  signer: opened.signer,
+                  account: opened.account);
           if (wrapped != null) {
             moves = _c7MovesWithWrap(moves, wrapped.probe, wrapped.wrap);
           }
           continue;
         }
-        final isPost = c7HistoryPostTypes.contains(payload.type);
-        if (!isPost && !c7TargetedTypes.contains(payload.type)) continue;
-        // C2, as live: a restricted post from a sender below admin.
-        if (roles != null &&
-            restrictedPostTypes.contains(payload.type) &&
-            shouldDropRestrictedPost(
-              record: roles.governanceOf(conversationId),
-              sender: account,
-              channelId: payload.channelId,
-              serverRestricts: roles.serverRestrictsPosting(
-                  conversationId, payload.channelId),
-              senderRemoved: listed != null,
-            )) {
-          continue;
-        }
-        final List<MessageEffect> effects;
-        try {
-          effects = messageEffectsFor(
-            payload,
+        await _c7CollectHistory(opened, row, payload,
             conversationId: conversationId,
-            senderAccountId: account,
-            senderDeviceId: row.senderDeviceId,
-            serverMessageId: row.messageId,
-            createdAt: row.createdAt.millisecondsSinceEpoch,
-            state: LocalMessageState.received,
-            // The sender's signed expiry; the route serves none of its own.
-            expiresAt: effectiveExpiryMillis(
-                senderMs: payload.expiresAtMs, serverMs: null),
-            authority: authority,
-            // A device no longer in the group never acts with a role.
-            senderActsWithRole: listed == null,
-          );
-        } on Object {
-          continue;
-        }
-        final key = messageKey(row.senderDeviceId, row.actionId);
-        if (isPost) {
-          // The post's own row only: no profile key rides in from history.
-          for (final effect in effects) {
-            if (effect is! InsertMessageEffect || effect.key != key) continue;
-            var insert = effect.withC7Gen(c7GenTag(chk));
-            // A former member's post is marked on its row (schema 42), so
-            // the mark travels with it into K1 backups and K2 bundles. The
-            // server named its account; the name is shown only when this
-            // device's signed device list of that account lists, or once
-            // listed, the device with the key that verified it (owner
-            // answer "Hide unproven names", review M2).
-            if (listed != null) {
-              final named = proven[row.senderDeviceId] ??=
-                  await _c7FormerProven(account, row.senderDeviceId, signer);
-              insert = insert.markedC7Former(named: named);
-            }
-            if (payload.type == AppPayloadType.attachmentManifest) {
-              // Owner answer Q2: never offered, so never stored.
-              insert = insert.withBody(c7HiddenAttachmentBody);
-            }
-            posts.add((key: key, account: account, row: insert));
-          }
-        } else {
-          actions.add(<MessageEffect>[
-            for (final effect in effects)
-              if (effect is! ProfileKeyEffect) effect,
-          ]);
-        }
+            posts: posts,
+            actions: actions,
+            proven: proven);
       }
     }
-    // Pass two: the authors' own deletes as a set first (a deleted post is
-    // never inserted, nor is any action on it), then the posts oldest first,
-    // then the other actions in order. A moderator's delete applies like
-    // any other action, after its target.
-    final authors = <String, String>{
-      for (final post in posts) post.key: post.account,
-    };
-    final deleted = <String>{
-      for (final action in actions)
-        for (final effect in action)
-          if (effect is DeleteMessageEffect &&
-              authors[effect.targetKey] == effect.deleterAccountId)
-            effect.targetKey,
-    };
-    String? targetOf(MessageEffect effect) => switch (effect) {
-          EditMessageEffect(:final targetKey) => targetKey,
-          DeleteMessageEffect(:final targetKey) => targetKey,
-          ReactionEffect(:final targetKey) => targetKey,
-          PinMessageEffect(:final targetKey) => targetKey,
-          PollVoteEffect(:final targetKey) => targetKey,
-          PollCloseEffect(:final targetKey) => targetKey,
-          _ => null,
-        };
-    final ordered = <MessageEffect>[
-      for (final post in posts)
-        if (!deleted.contains(post.key)) post.row,
-      for (final action in actions)
-        for (final effect in action)
-          if (!deleted.contains(targetOf(effect))) effect,
-    ];
+    final (ordered, imported) = _c7OrderImport(posts, actions);
     final next =
         C7ImportState(cursors: cursors, keys: keptKeys, candidates: candidates);
     await localStore.importC7History(ordered, c7Settings: <String, String?>{
@@ -7010,7 +6859,7 @@ extension _C7Engine on NativeCryptoService {
       if (!identical(moves, movesBefore))
         c7MovesSetting: C7Move.encodeAll(moves),
     });
-    return posts.where((post) => !deleted.contains(post.key)).length;
+    return imported;
   }
 
   /// The move and wrap of a `history_change` [payload] fetched from
@@ -7102,10 +6951,6 @@ extension _C7Engine on NativeCryptoService {
       for (final key in keys) key.deviceId: key,
     };
     final proven = <String, bool>{};
-    final authority = _authority;
-    final VerifiedRoleSource? roles = authority is VerifiedRoleSource
-        ? authority as VerifiedRoleSource
-        : null;
     final c7keys = C7Keys(bindings);
     final gens = c7WalkMoved(
       bindings: bindings,
@@ -7116,77 +6961,28 @@ extension _C7Engine on NativeCryptoService {
       fromConversationId: from,
       channelId: channelId,
     );
-    final posts = <({String key, String account, InsertMessageEffect row})>[];
+    final posts = <_C7Post>[];
     final actions = <List<MessageEffect>>[];
     for (final row in channel.rows.reversed) {
       if (row.channelId != channelId) continue;
       final epoch = row.epoch;
       if (epoch == null || epoch > wrapClose) continue;
       final gen = gens.where((g) => g.covers(from, epoch)).lastOrNull;
-      final chk = gen?.key;
-      if (gen == null || chk == null || gen.epoch == 0) continue;
-      final aad = C7Keys.bodyAad(
-        conversationId: from,
-        channelId: channelId,
-        senderDeviceId: row.senderDeviceId,
-        actionId: row.actionId,
-      );
-      final bodyKey = c7keys.postBodyKey(
-        chk: chk,
-        communityId: community,
-        channelId: channelId,
-        senderDeviceId: row.senderDeviceId,
-        actionId: row.actionId,
-      );
-      ({Uint8List signature, Uint8List paddedVap1})? opened;
-      try {
-        opened = c7keys.openBody(bodyKey: bodyKey, aad: aad, sealed: row.body);
-      } on Object {
-        opened = null;
-      } finally {
-        bodyKey.fillRange(0, bodyKey.length, 0);
-      }
+      if (gen == null) continue;
+      final opened = _c7OpenHistoryRow(row,
+          tries: <C7Gen>[gen],
+          keys: c7keys,
+          communityId: community,
+          channelId: channelId,
+          groupId: from,
+          epoch: epoch,
+          // Decision 8 in the new group: a key in its tree wins over
+          // anything the server lists for the same device.
+          treeConversationId: to,
+          former: former,
+          communityShared: fromShared);
       if (opened == null) continue;
-      // Decision 8 in the new group: a key in its tree wins over anything
-      // the server lists for the same device.
-      final tree = _c7TreeKey(to, row.senderDeviceId);
-      final listed = tree == null ? former[row.senderDeviceId] : null;
-      final signer = tree?.key ?? listed?.signingKey;
-      final account = tree?.accountId ?? listed?.accountId;
-      if (signer == null || account == null) continue;
-      bool valid;
-      try {
-        valid = bindings.c7Verify(
-          domain: c7PostSignatureDomain,
-          publicKey: signer,
-          message: c7PostSignedFields(
-            communityId: community,
-            channelId: channelId,
-            actionId: row.actionId,
-            groupId: from,
-            epoch: epoch,
-            senderDeviceId: row.senderDeviceId,
-            generation: gen.epoch,
-            paddedVap1: opened.paddedVap1,
-          ),
-          signature: opened.signature,
-        );
-      } on Object {
-        valid = false;
-      }
-      if (!valid) continue;
-      final outcome = AppPayloadCodec().classify(
-        opened.paddedVap1,
-        conversationId: from,
-        senderDeviceId: row.senderDeviceId,
-        actionId: row.actionId,
-        communityShared: fromShared,
-        channelId: channelId,
-      );
-      if (outcome is! DecodedAppPayload) continue;
-      final sent = outcome.payload;
-      final isPost = c7HistoryPostTypes.contains(sent.type);
-      if (!isPost && !c7TargetedTypes.contains(sent.type)) continue;
+      final sent = opened.payload;
       // Rehomed: the new conversation names the channel only when it is a
       // shared group.
       final payload = DecryptedAppPayload(
@@ -7196,58 +6992,208 @@ extension _C7Engine on NativeCryptoService {
         channelId: toShared ? channelId : null,
         expiresAtMs: sent.expiresAtMs,
       );
-      if (roles != null &&
-          restrictedPostTypes.contains(payload.type) &&
-          shouldDropRestrictedPost(
-            record: roles.governanceOf(to),
-            sender: account,
-            channelId: payload.channelId,
-            serverRestricts:
-                roles.serverRestrictsPosting(to, payload.channelId),
-            senderRemoved: listed != null,
-          )) {
-        continue;
-      }
-      final List<MessageEffect> effects;
+      await _c7CollectHistory(opened, row, payload,
+          conversationId: to, posts: posts, actions: actions, proven: proven);
+    }
+    final (ordered, imported) = _c7OrderImport(posts, actions);
+    final moves = await _c7LoadMoves();
+    await localStore.importC7History(ordered, c7Settings: <String, String?>{
+      c7MovesSetting: C7Move.encodeAll(<C7Move>[
+        for (final m in moves) m.same(move) ? m.copyWith(imported: true) : m,
+      ]),
+    });
+    return imported;
+  }
+
+  /// One body of a history stream opened and checked, the same for the
+  /// newcomer's import and a move's (decisions 6 and 8): the first of
+  /// [tries] whose key opens it under [groupId]'s body AAD (a generation
+  /// opened at epoch 0 seals nothing), then the post signature with that
+  /// generation, [groupId] and the route [epoch], under the sender's key in
+  /// [treeConversationId]'s tree or, for a device not in it, [former]'s;
+  /// then classified as sent in [groupId]. Null when any step fails.
+  _C7Opened? _c7OpenHistoryRow(
+    C7HistoryRow row, {
+    required Iterable<C7Gen> tries,
+    required C7Keys keys,
+    required String communityId,
+    required String channelId,
+    required String groupId,
+    required int epoch,
+    required String treeConversationId,
+    required Map<String, C7FormerKey> former,
+    required bool communityShared,
+  }) {
+    final aad = C7Keys.bodyAad(
+      conversationId: groupId,
+      channelId: channelId,
+      senderDeviceId: row.senderDeviceId,
+      actionId: row.actionId,
+    );
+    C7Gen? gen;
+    ({Uint8List signature, Uint8List paddedVap1})? opened;
+    for (final candidate in tries) {
+      final key = candidate.key;
+      if (key == null || candidate.epoch == 0) continue;
+      final bodyKey = keys.postBodyKey(
+        chk: key,
+        communityId: communityId,
+        channelId: channelId,
+        senderDeviceId: row.senderDeviceId,
+        actionId: row.actionId,
+      );
       try {
-        effects = messageEffectsFor(
-          payload,
-          conversationId: to,
-          senderAccountId: account,
-          senderDeviceId: row.senderDeviceId,
-          serverMessageId: row.messageId,
-          createdAt: row.createdAt.millisecondsSinceEpoch,
-          state: LocalMessageState.received,
-          expiresAt: effectiveExpiryMillis(
-              senderMs: payload.expiresAtMs, serverMs: null),
-          authority: authority,
-          senderActsWithRole: listed == null,
-        );
+        opened = keys.openBody(bodyKey: bodyKey, aad: aad, sealed: row.body);
       } on Object {
-        continue;
+        opened = null;
+      } finally {
+        bodyKey.fillRange(0, bodyKey.length, 0);
       }
-      final key = messageKey(row.senderDeviceId, row.actionId);
-      if (isPost) {
-        for (final effect in effects) {
-          if (effect is! InsertMessageEffect || effect.key != key) continue;
-          var insert = effect.withC7Gen(c7GenTag(chk));
-          if (listed != null) {
-            final named = proven[row.senderDeviceId] ??=
-                await _c7FormerProven(account, row.senderDeviceId, signer);
-            insert = insert.markedC7Former(named: named);
-          }
-          if (payload.type == AppPayloadType.attachmentManifest) {
-            insert = insert.withBody(c7HiddenAttachmentBody);
-          }
-          posts.add((key: key, account: account, row: insert));
-        }
-      } else {
-        actions.add(<MessageEffect>[
-          for (final effect in effects)
-            if (effect is! ProfileKeyEffect) effect,
-        ]);
+      if (opened != null) {
+        gen = candidate;
+        break;
       }
     }
+    if (gen == null || gen.key == null || opened == null) return null;
+    // Decision 8: a key in the current tree wins over anything the server
+    // lists for the same device.
+    final tree = _c7TreeKey(treeConversationId, row.senderDeviceId);
+    final listed = tree == null ? former[row.senderDeviceId] : null;
+    final signer = tree?.key ?? listed?.signingKey;
+    final account = tree?.accountId ?? listed?.accountId;
+    if (signer == null || account == null) return null;
+    bool valid;
+    try {
+      valid = bindings.c7Verify(
+        domain: c7PostSignatureDomain,
+        publicKey: signer,
+        message: c7PostSignedFields(
+          communityId: communityId,
+          channelId: channelId,
+          actionId: row.actionId,
+          groupId: groupId,
+          epoch: epoch,
+          senderDeviceId: row.senderDeviceId,
+          generation: gen.epoch,
+          paddedVap1: opened.paddedVap1,
+        ),
+        signature: opened.signature,
+      );
+    } on Object {
+      valid = false;
+    }
+    if (!valid) return null;
+    final outcome = AppPayloadCodec().classify(
+      opened.paddedVap1,
+      conversationId: groupId,
+      senderDeviceId: row.senderDeviceId,
+      actionId: row.actionId,
+      communityShared: communityShared,
+      channelId: channelId,
+    );
+    if (outcome is! DecodedAppPayload) return null;
+    return (
+      payload: outcome.payload,
+      gen: gen,
+      account: account,
+      signer: signer,
+      listed: listed,
+      inTree: tree != null,
+    );
+  }
+
+  /// Pass one of an import for one opened body ([_c7OpenHistoryRow]):
+  /// [payload] (as it lands in [conversationId]) becomes a post row in
+  /// [posts] or an action's effects in [actions]. Only posts and the
+  /// actions that target them; a restricted post from a sender below
+  /// admin is dropped, as live (C2).
+  Future<void> _c7CollectHistory(
+    _C7Opened opened,
+    C7HistoryRow row,
+    DecryptedAppPayload payload, {
+    required String conversationId,
+    required List<_C7Post> posts,
+    required List<List<MessageEffect>> actions,
+    required Map<String, bool> proven,
+  }) async {
+    final isPost = c7HistoryPostTypes.contains(payload.type);
+    if (!isPost && !c7TargetedTypes.contains(payload.type)) return;
+    final account = opened.account;
+    final listed = opened.listed;
+    final authority = _authority;
+    final VerifiedRoleSource? roles = authority is VerifiedRoleSource
+        ? authority as VerifiedRoleSource
+        : null;
+    if (roles != null &&
+        restrictedPostTypes.contains(payload.type) &&
+        shouldDropRestrictedPost(
+          record: roles.governanceOf(conversationId),
+          sender: account,
+          channelId: payload.channelId,
+          serverRestricts:
+              roles.serverRestrictsPosting(conversationId, payload.channelId),
+          senderRemoved: listed != null,
+        )) {
+      return;
+    }
+    final List<MessageEffect> effects;
+    try {
+      effects = messageEffectsFor(
+        payload,
+        conversationId: conversationId,
+        senderAccountId: account,
+        senderDeviceId: row.senderDeviceId,
+        serverMessageId: row.messageId,
+        createdAt: row.createdAt.millisecondsSinceEpoch,
+        state: LocalMessageState.received,
+        // The sender's signed expiry; the route serves none of its own.
+        expiresAt: effectiveExpiryMillis(
+            senderMs: payload.expiresAtMs, serverMs: null),
+        authority: authority,
+        // A device no longer in the group never acts with a role.
+        senderActsWithRole: listed == null,
+      );
+    } on Object {
+      return;
+    }
+    final key = messageKey(row.senderDeviceId, row.actionId);
+    if (!isPost) {
+      actions.add(<MessageEffect>[
+        for (final effect in effects)
+          if (effect is! ProfileKeyEffect) effect,
+      ]);
+      return;
+    }
+    // The post's own row only: no profile key rides in from history.
+    for (final effect in effects) {
+      if (effect is! InsertMessageEffect || effect.key != key) continue;
+      var insert = effect.withC7Gen(c7GenTag(opened.gen.key!));
+      // A former member's post is marked on its row (schema 42), so the
+      // mark travels with it into K1 backups and K2 bundles. The server
+      // named its account; the name is shown only when this device's signed
+      // device list of that account lists, or once listed, the device with
+      // the key that verified it (owner answer "Hide unproven names",
+      // review M2).
+      if (listed != null) {
+        final named = proven[row.senderDeviceId] ??=
+            await _c7FormerProven(account, row.senderDeviceId, opened.signer);
+        insert = insert.markedC7Former(named: named);
+      }
+      if (payload.type == AppPayloadType.attachmentManifest) {
+        // Owner answer Q2: never offered, so never stored.
+        insert = insert.withBody(c7HiddenAttachmentBody);
+      }
+      posts.add((key: key, account: account, row: insert));
+    }
+  }
+
+  /// Pass two of an import: the authors' own deletes as a set first (a
+  /// deleted post is never inserted, nor is any action on it), then the
+  /// posts oldest first, then the other actions in order. A moderator's
+  /// delete applies like any other action, after its target. Returns the
+  /// effects and the posts they insert.
+  (List<MessageEffect>, int) _c7OrderImport(
+      List<_C7Post> posts, List<List<MessageEffect>> actions) {
     final authors = <String, String>{
       for (final post in posts) post.key: post.account,
     };
@@ -7274,13 +7220,10 @@ extension _C7Engine on NativeCryptoService {
         for (final effect in action)
           if (!deleted.contains(targetOf(effect))) effect,
     ];
-    final moves = await _c7LoadMoves();
-    await localStore.importC7History(ordered, c7Settings: <String, String?>{
-      c7MovesSetting: C7Move.encodeAll(<C7Move>[
-        for (final m in moves) m.same(move) ? m.copyWith(imported: true) : m,
-      ]),
-    });
-    return posts.where((post) => !deleted.contains(post.key)).length;
+    return (
+      ordered,
+      posts.where((post) => !deleted.contains(post.key)).length,
+    );
   }
 
   Future<List<C7Due>> _c7Due(Iterable<String> conversationIds) async {
@@ -7329,3 +7272,19 @@ extension _C7Engine on NativeCryptoService {
     return out;
   }
 }
+
+/// A history body [NativeCryptoService] opened and checked: its payload as
+/// sent, the generation that opened it, the verifying key and its account,
+/// and whether that key came from the current tree (else [listed], the
+/// server's).
+typedef _C7Opened = ({
+  DecryptedAppPayload payload,
+  C7Gen gen,
+  String account,
+  Uint8List signer,
+  C7FormerKey? listed,
+  bool inTree,
+});
+
+/// An imported post's row, by local key and author account.
+typedef _C7Post = ({String key, String account, InsertMessageEffect row});
