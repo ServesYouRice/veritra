@@ -3,7 +3,7 @@ part of 'encrypted_database.dart';
 // Local schema 43 (L2-3 sealed sender, D123; docs/crypto.md, "Sealed sender
 // with VOPRF tokens"). Raw SQL like the other late tables, so the generated
 // drift code does not change, and every step is idempotent (IF NOT EXISTS
-// and a column check) so the step can be renumbered when C7's 41-42 land.
+// and a column check), so it also runs after C7's 41 and 42 (round 8).
 //
 // - local_sealed_tokens: unspent tokens. Each is a bearer credential: it
 //   lets its holder post into its conversation without a session. They live

@@ -118,6 +118,9 @@ class _Api extends ApiClient {
   final movedAsked = <(String, String, bool)>[];
   final moves = <(String, String)>[];
 
+  /// The request id of each move asked, in order.
+  final requestIds = <String>[];
+
   /// Awaited, then thrown, by the next move (once each): the server moved
   /// the channel, and the answer is late or lost.
   Completer<void>? moveGate;
@@ -129,7 +132,9 @@ class _Api extends ApiClient {
 
   @override
   Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
-      String token, String channelId, String accessMode) async {
+      String token, String channelId, String accessMode,
+      {required String requestId}) async {
+    requestIds.add(requestId);
     final usual = await _moveAnswer(channelId, accessMode);
     await moveGate?.future;
     moveGate = null;
@@ -863,10 +868,44 @@ void main() {
       await state.channelMovedForTesting(ownMove());
       await settle(() => api.added.isNotEmpty);
       expect(api.moves, [(_open, 'private'), (_open, 'private')]);
+      // Asked again under the same request id: the server answers it as
+      // the same move only then (review L-6 residual).
+      expect(api.requestIds, hasLength(2));
+      expect(api.requestIds.toSet(), hasLength(1));
+      expect(api.requestIds.first.length, greaterThanOrEqualTo(22));
       expect(api.added, [('conv_new', 'bob')]);
       expect(crypto.notes.map((n) => n.own), [false, true]);
       expect(await pending(state), isNull);
     });
+
+  test(
+      'a re-tap after a lost answer asks under the same request id, and '
+      'another device of this account under its own (review L-6 residual)',
+      () async {
+    final api = _Api()..moveThrows = const SocketException('lost');
+    final (state, crypto) = _appWith(api);
+    Channel open(AppState s) =>
+        s.channelsByCommunity[_community]!.where((c) => c.id == _open).single;
+    expect(await state.convertChannel(open(state), toPrivate: true), isFalse);
+    expect(await pending(state), _open);
+    // The channel still looks open here; the person taps again.
+    expect(await state.convertChannel(open(state), toPrivate: true), isTrue);
+    expect(api.requestIds, hasLength(2));
+    expect(api.requestIds.toSet(), hasLength(1));
+    expect(await pending(state), isNull);
+    expect(crypto.notes.map((n) => n.own), [true]);
+    // A second device of the same account makes its own id, which the
+    // server refuses to answer as the first device's move.
+    final otherApi = _Api();
+    final (other, _) = _appWith(otherApi);
+    expect(await other.convertChannel(open(other), toPrivate: true), isTrue);
+    expect(otherApi.requestIds.single, isNot(api.requestIds.first));
+    // A later conversion of the channel here is a new request.
+    final again = _Api();
+    final (third, _) = _appWith(again);
+    await third.convertChannel(open(third), toPrivate: true);
+    expect(again.requestIds.single, isNot(api.requestIds.first));
+  });
 
   for (final other in ['alice', 'bob']) {
     test(
@@ -970,6 +1009,7 @@ void main() {
       await settle(() => api.added.isNotEmpty);
       await Future<void>.delayed(const Duration(milliseconds: 50));
       expect(api.moves.length, lost ? 2 : 1);
+      expect(api.requestIds.toSet(), hasLength(1));
       expect(api.added, [('conv_new', 'bob')]);
       expect(crypto.notes.map((n) => n.own), [false, true]);
       expect(await pending(state), isNull);

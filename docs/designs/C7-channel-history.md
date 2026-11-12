@@ -1594,12 +1594,14 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   - Round-robin fairness holds against one junk sender, not against a
     server colluding with several member devices. Such senders each add
     4 per step, and the 64 cap can still be reached.
-  - A conversion finished from its own event re-POSTs. If the first
-    request never reached the server and another device of the same
-    account then made the same conversion, the replay answers that
-    device's move as this one's, and both devices set up the new group.
-    That needs the same admin to convert the same channel on two devices
-    within one lost answer. A request id in the move POST would close it.
+  - Closed at the round 8 integration (server migration 0093): the move
+    POST carries the device's `request_id` (22-128 base64url characters,
+    kept with the pending conversion), and the server answers a repeat
+    as the same move only under the same id, never by account alone.
+    Before, a conversion finished from its own event re-POSTed; if the
+    first request never reached the server and another device of the
+    same account then made the same conversion, the replay answered that
+    device's move as this one's and both devices set up the new group.
   - Open to private still stores `channels.kind = 'private'`, so the
     posting mode survives only through a later move back.
 

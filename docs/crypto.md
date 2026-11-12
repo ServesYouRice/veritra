@@ -1308,8 +1308,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   topic carry over, a private-to-open conversion asks first in plain
   words. Design: C7 design, decision 11 and "Build status: C3
   conversion". In short:
-  - **Server.** `POST /api/v1/channels/{id}/move` (`{"access_mode"}`,
-    owner or admin, active layout only) re-routes the channel: to a new
+  - **Server.** `POST /api/v1/channels/{id}/move` (`{"access_mode",
+    "request_id"}`, owner or admin, active layout only) re-routes the channel: to a new
     private conversation whose only member is the actor, or to the shared
     conversation. Table `c3_channel_moves` keeps each move (channel, from
     and to conversation and access, the cutoff sync event id). The old
@@ -1380,11 +1380,19 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     schema and the ABI unchanged; setting `c7.moves`.
   - **Review fixes (2026-11-12; no migration, ABI or local schema
     change).** Server:
-    - The move POST is idempotent for its actor. Repeating the actor's
-      own latest move of the channel, into the conversation the channel
-      routes to now with the same access, answers that move (the current
-      route generation) and stores and publishes nothing. Any other
-      same-access request is still 400 `invalid_input`.
+    - The move POST is idempotent for its request. It takes an optional
+      `request_id` (22-128 base64url characters; server migration 0093
+      keeps it in `c3_channel_moves.request_id`, never in an answer or an
+      event). Repeating the actor's own latest move of the channel with
+      the same `request_id`, into the conversation the channel routes to
+      now with the same access, answers that move (the current route
+      generation) and stores and publishes nothing. Any other same-access
+      request, the same account's with another id or none included, is
+      still 400 `invalid_input`, and so is an id whose move the channel
+      has since moved on from (a late retry never moves it again). The
+      round 8 integration added the id; before, the account alone made a
+      replay, so a second device of the same admin could adopt another
+      device's move and set the new group up twice.
     - The move JSON and the `conversation.channel_moved` payload name
       `moved_by`, the actor's account.
     - Private to open restores the posting mode the channel had before it
@@ -1580,8 +1588,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `local_sealed_key_pins`, sealed columns on `local_frank_reveals`; report
   body v2; the sync opt-in `?sealed=1` and the server's issuance gate on
   sealed-capable devices, amending the unmerged 0091) is built on
-  `feat/l2-sealed-app`. Schema 43 was reserved for it; C7's 41 and 42 may
-  renumber at integration, and the 43 step is idempotent so it can move.
+  `feat/l2-sealed-app`. Integrated in round 8 after C7: local schema 41
+  and 42 are C7's, 43 is this step. A store the sealed branch alone wrote
+  at 43 gets C7's two columns on open (a column check), beside this
+  step's own open-time repair.
   "Sealed sender with VOPRF tokens" above has the design, what leaks and
   what is left.
 - **C4 leave proof in the commit (2026-11-11, crypto ABI 24):** the

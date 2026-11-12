@@ -8,9 +8,13 @@ import (
 	"private-messenger/server/internal/domain"
 )
 
-// Review L-6: a move request that repeats the actor's own latest move
-// answers that move again, storing and publishing nothing; anyone else's
-// repeat is still refused.
+// Review L-6 and its residual: a move request that repeats the actor's own
+// latest move with the same request id answers that move again, storing and
+// publishing nothing. The account alone never makes a replay: a second
+// device of the same admin (its own request id, or none) is refused, so it
+// cannot adopt the first device's move and set the new group up twice. A
+// request id whose move the channel has moved on from is refused and moves
+// nothing.
 func TestC3MoveReplayAnswersTheSameMove(t *testing.T) {
 	ctx := context.Background()
 	f := newC7Fixture(t, ctx)
@@ -25,16 +29,27 @@ func TestC3MoveReplayAnswersTheSameMove(t *testing.T) {
 		}
 		return n
 	}
-	moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID)
+	const (
+		deviceA = "device-a-move-000000000001"
+		deviceB = "device-b-move-000000000001"
+		backA   = "device-a-move-000000000002"
+	)
+	moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, deviceA)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if moved.Replayed || moved.Move.MovedBy != f.owner.Account.ID {
+	if moved.Replayed || moved.Move.MovedBy != f.owner.Account.ID || moved.Move.RequestID != deviceA {
 		t.Fatalf("first move = %+v", moved)
 	}
 	moves := count(`SELECT COUNT(*) FROM c3_channel_moves`)
 	events := count(`SELECT COUNT(*) FROM sync_events`)
-	again, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID)
+	unchanged := func(what string) {
+		t.Helper()
+		if count(`SELECT COUNT(*) FROM c3_channel_moves`) != moves || count(`SELECT COUNT(*) FROM sync_events`) != events {
+			t.Fatalf("%s stored a move or an event", what)
+		}
+	}
+	again, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, deviceA)
 	if err != nil {
 		t.Fatalf("replay: %v", err)
 	}
@@ -42,25 +57,50 @@ func TestC3MoveReplayAnswersTheSameMove(t *testing.T) {
 		again.FromEventID != 0 || again.ToEventID != 0 {
 		t.Fatalf("replay = %+v, want %+v", again, moved)
 	}
-	if count(`SELECT COUNT(*) FROM c3_channel_moves`) != moves || count(`SELECT COUNT(*) FROM sync_events`) != events {
-		t.Fatal("a replay stored a move or an event")
+	unchanged("a replay")
+	// The same account's other device, with its own id or none: refused.
+	for _, request := range []string{deviceB, ""} {
+		if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, request); !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("same account, request %q: %v", request, err)
+		}
 	}
-	// Another admin's repeat is not a replay.
-	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.member.Account.ID); !errors.Is(err, ErrInvalidInput) {
+	unchanged("another device's repeat")
+	// Another admin with the first device's id is not a replay either.
+	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.member.Account.ID, deviceA); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("another admin's repeat: %v", err)
 	}
-	// Back to open; its replay too, and the old direction is no replay.
-	back, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID)
+	// The id asking for the other direction is refused, not a new move.
+	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID, deviceA); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("the id for the other direction: %v", err)
+	}
+	unchanged("a mismatched replay")
+	// A malformed id is refused.
+	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID, "short"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("malformed id: %v", err)
+	}
+	// Back to open; its replay too.
+	back, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID, backA)
 	if err != nil || back.Replayed {
 		t.Fatalf("move back = %+v %v", back, err)
 	}
-	if again, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID); err != nil || !again.Replayed ||
+	if again, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID, backA); err != nil || !again.Replayed ||
 		again.Move.ToConversationID != f.shared || again.Conversation.Kind != CommunityShared {
 		t.Fatalf("replay of the move back = %+v %v", again, err)
 	}
+	// The first id, retried late after the move back, moves nothing.
+	moves = count(`SELECT COUNT(*) FROM c3_channel_moves`)
+	events = count(`SELECT COUNT(*) FROM sync_events`)
+	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, deviceA); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("a late retry of an earlier move: %v", err)
+	}
+	unchanged("a late retry")
 	// A channel that never moved has nothing to replay.
-	if _, err := f.store.MoveChannel(ctx, f.announcement.ID, ChannelAccessOpen, f.owner.Account.ID); !errors.Is(err, ErrInvalidInput) {
+	if _, err := f.store.MoveChannel(ctx, f.announcement.ID, ChannelAccessOpen, f.owner.Account.ID, deviceA); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("never moved: %v", err)
+	}
+	// The id is stored with its move only.
+	if n := count(`SELECT COUNT(*) FROM sync_events WHERE payload_json LIKE ?`, "%device-a-move%"); n != 0 {
+		t.Fatalf("%d events carry a request id", n)
 	}
 }
 
@@ -78,26 +118,26 @@ func TestC3MoveBackKeepsThePostingMode(t *testing.T) {
 		}
 		return access, kind
 	}
-	if _, err := f.store.MoveChannel(ctx, f.announcement.ID, ChannelAccessPrivate, f.owner.Account.ID); err != nil {
+	if _, err := f.store.MoveChannel(ctx, f.announcement.ID, ChannelAccessPrivate, f.owner.Account.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	back, err := f.store.MoveChannel(ctx, f.announcement.ID, ChannelAccessOpen, f.owner.Account.ID)
+	back, err := f.store.MoveChannel(ctx, f.announcement.ID, ChannelAccessOpen, f.owner.Account.ID, "")
 	if err != nil || back.Move.ToAccess != ChannelAccessAnnouncement {
 		t.Fatalf("move back = %+v %v", back, err)
 	}
 	if access, kind := route(f.announcement.ID); access != ChannelAccessAnnouncement || kind != "announcement" {
 		t.Fatalf("route after the move back = %s %s", access, kind)
 	}
-	if _, err := f.store.MoveChannel(ctx, f.private.ID, ChannelAccessOpen, f.owner.Account.ID); err != nil {
+	if _, err := f.store.MoveChannel(ctx, f.private.ID, ChannelAccessOpen, f.owner.Account.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 	if access, _ := route(f.private.ID); access != ChannelAccessOpen {
 		t.Fatalf("a channel created private = %s", access)
 	}
-	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID); err != nil {
+	if _, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	if moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessAnnouncement, f.owner.Account.ID); err != nil || moved.Move.ToAccess != ChannelAccessAnnouncement {
+	if moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessAnnouncement, f.owner.Account.ID, ""); err != nil || moved.Move.ToAccess != ChannelAccessAnnouncement {
 		t.Fatalf("asked for announcement = %+v %v", moved, err)
 	}
 }
@@ -126,7 +166,7 @@ func TestC3MovedMemberKeysAreScopedToTheMovedStreams(t *testing.T) {
 	if _, _, err := f.postBody(ctx, f.shared, f.member, "elsewhere", f.epochMetadata(second.ID, second.LayoutGeneration, 1), c7Body(c7PostBytes, 2)); err != nil {
 		t.Fatal(err)
 	}
-	moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID)
+	moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, "")
 	if err != nil {
 		t.Fatal(err)
 	}

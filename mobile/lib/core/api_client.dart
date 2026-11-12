@@ -1393,16 +1393,22 @@ class ApiClient {
   }
 
   /// C3 channel conversion (owner or admin): moves [channelId] to
-  /// [accessMode] (`private`, or `open` / `announcement`). The answer is
+  /// [accessMode] (`private`, or `open` / `announcement`). [requestId] is
+  /// this device's id for the conversion: the server answers a repeat as
+  /// the same move only with the same id. The answer is
   /// `{move: {channel_id, from_conversation_id, to_conversation_id,
   /// from_access, to_access, layout_generation}, conversation}`.
   Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
-      String token, String channelId, String accessMode) async {
+      String token, String channelId, String accessMode,
+      {required String requestId}) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/channels/${Uri.encodeComponent(channelId)}/move',
       token: token,
-      body: <String, Object?>{'access_mode': accessMode},
+      body: <String, Object?>{
+        'access_mode': accessMode,
+        'request_id': requestId,
+      },
     );
     return _decode(() => (
           move: Map<String, Object?>.from(json['move'] as Map),

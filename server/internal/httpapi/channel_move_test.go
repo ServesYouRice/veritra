@@ -66,9 +66,16 @@ func TestChannelMoveRoute(t *testing.T) {
 		if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, map[string]interface{}{"access_mode": "announcement"}); status != http.StatusBadRequest {
 			t.Fatalf("same-kind move status=%d body=%s", status, body)
 		}
-		status, body = doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, map[string]interface{}{"access_mode": "private"})
+		const request = "owner-device-move-00000001"
+		if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, map[string]interface{}{"access_mode": "private", "request_id": "short"}); status != http.StatusBadRequest {
+			t.Fatalf("malformed request id status=%d body=%s", status, body)
+		}
+		status, body = doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, map[string]interface{}{"access_mode": "private", "request_id": request})
 		if status != http.StatusOK {
 			t.Fatalf("move status=%d body=%s", status, body)
+		}
+		if strings.Contains(string(body), request) {
+			t.Fatalf("the answer names the request id: %s", body)
 		}
 		var moved struct {
 			Move struct {
@@ -91,6 +98,9 @@ func TestChannelMoveRoute(t *testing.T) {
 			for {
 				select {
 				case raw := <-client.Send():
+					if strings.Contains(string(raw), request) {
+						t.Fatalf("c7=%v: a frame names the request id: %s", c7, raw)
+					}
 					var event struct {
 						Type    string `json:"type"`
 						Payload struct {
@@ -113,8 +123,18 @@ func TestChannelMoveRoute(t *testing.T) {
 				t.Fatalf("c7=%v: %d moved frames, want %d", c7, got, want)
 			}
 		}
+		// The same account's other device (its own request id, or none) is
+		// refused: only the request id makes a replay.
+		for _, other := range []map[string]interface{}{
+			{"access_mode": "private", "request_id": "other-device-move-00000001"},
+			{"access_mode": "private"},
+		} {
+			if status, body := doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, other); status != http.StatusBadRequest {
+				t.Fatalf("c7=%v: another request's repeat status=%d body=%s", c7, status, body)
+			}
+		}
 		// A replay (review L-6) answers the same move and publishes nothing.
-		status, replayed := doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, map[string]interface{}{"access_mode": "private"})
+		status, replayed := doJSON(t, handler, http.MethodPost, "/api/v1/channels/"+channel+"/move", ownerToken, map[string]interface{}{"access_mode": "private", "request_id": request})
 		if status != http.StatusOK {
 			t.Fatalf("replay status=%d body=%s", status, replayed)
 		}

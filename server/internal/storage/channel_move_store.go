@@ -35,6 +35,9 @@ type ChannelMove struct {
 	// device, having lost the answer, finishes the conversion from the
 	// event).
 	MovedBy string `json:"moved_by"`
+	// RequestID is the id the mover's device gave its request (migration
+	// 0093). Never in the answer or an event: only that device knows it.
+	RequestID string `json:"-"`
 }
 
 // ChannelMoveResult is a move and what the handler publishes after it.
@@ -62,11 +65,20 @@ type ChannelMoveResult struct {
 // keeps admins-only posting; "announcement" is always taken as asked.
 //
 // Review L-6: a request that repeats the actor's own latest move of the
-// channel (the channel is still where that move put it, in the same access
-// class) answers that move again (Replayed): a lost answer and a retry
-// must not end in a refusal with nothing to follow up.
-func (s *Store) MoveChannel(ctx context.Context, channelID, access, actorAccountID string) (ChannelMoveResult, error) {
+// channel with the same requestID (the channel is still where that move
+// put it, in the same access class) answers that move again (Replayed): a
+// lost answer and a retry must not end in a refusal with nothing to follow
+// up. Only the request id makes a replay, never the account alone, so a
+// second device of the same account cannot adopt the first one's move and
+// set the new group up twice. A requestID an earlier move of this actor
+// already used, which is no longer the channel's latest move, is refused:
+// a late retry never moves the channel again. An empty requestID replays
+// nothing.
+func (s *Store) MoveChannel(ctx context.Context, channelID, access, actorAccountID, requestID string) (ChannelMoveResult, error) {
 	if access != ChannelAccessOpen && access != ChannelAccessAnnouncement && access != ChannelAccessPrivate {
+		return ChannelMoveResult{}, ErrInvalidInput
+	}
+	if requestID != "" && !ValidMoveRequestID(requestID) {
 		return ChannelMoveResult{}, ErrInvalidInput
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -96,20 +108,22 @@ func (s *Store) MoveChannel(ctx context.Context, channelID, access, actorAccount
 	if !domain.CanCreateChannels(actorRole) {
 		return ChannelMoveResult{}, ErrForbidden
 	}
-	// Open and announcement share the shared group: between them is a
-	// posting setting, not a move.
-	if (move.FromAccess == ChannelAccessPrivate) == (access == ChannelAccessPrivate) {
-		result, replay, err := replayedMove(ctx, tx, channelID, move.FromConversationID, access, actorAccountID)
+	if requestID != "" {
+		result, replay, err := replayedMove(ctx, tx, channelID, move.FromConversationID, access, actorAccountID, requestID)
 		if err != nil {
 			return ChannelMoveResult{}, err
 		}
-		if !replay {
-			return ChannelMoveResult{}, ErrInvalidInput
+		if replay {
+			if err := tx.Commit(); err != nil {
+				return ChannelMoveResult{}, err
+			}
+			return result, nil
 		}
-		if err := tx.Commit(); err != nil {
-			return ChannelMoveResult{}, err
-		}
-		return result, nil
+	}
+	// Open and announcement share the shared group: between them is a
+	// posting setting, not a move.
+	if (move.FromAccess == ChannelAccessPrivate) == (access == ChannelAccessPrivate) {
+		return ChannelMoveResult{}, ErrInvalidInput
 	}
 	if move.FromAccess == ChannelAccessPrivate && access == ChannelAccessOpen {
 		// Review L-8: the posting mode the channel had before it went private.
@@ -165,11 +179,12 @@ func (s *Store) MoveChannel(ctx context.Context, channelID, access, actorAccount
 	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&cutoff); err != nil {
 		return ChannelMoveResult{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO c3_channel_moves(channel_id, community_id, from_conversation_id, to_conversation_id, from_access, to_access, cutoff_event_id, moved_by, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		channelID, move.CommunityID, move.FromConversationID, move.ToConversationID, move.FromAccess, access, cutoff, actorAccountID, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO c3_channel_moves(channel_id, community_id, from_conversation_id, to_conversation_id, from_access, to_access, cutoff_event_id, moved_by, request_id, created_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		channelID, move.CommunityID, move.FromConversationID, move.ToConversationID, move.FromAccess, access, cutoff, actorAccountID, sql.NullString{String: requestID, Valid: requestID != ""}, now); err != nil {
 		return ChannelMoveResult{}, err
 	}
 	move.MovedBy = actorAccountID
+	move.RequestID = requestID
 	payload := map[string]interface{}{
 		"channel_id":           channelID,
 		"from_conversation_id": move.FromConversationID,
@@ -198,27 +213,55 @@ func (s *Store) MoveChannel(ctx context.Context, channelID, access, actorAccount
 	return result, nil
 }
 
-// replayedMove is the answer to a move request that repeats actorAccountID's
-// own latest move of channelID (review L-6): that move put the channel in
+// ValidMoveRequestID reports whether id is a move request id: 22 to 128
+// characters from the base64url alphabet (a 128-bit random id or longer).
+func ValidMoveRequestID(id string) bool {
+	if len(id) < 22 || len(id) > 128 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// replayedMove is the answer to a move request that repeats
+// actorAccountID's own move of channelID under requestID (review L-6).
+// That move must be the channel's latest and have put the channel in
 // currentConversationID, which it still routes to, in access's class
 // ("open" also matches a move that restored "announcement", review L-8).
-// Nothing is stored; the answer names no events.
-func replayedMove(ctx context.Context, tx *sql.Tx, channelID, currentConversationID, access, actorAccountID string) (ChannelMoveResult, bool, error) {
-	var move ChannelMove
-	err := tx.QueryRowContext(ctx, `SELECT channel_id, community_id, from_conversation_id, to_conversation_id, from_access, to_access, moved_by
-		FROM c3_channel_moves WHERE channel_id = ? ORDER BY id DESC LIMIT 1`, channelID).
-		Scan(&move.ChannelID, &move.CommunityID, &move.FromConversationID, &move.ToConversationID, &move.FromAccess, &move.ToAccess, &move.MovedBy)
+// Nothing is stored; the answer names no events. A requestID that names
+// an earlier move of this actor is refused (ErrInvalidInput); one that
+// names none is no replay.
+func replayedMove(ctx context.Context, tx *sql.Tx, channelID, currentConversationID, access, actorAccountID, requestID string) (ChannelMoveResult, bool, error) {
+	var ownID int64
+	err := tx.QueryRowContext(ctx, `SELECT id FROM c3_channel_moves WHERE channel_id = ? AND moved_by = ? AND request_id = ?`,
+		channelID, actorAccountID, requestID).Scan(&ownID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ChannelMoveResult{}, false, nil
 	}
 	if err != nil {
 		return ChannelMoveResult{}, false, err
 	}
+	var move ChannelMove
+	var latestID int64
+	var latestRequest sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT id, channel_id, community_id, from_conversation_id, to_conversation_id, from_access, to_access, moved_by, request_id
+		FROM c3_channel_moves WHERE channel_id = ? ORDER BY id DESC LIMIT 1`, channelID).
+		Scan(&latestID, &move.ChannelID, &move.CommunityID, &move.FromConversationID, &move.ToConversationID, &move.FromAccess, &move.ToAccess, &move.MovedBy, &latestRequest)
+	if err != nil {
+		return ChannelMoveResult{}, false, err
+	}
 	sameClass := move.ToAccess == access ||
 		(access == ChannelAccessOpen && move.ToAccess == ChannelAccessAnnouncement)
-	if move.MovedBy != actorAccountID || move.ToConversationID != currentConversationID || !sameClass {
-		return ChannelMoveResult{}, false, nil
+	if latestID != ownID || move.ToConversationID != currentConversationID || !sameClass {
+		// The request's move happened, and the channel has moved on since
+		// (or the request asks for another direction): never move again.
+		return ChannelMoveResult{}, false, ErrInvalidInput
 	}
+	move.RequestID = latestRequest.String
 	if err := tx.QueryRowContext(ctx, `SELECT generation FROM community_channel_routes WHERE channel_id = ?`, channelID).Scan(&move.LayoutGeneration); err != nil {
 		return ChannelMoveResult{}, false, err
 	}

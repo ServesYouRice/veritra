@@ -22,11 +22,19 @@ func (a *API) registerChannelMoveRoutes(mux *http.ServeMux) {
 func (a *API) moveChannel(w http.ResponseWriter, r *http.Request, principal domain.Principal) {
 	var req struct {
 		AccessMode string `json:"access_mode"`
+		// RequestID is the device's id for this move (22-128 base64url
+		// characters). Only a request with the same id is answered as the
+		// same move (review L-6); without one nothing replays.
+		RequestID string `json:"request_id"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	result, err := a.Store.MoveChannel(r.Context(), r.PathValue("id"), strings.TrimSpace(req.AccessMode), principal.AccountID)
+	if req.RequestID != "" && !storage.ValidMoveRequestID(req.RequestID) {
+		writeError(w, http.StatusBadRequest, "invalid_input")
+		return
+	}
+	result, err := a.Store.MoveChannel(r.Context(), r.PathValue("id"), strings.TrimSpace(req.AccessMode), principal.AccountID, req.RequestID)
 	if err != nil {
 		handleStorageError(w, err)
 		return

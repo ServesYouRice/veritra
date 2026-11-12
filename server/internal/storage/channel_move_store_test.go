@@ -42,13 +42,14 @@ func TestC3ChannelMoveRoutesAndMovedHistory(t *testing.T) {
 		"unknown kind": {f.open.ID, "secret", f.owner.Account.ID, ErrInvalidInput},
 		"no channel":   {"chan_missing", ChannelAccessPrivate, f.owner.Account.ID, ErrNotFound},
 	} {
-		if _, err := f.store.MoveChannel(ctx, tc.channel, tc.access, tc.actor); !errors.Is(err, tc.want) {
+		if _, err := f.store.MoveChannel(ctx, tc.channel, tc.access, tc.actor, ""); !errors.Is(err, tc.want) {
 			t.Fatalf("%s: err=%v, want %v", name, err, tc.want)
 		}
 	}
 
 	// Open to private: a new conversation with the owner alone.
-	moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID)
+	const request = "move-request-0000000000001"
+	moved, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +74,7 @@ func TestC3ChannelMoveRoutesAndMovedHistory(t *testing.T) {
 		t.Fatalf("post to the old route: %v", err)
 	}
 	// The same request again is a replay (review L-6): the same move.
-	if again, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID); err != nil || !again.Replayed || again.Move.ToConversationID != private {
+	if again, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessPrivate, f.owner.Account.ID, request); err != nil || !again.Replayed || again.Move.ToConversationID != private {
 		t.Fatalf("second move to private: %+v %v", again, err)
 	}
 	// A history_sync of the old group after the move is past the cutoff.
@@ -137,7 +138,7 @@ func TestC3ChannelMoveRoutesAndMovedHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	back, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID)
+	back, err := f.store.MoveChannel(ctx, f.open.ID, ChannelAccessOpen, f.owner.Account.ID, "")
 	if err != nil || back.Move.ToConversationID != f.shared || back.Move.FromConversationID != private {
 		t.Fatalf("move back = %+v %v", back, err)
 	}

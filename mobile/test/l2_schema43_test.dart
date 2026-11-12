@@ -9,7 +9,7 @@ import 'package:private_messenger/storage/encrypted_database.dart';
 
 /// L2-3, local schema 43: unspent sealed sender tokens, the issuer key pin,
 /// and the sealed reveal columns of `local_frank_reveals`. Every step is
-/// idempotent, so the step can be renumbered when C7's 41 and 42 land.
+/// idempotent; C7's 41 and 42 come first (round 8 integration).
 
 const _origin = 'https://chat.example.org';
 

@@ -8151,8 +8151,13 @@ class AppState extends ChangeNotifier
   }
 
   /// The conversion of [channelId] pending here, when [move] is it.
-  Future<({Channel channel, bool toPrivate, List<String> members})?>
-      _pendingConversionOf(String channelId, _ChannelMove move) async {
+  Future<
+      ({
+        Channel channel,
+        bool toPrivate,
+        List<String> members,
+        String requestId
+      })?> _pendingConversionOf(String channelId, _ChannelMove move) async {
     final entry = (await _pendingConversions())[channelId];
     if (entry is! Map) return null;
     final community = entry['community_id'];
@@ -8161,12 +8166,14 @@ class AppState extends ChangeNotifier
     final layout = entry['layout_generation'];
     final toPrivate = entry['to_private'];
     final members = entry['members'];
+    final requestId = entry['request_id'];
     if (community is! String ||
         from is! String ||
         kind is! String ||
         layout is! int ||
         toPrivate is! bool ||
         members is! List ||
+        requestId is! String ||
         // A move that fits starts in the shared conversation exactly when
         // it makes the channel private: the same start is the same move.
         from != move.from) {
@@ -8185,7 +8192,25 @@ class AppState extends ChangeNotifier
         for (final member in members)
           if (member is String) member
       ],
+      requestId: requestId,
     );
+  }
+
+  /// The request id of the conversion of [channelId] from [from] in the
+  /// direction [toPrivate] pending here, or null. Asking again for the same
+  /// conversion (a re-tap after a lost answer) reuses it, so the server
+  /// answers the move it already made instead of refusing a second one.
+  Future<String?> _pendingConversionRequestId(
+      String channelId, String from, bool toPrivate) async {
+    final entry = (await _pendingConversions())[channelId];
+    if (entry is! Map) return null;
+    final requestId = entry['request_id'];
+    if (entry['from'] != from ||
+        entry['to_private'] != toPrivate ||
+        requestId is! String) {
+      return null;
+    }
+    return requestId;
   }
 
   /// After [move], the last of [channelId] followed in a run: finishes
@@ -8207,7 +8232,9 @@ class AppState extends ChangeNotifier
       return;
     }
     await convertChannel(pending.channel,
-        toPrivate: pending.toPrivate, members: pending.members);
+        toPrivate: pending.toPrivate,
+        members: pending.members,
+        requestId: pending.requestId);
   }
 
   /// The readers of an open [channel] other than this account: the
@@ -8269,9 +8296,16 @@ class AppState extends ChangeNotifier
   /// leaves the channel converted: the other ticked readers are still
   /// added, and the refused ones are listed in [channelConversionNotAdded]
   /// (the conversion screen names them) with the error.
+  ///
+  /// [requestId] names this conversion to the server, which answers a
+  /// repeat as the same move only under the same id, so another device of
+  /// this account never adopts it (review L-6 residual). It is kept with
+  /// the pending conversion; when null, a pending conversion of the same
+  /// channel and direction lends its id, else a new one is made.
   Future<bool> convertChannel(Channel channel,
       {required bool toPrivate,
-      List<String> members = const <String>[]}) async {
+      List<String> members = const <String>[],
+      String? requestId}) async {
     final name = channelDisplayName(channel);
     final topic = channelTopic(channel) ?? '';
     final from = channel.conversationId;
@@ -8288,6 +8322,7 @@ class AppState extends ChangeNotifier
     // Review L-6: kept for an answer that may still come as an event; any
     // other end of this conversion forgets it.
     var keepPending = false;
+    String? sentRequest;
     await _run(() async {
       final current = session;
       final client = api;
@@ -8303,6 +8338,10 @@ class AppState extends ChangeNotifier
       if (adds.isNotEmpty && !membershipChangesAvailable) {
         throw StateError('adding members is not available in this build');
       }
+      final request = requestId ??
+          await _pendingConversionRequestId(channel.id, from, toPrivate) ??
+          _randomHexId();
+      sentRequest = request;
       await _savePendingConversion(channel.id, <String, Object?>{
         'community_id': channel.communityId,
         'from': from,
@@ -8310,11 +8349,13 @@ class AppState extends ChangeNotifier
         'layout_generation': channel.layoutGeneration,
         'to_private': toPrivate,
         'members': adds.toList(),
+        'request_id': request,
       });
       final ({Map<String, Object?> move, Conversation conversation}) result;
       try {
         result = await client.moveChannel(
-            current.token, channel.id, toPrivate ? 'private' : 'open');
+            current.token, channel.id, toPrivate ? 'private' : 'open',
+            requestId: request);
       } on ApiException catch (err) {
         // A refusal is final; a server error may have moved it.
         keepPending = err.statusCode >= 500;
@@ -8398,8 +8439,8 @@ class AppState extends ChangeNotifier
       await _savePendingConversion(channel.id, null);
     } else if (meanwhile) {
       // Its own move event came while the answer was awaited.
-      unawaited(
-          convertChannel(channel, toPrivate: toPrivate, members: members));
+      unawaited(convertChannel(channel,
+          toPrivate: toPrivate, members: members, requestId: sentRequest));
     }
     if (error != null || next == null) return false;
     final failure = addFailure;
