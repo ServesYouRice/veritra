@@ -1386,8 +1386,8 @@ class ApiClient {
   /// [accessMode] (`private`, or `open` / `announcement`). The answer is
   /// `{move: {channel_id, from_conversation_id, to_conversation_id,
   /// from_access, to_access, layout_generation}, conversation}`.
-  Future<({Map<String, Object?> move, Conversation conversation})>
-      moveChannel(String token, String channelId, String accessMode) async {
+  Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
+      String token, String channelId, String accessMode) async {
     final json = await _jsonRequest(
       'POST',
       '/api/v1/channels/${Uri.encodeComponent(channelId)}/move',

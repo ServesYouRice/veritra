@@ -4482,6 +4482,22 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get channelHistoryFormerMemberUnnamed => 'Бивши члан';
+
+  @override
+  String get channelConvertToPrivate => 'Учини овај канал приватним';
+
+  @override
+  String get channelConvertToOpen => 'Учини овај канал отвореним';
+
+  @override
+  String get channelConvertOpenTitle => 'Учинити овај канал отвореним?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Раније објаве у овом каналу постаће видљиве свима који могу да читају отворени канал, укључујући чланове заједнице који никада нису били у овом приватном каналу.';
+
+  @override
+  String get channelConvertOpenAccept => 'Учини отвореним';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8967,4 +8983,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get channelHistoryFormerMemberUnnamed => 'Bivši član';
+
+  @override
+  String get channelConvertToPrivate => 'Učini ovaj kanal privatnim';
+
+  @override
+  String get channelConvertToOpen => 'Učini ovaj kanal otvorenim';
+
+  @override
+  String get channelConvertOpenTitle => 'Učiniti ovaj kanal otvorenim?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Ranije objave u ovom kanalu postaće vidljive svima koji mogu da čitaju otvoreni kanal, uključujući članove zajednice koji nikada nisu bili u ovom privatnom kanalu.';
+
+  @override
+  String get channelConvertOpenAccept => 'Učini otvorenim';
 }

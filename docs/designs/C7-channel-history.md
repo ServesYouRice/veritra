@@ -848,7 +848,10 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   behind it, including members who were removed from the private channel
   earlier but are still in the community: whatever the private channel
   held is readable by everyone who can read the open channel. The app
-  asks first and says so in plain words.
+  asks first and says so in plain words (`confirmChannelConversion`,
+  `channelConvertOpenConfirm`; widget test
+  `mobile/test/c3_channel_conversion_dialog_test.dart`). The server learns
+  only what it already routes: which conversation the channel moved to.
 - **Open to private conversion** gives the private channel's members the
   open channel's history. Shared members outside the new private channel
   keep the old key and the posts they already hold, but cannot derive the
@@ -1195,8 +1198,9 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
 **Not built (left for the next slices):** the newcomer's import (backward
 walk through stored `history_sync` slots, the per-channel and group-level
 fetch, window and signature checks, former members, two-pass import),
-the prefetch depth (owner question 1), C3 conversion (`move`, its wrap, the server route and
-migrations 0088-0089). Targeted-action sealing was built after the
+the prefetch depth (owner question 1), C3 conversion (`move`, its wrap,
+the server route and migration 0089; built since, see "Build status").
+Targeted-action sealing was built after the
 owner's answers (next section).
 
 ### Build status (2026-11-12): step 4 continued, after the owner's answers
@@ -1460,25 +1464,61 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     App: the same requests for every channel, paging. The history and
     former-member JSON is pinned on both sides (Go marshals its structs to
     the text the Dart parser reads).
-- **C3 conversion (`move`, decision 11): the wrap codec only.** Built:
-  the 128-byte wrap's codec, `u64 E_prev | CHK_prev[32] |
-  lp(prev_group_id) | u64 E_prev_close` zero-padded, in Rust
-  (`c7::MoveWrap`, no ABI) and Dart (`C7MoveWrap`, with `decodeFor`,
-  which takes a wrap only when it names the record's own
-  `close_group_id` and `close_epoch`; anything else, the random bytes of
-  every other move included, is "no wrap"), and the vector
-  `testing/vectors/c7-move-v1.json` from an independent Python
-  generator, checked in Rust, Go and Dart (the compact form's
-  `lp(close_group_id)` and wrap field were already in both codecs). Not
-  built: the server route that moves a channel to another conversation
-  and its migration (0089 is the only one left free: 0088 is
-  `c7_membership_epochs`, 0090-0091 are sealed sender's), the record kind
-  in the ordering table and the walk, the app flow and the native tests;
-  receivers still drop every `move` record. ABI 25 stays unused. Until then a C3 conversion works as before: the channel holds no
-  record in its new group, so posts there seal under random keys until an
-  owner or admin switches it to `full` again (a `create`, since it has no
-  record there), and newcomers read nothing from before that switch (a
-  gap, never a leak).
+- **C3 conversion (`move`, decision 11), built 2026-11-12 after the
+  owner's answers.** Wrap codec: the 128-byte wrap, `u64 E_prev |
+  CHK_prev[32] | lp(prev_group_id) | u64 E_prev_close` zero-padded, in
+  Rust (`c7::MoveWrap`, no ABI) and Dart (`C7MoveWrap.decodeFor`, which
+  takes a wrap only when it names the record's own `close_group_id` and
+  `close_epoch`), vector `testing/vectors/c7-move-v1.json` from an
+  independent Python generator, checked in Rust, Go and Dart. Server:
+  `POST /api/v1/channels/{id}/move`, table `c3_channel_moves` (migration
+  0089), the moved-history and moved-keys routes (see docs/crypto.md).
+  Ordering table: no change; a `move` continues the chain (row 1 in a new
+  group, row 5 over a stale head), as `isSwitchOrMove` already allowed.
+  App (`c7_move.dart`, setting `c7.moves`):
+  - The mover notes the move and owes its record (`C7DueMove`) only once
+    the new group's epoch is above 0, so the record's message seals under
+    the key it opens. After open-to-private that is after the first add;
+    a group of one has nobody to tell. A stale own move is proposed again
+    as a move, never as a switch.
+  - A live receiver applies the move like any record (sender, freshness,
+    authority, signature in the new group's tree) and, when it lands in
+    `full`, keeps the wrap and owes an import, unless it holds the old
+    group itself (it moves its own rows on the server's
+    `conversation.channel_moved` event). `history_sync` slots now accept
+    a move head.
+  - A newcomer who joins the new group later takes the wrap from the move
+    message in its own import of the channel's stream (option A), only
+    when the record's signature checks with its actor's key in the
+    current tree and that actor may record now.
+  - The moved import (`c7ImportMoved`) uses the wrap the device stored,
+    walks back through the old group's stored slots (`c7WalkMoved`: one
+    unique previous per step, a dispute stops it), opens bodies only
+    with the old group's ids and route epochs inside
+    `E_prev <= epoch <= close_epoch`, verifies the signature under a key
+    from the new group's tree or the server's moved-keys list (then
+    marked like a former member's), and writes the rows into the new
+    conversation (no channel id when that is a private channel's own
+    conversation). Only posts and the actions that target them.
+  - The UI: "Make this channel private" / "Make this channel open" in the
+    channel's settings for owners and admins; private to open asks first
+    (`confirmChannelConversion`), open to private does not. The channel
+    record is published again in the new home: a private channel's under
+    a newly minted key, an open one's under the community key, and the
+    community record lists the open channels.
+
+  Tests: `mobile/test/c3_channel_move_native_test.dart` (both directions
+  through real OpenMLS devices, the later newcomer, the window bound, a
+  post of another channel), `c3_channel_conversion_dialog_test.dart`, the
+  server tests named in docs/crypto.md. Residuals: only the first page
+  of the old streams is imported (no "Load earlier posts" into the old
+  group); moved slot heads are checked for shape, ids, channel and mode
+  but not their record signature (the wrap they extend is authenticated
+  by the move); a channel moved back and forth between the same two
+  conversations is noted per direction, the mover's note replacing the
+  older one; open-to-private makes a conversation with the mover alone
+  and members are added afterwards (owner question below). ABI 25 stays
+  unused.
 
 ## Open questions for the owner
 
@@ -1501,6 +1541,11 @@ C are answered in round 3.
    membership commit at 1,000 devices (0.6 MB for the add commit itself;
    C0 batches joins). Accept, or add targeted delivery of add-time
    messages to the new devices only (a server feature, C8)?
+4. **Who is in a channel made private (C3 conversion).** Built: the new
+   private conversation holds only the owner or admin who converted it;
+   everyone else is added afterwards, one by one, and the `move` record
+   (with the earlier posts) waits for the first add. Keep that, or offer
+   to add the open channel's readers (or a chosen set) at conversion?
 
 ## Owner decisions (2026-11-01)
 

@@ -7370,6 +7370,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Former member'**
   String get channelHistoryFormerMemberUnnamed;
+
+  /// No description provided for @channelConvertToPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel private'**
+  String get channelConvertToPrivate;
+
+  /// No description provided for @channelConvertToOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel open'**
+  String get channelConvertToOpen;
+
+  /// No description provided for @channelConvertOpenTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel open?'**
+  String get channelConvertOpenTitle;
+
+  /// No description provided for @channelConvertOpenConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.'**
+  String get channelConvertOpenConfirm;
+
+  /// No description provided for @channelConvertOpenAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Make open'**
+  String get channelConvertOpenAccept;
 }
 
 class _AppLocalizationsDelegate

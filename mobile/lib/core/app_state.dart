@@ -7795,6 +7795,17 @@ class AppState extends ChangeNotifier
         own: false);
   }
 
+  /// Whether [channel] can be converted here: a routed channel of a
+  /// community with the shared layout, and an owner or admin (the server
+  /// checks every move).
+  bool mayConvertChannel(Channel channel) {
+    if (!channel.isRouted) return false;
+    final community =
+        communities.where((c) => c.id == channel.communityId).firstOrNull;
+    return community?.sharedConversationId != null &&
+        canCreateChannel(channel.communityId);
+  }
+
   /// C3 conversion: turns [channel] private ([toPrivate]) or a private one
   /// open. Owners and admins only; the server re-routes it. Earlier posts
   /// carry over (rows here; the `move` record's wrap for members who never

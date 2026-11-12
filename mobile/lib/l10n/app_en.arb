@@ -1550,5 +1550,10 @@
   "channelHistoryEarlier": "Load earlier posts",
   "channelHistoryAttachmentHidden": "Attachment from before you joined",
   "channelHistoryFormerMember": "From a former member",
-  "channelHistoryFormerMemberUnnamed": "Former member"
+  "channelHistoryFormerMemberUnnamed": "Former member",
+  "channelConvertToPrivate": "Make this channel private",
+  "channelConvertToOpen": "Make this channel open",
+  "channelConvertOpenTitle": "Make this channel open?",
+  "channelConvertOpenConfirm": "Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.",
+  "channelConvertOpenAccept": "Make open"
 }

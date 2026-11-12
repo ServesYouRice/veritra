@@ -627,6 +627,19 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     group's ids and epochs, inside the wrap's window and the server's
     cutoff; a sender key comes from the new group's tree, else from the
     server's list of the old conversation with the former-member mark.
+  - **App, as built.** The mover owes the record (`C7DueMove`) only once
+    the new group's epoch is above 0, so its message seals under the key
+    it opens; after open-to-private that is after the first add. A live
+    receiver keeps the wrap only from a move it applied into `full`, and
+    imports only when it does not hold the old group (a member of both
+    moves its own rows on the server's event). `history_sync` slots
+    accept a move head. A later newcomer takes the wrap from the move
+    message in its import only when the record's signature checks with
+    its actor's key in the current tree (never a server-listed key) and
+    that actor may record now. The import always uses the wrap the device
+    stored, never one handed in. The old group's earlier generations come
+    from its stored slots, one unique wrap per step; a dispute stops the
+    walk (a gap). Local schema and the ABI unchanged; setting `c7.moves`.
   Trust limits, both directions, in the C7 design. Needs the
   independent review.
 - **Message frames name nothing (2026-11-12; was "Found, not fixed" in the

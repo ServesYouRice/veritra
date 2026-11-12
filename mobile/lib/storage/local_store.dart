@@ -839,6 +839,7 @@ abstract class LocalStore {
   /// records the import, in one transaction. No MLS state or cursor moves.
   Future<void> importC7History(List<MessageEffect> effects,
       {Map<String, String?> c7Settings = const <String, String?>{}});
+
   /// C3 conversion: this device's rows of a moved channel follow it from
   /// [fromConversationId] (channel [fromChannelId], or null in a private
   /// channel's own conversation) to [toConversationId] and [toChannelId], so

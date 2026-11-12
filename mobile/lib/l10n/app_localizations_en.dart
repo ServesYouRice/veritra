@@ -4466,4 +4466,20 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get channelHistoryFormerMemberUnnamed => 'Former member';
+
+  @override
+  String get channelConvertToPrivate => 'Make this channel private';
+
+  @override
+  String get channelConvertToOpen => 'Make this channel open';
+
+  @override
+  String get channelConvertOpenTitle => 'Make this channel open?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.';
+
+  @override
+  String get channelConvertOpenAccept => 'Make open';
 }

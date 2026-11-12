@@ -1310,5 +1310,10 @@
   "channelHistoryEarlier": "Učitaj ranije objave",
   "channelHistoryAttachmentHidden": "Prilog od pre nego što si se pridružio",
   "channelHistoryFormerMember": "Od bivšeg člana",
-  "channelHistoryFormerMemberUnnamed": "Bivši član"
+  "channelHistoryFormerMemberUnnamed": "Bivši član",
+  "channelConvertToPrivate": "Učini ovaj kanal privatnim",
+  "channelConvertToOpen": "Učini ovaj kanal otvorenim",
+  "channelConvertOpenTitle": "Učiniti ovaj kanal otvorenim?",
+  "channelConvertOpenConfirm": "Ranije objave u ovom kanalu postaće vidljive svima koji mogu da čitaju otvoreni kanal, uključujući članove zajednice koji nikada nisu bili u ovom privatnom kanalu.",
+  "channelConvertOpenAccept": "Učini otvorenim"
 }

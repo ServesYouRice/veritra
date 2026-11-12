@@ -6,6 +6,7 @@ import '../../crypto/crypto_service.dart' show C7ChannelView;
 import '../../crypto/community_info_codec.dart';
 import '../../crypto/profile_record_codec.dart';
 import '../../l10n/l10n.dart';
+import 'channel_conversion.dart';
 import 'channel_history_warning.dart';
 
 /// Edits through encrypted records only. Failed saves keep the draft open.
@@ -116,6 +117,10 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
                       widget.state.channelHistoryAvailable &&
                       widget.state.canCreateChannel(widget.community.id))
                     ChannelHistorySetting(
+                        state: widget.state, channel: widget.channel!),
+                  if (widget.channel != null &&
+                      widget.state.mayConvertChannel(widget.channel!))
+                    ChannelConversionAction(
                         state: widget.state, channel: widget.channel!),
                   if (_failed) Text(l10n.communityInfoEditFailed),
                 ]),
