@@ -2382,8 +2382,7 @@ class NativeCryptoDevice implements Finalizable {
   /// authenticated. Nothing the server says about the sender is used.
   /// Throws [NativeCryptoError.senderRemoved] for a past-epoch message from
   /// a sender who has left; the ratchet has advanced then. The app calls it
-  /// for `message.sealed.created` events (NativeCryptoService's
-  /// processSealedApplicationMessage).
+  /// for `message.sealed.created` events (processSealedApplicationMessage).
   ({List<int> plaintext, String accountId, String deviceId}) decryptSealed(
       String groupId, List<int> ciphertext) {
     _bindings._bounded(groupId.codeUnits, 128);

@@ -820,8 +820,11 @@ tokens one account gets per conversation and UTC day.
   it can post junk into conversations whose ids they know; it reads nothing.
   Changing it is not supported yet: apps pin the first key they see.
 - The sealed post route takes no session and is on the per-address public
-  budget; the token is its rate limit. A request with an `Authorization`
-  header or a cookie is refused.
+  budget (`PRIVATE_MESSENGER_RATE_LIMIT_ADDRESS_PER_MINUTE`, default 240,
+  shared by every request without a session from that address); the token
+  is its rate limit. Many people behind one NAT share that budget for their
+  sealed posts; a refused post retries (429), so it is late, not lost. A
+  request with an `Authorization` header or a cookie is refused.
 - The server still sees the client address and the time of every sealed
   post, so a proxy that logs addresses (see L2-2) undoes much of it.
 - Sealed envelopes cannot be edited or deleted through the server, and

@@ -846,10 +846,17 @@ sealed post client and its retry rules), `NativeCryptoService`
   newest identified message (the server keeps no read position on a sealed
   row).
 
-**App residuals.** A message chosen sealed whose tokens all expire offline
-retries until the next token pass refills (it is never sent identified; in
-a conversation that stopped being eligible it fails with
-`sealed_not_eligible` and the person resends it). The server's unread count
+**App residuals.** A message chosen sealed is never sent identified, so
+it can wait. Once its token is past its day (`sealed_token_expired`) it
+needs a fresh one, and while the conversation is ineligible (C2
+admins-only, a C5 timeout, or the issuance gate closed by a member device
+on an older app) the token pass fetches none and drops what it held: the
+message stays queued as a retryable failure, possibly for good, until the
+conversation is eligible again or the person discards it. Only a post that
+reaches the server with a valid token while the conversation is ineligible
+is refused (`sealed_not_eligible`) and fails. Failing the waiting message
+on its own is not done: after a lost answer it may already be stored, and
+a resend would then show twice. The server's unread count
 ignores sealed posts. The signing key checked on receive is the sender
 leaf's current key, so a sender that rotated its leaf key between sending
 and the receiver's decrypt would read as `invalid`. The notice owner of a

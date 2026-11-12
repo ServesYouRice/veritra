@@ -134,6 +134,17 @@ void main() {
     expect(row.body, 'mine');
     expect(row.serverMessageId, envelope.id);
     expect(row.kind, isNot(LocalMessageKind.invalid));
+    // The choice stays with the message after its echo: the cached
+    // envelope (what read receipts and the timeline read) is marked sealed,
+    // under the server id, with the sender MLS named.
+    final cached = (await bob.store.loadSnapshot())!
+        .messagesByConversation[envelope.conversationId]!
+        .where((item) => item.id == envelope.id)
+        .single;
+    expect(cached.sealed, isTrue);
+    expect(cached.senderDeviceId, 'dev_bob');
+    final reread = ReceivedMessageEnvelope.fromJson(cached.toJson());
+    expect(reread.sealed, isTrue);
   }, skip: skip);
 
   test('an own sealed post the device no longer holds becomes a placeholder',
