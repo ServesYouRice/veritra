@@ -26,10 +26,17 @@ learns text it was not given.
 
 ## Why MLS alone is not enough
 
-An MLS application message is signed by the sender, but the signature covers
-the group context, so a party outside the group cannot check it, and handing
-the signature over would make every message non-deniable. Franking adds a
-cheap commitment instead.
+An MLS application message is signed by the sender's leaf key over the
+message and the group context. That does not keep outsiders from checking
+it: a member who keeps the message, its signature and the group context
+(its own client sees all three) can hand them to anyone, who can then
+verify the signature against the sender's leaf key. So the MLS signature
+already makes a message provable by any member who chooses to keep it; it
+is not deniable against a member (owner decision 6, 2026-11-12: accepted
+and documented, `docs/crypto.md`, "Franking a sealed message"). It still
+cannot serve reports: handing it over makes the message provable to
+everyone, and the server cannot check it. Franking adds a cheap commitment
+instead, and for sealed messages owner-only tags.
 
 ## Mechanism (franking v1)
 

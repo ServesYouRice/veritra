@@ -110,12 +110,17 @@ body =
   [32] prev_hash              all zero for version 1
   u64  created_at_ms          signer's clock; shown, never trusted
   u8   change                 1 genesis, 2 add, 3 remove, 4 recovery,
-                              5 recovery key, 6 migration genesis
+                              5 recovery key, 6 migration genesis,
+                              7 franking key (L2-3)
   u8   count                  1..16
   count × ( lp(device_id) | [32] signing_key )
                               sorted by device_id bytes; ids and keys unique
   u8   has_recovery           0 or 1
   [32] recovery_key           only when has_recovery = 1
+  [ u8 n                      format 2 only (L2-3): 1..count
+    n × ( lp(device_id) | [32] frank_key ) ]
+                              sorted by device_id; every id listed above;
+                              keys unique, canonical X25519, not low order
 
 statement = body | u8 signer_kind (1 device, 2 recovery key)
                  | lp(signer device_id, empty for kind 2) | [64] signature
@@ -126,6 +131,21 @@ signed message = "veritra-l1-device-list-sig-v1" | SHA-256(body)
 list_hash(v)   = SHA-256("veritra-l1-device-list-hash-v1" | body)
 ```
 
+- **Format 2 (L2-3, crypto ABI 26).** Adds each device's X25519
+  franking key, the key a sealed message's owner-only tags use
+  (`docs/crypto.md`, "Franking a sealed message"). `format` is 2 exactly
+  when the section names at least one key, so a body without keys is
+  format 1 byte for byte and every earlier statement and vector stays
+  valid. Rules: a device's key is set only by that device, in its genesis
+  (1 or 6), its recovery version (4) or change 7; change 7 is self-signed
+  and sets only the signer's key from none to some, with entries and the
+  recovery key unchanged; every other change keeps the keys of the devices
+  that stay; a device added by change 2 starts with none; a key belongs to
+  one device for the whole chain (`check_chain`, the app's pin step, the
+  server's history check; `check_step` alone cannot see it). A device with
+  no listed key cannot send sealed (fail safe). Vectors:
+  `testing/vectors/l1-device-list-v2.json`; migration 0092 lets the
+  server store change 7.
 - **The chain** links bodies: `prev_hash` of version n+1 is `list_hash` of
   version n. The signature is outside the hash, so signature malleability
   cannot fork the chain.

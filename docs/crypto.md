@@ -468,8 +468,8 @@ oblivious PRF (RFC 9497). This section is the design; "As built" at its end
 says what exists. Everything is behind the server switch
 `PRIVATE_MESSENGER_SEALED_SENDER=1` (off by default). The two open facts the
 ABI 23 entry recorded are answered: sealed messages stay reportable through
-a sender signature over the franking commitment ("Franking a sealed
-message"), and the credential verifies in Go and Rust through one library
+designated-verifier tags over the franking commitment, one per pinned
+instance owner ("Franking a sealed message"), and the credential verifies in Go and Rust through one library
 on each side ("Libraries").
 
 **What it protects.** For an ordinary application message in a DM or a
@@ -637,64 +637,133 @@ re-pointed the victim's row). An own echo never overwrites a server id a
 local row already holds. Blocked senders are hidden by the receiving app
 only.
 
-#### Franking a sealed message (C6 still works)
+#### Franking a sealed message (C6 still works, owner-only proofs)
 
 C6 v1 attributes a report through the server's authenticated sender row
 (G1). A sealed row has no sender, so without a change member M could send a
 sealed message whose commitment names victim S (honest receivers drop it,
-as MLS says M sent it), then report it and frame S. The fix binds the
-commitment to the sender's key, inside the ciphertext:
+as MLS says M sent it), then report it and frame S. An earlier draft fixed
+this with an Ed25519 signature `s` anyone could check. The owner chose
+"a leak proves nothing to anyone else" over "every report traceable"
+(2026-11-12), so `s` is gone: in its place the sender adds one
+designated-verifier tag per instance owner its app pinned. Only that owner
+can check its tag, and that owner could have made it itself, so a tag
+convinces nobody else. Built in `crypto/rust/src/l2_frank.rs` (ABI 26),
+`testing/vectors/l2-frank-dv-v1.json` (checked in Rust, in Dart through
+FFI, and independently in Go with `x/crypto/curve25519` and the standard
+HKDF and HMAC).
 
-- **Signature.** The sender signs
-  `"veritra-frank-sig-v1" || u16 len(conversation_id) || conversation_id ||
-  u16 len(account_id) || account_id || u16 len(device_id) || device_id ||
-  c` (c = the 32-byte franking commitment) with its device's MLS signing
-  key (Ed25519), through `pm_crypto_l2_frank_sign`. The fixed ASCII prefix
-  cannot start an RFC 9420 `SignContent` (its first bytes would be a varint
-  label length followed by `MLS 1.0 `), so the call cannot be turned into
-  an MLS signature; there is still no raw signing entry point.
-- **Wire.** Only in a payload sent sealed, the `frank` member gains a
-  second member: `,"frank":{"k":"<44 chars>","s":"<88 chars, standard
-  base64 of the 64-byte signature>"}}`. `P` and `c` are unchanged (both
-  exclude `frank`). The signature is inside the MLS ciphertext; outside it
-  the server could test it against every device key and unseal the sender.
-- **Receive rule.** On a sealed message, a franked payload must carry `s`,
-  and `s` must verify (`pm_crypto_l2_frank_verify`) under the signing key
-  of the sender's leaf in this group
-  (`pm_crypto_group_member_signature_key`, the leaf MLS authenticated), else
-  the payload is `invalid`. An identified message carrying `s` is `invalid`.
-  An unfranked sealed payload is accepted as unreportable (the G5 rule).
-- **Report.** The reveal kept with the message (schema 43 adds the
-  signature to `local_frank_reveals`) and the sealed report body carry `s`,
-  the sender's account and device ids and its signing key. The moderator
-  or owner checks: `c` recomputes from `P`, `kf` and the claimed sender;
-  `c` equals the commitment the server stored for the envelope (the
-  `/reports/{id}/envelope` route serves sealed envelopes with no sender and
-  `"sealed": true`); `s` verifies under the key; and the key is the claimed
-  device's key in the claimed account's L1 device list, which that account
-  signed (the server cannot forge it). Framing fails: M cannot sign as S.
-  The route also serves the sealed envelope's `idempotency_key`, and the
-  verifier requires it to equal the report's action id (review low b): a
-  member's copy of S's ciphertext and commitment under another key is not
-  attributed to S. A designated-verifier scheme would replace `s` in four
-  places: where it is made (`_encryptPayload`'s `sealedSignature` callback,
-  `l2FrankSign`), where it is checked on receive (`_checkFranking`), where
-  a report is verified (`_verifySealed` in `reports_service.dart`), and the
-  ABI 26 entry points `pm_crypto_l2_frank_sign` and
-  `pm_crypto_l2_frank_verify`.
-  A moderator who is a member checks against its own MLS copy as before.
-- **Cost: deniability.** C6 v1 said "no signature over the text". With `s`,
-  a revealed `(P, kf, s)` is a proof anyone can check that S's device
-  committed to `P`, not only the moderator or owner (a transferable proof).
-  MLS application messages are already signed by the sender's leaf, so a
-  member could already hand out such a proof with more work, but this makes
-  it easy. Designated-verifier franking (asymmetric message franking,
-  Tyagi et al., CRYPTO 2019) would convince only the moderator; it is new
-  crypto with no reviewed library here, so it is not built. Owner question.
-- **What the verifier tells the server.** Checking a sealed report fetches
-  the claimed sender's account device list; the server learns, at review
-  time and only from the reviewer, which account a reported sealed message
-  is attributed to. A cached list avoids the fetch.
+**The franking key.** Every device has its own random X25519 franking
+secret `f_S`, sealed in its device record (a `VFK1` section). It is not the
+MLS leaf key and is never derived from the Ed25519 key. Its public key
+`F_S` is listed in the account's signed L1 device list (format 2, change 7;
+see `docs/designs/L1-approved-device-list.md`). Invariant: **`F_S` is the
+device's fixed, listed key.** A list may set a device's key once (in its
+genesis 1 or 6, its recovery version 4, or change 7, which only that device
+signs and which sets only its own key from none to some), and no later
+version changes or drops it while the device stays listed. A key belongs to
+one device for the whole chain (enforced in Rust `check_chain`, the Dart pin
+step and the server's `SeenFrankKeyElsewhere`). The record seals the key
+before anything can list it (`currentFrankKey`), so a reload never makes a
+second one. The test `the_franking_key_is_the_one_the_list_names` (Rust)
+and the native Dart tests show the listed key equals `F_S`.
+
+```text
+pk_V  = an owner's C6 report public key (X25519, from its report seed)
+Z     = X25519(f_S, pk_V) = X25519(sk_V, F_S); refused when all zero
+kid   = SHA-256("veritra-frank-dv-kid-v1" || pk_V)[0..16]
+K     = HKDF-SHA256(salt = "veritra-frank-dv-v1", ikm = Z,
+                    info = "veritra-frank-dv-v1 key" || F_S || pk_V)
+t     = HMAC-SHA256(K, "veritra-frank-dv-v1" || lp(conversation_id)
+                       || lp(account_id) || lp(device_id) || kid || c)
+entry = kid || t                                (48 bytes)
+d     = entries sorted strictly by kid, 1 to 16 of them; empty = plain form
+```
+
+`c` is the C6 commitment. Public keys are accepted only canonical (bit 255
+clear, u < p) and never at one of the low-order points; an owner key that
+is refused is skipped, never fatal.
+
+- **Send (fail safe).** The sealed token pass, never a send, loads the
+  context: this device must be approved on its own verified list, and the
+  list must name exactly this device's franking key (a listed device with
+  no key publishes change 7 first). The owner keys are the instance
+  owners' report keys this app **pinned** (D95 pins, owner scope, sorted by
+  account, at most 16); nothing is fetched for them. Without that context
+  no token is handed out and the message goes identified. Native refuses a
+  listed key other than the device's own (`pm_crypto_l2_frank_designate`).
+  With no pinned owner key the message goes sealed in the plain form, which
+  no one can attribute; the sealed key screen says so ("provable to no
+  one", or how many owners).
+- **Wire.** Only in a payload sent sealed, `frank` may gain `d`:
+  `,"frank":{"k":"<44>","d":"<64·n, standard base64 of n entries>"}}`. The
+  plain form is the identified form. `P` and `c` are unchanged. The tags
+  are inside the MLS ciphertext; outside it the server could test them.
+  `splitFrank` reads exactly what the encoder writes (a property test
+  re-encodes every accepted mutation).
+- **Receive.** Commitment checks are unchanged. On a sealed message the
+  plain form or a well-formed `d`; tags cannot be checked by receivers. An
+  identified message carrying `d` is `invalid`. No native call, and no leaf
+  key is read.
+- **Report.** The reveal (schema 43) and the v2 report body keep `d` and
+  the sender account; nothing else is added. The owner checks, in order:
+  the context and the first-stored envelope's key (review low b); `c`
+  recomputes and equals the stored commitment; its report seed is loaded
+  and its own `kid` is in `d` (else **notDesignated**, with no list fetch);
+  the claimed device's franking key from the claimed account's verified
+  list (none: **senderUnverified**); then `pm_crypto_l2_frank_dv_verify`
+  (2: **notDesignated**, 0: **proofFailed**, 1: **verified**). Framing as
+  another account or device fails: the tag covers both and `Z` needs `f_S`.
+- **Owner keys change: old proofs lapse.** No old report key is kept. A
+  message designated to a key the owner no longer holds reads
+  notDesignated for that owner; other owners still verify.
+
+**Proof sketch** (verification (e); a sketch for the G25 reviewer, not a
+machine proof). Model HKDF and HMAC as random oracles / a PRF, and assume
+gap-CDH in X25519.
+
+1. *No framing toward an honest owner V (P2).* A valid tag for `(S, V)`
+   needs `K`, a function of `Z = CDH(F_S, pk_V)`. A party without `f_S` or
+   `sk_V` that outputs a valid tag on a new `(conv, account, device, c)`
+   either queried the oracle on `Z` (breaking gap-CDH, with the DH oracle
+   answering consistency checks for other queries) or forged HMAC under an
+   unknown key. `F_S` comes from S's own signed list (the server cannot
+   forge it, L1), the key is fixed and unique per chain, and the tag binds
+   account and device, so M's own key cannot stand in for S's.
+2. *Non-transferability (P3).* `V` computes the same `K` from `sk_V` and
+   `F_S`, so for every tuple the distribution of tags `V` can make equals
+   the distribution S makes. A third party given `(P, kf, d)` and even `V`'s
+   cooperation learns nothing it could not have got from `V` alone: the
+   transcript is simulatable by `V`. A leaked `d` names `kid`s, which are
+   public-key hashes, not secrets.
+3. *Commitment binding.* `c` binds `P` and `kf` (C6), and the tag binds `c`,
+   so a tag does not move to another message.
+4. *Sealed sender (P5).* `d` is only inside the MLS ciphertext and the
+   report copies (HPKE to owners), so the server sees no tag at post time.
+
+Not covered by the sketch: side channels, a stolen owner seed (which also
+lets its holder frame toward that owner, inherent to every DV scheme), and
+the MLS residual below. ProVerif/Tamarin were not run (not installable in
+this environment).
+
+**What remains provable to others (accepted, owner decision 6).** Every MLS
+application message is signed by the sender's leaf key over the framed
+content and the group context. A member who keeps the decrypted message,
+its signature and the group context (all of which its own client sees)
+can hand them to anyone who trusts the binding of that leaf key to S, and
+that proves authorship. A stock Veritra app keeps none of these: OpenMLS
+deletes the message key once used, so a processed ciphertext row cannot be
+opened again (verification (b)); no column, history export or K2 field
+holds a signature over a payload (verification (c)); and a sync page that
+opened a sealed message checkpoints and truncates the database log, so
+the MLS state from before the message does not linger in old log frames
+(verification (d); `secure_delete` already clears freed pages of the
+database file). A modified app can keep them; that cannot be prevented.
+
+- **What the verifier tells the server.** An owner's check fetches the
+  claimed sender's account device list only when `d` names that owner; the
+  server learns, at review time and only from the reviewer, which account a
+  reported sealed message is attributed to. A cached list avoids the fetch.
 
 #### What still leaks (plainly)
 
@@ -743,6 +812,7 @@ commitment to the sender's key, inside the ciphertext:
 | Side | Library | Version | Licence | Notes |
 |---|---|---|---|---|
 | Rust (crypto core) | `voprf` (facebook/voprf) | `=0.5.0`, `default-features = false`, `ristretto255-ciphersuite` | MIT | RFC 9497 final. Brings `derive-where` (MIT OR Apache-2.0) and `displaydoc` (MIT OR Apache-2.0); `curve25519-dalek` 4, `sha2` 0.10, `elliptic-curve` 0.13 (features `hash2curve`, `voprf`) are already locked. The NCC Group review of opaque-ke (2021) covered a pre-RFC voprf; **0.5.0 itself has no published audit**. |
+| Rust (crypto core) | `x25519-dalek` | `=3.0.0`, `default-features = false`, features `static_secrets`, `zeroize` | BSD-3-Clause | Owner-approved 2026-11-12 for the franking key and tags. Uses the already locked `curve25519-dalek`. No audit of 3.0.0 itself is known. The Go cross-check uses `golang.org/x/crypto/curve25519` (already a dependency). |
 | Go (server) | `github.com/cloudflare/circl` | `v1.6.5` | BSD-3-Clause | `oprf` package, RFC 9497 vectors in its tests. Brings `github.com/bwesterb/go-ristretto` v1.2.4 (MIT). No published audit of the `oprf` package. |
 
 Dart has no crypto dependency; it calls the Rust FFI. The two libraries
@@ -761,18 +831,30 @@ finalizes in voprf to circl's `FullEvaluate` output
   `count × 32` evaluated elements `|| 64-byte proof`; `out_tokens` is
   `count × (32-byte nonce || 64-byte output)`. The proof is checked against
   the key in the state.
-- `pm_crypto_l2_frank_sign(device, conversation_id, commit)` and
-  `pm_crypto_l2_frank_verify(signing_key, conversation_id, account_id,
-  device_id, commit, signature)`.
-- The receiver reads the sender leaf's key with the existing
-  `pm_crypto_group_member_signature_key` (ABI 13, C7); no new lookup.
+- `pm_crypto_l2_frank_public_key(device, out_key)`: this device's 32-byte
+  franking public key `F_S`.
+- `pm_crypto_l2_frank_designate(device, conversation_id, commit,
+  listed_key, owner_keys, out_designation)`: `owner_keys` is `n × 32`,
+  `1 ≤ n ≤ 16`; `listed_key` must equal `F_S` (else refused);
+  `out_designation` is `m × 48` sorted by kid, `m ≤ n`, refused owner keys
+  skipped, empty (a null buffer) when none is usable. The identity is
+  always the device's own.
+- `pm_crypto_l2_frank_dv_verify(report_seed, sender_frank_key,
+  conversation_id, account_id, device_id, commit, designation, out_result)`:
+  `out_result` 1 valid, 0 mismatch (also a refused sender key or a zero
+  `Z`), 2 no entry for this seed's key. The X25519 pair is derived from the
+  seed inside; no call returns a private key.
+- The earlier `pm_crypto_l2_frank_sign` and `pm_crypto_l2_frank_verify`
+  are removed (ABI 26 amended in place; never merged).
 
 #### Counters
 
 Crypto ABI 26 (25 is reserved by another package; this branch goes 24 to
 26), local schema 43, server migrations 0090 (keys, issuance counts, spent
-tokens) and 0091 (sealed envelope table, capable devices, an index on
-`message_envelopes(idempotency_key)`). The review fixes of 2026-11-12
+tokens), 0091 (sealed envelope table, capable devices, an index on
+`message_envelopes(idempotency_key)`) and 0092 (device list change 7).
+The franking redesign of 2026-11-12 (owner-only proofs) amended ABI 26 and
+schema 43 in place again and adds L1 list format 2. The review fixes of 2026-11-12
 amended ABI 26, schema 43, 0090 and 0091 in place (none had merged): the
 numbers did not change. Needs the
 independent crypto review (G25) before the switch is turned on anywhere.
@@ -846,9 +928,11 @@ sealed post client and its retry rules), `NativeCryptoService`
 - **Choice at encrypt time.** `_encryptPayload` seals a payload only when
   its type is a message type (`sealedPayloadTypes`), it has no attachments,
   the conversation is `dm` or `group`, not a shared group, carries no C7
-  body, and a token is held under the pinned key; otherwise the message
-  goes identified, as before. The sealed payload
-  carries `s` (`pm_crypto_l2_frank_sign`). The choice and its token are
+  body, a token is held under the pinned key, and the token pass loaded a
+  franking context (own listed key, pinned owner keys); otherwise the
+  message goes identified, as before (a token taken without a context goes
+  back). The sealed payload carries `d` to the pinned owners, or the plain
+  form (`pm_crypto_l2_frank_designate`). The choice and its token are
   stored in the outbox entry with the ciphertext; the local message row
   holds no flag (the echo arrives as `message.sealed.created`).
 - **Post.** `SealedPostClient` has its own `HttpClient` (no keep-alive, no
@@ -866,7 +950,7 @@ sealed post client and its retry rules), `NativeCryptoService`
   `sealed_not_eligible`** (the invariant below): then
   `reencryptSealedAsIdentified` encrypts the message afresh, identified,
   under the same key (new MLS ciphertext and franking key, no token, no
-  `s`), puts it in the outbox entry's place with its failure cleared, and
+  `d`), puts it in the outbox entry's place with its failure cleared, and
   the app sends it. The plaintext for that is kept only in
   `local_sealed_own_posts` while the message is queued, never in the outbox
   JSON or on the wire. It is dropped when the entry is replaced or goes;
@@ -882,20 +966,23 @@ sealed post client and its retry rules), `NativeCryptoService`
   The own post is recognised by the digest of its ciphertext (above); a
   decrypted sender equal to this device is refused. Messages from blocked
   senders are hidden from the timeline.
-- **Franking.** `_checkFranking` requires `s` exactly when the envelope is
-  sealed and verifies it under `pm_crypto_group_member_signature_key` of
-  the MLS sender; an identified payload with `s`, a sealed franked payload
-  without it, or a bad `s` is `invalid`. Schema 43 adds `signature`,
-  `signing_key` and `sender_account_id` to `local_frank_reveals`.
-- **Reports.** Report body version 2 (`report_body.dart`, 10 fields) adds
-  the sender's account id, `s` and the signing key, and is used only for
-  sealed envelopes; version 1 is unchanged for identified ones. The
-  verifier (`reports_service.dart`) recomputes `c`, checks it against the
-  sealed envelope the server serves (`sealed: true`, no sender), verifies
-  `s`, and requires the key to be the claimed device's key in the claimed
-  account's device list, approved or removed
-  (`DeviceListsService.listsOrListed`); a list it cannot read or that
-  conflicts gives the new verdict `senderUnverified`, never `verified`.
+- **Franking.** `_checkFranking` accepts the plain form or a well-formed
+  `d` on a sealed envelope; an identified payload with `d` is `invalid`.
+  Schema 43 adds `designation` (48 to 768 bytes, whole entries, or null for
+  the plain form) and `sender_account_id` to `local_frank_reveals`, and
+  `frank_key` to `local_device_list_keys`; the draft's `signature` and
+  `signing_key` columns are dropped where they exist.
+- **Reports.** Report body version 2 (`report_body.dart`, 9 fields) adds
+  the sender's account id and `d` (empty for the plain form), and is used
+  only for sealed envelopes; version 1 is unchanged for identified ones.
+  The verifier (`reports_service.dart`, `_verifySealed`) runs the order in
+  "Franking a sealed message"; the claimed device's franking key comes from
+  the claimed account's verified list, approved or removed
+  (`DeviceListsService.frankKeyOf`). Verdicts `notDesignated` and
+  `proofFailed` are new; neither is ever shown as verified.
+- **Log residue.** A sync page that opened a sealed message ends with
+  `PRAGMA wal_checkpoint(TRUNCATE)` (`checkpointSealedResidue`), best
+  effort.
 - **Typing and read state.** In a conversation that is eligible while the
   switch is on (`SealedSender.activeIn`), the app sends no server typing
   event and only the private read cursor, and its read marker names the
@@ -916,11 +1003,12 @@ switch is turned off for good, queued sealed messages wait as
 message with no fallback row (after a restore from backup, which does not
 carry `local_sealed_own_posts`) fails on `sealed_not_eligible` instead of
 going identified. The `sendIdentified` hook in `AppState._postSealed` is
-tested only through `postSealedMessage` and the re-encrypt, not end to
-end. The server's unread count
-ignores sealed posts. The signing key checked on receive is the sender
-leaf's current key, so a sender that rotated its leaf key between sending
-and the receiver's decrypt would read as `invalid`. The notice owner of a
+`sendSealedAsIdentified`, tested on its own (every branch) and through the
+native re-encrypt; the AppState wiring is one call. The server's unread
+count ignores sealed posts. A device whose list names no franking key
+(any device until its first sealed token pass publishes change 7, or one
+added by change 2 that has not yet published) sends identified. The
+notice owner of a
 sealed post is captured inside the serial receive turn, not before it.
 Sealed posts get no delivery ticks (W5).
 
@@ -1049,11 +1137,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
 - **L2-3 sealed sender (2026-11-12, crypto ABI 26, D122):** RFC 9497
   POPRF tokens (ristretto255-SHA512; voprf 0.5.0 in Rust, circl 1.6.5 in
   Go) let a member post to a DM or plain group without a session; the
-  server stores those envelopes without a sender. Four new FFI functions
-  (`pm_crypto_l2_token_request`, `_token_finalize`, `_frank_sign`,
-  `_frank_verify`); the franking signature binds a sealed message's C6
-  commitment to the sender's MLS leaf key so reports still attribute it,
-  at the cost of a transferable proof (owner question). ABI 25 is left to
+  server stores those envelopes without a sender. Five new FFI functions
+  (`pm_crypto_l2_token_request`, `_token_finalize`, `_frank_public_key`,
+  `_frank_designate`, `_frank_dv_verify`); designated-verifier tags bind a
+  sealed message's C6 commitment to the sender device's dedicated X25519
+  franking key (listed in L1 format 2) for each instance owner the sender
+  pinned, so reports still attribute it to those owners and to nobody else
+  (owner decision 2026-11-12, replacing a transferable signature). New
+  direct dependency `x25519-dalek =3.0.0`. ABI 25 is left to
   another package. Server side behind `PRIVATE_MESSENGER_SEALED_SENDER`
   (off). The app step (local schema 43: `local_sealed_tokens`,
   `local_sealed_key_pins`, sealed columns on `local_frank_reveals`; report
