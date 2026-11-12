@@ -114,6 +114,21 @@ class _Api extends ApiClient {
   Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
       String token, String channelId, String accessMode) async {
     moves.add((channelId, accessMode));
+    if (accessMode == 'private') {
+      return (
+        move: <String, Object?>{
+          'channel_id': channelId,
+          'from_conversation_id': 'conv_shared',
+          'to_conversation_id': 'conv_new',
+          'layout_generation': 4,
+        },
+        conversation: Conversation(
+            id: 'conv_new',
+            kind: 'community_channel',
+            communityId: _community,
+            createdBy: 'alice'),
+      );
+    }
     return (
       move: <String, Object?>{
         'channel_id': channelId,
@@ -127,6 +142,32 @@ class _Api extends ApiClient {
           communityId: _community,
           createdBy: 'alice'),
     );
+  }
+
+  /// The shared conversation's roster, and every add as (conversation,
+  /// account).
+  final roster = <String>['alice', 'bob', 'carol', 'dave'];
+  final added = <(String, String)>[];
+
+  /// While set, adding this account fails as a server error.
+  String? addFails;
+
+  @override
+  Future<List<ConversationMember>> conversationMembers(
+          String token, String conversationId) async =>
+      <ConversationMember>[
+        for (final account in roster)
+          ConversationMember(
+              accountId: account,
+              role: account == 'alice' ? 'owner' : 'member'),
+      ];
+
+  @override
+  Future<void> addConversationMember(
+      String token, String conversationId, String accountId,
+      {String role = 'member'}) async {
+    if (accountId == addFails) throw ApiException(500, '{"error":"internal"}');
+    added.add((conversationId, accountId));
   }
 
   @override
@@ -502,6 +543,78 @@ void main() {
     expect(api.movedAsked, contains(('chan_x', 'conv_private', true)));
     expect(api.movedAsked, contains(('chan_x', 'conv_private', false)));
     expect(crypto.movedImports, hasLength(1));
+  });
+
+  test(
+      'making an open channel private adds the readers left ticked, and '
+      'only them, in one reconcile; the channel\'s rows move with it '
+      '(owner answer 2026-11-12, "Admin picks during switch")', () async {
+    final api = _Api();
+    final (state, crypto) = _appWith(api);
+    await state.localStore.importC7History(<MessageEffect>[
+      InsertMessageEffect(
+          key: 'dev_bob:o1',
+          conversationId: 'conv_shared',
+          channelId: _open,
+          senderAccountId: 'bob',
+          senderDeviceId: 'dev_bob',
+          kind: LocalMessageKind.text,
+          createdAt: 1,
+          state: LocalMessageState.received,
+          body: 'open earlier'),
+    ]);
+    final channel = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _open)
+        .single;
+    // The screen lists everyone but this account, all ticked.
+    expect((await state.channelReaders(channel)).map((m) => m.accountId),
+        ['bob', 'carol', 'dave']);
+    // Carol is unticked; this account is never added to its own channel.
+    expect(
+        await state.convertChannel(channel,
+            toPrivate: true, members: ['bob', 'dave', 'alice']),
+        isTrue);
+    expect(api.moves, [(_open, 'private')]);
+    expect(api.added, [('conv_new', 'bob'), ('conv_new', 'dave')]);
+    expect(state.mlsReconcileNowForTesting('conv_new'), isTrue);
+    expect(crypto.notes.first,
+        (channel: _open, from: 'conv_shared', to: 'conv_new', own: true));
+    final rows = await state.localStore.loadMessages('conv_new');
+    expect(rows.single.body, 'open earlier');
+    expect(await state.localStore.loadMessages('conv_shared'), isEmpty);
+  });
+
+  test(
+      'an add the server refuses leaves the channel converted, stops the '
+      'adds after it and reports the error', () async {
+    final api = _Api()..addFails = 'carol';
+    final (state, _) = _appWith(api);
+    final channel = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _open)
+        .single;
+    expect(
+        await state.convertChannel(channel,
+            toPrivate: true, members: ['bob', 'carol', 'dave']),
+        isTrue);
+    expect(api.added, [('conv_new', 'bob')]);
+    expect(state.error, isNotNull);
+    final converted = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _open)
+        .single;
+    expect(converted.kind, 'private');
+    expect(converted.conversationId, 'conv_new');
+  });
+
+  test('making a private channel open adds no one', () async {
+    final api = _Api();
+    final (state, _) = _appWith(api);
+    final channel = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _private)
+        .single;
+    expect(
+        await state.convertChannel(channel, toPrivate: false, members: ['bob']),
+        isTrue);
+    expect(api.added, isEmpty);
   });
 
   test('with C7 off nothing is proposed', () async {

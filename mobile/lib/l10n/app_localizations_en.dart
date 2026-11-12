@@ -4482,4 +4482,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get channelConvertOpenAccept => 'Make open';
+
+  @override
+  String get channelConvertPrivateTitle => 'Make this channel private?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'No one else reads this channel yet.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Could not load who reads this channel. Try again.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Make private';
 }

@@ -1555,5 +1555,10 @@
   "channelConvertToOpen": "Make this channel open",
   "channelConvertOpenTitle": "Make this channel open?",
   "channelConvertOpenConfirm": "Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.",
-  "channelConvertOpenAccept": "Make open"
+  "channelConvertOpenAccept": "Make open",
+  "channelConvertPrivateTitle": "Make this channel private?",
+  "channelConvertPrivatePick": "Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.",
+  "channelConvertPrivateNoReaders": "No one else reads this channel yet.",
+  "channelConvertReadersFailed": "Could not load who reads this channel. Try again.",
+  "channelConvertPrivateAccept": "Make private"
 }

@@ -4498,6 +4498,24 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get channelConvertOpenAccept => 'Учини отвореним';
+
+  @override
+  String get channelConvertPrivateTitle => 'Учинити овај канал приватним?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Сви означени биће додати у приватни канал и задржаће његове раније објаве. Свако коме уклоните ознаку губи приступ каналу и његовим ранијим објавама.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'Још нико други не чита овај канал.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Није могуће учитати ко чита овај канал. Покушајте поново.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Учини приватним';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8999,4 +9017,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get channelConvertOpenAccept => 'Učini otvorenim';
+
+  @override
+  String get channelConvertPrivateTitle => 'Učiniti ovaj kanal privatnim?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Svi označeni biće dodati u privatni kanal i zadržaće njegove ranije objave. Svako kome uklonite oznaku gubi pristup kanalu i njegovim ranijim objavama.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'Još niko drugi ne čita ovaj kanal.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Nije moguće učitati ko čita ovaj kanal. Pokušajte ponovo.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Učini privatnim';
 }

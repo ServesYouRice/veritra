@@ -7400,6 +7400,36 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Make open'**
   String get channelConvertOpenAccept;
+
+  /// No description provided for @channelConvertPrivateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel private?'**
+  String get channelConvertPrivateTitle;
+
+  /// No description provided for @channelConvertPrivatePick.
+  ///
+  /// In en, this message translates to:
+  /// **'Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.'**
+  String get channelConvertPrivatePick;
+
+  /// No description provided for @channelConvertPrivateNoReaders.
+  ///
+  /// In en, this message translates to:
+  /// **'No one else reads this channel yet.'**
+  String get channelConvertPrivateNoReaders;
+
+  /// No description provided for @channelConvertReadersFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load who reads this channel. Try again.'**
+  String get channelConvertReadersFailed;
+
+  /// No description provided for @channelConvertPrivateAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Make private'**
+  String get channelConvertPrivateAccept;
 }
 
 class _AppLocalizationsDelegate

@@ -324,23 +324,28 @@ void main() {
   }, skip: skip);
 
   test(
-      'open to private: the move waits for the first add, then the newcomer '
-      'takes its wrap live and imports the open channel\'s earlier posts, '
-      'and only that channel\'s', () async {
+      'open to private: the move waits for the first add, then the readers '
+      'the admin left ticked, added in one commit, take its wrap live and '
+      'import the open channel\'s earlier posts, and only that channel\'s; '
+      'an unticked reader gets neither (owner answer 2026-11-12)', () async {
     final alice = await client('alice');
     final bob = await client('bob');
     final carol = await client('carol');
+    final erin = await client('erin');
+    // Dave reads the open channel but is unticked: never added.
+    final dave = await client('dave', where: {_channel: _newPrivate});
     home[_channel] = _shared;
-    await alice.service.initializeConversation(
-        _shared, <DeviceKeyPackage>[await bob.keyPackage()]);
-    await _accept(alice, [bob], const [], conversation: _shared);
+    await alice.service.initializeConversation(_shared,
+        <DeviceKeyPackage>[await bob.keyPackage(), await dave.keyPackage()]);
+    await _accept(alice, [bob, dave], const [], conversation: _shared);
     await deliver(
         alice,
         await alice.service.c7ProposeRecord(_shared, _channel,
             full: true, create: true, layoutGeneration: 1),
-        [bob]);
+        [bob, dave]);
     final open = await bob.sendIn(_shared, 'said in the open channel');
     await alice.receive(bob, open);
+    await dave.receive(bob, open);
 
     // The server moves it to a new conversation with alice alone.
     await alice.service
@@ -356,16 +361,35 @@ void main() {
     expect(
         (await alice.service.c7DueWork([_newPrivate])).whereType<C7DueMove>(),
         isEmpty);
-    await alice.service
-        .stageMembershipChange(_newPrivate, adds: [await carol.keyPackage()]);
-    await _accept(alice, [carol], const [], conversation: _newPrivate);
-    await carol.receive(alice, await syncFor(alice, _newPrivate));
-    await move(alice, _newPrivate, [carol]);
+    // The ticked readers, carol and erin, join in one commit.
+    await alice.service.stageMembershipChange(_newPrivate,
+        adds: [await carol.keyPackage(), await erin.keyPackage()]);
+    await _accept(alice, [carol, erin], const [], conversation: _newPrivate);
+    final sync = await syncFor(alice, _newPrivate);
+    await carol.receive(alice, sync);
+    await erin.receive(alice, sync);
+    final record = await move(alice, _newPrivate, [carol, erin]);
     expect((await carol.service.c7ChannelView(_newPrivate, _channel))!.full,
         isTrue);
     final due = await carol.service.c7MovedImportsDue();
     expect(due, hasLength(1));
     expect(due.single.fromConversationId, _shared);
+    final erinDue = await erin.service.c7MovedImportsDue();
+    expect(erinDue, hasLength(1));
+    // Dave follows the move as every shared member does, but holds no leaf
+    // in the new group: the record never opens for him, so no wrap is
+    // his and nothing is owed.
+    await dave.service.c7NoteMove(
+        channelId: _channel,
+        fromConversationId: _shared,
+        toConversationId: _newPrivate,
+        own: false);
+    try {
+      await dave.receive(alice, record);
+    } catch (_) {
+      // Not a member: refused, or dropped as undecryptable.
+    }
+    expect(await dave.service.c7MovedImportsDue(), isEmpty);
     final bobKey = await bob.service.currentSigningKey();
     final keys = <C7FormerKey>[
       C7FormerKey(
@@ -396,6 +420,16 @@ void main() {
     // A private channel's own conversation names no channel on its rows.
     expect(imported.channelId, isNull);
     expect(imported.conversationId, _newPrivate);
+    expect(
+        await erin.service.c7ImportMoved(erinDue.single,
+            channel: page,
+            groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+            keys: keys),
+        1);
+    // Dave holds only the record's undecryptable placeholder there.
+    final daves = await dave.store.loadMessages(_newPrivate);
+    expect(daves.where((r) => r.body != null), isEmpty);
+    expect(daves.every((r) => r.key.startsWith('undecryptable:')), isTrue);
   }, skip: skip);
 }
 

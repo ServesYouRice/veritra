@@ -7795,11 +7795,35 @@ class AppState extends ChangeNotifier
         own: false);
   }
 
+  /// Whether a reconcile of [conversationId] is asked for at once.
+  @visibleForTesting
+  bool mlsReconcileNowForTesting(String conversationId) =>
+      _mlsReconcileNow.contains(conversationId);
+
   /// The handling of one `conversation.channel_moved` event's [payload].
   @visibleForTesting
   Future<void> channelMovedForTesting(Object? payload) async {
     final move = _channelMoveOf(payload);
     if (move != null) await _followChannelMove(move);
+  }
+
+  /// The readers of an open [channel] other than this account: the
+  /// server's roster of the shared conversation it posts to. The
+  /// conversion screen lists them, all ticked (owner answer 2026-11-12,
+  /// "Admin picks during switch").
+  Future<List<ConversationMember>> channelReaders(Channel channel) async {
+    final current = session;
+    final client = api;
+    final conversationId = channel.conversationId;
+    if (current == null || client == null || conversationId == null) {
+      return const <ConversationMember>[];
+    }
+    final members =
+        await client.conversationMembers(current.token, conversationId);
+    return <ConversationMember>[
+      for (final member in members)
+        if (member.accountId != current.accountId) member,
+    ];
   }
 
   /// Whether [channel] can be converted here: a routed channel of a
@@ -7820,18 +7844,39 @@ class AppState extends ChangeNotifier
   /// home: a private channel under a key of its own, an open one under the
   /// community's. A private-to-open conversion is confirmed in the UI
   /// first (`confirmChannelConversion`).
+  ///
+  /// Open to private: [members] are the readers the admin left ticked
+  /// (owner answer 2026-11-12, "Admin picks during switch"). Each is added
+  /// to the new private channel through the add-member route as part of
+  /// the conversion, once the channel has moved here, and their devices
+  /// join in the one commit reconcile stages for all of them; the `move`
+  /// record, with the earlier posts, goes out in that commit's epoch, so
+  /// they all receive it. No one else is added. An add the server refuses
+  /// leaves the channel converted and reports the error.
   Future<bool> convertChannel(Channel channel,
-      {required bool toPrivate}) async {
+      {required bool toPrivate,
+      List<String> members = const <String>[]}) async {
     final name = channelDisplayName(channel);
     final topic = channelTopic(channel) ?? '';
     final from = channel.conversationId;
+    final adds = <String>{
+      if (toPrivate)
+        for (final member in members)
+          if (member != session?.accountId) member,
+    };
     Channel? moved;
+    Object? addFailure;
     await _run(() async {
       final current = session;
       final client = api;
       if (current == null || client == null) return;
       if (from == null || (channel.kind == 'private') == toPrivate) {
         throw StateError('this channel cannot be converted that way');
+      }
+      // Checked before the move, so a conversion never strands the
+      // channel with nobody added.
+      if (adds.isNotEmpty && !membershipChangesAvailable) {
+        throw StateError('adding members is not available in this build');
       }
       final result = await client.moveChannel(
           current.token, channel.id, toPrivate ? 'private' : 'open');
@@ -7873,9 +7918,29 @@ class AppState extends ChangeNotifier
           fromConversationId: from,
           toConversationId: conversation.id,
           own: true);
+      try {
+        for (final account in adds) {
+          await client.addConversationMember(
+              current.token, conversation.id, account);
+        }
+      } catch (err) {
+        addFailure = err;
+      }
+      if (adds.isNotEmpty) {
+        // Their devices join through reconcile (card I51): one staged
+        // commit adds everyone the server now lists.
+        _mlsReconcileRequested = true;
+        _mlsReconcileNow.add(conversation.id);
+        _mlsChangeRetries.remove(conversation.id);
+      }
     });
     final next = moved;
     if (error != null || next == null) return false;
+    final failure = addFailure;
+    if (failure != null) {
+      error = describeError(failure, l10n);
+      notifyListeners();
+    }
     unawaited(() async {
       if (name != null) {
         await publishChannelInfo(next,

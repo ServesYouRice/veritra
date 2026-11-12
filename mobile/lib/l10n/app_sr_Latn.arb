@@ -1315,5 +1315,10 @@
   "channelConvertToOpen": "Učini ovaj kanal otvorenim",
   "channelConvertOpenTitle": "Učiniti ovaj kanal otvorenim?",
   "channelConvertOpenConfirm": "Ranije objave u ovom kanalu postaće vidljive svima koji mogu da čitaju otvoreni kanal, uključujući članove zajednice koji nikada nisu bili u ovom privatnom kanalu.",
-  "channelConvertOpenAccept": "Učini otvorenim"
+  "channelConvertOpenAccept": "Učini otvorenim",
+  "channelConvertPrivateTitle": "Učiniti ovaj kanal privatnim?",
+  "channelConvertPrivatePick": "Svi označeni biće dodati u privatni kanal i zadržaće njegove ranije objave. Svako kome uklonite oznaku gubi pristup kanalu i njegovim ranijim objavama.",
+  "channelConvertPrivateNoReaders": "Još niko drugi ne čita ovaj kanal.",
+  "channelConvertReadersFailed": "Nije moguće učitati ko čita ovaj kanal. Pokušajte ponovo.",
+  "channelConvertPrivateAccept": "Učini privatnim"
 }
