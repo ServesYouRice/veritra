@@ -156,6 +156,7 @@ final class InsertMessageEffect extends MessageEffect {
     this.channelId,
     this.senderHidden = false,
     this.senderRemoved = false,
+    this.c7Gen,
   });
 
   final String key;
@@ -182,8 +183,18 @@ final class InsertMessageEffect extends MessageEffect {
   /// arrived ([LocalMessages.senderRemoved]).
   final bool senderRemoved;
 
+  /// C7 (schema 41): the generation this post's body was sealed under
+  /// ([LocalMessages.c7Gen]); null for a random key.
+  final String? c7Gen;
+
   /// This row, marked as sent from a removed device.
-  InsertMessageEffect markedSenderRemoved() => InsertMessageEffect(
+  InsertMessageEffect markedSenderRemoved() => _with(senderRemoved: true);
+
+  /// This row, recorded as sealed under the C7 generation [gen].
+  InsertMessageEffect withC7Gen(String gen) => _with(c7Gen: gen);
+
+  InsertMessageEffect _with({bool? senderRemoved, String? c7Gen}) =>
+      InsertMessageEffect(
         key: key,
         conversationId: conversationId,
         senderAccountId: senderAccountId,
@@ -199,7 +210,8 @@ final class InsertMessageEffect extends MessageEffect {
         forwardHops: forwardHops,
         channelId: channelId,
         senderHidden: senderHidden,
-        senderRemoved: true,
+        senderRemoved: senderRemoved ?? this.senderRemoved,
+        c7Gen: c7Gen ?? this.c7Gen,
       );
 }
 
@@ -553,6 +565,16 @@ class LocalMessages extends Table {
   /// removed". Null and false mean an approved sender.
   BoolColumn get senderRemoved => boolean().nullable()();
 
+  /// C7 (schema 41, decision 7): the generation this row's body was sealed
+  /// under, as the lowercase hex `sha256("veritra-c7-chk-v1" | CHK_g)`; it
+  /// names the period and the generation at once. The sender records it, a
+  /// live member when the body key it opened is that generation's, an
+  /// import when it opens the body under it. Null means a random key or a
+  /// conversation without C7. An action naming this row (an edit, a delete,
+  /// a reaction, a pin, a poll vote or close) seals under the current
+  /// generation only while this is one of the current period's.
+  TextColumn get c7Gen => text().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => {key};
 }
@@ -658,7 +680,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 40;
+  static const currentSchemaVersion = 41;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -901,6 +923,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // generated rows. A store from before schema 7 creates the table
             // whole further down. Idempotent, so it can be renumbered.
             if (from >= 7 && from < 40) await _addSenderRemovedColumn();
+            // C7 (schema 41): the generation a row's body was sealed under.
+            // First too, for the same reason; idempotent.
+            if (from >= 7 && from < 41) await _addC7GenColumn();
             // K2/K0: the pending device enrollment. The waiting K0 claim
             // moves out of its schema 16 setting in this same transaction.
             if (from < 17) {
@@ -1058,6 +1083,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await customStatement('PRAGMA secure_delete = ON');
         },
       );
+
+  /// Adds `local_messages.c7_gen` unless it is there already.
+  Future<void> _addC7GenColumn() async {
+    final columns = await customSelect(
+            "SELECT name FROM pragma_table_info('local_messages')")
+        .get();
+    if (columns.any((row) => row.read<String>('name') == 'c7_gen')) return;
+    await customStatement('ALTER TABLE local_messages ADD COLUMN c7_gen TEXT');
+  }
 
   /// Adds `local_messages.sender_removed` unless it is there already.
   Future<void> _addSenderRemovedColumn() async {
@@ -2427,6 +2461,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   Future<List<LocalMessageReaction>> readAllReactions() =>
       select(localMessageReactions).get();
+
+  /// One decrypted row by its key, expired or not; null if there is none.
+  Future<LocalMessage?> readMessage(String key) =>
+      (select(localMessages)..where((table) => table.key.equals(key)))
+          .getSingleOrNull();
 
   Future<List<LocalMessage>> readMessages(String conversationId) =>
       (select(localMessages)

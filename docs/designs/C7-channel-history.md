@@ -1070,9 +1070,9 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
    taken as out of step: a gap, never a leak.
 4. A generation opened at MLS epoch 0 (a group no one has joined yet)
    seals nothing under its key: `gen` 0 means a random key.
-5. Targeted actions stay under random keys until each local row records
-   the period it was sealed in (decision 7 needs a row column: local
-   schema 41, not taken). A gap for newcomers, never a leak.
+5. Targeted actions stayed under random keys until each local row
+   recorded the period it was sealed in. **Settled (2026-11-12, local
+   schema 41)**: see "Targeted actions" in the next build status.
 6. A newcomer adopts a slot only for a channel it already knows: the
    server's list (`AppState` answers `C7ChannelListSource` with the
    shared group's open and announcement channels) or its private group's
@@ -1099,8 +1099,8 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
 walk through stored `history_sync` slots, the per-channel and group-level
 fetch, window and signature checks, former members, two-pass import),
 the prefetch depth (owner question 1), C3 conversion (`move`, its wrap, the server route and
-migrations 0088-0089), and targeted-action sealing under generation
-keys.
+migrations 0088-0089). Targeted-action sealing was built after the
+owner's answers (next section).
 
 ### Build status (2026-11-12): step 4 continued, after the owner's answers
 
@@ -1132,6 +1132,27 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   creation sends a `create` that every device refuses (`_c7MayRecord`
   needs admin, C4's channel-creation right is not yet aligned): the
   channel stays `members_from_join`, which fails closed.
+- **Targeted actions follow their target (decision 7, local schema 41).**
+  `local_messages.c7_gen` records the generation a row's body was sealed
+  under as `hex(sha256("veritra-c7-chk-v1" | CHK_g))` (the commitment the
+  entries already carry, so it names nothing new), or null for a random
+  key. It names the period and the generation at once, so a channel
+  switched off and on again in the same epoch (two generations with the
+  same `E_g`, different keys) is told apart; an epoch alone would not be.
+  The sender records it on its own post; a live member when the body key
+  it opened is the current generation's (the `gen` check, which already
+  derives it); the import (next step) when it opens a body under a
+  generation. An edit, delete, reaction, pin, poll vote or poll close is
+  sealed under the current generation only while the channel is `full` and
+  `ok` and its target's row names a generation of the current period whose
+  key this device holds; any other target (sealed under a random key,
+  before this period, before schema 41, restored from a history snapshot,
+  or unknown) gets a random key, a gap, never a leak. The column is never
+  in a history snapshot (a restored device holds no generation keys of its
+  own until a `history_sync`, so its rows would only name keys it cannot
+  check). Upgrade step first in the transaction, idempotent, tested from
+  40, 36 and 12; both stores; the native test covers the same-epoch
+  off-and-on case.
 
 ## Open questions for the owner
 

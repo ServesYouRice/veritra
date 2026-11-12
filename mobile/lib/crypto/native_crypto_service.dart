@@ -3020,6 +3020,8 @@ class NativeCryptoService
           // the padded VAP1 goes in the sealed body beside it.
           List<int> mlsPlaintext = payload;
           Uint8List? sealedBody;
+          // C7 (decision 7): the generation a post's own row records.
+          String? c7Gen;
           if (c7SealedBodies &&
               c7CommunityKind(_authority?.conversationKind(conversationId))) {
             final communityId = switch (_authority) {
@@ -3031,9 +3033,14 @@ class NativeCryptoService
               throw StateError('C7 needs the community of this conversation');
             }
             // A post in a `full` and `ok` channel seals under the current
-            // generation's key; everything else under a random key (I4).
+            // generation's key, and so does an action whose target was
+            // sealed in the current period (decision 7); everything else
+            // under a random key (I4).
             final generation = await _c7SealGen(
-                conversationId, channelId ?? c7Private, type, epoch);
+                conversationId, channelId ?? c7Private, type, epoch, body);
+            if (generation != null && c7HistoryPostTypes.contains(type)) {
+              c7Gen = c7GenTag(generation.key!);
+            }
             final sealed = c7SealMessage(
               bindings: bindings,
               sign: (message) => device.c7Sign(
@@ -3102,22 +3109,26 @@ class NativeCryptoService
                         state: LocalMessageState.pending,
                       ),
                     ]
-                  : messageEffectsFor(
-                      DecryptedAppPayload(
-                          type: type,
-                          actionId: idempotencyKey,
-                          body: body,
-                          channelId: channelId),
-                      conversationId: conversationId,
-                      senderAccountId: _accountId!,
-                      senderDeviceId: deviceId,
-                      createdAt: DateTime.now().toUtc().millisecondsSinceEpoch,
-                      state: LocalMessageState.pending,
-                      // The sender's own word: the first echo can only
-                      // shorten it.
-                      expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
-                      authority: _authority,
-                    ),
+                  : _c7Recorded(
+                      messageEffectsFor(
+                        DecryptedAppPayload(
+                            type: type,
+                            actionId: idempotencyKey,
+                            body: body,
+                            channelId: channelId),
+                        conversationId: conversationId,
+                        senderAccountId: _accountId!,
+                        senderDeviceId: deviceId,
+                        createdAt:
+                            DateTime.now().toUtc().millisecondsSinceEpoch,
+                        state: LocalMessageState.pending,
+                        // The sender's own word: the first echo can only
+                        // shorten it.
+                        expiresAt: expiresAt?.toUtc().millisecondsSinceEpoch,
+                        authority: _authority,
+                      ),
+                      messageKey(deviceId, idempotencyKey),
+                      c7Gen),
               communityInfo: info
                   ? <CommunityInfoEvent>[
                       communityInfoEventFor(
@@ -3715,7 +3726,9 @@ class NativeCryptoService
                 break;
               }
               // C7: a live post sealed under a generation this device
-              // does not hold as current there (decision 5, "Unsure").
+              // does not hold as current there (decision 5, "Unsure"); one
+              // sealed under the current one records it (decision 7).
+              String? postGen;
               final postChannel = payload.channelId ?? c7Channel;
               final postEpoch =
                   mlsMessageEpoch(envelope.ciphertext, envelope.conversationId);
@@ -3724,32 +3737,36 @@ class NativeCryptoService
                   postChannel != null &&
                   postEpoch != null &&
                   c7HistoryPostTypes.contains(payload.type)) {
-                settings = await _c7GenCheck(
+                (:settings, gen: postGen) = await _c7GenCheck(
                     envelope: envelope,
                     channelId: postChannel,
                     epoch: postEpoch,
                     opened: c7Opened);
               }
-              effects = messageEffectsFor(
-                payload,
-                conversationId: envelope.conversationId,
-                senderAccountId: envelope.senderAccountId,
-                senderDeviceId: envelope.senderDeviceId,
-                serverMessageId: envelope.id,
-                createdAt: envelope.createdAt.millisecondsSinceEpoch,
-                state: LocalMessageState.received,
-                // The sender's signed expiry bounds the server's: the shorter
-                // wins. A payload without one (an older sender) keeps the
-                // server-stamped time, as before.
-                expiresAt: effectiveExpiryMillis(
-                    senderMs: payload.expiresAtMs,
-                    serverMs:
-                        envelope.expiresAt?.toUtc().millisecondsSinceEpoch),
-                authority: _authority,
-                // Owner decision B: a leaf its account's list removed
-                // (a stolen or replaced phone) keeps ordinary messages but
-                // never acts with its account's role.
-                senderActsWithRole: senderVerdict != LeafVerdict.removed,
+              effects = _c7Recorded(
+                messageEffectsFor(
+                  payload,
+                  conversationId: envelope.conversationId,
+                  senderAccountId: envelope.senderAccountId,
+                  senderDeviceId: envelope.senderDeviceId,
+                  serverMessageId: envelope.id,
+                  createdAt: envelope.createdAt.millisecondsSinceEpoch,
+                  state: LocalMessageState.received,
+                  // The sender's signed expiry bounds the server's: the shorter
+                  // wins. A payload without one (an older sender) keeps the
+                  // server-stamped time, as before.
+                  expiresAt: effectiveExpiryMillis(
+                      senderMs: payload.expiresAtMs,
+                      serverMs:
+                          envelope.expiresAt?.toUtc().millisecondsSinceEpoch),
+                  authority: _authority,
+                  // Owner decision B: a leaf its account's list removed
+                  // (a stolen or replaced phone) keeps ordinary messages but
+                  // never acts with its account's role.
+                  senderActsWithRole: senderVerdict != LeafVerdict.removed,
+                ),
+                messageKey(envelope.senderDeviceId, envelope.idempotencyKey),
+                postGen,
               );
               noticePayload = const {
                 AppPayloadType.text,
@@ -5385,15 +5402,24 @@ const Duration c7FallbackBase = Duration(seconds: 20);
 const Duration c7FallbackPerMember = Duration(seconds: 2);
 const Duration c7FallbackCap = Duration(minutes: 10);
 
-/// Posts sealed under a generation key. Targeted actions (edit, delete,
-/// reaction, pin, poll vote and close) stay under random keys until each
-/// local row records the period it was sealed in (decision 7, not built:
-/// a gap for newcomers, never a leak). Control payloads never are.
+/// Posts sealed under a generation key. Control payloads never are.
 const Set<AppPayloadType> c7HistoryPostTypes = <AppPayloadType>{
   AppPayloadType.text,
   AppPayloadType.reply,
   AppPayloadType.attachmentManifest,
   AppPayloadType.poll,
+};
+
+/// Actions that name a target post (`message_id`): sealed under the current
+/// generation only when their target was sealed in the current period and
+/// the channel is `ok` (decision 7). A moderator's delete is a `delete`.
+const Set<AppPayloadType> c7TargetedTypes = <AppPayloadType>{
+  AppPayloadType.edit,
+  AppPayloadType.delete,
+  AppPayloadType.reaction,
+  AppPayloadType.pin,
+  AppPayloadType.pollVote,
+  AppPayloadType.pollClose,
 };
 
 const Map<String, String?> _c7None = <String, String?>{};
@@ -5619,18 +5645,20 @@ extension _C7Engine on NativeCryptoService {
   /// signed `gen` only by checking the signature against those candidates:
   /// 0 and the past generations it remembers. A sender in an older period
   /// whose `gen` this device never held is so taken as out of step (a gap,
-  /// never a leak).
-  Future<Map<String, String?>> _c7GenCheck({
+  /// never a leak). [gen] is the generation the post was sealed under when
+  /// it is the current one ([c7GenTag]), for its row (decision 7).
+  Future<({Map<String, String?> settings, String? gen})> _c7GenCheck({
     required ReceivedMessageEnvelope envelope,
     required String channelId,
     required int epoch,
     required C7Opened opened,
   }) async {
     final conversationId = envelope.conversationId;
+    const none = (settings: _c7None, gen: null);
     final community = _c7CommunityOf(conversationId);
-    if (community == null) return _c7None;
+    if (community == null) return none;
     final book = await _c7LoadBook(conversationId, channelId);
-    if (book.mode != c7ModeFull || book.status != C7Status.ok) return _c7None;
+    if (book.mode != c7ModeFull || book.status != C7Status.ok) return none;
     final gen = book.genAt(conversationId, epoch);
     final key = gen?.key;
     if (key != null && gen!.epoch != 0) {
@@ -5643,7 +5671,7 @@ extension _C7Engine on NativeCryptoService {
       );
       final same = c7SameBytes(expected, opened.bodyKey);
       expected.fillRange(0, expected.length, 0);
-      if (same) return _c7None;
+      if (same) return (settings: _c7None, gen: c7GenTag(key));
     }
     final signer = _c7TreeKey(conversationId, envelope.senderDeviceId);
     if (signer != null) {
@@ -5673,14 +5701,30 @@ extension _C7Engine on NativeCryptoService {
         } on Object {
           continue;
         }
-        if (valid) return _c7None;
+        if (valid) return none;
       }
     }
     final group = await _c7LoadGroup(conversationId);
-    return _c7Put(conversationId, group, <C7ChannelBook>[
-      book.markUnsure(_requiredDevice().groupEpoch(conversationId).epoch),
-    ]);
+    return (
+      settings: await _c7Put(conversationId, group, <C7ChannelBook>[
+        book.markUnsure(_requiredDevice().groupEpoch(conversationId).epoch),
+      ]),
+      gen: null,
+    );
   }
+
+  /// [effects] with the row [key] recorded as sealed under the C7
+  /// generation [gen] (decision 7); unchanged when [gen] is null.
+  List<MessageEffect> _c7Recorded(
+          List<MessageEffect> effects, String key, String? gen) =>
+      gen == null
+          ? effects
+          : <MessageEffect>[
+              for (final effect in effects)
+                effect is InsertMessageEffect && effect.key == key
+                    ? effect.withC7Gen(gen)
+                    : effect,
+            ];
 
   // ---- records ----------------------------------------------------------------
 
@@ -5940,17 +5984,33 @@ extension _C7Engine on NativeCryptoService {
 
   // ---- sending ------------------------------------------------------------------
 
-  /// The generation a post of [type] in [channelId] seals under at [epoch],
-  /// or null (a random key; I4).
+  /// The generation a message of [type] in [channelId] seals under at
+  /// [epoch], or null (a random key; I4). A post seals under it while the
+  /// channel is `full` and `ok`; an action naming a target (decision 7)
+  /// only when its target's row records a generation of the current period
+  /// too, so an edit's new text never reaches a newcomer who could not read
+  /// the post. A target this device holds no generation for (sealed under
+  /// a random key, before this period, before schema 41, or restored from
+  /// a snapshot) gets a random key: a gap, never a leak.
   Future<C7Gen?> _c7SealGen(String conversationId, String? channelId,
-      AppPayloadType type, int epoch) async {
+      AppPayloadType type, int epoch, Map<String, Object?> body) async {
+    final post = c7HistoryPostTypes.contains(type);
     if (channelId == null ||
-        !c7HistoryPostTypes.contains(type) ||
+        !(post || c7TargetedTypes.contains(type)) ||
         !_c7Active(conversationId)) {
       return null;
     }
     final book = await _c7LoadBook(conversationId, channelId);
-    return book.sealGenAt(epoch);
+    final generation = book.sealGenAt(epoch);
+    if (generation == null || post) return generation;
+    final target = body['message_id'];
+    if (target is! String) return null;
+    final row = await localStore.loadMessage(target);
+    final sealed = row?.c7Gen;
+    if (row == null || row.conversationId != conversationId || sealed == null) {
+      return null;
+    }
+    return book.sealedInPeriod(sealed) ? generation : null;
   }
 
   /// Queues one hidden C7 message (a record, a `history_sync` or its

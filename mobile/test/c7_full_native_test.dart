@@ -190,6 +190,64 @@ void main() {
     expect(await alice.sealedUnderChannelKey(after), isFalse);
   }, skip: skip);
 
+  test(
+      'rows record the generation their post was sealed under, and a '
+      'targeted action seals under it only while its target is in the '
+      'current period (decision 7)', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    final before = await alice.send('before the period');
+    await bob.receive(alice, before);
+    await propose(alice, [bob], full: true, create: true);
+    final post = await alice.send('in the period');
+    await bob.receive(alice, post);
+    final key = (await alice.book()).sealGenAt(await alice.epoch())!.key!;
+    String keyOf(MessageEnvelope sent) =>
+        '${alice.deviceId}:${sent.idempotencyKey}';
+    for (final c in [alice, bob]) {
+      expect((await c.store.loadMessage(keyOf(post)))!.c7Gen, c7GenTag(key),
+          reason: c.deviceId);
+      expect((await c.store.loadMessage(keyOf(before)))!.c7Gen, isNull,
+          reason: c.deviceId);
+    }
+    // An edit and a reaction to the period's post seal under the
+    // generation; an edit to the earlier post never does.
+    final edit = await alice.act(AppPayloadType.edit,
+        <String, Object?>{'message_id': keyOf(post), 'text': 'edited'});
+    expect(await alice.sealedUnderChannelKey(edit), isTrue);
+    final reaction = await bob.act(AppPayloadType.reaction,
+        <String, Object?>{'message_id': keyOf(post), 'reaction': '+1'});
+    expect(await bob.sealedUnderChannelKey(reaction), isTrue);
+    final oldEdit = await alice.act(AppPayloadType.edit,
+        <String, Object?>{'message_id': keyOf(before), 'text': 'edited'});
+    expect(await alice.sealedUnderChannelKey(oldEdit), isFalse);
+    // An unknown target is a random key too.
+    final stray = await alice.act(AppPayloadType.delete,
+        <String, Object?>{'message_id': 'dev_none:nothing'});
+    expect(await alice.sealedUnderChannelKey(stray), isFalse);
+    // Bob's row of Alice's edit is an action row: it records nothing, and
+    // the edited post keeps its generation.
+    await bob.receive(alice, edit);
+    expect((await bob.store.loadMessage(keyOf(post)))!.body, 'edited');
+    expect((await bob.store.loadMessage(keyOf(post)))!.c7Gen, c7GenTag(key));
+    // Off and on again in the same epoch: a new period with a new key, so
+    // the earlier post's actions go under random keys.
+    await propose(bob, [alice], full: false);
+    await propose(alice, [bob], full: true);
+    final next = (await alice.book()).sealGenAt(await alice.epoch())!;
+    expect(next.epoch, await alice.epoch());
+    expect(c7GenTag(next.key!), isNot(c7GenTag(key)));
+    final late = await alice.act(AppPayloadType.edit,
+        <String, Object?>{'message_id': keyOf(post), 'text': 'again'});
+    expect(await alice.sealedUnderChannelKey(late), isFalse);
+    final fresh = await alice.send('the next period');
+    expect(await alice.sealedUnderChannelKey(fresh), isTrue);
+    final freshEdit = await alice.act(
+        AppPayloadType.delete, <String, Object?>{'message_id': keyOf(fresh)});
+    expect(await alice.sealedUnderChannelKey(freshEdit), isTrue);
+  }, skip: skip);
+
   test('a record from an account without authority changes nothing', () async {
     final alice = await client('alice');
     // Carol believes she is an admin; nobody else does.
@@ -719,6 +777,14 @@ class _Client {
   Future<MessageEnvelope> send(String text) async {
     final envelope = await service.encryptPayload(
         _conversation, AppPayloadType.text, <String, Object?>{'text': text});
+    senders[envelope.idempotencyKey] = deviceId;
+    await store.removePendingEnvelope(envelope.idempotencyKey);
+    return envelope;
+  }
+
+  Future<MessageEnvelope> act(
+      AppPayloadType type, Map<String, Object?> body) async {
+    final envelope = await service.encryptPayload(_conversation, type, body);
     senders[envelope.idempotencyKey] = deviceId;
     await store.removePendingEnvelope(envelope.idempotencyKey);
     return envelope;

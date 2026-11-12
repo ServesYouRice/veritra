@@ -53,6 +53,11 @@ bool _sameBytes(List<int> a, List<int> b) {
 Uint8List c7ChkCommitOf(List<int> key) =>
     sha256(<int>[...utf8.encode('veritra-c7-chk-v1'), ...key]);
 
+/// The name a local row keeps for the generation its body was sealed under
+/// (decision 7, schema 41): [c7ChkCommitOf] in lowercase hex. It names the
+/// period and the generation at once, and reveals nothing of the key.
+String c7GenTag(List<int> key) => hexOf(c7ChkCommitOf(key));
+
 class _Reader {
   _Reader(this._bytes);
   final Uint8List _bytes;

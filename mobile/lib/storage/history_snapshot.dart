@@ -860,7 +860,8 @@ LocalMessage historyMessageFromInsert(InsertMessageEffect effect) =>
         forwardHops: effect.forwardHops,
         channelId: effect.channelId,
         senderHidden: effect.senderHidden,
-        senderRemoved: effect.senderRemoved ? true : null);
+        senderRemoved: effect.senderRemoved ? true : null,
+        c7Gen: effect.c7Gen);
 
 HistorySnapshot captureHistory(
     {required Session session,

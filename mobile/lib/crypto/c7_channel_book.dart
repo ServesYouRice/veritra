@@ -325,6 +325,13 @@ final class C7ChannelBook {
     return gen?.key == null || gen!.epoch == 0 ? null : gen;
   }
 
+  /// Whether [gen] ([c7GenTag]) names a generation of the current period
+  /// whose key this device holds (decision 7).
+  bool sealedInPeriod(String gen) => gens.any((held) {
+        final key = held.key;
+        return key != null && held.epoch != 0 && c7GenTag(key) == gen;
+      });
+
   /// [pending] once it has waited [c7ProposalTimeout] at [nowMs]: moved to
   /// [late] and reported `timeout`, so the app may propose again. A stale
   /// proposal (its echo came, below the floor) is left for the app.

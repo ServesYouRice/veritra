@@ -993,6 +993,9 @@ abstract class LocalStore {
 
   /// Decrypted history for one conversation, oldest first (D23).
   Future<List<LocalMessage>> loadMessages(String conversationId);
+
+  /// One decrypted row by its key, or null.
+  Future<LocalMessage?> loadMessage(String key);
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
   Future<List<LocalPin>> loadPins(String conversationId);
   Future<Set<String>> loadStarred();
@@ -2527,6 +2530,9 @@ class MemoryLocalStore implements LocalStore {
       _history.messages(conversationId);
 
   @override
+  Future<LocalMessage?> loadMessage(String key) async => _history.message(key);
+
+  @override
   Future<List<LocalPin>> loadPins(String conversationId) async {
     _history.pins.removeWhere(
         (_, p) => p.expiresAt <= DateTime.now().millisecondsSinceEpoch);
@@ -2605,6 +2611,8 @@ class _MemoryMessageHistory {
       <String, LocalMessageReaction>{};
 
   List<LocalMessage> allMessages() => _messages.values.toList(growable: false);
+
+  LocalMessage? message(String key) => _messages[key];
 
   List<LocalMessageReaction> allReactions() =>
       _reactions.values.toList(growable: false);
@@ -3947,6 +3955,10 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<List<LocalMessage>> loadMessages(String conversationId) async =>
       (await _database()).readMessages(conversationId);
+
+  @override
+  Future<LocalMessage?> loadMessage(String key) async =>
+      (await _database()).readMessage(key);
 
   @override
   Future<List<LocalPin>> loadPins(String conversationId) async =>

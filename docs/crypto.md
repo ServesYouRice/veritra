@@ -573,6 +573,20 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C7 targeted actions follow their target (2026-11-12, local schema
+  41):** `local_messages.c7_gen` (nullable text) records the generation a
+  post's body was sealed under, as the lowercase hex of the generation's
+  existing key commitment `sha256("veritra-c7-chk-v1" | CHK_g)`; null is a
+  random key. The sender records it on its own post, a live member when
+  the body key it opened is the current generation's post key. An edit,
+  delete, reaction, pin, poll vote or poll close now seals under the
+  current generation (signed `gen = E_g`) only while the channel is `full`
+  and `ok` and its target's row names a generation of the current period
+  whose key this device holds; otherwise under a random key with `gen = 0`
+  as before (decision 7). This replaces "targeted actions included" in the
+  entry below. The column is never written to a history snapshot. No ABI,
+  wire or server change. Upgrade step idempotent and first in the
+  transaction (tests from 40, 36 and 12).
 - **C7 full mode in the client (2026-11-12):** no ABI, local schema,
   migration or dependency change; behind `c7SealedBodies` (the server's
   `c7_history`, off by default). Records (create, switch) under C4
