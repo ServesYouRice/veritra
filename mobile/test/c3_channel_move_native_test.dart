@@ -67,7 +67,7 @@ class _Authority
         rev: 1,
         owner: 'acct_alice',
         ownerRev: 0,
-        admins: const {},
+        admins: {for (final admin in _admins) admin: 1},
       );
   @override
   bool serverRestrictsPosting(String conversationId, String? channelId) =>
@@ -76,12 +76,18 @@ class _Authority
 
 int _serverIds = 0;
 
+/// Accounts besides the owner (alice) that may record and commit.
+final _admins = <String>{};
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final skip = nativeCryptoSkip();
   late NativeCryptoBindings bindings;
   final home = <String, String>{};
-  setUp(home.clear);
+  setUp(() {
+    home.clear();
+    _admins.clear();
+  });
 
   /// [where]: this client's own view of the channel's home (default: the
   /// shared one the test moves).
@@ -261,6 +267,60 @@ void main() {
         (await dave.store.loadMessages(_shared))
             .where((r) => r.body == 'said in the private channel'),
         hasLength(1));
+  }, skip: skip);
+
+  test(
+      'option A trusts a move only from its actor\'s key in the current tree: '
+      'once the mover has left, a newcomer takes no wrap from it, even '
+      'with the server listing the mover\'s key', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final carol = await client('carol');
+    final dave = await client('dave');
+    _admins.add(carol.accountId);
+    home[_channel] = _private;
+    await alice.service.initializeConversation(
+        _private, <DeviceKeyPackage>[await bob.keyPackage()]);
+    await _accept(alice, [bob], const [], conversation: _private);
+    await deliver(
+        alice,
+        await alice.service
+            .c7ProposeRecord(_private, _channel, full: true, create: true),
+        [bob]);
+    await alice.receive(bob, await bob.send(_private, 'private'));
+    await alice.service.initializeConversation(
+        _shared, <DeviceKeyPackage>[await carol.keyPackage()]);
+    await _accept(alice, [carol], const [], conversation: _shared);
+    home[_channel] = _shared;
+    await alice.service.c7NoteMove(
+        channelId: _channel,
+        fromConversationId: _private,
+        toConversationId: _shared,
+        own: true);
+    final record = await move(alice, _shared, [carol], layoutGeneration: 1);
+    // Carol, an admin, removes alice and then adds dave.
+    await carol.service.stageMembershipChange(_shared,
+        removes: [(accountId: alice.accountId, deviceId: alice.deviceId)]);
+    await _accept(carol, const [], [alice], conversation: _shared);
+    await carol.service
+        .stageMembershipChange(_shared, adds: [await dave.keyPackage()]);
+    await _accept(carol, [dave], const [], conversation: _shared);
+    await dave.receive(carol, await syncFor(carol, _shared));
+    expect(await dave.service.c7ImportDue([_shared]), [_shared]);
+    final aliceKey = await alice.service.currentSigningKey();
+    await dave.service.c7ImportHistory(_shared,
+        groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+        channels: <String, C7HistoryPage>{
+          _channel: C7HistoryPage(<C7HistoryRow>[_served(record, alice, 'h1')],
+              complete: true),
+        },
+        formerKeys: <C7FormerKey>[
+          C7FormerKey(
+              deviceId: alice.deviceId,
+              accountId: alice.accountId,
+              signingKey: Uint8List.fromList(aliceKey)),
+        ]);
+    expect(await dave.service.c7MovedImportsDue(), isEmpty);
   }, skip: skip);
 
   test(
