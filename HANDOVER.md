@@ -9,6 +9,8 @@ C3, C4 (succession, held commits, leave proof D118, removed-device limits D119),
 - **C7 full mode:** records with C4 authority, per-channel chain state, generation keys, `history_sync` slots, keyless/unsure states, newcomer import and prefetch, backward walk. Then **C3 channel conversion** (C7 `move`), which depends on it.
 - **L2 sealed sender** with VOPRF credentials (D122): new crypto dependency on app and server (licence check), and how sealed messages fit C6 franking.
 - **B6:** camera, screen share, S1, S7, Android foreground service, iOS extension, `call_id` extension, restricting `pm_crypto_group_b6_media_key` to call groups (ABI change). Confirm on devices: a forced reconnect sends only encrypted audio; bind/rebind plays and does not crash.
+- **B6 residuals:** a server-driven remote mute/unmute can bypass the user's own mute (media stays encrypted); a call commit keeping a parent-removed member is not refused (send key is held instead).
+- **C4 residual:** another device of the leaving account that commits between the leave notice and the server-side leave voids a real leave (held until a fresh proof or a kick).
 - **K1 / native code:** Kotlin and Swift for the phone second copy were never compiled; build both apps and test the folder pick and iOS export.
 - **L2-1:** an ABI 22 core reading padded blobs is untested.
 - **L3:** real SEV-SNP run with evidence; owner choices: may `sev-snp-measure` be used, pin AMD ARK fingerprints in the repo, which confidential-VM host.
