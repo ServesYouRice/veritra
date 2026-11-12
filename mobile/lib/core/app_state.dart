@@ -286,7 +286,8 @@ class AppState extends ChangeNotifier
     implements
         ConversationAuthority,
         ConversationCommunitySource,
-        VerifiedRoleSource {
+        VerifiedRoleSource,
+        C7ChannelListSource {
   AppState({
     required this.apiClientFactory,
     required this.cryptoService,
@@ -701,6 +702,21 @@ class AppState extends ChangeNotifier
   @override
   String? conversationChannel(String conversationId) =>
       conversations.where((c) => c.id == conversationId).firstOrNull?.channelId;
+
+  /// The community's open and announcement channels routed through
+  /// [conversationId] (C7: the channels a `history_sync` names and a
+  /// newcomer adopts). The server's list: a channel it leaves out is not
+  /// handed over (fails closed); one it adds gets a zero slot.
+  @override
+  List<String> c7Channels(String conversationId) => <String>[
+        for (final channels in channelsByCommunity.values)
+          for (final channel in channels)
+            if (channel.kind != 'private' &&
+                channel.isRouted &&
+                channel.conversationId == conversationId)
+              channel.id,
+      ];
+
   @override
   String? privateGroupChannel(String conversationId) {
     for (final channels in channelsByCommunity.values) {

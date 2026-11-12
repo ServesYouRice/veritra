@@ -32,21 +32,32 @@ import 'native_test_env.dart';
 final _community = 'comm_${'1' * 32}';
 final _channel = 'chan_${'3' * 32}';
 const _conversation = 'conv_private_c7full';
+const _shared = 'conv_shared_c7full';
+final _channelA = 'chan_${'a' * 32}';
+final _channelB = 'chan_${'b' * 32}';
 
-/// A private channel's own group, judged by a role record in which
-/// [admins] (and the owner, alice) may change the history setting.
+/// A private channel's own group ([_conversation]) and a community's
+/// shared group ([_shared], two open channels), judged by a role record in
+/// which [admins] (and the owner, alice) may change the history setting.
 class _Authority
     implements
         ConversationAuthority,
         ConversationCommunitySource,
-        VerifiedRoleSource {
+        VerifiedRoleSource,
+        C7ChannelListSource {
   _Authority(this.admins);
   final Set<String> admins;
 
   @override
-  String? conversationKind(String conversationId) => 'community_channel';
+  String? conversationKind(String conversationId) =>
+      conversationId == _shared ? 'community_shared' : 'community_channel';
   @override
-  String? conversationChannel(String conversationId) => _channel;
+  String? conversationChannel(String conversationId) =>
+      conversationId == _shared ? null : _channel;
+  @override
+  List<String> c7Channels(String conversationId) => conversationId == _shared
+      ? <String>[_channelA, _channelB]
+      : const <String>[];
   @override
   Set<String> memberAccounts(String conversationId) => const {};
   @override
@@ -367,17 +378,82 @@ void main() {
     }
     expect((await alice.view())!.ownNotice, isNull);
   }, skip: skip);
+  test(
+      'in a shared group, records name their channel, one history_sync '
+      'covers every channel, and a newcomer adopts each', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    await alice.service.initializeConversation(
+        _shared, <DeviceKeyPackage>[await bob.keyPackage()]);
+    await _accept(alice, [bob], const [], conversation: _shared);
+    // Channel A goes full; channel B stays members_from_join.
+    final record = await alice.service.c7ProposeRecord(_shared, _channelA,
+        full: true, create: true, layoutGeneration: 1);
+    await alice.store.removePendingEnvelope(record.idempotencyKey);
+    expect((record.cryptoMetadata as Map)['channel_id'], _channelA);
+    expect((record.cryptoMetadata as Map)['community_layout_generation'], 1);
+    await bob.receive(alice, record);
+    await alice.receive(alice, record);
+    expect((await bob.view(_channelA, _shared))!.full, isTrue);
+    expect((await bob.view(_channelB, _shared))!.full, isFalse);
+    // A shared-group channel needs its layout generation.
+    await expectLater(
+        alice.service.c7ProposeRecord(_shared, _channelB, full: true),
+        throwsStateError);
+    // A post in channel A seals under its generation and opens for Bob.
+    final post = await alice.service.encryptChannelPayload(
+        _shared, AppPayloadType.text, <String, Object?>{'text': 'in A'},
+        channelId: _channelA, layoutGeneration: 1);
+    await alice.store.removePendingEnvelope(post.idempotencyKey);
+    _Client.senders[post.idempotencyKey] = alice.deviceId;
+    expect(
+        await bob.sealedUnderChannelKey(post,
+            channelId: _channelA, conversationId: _shared),
+        isTrue);
+    await bob.receive(alice, post);
+    expect((await bob.view(_channelA, _shared))!.status, 'ok');
+    // Dave joins; Alice's history_sync names both channels.
+    await alice.service
+        .stageMembershipChange(_shared, adds: [await dave.keyPackage()]);
+    await _accept(alice, [dave], [bob], conversation: _shared);
+    final due = (await alice.service.c7DueWork([_shared]))
+        .whereType<C7DueSync>()
+        .where((d) => d.forEpoch == 2)
+        .single;
+    final sync = (await alice.service.c7Send(due))!;
+    await alice.store.removePendingEnvelope(sync.idempotencyKey);
+    expect(sync.sealedBody!.length, c7HistorySyncBodyLength(2));
+    expect((sync.cryptoMetadata as Map).containsKey('channel_id'), isFalse);
+    await dave.receive(alice, sync);
+    await bob.receive(alice, sync);
+    final daveA = (await dave.view(_channelA, _shared))!;
+    expect(daveA.full, isTrue);
+    expect(daveA.status, 'ok');
+    expect((await dave.view(_channelB, _shared))!.full, isFalse);
+    expect((await dave.group(_shared)).channels, contains(_channelA));
+    // Dave's post in A seals under the key he was handed.
+    final fromDave = await dave.service.encryptChannelPayload(
+        _shared, AppPayloadType.text, <String, Object?>{'text': 'new here'},
+        channelId: _channelA, layoutGeneration: 1);
+    await dave.store.removePendingEnvelope(fromDave.idempotencyKey);
+    _Client.senders[fromDave.idempotencyKey] = dave.deviceId;
+    expect(
+        await alice.sealedUnderChannelKey(fromDave,
+            channelId: _channelA, conversationId: _shared),
+        isTrue);
+  }, skip: skip);
 }
 
-Future<void> _accept(
-    _Client from, List<_Client> joiners, List<_Client> members) async {
+Future<void> _accept(_Client from, List<_Client> joiners, List<_Client> members,
+    {String conversation = _conversation}) async {
   final item = (await from.store.pendingMlsMessages()).single;
   final bundle = MlsCommitBundle.decode(item.payload);
   await from.service.completeCommitBundle(item);
   for (final member in members) {
     await member.service.processMlsMessage(MlsMessage(
       id: 'mls_${++_serverIds}',
-      conversationId: _conversation,
+      conversationId: conversation,
       senderAccountId: from.accountId,
       senderDeviceId: from.deviceId,
       kind: 'commit',
@@ -390,7 +466,7 @@ Future<void> _accept(
   for (final joiner in joiners) {
     await joiner.service.processMlsMessage(MlsMessage(
       id: 'mls_${++_serverIds}',
-      conversationId: _conversation,
+      conversationId: conversation,
       senderAccountId: from.accountId,
       senderDeviceId: from.deviceId,
       kind: 'welcome',
@@ -476,33 +552,43 @@ class _Client {
 
   Future<int> epoch() async => (await service.groupEpoch(_conversation))!.epoch;
 
-  Future<C7ChannelView?> view() =>
-      service.c7ChannelView(_conversation, _channel);
+  Future<C7ChannelView?> view(
+          [String? channelId, String conversation = _conversation]) =>
+      service.c7ChannelView(conversation, channelId ?? _channel);
 
   Future<C7ChannelBook> book() async => C7ChannelBook.decode(
       await store.loadSetting(c7ChannelSetting(_conversation, _channel)),
       _channel,
       _conversation);
 
-  Future<C7GroupState> group() async => C7GroupState.decode(
-      await store.loadSetting(c7GroupSetting(_conversation)));
+  Future<C7GroupState> group([String conversation = _conversation]) async =>
+      C7GroupState.decode(
+          await store.loadSetting(c7GroupSetting(conversation)));
 
   Future<List<LocalMessage>> rows() => store.loadMessages(_conversation);
 
   /// Whether [sent]'s body opens under the post key of [key], or of any
   /// generation this device holds.
   Future<bool> sealedUnderChannelKey(MessageEnvelope sent,
-      {Uint8List? key}) async {
+      {Uint8List? key,
+      String? channelId,
+      String conversationId = _conversation}) async {
+    final channel = channelId ?? _channel;
     final keys = C7Keys(bindings);
     final candidates = key != null
         ? <Uint8List>[key]
         : <Uint8List>[
-            for (final gen in (await book()).gens)
+            for (final gen in C7ChannelBook.decode(
+                    await store
+                        .loadSetting(c7ChannelSetting(conversationId, channel)),
+                    channel,
+                    conversationId)
+                .gens)
               if (gen.key != null) gen.key!,
           ];
     final aad = C7Keys.bodyAad(
-      conversationId: _conversation,
-      channelId: _channel,
+      conversationId: conversationId,
+      channelId: channel,
       senderDeviceId: _senderOf(sent),
       actionId: sent.idempotencyKey,
     );
@@ -510,7 +596,7 @@ class _Client {
       final bodyKey = keys.postBodyKey(
         chk: chk,
         communityId: _community,
-        channelId: _channel,
+        channelId: channel,
         senderDeviceId: _senderOf(sent),
         actionId: sent.idempotencyKey,
       );
