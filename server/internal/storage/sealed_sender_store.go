@@ -284,6 +284,18 @@ func (s *Store) SaveSealedEnvelope(ctx context.Context, envelope domain.SealedMe
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return domain.SealedMessageEnvelope{}, false, 0, nil, err
 	}
+	// Review H1: a sealed post may not take the idempotency key of an
+	// identified envelope in the same conversation. Every member reads that
+	// key, and the sending device would take a sealed post under it for its
+	// own. Before eligibility, so sealed_not_eligible proves that no envelope
+	// of either kind is stored under (conversation, key).
+	var taken int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM message_envelopes WHERE idempotency_key = ? AND conversation_id = ? LIMIT 1`, envelope.IdempotencyKey, envelope.ConversationID).Scan(&taken)
+	if err == nil {
+		return domain.SealedMessageEnvelope{}, false, 0, nil, ErrIdempotencyConflict
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.SealedMessageEnvelope{}, false, 0, nil, err
+	}
 	if !eligible {
 		return domain.SealedMessageEnvelope{}, false, 0, nil, ErrSealedNotEligible
 	}

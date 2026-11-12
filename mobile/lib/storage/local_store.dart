@@ -35,7 +35,9 @@ export 'encrypted_database.dart'
         FrankReveal,
         ReportKeyPin,
         SealedKeyPin,
+        SealedOwnPost,
         maxSealedTokensPerConversation,
+        sealedOwnPostRetention,
         ProfileKeyEffect;
 export 'profile_records.dart';
 export 'device_list_records.dart';
@@ -559,6 +561,8 @@ class OutgoingApplicationStateTransition {
     this.governanceObservation,
     this.messageEffects = const <MessageEffect>[],
     this.communityInfo = const <CommunityInfoEvent>[],
+    this.sealedOwnPost,
+    this.replacesSealedEntry = false,
   });
 
   final int expectedCounter;
@@ -567,6 +571,15 @@ class OutgoingApplicationStateTransition {
   final MessageEnvelope envelope;
   final String? draftText;
   final GovernanceObservationChange? governanceObservation;
+
+  /// L2-3: the digest (and identified fallback) of a message chosen to go
+  /// sealed, recorded with its outbox entry.
+  final SealedOwnPost? sealedOwnPost;
+
+  /// L2-3 (M2): [envelope] is the identified re-encryption of the queued
+  /// sealed message with the same idempotency key and takes that entry's
+  /// place (attempts reset). Its own copy is already stored.
+  final bool replacesSealedEntry;
 
   /// This device's own copy of what it sent, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
@@ -733,9 +746,16 @@ abstract class LocalStore {
   /// still queued.
   Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope);
 
-  /// Whether a message row with [key] exists in [conversationId] (L2-3,
-  /// recognising this device's own sealed post).
-  Future<bool> hasLocalMessage(String conversationId, String key);
+  /// L2-3: the SHA-256 of the ciphertext this device encrypted to go sealed
+  /// under ([conversationId], [idempotencyKey]), or null. How the device
+  /// recognises the echo of its own sealed post.
+  Future<List<int>?> loadSealedOwnPostDigest(
+      String conversationId, String idempotencyKey);
+
+  /// L2-3 (M2): the payload kept to encrypt a queued sealed message again
+  /// identified, or null once it left the outbox.
+  Future<String?> loadSealedOwnPostFallback(
+      String conversationId, String idempotencyKey);
 
   /// C6 (schema 27): whether [accountId] already reported [messageKey] on
   /// [origin] from this device, and the note that it did. Ids only.
@@ -1252,6 +1272,7 @@ class MemoryLocalStore implements LocalStore {
     _conversationPrefs.clear();
     _frankReveals.clear();
     _sealedTokens.clear();
+    _sealedOwnPosts.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
@@ -1386,6 +1407,7 @@ class MemoryLocalStore implements LocalStore {
   Future<void> removePendingEnvelope(String idempotencyKey) async {
     _outbox.removeWhere((item) => item.idempotencyKey == idempotencyKey);
     _outboxRecords.remove(idempotencyKey);
+    _clearSealedFallback(idempotencyKey);
   }
 
   @override
@@ -1706,9 +1728,34 @@ class MemoryLocalStore implements LocalStore {
     _sealedKeyPins[pin.origin] = pin;
   }
 
+  final Map<String, SealedOwnPost> _sealedOwnPosts = <String, SealedOwnPost>{};
+
+  static String _ownPostKey(String conversationId, String idempotencyKey) =>
+      '$conversationId\u0000$idempotencyKey';
+
   @override
-  Future<bool> hasLocalMessage(String conversationId, String key) async =>
-      _history.messages(conversationId).any((message) => message.key == key);
+  Future<List<int>?> loadSealedOwnPostDigest(
+          String conversationId, String idempotencyKey) async =>
+      _sealedOwnPosts[_ownPostKey(conversationId, idempotencyKey)]
+          ?.ciphertextSha256;
+
+  @override
+  Future<String?> loadSealedOwnPostFallback(
+          String conversationId, String idempotencyKey) async =>
+      _sealedOwnPosts[_ownPostKey(conversationId, idempotencyKey)]
+          ?.fallbackJson;
+
+  void _clearSealedFallback(String idempotencyKey) {
+    for (final entry in _sealedOwnPosts.entries.toList()) {
+      if (entry.value.idempotencyKey == idempotencyKey &&
+          entry.value.fallbackJson != null) {
+        _sealedOwnPosts[entry.key] = SealedOwnPost(
+            conversationId: entry.value.conversationId,
+            idempotencyKey: idempotencyKey,
+            ciphertextSha256: entry.value.ciphertextSha256);
+      }
+    }
+  }
 
   @override
   Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope) async {
@@ -1970,6 +2017,7 @@ class MemoryLocalStore implements LocalStore {
     final nextHistory = _history.copy();
     final nextNamespace = _historyNamespace.copy();
     final envelope = commit.envelope;
+    String? settledOwnPost;
     if (envelope != null) {
       final messages =
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
@@ -2003,11 +2051,16 @@ class MemoryLocalStore implements LocalStore {
             expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
             conversationId: envelope.conversationId,
             channelId: channel as String?);
+        if (envelope.sealed) {
+          settledOwnPost =
+              _ownPostKey(envelope.conversationId, envelope.idempotencyKey);
+        }
       }
     }
     commit.checkCanCommit?.call();
     _history = nextHistory;
     _historyNamespace = nextNamespace;
+    if (settledOwnPost != null) _sealedOwnPosts.remove(settledOwnPost);
     _processedMlsMessages.add(commit.eventKey);
     if (replay) {
       _pauses[commit.conversationId] =
@@ -2090,12 +2143,22 @@ class MemoryLocalStore implements LocalStore {
     if (_pauses.containsKey(transition.envelope.conversationId)) {
       throw ConversationSyncPausedException(transition.envelope.conversationId);
     }
-    final existing = _outboxRecords[transition.envelope.idempotencyKey];
-    if (existing != null) {
-      throw StateError('outbox idempotency key conflict');
-    }
-    if (_outbox.length >= maxPendingEnvelopes) {
-      throw const OutboxFullException();
+    final key = transition.envelope.idempotencyKey;
+    final existing = _outboxRecords[key];
+    if (transition.replacesSealedEntry) {
+      if (existing == null ||
+          !existing.envelope.sealed ||
+          existing.envelope.conversationId !=
+              transition.envelope.conversationId) {
+        throw StateError('no queued sealed entry to replace');
+      }
+    } else {
+      if (existing != null) {
+        throw StateError('outbox idempotency key conflict');
+      }
+      if (_outbox.length >= maxPendingEnvelopes) {
+        throw const OutboxFullException();
+      }
     }
     _applyHistoryEffects(transition.messageEffects);
     _applyGovernanceObservation(transition.governanceObservation);
@@ -2114,13 +2177,39 @@ class MemoryLocalStore implements LocalStore {
         draft.text.trim() == sentText.trim()) {
       _drafts.remove(transition.envelope.conversationId);
     }
-    _outbox.add(transition.envelope);
-    _outboxRecords[transition.envelope.idempotencyKey] = PendingEnvelopeRecord(
-        envelope: transition.envelope,
-        attemptCount: 0,
-        terminal: false,
-        draftText: transition.draftText);
+    if (transition.replacesSealedEntry) {
+      final index = _outbox.indexWhere((item) => item.idempotencyKey == key);
+      _outbox[index] = transition.envelope;
+      _outboxRecords[key] = PendingEnvelopeRecord(
+          envelope: transition.envelope,
+          attemptCount: 0,
+          terminal: false,
+          draftText: existing!.draftText);
+      _clearSealedFallback(key);
+    } else {
+      _outbox.add(transition.envelope);
+      _outboxRecords[key] = PendingEnvelopeRecord(
+          envelope: transition.envelope,
+          attemptCount: 0,
+          terminal: false,
+          draftText: transition.draftText);
+    }
+    final ownPost = transition.sealedOwnPost;
+    if (ownPost != null) {
+      final cutoff = DateTime.now().toUtc().subtract(sealedOwnPostRetention);
+      _sealedOwnPostTimes.removeWhere((name, at) {
+        final stale = at.isBefore(cutoff) &&
+            !_outboxRecords.containsKey(_sealedOwnPosts[name]?.idempotencyKey);
+        if (stale) _sealedOwnPosts.remove(name);
+        return stale;
+      });
+      final name = _ownPostKey(ownPost.conversationId, ownPost.idempotencyKey);
+      _sealedOwnPosts[name] = ownPost;
+      _sealedOwnPostTimes[name] = DateTime.now().toUtc();
+    }
   }
+
+  final Map<String, DateTime> _sealedOwnPostTimes = <String, DateTime>{};
 
   @override
   Future<void> commitLocalMlsState({
@@ -2525,6 +2614,7 @@ class MemoryLocalStore implements LocalStore {
     _conversationPrefs.clear();
     _frankReveals.clear();
     _sealedTokens.clear();
+    _sealedOwnPosts.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
@@ -2954,6 +3044,9 @@ class _MemoryMessageHistory {
     if (target == null ||
         (conversationId != null && target.conversationId != conversationId) ||
         target.channelId != channelId) return;
+    // A row linked to another server id keeps it (L2-3 review H1).
+    final linked = target.serverMessageId;
+    if (linked != null && linked != serverMessageId) return;
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
@@ -3512,8 +3605,16 @@ class SecureLocalStore implements LocalStore {
       (await _database()).writeSealedKeyPin(pin);
 
   @override
-  Future<bool> hasLocalMessage(String conversationId, String key) async =>
-      (await _database()).hasMessageRow(conversationId, key);
+  Future<List<int>?> loadSealedOwnPostDigest(
+          String conversationId, String idempotencyKey) async =>
+      (await _database())
+          .readSealedOwnPostDigest(conversationId, idempotencyKey);
+
+  @override
+  Future<String?> loadSealedOwnPostFallback(
+          String conversationId, String idempotencyKey) async =>
+      (await _database())
+          .readSealedOwnPostFallback(conversationId, idempotencyKey);
 
   @override
   Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope) async =>
@@ -3781,6 +3882,8 @@ class SecureLocalStore implements LocalStore {
         messageEffects: transition.messageEffects,
         communityInfo: transition.communityInfo,
         recordChanges: _recordWrites(transition.state),
+        sealedOwnPost: transition.sealedOwnPost,
+        replacesSealedEntry: transition.replacesSealedEntry,
         leaseKey: _syncLeaseKey,
       );
     } on StateError catch (error) {

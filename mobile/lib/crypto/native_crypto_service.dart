@@ -58,6 +58,7 @@ import 'report_key_announcement.dart';
 import 'k2_transfer_crypto.dart';
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart';
+import 'sha256.dart' show sha256;
 import '../calls/room/native_call_group.dart';
 import '../calls/room/room_ports.dart'
     show CallGroupHandle, ParentGroupView, RoomCryptoSource;
@@ -3119,6 +3120,12 @@ class NativeCryptoService
               state: _sealNext(previous),
               envelope: envelope,
               draftText: draftText,
+              sealedOwnPost: sealedToken == null
+                  ? null
+                  : SealedOwnPost(
+                      conversationId: conversationId,
+                      idempotencyKey: idempotencyKey,
+                      ciphertextSha256: sha256(ciphertext)),
               messageEffects: info || leaveProof || reportKey || deviceAlert
                   ? <MessageEffect>[
                       InsertMessageEffect(
@@ -3283,14 +3290,13 @@ class NativeCryptoService
       }
       // L2-3: this device's own sealed post comes back to it too, and MLS
       // cannot decrypt a message for its own sender. It is recognised by
-      // the idempotency key of a message this device holds under its own
-      // device key (its row, or its outbox entry). A server that replays
-      // that key with other bytes only gets the event skipped, as it could
-      // by dropping it. One not recognised (its row purged) is decrypted
-      // like any other and becomes a D54 placeholder, never a stuck sync.
-      if (sealed &&
-          await _isOwnSealedPost(
-              envelope.conversationId, envelope.idempotencyKey)) {
+      // the digest of the exact ciphertext it encrypted under that key
+      // ([_isOwnSealedPost]), never by the key alone. Anything else is
+      // decrypted like any other post: another member's post under a key
+      // this device used opens as that member's; this device's own bytes
+      // under another key, or a post whose digest is gone, become a D54
+      // placeholder, never a stuck sync.
+      if (sealed && await _isOwnSealedPost(envelope)) {
         envelope = envelope.withSender(_accountId!, _deviceId!);
         onSender?.call(envelope);
       }
@@ -4031,23 +4037,24 @@ class NativeCryptoService
     }
   }
 
-  /// Whether this device holds a message under its own device key and
-  /// [idempotencyKey] in [conversationId]: its own row, or its queued
-  /// envelope (L2-3, recognising its own sealed post).
-  Future<bool> _isOwnSealedPost(
-      String conversationId, String idempotencyKey) async {
-    final deviceId = _deviceId;
-    if (deviceId == null) return false;
-    final key = messageKey(deviceId, idempotencyKey);
-    if (await localStore.hasLocalMessage(conversationId, key)) return true;
-    for (final queued in await localStore.pendingEnvelopes()) {
-      if (queued.idempotencyKey == idempotencyKey &&
-          queued.conversationId == conversationId &&
-          queued.sealed) {
-        return true;
-      }
+  /// Whether [envelope] is this device's own sealed post (L2-3): the device
+  /// recorded, when it encrypted a message to go sealed under this
+  /// conversation and idempotency key, the SHA-256 of the exact ciphertext,
+  /// and the envelope carries those bytes. The key alone proves nothing:
+  /// every member reads it, so a member could put the key of this device's
+  /// identified message on its own sealed post (review H1); the ciphertext
+  /// no one else knows before the post is made.
+  Future<bool> _isOwnSealedPost(ReceivedMessageEnvelope envelope) async {
+    if (_deviceId == null) return false;
+    final digest = await localStore.loadSealedOwnPostDigest(
+        envelope.conversationId, envelope.idempotencyKey);
+    if (digest == null) return false;
+    final actual = sha256(envelope.ciphertext);
+    var difference = digest.length ^ actual.length;
+    for (var i = 0; i < digest.length && i < actual.length; i++) {
+      difference |= digest[i] ^ actual[i];
     }
-    return false;
+    return difference == 0;
   }
 
   ({LocalNoticeOwner owner, int generation})? _captureNoticeOwner(

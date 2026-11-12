@@ -1536,6 +1536,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await (delete(localOutboxEntries)
               ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
             .go();
+        // L2-3: the identified fallback of a sealed message is kept only
+        // while it is queued; the digest stays for its echo.
+        await _clearSealedFallbackInTransaction(idempotencyKey);
         await (delete(localMetadata)
               ..where((table) =>
                   table.name.equals(_outboxDraftName(idempotencyKey))))
@@ -1824,17 +1827,26 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   .write(LocalMessagesCompanion(expiresAt: Value(merged)));
             }
           }
+          // A row already linked to another server id keeps it: an echo
+          // never re-points it (L2-3 review H1).
           await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(ownMessageKey) &
                     table.conversationId.equals(conversationId) &
                     (channel == null
                         ? table.channelId.isNull()
-                        : table.channelId.equals(channel as String))))
+                        : table.channelId.equals(channel as String)) &
+                    (table.serverMessageId.isNull() |
+                        table.serverMessageId.equals(envelope.id))))
               .write(LocalMessagesCompanion(
             serverMessageId: Value(envelope.id),
             state: const Value(LocalMessageState.sent),
           ));
+          // L2-3: an own sealed post's digest has done its work.
+          final echoKey = echo['idempotency_key'];
+          if (echo['sealed'] == true && echoKey is String) {
+            await _deleteSealedOwnPostInTransaction(conversationId, echoKey);
+          }
         }
         final previousCursor = await (select(localSyncStates)
               ..where((table) => table.singleton.equals(1)))
@@ -2008,6 +2020,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     GovernanceObservationChange? governanceObservation,
+    SealedOwnPost? sealedOwnPost,
+    bool replacesSealedEntry = false,
     String? leaseKey,
   }) =>
       transaction(() async {
@@ -2025,15 +2039,27 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         }
         // Nothing is encrypted for a paused conversation (C1 P1).
         await _assertConversationNotPausedInTransaction(conversationId);
-        if (await (select(localOutboxEntries)
-                  ..where(
-                      (table) => table.idempotencyKey.equals(idempotencyKey)))
-                .getSingleOrNull() !=
-            null) {
-          throw StateError('outbox idempotency key conflict');
-        }
-        if (await outboxCount() >= maxEntries) {
-          throw StateError('outbox_full');
+        final queued = await (select(localOutboxEntries)
+              ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .getSingleOrNull();
+        if (replacesSealedEntry) {
+          // L2-3 (M2): the identified re-encryption of a queued sealed
+          // message takes its entry's place; nothing else may.
+          final previous = queued == null
+              ? null
+              : jsonDecode(queued.payloadJson) as Map<String, Object?>;
+          if (previous == null ||
+              queued!.conversationId != conversationId ||
+              previous['l2_sealed_token'] == null) {
+            throw StateError('no queued sealed entry to replace');
+          }
+        } else {
+          if (queued != null) {
+            throw StateError('outbox idempotency key conflict');
+          }
+          if (await outboxCount() >= maxEntries) {
+            throw StateError('outbox_full');
+          }
         }
         await _applyGovernanceObservation(governanceObservation);
         await _applyCryptoRecordChanges(recordChanges);
@@ -2045,14 +2071,30 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             sealedState: Uint8List.fromList(sealedState),
           ),
         );
-        await into(localOutboxEntries).insert(
-          LocalOutboxEntriesCompanion.insert(
-            idempotencyKey: idempotencyKey,
-            conversationId: conversationId,
-            queuedAt: DateTime.now().microsecondsSinceEpoch,
-            payloadJson: payloadJson,
-          ),
-        );
+        if (replacesSealedEntry) {
+          await (update(localOutboxEntries)
+                ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+              .write(LocalOutboxEntriesCompanion(
+            payloadJson: Value(payloadJson),
+            attemptCount: const Value(0),
+            nextAttemptAt: const Value(null),
+            failureClass: const Value(null),
+            terminal: const Value(false),
+          ));
+          await _clearSealedFallbackInTransaction(idempotencyKey);
+        } else {
+          await into(localOutboxEntries).insert(
+            LocalOutboxEntriesCompanion.insert(
+              idempotencyKey: idempotencyKey,
+              conversationId: conversationId,
+              queuedAt: DateTime.now().microsecondsSinceEpoch,
+              payloadJson: payloadJson,
+            ),
+          );
+        }
+        if (sealedOwnPost != null) {
+          await _writeSealedOwnPostInTransaction(sealedOwnPost);
+        }
         if (draftText != null) {
           await _writeMetadataInTransaction(
               _outboxDraftName(idempotencyKey), draftText);

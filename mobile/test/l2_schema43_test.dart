@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/models.dart';
@@ -148,6 +150,65 @@ void main() {
     addTearDown(db.close);
     expect((await db.readSealedKeyPin(_origin))!.keyId, 'a' * 32);
     expect((await db.readFrankReveal('dev_b:act1'))!.envelopeId, 'msg_1');
+  });
+
+  // Review H1, the database half: an own echo never re-points a row that
+  // is already linked to another server id, and a sealed echo settles the
+  // digest of the own post.
+  test('an own echo keeps a linked server id and settles the digest', () async {
+    final db = EncryptedLocalDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.into(db.localMessages).insert(LocalMessagesCompanion.insert(
+          key: 'dev_alice:key_1',
+          serverMessageId: const Value('srv_1'),
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_alice',
+          senderDeviceId: 'dev_alice',
+          kind: 'text',
+          createdAt: 1,
+          state: 'sent',
+        ));
+    String echo(String id, {bool sealed = false}) =>
+        jsonEncode(<String, Object?>{
+          'id': id,
+          'conversation_id': 'conv_1',
+          'idempotency_key': 'key_1',
+          'crypto_metadata': <String, Object?>{},
+          'created_at': '2026-11-12T00:00:00Z',
+          if (sealed) 'sealed': true,
+        });
+    await db.commitSyncEvent(
+      eventKey: 'application:1:srv_2',
+      conversationId: 'conv_1',
+      expectedCursor: 0,
+      cursor: 1,
+      envelope: (
+        id: 'srv_2',
+        conversationId: 'conv_1',
+        payloadJson: echo('srv_2')
+      ),
+      ownMessageKey: 'dev_alice:key_1',
+    );
+    final row = await (db.select(db.localMessages)).getSingle();
+    expect(row.serverMessageId, 'srv_1');
+    await db.customStatement(
+        'INSERT INTO local_sealed_own_posts (conversation_id, idempotency_key, '
+        'ciphertext_sha256, fallback_json, created_at) VALUES (?, ?, ?, ?, ?)',
+        <Object?>['conv_1', 'key_1', Uint8List(32), '{}', 1]);
+    expect(await db.readSealedOwnPostDigest('conv_1', 'key_1'), hasLength(32));
+    await db.commitSyncEvent(
+      eventKey: 'application:2:srv_1',
+      conversationId: 'conv_1',
+      expectedCursor: 1,
+      cursor: 2,
+      envelope: (
+        id: 'srv_1',
+        conversationId: 'conv_1',
+        payloadJson: echo('srv_1', sealed: true)
+      ),
+      ownMessageKey: 'dev_alice:key_1',
+    );
+    expect(await db.readSealedOwnPostDigest('conv_1', 'key_1'), isNull);
   });
 
   test('a pin refuses malformed keys', () async {

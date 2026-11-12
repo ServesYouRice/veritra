@@ -145,6 +145,73 @@ void main() {
     expect(reread.sealed, isTrue);
   }, skip: skip);
 
+  // Review H1: a member copies the idempotency key of the victim's
+  // identified message onto its own sealed post. The victim must neither
+  // take it for its own post (hiding it) nor re-point its own row at it.
+  test('a sealed post under the key of an own identified message is not own',
+      () async {
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    final mine = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'alice says hi'});
+    expect(mine.sealed, isFalse);
+    final echo = alice.envelopeFrom(alice, mine);
+    await alice.service.processApplicationMessage(echo, alice.nextEvent());
+    expect((await alice.history()).single.serverMessageId, echo.id);
+    await bob.receive(alice, mine);
+    bob.tokens.add(_token());
+    final attack = await bob
+        .send(AppPayloadType.text, <String, Object?>{'text': 'hidden'});
+    expect(attack.sealed, isTrue);
+    final forged = ReceivedMessageEnvelope.fromJson(<String, Object?>{
+      'id': 'sealed_attack',
+      'conversation_id': attack.conversationId,
+      'idempotency_key': mine.idempotencyKey,
+      'ciphertext': base64Encode(attack.ciphertext),
+      'crypto_protocol': attack.cryptoProtocol,
+      'crypto_metadata': attack.cryptoMetadata,
+      'frank_commit': base64Encode(attack.frankCommit!),
+      'sealed': true,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    final opened = await alice.service
+        .processSealedApplicationMessage(forged, alice.nextEvent());
+    // Not taken for Alice's own post: MLS names Bob's device (Bob's action
+    // id inside differs from the clear key, so it is no readable message).
+    expect(opened.senderDeviceId, isNot('dev_alice'));
+    final rows = await alice.history();
+    final own = rows.singleWhere((row) => row.senderDeviceId == 'dev_alice');
+    expect(own.body, 'alice says hi');
+    expect(own.serverMessageId, echo.id);
+    expect(rows.any((row) => row.serverMessageId == 'sealed_attack'), isTrue);
+  }, skip: skip);
+
+  // Review H1, the store half: an own echo never re-points a row that is
+  // already linked to another server id.
+  test('an own echo never overwrites a linked server id', () async {
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    final mine = await alice
+        .send(AppPayloadType.text, <String, Object?>{'text': 'linked'});
+    final echo = alice.envelopeFrom(alice, mine);
+    await alice.service.processApplicationMessage(echo, alice.nextEvent());
+    final again = ReceivedMessageEnvelope(
+      id: 'srv_other',
+      conversationId: echo.conversationId,
+      senderAccountId: echo.senderAccountId,
+      senderDeviceId: echo.senderDeviceId,
+      idempotencyKey: echo.idempotencyKey,
+      ciphertext: echo.ciphertext,
+      cryptoProtocol: echo.cryptoProtocol,
+      createdAt: echo.createdAt,
+      frankCommit: echo.frankCommit,
+    );
+    await alice.service.processApplicationMessage(again, alice.nextEvent());
+    expect((await alice.history()).single.serverMessageId, echo.id);
+  }, skip: skip);
+
   test('an own sealed post the device no longer holds becomes a placeholder',
       () async {
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');

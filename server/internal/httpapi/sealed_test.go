@@ -680,3 +680,39 @@ func TestSealedEnvelopesExpireAndArePruned(t *testing.T) {
 		t.Fatalf("dead token rows kept: spent=%d issued=%d", oldSpent, oldIssued)
 	}
 }
+
+// Review H1: a member reads every idempotency key in the conversation, so a
+// sealed post may not take the key of an identified envelope there (the
+// sending device would take it for its own post), and an identified post
+// may not take the key of a sealed one. Both answer idempotency_conflict.
+func TestSealedAndIdentifiedKeysDoNotCross(t *testing.T) {
+	handler, ownerToken, _, _ := sealedHandler(t, nil)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedcross")
+	conversationID := createConversation(t, handler, ownerToken)
+	addMember(t, handler, ownerToken, conversationID, memberID)
+	sealedReaders(t, handler, ownerToken, memberToken)
+	_, info := sealedInfo(t, handler, memberToken, conversationID)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2)
+	if status != http.StatusOK {
+		t.Fatalf("tokens status=%d body=%s", status, body)
+	}
+	const identifiedKey = "identified-key-00000000001"
+	createMessage(t, handler, ownerToken, conversationID, identifiedKey, []byte("owner ciphertext"))
+	status, response := postSealed(t, handler, sealedPostBody(conversationID, tokens[0], identifiedKey, []byte("member ciphertext"), nil))
+	if status != http.StatusConflict || !strings.Contains(string(response), "idempotency_conflict") {
+		t.Fatalf("sealed under an identified key status=%d body=%s", status, response)
+	}
+	// The refused post spent nothing.
+	if status, response := postSealed(t, handler, sealedPostBody(conversationID, tokens[0], sealedKey1, []byte("member ciphertext"), nil)); status != http.StatusCreated {
+		t.Fatalf("post status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodPost, "/api/v1/messages/envelopes", ownerToken, map[string]interface{}{
+		"conversation_id": conversationID,
+		"idempotency_key": sealedKey1,
+		"ciphertext":      base64.StdEncoding.EncodeToString([]byte("owner again")),
+		"crypto_protocol": "mls10-openmls-v1",
+	})
+	if status != http.StatusConflict || !strings.Contains(string(response), "idempotency_conflict") {
+		t.Fatalf("identified under a sealed key status=%d body=%s", status, response)
+	}
+}

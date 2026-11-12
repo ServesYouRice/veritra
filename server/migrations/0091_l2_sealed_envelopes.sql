@@ -18,6 +18,12 @@ CREATE TABLE IF NOT EXISTS sealed_message_envelopes (
 CREATE INDEX IF NOT EXISTS idx_sealed_message_envelopes_expires
   ON sealed_message_envelopes(expires_at) WHERE expires_at IS NOT NULL;
 
+-- A sealed post may not take the idempotency key of an identified envelope
+-- in the same conversation, and the reverse (review H1); this index serves
+-- the identified side of that lookup.
+CREATE INDEX IF NOT EXISTS idx_message_envelopes_idempotency_key
+  ON message_envelopes(idempotency_key);
+
 CREATE TRIGGER IF NOT EXISTS sealed_message_envelopes_frank_commit_write_once
 BEFORE UPDATE OF frank_commit ON sealed_message_envelopes
 WHEN NEW.frank_commit IS NOT OLD.frank_commit

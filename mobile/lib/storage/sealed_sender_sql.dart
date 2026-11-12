@@ -13,6 +13,14 @@ part of 'encrypted_database.dart';
 // - local_sealed_key_pins: the server's POPRF public key, pinned per origin
 //   on first use, and a changed key it served since, waiting for a person to
 //   accept it in Settings.
+// - local_sealed_own_posts: for each message this device chose to send
+//   sealed, the SHA-256 of the exact ciphertext it encrypted, so the echo
+//   of its own post is recognised by bytes no other member can produce
+//   beforehand (never by the idempotency key alone, which every member
+//   reads), and, while the message is queued, the plaintext needed to send
+//   it identified instead after the server proved nothing sealed was stored
+//   (`sealed_not_eligible`). The plaintext is cleared when the outbox entry
+//   goes.
 // - local_frank_reveals gains the sealed message's franking signature `s`,
 //   the sender leaf's signing key it verified under, and the sender account
 //   MLS authenticated, so a report of a sealed message can be checked.
@@ -58,13 +66,46 @@ class SealedKeyPin {
   String toString() => 'SealedKeyPin($origin, $keyId)';
 }
 
+/// L2-3: one message this device encrypted to go sealed: the digest of its
+/// ciphertext (how its echo is recognised as its own) and, while it is
+/// queued, [fallbackJson], the payload to encrypt again identified (see
+/// [SealedFallback]). Never in a backup, a snapshot or a K2 transfer.
+class SealedOwnPost {
+  SealedOwnPost({
+    required this.conversationId,
+    required this.idempotencyKey,
+    required List<int> ciphertextSha256,
+    this.fallbackJson,
+  }) : ciphertextSha256 = List<int>.unmodifiable(ciphertextSha256) {
+    if (this.ciphertextSha256.length != 32) {
+      throw const FormatException('invalid sealed own post digest');
+    }
+  }
+
+  final String conversationId;
+  final String idempotencyKey;
+  final List<int> ciphertextSha256;
+  final String? fallbackJson;
+
+  @override
+  String toString() => 'SealedOwnPost($conversationId)';
+}
+
+/// How long the digest of an own sealed post whose outbox entry is gone is
+/// kept for a late echo.
+const Duration sealedOwnPostRetention = Duration(days: 30);
+
 /// Most unspent tokens kept for one conversation: today's and tomorrow's
 /// batch of 32, with room for a refill.
 const int maxSealedTokensPerConversation = 128;
 
 extension SealedSenderSql on EncryptedLocalDatabase {
   /// The tables schema 43 adds (for fixtures that build older databases).
-  static const tables = ['local_sealed_tokens', 'local_sealed_key_pins'];
+  static const tables = [
+    'local_sealed_tokens',
+    'local_sealed_key_pins',
+    'local_sealed_own_posts',
+  ];
 
   Future<void> _createSealedSender() async {
     await customStatement('CREATE TABLE IF NOT EXISTS local_sealed_tokens ('
@@ -85,6 +126,13 @@ extension SealedSenderSql on EncryptedLocalDatabase {
         'pinned_at INTEGER NOT NULL,'
         'seen_key_id TEXT CHECK(seen_key_id IS NULL OR length(seen_key_id)=32),'
         'seen_public_key BLOB CHECK(seen_public_key IS NULL OR length(seen_public_key)=32))');
+    await customStatement('CREATE TABLE IF NOT EXISTS local_sealed_own_posts ('
+        'conversation_id TEXT NOT NULL CHECK(length(conversation_id) BETWEEN 1 AND 128),'
+        'idempotency_key TEXT NOT NULL CHECK(length(idempotency_key) BETWEEN 1 AND 128),'
+        'ciphertext_sha256 BLOB NOT NULL CHECK(length(ciphertext_sha256)=32),'
+        'fallback_json TEXT,'
+        'created_at INTEGER NOT NULL,'
+        'PRIMARY KEY (conversation_id, idempotency_key)) WITHOUT ROWID');
     // local_frank_reveals exists from schema 19 (or was just created with
     // these columns by onCreate's _createFrankReveals).
     final columns = await customSelect(
@@ -108,8 +156,71 @@ extension SealedSenderSql on EncryptedLocalDatabase {
     }
   }
 
-  Future<void> _clearSealedTokens() =>
-      customStatement('DELETE FROM local_sealed_tokens');
+  Future<void> _clearSealedTokens() async {
+    await customStatement('DELETE FROM local_sealed_tokens');
+    await customStatement('DELETE FROM local_sealed_own_posts');
+  }
+
+  /// Records [post] (inside the outgoing transaction), and drops digests
+  /// older than [sealedOwnPostRetention] whose outbox entry is gone.
+  Future<void> _writeSealedOwnPostInTransaction(SealedOwnPost post) async {
+    final now = DateTime.now().toUtc().millisecondsSinceEpoch;
+    await customStatement(
+        'DELETE FROM local_sealed_own_posts WHERE created_at < ? AND '
+        'idempotency_key NOT IN (SELECT idempotency_key FROM local_outbox_entries)',
+        <Object?>[now - sealedOwnPostRetention.inMilliseconds]);
+    await customStatement(
+        'INSERT OR REPLACE INTO local_sealed_own_posts '
+        '(conversation_id, idempotency_key, ciphertext_sha256, fallback_json, created_at) '
+        'VALUES (?, ?, ?, ?, ?)',
+        <Object?>[
+          post.conversationId,
+          post.idempotencyKey,
+          Uint8List.fromList(post.ciphertextSha256),
+          post.fallbackJson,
+          now,
+        ]);
+  }
+
+  /// The digest of the ciphertext this device sent sealed under
+  /// ([conversationId], [idempotencyKey]), or null.
+  Future<List<int>?> readSealedOwnPostDigest(
+      String conversationId, String idempotencyKey) async {
+    final row = await customSelect(
+        'SELECT ciphertext_sha256 FROM local_sealed_own_posts '
+        'WHERE conversation_id = ? AND idempotency_key = ?',
+        variables: [
+          Variable.withString(conversationId),
+          Variable.withString(idempotencyKey),
+        ]).getSingleOrNull();
+    return row?.read<Uint8List>('ciphertext_sha256');
+  }
+
+  /// The identified fallback payload kept for a queued sealed message.
+  Future<String?> readSealedOwnPostFallback(
+      String conversationId, String idempotencyKey) async {
+    final row = await customSelect(
+        'SELECT fallback_json FROM local_sealed_own_posts '
+        'WHERE conversation_id = ? AND idempotency_key = ?',
+        variables: [
+          Variable.withString(conversationId),
+          Variable.withString(idempotencyKey),
+        ]).getSingleOrNull();
+    return row?.readNullable<String>('fallback_json');
+  }
+
+  Future<void> _clearSealedFallbackInTransaction(String idempotencyKey) =>
+      customStatement(
+          'UPDATE local_sealed_own_posts SET fallback_json = NULL '
+          'WHERE idempotency_key = ?',
+          <Object?>[idempotencyKey]);
+
+  Future<void> _deleteSealedOwnPostInTransaction(
+          String conversationId, String idempotencyKey) =>
+      customStatement(
+          'DELETE FROM local_sealed_own_posts '
+          'WHERE conversation_id = ? AND idempotency_key = ?',
+          <Object?>[conversationId, idempotencyKey]);
 
   /// Keeps [tokens] (ignoring any not well formed and any nonce already
   /// held), up to [maxSealedTokensPerConversation] per conversation.
@@ -260,16 +371,6 @@ extension SealedSenderSql on EncryptedLocalDatabase {
               ? null
               : Uint8List.fromList(pin.seenPublicKey!),
         ]);
-  }
-
-  Future<bool> hasMessageRow(String conversationId, String key) async {
-    final row = await (select(localMessages)
-          ..where((table) =>
-              table.key.equals(key) &
-              table.conversationId.equals(conversationId))
-          ..limit(1))
-        .getSingleOrNull();
-    return row != null;
   }
 
   /// Rewrites the queued envelope [idempotencyKey] (its sealed token changed)

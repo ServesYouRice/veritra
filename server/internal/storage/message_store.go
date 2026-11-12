@@ -92,6 +92,17 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	// L2-3: an idempotency key that names a sealed post in this conversation
+	// is taken (the sealed route refuses the reverse). An app sends a sealed
+	// message identified only after the sealed route proved nothing was
+	// stored under its key; a delayed sealed attempt that landed since makes
+	// the identified copy a conflict here, never a second message.
+	var sealedTaken int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM sealed_message_envelopes WHERE conversation_id = ? AND idempotency_key = ?`, envelope.ConversationID, envelope.IdempotencyKey).Scan(&sealedTaken); err == nil {
+		return domain.MessageEnvelope{}, false, 0, ErrIdempotencyConflict
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
 	// C0: a post in a shared community conversation must name one of its open
 	// or announcement channels; elsewhere it must name none.
 	// C7 (while on) adds group-level envelopes with no channel keys, and the
