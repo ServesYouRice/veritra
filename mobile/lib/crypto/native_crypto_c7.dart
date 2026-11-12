@@ -420,6 +420,7 @@ extension _C7Engine on NativeCryptoService {
     ReceivedMessageEnvelope envelope,
     DecryptedAppPayload payload,
     Uint8List trailer, {
+    required int? epoch,
     required LeafVerdict? verdict,
   }) async {
     final conversationId = envelope.conversationId;
@@ -440,6 +441,17 @@ extension _C7Engine on NativeCryptoService {
     if (verdict != LeafVerdict.approved) return _c7None;
     final forEpoch = payload.body['for_epoch']! as int;
     var group = await _c7LoadGroup(conversationId);
+    // `for_epoch` is the epoch a membership commit produced (decision 5):
+    // one this device merged (its snapshot, its floor) or joined at, and
+    // never after the epoch MLS authenticated for the message itself. Any
+    // other value could clear `unsure` or settle a duty with no commit.
+    if (epoch == null ||
+        forEpoch > epoch ||
+        !(group.snapshots.containsKey(forEpoch) ||
+            forEpoch == group.floor ||
+            forEpoch == group.joinEpoch)) {
+      return _c7None;
+    }
     final known = _c7KnownChannels(conversationId, group);
     final mine = group.snapshots[forEpoch];
     var matches = mine != null;

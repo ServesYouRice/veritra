@@ -3423,6 +3423,8 @@ class NativeCryptoService
                       : await _c7Miss(envelope.conversationId),
                   AppPayloadType.historySync => await _c7ApplySync(
                       envelope, payload, opened.trailer,
+                      epoch: mlsMessageEpoch(
+                          envelope.ciphertext, envelope.conversationId),
                       verdict: senderVerdict),
                   AppPayloadType.historySyncRequest => opened.trailer.isEmpty
                       ? await _c7ApplyRequest(envelope.conversationId, payload)

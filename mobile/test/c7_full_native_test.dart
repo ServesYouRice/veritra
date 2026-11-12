@@ -278,6 +278,38 @@ void main() {
   }, skip: skip);
 
   test(
+      'a history_sync for an epoch no membership commit produced clears '
+      'nothing', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    await bob.receive(alice, await alice.send('lost'), body: const <int>[]);
+    expect((await bob.view())!.status, 'unsure');
+    // A member (here Alice's device, tampered with) sends her own head and
+    // key in a history_sync claiming a later commit that never happened.
+    final now = await alice.epoch();
+    final forged = (await alice.group()).withSnapshot(
+        now + 5, {_channel: (await alice.book()).snapshot(now)}, 0);
+    await alice.store
+        .saveSetting(c7GroupSetting(_conversation), forged.encode());
+    final sync =
+        (await alice.service.c7Send(C7DueSync(_conversation, now + 5)))!;
+    await alice.store.removePendingEnvelope(sync.idempotencyKey);
+    await bob.receive(alice, sync);
+    expect((await bob.view())!.status, 'unsure');
+    // The same slots for the real commit epoch do not clear it either: the
+    // miss happened in that epoch, so only a later commit can (I3).
+    final real = (await alice.group())
+        .withSnapshot(now, {_channel: (await alice.book()).snapshot(now)}, 0);
+    await alice.store.saveSetting(c7GroupSetting(_conversation), real.encode());
+    final again = (await alice.service.c7Send(C7DueSync(_conversation, now)))!;
+    await alice.store.removePendingEnvelope(again.idempotencyKey);
+    await bob.receive(alice, again);
+    expect((await bob.view())!.status, 'unsure');
+  }, skip: skip);
+
+  test(
       'a newcomer added by an unsure committer is keyless and seals under '
       'random keys', () async {
     final alice = await client('alice');
