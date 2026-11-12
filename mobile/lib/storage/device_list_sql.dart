@@ -9,7 +9,8 @@ part of 'encrypted_database.dart';
 //   `list_hash`, the list identity, the head statement), a state (`ok` or
 //   `conflict`) and when it was last checked.
 // - `local_device_list_keys`: every pair the pinned chain ever listed, with
-//   the version that added it and the one that removed it (0 while listed).
+//   the version that added it and the one that removed it (0 while listed),
+//   and (schema 43, L1 format 2) the franking key the chain gave it.
 // - `local_device_list_conflicts`: the two statements that prove a fork.
 // - `local_approval_leaves`: per conversation, every leaf of its group as
 //   this device judged it. A conversation is held while any row is not
@@ -89,6 +90,7 @@ extension DeviceListSql on EncryptedLocalDatabase {
             signingKey: row.read<Uint8List>('signing_key'),
             addedVersion: row.read<int>('added_version'),
             removedVersion: row.read<int>('removed_version'),
+            frankKey: row.readNullable<Uint8List>('frank_key'),
           ),
       ],
     );
@@ -135,14 +137,15 @@ extension DeviceListSql on EncryptedLocalDatabase {
         for (final key in pin.keys) {
           await customStatement(
               'INSERT INTO local_device_list_keys (account_id, device_id, '
-              'signing_key, added_version, removed_version) '
-              'VALUES (?, ?, ?, ?, ?)',
+              'signing_key, added_version, removed_version, frank_key) '
+              'VALUES (?, ?, ?, ?, ?, ?)',
               [
                 pin.accountId,
                 Uint8List.fromList(key.deviceId),
                 Uint8List.fromList(key.signingKey),
                 key.addedVersion,
                 key.removedVersion,
+                key.frankKey == null ? null : Uint8List.fromList(key.frankKey!),
               ]);
         }
         return true;

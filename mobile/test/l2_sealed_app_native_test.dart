@@ -1,5 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/models.dart';
@@ -18,15 +21,25 @@ import 'package:private_messenger/storage/local_store.dart';
 import 'native_test_env.dart';
 import 'l1_test_lists.dart';
 
-/// L2-3 app step on the real core: messages chosen to go sealed are signed,
+/// L2-3 app step on the real core: messages chosen to go sealed carry a tag
+/// for each owner key the sender pinned (designated-verifier franking), are
 /// opened with the sender MLS names, recognised when they come back to the
 /// sending device, and refused when sealed and identified forms are mixed.
 void main() {
   // Skipped without the library, unless VERITRA_REQUIRE_NATIVE_CRYPTO=1.
   final skip = nativeCryptoSkip();
   late NativeCryptoBindings bindings;
-  setUp(
-      () => bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+  setUp(() {
+    bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    // Two instance owners' report keys the senders pinned.
+    _ownerSeeds = <Uint8List>[
+      bindings.generateReportKeySeed(),
+      bindings.generateReportKeySeed(),
+    ];
+    _ownerKeys = <Uint8List>[
+      for (final seed in _ownerSeeds) bindings.reportPublicKey(seed),
+    ];
+  });
 
   test('a sealed message reaches the other member with the MLS sender',
       () async {
@@ -67,22 +80,40 @@ void main() {
     expect(row.senderDeviceId, 'dev_bob');
     expect(row.kind, isNot(LocalMessageKind.invalid));
 
-    // C6: the reveal keeps s, the leaf key it verified under and the sender
-    // account, so the message can still be reported.
+    // C6: the reveal keeps the designation and the sender account, so the
+    // message can still be reported; it holds no signature anyone could
+    // check, only one tag per pinned owner key.
     final reveal = (await alice.store.loadFrankReveal(row.key))!;
     expect(reveal.sealed, isTrue);
     expect(reveal.senderAccountId, 'acct_bob');
-    expect(reveal.signingKey, await bob.service.currentSigningKey());
+    expect(reveal.designation,
+        hasLength(2 * NativeCryptoBindings.l2FrankEntryBytes));
+    final bobFrankKey = await bob.service.currentFrankKey();
+    for (final seed in _ownerSeeds) {
+      expect(
+          bindings.l2FrankDvVerify(
+            seed: seed,
+            senderFrankKey: bobFrankKey,
+            conversationId: 'conv_1',
+            accountId: 'acct_bob',
+            deviceId: 'dev_bob',
+            commit: sent.frankCommit!,
+            designation: reveal.designation!,
+          ),
+          1);
+    }
+    // Alice's own report key (were she an owner nobody pinned) is not named.
     expect(
-        bindings.l2FrankVerify(
-          signingKey: reveal.signingKey!,
+        bindings.l2FrankDvVerify(
+          seed: bindings.generateReportKeySeed(),
+          senderFrankKey: bobFrankKey,
           conversationId: 'conv_1',
           accountId: 'acct_bob',
           deviceId: 'dev_bob',
           commit: sent.frankCommit!,
-          signature: reveal.signature!,
+          designation: reveal.designation!,
         ),
-        isTrue);
+        2);
   }, skip: skip);
 
   test('with no token the message goes identified, and stays so', () async {
@@ -245,8 +276,7 @@ void main() {
     expect(placeholder.senderAccountId, isEmpty);
   }, skip: skip);
 
-  test('a payload signed for sealed is invalid when it comes identified',
-      () async {
+  test('a designated payload is invalid when it comes identified', () async {
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
     await _startConversation(alice, bob);
@@ -261,19 +291,64 @@ void main() {
     expect(await alice.store.loadFrankReveal(row.key), isNull);
   }, skip: skip);
 
-  test('a franked payload without s is invalid when it comes sealed', () async {
+  // With no owner key pinned the message still goes sealed, in the plain
+  // form: it is provable to nobody (owner decision 4).
+  test('with no pinned owner key a sealed message goes in the plain form',
+      () async {
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
     await _startConversation(alice, bob);
-    final sent = await bob
-        .send(AppPayloadType.text, <String, Object?>{'text': 'unsigned'});
-    expect(sent.sealed, isFalse);
-    final opened = await alice.service.processSealedApplicationMessage(
+    bob.tokens.add(_token());
+    bob.tokens.frankContext = SealedFrankContext(
+        listedKey: await bob.service.currentFrankKey(),
+        ownerKeys: const <List<int>>[]);
+    final sent =
+        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'plain'});
+    expect(sent.sealed, isTrue);
+    await alice.service.processSealedApplicationMessage(
         alice.sealedFrom(sent), alice.nextEvent());
-    expect(opened.senderAccountId, 'acct_bob');
     final row = (await alice.history()).single;
-    expect(row.kind, LocalMessageKind.invalid);
-    expect(row.body, isNull);
+    expect(row.body, 'plain');
+    expect(row.kind, isNot(LocalMessageKind.invalid));
+    final reveal = (await alice.store.loadFrankReveal(row.key))!;
+    expect(reveal.sealed, isTrue);
+    // The plain form is kept as no designation.
+    expect(reveal.designation ?? const <int>[], isEmpty);
+    expect(ReportBody.fromReveal(reveal).designation, isEmpty);
+  }, skip: skip);
+
+  // Fail safe: without a verified franking context (no listed key) the
+  // token goes back and the message goes identified.
+  test('with no franking context the message goes identified', () async {
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    bob.tokens.add(_token());
+    bob.tokens.frankContext = null;
+    final sent =
+        await bob.send(AppPayloadType.text, <String, Object?>{'text': 'safe'});
+    expect(sent.sealed, isFalse);
+    expect(bob.tokens.held, 1);
+    await alice.receive(bob, sent);
+    expect((await alice.history()).single.body, 'safe');
+  }, skip: skip);
+
+  // A context naming a key that is not this device's own fails the send
+  // closed (the listed key is the device's fixed key, or nothing is sent).
+  test('a listed key that is not the own franking key refuses the send',
+      () async {
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    bob.tokens.add(_token());
+    bob.tokens.frankContext = SealedFrankContext(
+        listedKey: await alice.service.currentFrankKey(),
+        ownerKeys: _ownerKeys);
+    await expectLater(
+        bob.send(AppPayloadType.text, <String, Object?>{'text': 'no'}),
+        throwsA(anything));
+    expect(bob.tokens.held, 1);
+    expect(await alice.history(), isEmpty);
   }, skip: skip);
 
   test('the sealed and identified paths refuse each other', () async {
@@ -371,27 +446,174 @@ void main() {
     expect(bob.tokens.taken, 1);
   }, skip: skip);
 
-  test('a sealed message is reported and verified by its signature and key',
+  // Verification (b), (c), (d) on the real encrypted database: a processed
+  // sealed ciphertext cannot be opened again, nothing kept is a signature
+  // over the payload (database, history export), and the write-ahead log
+  // holding the MLS state from before the message is truncated.
+  test('a processed sealed message leaves nothing that proves it to others',
       () async {
-    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final directory = await Directory.systemTemp.createTemp('veritra-l2-res-');
+    final databases = <EncryptedLocalDatabase>[];
+    addTearDown(() async {
+      for (final db in databases) {
+        await db.close();
+      }
+      await SecureLocalStore.releaseInstanceLocks();
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    FlutterSecureStorage.setMockInitialValues(<String, String>{});
+    final drift = SecureLocalStore(
+      storage: const FlutterSecureStorage(),
+      directoryProvider: () async => directory,
+      databaseFactory: (file, key) {
+        final db = openEncryptedLocalDatabase(file, key);
+        databases.add(db);
+        return db;
+      },
+    );
+    final alice =
+        await _Client.enroll(bindings, 'acct_alice', 'dev_alice', store: drift);
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
     await _startConversation(alice, bob);
     bob.tokens.add(_token());
-    final sent = await bob
-        .send(AppPayloadType.text, <String, Object?>{'text': 'reportable'});
-    final envelope = alice.sealedFrom(sent);
+    const words = 'said once, provable to no one else';
+    final sent =
+        await bob.send(AppPayloadType.text, <String, Object?>{'text': words});
+    expect(sent.sealed, isTrue);
+    final first = alice.sealedFrom(sent);
     await alice.service
-        .processSealedApplicationMessage(envelope, alice.nextEvent());
+        .processSealedApplicationMessage(first, alice.nextEvent());
     final row = (await alice.history()).single;
+    expect(row.body, words);
     final reveal = (await alice.store.loadFrankReveal(row.key))!;
 
-    // The reporter's body is version 2 and survives the seal round trip.
-    final body = ReportBody.decode(ReportBody.fromReveal(reveal).encode());
-    expect(body.sealed, isTrue);
-    expect(body.senderAccountId, 'acct_bob');
-    expect(jsonDecode(utf8.decode(body.encode()))['v'], 2);
+    // (b) The same ciphertext again (a server replay under a new id, or a
+    // copy kept by whoever took the device): MLS deleted the key with the
+    // message, so it opens to a placeholder, never a second reading.
+    final again = ReceivedMessageEnvelope.fromJson(<String, Object?>{
+      ...first.toJson(),
+      'id': 'sealed_replay_${++_serverIds}',
+      'idempotency_key': 'replayed-key-aaaaaaaaaaaaaaaa',
+    });
+    final reopened = await alice.service
+        .processSealedApplicationMessage(again, alice.nextEvent());
+    expect(reopened.senderDeviceId, isEmpty);
+    final rows = await alice.history();
+    expect(rows.where((item) => item.body == words), hasLength(1));
+    expect(
+        rows.where((item) => item.key.startsWith('undecryptable:')).single.kind,
+        LocalMessageKind.invalid);
 
-    final bobKey = await bob.service.currentSigningKey();
+    // (c) No column of any table holds a signature: the only signing-named
+    // columns are device public keys (L1 pins, approval leaves, invite
+    // anchors); the reveal keeps the C6 key and the designation alone.
+    final db = databases.single;
+    final tables = (await db
+            .customSelect("SELECT name FROM sqlite_master WHERE type='table'")
+            .get())
+        .map((item) => item.read<String>('name'));
+    final named = <String>{};
+    for (final table in tables) {
+      for (final column in (await db
+              .customSelect("SELECT name FROM pragma_table_info('$table')")
+              .get())
+          .map((item) => item.read<String>('name'))) {
+        // `designation` holds tags, not a signature (checked below).
+        if (RegExp(r'(^|_)(sig|sign|signature|signing)(_|$)|signature',
+                caseSensitive: false)
+            .hasMatch(column)) {
+          named.add('$table.$column');
+        }
+      }
+    }
+    expect(named, <String>{
+      'local_device_list_keys.signing_key',
+      'local_approval_leaves.signing_key',
+      'local_invite_anchors.signing_key',
+    });
+    final revealColumns = (await db
+            .customSelect("SELECT name FROM pragma_table_info"
+                "('local_frank_reveals')")
+            .get())
+        .map((item) => item.read<String>('name'))
+        .toSet();
+    expect(revealColumns, <String>{
+      'message_key',
+      'conversation_id',
+      'envelope_id',
+      'frank_key',
+      'payload',
+      'stored_at',
+      // Sealed is a reveal that names its sender account.
+      'designation',
+      'sender_account_id',
+    });
+    expect(reveal.designation,
+        hasLength(2 * NativeCryptoBindings.l2FrankEntryBytes));
+    // The history export (K1 backup, K2 transfer) carries the message, not
+    // its franking: no key, no designation, no commitment.
+    await alice.store.saveSession(const Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: 'acct_alice',
+      deviceId: 'dev_alice',
+    ));
+    final cached = await alice.store.loadSnapshot();
+    await alice.store.saveSnapshot(
+        <Conversation>[Conversation(id: 'conv_1', kind: 'dm', title: 'Chat')],
+        cached?.messagesByConversation ??
+            const <String, List<ReceivedMessageEnvelope>>{},
+        await alice.store.loadSyncCursor());
+    final exported = utf8.decode(await alice.store.exportHistorySnapshot());
+    expect(exported, contains(words));
+    for (final kept in <List<int>>[
+      reveal.frankKey,
+      reveal.designation!,
+      sent.frankCommit!,
+    ]) {
+      expect(exported, isNot(contains(base64Encode(kept))));
+    }
+    expect(exported, isNot(contains('designation')));
+
+    // (d) The log held the state from before the message; after the
+    // checkpoint it is empty.
+    final wal = directory
+        .listSync(recursive: true)
+        .whereType<File>()
+        .where((file) => file.path.endsWith('-wal'))
+        .single;
+    expect(wal.lengthSync(), greaterThan(0));
+    expect(await alice.store.checkpointSealedResidue(), isTrue);
+    expect(wal.lengthSync(), 0);
+  }, skip: skip);
+
+  test('a sealed message is proven only to the owners it designates', () async {
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    final bobFrankKey = await bob.service.currentFrankKey();
+
+    Future<(ReportBody, MessageEnvelope, ReceivedMessageEnvelope)> sealedReport(
+        String text) async {
+      bob.tokens.add(_token());
+      final sent =
+          await bob.send(AppPayloadType.text, <String, Object?>{'text': text});
+      expect(sent.sealed, isTrue);
+      final envelope = alice.sealedFrom(sent);
+      await alice.service
+          .processSealedApplicationMessage(envelope, alice.nextEvent());
+      final row =
+          (await alice.history()).singleWhere((item) => item.body == text);
+      final reveal = (await alice.store.loadFrankReveal(row.key))!;
+      // The reporter's body is version 2 and survives the seal round trip.
+      final body = ReportBody.decode(ReportBody.fromReveal(reveal).encode());
+      expect(body.sealed, isTrue);
+      expect(body.senderAccountId, 'acct_bob');
+      expect(jsonDecode(utf8.decode(body.encode()))['v'], 2);
+      return (body, sent, envelope);
+    }
+
+    final (body, sent, envelope) = await sealedReport('reportable');
     Map<String, Object?> recordJson(String key) => <String, Object?>{
           'envelope_id': envelope.id,
           'conversation_id': 'conv_1',
@@ -407,85 +629,174 @@ void main() {
         () => ReportEnvelopeRecord.fromJson(
             recordJson(sent.idempotencyKey)..remove('idempotency_key')),
         throwsFormatException);
-    Future<ReportVerification> verifyAs(ReportBody reported,
-        Future<bool> Function(String, String, List<int>)? listed) async {
+
+    // An owner whose current report seed is [seed]; [frankKey] answers what
+    // the claimed account's verified device list says.
+    Future<ReportVerification> verifyAs(ReportBody reported, List<int>? seed,
+        {Future<Uint8List?> Function(String, String)? frankKey}) async {
+      final seeds = MemoryReportSeedStore();
+      if (seed != null) {
+        await seeds.save(
+            server.baseUrl, 'acct_owner', Uint8List.fromList(seed));
+      }
       final owner = ReportsService(
         api: server,
         token: 'acct_owner',
         accountId: 'acct_owner',
         crypto: alice.service,
         store: MemoryLocalStore(),
-        seeds: MemoryReportSeedStore(),
-        senderKeyListed: listed,
+        seeds: seeds,
+        senderFrankKey: frankKey,
       );
       return owner.verify(OpenedReport(_row(), body: reported));
     }
 
-    Future<bool> bobsList(String account, String device, List<int> key) async =>
-        account == 'acct_bob' && device == 'dev_bob' && _sameBytes(key, bobKey);
+    var lookups = 0;
+    Future<Uint8List?> bobsList(String account, String device) async {
+      lookups++;
+      return account == 'acct_bob' && device == 'dev_bob'
+          ? Uint8List.fromList(bobFrankKey)
+          : null;
+    }
 
-    final verified = await verifyAs(body, bobsList);
-    expect(verified.verdict, ReportVerdict.verified);
-    expect(verified.record!.senderAccountId, 'acct_bob');
-    expect(verified.record!.senderDeviceId, 'dev_bob');
+    Future<Uint8List?> anyAccount(String account, String device) async =>
+        Uint8List.fromList(bobFrankKey);
+
+    // Both pinned owners verify it, each with its own seed.
+    for (final seed in _ownerSeeds) {
+      final verified = await verifyAs(body, seed, frankKey: bobsList);
+      expect(verified.verdict, ReportVerdict.verified);
+      expect(verified.record!.senderAccountId, 'acct_bob');
+      expect(verified.record!.senderDeviceId, 'dev_bob');
+    }
+
+    // Owner 2 rotates its report key: the old proof lapses, and no device
+    // list is fetched for an owner the message does not name.
+    lookups = 0;
+    expect(
+        (await verifyAs(body, bindings.generateReportKeySeed(),
+                frankKey: bobsList))
+            .verdict,
+        ReportVerdict.notDesignated);
+    expect(lookups, 0);
+    // An owner with no seed at all.
+    expect((await verifyAs(body, null, frankKey: bobsList)).verdict,
+        ReportVerdict.notDesignated);
+
+    // A tampered tag: the kid still names owner 1, the tag fails.
+    final tampered = List<int>.of(body.designation!);
+    tampered[tampered.length - 1] ^= 1;
+    tampered[NativeCryptoBindings.l2FrankEntryBytes - 1] ^= 1;
+    expect(
+        (await verifyAs(_withBody(body, designation: tampered), _ownerSeeds[0],
+                frankKey: bobsList))
+            .verdict,
+        ReportVerdict.proofFailed);
 
     // Review low (b): a member re-posts Bob's ciphertext and commitment
     // sealed under another key. A report naming that copy is not
     // attributed to Bob.
     final original = server.record;
     server.record = ReportEnvelopeRecord.fromJson(recordJson('k' * 48));
-    expect((await verifyAs(body, bobsList)).verdict, ReportVerdict.mismatch);
+    expect((await verifyAs(body, _ownerSeeds[0], frankKey: bobsList)).verdict,
+        ReportVerdict.mismatch);
     server.record = original;
 
     // No device-list check wired: never attributed (fails closed).
-    expect(
-        (await verifyAs(body, null)).verdict, ReportVerdict.senderUnverified);
-    // The key is not on the claimed account's list.
-    expect((await verifyAs(body, (a, d, k) async => false)).verdict,
+    expect((await verifyAs(body, _ownerSeeds[0])).verdict,
         ReportVerdict.senderUnverified);
+    // The claimed account lists no franking key for the device.
+    expect(
+        (await verifyAs(body, _ownerSeeds[0], frankKey: (a, d) async => null))
+            .verdict,
+        ReportVerdict.senderUnverified);
+    // Another device's key (Alice's) in place of Bob's.
+    final aliceFrankKey = await alice.service.currentFrankKey();
+    expect(
+        (await verifyAs(body, _ownerSeeds[0],
+                frankKey: (a, d) async => aliceFrankKey))
+            .verdict,
+        ReportVerdict.proofFailed);
 
-    // Framing: the reporter names another account. The signature covers
-    // the account, so it no longer verifies.
-    final framed = ReportBody(
-      envelopeId: body.envelopeId,
-      conversationId: body.conversationId,
-      senderDeviceId: body.senderDeviceId,
-      actionId: body.actionId,
-      payload: body.payload,
-      frankKey: body.frankKey,
-      senderAccountId: 'acct_carol',
-      signature: body.signature,
-      signingKey: body.signingKey,
-    );
-    expect((await verifyAs(framed, (a, d, k) async => true)).verdict,
-        ReportVerdict.mismatch);
-    // Another key with the same signature fails too.
-    final otherKey = ReportBody(
-      envelopeId: body.envelopeId,
-      conversationId: body.conversationId,
-      senderDeviceId: body.senderDeviceId,
-      actionId: body.actionId,
-      payload: body.payload,
-      frankKey: body.frankKey,
-      senderAccountId: body.senderAccountId,
-      signature: body.signature,
-      signingKey: await alice.service.currentSigningKey(),
-    );
-    expect((await verifyAs(otherKey, (a, d, k) async => true)).verdict,
-        ReportVerdict.mismatch);
+    // Framing: the reporter names another account. The tag covers the
+    // account, so even a list that answered Bob's key does not verify.
+    expect(
+        (await verifyAs(
+                _withBody(body, senderAccountId: 'acct_carol'), _ownerSeeds[0],
+                frankKey: anyAccount))
+            .verdict,
+        ReportVerdict.proofFailed);
     // A version-1 body about a sealed record cannot be attributed.
-    final plain = ReportBody(
-      envelopeId: body.envelopeId,
-      conversationId: body.conversationId,
-      senderDeviceId: body.senderDeviceId,
-      actionId: body.actionId,
-      payload: body.payload,
-      frankKey: body.frankKey,
-    );
-    expect((await verifyAs(plain, (a, d, k) async => true)).verdict,
+    expect(
+        (await verifyAs(_withBody(body, plain: true), _ownerSeeds[0],
+                frankKey: anyAccount))
+            .verdict,
         ReportVerdict.mismatch);
+    // The plain form (designation stripped) is provable to nobody.
+    expect(
+        (await verifyAs(
+                _withBody(body, designation: const <int>[]), _ownerSeeds[0],
+                frankKey: bobsList))
+            .verdict,
+        ReportVerdict.notDesignated);
+
+    // A message sent with no pinned owner key: no owner can prove it.
+    bob.tokens.frankContext = SealedFrankContext(
+        listedKey: bobFrankKey, ownerKeys: const <List<int>>[]);
+    final (unpinned, unpinnedSent, unpinnedEnvelope) =
+        await sealedReport('unpinned');
+    expect(unpinned.designation, isEmpty);
+    server.record = ReportEnvelopeRecord.fromJson(<String, Object?>{
+      'envelope_id': unpinnedEnvelope.id,
+      'conversation_id': 'conv_1',
+      'frank_commit': base64Encode(unpinnedSent.frankCommit!),
+      'sealed': true,
+      'idempotency_key': unpinnedSent.idempotencyKey,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    for (final seed in _ownerSeeds) {
+      expect((await verifyAs(unpinned, seed, frankKey: bobsList)).verdict,
+          ReportVerdict.notDesignated);
+    }
+
+    // Owner 1 alone pinned: owner 2 is not designated, owner 1 is.
+    bob.tokens.frankContext = SealedFrankContext(
+        listedKey: bobFrankKey, ownerKeys: <List<int>>[_ownerKeys[0]]);
+    final (single, singleSent, singleEnvelope) = await sealedReport('single');
+    expect(
+        single.designation, hasLength(NativeCryptoBindings.l2FrankEntryBytes));
+    server.record = ReportEnvelopeRecord.fromJson(<String, Object?>{
+      'envelope_id': singleEnvelope.id,
+      'conversation_id': 'conv_1',
+      'frank_commit': base64Encode(singleSent.frankCommit!),
+      'sealed': true,
+      'idempotency_key': singleSent.idempotencyKey,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+    expect((await verifyAs(single, _ownerSeeds[0], frankKey: bobsList)).verdict,
+        ReportVerdict.verified);
+    expect((await verifyAs(single, _ownerSeeds[1], frankKey: bobsList)).verdict,
+        ReportVerdict.notDesignated);
   }, skip: skip);
 }
+
+ReportBody _withBody(ReportBody body,
+        {String? senderAccountId,
+        List<int>? designation,
+        bool plain = false}) =>
+    ReportBody(
+      envelopeId: body.envelopeId,
+      conversationId: body.conversationId,
+      senderDeviceId: body.senderDeviceId,
+      actionId: body.actionId,
+      payload: body.payload,
+      frankKey: body.frankKey,
+      senderAccountId: plain ? null : (senderAccountId ?? body.senderAccountId),
+      designation: plain ? null : (designation ?? body.designation),
+    );
+
+List<Uint8List> _ownerSeeds = <Uint8List>[];
+List<Uint8List> _ownerKeys = <Uint8List>[];
 
 int _serverIds = 0;
 
@@ -499,6 +810,9 @@ SealedToken _token() => SealedToken(
 
 class _Tokens implements SealedTokenSource {
   final List<SealedToken> _held = <SealedToken>[];
+
+  @override
+  SealedFrankContext? frankContext;
   int asked = 0;
   int taken = 0;
   int get held => _held.length;
@@ -554,7 +868,7 @@ class _Client {
   _Client(this.service, this.store, this.accountId, this.deviceId);
 
   final NativeCryptoService service;
-  final MemoryLocalStore store;
+  final LocalStore store;
   final String accountId;
   final String deviceId;
   final _Tokens tokens = _Tokens();
@@ -562,8 +876,9 @@ class _Client {
   int _events = 0;
 
   static Future<_Client> enroll(
-      NativeCryptoBindings bindings, String accountId, String deviceId) async {
-    final local = MemoryLocalStore();
+      NativeCryptoBindings bindings, String accountId, String deviceId,
+      {LocalStore? store}) async {
+    final local = store ?? MemoryLocalStore();
     final service =
         TestNativeCryptoService(bindings: bindings, localStore: local);
     await service.createEnrollmentCredential(EnrollmentReservation(
@@ -581,6 +896,10 @@ class _Client {
     final client = _Client(service, local, accountId, deviceId);
     service.conversationAuthority = client.authority;
     service.sealedTokenSource = client.tokens;
+    // What the token pass caches: the own key as the verified list names
+    // it, and the owner keys this app pinned.
+    client.tokens.frankContext = SealedFrankContext(
+        listedKey: await service.currentFrankKey(), ownerKeys: _ownerKeys);
     return client;
   }
 
@@ -635,10 +954,6 @@ class _Client {
   Future<List<int>?> receive(_Client from, MessageEnvelope sent) =>
       service.processApplicationMessage(envelopeFrom(from, sent), nextEvent());
 }
-
-bool _sameBytes(List<int> a, List<int> b) =>
-    a.length == b.length &&
-    Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
 
 ReportCopyRow _row() => ReportCopyRow(
       id: 'row_1',

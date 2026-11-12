@@ -21,6 +21,7 @@ import '../crypto/k2_transfer_crypto.dart';
 import '../crypto/native_crypto_bindings.dart'
     show
         DeviceListBody,
+        DeviceListFrankKey,
         DeviceListChange,
         DeviceListPair,
         K2LinkContext,
@@ -6439,6 +6440,7 @@ class AppState extends ChangeNotifier
           rethrow;
         }
         await _publishReceived(received, current, ownerGeneration);
+        await _clearSealedResidue();
         await advanceToScan(events.last.id);
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         pageCursor = await localStore.loadSyncCursor();
@@ -7004,7 +7006,25 @@ class AppState extends ChangeNotifier
       } catch (_) {
         // Shown by the next pass, like any committed envelope.
       }
+      await _clearSealedResidue();
     }
+  }
+
+  /// Set when a sync pass opened a sealed message; [_clearSealedResidue]
+  /// then checkpoints the database log once for the page.
+  bool _sealedResiduePending = false;
+
+  /// L2-3 (`docs/crypto.md`, "Franking a sealed message", residue): the
+  /// MLS state from before a sealed message could decrypt it again, and an
+  /// old copy of it can sit in write-ahead log frames after the new state
+  /// is committed. Once per sync page that opened a sealed message the log
+  /// is checkpointed and truncated. Best effort, never fails the pass.
+  Future<void> _clearSealedResidue() async {
+    if (!_sealedResiduePending) return;
+    _sealedResiduePending = false;
+    try {
+      await localStore.checkpointSealedResidue();
+    } catch (_) {}
   }
 
   /// Whether the server's event at the id that failed is not the one that
@@ -7565,6 +7585,9 @@ class AppState extends ChangeNotifier
           if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
+        // L2-3: the pass ends by clearing the log of the state that could
+        // open this ciphertext again.
+        _sealedResiduePending = true;
         // This device's own post came back: it landed, whatever the
         // outbox last heard (a lost answer), so it leaves the outbox.
         if (opened.senderDeviceId == current.deviceId && wake == null) {
@@ -8253,26 +8276,13 @@ class AppState extends ChangeNotifier
         tokens: sealedSender,
         rewrite: localStore.rewriteQueuedEnvelope,
         owned: () => _syncOwnerActive(current, ownerGeneration),
-        sendIdentified: (sealed) async {
-          final crypto = switch (cryptoService) {
-            final SealedSendingCryptoService sealing => sealing,
-            _ => null,
-          };
-          if (crypto == null) return false;
-          // An MLS control message queued since keeps the fresh encrypt
-          // waiting, as the flush does (I34); the sealed entry stays.
-          if ((await localStore.pendingMlsMessages()).any(
-              (message) => message.conversationId == sealed.conversationId)) {
-            throw ApiException(503, '{"error":"mls_control_pending"}');
-          }
-          final identified = await crypto.reencryptSealedAsIdentified(sealed);
-          if (identified == null || identified.sealed) return false;
-          if (!_syncOwnerActive(current, ownerGeneration)) {
-            throw ApiException(503, '{"error":"session_changed"}');
-          }
-          await client.sendEnvelope(current.token, identified);
-          return true;
-        },
+        sendIdentified: (sealed) => sendSealedAsIdentified(
+          crypto: cryptoService,
+          localStore: localStore,
+          sealed: sealed,
+          owned: () => _syncOwnerActive(current, ownerGeneration),
+          send: (identified) => client.sendEnvelope(current.token, identified),
+        ),
       );
 
   /// Builds the sealed post client (tests use a loopback server).
@@ -9838,7 +9848,10 @@ class AppState extends ChangeNotifier
     _sealedPost?.close();
     _sealedPost = null;
     final sealed = SealedSender(
-        origin: client.baseUrl, localStore: localStore, crypto: crypto);
+        origin: client.baseUrl,
+        localStore: localStore,
+        crypto: crypto,
+        loadFrankContext: () => _sealedFrankContext(client.baseUrl));
     sealedSender = sealed;
     crypto.sealedTokenSource = sealed;
   }
@@ -9848,6 +9861,15 @@ class AppState extends ChangeNotifier
     final sealed = sealedSender;
     if (sealed == null) return null;
     return localStore.loadSealedKeyPin(sealed.origin);
+  }
+
+  /// L2-3: how many owner report keys this app pinned for this server, for
+  /// Settings: a message sent sealed can be proven only to those owners
+  /// (none: to no one).
+  Future<int> sealedProvableOwnerCount() async {
+    final sealed = sealedSender;
+    if (sealed == null) return 0;
+    return (await _pinnedOwnerKeys(sealed.origin)).length;
   }
 
   /// Accepts the changed sealed sender key (Settings), then fetches tokens

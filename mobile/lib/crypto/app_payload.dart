@@ -383,18 +383,21 @@ class AppPayloadCodec {
     String? channelId,
     bool hidden = false,
     int? expiresAtMs,
-    List<int> Function(Uint8List canonical)? sealedSignature,
+    List<int>? Function(Uint8List canonical)? sealedDesignation,
   }) {
     validateContext(conversationId, senderDeviceId, actionId);
     _validateBody(type, body, version: 2);
     final canonical = _innerJson(2, type, conversationId, senderDeviceId,
         actionId, body, channelId, hidden, expiresAtMs);
-    // L2-3: a payload sent sealed carries the sender's signature over the
-    // commitment to `P`, which only the caller can make (it holds the
-    // device key), so it is asked for once `P` exists.
+    // L2-3: a payload sent sealed may carry the sender's designation of the
+    // commitment to `P` to the pinned owner keys, which only the caller can
+    // make (it holds the device's franking key), so it is asked for once `P`
+    // exists. Null or empty is the plain form.
+    final designation = sealedDesignation?.call(canonical);
     return (
       padded: _frame(frankWireJson(canonical, frankKey,
-          signature: sealedSignature?.call(canonical))),
+          designation:
+              designation == null || designation.isEmpty ? null : designation)),
       canonical: canonical
     );
   }

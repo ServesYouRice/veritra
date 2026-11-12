@@ -7,6 +7,7 @@ import '../crypto/franking.dart';
 import '../crypto/report_body.dart';
 import '../crypto/report_key_announcement.dart';
 import '../crypto/report_key_pins.dart';
+import '../crypto/sha256.dart';
 import '../storage/local_store.dart';
 import 'api_client.dart';
 import 'report_key_announcer.dart' show ReportKeyAnnouncer;
@@ -191,11 +192,22 @@ enum ReportVerdict {
   /// The message was sent without franking: it cannot be proven.
   unfranked,
 
-  /// L2-3: a sealed message whose commitment matches, but whose sender
-  /// could not be confirmed: the signature key could not be checked against
-  /// the claimed account's signed device list (unavailable, or this app
-  /// cannot check). Not proven; fails closed.
+  /// L2-3: a sealed message whose commitment matches and that names this
+  /// owner's key, but whose sender's franking key could not be read from the
+  /// claimed account's signed device list (unavailable, in conflict, or
+  /// naming none). Not proven; fails closed.
   senderUnverified,
+
+  /// L2-3: a sealed message that was not designated to this owner's current
+  /// report key: sent in the plain form (the sender's app had no owner key
+  /// pinned), to other owners only, or to a key this owner has since
+  /// replaced (old proofs lapse with the key). It can be proven to no one
+  /// here.
+  notDesignated,
+
+  /// L2-3: a sealed message that names this owner's key, but whose tag does
+  /// not verify for the claimed sender. Not proven.
+  proofFailed,
 }
 
 class ReportVerification {
@@ -216,7 +228,7 @@ class ReportsService {
     this.moderatorsOf,
     this.communityId,
     this.onSeedChanged,
-    this.senderKeyListed,
+    this.senderFrankKey,
     Random? random,
   })  : pins = ReportKeyPins(store, api.baseUrl),
         _random = random ?? Random.secure();
@@ -226,11 +238,12 @@ class ReportsService {
   final String accountId;
   final ReportCryptoService crypto;
 
-  /// L2-3: whether [signingKey] is (or was) [deviceId]'s key in
-  /// [accountId]'s signed L1 device list. Null: a sealed report cannot be
-  /// attributed here, and checks [ReportVerdict.senderUnverified].
-  final Future<bool> Function(
-      String accountId, String deviceId, List<int> signingKey)? senderKeyListed;
+  /// L2-3: the franking key [accountId]'s signed L1 device list gives
+  /// [deviceId] (listed now or removed since), or null. Null callback: a
+  /// sealed report cannot be attributed here, and checks
+  /// [ReportVerdict.senderUnverified].
+  final Future<Uint8List?> Function(String accountId, String deviceId)?
+      senderFrankKey;
   final LocalStore store;
   final ReportSeedStore seeds;
   final ReportKeyPins pins;
@@ -260,6 +273,7 @@ class ReportsService {
         moderatorsOf: moderatorsOf,
         communityId: id,
         onSeedChanged: onSeedChanged,
+        senderFrankKey: senderFrankKey,
         random: _random,
       );
 
@@ -636,24 +650,25 @@ class ReportsService {
     );
   }
 
-  /// L2-3: a report about a sealed message. The server row names no sender,
-  /// so the body does, and proves it: the commitment recomputes from the
-  /// revealed message for the claimed device and equals the stored one; the
-  /// sender's signature over it verifies under the claimed key; and that key
-  /// is the claimed device's in the claimed account's signed device list
-  /// (which the server cannot forge). Anything short of all three is not a
-  /// verified report.
+  /// L2-3: a report about a sealed message (`docs/crypto.md`, "Franking a
+  /// sealed message"). The server row names no sender, so the body does,
+  /// and this owner checks it: the commitment recomputes from the revealed
+  /// message for the claimed device and equals the stored one; the
+  /// designation names this owner's current report key (else nothing more
+  /// is asked of anyone: [ReportVerdict.notDesignated]); the claimed
+  /// device's franking key comes from the claimed account's signed device
+  /// list (which the server cannot forge); and the tag for this owner
+  /// verifies with this owner's report seed. The tag convinces only this
+  /// owner: anyone holding the seed could have made it.
   Future<ReportVerification> _verifySealed(
       OpenedReport report, ReportEnvelopeRecord record) async {
     final body = report.body!;
     final account = body.senderAccountId;
-    final signature = body.signature;
-    final signingKey = body.signingKey;
+    final designation = body.designation;
     if (!record.sealed ||
         !body.sealed ||
         account == null ||
-        signature == null ||
-        signingKey == null ||
+        designation == null ||
         record.envelopeId != body.envelopeId ||
         // Review low (b): the envelope the message was first stored in,
         // not a copy under another key.
@@ -679,28 +694,45 @@ class ReportsService {
     if (!frankCommitEquals(computed, commit)) {
       return const ReportVerification(ReportVerdict.mismatch);
     }
-    final signatures = crypto;
-    if (signatures is! SealedReportCryptoService ||
-        !await (signatures as SealedReportCryptoService).frankSignatureValid(
-          signingKey: signingKey,
-          conversationId: body.conversationId,
-          accountId: account,
-          deviceId: body.senderDeviceId,
-          commit: commit,
-          signature: signature,
-        )) {
-      return const ReportVerification(ReportVerdict.mismatch);
+    final seed = await seeds.load(api.baseUrl, accountId);
+    if (seed == null) {
+      return const ReportVerification(ReportVerdict.notDesignated);
     }
-    final listed = senderKeyListed;
-    bool known;
     try {
-      known = listed != null &&
-          await listed(account, body.senderDeviceId, signingKey);
-    } on Object {
-      known = false;
-    }
-    if (!known) {
-      return const ReportVerification(ReportVerdict.senderUnverified);
+      final own = await crypto.reportPublicKey(seed);
+      if (!designationNames(designation, frankDesignationKid(own))) {
+        return const ReportVerification(ReportVerdict.notDesignated);
+      }
+      Uint8List? senderKey;
+      try {
+        senderKey = await senderFrankKey?.call(account, body.senderDeviceId);
+      } on Object {
+        senderKey = null;
+      }
+      if (senderKey == null) {
+        return const ReportVerification(ReportVerdict.senderUnverified);
+      }
+      final checker = crypto;
+      final verdict = checker is SealedReportCryptoService
+          ? await (checker as SealedReportCryptoService)
+              .frankDesignationVerdict(
+              seed: seed,
+              senderFrankKey: senderKey,
+              conversationId: body.conversationId,
+              accountId: account,
+              deviceId: body.senderDeviceId,
+              commit: commit,
+              designation: designation,
+            )
+          : 0;
+      if (verdict == 2) {
+        return const ReportVerification(ReportVerdict.notDesignated);
+      }
+      if (verdict != 1) {
+        return const ReportVerification(ReportVerdict.proofFailed);
+      }
+    } finally {
+      seed.fillRange(0, seed.length, 0);
     }
     return ReportVerification(ReportVerdict.verified,
         record: ReportEnvelopeRecord(
@@ -756,4 +788,25 @@ String? _textOf(List<int> payload) {
   if (body is! Map) return null;
   final text = body['text'];
   return text is String ? text : null;
+}
+
+/// L2-3: the 16-byte id a designation files an owner key under,
+/// `SHA-256("veritra-frank-dv-kid-v1" | key)[0..16]` (vector
+/// testing/vectors/l2-frank-dv-v1.json).
+Uint8List frankDesignationKid(List<int> ownerKey) => Uint8List.sublistView(
+    sha256(<int>[...utf8.encode('veritra-frank-dv-kid-v1'), ...ownerKey]),
+    0,
+    frankDesignationKidBytes);
+
+/// Whether [designation] has an entry under [kid].
+bool designationNames(List<int> designation, List<int> kid) {
+  if (designation.isEmpty || !designationWellFormed(designation)) return false;
+  for (var at = 0; at < designation.length; at += frankDesignationEntryBytes) {
+    var same = true;
+    for (var i = 0; i < frankDesignationKidBytes; i++) {
+      if (designation[at + i] != kid[i]) same = false;
+    }
+    if (same) return true;
+  }
+  return false;
 }

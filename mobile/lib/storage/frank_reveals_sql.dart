@@ -29,15 +29,13 @@ class FrankReveal {
     required this.envelopeId,
     required List<int> frankKey,
     required List<int> payload,
-    List<int>? signature,
-    List<int>? signingKey,
+    this.sealed = false,
+    List<int>? designation,
     this.senderAccountId,
   })  : frankKey = List<int>.unmodifiable(frankKey),
         payload = List<int>.unmodifiable(payload),
-        signature =
-            signature == null ? null : List<int>.unmodifiable(signature),
-        signingKey =
-            signingKey == null ? null : List<int>.unmodifiable(signingKey);
+        designation =
+            designation == null ? null : List<int>.unmodifiable(designation);
 
   /// The key of the message row (`<sender_device_id>:<action_id>`).
   final String messageKey;
@@ -51,17 +49,16 @@ class FrankReveal {
   /// covers them.
   final List<int> payload;
 
-  /// L2-3 (schema 43): only for a message that came sealed, the sender's
-  /// 64-byte franking signature `s`, the 32-byte signing key of the sender
-  /// leaf it verified under, and the sender account MLS authenticated. A
-  /// report of a sealed message carries them, since the server's row names
-  /// no sender. All three or none.
-  final List<int>? signature;
-  final List<int>? signingKey;
-  final String? senderAccountId;
+  /// L2-3 (schema 43): whether the message came sealed. Only then are
+  /// [senderAccountId] (the sender account MLS authenticated; a sealed
+  /// message's server row names no sender) and [designation] kept.
+  final bool sealed;
 
-  /// Whether this reveal is of a sealed message.
-  bool get sealed => signature != null;
+  /// The sealed message's designation `d` (48-byte entries, tags only the
+  /// designated owners can check), or null for the plain form. Never a
+  /// signature: nothing here proves the message to anyone but those owners.
+  final List<int>? designation;
+  final String? senderAccountId;
 
   /// Whether the table would accept this reveal. A reveal that is not is
   /// skipped, never thrown on: it rides in the transaction that consumes an
@@ -76,12 +73,11 @@ class FrankReveal {
       frankKey.length == frankRevealKeyBytes &&
       payload.isNotEmpty &&
       payload.length <= frankRevealMaxPayloadBytes &&
-      (signature == null
-          ? signingKey == null && senderAccountId == null
-          : signature!.length == 64 &&
-              signingKey?.length == 32 &&
-              (senderAccountId?.isNotEmpty ?? false) &&
-              senderAccountId!.length <= 128);
+      (sealed
+          ? (senderAccountId?.isNotEmpty ?? false) &&
+              senderAccountId!.length <= 128 &&
+              (designation == null || designationWellFormed(designation!))
+          : designation == null && senderAccountId == null);
 
   @override
   String toString() => 'FrankReveal($messageKey)';
@@ -159,8 +155,8 @@ extension FrankRevealSql on EncryptedLocalDatabase {
       await customStatement(
           'INSERT OR IGNORE INTO local_frank_reveals '
           '(message_key, conversation_id, envelope_id, frank_key, payload, stored_at, '
-          'signature, signing_key, sender_account_id) '
-          'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS ('
+          'designation, sender_account_id) '
+          'SELECT ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS ('
           'SELECT 1 FROM local_messages WHERE key = ? '
           'AND deleted_at IS NULL AND hidden_at IS NULL)',
           <Object?>[
@@ -170,12 +166,9 @@ extension FrankRevealSql on EncryptedLocalDatabase {
             Uint8List.fromList(reveal.frankKey),
             Uint8List.fromList(reveal.payload),
             now,
-            reveal.signature == null
+            reveal.designation == null
                 ? null
-                : Uint8List.fromList(reveal.signature!),
-            reveal.signingKey == null
-                ? null
-                : Uint8List.fromList(reveal.signingKey!),
+                : Uint8List.fromList(reveal.designation!),
             reveal.senderAccountId,
             reveal.messageKey,
           ]);
@@ -186,7 +179,7 @@ extension FrankRevealSql on EncryptedLocalDatabase {
   Future<FrankReveal?> readFrankReveal(String messageKey) async {
     final row = await customSelect(
         'SELECT message_key, conversation_id, envelope_id, frank_key, payload, '
-        'signature, signing_key, sender_account_id '
+        'designation, sender_account_id '
         'FROM local_frank_reveals WHERE message_key = ?',
         variables: [Variable.withString(messageKey)]).getSingleOrNull();
     if (row == null) return null;
@@ -196,8 +189,8 @@ extension FrankRevealSql on EncryptedLocalDatabase {
       envelopeId: row.read<String>('envelope_id'),
       frankKey: row.read<Uint8List>('frank_key'),
       payload: row.read<Uint8List>('payload'),
-      signature: row.readNullable<Uint8List>('signature'),
-      signingKey: row.readNullable<Uint8List>('signing_key'),
+      sealed: row.readNullable<String>('sender_account_id') != null,
+      designation: row.readNullable<Uint8List>('designation'),
       senderAccountId: row.readNullable<String>('sender_account_id'),
     );
   }

@@ -701,6 +701,8 @@ void main() {
         DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey())
       ],
       recoveryKey: head.recoveryKey,
+      // L2-3: devices that stay keep their franking keys.
+      frankKeys: head.frankKeys,
     ));
     await stop(owner);
     return (api: api, key: key, other: other, chained: chained);
@@ -899,6 +901,8 @@ Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
         ...head.entries,
         DeviceListPair(idBytes('dev_phone'), phone.signingPublicKey())
       ],
+      // L2-3: devices that stay keep their franking keys.
+      frankKeys: head.frankKeys,
     ));
     api._take(statement);
     await DeviceListPins(
@@ -1366,6 +1370,8 @@ Future<Uint8List> _signDeviceAdd(NativeCryptoBindings bindings, _AuditApi api,
         ...head.entries,
         DeviceListPair(idBytes(deviceId), device.signingPublicKey())
       ],
+      // L2-3: devices that stay keep their franking keys.
+      frankKeys: head.frankKeys,
     ));
   } finally {
     device.close();

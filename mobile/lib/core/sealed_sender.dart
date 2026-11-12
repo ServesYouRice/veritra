@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../crypto/crypto_service.dart'
-    show SealedSendingCryptoService, SealedTokenSource;
+    show SealedFrankContext, SealedSendingCryptoService, SealedTokenSource;
 import '../storage/local_store.dart' show LocalStore, SealedKeyPin;
 import 'api_client.dart';
 import 'models.dart';
@@ -26,6 +26,32 @@ import 'models.dart';
 /// The sync event of a sealed post. Only an app that reads sealed events
 /// (`sealed=1`) is ever served one.
 const String sealedMessageEventType = 'message.sealed.created';
+
+/// Review M2, the identified fallback of [postSealedMessage] (`sendIdentified`)
+/// as the app wires it: re-encrypts [sealed] afresh, identified, under the
+/// same key, and sends it with [send]. Returns false (the message fails as
+/// before) when [crypto] cannot seal or nothing is left to fall back with.
+/// An MLS control message queued for the conversation keeps the fresh
+/// encrypt waiting (I34), and a session that changed after the encrypt
+/// sends nothing: both throw a retryable 503 and the sealed entry stays.
+Future<bool> sendSealedAsIdentified({
+  required Object? crypto,
+  required LocalStore localStore,
+  required MessageEnvelope sealed,
+  required bool Function() owned,
+  required Future<void> Function(MessageEnvelope identified) send,
+}) async {
+  if (crypto is! SealedSendingCryptoService) return false;
+  if ((await localStore.pendingMlsMessages())
+      .any((message) => message.conversationId == sealed.conversationId)) {
+    throw ApiException(503, '{"error":"mls_control_pending"}');
+  }
+  final identified = await crypto.reencryptSealedAsIdentified(sealed);
+  if (identified == null || identified.sealed) return false;
+  if (!owned()) throw ApiException(503, '{"error":"session_changed"}');
+  await send(identified);
+  return true;
+}
 
 /// The UTC day number the server calls a token's epoch. The app takes it
 /// from its own clock, never from the server (review M1): a day the server
@@ -206,6 +232,7 @@ class SealedSender implements SealedTokenSource {
     required this.origin,
     required this.localStore,
     required this.crypto,
+    this.loadFrankContext,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
@@ -213,6 +240,16 @@ class SealedSender implements SealedTokenSource {
   final LocalStore localStore;
   final SealedSendingCryptoService crypto;
   final DateTime Function() _clock;
+
+  /// L2-3: reads what a sealed message is designated with (this device's
+  /// listed franking key and the pinned owner keys), on the token pass
+  /// only. Null, or a null answer, sends everything identified.
+  final Future<SealedFrankContext?> Function()? loadFrankContext;
+
+  SealedFrankContext? _frank;
+
+  @override
+  SealedFrankContext? get frankContext => _frank;
 
   /// The server's `sealed_sender` (setup status). Off sends everything
   /// identified and fetches nothing.
@@ -238,7 +275,9 @@ class SealedSender implements SealedTokenSource {
 
   @override
   Future<SealedToken?> takeFor(String conversationId) async {
-    if (!enabled) return null;
+    // Fail safe (docs/crypto.md, "Franking a sealed message"): without this
+    // device's own franking key on its verified list, nothing goes sealed.
+    if (!enabled || _frank == null) return null;
     final known = _conversations[conversationId];
     if (known == null || !known.state.eligible) return null;
     final pin = await localStore.loadSealedKeyPin(origin);
@@ -312,6 +351,12 @@ class SealedSender implements SealedTokenSource {
 
   Future<void> _refresh(ApiClient client, String sessionToken,
       List<Conversation> conversations) async {
+    // L2-3: the designation context, read here and nowhere on a send.
+    try {
+      _frank = await loadFrankContext?.call();
+    } catch (_) {
+      _frank = null;
+    }
     final served = await client.sealedKey();
     final pin = await _pinned(served);
     if (pin == null) return;

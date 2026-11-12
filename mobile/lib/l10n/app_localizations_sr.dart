@@ -4430,6 +4430,29 @@ class AppLocalizationsSr extends AppLocalizations {
       'Порука се поклапа, али кључ пошиљаоца није могао да се провери у његовој потписаној листи уређаја.';
 
   @override
+  String get c6VerdictNotDesignated => 'Није доказиво вама';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'Порука се поклапа, али је послата без имена и није учињена доказивом вашем тренутном кључу за пријаве. Апликација пошиљаоца није закачила ваш кључ, или сте од тада заменили кључ. Овде не може да се докаже.';
+
+  @override
+  String get c6VerdictProofFailed => 'Доказ се не слаже';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'Порука се поклапа, али њен доказ за вас се не слаже са пошиљаоцем којег наводи. Не ослањајте се на то ко ју је послао.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'На овом уређају није закачен кључ за пријаве ниједног власника. Порука коју пошаљете без имена тада не може никоме да се докаже ако буде пријављена. Кључ се закачи када упоредите код власника током пријаве.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'Порука коју пошаљете без имена може, ако буде пријављена, да се докаже само власницима чије сте кључеве за пријаве закачили: $count. Само они могу да провере доказ; он никог другог не убеђује.';
+  }
+
+  @override
   String get l2SealedKeyTitle => 'Кључ скривеног пошиљаоца';
 
   @override
@@ -8893,6 +8916,29 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get c6VerdictSenderUnverifiedDetail =>
       'Poruka se poklapa, ali ključ pošiljaoca nije mogao da se proveri u njegovoj potpisanoj listi uređaja.';
+
+  @override
+  String get c6VerdictNotDesignated => 'Nije dokazivo vama';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'Poruka se poklapa, ali je poslata bez imena i nije učinjena dokazivom vašem trenutnom ključu za prijave. Aplikacija pošiljaoca nije zakačila vaš ključ, ili ste od tada zamenili ključ. Ovde ne može da se dokaže.';
+
+  @override
+  String get c6VerdictProofFailed => 'Dokaz se ne slaže';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'Poruka se poklapa, ali njen dokaz za vas se ne slaže sa pošiljaocem kojeg navodi. Ne oslanjajte se na to ko ju je poslao.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'Na ovom uređaju nije zakačen ključ za prijave nijednog vlasnika. Poruka koju pošaljete bez imena tada ne može nikome da se dokaže ako bude prijavljena. Ključ se zakači kada uporedite kod vlasnika tokom prijave.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'Poruka koju pošaljete bez imena može, ako bude prijavljena, da se dokaže samo vlasnicima čije ste ključeve za prijave zakačili: $count. Samo oni mogu da provere dokaz; on nikog drugog ne ubeđuje.';
+  }
 
   @override
   String get l2SealedKeyTitle => 'Ključ skrivenog pošiljaoca';

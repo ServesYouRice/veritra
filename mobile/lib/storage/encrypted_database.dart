@@ -17,6 +17,7 @@ import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart' show SyncFailureKind;
 import '../crypto/app_payload.dart' show effectiveExpiryMillis;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
+import '../crypto/franking.dart' show designationWellFormed;
 import 'device_list_records.dart';
 import 'invite_anchor.dart';
 import 'profile_records.dart';
@@ -873,9 +874,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createPendingEnrollment();
             await _createK2Transfer();
             await _createFrankReveals();
-            await _createSealedSender();
             await _createConversationPauses();
             await _createDeviceLists();
+            // After the schema 19 and 26 tables it adds columns to.
+            await _createSealedSender();
             await _createFiledReports();
             await _createCommunityInfo();
             await _createInviteAnchors();
@@ -1051,9 +1053,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // receipt clocks only.
             if (from < 36) await _createGovernanceObservations();
             // L2-3 (schema 43; 41-42 are reserved by C7 and may renumber at
-            // integration): sealed sender tokens, the server key pin and the
-            // franking signature beside a reveal. Idempotent and last, after
-            // the schema 19 step that creates local_frank_reveals.
+            // integration): sealed sender tokens, the server key pin, the
+            // designation beside a reveal and the franking key beside a
+            // device-list pair. Idempotent and last, after the schema 19 and
+            // 26 steps that create the tables it adds columns to.
             if (from < 43) await _createSealedSender();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.

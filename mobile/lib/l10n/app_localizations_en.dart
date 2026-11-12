@@ -4413,6 +4413,29 @@ class AppLocalizationsEn extends AppLocalizations {
       'The message matches, but its sender\'s key could not be checked against their signed device list.';
 
   @override
+  String get c6VerdictNotDesignated => 'Not provable to you';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'The message matches, but it was sent without your name and was not made provable to your current report key. Its sender\'s app had not pinned your key, or you replaced the key since. It cannot be proven here.';
+
+  @override
+  String get c6VerdictProofFailed => 'Proof does not check';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'The message matches, but its proof for you does not check out for the sender it names. Do not rely on who sent it.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'No owner\'s report key is pinned on this device. A message you send without your name can then be proven to no one if it is reported. A key is pinned when you compare an owner\'s code while reporting.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'A message you send without your name can be proven, if reported, only to the owners whose report keys you pinned: $count. Only they can check the proof; it convinces no one else.';
+  }
+
+  @override
   String get l2SealedKeyTitle => 'Sealed sender key';
 
   @override

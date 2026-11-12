@@ -160,6 +160,10 @@ abstract interface class DeviceListCryptoService implements DeviceListVerifier {
   /// The current (possibly pending) device's MLS signing key.
   Future<Uint8List> currentSigningKey();
 
+  /// L2-3: the current (possibly pending) device's X25519 franking key, the
+  /// one its L1 entry lists (set by genesis, recovery or change 7). Public.
+  Future<Uint8List> currentFrankKey();
+
   /// Keeps the recovery list seed derived from [entropy] in the sealed
   /// pending enrollment (K0-R claim, D94 question 1).
   Future<void> holdRecoveryListSeed(Uint8List entropy);
@@ -478,17 +482,52 @@ abstract interface class SealedTokenSource {
 
   /// Returns a token that was taken but never posted (the encrypt failed).
   Future<void> putBack(SealedToken token);
+
+  /// What a sealed message is designated with, as the last token pass found
+  /// it. Read at encrypt time without any I/O; null sends identified (this
+  /// device's franking key is not, or not verifiably, on its own L1 list).
+  SealedFrankContext? get frankContext;
 }
 
-/// Checks a sealed message's franking signature for a report (L2-3).
+/// L2-3 (`docs/crypto.md`, "Franking a sealed message"): what a sealed send
+/// designates its commitment to, read on the token pass and kept until the
+/// next one, so a send makes no request and reads no pin.
+class SealedFrankContext {
+  SealedFrankContext(
+      {required List<int> listedKey, required List<List<int>> ownerKeys})
+      : listedKey = Uint8List.fromList(listedKey),
+        ownerKeys = List<Uint8List>.unmodifiable(
+            [for (final key in ownerKeys) Uint8List.fromList(key)]) {
+    if (this.listedKey.length != 32 ||
+        this.ownerKeys.length > maxOwnerKeys ||
+        this.ownerKeys.any((key) => key.length != 32)) {
+      throw ArgumentError('invalid sealed franking context');
+    }
+  }
+
+  /// This device's franking key exactly as its verified L1 entry lists it.
+  final Uint8List listedKey;
+
+  /// The instance owners' report keys this app pinned, at most
+  /// [maxOwnerKeys]. Empty: no owner can be designated, and a sealed message
+  /// goes in the plain form, provable to nobody.
+  final List<Uint8List> ownerKeys;
+
+  static const int maxOwnerKeys = 16;
+}
+
+/// Checks a sealed message's designation for a report (L2-3), with the
+/// owner's report seed. Returns 1 valid, 0 mismatch, 2 not designated to
+/// this owner's key.
 abstract interface class SealedReportCryptoService {
-  Future<bool> frankSignatureValid({
-    required List<int> signingKey,
+  Future<int> frankDesignationVerdict({
+    required List<int> seed,
+    required List<int> senderFrankKey,
     required String conversationId,
     required String accountId,
     required String deviceId,
     required List<int> commit,
-    required List<int> signature,
+    required List<int> designation,
   });
 }
 

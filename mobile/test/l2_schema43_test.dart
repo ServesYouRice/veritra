@@ -38,6 +38,14 @@ void main() {
           .map((row) => row.read<String>('name'))
           .toSet();
 
+  Future<Set<String>> columnsOf(
+          EncryptedLocalDatabase db, String table) async =>
+      (await db
+              .customSelect("SELECT name FROM pragma_table_info('$table')")
+              .get())
+          .map((row) => row.read<String>('name'))
+          .toSet();
+
   SealedToken token(int seed, {int epoch = 20404}) => SealedToken(
         conversationId: 'conv_1',
         keyId: 'a' * 32,
@@ -52,7 +60,12 @@ void main() {
     expect(EncryptedLocalDatabase.currentSchemaVersion, 43);
     expect(await tables(db), containsAll(SealedSenderSql.tables));
     expect(await revealColumns(db),
-        containsAll(<String>['signature', 'signing_key', 'sender_account_id']));
+        containsAll(<String>['designation', 'sender_account_id']));
+    // Owner decision (deniability): no signature over a payload is kept.
+    expect(await revealColumns(db),
+        isNot(anyOf(contains('signature'), contains('signing_key'))));
+    expect(
+        await columnsOf(db, 'local_device_list_keys'), contains('frank_key'));
   });
 
   test('tokens: per conversation cap, oldest day first, taken once', () async {
@@ -129,7 +142,12 @@ void main() {
     expect(version, 43);
     expect(await tables(db), containsAll(SealedSenderSql.tables));
     expect(await revealColumns(db),
-        containsAll(<String>['signature', 'signing_key', 'sender_account_id']));
+        containsAll(<String>['designation', 'sender_account_id']));
+    // Owner decision (deniability): no signature over a payload is kept.
+    expect(await revealColumns(db),
+        isNot(anyOf(contains('signature'), contains('signing_key'))));
+    expect(
+        await columnsOf(db, 'local_device_list_keys'), contains('frank_key'));
     final kept = (await db.readFrankReveal('dev_b:act1'))!;
     expect(kept.sealed, isFalse);
     expect(kept.envelopeId, 'msg_1');
@@ -146,6 +164,63 @@ void main() {
     addTearDown(db.close);
     expect((await db.readSealedKeyPin(_origin))!.keyId, 'a' * 32);
     expect((await db.readFrankReveal('dev_b:act1'))!.envelopeId, 'msg_1');
+  });
+
+  test('an earlier draft of 43 loses its signature columns on upgrade',
+      () async {
+    final file = File('${directory.path}/draft.db');
+    var db = EncryptedLocalDatabase(NativeDatabase(file));
+    await db.customStatement(
+        'ALTER TABLE local_frank_reveals ADD COLUMN signature BLOB');
+    await db.customStatement(
+        'ALTER TABLE local_frank_reveals ADD COLUMN signing_key BLOB');
+    expect(await revealColumns(db), containsAll(<String>['signature']));
+    await db.customStatement('PRAGMA user_version = 42');
+    await db.close();
+    db = EncryptedLocalDatabase(NativeDatabase(file));
+    addTearDown(db.close);
+    expect(
+        (await db.customSelect('PRAGMA user_version').getSingle())
+            .read<int>('user_version'),
+        43);
+    expect(await revealColumns(db),
+        isNot(anyOf(contains('signature'), contains('signing_key'))));
+    expect(await revealColumns(db), contains('designation'));
+  });
+
+  test('a designation is whole entries, 1 to 16, or none', () async {
+    final db = EncryptedLocalDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    await db.into(db.localMessages).insert(LocalMessagesCompanion.insert(
+          key: 'dev_b:act1',
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_b',
+          senderDeviceId: 'dev_b',
+          kind: 'text',
+          createdAt: 1,
+          state: 'received',
+        ));
+    Future<void> write(Uint8List? designation) => db.customStatement(
+            'INSERT OR REPLACE INTO local_frank_reveals (message_key, '
+            'conversation_id, envelope_id, frank_key, payload, stored_at, '
+            'designation, sender_account_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            <Object?>[
+              'dev_b:act1',
+              'conv_1',
+              'msg_1',
+              Uint8List(32),
+              Uint8List.fromList(<int>[123, 125]),
+              1,
+              designation,
+              'acct_b',
+            ]);
+    await write(null);
+    await write(Uint8List(48));
+    await write(Uint8List(16 * 48));
+    for (final bad in <int>[1, 47, 49, 64, 17 * 48]) {
+      await expectLater(write(Uint8List(bad)), throwsA(anything),
+          reason: '$bad bytes');
+    }
   });
 
   // Review H1, the database half: an own echo never re-points a row that

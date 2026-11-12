@@ -29,7 +29,10 @@ enum DeviceListChange {
   remove(3),
   recovery(4),
   recoveryKey(5),
-  migrationGenesis(6);
+  migrationGenesis(6),
+
+  /// L2-3: a listed device sets its own franking key, from none to some.
+  frankKey(7);
 
   const DeviceListChange(this.code);
   final int code;
@@ -85,6 +88,22 @@ bool _sameBytes(List<int> a, List<int> b) {
   return true;
 }
 
+/// A listed device's X25519 franking key (format 2, L2-3). Once a version
+/// lists it, no later version changes or drops it while the device stays
+/// listed.
+class DeviceListFrankKey {
+  DeviceListFrankKey(List<int> deviceId, List<int> key)
+      : deviceId = Uint8List.fromList(deviceId),
+        key = Uint8List.fromList(key) {
+    if (this.key.length != 32) {
+      throw ArgumentError('A franking key is 32 bytes');
+    }
+  }
+
+  final Uint8List deviceId;
+  final Uint8List key;
+}
+
 /// The signed part of a device-list statement. [encode] writes the one
 /// canonical spelling (entries sorted by id bytes); Rust refuses anything
 /// else, so a mistake here fails closed.
@@ -97,6 +116,7 @@ class DeviceListBody {
     required this.change,
     required this.entries,
     List<int>? recoveryKey,
+    this.frankKeys = const [],
   })  : accountId = Uint8List.fromList(accountId),
         prevHash = Uint8List.fromList(prevHash),
         recoveryKey =
@@ -116,6 +136,10 @@ class DeviceListBody {
   final DeviceListChange change;
   final List<DeviceListPair> entries;
   final Uint8List? recoveryKey;
+
+  /// The devices' franking keys. Empty writes format 1, byte for byte the
+  /// earlier format; any key writes format 2 with the keys appended.
+  final List<DeviceListFrankKey> frankKeys;
 
   /// `prev_hash` of a genesis.
   static final Uint8List zeroHash = Uint8List(32);
@@ -144,7 +168,7 @@ class DeviceListBody {
 
     out
       ..add(utf8.encode('VDL1'))
-      ..addByte(1);
+      ..addByte(frankKeys.isEmpty ? 1 : 2);
     lp(accountId);
     u64(version);
     out.add(prevHash);
@@ -163,6 +187,15 @@ class DeviceListBody {
       out
         ..addByte(1)
         ..add(key);
+    }
+    if (frankKeys.isNotEmpty) {
+      final franks = [...frankKeys]
+        ..sort((a, b) => _compareBytes(a.deviceId, b.deviceId));
+      out.addByte(franks.length);
+      for (final frank in franks) {
+        lp(frank.deviceId);
+        out.add(frank.key);
+      }
     }
     return out.toBytes();
   }
@@ -215,6 +248,7 @@ class DeviceListSummary {
     required this.accountId,
     required this.entries,
     required this.recoveryKey,
+    this.frankKeys = const [],
   });
 
   final DeviceListChange change;
@@ -229,6 +263,17 @@ class DeviceListSummary {
   final Uint8List accountId;
   final List<DeviceListPair> entries;
   final Uint8List? recoveryKey;
+
+  /// The franking keys this version lists (L2-3), sorted by id.
+  final List<DeviceListFrankKey> frankKeys;
+
+  /// The franking key this version lists for [deviceId], if any.
+  Uint8List? frankKeyOf(List<int> deviceId) {
+    for (final frank in frankKeys) {
+      if (_sameBytes(frank.deviceId, deviceId)) return frank.key;
+    }
+    return null;
+  }
 }
 
 class _SummaryReader {
@@ -283,6 +328,11 @@ DeviceListSummary _readSummary(_SummaryReader reader) {
     1 => reader.take(32),
     _ => throw const NativeCryptoException(NativeCryptoError.invalidOutput),
   };
+  final frankCount = reader.byte();
+  final frankKeys = <DeviceListFrankKey>[
+    for (var i = 0; i < frankCount; i++)
+      DeviceListFrankKey(reader.lpBytes(), reader.take(32)),
+  ];
   return DeviceListSummary(
     change: change,
     signerKind: signerKind,
@@ -294,16 +344,20 @@ DeviceListSummary _readSummary(_SummaryReader reader) {
     accountId: account,
     entries: entries,
     recoveryKey: recoveryKey,
+    frankKeys: frankKeys,
   );
 }
 
 /// A pair a chain listed, with the versions that added it and removed it
-/// ([removedVersion] is 0 while it is listed).
+/// ([removedVersion] is 0 while it is listed), and the franking key the
+/// chain gave the device, if any (L2-3; fixed once set).
 class DeviceListListedPair {
-  const DeviceListListedPair(this.pair, this.addedVersion, this.removedVersion);
+  const DeviceListListedPair(this.pair, this.addedVersion, this.removedVersion,
+      [this.frankKey]);
   final DeviceListPair pair;
   final int addedVersion;
   final int removedVersion;
+  final Uint8List? frankKey;
 }
 
 /// A verified chain: its head, its list identity (`list_hash` of version 1)
@@ -564,6 +618,12 @@ extension DeviceListBindings on NativeCryptoBindings {
           DeviceListPair(reader.lpBytes(), reader.take(32)),
           reader.u64(),
           reader.u64(),
+          switch (reader.byte()) {
+            0 => null,
+            1 => reader.take(32),
+            _ => throw const NativeCryptoException(
+                NativeCryptoError.invalidOutput),
+          },
         ),
     ];
     if (!reader.finished) {

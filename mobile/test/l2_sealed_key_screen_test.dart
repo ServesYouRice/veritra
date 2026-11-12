@@ -20,9 +20,13 @@ import 'test_crypto_service.dart';
 void main() {
   const origin = 'https://localhost:8080';
 
-  Future<AppState> stateWith(SealedKeyPin? pin) async {
+  Future<AppState> stateWith(SealedKeyPin? pin,
+      {List<ReportKeyPin> owners = const <ReportKeyPin>[]}) async {
     final store = MemoryLocalStore();
     if (pin != null) await store.saveSealedKeyPin(pin);
+    for (final owner in owners) {
+      await store.saveReportKeyPin(owner);
+    }
     final api = ApiClient(baseUrl: origin);
     final state = AppState(
       apiClientFactory: (_) => api,
@@ -76,6 +80,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text(reportKeyFingerprint(changed)), findsOneWidget);
     expect(find.widgetWithText(FilledButton, 'Accept new key'), findsNothing);
+  });
+
+  // Owner decision 4: with no pinned owner key a sealed message is provable
+  // to no one, and the screen says so; else it names how many owners.
+  testWidgets('the screen says who a sealed message is provable to',
+      (tester) async {
+    final key = SealedKeyPin(
+        origin: origin, keyId: 'a' * 32, publicKey: pinned, pinnedAt: 1);
+    var state = await stateWith(key);
+    await tester.pumpWidget(MaterialApp(home: SealedKeyScreen(state: state)));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('can then be proven to no one'), findsOneWidget);
+
+    ReportKeyPin owner(String id, int fill) => ReportKeyPin(
+        origin: origin,
+        ownerAccountId: id,
+        publicKey: List<int>.filled(32, fill),
+        keyRev: 1,
+        pinnedAt: 1);
+    state = await stateWith(key, owners: <ReportKeyPin>[
+      owner('acct_owner_1', 0x31),
+      owner('acct_owner_2', 0x32),
+      // A community moderator inbox is not an instance owner.
+      owner('comm_1:acct_mod', 0x33),
+    ]);
+    await tester.pumpWidget(MaterialApp(
+        key: const ValueKey('second'), home: SealedKeyScreen(state: state)));
+    await tester.pumpAndSettle();
+    expect(
+        tester
+            .widget<Text>(find.byKey(const ValueKey('sealed-provable-owners')))
+            .data,
+        contains(': 2.'));
+    expect(await state.sealedProvableOwnerCount(), 2);
   });
 
   testWidgets('no pin yet says so', (tester) async {

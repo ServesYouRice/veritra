@@ -848,6 +848,14 @@ abstract class LocalStore {
   Future<bool> clearConversationPause(String conversationId,
       {int? generation, void Function()? checkCanCommit});
 
+  /// L2-3: after a sync pass that opened a sealed message, moves the
+  /// write-ahead log into the database and truncates it, so the MLS state
+  /// from before the message (which could open its ciphertext again) does
+  /// not linger in old log frames (`secure_delete` clears freed pages of
+  /// the database file, not the log). Best effort: a busy database keeps
+  /// the log until the next pass. Returns whether the log was emptied.
+  Future<bool> checkpointSealedResidue();
+
   /// When this device last made an encrypted backup (card I45).
 
   /// Group invite commitments, excluded from backups and identity changes.
@@ -1219,6 +1227,15 @@ class MemoryLocalStore implements LocalStore {
     }
     checkCanCommit?.call();
     _syncCursor = eventId;
+  }
+
+  /// How often [checkpointSealedResidue] ran (tests).
+  int sealedResidueCheckpoints = 0;
+
+  @override
+  Future<bool> checkpointSealedResidue() async {
+    sealedResidueCheckpoints++;
+    return true;
   }
 
   @override
@@ -3291,6 +3308,15 @@ class SecureLocalStore implements LocalStore {
         leaseKey: _syncLeaseKey,
         checkCanCommit: checkCanCommit,
       );
+
+  @override
+  Future<bool> checkpointSealedResidue() async {
+    try {
+      return await (await _database()).checkpointWalTruncate();
+    } on Object {
+      return false;
+    }
+  }
 
   @override
   Future<bool> clearConversationPause(String conversationId,

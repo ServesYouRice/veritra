@@ -81,6 +81,7 @@ extension AppStateDeviceList on AppState {
     final crypto = _listCrypto;
     if (crypto == null) return null;
     final key = await crypto.currentSigningKey();
+    final frank = await crypto.currentFrankKey();
     return crypto.signDeviceList(DeviceListBody(
       accountId: idBytes(enrollment.accountId),
       version: 1,
@@ -88,6 +89,8 @@ extension AppStateDeviceList on AppState {
       createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
       change: DeviceListChange.genesis,
       entries: [DeviceListPair(idBytes(enrollment.deviceId), key)],
+      // L2-3: the device's franking key is listed from the start.
+      frankKeys: [DeviceListFrankKey(idBytes(enrollment.deviceId), frank)],
     ));
   }
 
@@ -140,12 +143,17 @@ extension AppStateDeviceList on AppState {
     return status.state == DeviceListState.ok ? status.pin : null;
   }
 
+  /// The version after [head]. Every franking key the head lists for a
+  /// device that stays is carried unchanged (L2-3: a listed key is fixed,
+  /// and Rust refuses a version that drops or changes one); [ownFrankKey]
+  /// adds this device's own, for change 7 and a recovery version.
   DeviceListBody _nextBody(
     DeviceListPin head,
     DeviceListChange change,
     List<DeviceListPair> entries, {
     Uint8List? recoveryKey,
     bool keepRecoveryKey = true,
+    DeviceListFrankKey? ownFrankKey,
   }) =>
       DeviceListBody(
         accountId: idBytes(head.accountId),
@@ -155,7 +163,95 @@ extension AppStateDeviceList on AppState {
         change: change,
         entries: entries,
         recoveryKey: keepRecoveryKey ? head.recoveryKey : recoveryKey,
+        frankKeys: [
+          for (final key in head.listed)
+            if (key.frankKey != null &&
+                entries
+                    .any((pair) => _sameIdBytes(pair.deviceId, key.deviceId)))
+              DeviceListFrankKey(key.deviceId, key.frankKey!),
+          if (ownFrankKey != null) ownFrankKey,
+        ],
       );
+
+  /// L2-3 (`docs/crypto.md`, "Franking a sealed message"): what a sealed
+  /// send designates with, read on the sealed token pass and never on a
+  /// send. Null (so every message goes identified, fail safe) unless this
+  /// device is on its own verified list with its signing key and the list
+  /// names exactly this device's franking key. A listed device whose list
+  /// names no franking key for it yet publishes change 7 first. The owner
+  /// keys are the instance owners' report keys this app pinned, never a key
+  /// fetched for the send.
+  Future<SealedFrankContext?> _sealedFrankContext(String origin) async {
+    final current = session;
+    final crypto = _listCrypto;
+    final pins = _deviceListPins;
+    final account = current?.accountId;
+    final device = current?.deviceId;
+    if (current == null ||
+        crypto == null ||
+        pins == null ||
+        account == null ||
+        device == null) {
+      return null;
+    }
+    final own = await crypto.currentFrankKey();
+    final ownSigning = await crypto.currentSigningKey();
+    var status = await pins.refresh(account);
+    var head = status.state == DeviceListState.ok ? status.pin : null;
+    if (head == null ||
+        head.conflict ||
+        head.standing(idBytes(device), ownSigning) != PinStanding.approved) {
+      return null;
+    }
+    if (head.listedFrankKey(idBytes(device)) == null) {
+      await _publishOwnFrankKey(current, own);
+      status = await pins.refresh(account);
+      head = status.state == DeviceListState.ok ? status.pin : null;
+      if (head == null || head.conflict) return null;
+    }
+    final listed = head.listedFrankKey(idBytes(device));
+    if (listed == null || !_sameIdBytes(listed, own)) return null;
+    return SealedFrankContext(
+        listedKey: listed, ownerKeys: await _pinnedOwnerKeys(origin));
+  }
+
+  /// The instance owners' report keys pinned for [origin] (owner scope: no
+  /// `:` in the id), at most [SealedFrankContext.maxOwnerKeys], in account
+  /// order.
+  Future<List<List<int>>> _pinnedOwnerKeys(String origin) async {
+    final owners = [
+      for (final pin in await localStore
+          .loadReportKeyPins(canonicalizeServerOrigin(origin)))
+        if (!pin.ownerAccountId.contains(':')) pin,
+    ]..sort((a, b) => a.ownerAccountId.compareTo(b.ownerAccountId));
+    return [
+      for (final pin in owners.take(SealedFrankContext.maxOwnerKeys))
+        pin.publicKey,
+    ];
+  }
+
+  /// Change 7: this device sets its own franking key on its list, once.
+  /// Errors are left to the caller's pass (it tries again on the next one).
+  Future<void> _publishOwnFrankKey(Session current, Uint8List frank) async {
+    final client = api;
+    final device = current.deviceId;
+    if (client == null || device == null) return;
+    await _signAndSend(
+      current,
+      (head) {
+        final id = idBytes(device);
+        if (head.listedKey(id) == null || head.listedFrankKey(id) != null) {
+          return null;
+        }
+        return _nextBody(head, DeviceListChange.frankKey, _listedPairs(head),
+            ownFrankKey: DeviceListFrankKey(id, frank));
+      },
+      (statement) async {
+        if (statement == null) return;
+        await client.publishDeviceList(current.token, statement);
+      },
+    );
+  }
 
   List<DeviceListPair> _listedPairs(DeviceListPin head) => [
         for (final key in head.listed)
@@ -368,7 +464,9 @@ extension AppStateDeviceList on AppState {
         statement = await crypto.signRecoveryDeviceList(
           prev: head.headStatement,
           body: _nextBody(head, DeviceListChange.recovery,
-              [DeviceListPair(idBytes(device), own)]),
+              [DeviceListPair(idBytes(device), own)],
+              ownFrankKey: DeviceListFrankKey(
+                  idBytes(device), await crypto.currentFrankKey())),
           history: [
             for (final key in head.keys)
               DeviceListPair(key.deviceId, key.signingKey),
@@ -617,7 +715,9 @@ extension AppStateDeviceList on AppState {
           statement = await crypto.signRecoveryDeviceList(
             prev: head.headStatement,
             body: _nextBody(head, DeviceListChange.recovery,
-                [DeviceListPair(idBytes(device), own)]),
+                [DeviceListPair(idBytes(device), own)],
+                ownFrankKey: DeviceListFrankKey(
+                    idBytes(device), await crypto.currentFrankKey())),
             history: [
               for (final key in head.keys)
                 DeviceListPair(key.deviceId, key.signingKey),
@@ -667,6 +767,7 @@ extension AppStateDeviceList on AppState {
         throw UserFacingException(l10n.errorRelinkRequired);
       }
       final ownKey = await crypto.currentSigningKey();
+      final ownFrank = await crypto.currentFrankKey();
       final entries = <DeviceListPair>[
         for (final device in devices)
           if (device.revokedAt == null &&
@@ -683,6 +784,9 @@ extension AppStateDeviceList on AppState {
         createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
         change: DeviceListChange.migrationGenesis,
         entries: entries,
+        // L2-3: only this device's own franking key; the others set theirs
+        // with change 7.
+        frankKeys: [DeviceListFrankKey(idBytes(own), ownFrank)],
       ));
       try {
         await client.publishDeviceList(current.token, statement);

@@ -21,11 +21,13 @@ class SealedKeyScreen extends StatefulWidget {
 
 class _SealedKeyScreenState extends State<SealedKeyScreen> {
   late Future<SealedKeyPin?> _pin;
+  late Future<int> _owners;
 
   @override
   void initState() {
     super.initState();
     _pin = widget.state.sealedKeyPin();
+    _owners = widget.state.sealedProvableOwnerCount();
   }
 
   Future<void> _accept() async {
@@ -104,6 +106,23 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
                     child: Text(l10n.l2SealedKeyAccept),
                   ),
                 ],
+              ],
+              // L2-3: who can be shown a sealed message's proof (only owners
+              // whose report key this app pinned; none, no one).
+              if (enabled || pin != null) ...<Widget>[
+                const SizedBox(height: BoneSpacing.lg),
+                FutureBuilder<int>(
+                  future: _owners,
+                  builder: (context, owners) {
+                    final count = owners.data ?? 0;
+                    return Text(
+                      count == 0
+                          ? l10n.l2SealedProvableNone
+                          : l10n.l2SealedProvableOwners(count),
+                      key: const ValueKey('sealed-provable-owners'),
+                    );
+                  },
+                ),
               ],
             ],
           );

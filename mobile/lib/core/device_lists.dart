@@ -8,6 +8,7 @@ import '../crypto/native_crypto_bindings.dart'
         DeviceListListedPair,
         DeviceListPair,
         DeviceListSummary,
+        NativeCryptoError,
         NativeCryptoException;
 import '../storage/local_store.dart';
 
@@ -217,6 +218,7 @@ class DeviceListPins {
               signingKey: listed.pair.signingKey,
               addedVersion: listed.addedVersion,
               removedVersion: listed.removedVersion,
+              frankKey: listed.frankKey,
             ),
         ],
       );
@@ -363,19 +365,27 @@ class DeviceListPins {
               DeviceListPair(key.deviceId, key.signingKey),
           ],
         );
+    // L2-3: a franking key is one device's for the whole chain. The native
+    // step check sees only the version before; the pin holds the rest.
+    for (final frank in summary.frankKeys) {
+      if (pin.keys.any((key) =>
+          key.frankKey != null &&
+          _same(key.frankKey!, frank.key) &&
+          !_same(key.deviceId, frank.deviceId))) {
+        throw const NativeCryptoException(NativeCryptoError.deviceListRule);
+      }
+    }
     final keys = <DeviceListKeyRow>[];
     for (final key in pin.keys) {
       final still = summary.entries.any((entry) =>
           _same(entry.deviceId, key.deviceId) &&
           _same(entry.signingKey, key.signingKey));
+      final listedFrank = still ? summary.frankKeyOf(key.deviceId) : null;
       keys.add(key.listed && !still
-          ? DeviceListKeyRow(
-              deviceId: key.deviceId,
-              signingKey: key.signingKey,
-              addedVersion: key.addedVersion,
-              removedVersion: summary.version,
-            )
-          : key);
+          ? key.removedAt(summary.version)
+          : listedFrank != null && key.frankKey == null
+              ? key.withFrankKey(listedFrank)
+              : key);
     }
     for (final entry in summary.entries) {
       final known = pin.keys.any((key) =>
@@ -387,6 +397,7 @@ class DeviceListPins {
           signingKey: entry.signingKey,
           addedVersion: summary.version,
           removedVersion: 0,
+          frankKey: summary.frankKeyOf(entry.deviceId),
         ));
       }
     }
@@ -509,26 +520,21 @@ class DeviceListPins {
     return pin.listedKey(device);
   }
 
-  /// L2-3: whether [accountId]'s signed list lists, or once listed,
-  /// [deviceId] with [signingKey] (a report about a sealed message may be
-  /// older than a removal). False when the list is unavailable or in
-  /// conflict: a report is never attributed on a list this app cannot
-  /// trust.
-  Future<bool> listsOrListed(
-      String accountId, String deviceId, List<int> signingKey) async {
+  /// L2-3: the franking key [accountId]'s signed list gives [deviceId],
+  /// listed now or removed since (a report about a sealed message may be
+  /// older than a removal). Null when the list names none for it, or is
+  /// unavailable or in conflict: a report is never attributed on a list this
+  /// app cannot trust. The list is fetched only when the pin does not
+  /// already name a key for the device.
+  Future<Uint8List?> frankKeyOf(String accountId, String deviceId) async {
     final device = utf8.encode(deviceId);
-    bool known(DeviceListPin pin) {
-      final standing = pin.standing(device, signingKey);
-      return standing == PinStanding.approved ||
-          standing == PinStanding.removed;
-    }
-
-    final status = await _refreshFor(accountId, known);
+    final status =
+        await _refreshFor(accountId, (pin) => pin.frankKeyOf(device) != null);
     final pin = status.pin;
     if (status.state != DeviceListState.ok || pin == null || pin.conflict) {
-      return false;
+      return null;
     }
-    return known(pin);
+    return pin.frankKeyOf(device);
   }
 
   /// Device inventory comes from the signed list, never a server device roster.

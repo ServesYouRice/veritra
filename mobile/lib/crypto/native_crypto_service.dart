@@ -127,24 +127,27 @@ class NativeCryptoService
   SealedTokenSource? sealedTokenSource;
 
   @override
-  Future<bool> frankSignatureValid({
-    required List<int> signingKey,
+  Future<int> frankDesignationVerdict({
+    required List<int> seed,
+    required List<int> senderFrankKey,
     required String conversationId,
     required String accountId,
     required String deviceId,
     required List<int> commit,
-    required List<int> signature,
+    required List<int> designation,
   }) async {
     try {
-      return bindings.l2FrankVerify(
-          signingKey: signingKey,
+      return bindings.l2FrankDvVerify(
+          seed: seed,
+          senderFrankKey: senderFrankKey,
           conversationId: conversationId,
           accountId: accountId,
           deviceId: deviceId,
           commit: commit,
-          signature: signature);
+          designation: designation);
     } on Object {
-      return false;
+      // A check that errors proves nothing.
+      return 0;
     }
   }
 
@@ -670,6 +673,10 @@ class NativeCryptoService
   @override
   Future<Uint8List> currentSigningKey() => _serial(
       () async => Uint8List.fromList(_requiredDevice().signingPublicKey()));
+
+  @override
+  Future<Uint8List> currentFrankKey() =>
+      _serial(() async => _requiredDevice().l2FrankPublicKey());
 
   @override
   Future<void> holdRecoveryListSeed(Uint8List entropy) => _serial(() async {
@@ -3020,11 +3027,21 @@ class NativeCryptoService
         }
         final source = sealedTokenSource;
         SealedToken? sealedToken;
+        // L2-3: what the commitment is designated to, as the last token pass
+        // cached it. Without it (this device's franking key is not on its own
+        // verified list) the message goes identified, decided here, before
+        // anything is sealed (fail safe).
+        SealedFrankContext? sealedFrank;
         if (sealable && source != null && !replacing) {
           sealedToken = await source.takeFor(conversationId);
           if (sealedToken != null &&
               (sealedToken.conversationId != conversationId ||
                   !sealedToken.isWellFormed)) {
+            sealedToken = null;
+          }
+          sealedFrank = sealedToken == null ? null : source.frankContext;
+          if (sealedToken != null && sealedFrank == null) {
+            await source.putBack(sealedToken);
             sealedToken = null;
           }
         }
@@ -3072,10 +3089,13 @@ class NativeCryptoService
               hidden: type.sendsHidden,
               channelId: channelId,
               expiresAtMs: expiresAt?.toUtc().millisecondsSinceEpoch,
-              // L2-3: a sealed payload also carries this device's signature
-              // over the commitment (docs/crypto.md, "Franking a sealed
-              // message"), inside the ciphertext.
-              sealedSignature: sealedToken == null
+              // L2-3: a sealed payload carries this device's designation of
+              // the commitment to the owner keys this app pinned (docs/
+              // crypto.md, "Franking a sealed message"), inside the
+              // ciphertext: tags only those owners can check, and no
+              // signature anyone else could. With no pinned owner key it
+              // goes in the plain form.
+              sealedDesignation: sealedToken == null
                   ? null
                   : (canonical) {
                       sealedCommit = bindings.frankCommit(
@@ -3085,9 +3105,13 @@ class NativeCryptoService
                         actionId: idempotencyKey,
                         payload: canonical,
                       );
-                      return _requiredDevice().l2FrankSign(
+                      final frank = sealedFrank!;
+                      if (frank.ownerKeys.isEmpty) return null;
+                      return _requiredDevice().l2FrankDesignate(
                           conversationId: conversationId,
-                          commit: sealedCommit!);
+                          commit: sealedCommit!,
+                          listedKey: frank.listedKey,
+                          ownerKeys: frank.ownerKeys);
                     },
             );
             payload = framed.padded;
@@ -3384,7 +3408,6 @@ class NativeCryptoService
       try {
         operationFence();
         LeafVerdict? senderVerdict;
-        List<int>? sealedSigningKey;
         List<int> plaintext;
         // C7: whether the message came in two parts, and the channel its
         // clear metadata names (bound into the body's aad).
@@ -3434,16 +3457,6 @@ class NativeCryptoService
             }
             envelope = envelope.withSender(opened.accountId, opened.deviceId);
             onSender?.call(envelope);
-            // The sender leaf's signing key, read in the same turn as the
-            // decrypt (before anything can change the tree), for the
-            // franking signature. A leaf without one leaves it null and a
-            // franked payload is then invalid.
-            try {
-              sealedSigningKey = device.memberSignatureKey(
-                  envelope.conversationId, opened.accountId, opened.deviceId);
-            } on Object {
-              sealedSigningKey = null;
-            }
             return opened.plaintext;
           });
           if (decrypted == null) {
@@ -3586,7 +3599,6 @@ class NativeCryptoService
             envelope,
             plaintext,
             sealed: sealed,
-            signingKey: sealedSigningKey,
             AppPayloadCodec().classify(
               plaintext,
               conversationId: envelope.conversationId,
@@ -4019,17 +4031,17 @@ class NativeCryptoService
   /// that into an `invalid` row, never a stuck sync.
   ///
   /// L2-3 (`docs/crypto.md`, "Franking a sealed message"): a franked payload
-  /// that came [sealed] must carry `s`, and `s` must verify under the sender
-  /// leaf's [signingKey] over the commitment; an identified one carrying `s`
-  /// is invalid. The reveal of a sealed message keeps `s`, the key and the
-  /// sender account, which a report needs since the server row names no
-  /// sender.
+  /// that came [sealed] may carry a designation `d` (tags only the
+  /// designated owners can check, so a receiver checks only its shape); an
+  /// identified one carrying `d` is invalid. The reveal of a sealed message
+  /// keeps `d` and the sender account MLS authenticated, which a report
+  /// needs since the server row names no sender. Nothing a receiver keeps
+  /// is a signature over the message.
   ({AppPayloadOutcome outcome, FrankReveal? reveal}) _checkFranking(
       ReceivedMessageEnvelope envelope,
       List<int> plaintext,
       AppPayloadOutcome outcome,
-      {bool sealed = false,
-      List<int>? signingKey}) {
+      {bool sealed = false}) {
     if (outcome is InvalidAppPayload) return (outcome: outcome, reveal: null);
     switch (AppPayloadCodec.frankOf(plaintext)) {
       case Unfranked():
@@ -4039,12 +4051,12 @@ class NativeCryptoService
         return (outcome: const InvalidAppPayload(), reveal: null);
       case MalformedFrank():
         return (outcome: const InvalidAppPayload(), reveal: null);
-      case Franked(:final canonical, :final key, :final signature):
+      case Franked(:final canonical, :final key, :final designation):
         final commit = envelope.frankCommit;
         if (commit == null || commit.length != frankCommitBytes) {
           return (outcome: const InvalidAppPayload(), reveal: null);
         }
-        if (sealed != (signature != null)) {
+        if (designation != null && !sealed) {
           return (outcome: const InvalidAppPayload(), reveal: null);
         }
         final expected = bindings.frankCommit(
@@ -4057,28 +4069,6 @@ class NativeCryptoService
         if (!frankCommitEquals(expected, commit)) {
           return (outcome: const InvalidAppPayload(), reveal: null);
         }
-        if (signature != null) {
-          // A check that errors is a check that failed: the ratchet has
-          // moved, so this must commit as invalid, never stop sync.
-          var verified = false;
-          if (signingKey != null && signingKey.length == 32) {
-            try {
-              verified = bindings.l2FrankVerify(
-                signingKey: signingKey,
-                conversationId: envelope.conversationId,
-                accountId: envelope.senderAccountId,
-                deviceId: envelope.senderDeviceId,
-                commit: commit,
-                signature: signature,
-              );
-            } on Object {
-              verified = false;
-            }
-          }
-          if (!verified) {
-            return (outcome: const InvalidAppPayload(), reveal: null);
-          }
-        }
         // Kept so the message can be reported later (D95, schema 19): kf and
         // the exact bytes P the commitment covers.
         return (
@@ -4090,10 +4080,9 @@ class NativeCryptoService
             envelopeId: envelope.id,
             frankKey: key,
             payload: canonical,
-            signature: signature,
-            signingKey: signature == null ? null : signingKey,
-            senderAccountId:
-                signature == null ? null : envelope.senderAccountId,
+            sealed: sealed,
+            designation: sealed ? designation : null,
+            senderAccountId: sealed ? envelope.senderAccountId : null,
           ),
         );
     }

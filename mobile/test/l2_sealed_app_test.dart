@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -20,23 +21,103 @@ void main() {
   test('the frank member reads in exactly one spelling of each form', () {
     final canonical = Uint8List.fromList(utf8.encode('{"t":"x"}'));
     final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
-    final signature =
-        Uint8List.fromList(List<int>.generate(64, (i) => 255 - i));
-    final sealed = frankWireJson(canonical, key, signature: signature);
+    final designation = _designation(3, seed: 5);
+    final designated = frankWireJson(canonical, key, designation: designation);
     final plain = frankWireJson(canonical, key);
-    final readSealed = splitFrank(sealed) as Franked;
-    expect(readSealed.signature, signature);
-    expect(readSealed.key, key);
-    expect(readSealed.canonical, canonical);
+    final readDesignated = splitFrank(designated) as Franked;
+    expect(readDesignated.designation, designation);
+    expect(readDesignated.key, key);
+    expect(readDesignated.canonical, canonical);
     final readPlain = splitFrank(plain) as Franked;
-    expect(readPlain.signature, isNull);
-    // A non-canonical signature spelling is refused.
-    final text = utf8.decode(sealed);
-    final bent = text.replaceFirst('","s":"', '","s" :"');
-    expect(splitFrank(Uint8List.fromList(utf8.encode(bent))),
-        isA<MalformedFrank>());
-    expect(() => frankWireJson(canonical, key, signature: Uint8List(63)),
+    expect(readPlain.designation, isNull);
+    final text = utf8.decode(designated);
+    // A bent infix, an empty `d`, padding, a short entry, unsorted or
+    // repeated key ids and 17 entries are all refused.
+    for (final bent in <String>[
+      text.replaceFirst('","d":"', '","d" :"'),
+      text.replaceFirst(RegExp(r'"d":"[^"]*"'), '"d":""'),
+      text.replaceFirst(RegExp(r'"d":"[^"]*"'),
+          '"d":"${base64.encode(designation.sublist(0, 47))}"'),
+      text.replaceFirst(
+          RegExp(r'"d":"[^"]*"'), '"d":"${base64.encode(designation)}=="'),
+      text.replaceFirst(
+          RegExp(r'"d":"[^"]*"'),
+          '"d":"${base64.encode(<int>[
+                ...designation.sublist(48, 96),
+                ...designation.sublist(0, 48)
+              ])}"'),
+      text.replaceFirst(
+          RegExp(r'"d":"[^"]*"'),
+          '"d":"${base64.encode(<int>[
+                ...designation.sublist(0, 48),
+                ...designation.sublist(0, 48)
+              ])}"'),
+      text.replaceFirst(RegExp(r'"d":"[^"]*"'),
+          '"d":"${base64.encode(_designation(17, seed: 1))}"'),
+      text.replaceFirst(
+          RegExp(r'"d":"[^"]*"'), '"d":"${base64Url.encode(designation)}"'),
+    ]) {
+      expect(splitFrank(Uint8List.fromList(utf8.encode(bent))),
+          isA<MalformedFrank>(),
+          reason: bent);
+    }
+    expect(() => frankWireJson(canonical, key, designation: Uint8List(47)),
         throwsFormatException);
+    expect(() => frankWireJson(canonical, key, designation: Uint8List(0)),
+        throwsFormatException);
+    expect(
+        () => frankWireJson(canonical, key,
+            designation: _designation(17, seed: 2)),
+        throwsFormatException);
+  });
+
+  // Item (g): splitFrank against random and mutated inputs. Whatever it
+  // accepts must be the one spelling the encoder writes for what it read,
+  // so two different byte strings never read as the same franked payload.
+  test('splitFrank accepts only what the encoder writes (property)', () {
+    final random = Random(20261112);
+    var accepted = 0, refused = 0;
+    for (var round = 0; round < 3000; round++) {
+      final canonical = _randomObject(random);
+      final key = Uint8List.fromList(
+          List<int>.generate(32, (_) => random.nextInt(256)));
+      final n = random.nextInt(17); // 0 = plain form
+      final designation =
+          n == 0 ? null : _designation(n, seed: random.nextInt(1 << 30));
+      final wire = frankWireJson(canonical, key, designation: designation);
+      final read = splitFrank(wire);
+      expect(read, isA<Franked>());
+      read as Franked;
+      expect(read.canonical, canonical);
+      expect(read.key, key);
+      expect(read.designation, designation);
+      // Mutations: flip, insert, delete or truncate one byte.
+      final mutated = Uint8List.fromList(wire);
+      final at = random.nextInt(mutated.length);
+      final List<int> bent = switch (random.nextInt(4)) {
+        0 => (mutated..[at] ^= 1 << random.nextInt(8)),
+        1 => <int>[
+            ...mutated.sublist(0, at),
+            random.nextInt(128),
+            ...mutated.sublist(at)
+          ],
+        2 => <int>[...mutated.sublist(0, at), ...mutated.sublist(at + 1)],
+        _ => mutated.sublist(0, at),
+      };
+      final again = splitFrank(bent);
+      if (again is Franked) {
+        accepted++;
+        expect(
+            frankWireJson(again.canonical, again.key,
+                designation: again.designation),
+            bent,
+            reason: utf8.decode(bent, allowMalformed: true));
+      } else {
+        refused++;
+      }
+    }
+    // Most mutations break the form; a few land in P and stay valid.
+    expect(refused, greaterThan(accepted));
   });
 
   group('sealed posts', () {
@@ -272,6 +353,84 @@ void main() {
       expect(sealedPostOutcome(const SocketException('x')),
           SealedPostOutcome.retry);
     });
+
+    // The identified fallback exactly as AppState wires it into
+    // postSealedMessage (AppState._postSealed passes sendSealedAsIdentified).
+    test('the identified fallback re-encrypts, waits, or refuses', () async {
+      final sealed = _envelope(_token(1));
+      final identified = MessageEnvelope(
+        conversationId: sealed.conversationId,
+        idempotencyKey: sealed.idempotencyKey,
+        ciphertext: const <int>[4, 5, 6],
+        cryptoProtocol: sealed.cryptoProtocol,
+        cryptoMetadata: sealed.cryptoMetadata,
+      );
+      final store = _MlsQueue();
+      final crypto = _FakeCrypto();
+      final sent = <MessageEnvelope>[];
+      var owned = true;
+      Future<bool> fallback(Object? with_) => sendSealedAsIdentified(
+            crypto: with_,
+            localStore: store,
+            sealed: sealed,
+            owned: () => owned,
+            send: (envelope) async => sent.add(envelope),
+          );
+
+      // A crypto service that cannot seal: the message fails, nothing sent.
+      expect(await fallback(Object()), isFalse);
+      expect(await fallback(null), isFalse);
+
+      // The fresh identified copy is sent, once.
+      crypto.reencrypt = (_) => identified;
+      expect(await fallback(crypto), isTrue);
+      expect(sent.single, same(identified));
+      expect(sent.single.sealed, isFalse);
+
+      // Nothing left to fall back with, or a copy still sealed: fails.
+      sent.clear();
+      crypto.reencrypt = (_) => null;
+      expect(await fallback(crypto), isFalse);
+      crypto.reencrypt = (sealed) => sealed;
+      expect(await fallback(crypto), isFalse);
+      expect(sent, isEmpty);
+
+      // An MLS control message queued for this conversation: waits
+      // (retryable), and nothing is encrypted.
+      crypto.reencrypt = (_) => identified;
+      crypto.reencrypts = 0;
+      store.pending = <PendingMlsMessage>[
+        PendingMlsMessage(
+            idempotencyKey: 'mls_1',
+            conversationId: sealed.conversationId,
+            kind: 'commit',
+            payload: const <int>[1]),
+      ];
+      await expectLater(
+          fallback(crypto),
+          throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'statusCode', 503)
+              .having((e) => e.serverCode, 'code', 'mls_control_pending')));
+      expect(crypto.reencrypts, 0);
+      // One for another conversation does not hold it.
+      store.pending = <PendingMlsMessage>[
+        const PendingMlsMessage(
+            idempotencyKey: 'mls_2',
+            conversationId: 'conv_other',
+            kind: 'commit',
+            payload: <int>[1]),
+      ];
+      expect(await fallback(crypto), isTrue);
+      sent.clear();
+
+      // The session changed during the encrypt: nothing is sent.
+      owned = false;
+      await expectLater(
+          fallback(crypto),
+          throwsA(isA<ApiException>()
+              .having((e) => e.serverCode, 'code', 'session_changed')));
+      expect(sent, isEmpty);
+    });
   });
 
   group('sync reads', () {
@@ -308,6 +467,7 @@ void main() {
           origin: 'https://chat.example.org',
           localStore: store,
           crypto: crypto,
+          loadFrankContext: () async => _frank,
           clock: () => _now);
       sealed.enabled = true;
       api.remaining = 40;
@@ -340,6 +500,7 @@ void main() {
           origin: 'https://chat.example.org',
           localStore: store,
           crypto: crypto,
+          loadFrankContext: () async => _frank,
           clock: () => now);
       sealed.enabled = true;
       final conversations = <Conversation>[
@@ -377,6 +538,7 @@ void main() {
           origin: 'https://chat.example.org',
           localStore: store,
           crypto: _FakeCrypto(),
+          loadFrankContext: () async => _frank,
           clock: () => _now);
       sealed.enabled = true;
       await store.saveSealedTokens(<SealedToken>[_token(9, epoch: api.epoch)]);
@@ -391,6 +553,50 @@ void main() {
           0);
     });
 
+    test('without its own franking key listed, nothing goes sealed', () async {
+      // Fail safe: the context is null when this device's key is not on its
+      // verified list, so a held token is never handed to a send.
+      final store = MemoryLocalStore();
+      final api = _SealedApi();
+      final sealed = SealedSender(
+          origin: 'https://chat.example.org',
+          localStore: store,
+          crypto: _FakeCrypto(),
+          loadFrankContext: () async => null,
+          clock: () => _now);
+      sealed.enabled = true;
+      await sealed.refresh(api, 't',
+          <Conversation>[Conversation(id: _conversation, kind: 'dm')]);
+      expect(api.batches, isNotEmpty);
+      expect(sealed.frankContext, isNull);
+      expect(await sealed.takeFor(_conversation), isNull);
+    });
+
+    test('the designation context is read on the token pass, never on a send',
+        () async {
+      final store = MemoryLocalStore();
+      final api = _SealedApi();
+      var reads = 0;
+      final sealed = SealedSender(
+          origin: 'https://chat.example.org',
+          localStore: store,
+          crypto: _FakeCrypto(),
+          loadFrankContext: () async {
+            reads++;
+            return _frank;
+          },
+          clock: () => _now);
+      sealed.enabled = true;
+      await sealed.refresh(api, 't',
+          <Conversation>[Conversation(id: _conversation, kind: 'dm')]);
+      expect(reads, 1);
+      for (var i = 0; i < 5; i++) {
+        expect(await sealed.takeFor(_conversation), isNotNull);
+        expect(sealed.frankContext, same(_frank));
+      }
+      expect(reads, 1);
+    });
+
     test('off: nothing is fetched and no token is handed out', () async {
       final store = MemoryLocalStore();
       final api = _SealedApi();
@@ -398,6 +604,7 @@ void main() {
           origin: 'https://chat.example.org',
           localStore: store,
           crypto: _FakeCrypto(),
+          loadFrankContext: () async => _frank,
           clock: () => _now);
       await sealed.refresh(api, 't',
           <Conversation>[Conversation(id: _conversation, kind: 'dm')]);
@@ -439,8 +646,66 @@ SealedSender _tokens({MemoryLocalStore? store}) => SealedSender(
       origin: 'https://chat.example.org',
       localStore: store ?? MemoryLocalStore(),
       crypto: _FakeCrypto(),
+      loadFrankContext: () async => _frank,
       clock: () => _now,
     )..enabled = true;
+
+/// A designation context as the token pass would cache it.
+final SealedFrankContext _frank = SealedFrankContext(
+    listedKey: List<int>.filled(32, 9),
+    ownerKeys: <List<int>>[List<int>.filled(32, 3)]);
+
+/// [n] entries with strictly ascending random key ids.
+Uint8List _designation(int n, {required int seed}) {
+  final random = Random(seed);
+  final kids = <String, List<int>>{};
+  while (kids.length < n) {
+    final kid = List<int>.generate(16, (_) => random.nextInt(256));
+    kids[base64.encode(kid)] = kid;
+  }
+  final sorted = kids.values.toList()
+    ..sort((a, b) {
+      for (var i = 0; i < 16; i++) {
+        if (a[i] != b[i]) return a[i] - b[i];
+      }
+      return 0;
+    });
+  return Uint8List.fromList(<int>[
+    for (final kid in sorted) ...<int>[
+      ...kid,
+      ...List<int>.generate(32, (_) => random.nextInt(256))
+    ],
+  ]);
+}
+
+/// A random JSON object without `frank`, with values that try to look like
+/// the frank member's own syntax.
+Uint8List _randomObject(Random random) {
+  const tricky = <String>[
+    ',"frank":{"k":"',
+    '","d":"',
+    '"}}',
+    'AAAA',
+    '=',
+    'frank',
+    'd',
+    '\u0022',
+  ];
+  final map = <String, Object?>{};
+  final count = 1 + random.nextInt(4);
+  for (var i = 0; i < count; i++) {
+    final name = random.nextBool() ? 'f$i' : 'd$i';
+    final value = switch (random.nextInt(4)) {
+      0 => tricky[random.nextInt(tricky.length)] * (1 + random.nextInt(3)),
+      1 => random.nextInt(1 << 20),
+      2 => <String, Object?>{'frank': tricky[random.nextInt(tricky.length)]},
+      _ => base64.encode(
+          List<int>.generate(random.nextInt(70), (_) => random.nextInt(256))),
+    };
+    map[name] = value;
+  }
+  return Uint8List.fromList(utf8.encode(jsonEncode(map)));
+}
 
 extension on SealedSender {
   /// Pins the test key and marks [conversationId] eligible, as a token pass
@@ -450,14 +715,28 @@ extension on SealedSender {
           <Conversation>[Conversation(id: conversationId, kind: 'dm')]);
 }
 
+class _MlsQueue extends MemoryLocalStore {
+  List<PendingMlsMessage> pending = const <PendingMlsMessage>[];
+
+  @override
+  Future<List<PendingMlsMessage>> pendingMlsMessages() async => pending;
+}
+
 class _FakeCrypto implements SealedSendingCryptoService {
   @override
   set sealedTokenSource(SealedTokenSource? source) {}
 
+  MessageEnvelope? Function(MessageEnvelope sealed)? reencrypt;
+  int reencrypts = 0;
+
   @override
   Future<MessageEnvelope?> reencryptSealedAsIdentified(
-          MessageEnvelope sealed) =>
-      throw UnimplementedError();
+      MessageEnvelope sealed) async {
+    final answer = reencrypt;
+    if (answer == null) throw UnimplementedError();
+    reencrypts++;
+    return answer(sealed);
+  }
 
   @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(

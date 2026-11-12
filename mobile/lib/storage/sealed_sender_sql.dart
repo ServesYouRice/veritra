@@ -21,9 +21,13 @@ part of 'encrypted_database.dart';
 //   it identified instead after the server proved nothing sealed was stored
 //   (`sealed_not_eligible`). The plaintext is cleared when the outbox entry
 //   goes.
-// - local_frank_reveals gains the sealed message's franking signature `s`,
-//   the sender leaf's signing key it verified under, and the sender account
-//   MLS authenticated, so a report of a sealed message can be checked.
+// - local_frank_reveals gains the sealed message's designation `d` (tags
+//   only the designated owners can check; never a signature) and the sender
+//   account MLS authenticated, so a report of a sealed message can be
+//   checked. An earlier draft of this step stored a signature and a signing
+//   key: both columns are dropped where they exist.
+// - local_device_list_keys gains each pair's franking key (L1 format 2), so
+//   an owner checks a report against the key the sender's list names.
 
 /// The server's sealed sender key as this app pinned it for [origin], and a
 /// different key the server served since ([seenKeyId], [seenPublicKey]),
@@ -107,6 +111,18 @@ extension SealedSenderSql on EncryptedLocalDatabase {
     'local_sealed_own_posts',
   ];
 
+  /// `PRAGMA wal_checkpoint(TRUNCATE)`: true when every log frame reached
+  /// the database and the log file was cut to zero (no reader held it).
+  /// In-memory and rollback-journal databases have no log: true.
+  Future<bool> checkpointWalTruncate() async {
+    final row =
+        await customSelect('PRAGMA wal_checkpoint(TRUNCATE)').getSingle();
+    final busy = row.data['busy'] as int? ?? 0;
+    final log = row.data['log'] as int? ?? -1;
+    final done = row.data['checkpointed'] as int? ?? -1;
+    return busy == 0 && (log == -1 || log == done);
+  }
+
   Future<void> _createSealedSender() async {
     await customStatement('CREATE TABLE IF NOT EXISTS local_sealed_tokens ('
         'nonce BLOB PRIMARY KEY NOT NULL CHECK(length(nonce)=${SealedToken.nonceBytes}),'
@@ -138,20 +154,34 @@ extension SealedSenderSql on EncryptedLocalDatabase {
             "SELECT name FROM pragma_table_info('local_frank_reveals')")
         .get();
     final names = columns.map((row) => row.read<String>('name')).toSet();
-    if (!names.contains('signature')) {
-      await customStatement(
-          'ALTER TABLE local_frank_reveals ADD COLUMN signature BLOB '
-          'CHECK(signature IS NULL OR length(signature)=64)');
+    // A signature over the payload must never be kept (owner decision on
+    // deniability): drop the columns of the earlier draft of this step.
+    for (final dropped in const ['signature', 'signing_key']) {
+      if (names.contains(dropped)) {
+        await customStatement(
+            'ALTER TABLE local_frank_reveals DROP COLUMN $dropped');
+      }
     }
-    if (!names.contains('signing_key')) {
+    if (!names.contains('designation')) {
       await customStatement(
-          'ALTER TABLE local_frank_reveals ADD COLUMN signing_key BLOB '
-          'CHECK(signing_key IS NULL OR length(signing_key)=32)');
+          'ALTER TABLE local_frank_reveals ADD COLUMN designation BLOB '
+          'CHECK(designation IS NULL OR (length(designation) BETWEEN 48 AND 768 '
+          'AND length(designation) % 48 = 0))');
     }
     if (!names.contains('sender_account_id')) {
       await customStatement(
           'ALTER TABLE local_frank_reveals ADD COLUMN sender_account_id TEXT '
           'CHECK(sender_account_id IS NULL OR length(sender_account_id) BETWEEN 1 AND 128)');
+    }
+    final keyColumns = await customSelect(
+            "SELECT name FROM pragma_table_info('local_device_list_keys')")
+        .get();
+    if (!keyColumns
+        .map((row) => row.read<String>('name'))
+        .contains('frank_key')) {
+      await customStatement(
+          'ALTER TABLE local_device_list_keys ADD COLUMN frank_key BLOB '
+          'CHECK(frank_key IS NULL OR length(frank_key) = 32)');
     }
   }
 

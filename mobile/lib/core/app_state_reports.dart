@@ -36,10 +36,9 @@ extension ReportActions on AppState {
       store: localStore,
       seeds: reportSeedStore,
       moderatorsOf: reportModeratorsFor,
-      senderKeyListed: _deviceListPins == null
+      senderFrankKey: _deviceListPins == null
           ? null
-          : (account, device, key) =>
-              _deviceListPins!.listsOrListed(account, device, key),
+          : (account, device) => _deviceListPins!.frankKeyOf(account, device),
       onSeedChanged: () {
         _reportKeyMemo = null;
         _reportKeyUnlisted.clear();

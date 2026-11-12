@@ -844,6 +844,9 @@ void main() {
       origin: sealedBaseUrl,
       localStore: store,
       crypto: NativeCryptoService(bindings: bindings, localStore: store),
+      // L2-3: without a franking context no token is handed out.
+      loadFrankContext: () async => SealedFrankContext(
+          listedKey: List<int>.filled(32, 9), ownerKeys: const <List<int>>[]),
     )..enabled = true;
     await tokens.refresh(reader, owner.token, <Conversation>[dm]);
     final pin = (await store.loadSealedKeyPin(tokens.origin))!;
