@@ -418,7 +418,9 @@ pub fn post_signed_fields(
 ) -> Result<Vec<u8>, C7Error> {
     let mut out = Vec::new();
     lp_id(&mut out, community_id)?;
-    lp_id(&mut out, channel_id)?;
+    // Empty for a group-level message (`history_sync` and its request),
+    // as in the body's aad.
+    lp_aad_id(&mut out, channel_id)?;
     lp_id(&mut out, action_id)?;
     lp_id(&mut out, group_id)?;
     out.extend_from_slice(&epoch.to_be_bytes());

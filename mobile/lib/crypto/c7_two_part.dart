@@ -8,6 +8,7 @@
 // channel as `full` and `ok`, when the key is derived from the current
 // generation's `CHK` (decision 3). Live members read either the same way;
 // newcomers open only what a generation key they hold derives.
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -71,17 +72,32 @@ Uint8List c7PostSignedFields({
   required String senderDeviceId,
   required int generation,
   required List<int> paddedVap1,
-}) =>
-    Uint8List.fromList(<int>[
-      ...c7Lp(communityId),
-      ...c7Lp(channelId),
-      ...c7Lp(actionId),
-      ...c7Lp(groupId),
-      ..._u64(epoch),
-      ...c7Lp(senderDeviceId),
-      ..._u64(generation),
-      ...sha256(paddedVap1),
-    ]);
+}) {
+  // As Rust's `post_signed_fields`: every id 1 to 64 bytes, except the
+  // channel, which is empty for a group-level message.
+  for (final (id, mayBeEmpty) in <(String, bool)>[
+    (communityId, false),
+    (channelId, true),
+    (actionId, false),
+    (groupId, false),
+    (senderDeviceId, false),
+  ]) {
+    final length = utf8.encode(id).length;
+    if ((length == 0 && !mayBeEmpty) || length > 64) {
+      throw ArgumentError('invalid C7 signed id');
+    }
+  }
+  return Uint8List.fromList(<int>[
+    ...c7Lp(communityId),
+    ...c7Lp(channelId),
+    ...c7Lp(actionId),
+    ...c7Lp(groupId),
+    ..._u64(epoch),
+    ...c7Lp(senderDeviceId),
+    ..._u64(generation),
+    ...sha256(paddedVap1),
+  ]);
+}
 
 /// One message sealed in two parts.
 final class C7SealedMessage {

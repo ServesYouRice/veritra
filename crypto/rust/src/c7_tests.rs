@@ -774,6 +774,14 @@ fn verify_refuses_unknown_domains_and_bad_lengths_and_rejects_tampering() {
 fn a_post_signature_binds_every_field() {
     let hash = [1u8; 32];
     let base = post_signed_fields(b"c", b"h", b"a", b"g", 5, b"d", 3, &hash).unwrap();
+    // Only the channel may be empty (a group-level message); every id is
+    // at most 64 bytes.
+    assert!(post_signed_fields(b"c", b"", b"a", b"g", 5, b"d", 0, &hash).is_ok());
+    assert!(post_signed_fields(b"", b"h", b"a", b"g", 5, b"d", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", b"h", b"", b"g", 5, b"d", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", b"h", b"a", b"", 5, b"d", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", b"h", b"a", b"g", 5, b"", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", &[b'h'; 65], b"a", b"g", 5, b"d", 3, &hash).is_err());
     for changed in [
         post_signed_fields(b"x", b"h", b"a", b"g", 5, b"d", 3, &hash),
         post_signed_fields(b"c", b"x", b"a", b"g", 5, b"d", 3, &hash),
@@ -946,28 +954,18 @@ fn assembled_history_sync_opens_slot_by_slot() {
     assert_eq!(hex(vap1), outputs["body0_padded_vap1_hex"]);
     assert_eq!(vap1.len(), body0_padded_len(n).unwrap());
     let vap1_hash: [u8; 32] = Sha256::digest(vap1).into();
-    // A group-level message signs an empty channel id, which
-    // `post_signed_fields` (built for posts) refuses: the fields are built
-    // here as the Dart sender builds them.
-    let mut fields = Vec::new();
-    for (id, epoch) in [
-        (community, None),
-        (&b""[..], None),
-        (action, None),
-        (
-            conversation,
-            Some(inputs["message_epoch"].as_u64().unwrap()),
-        ),
-        (sender, None),
-    ] {
-        fields.extend_from_slice(&(id.len() as u16).to_be_bytes());
-        fields.extend_from_slice(id);
-        if let Some(epoch) = epoch {
-            fields.extend_from_slice(&epoch.to_be_bytes());
-        }
-    }
-    fields.extend_from_slice(&0u64.to_be_bytes());
-    fields.extend_from_slice(&vap1_hash);
+    // A group-level message signs an empty channel id.
+    let fields = post_signed_fields(
+        community,
+        b"",
+        action,
+        conversation,
+        inputs["message_epoch"].as_u64().unwrap(),
+        sender,
+        0,
+        &vap1_hash,
+    )
+    .unwrap();
     assert_eq!(hex(&fields), outputs["post_signed_fields_hex"]);
     let public = unhex(&outputs["signing_public_key_hex"]);
     assert!(verify(SIGN_DOMAIN_POST, &public, &fields, sig).unwrap());

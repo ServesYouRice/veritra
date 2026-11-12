@@ -10,6 +10,35 @@ import 'package:private_messenger/crypto/c7_two_part.dart';
 import 'package:private_messenger/crypto/sha256.dart';
 
 void main() {
+  test(
+      'post signed fields take the same ids as Rust: only the channel may be '
+      'empty, none longer than 64 bytes', () {
+    Uint8List fields({
+      String community = 'comm',
+      String channel = 'chan',
+      String action = 'act',
+      String group = 'conv',
+      String sender = 'dev',
+    }) =>
+        c7PostSignedFields(
+          communityId: community,
+          channelId: channel,
+          actionId: action,
+          groupId: group,
+          epoch: 5,
+          senderDeviceId: sender,
+          generation: 0,
+          paddedVap1: const <int>[1, 2, 3],
+        );
+    expect(fields(channel: ''), isNotEmpty);
+    expect(() => fields(community: ''), throwsArgumentError);
+    expect(() => fields(action: ''), throwsArgumentError);
+    expect(() => fields(group: ''), throwsArgumentError);
+    expect(() => fields(sender: ''), throwsArgumentError);
+    expect(() => fields(channel: 'h' * 65), throwsArgumentError);
+    expect(fields(channel: 'h' * 64), isNotEmpty);
+  });
+
   group('C7 reference', () {
     final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
     final body = Uint8List.fromList(List<int>.filled(124 + 256, 7));

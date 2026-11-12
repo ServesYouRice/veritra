@@ -1049,9 +1049,8 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
   (`testing/vectors/c7-sync-v1.py`). Dart opens it as sync does and
   verifies its signature; Go checks the sealed length against the
   server's size rule; Rust checks the layout, the AEAD of body0 and of
-  every slot, and the signature over fields it builds by hand (its
-  production `post_signed_fields` refuses the empty channel, deviation
-  8).
+  every slot, and the signature over its production
+  `post_signed_fields` (deviation 8).
 
 **Deviations and interpretations (for the crypto review):**
 
@@ -1082,9 +1081,14 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
 7. An own proposal that never comes back (the server refuses or loses
    it) stays pending; the channel then takes no new proposal from this
    device. No timeout is built.
-8. A group-level message signs channel `""`; Rust's
-   `post_signed_fields` refuses an empty id. Only Dart verifies those
-   signatures today; the review should fix one side.
+8. A group-level message signs channel `""` (two zero length bytes),
+   as its aad already binds it. Settled 2026-11-12 with the smallest
+   change: Rust's `post_signed_fields` now takes an empty channel id (as
+   its `body_aad` did), and Dart's `c7PostSignedFields` refuses what Rust
+   refuses (an empty community, action, group or sender id, any id over
+   64 bytes). No wire, ABI or vector change: `post_signed_fields` has no
+   C ABI caller, the bytes Dart sent were already the bytes the vector
+   pins, and the Rust vector test now uses the production function.
 
 **Not built (left for the next slices):** the newcomer's import (backward
 walk through stored `history_sync` slots, the per-channel and group-level
