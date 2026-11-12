@@ -675,8 +675,33 @@ class NativeCryptoService
       () async => Uint8List.fromList(_requiredDevice().signingPublicKey()));
 
   @override
-  Future<Uint8List> currentFrankKey() =>
-      _serial(() async => _requiredDevice().l2FrankPublicKey());
+  Future<Uint8List> currentFrankKey() => _serial(() async {
+        // A record from before L2-3 makes its franking key when it is loaded
+        // and holds it only in memory until it is sealed again; a reload
+        // would make another. Seal it once before anything can list it, or
+        // the listed key would never be this device's again (and the device
+        // could never send sealed). A pending enrollment's key is sealed
+        // with its first state.
+        if (!_pendingEnrollment && !_frankKeyDurable) {
+          final previous = await _requiredState();
+          try {
+            await localStore.commitLocalMlsState(
+              expectedCounter: previous.counter,
+              expectedCursor: await localStore.loadSyncCursor(),
+              state: _sealNext(previous),
+            );
+          } catch (_) {
+            await _restorePrevious(previous);
+            rethrow;
+          }
+          _frankKeyDurable = true;
+        }
+        return _requiredDevice().l2FrankPublicKey();
+      });
+
+  /// Whether this process sealed the loaded record since it was loaded, so
+  /// its franking key is in the stored state ([currentFrankKey]).
+  bool _frankKeyDurable = false;
 
   @override
   Future<void> holdRecoveryListSeed(Uint8List entropy) => _serial(() async {
@@ -1195,6 +1220,7 @@ class NativeCryptoService
 
   @override
   Future<void> activateSession(Session session) => _serial(() async {
+        _frankKeyDurable = false;
         final origin = canonicalizeServerOrigin(session.baseUrl);
         final accountId = session.accountId;
         final deviceId = session.deviceId;
@@ -5011,6 +5037,8 @@ class NativeCryptoService
     if (_pendingEnrollment) {
       throw StateError('crypto state cannot be restored during enrollment');
     }
+    // The reloaded record may be one from before L2-3 again.
+    _frankKeyDurable = false;
     _deviceCounter = null;
     ({NativeCryptoDevice device, int counter}) restored;
     try {

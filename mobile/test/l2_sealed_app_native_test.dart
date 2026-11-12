@@ -587,6 +587,39 @@ void main() {
     expect(wal.lengthSync(), 0);
   }, skip: skip);
 
+  // Owner item 3: the key a list names is the device's fixed key. It is in
+  // the stored state before anything can list it, and survives a reload.
+  test('the franking key is sealed before it is listed and stays the same',
+      () async {
+    final store = MemoryLocalStore();
+    final first =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
+    await first.createEnrollmentCredential(const EnrollmentReservation(
+      id: 'res_dev_keep',
+      accountId: 'acct_keep',
+      deviceId: 'dev_keep',
+      challenge: <int>[1, 2, 3],
+    ));
+    const session = Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: 'acct_keep',
+      deviceId: 'dev_keep',
+    );
+    await first.activateSession(session);
+    final before = (await store.loadCryptoState())!.counter;
+    final key = await first.currentFrankKey();
+    expect((await store.loadCryptoState())!.counter, before + 1);
+    // Sealed once per load, not on every read.
+    expect(await first.currentFrankKey(), key);
+    expect((await store.loadCryptoState())!.counter, before + 1);
+    // Another process loading the same record has the same key.
+    final again =
+        TestNativeCryptoService(bindings: bindings, localStore: store);
+    await again.activateSession(session);
+    expect(await again.currentFrankKey(), key);
+  }, skip: skip);
+
   test('a sealed message is proven only to the owners it designates', () async {
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
