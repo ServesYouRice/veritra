@@ -190,9 +190,14 @@ int? c7HistorySyncChannelCount(int length) {
 /// A live member's open of a two-part message: the padded VAP1 and, for a
 /// `history_sync`, the slots after body0 ([trailer], empty otherwise).
 final class C7Opened {
-  const C7Opened(this.paddedVap1, this.trailer, {required this.bodyKey});
+  const C7Opened(this.paddedVap1, this.trailer,
+      {required this.bodyKey, required this.signature});
   final Uint8List paddedVap1;
   final Uint8List trailer;
+
+  /// The sender's signature over the post fields; a live member checks it
+  /// only for the `unsure` trigger (decision 8).
+  final Uint8List signature;
 
   /// The reference's body key, kept so the receiver can tell which
   /// generation sealed the body (the `unsure` trigger); the caller wipes it.
@@ -245,7 +250,8 @@ C7Opened? c7OpenLiveParts({
     final whole = tryOpen(bytes);
     if (whole != null) {
       return C7Opened(Uint8List.fromList(whole.paddedVap1), Uint8List(0),
-          bodyKey: Uint8List.fromList(reference.bodyKey));
+          bodyKey: Uint8List.fromList(reference.bodyKey),
+          signature: Uint8List.fromList(whole.signature));
     }
   }
   final n = channelId == null ? c7HistorySyncChannelCount(bytes.length) : null;
@@ -255,7 +261,8 @@ C7Opened? c7OpenLiveParts({
   if (first == null) return null;
   return C7Opened(Uint8List.fromList(first.paddedVap1),
       Uint8List.fromList(Uint8List.sublistView(bytes, split)),
-      bodyKey: Uint8List.fromList(reference.bodyKey));
+      bodyKey: Uint8List.fromList(reference.bodyKey),
+      signature: Uint8List.fromList(first.signature));
 }
 
 /// [c7OpenLiveParts] for a message that is not a `history_sync`: the padded

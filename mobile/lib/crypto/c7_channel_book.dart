@@ -290,10 +290,12 @@ final class C7ChannelBook {
   /// The generation and key a post sent at [epoch] seals under: only while
   /// the channel is `full` and `ok` and the generation's key is held
   /// (I4: anything else seals under a random key).
+  /// A generation opened at epoch 0 (a group no one has joined yet) seals
+  /// nothing: the signed `gen` 0 means a random key.
   C7Gen? sealGenAt(int epoch) {
     if (!chain.sealsUnderHistoryKey) return null;
     final gen = genAt(groupId, epoch);
-    return gen?.key == null ? null : gen;
+    return gen?.key == null || gen!.epoch == 0 ? null : gen;
   }
 
   C7ChannelBook copyWith({

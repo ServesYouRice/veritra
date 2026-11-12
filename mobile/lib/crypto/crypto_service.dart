@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import '../core/models.dart';
@@ -598,11 +597,6 @@ final class C7DueRepropose extends C7Due {
   final bool full;
 }
 
-/// A newcomer imports the history its keys open (decision 10).
-final class C7DueImport extends C7Due {
-  const C7DueImport(super.conversationId);
-}
-
 /// What the app shows about one channel's history setting.
 final class C7ChannelView {
   const C7ChannelView({
@@ -625,56 +619,9 @@ final class C7ChannelView {
   final String? ownNotice;
 }
 
-/// One row of the history route (`GET /conversations/{id}/history`).
-final class C7HistoryRow {
-  const C7HistoryRow({
-    required this.messageId,
-    required this.senderDeviceId,
-    required this.actionId,
-    required this.channelId,
-    required this.createdAt,
-    required this.epoch,
-    required this.body,
-  });
-
-  factory C7HistoryRow.fromJson(Map<String, Object?> json) => C7HistoryRow(
-        messageId: json['message_id']! as String,
-        senderDeviceId: json['sender_device_id']! as String,
-        actionId: json['action_id']! as String,
-        channelId: json['channel_id'] as String?,
-        createdAt: DateTime.parse(json['created_at']! as String).toUtc(),
-        epoch: json['epoch'] as int?,
-        body: base64Decode(json['body']! as String),
-      );
-
-  final String messageId;
-  final String senderDeviceId;
-  final String actionId;
-  final String? channelId;
-  final DateTime createdAt;
-  final int? epoch;
-  final List<int> body;
-}
-
-/// A former member device's signing key (`former-member-keys`).
-final class C7FormerKey {
-  const C7FormerKey(
-      {required this.deviceId,
-      required this.accountId,
-      required this.signingKey});
-  final String deviceId;
-  final String accountId;
-  final List<int> signingKey;
-}
-
-/// The history route as the import reads it: one page of [channelId]'s
-/// stream (null: the group-level stream), newest first, before [beforeId].
-typedef C7HistoryPage = Future<List<C7HistoryRow>> Function(
-    String? channelId, String? beforeId);
-
-/// C7 full mode (docs/designs/C7-channel-history.md): records, the
-/// `history_sync` duties and a newcomer's import. Only the native service
-/// offers it.
+/// C7 full mode as the app drives it (docs/designs/C7-channel-history.md):
+/// records, the channel view, and the `history_sync` duties. Records,
+/// rekeys and handovers themselves happen inside sync.
 abstract interface class C7HistoryService {
   /// Proposes a record for [channelId] in [conversationId]: a `create` when
   /// [create], else a switch, to `full` when [full]. [layoutGeneration] is
@@ -689,19 +636,17 @@ abstract interface class C7HistoryService {
   });
 
   /// The setting this device holds for a channel, or null when C7 is off.
-  Future<C7ChannelView?> c7ChannelView(
-      String conversationId, String channelId);
+  Future<C7ChannelView?> c7ChannelView(String conversationId, String channelId);
 
-  /// What is due now, in every community conversation with C7 state.
-  Future<List<C7Due>> c7DueWork();
+  /// What is due now in [conversationIds] (the community conversations the
+  /// app holds): `history_sync` duties, a newcomer's request, and own
+  /// records that came back stale (the app proposes those again, with the
+  /// channel's layout generation).
+  Future<List<C7Due>> c7DueWork(Iterable<String> conversationIds);
 
-  /// Does one piece of due work; returns the envelope it queued, if any.
+  /// Sends a due `history_sync` or request; returns the envelope it queued,
+  /// or null when nothing was owed any more.
   Future<MessageEnvelope?> c7Send(C7Due due);
-
-  /// A newcomer's import: the backward walk, then every channel's bodies
-  /// within the prefetch depth (decision 10). Returns the posts imported.
-  Future<int> c7ImportHistory(String conversationId,
-      {required C7HistoryPage page, required List<C7FormerKey> formerKeys});
 }
 
 /// Off by default. AppState enables this only for the current verified

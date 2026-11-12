@@ -1,0 +1,498 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/roles/governance.dart';
+import 'package:private_messenger/core/roles/posting_verdict.dart';
+import 'package:private_messenger/crypto/app_payload.dart';
+import 'package:private_messenger/crypto/c7_channel_book.dart';
+import 'package:private_messenger/crypto/c7_group_state.dart';
+import 'package:private_messenger/crypto/c7_history.dart';
+import 'package:private_messenger/crypto/c7_keys.dart';
+import 'package:private_messenger/crypto/c7_two_part.dart';
+import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/mls_commit_bundle.dart';
+import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/storage/encrypted_database.dart'
+    show LocalMessage;
+import 'package:private_messenger/storage/local_store.dart';
+
+import 'l1_test_lists.dart';
+import 'native_test_env.dart';
+
+// C7 full mode through real OpenMLS devices and NativeCryptoService
+// (docs/designs/C7-channel-history.md, decisions 2 to 5 and Traces 1 to 4):
+// records applied in sync order under C4 authority, posts sealed under the
+// generation key, the rekey at a removal merge, `unsure` after a message a
+// device could not apply, and the `history_sync` handover to a newcomer,
+// keyless when its committer was unsure.
+
+final _community = 'comm_${'1' * 32}';
+final _channel = 'chan_${'3' * 32}';
+const _conversation = 'conv_private_c7full';
+
+/// A private channel's own group, judged by a role record in which
+/// [admins] (and the owner, alice) may change the history setting.
+class _Authority
+    implements
+        ConversationAuthority,
+        ConversationCommunitySource,
+        VerifiedRoleSource {
+  _Authority(this.admins);
+  final Set<String> admins;
+
+  @override
+  String? conversationKind(String conversationId) => 'community_channel';
+  @override
+  String? conversationChannel(String conversationId) => _channel;
+  @override
+  Set<String> memberAccounts(String conversationId) => const {};
+  @override
+  String? roleOf(String conversationId, String accountId) => null;
+  @override
+  String? conversationCommunity(String conversationId) => _community;
+  @override
+  String? privateGroupChannel(String conversationId) =>
+      conversationId == _conversation ? _channel : null;
+  @override
+  GovernanceState? governanceOf(String conversationId) => GovernanceState(
+        rev: 1,
+        owner: 'acct_alice',
+        ownerRev: 0,
+        admins: {for (final admin in admins) admin: 1},
+      );
+  @override
+  bool serverRestrictsPosting(String conversationId, String? channelId) =>
+      false;
+}
+
+int _serverIds = 0;
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final skip = nativeCryptoSkip();
+  late NativeCryptoBindings bindings;
+
+  Future<_Client> client(String name, {Set<String>? admins}) async {
+    bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
+    final c = await _Client.enroll(bindings, 'acct_$name', 'dev_$name');
+    addTearDown(c.service.dispose);
+    c.service.conversationAuthority = _Authority(admins ?? const {'acct_bob'});
+    c.service.c7SealedBodies = true;
+    return c;
+  }
+
+  /// Alice makes the group with [members] and every one of them joins.
+  Future<void> group(_Client alice, List<_Client> members) async {
+    await alice.service
+        .initializeConversation(_conversation, <DeviceKeyPackage>[
+      for (final member in members) await member.keyPackage(),
+    ]);
+    await _accept(alice, members, const []);
+    // The creating commit is a membership commit too: Alice owes its
+    // history_sync at once, and it settles everyone's duty for it.
+    final due = await alice.service.c7DueWork([_conversation]);
+    final sync = (await alice.service.c7Send(due.single))!;
+    await alice.store.removePendingEnvelope(sync.idempotencyKey);
+    for (final member in members) {
+      await member.receive(alice, sync);
+      expect(await member.service.c7DueWork([_conversation]), isEmpty);
+    }
+    expect(await alice.service.c7DueWork([_conversation]), isEmpty);
+  }
+
+  /// [actor] proposes a record and every client in [to] receives it; the
+  /// actor's own copy comes back last, in sync order.
+  Future<MessageEnvelope> propose(_Client actor, List<_Client> to,
+      {required bool full, bool create = false}) async {
+    final sent = await actor.service
+        .c7ProposeRecord(_conversation, _channel, full: full, create: create);
+    await actor.store.removePendingEnvelope(sent.idempotencyKey);
+    for (final member in to) {
+      await member.receive(actor, sent);
+    }
+    await actor.receive(actor, sent);
+    return sent;
+  }
+
+  test(
+      'a full create applies everywhere in sync order and posts seal under '
+      'the generation key', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    expect((await alice.view())!.full, isFalse);
+    final sent = await alice.service
+        .c7ProposeRecord(_conversation, _channel, full: true, create: true);
+    await alice.store.removePendingEnvelope(sent.idempotencyKey);
+    // Applied only when it comes back: pending until then.
+    expect((await alice.view())!.pending, isTrue);
+    expect((await alice.view())!.full, isFalse);
+    await bob.receive(alice, sent);
+    await alice.receive(alice, sent);
+    for (final c in [alice, bob]) {
+      final view = (await c.view())!;
+      expect(view.full, isTrue, reason: c.deviceId);
+      expect(view.status, 'ok');
+      expect(view.pending, isFalse);
+    }
+    // Both hold the same generation; a post seals under it and opens on
+    // the other side, which stays `ok` (the `gen` matches).
+    final aliceKey = (await alice.book()).sealGenAt(await alice.epoch())!.key;
+    expect((await bob.book()).sealGenAt(await bob.epoch())!.key, aliceKey);
+    final post = await alice.send('in the period');
+    expect(await alice.sealedUnderChannelKey(post), isTrue);
+    // Generation keys never ride a history snapshot (K1 backups, K2).
+    await alice.store.saveSession(Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: alice.accountId,
+      deviceId: alice.deviceId,
+    ));
+    for (final omit in <bool>[false, true]) {
+      final snapshot = utf8.decode(
+          await alice.store.exportHistorySnapshot(omitDisappearing: omit));
+      expect(snapshot, isNot(contains(c7SettingPrefix)));
+      expect(snapshot, isNot(contains(base64Encode(aliceKey!))));
+    }
+    await bob.receive(alice, post);
+    expect((await bob.rows()).where((r) => r.kind == 'text'), hasLength(1));
+    expect((await bob.view())!.status, 'ok');
+    // A switch back to members_from_join ends the period: keys gone.
+    await propose(bob, [alice], full: false);
+    for (final c in [alice, bob]) {
+      final book = await c.book();
+      expect(book.mode, c7ModeMembersFromJoin);
+      expect(book.gens, isEmpty);
+    }
+    final after = await alice.send('after the period');
+    expect(await alice.sealedUnderChannelKey(after), isFalse);
+  }, skip: skip);
+
+  test('a record from an account without authority changes nothing', () async {
+    final alice = await client('alice');
+    // Carol believes she is an admin; nobody else does.
+    final carol = await client('carol', admins: const {'acct_carol'});
+    await group(alice, [carol]);
+    final sent = await carol.service
+        .c7ProposeRecord(_conversation, _channel, full: true, create: true);
+    await carol.store.removePendingEnvelope(sent.idempotencyKey);
+    await alice.receive(carol, sent);
+    final book = await alice.book();
+    expect(book.hasHead, isFalse);
+    expect(book.mode, c7ModeMembersFromJoin);
+    // The record left a hidden action row and nothing else.
+    final fromCarol = (await alice.rows())
+        .where((row) => row.senderAccountId == 'acct_carol')
+        .single;
+    expect(fromCarol.kind, 'action');
+    expect(fromCarol.senderHidden, isTrue);
+  }, skip: skip);
+
+  test('a removal rekeys every full channel at merge (Trace 1)', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final carol = await client('carol');
+    await group(alice, [bob, carol]);
+    await propose(alice, [bob, carol], full: true, create: true);
+    final opened = await alice.epoch();
+    final firstKey = (await alice.book()).sealGenAt(opened)!.key!;
+    await alice.service.stageMembershipChange(_conversation,
+        removes: [(accountId: 'acct_carol', deviceId: 'dev_carol')]);
+    await _accept(alice, const [], [bob, carol]);
+    final removal = await alice.epoch();
+    expect(removal, opened + 1);
+    final aliceBook = await alice.book();
+    final bobBook = await bob.book();
+    expect(aliceBook.gens.map((gen) => (gen.epoch, gen.close)),
+        [(opened, removal), (removal, null)]);
+    expect(bobBook.gens.map((gen) => gen.epoch), [opened, removal]);
+    final secondKey = aliceBook.sealGenAt(removal)!.key!;
+    expect(secondKey, isNot(firstKey));
+    expect(bobBook.sealGenAt(removal)!.key, secondKey);
+    // The removed device keeps nothing (the re-add wipe).
+    expect(
+        await carol.store.loadSetting(c7GroupSetting(_conversation)), isNull);
+    expect(
+        await carol.store
+            .loadSetting(c7ChannelSetting(_conversation, _channel)),
+        isNull);
+    // A post after the removal seals under the new generation.
+    final post = await bob.send('after carol left');
+    expect(await bob.sealedUnderChannelKey(post, key: secondKey), isTrue);
+    await alice.receive(bob, post);
+    expect((await alice.view())!.status, 'ok');
+  }, skip: skip);
+
+  test(
+      'a stripped body makes the group unsure; a later history_sync for the '
+      "device's own head and key clears it; the newcomer takes the key",
+      () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    final stripped = await alice.send('stripped');
+    await bob.receive(alice, stripped, body: const <int>[]);
+    expect((await bob.view())!.status, 'unsure');
+    // An unsure device seals under random keys (I3).
+    final random = await bob.send('while unsure');
+    expect(await bob.sealedUnderChannelKey(random), isFalse);
+    expect(await alice.sealedUnderChannelKey(random), isFalse);
+    await alice.receive(bob, random);
+    // Alice adds Dave; as the committer her history_sync is due at once.
+    await alice.service
+        .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
+    await _accept(alice, [dave], [bob]);
+    final forEpoch = await alice.epoch();
+    final due = await alice.service.c7DueWork([_conversation]);
+    expect(due.whereType<C7DueSync>().single.forEpoch, forEpoch);
+    // Bob's own duty waits for its jittered delay.
+    expect(
+        (await bob.service.c7DueWork([_conversation])).whereType<C7DueSync>(),
+        isEmpty);
+    final sync = (await alice.service.c7Send(due.single))!;
+    await alice.store.removePendingEnvelope(sync.idempotencyKey);
+    expect(sync.sealedBody!.length, c7HistorySyncBodyLength(1));
+    expect((sync.cryptoMetadata as Map).containsKey('channel_id'), isFalse);
+    expect(await alice.service.c7DueWork([_conversation]), isEmpty);
+    await bob.receive(alice, sync);
+    await dave.receive(alice, sync);
+    // Bob: own head and key, for an epoch above the miss: `ok` again, and
+    // his duty for that commit is settled by Alice's matching slots.
+    expect((await bob.view())!.status, 'ok');
+    expect((await bob.group()).duties[forEpoch]!.settled, isTrue);
+    // Dave: head and key from the slot; seals under the same key.
+    final daveView = (await dave.view())!;
+    expect(daveView.full, isTrue);
+    expect(daveView.status, 'ok');
+    final key = (await alice.book()).sealGenAt(forEpoch)!.key;
+    expect((await dave.book()).sealGenAt(forEpoch)!.key, key);
+    final fromDave = await dave.send('hello from the newcomer');
+    expect(await alice.sealedUnderChannelKey(fromDave), isTrue);
+    expect((await dave.group()).joinSynced, isTrue);
+    expect(await dave.service.c7DueWork([_conversation]), isEmpty);
+  }, skip: skip);
+
+  test(
+      'a newcomer added by an unsure committer is keyless and seals under '
+      'random keys', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    // Bob misses one of Alice's messages, then adds Dave.
+    await bob.receive(alice, await alice.send('lost'), body: const <int>[]);
+    expect((await bob.view())!.status, 'unsure');
+    await bob.service
+        .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
+    await _accept(bob, [dave], [alice]);
+    final due = await bob.service.c7DueWork([_conversation]);
+    final sync = (await bob.service.c7Send(due.single))!;
+    await bob.store.removePendingEnvelope(sync.idempotencyKey);
+    await dave.receive(bob, sync);
+    final view = (await dave.view())!;
+    expect(view.full, isTrue);
+    expect(view.status, 'keyless');
+    final post = await dave.send('keyless');
+    expect(await alice.sealedUnderChannelKey(post), isFalse);
+    // Alice's duty is not settled by slots without her key.
+    await alice.receive(bob, sync);
+    expect((await alice.group()).duties[await alice.epoch()]!.settled, isFalse);
+  }, skip: skip);
+
+  test(
+      'an own record sequenced after a membership commit is stale and is '
+      'proposed again', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    await group(alice, [bob]);
+    final sent = await alice.service
+        .c7ProposeRecord(_conversation, _channel, full: true, create: true);
+    await alice.store.removePendingEnvelope(sent.idempotencyKey);
+    // Bob's add is sequenced before Alice's record.
+    await bob.service
+        .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
+    await _accept(bob, [dave], [alice]);
+    await bob.receive(alice, sent);
+    await alice.receive(alice, sent);
+    expect((await bob.book()).hasHead, isFalse, reason: 'below the floor');
+    final view = (await alice.view())!;
+    expect(view.ownNotice, 'stale');
+    expect(view.full, isFalse);
+    final again = (await alice.service.c7DueWork([_conversation]))
+        .whereType<C7DueRepropose>()
+        .single;
+    expect(again.full, isTrue);
+    await propose(alice, [bob, dave], full: again.full, create: true);
+    for (final c in [alice, bob, dave]) {
+      expect((await c.view())!.full, isTrue, reason: c.deviceId);
+    }
+    expect((await alice.view())!.ownNotice, isNull);
+  }, skip: skip);
+}
+
+Future<void> _accept(
+    _Client from, List<_Client> joiners, List<_Client> members) async {
+  final item = (await from.store.pendingMlsMessages()).single;
+  final bundle = MlsCommitBundle.decode(item.payload);
+  await from.service.completeCommitBundle(item);
+  for (final member in members) {
+    await member.service.processMlsMessage(MlsMessage(
+      id: 'mls_${++_serverIds}',
+      conversationId: _conversation,
+      senderAccountId: from.accountId,
+      senderDeviceId: from.deviceId,
+      kind: 'commit',
+      payload: bundle.commit,
+      idempotencyKey: item.idempotencyKey,
+      syncEventId: member.nextEvent(),
+      createdAt: DateTime.now().toUtc(),
+    ));
+  }
+  for (final joiner in joiners) {
+    await joiner.service.processMlsMessage(MlsMessage(
+      id: 'mls_${++_serverIds}',
+      conversationId: _conversation,
+      senderAccountId: from.accountId,
+      senderDeviceId: from.deviceId,
+      kind: 'welcome',
+      payload: bundle.welcome,
+      idempotencyKey: '${item.idempotencyKey}:welcome:${joiner.deviceId}',
+      syncEventId: joiner.nextEvent(),
+      createdAt: DateTime.now().toUtc(),
+      recipientDeviceId: joiner.deviceId,
+    ));
+  }
+}
+
+class _Client {
+  _Client(
+      this.bindings, this.service, this.store, this.accountId, this.deviceId);
+
+  final NativeCryptoBindings bindings;
+  final NativeCryptoService service;
+  final MemoryLocalStore store;
+  final String accountId;
+  final String deviceId;
+  int events = 0;
+
+  static Future<_Client> enroll(
+      NativeCryptoBindings bindings, String accountId, String deviceId) async {
+    final local = MemoryLocalStore();
+    final service =
+        TestNativeCryptoService(bindings: bindings, localStore: local);
+    await service.createEnrollmentCredential(EnrollmentReservation(
+      id: 'res_$deviceId',
+      accountId: accountId,
+      deviceId: deviceId,
+      challenge: const <int>[1, 2, 3],
+    ));
+    await service.activateSession(Session(
+      baseUrl: 'https://localhost:8443',
+      token: 'token',
+      accountId: accountId,
+      deviceId: deviceId,
+    ));
+    return _Client(bindings, service, local, accountId, deviceId);
+  }
+
+  int nextEvent() => ++events;
+
+  Future<DeviceKeyPackage> keyPackage() async => DeviceKeyPackage(
+        id: 'kp_$deviceId${++_serverIds}',
+        deviceId: deviceId,
+        accountId: accountId,
+        keyPackage:
+            (await service.createReplenishmentKeyPackages(count: 1)).single,
+        ciphersuite: 'MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519',
+        expiresAt: DateTime.now().add(const Duration(days: 1)),
+      );
+
+  Future<MessageEnvelope> send(String text) async {
+    final envelope = await service.encryptPayload(
+        _conversation, AppPayloadType.text, <String, Object?>{'text': text});
+    senders[envelope.idempotencyKey] = deviceId;
+    await store.removePendingEnvelope(envelope.idempotencyKey);
+    return envelope;
+  }
+
+  Future<void> receive(_Client from, MessageEnvelope sent,
+      {List<int>? body}) async {
+    await service.processApplicationMessage(
+      ReceivedMessageEnvelope(
+        id: 'srv_${++_serverIds}',
+        conversationId: sent.conversationId,
+        senderAccountId: from.accountId,
+        senderDeviceId: from.deviceId,
+        idempotencyKey: sent.idempotencyKey,
+        ciphertext: sent.ciphertext,
+        cryptoProtocol: sent.cryptoProtocol,
+        cryptoMetadata: sent.cryptoMetadata,
+        frankCommit: sent.frankCommit,
+        sealedBody: body ?? sent.sealedBody,
+        createdAt: DateTime.now().toUtc(),
+      ),
+      nextEvent(),
+    );
+  }
+
+  Future<int> epoch() async => (await service.groupEpoch(_conversation))!.epoch;
+
+  Future<C7ChannelView?> view() =>
+      service.c7ChannelView(_conversation, _channel);
+
+  Future<C7ChannelBook> book() async => C7ChannelBook.decode(
+      await store.loadSetting(c7ChannelSetting(_conversation, _channel)),
+      _channel,
+      _conversation);
+
+  Future<C7GroupState> group() async => C7GroupState.decode(
+      await store.loadSetting(c7GroupSetting(_conversation)));
+
+  Future<List<LocalMessage>> rows() => store.loadMessages(_conversation);
+
+  /// Whether [sent]'s body opens under the post key of [key], or of any
+  /// generation this device holds.
+  Future<bool> sealedUnderChannelKey(MessageEnvelope sent,
+      {Uint8List? key}) async {
+    final keys = C7Keys(bindings);
+    final candidates = key != null
+        ? <Uint8List>[key]
+        : <Uint8List>[
+            for (final gen in (await book()).gens)
+              if (gen.key != null) gen.key!,
+          ];
+    final aad = C7Keys.bodyAad(
+      conversationId: _conversation,
+      channelId: _channel,
+      senderDeviceId: _senderOf(sent),
+      actionId: sent.idempotencyKey,
+    );
+    for (final chk in candidates) {
+      final bodyKey = keys.postBodyKey(
+        chk: chk,
+        communityId: _community,
+        channelId: _channel,
+        senderDeviceId: _senderOf(sent),
+        actionId: sent.idempotencyKey,
+      );
+      if (keys.openBody(
+              bodyKey: bodyKey,
+              aad: aad,
+              sealed: Uint8List.fromList(sent.sealedBody!)) !=
+          null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static final Map<String, String> senders = <String, String>{};
+  String _senderOf(MessageEnvelope sent) => senders[sent.idempotencyKey]!;
+}

@@ -46,7 +46,11 @@ import '../storage/history_snapshot.dart'
 import '../storage/local_store.dart';
 import '../sync/conversation_pause.dart';
 import 'app_payload.dart';
+import 'c7_channel_book.dart';
 import 'c7_group_state.dart';
+import 'c7_history.dart';
+import 'c7_keys.dart';
+import 'c7_sync.dart';
 import 'c7_two_part.dart';
 import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'community_info_payload.dart' show infoKeyBytes;
@@ -62,8 +66,11 @@ import '../calls/room/native_call_group.dart';
 import '../calls/room/room_ports.dart'
     show CallGroupHandle, ParentGroupView, RoomCryptoSource;
 
+part 'native_crypto_c7.dart';
+
 class NativeCryptoService
     implements
+        C7HistoryService,
         BackupSealCryptoService,
         BackupOpenCryptoService,
         CommunityInfoCryptoService,
@@ -117,21 +124,42 @@ class NativeCryptoService
   @override
   bool c7SealedBodies = false;
 
-  /// The C7 group state change a merged commit makes, for the same MLS
-  /// transition. Empty while C7 is off or outside community conversations;
-  /// a commit that removed this device deletes the state (re-add wipe).
-  Future<Map<String, String?>> _c7AfterCommit(
-      String conversationId, C7CommitOutcome outcome) async {
-    if (!c7SealedBodies ||
-        !c7CommunityKind(_authority?.conversationKind(conversationId))) {
-      return const <String, String?>{};
-    }
-    final now = C7GroupState.decode(
-        await localStore.loadSetting(c7GroupSetting(conversationId)));
-    final next = now.afterCommit(outcome);
-    if (identical(next, now)) return const <String, String?>{};
-    return <String, String?>{c7GroupSetting(conversationId): next?.encode()};
+  @override
+  Future<MessageEnvelope> c7ProposeRecord(
+    String conversationId,
+    String channelId, {
+    required bool full,
+    bool create = false,
+    int? layoutGeneration,
+  }) =>
+      _serial(() => _c7Propose(conversationId, channelId,
+          full: full, create: create, layoutGeneration: layoutGeneration));
+
+  @override
+  Future<C7ChannelView?> c7ChannelView(
+      String conversationId, String channelId) async {
+    if (!_c7Active(conversationId)) return null;
+    final book = await _c7LoadBook(conversationId, channelId);
+    return C7ChannelView(
+      full: book.mode == c7ModeFull,
+      status: book.status.name,
+      pending: book.pending != null && book.ownNotice != 'stale',
+      ownNotice: book.ownNotice,
+    );
   }
+
+  @override
+  Future<List<C7Due>> c7DueWork(Iterable<String> conversationIds) =>
+      _serial(() => _c7Due(conversationIds));
+
+  @override
+  Future<MessageEnvelope?> c7Send(C7Due due) => _serial(() => switch (due) {
+        C7DueSync(:final conversationId, :final forEpoch) =>
+          _c7SendSync(conversationId, forEpoch),
+        C7DueRequest(:final conversationId) => _c7SendRequest(conversationId),
+        C7DueRepropose() => throw ArgumentError.value(
+            due, 'due', 'the app proposes a stale record again'),
+      });
 
   String? _c7PrivateChannel(String conversationId) => switch (_authority) {
         final ConversationCommunitySource source =>
@@ -1505,7 +1533,8 @@ class NativeCryptoService
                 if (outcome.removedAny && !outcome.removedSelf) {
                   infoRemovalEpoch = outcome.newEpoch;
                 }
-                c7Settings = await _c7AfterCommit(item.conversationId, outcome);
+                c7Settings =
+                    await _c7Commit(item.conversationId, outcome, own: true);
               } finally {
                 outcome.wipeRoot();
               }
@@ -2310,8 +2339,8 @@ class NativeCryptoService
                   if (outcome.removedAny && !outcome.removedSelf) {
                     infoRemovalEpoch = outcome.newEpoch;
                   }
-                  c7Settings =
-                      await _c7AfterCommit(message.conversationId, outcome);
+                  c7Settings = await _c7Commit(message.conversationId, outcome,
+                      own: true);
                 } finally {
                   outcome.wipeRoot();
                 }
@@ -2479,8 +2508,9 @@ class NativeCryptoService
                 if (pairs.removed && !pairs.removedSelf) {
                   infoRemovalEpoch = pairs.epoch;
                 }
-                c7Settings = await _c7AfterCommit(
-                    message.conversationId, pairs.c7Outcome);
+                c7Settings = await _c7Commit(
+                    message.conversationId, pairs.c7Outcome,
+                    own: false);
               } finally {
                 root?.fillRange(0, root.length, 0);
               }
@@ -2502,6 +2532,11 @@ class NativeCryptoService
                 leaves: const [],
                 replaceAll: true);
           }
+          // C7: the re-add wipe and the newcomer's floor (decision 5).
+          final welcomeC7 = message.kind == 'welcome'
+              ? await _c7Welcome(message.conversationId,
+                  device.groupEpoch(message.conversationId).epoch)
+              : null;
           checkCanCommit?.call();
           final next = _sealNext(previous);
           await localStore.commitMlsTransition(MlsStateTransition(
@@ -2516,15 +2551,11 @@ class NativeCryptoService
             infoRemovalEpoch: infoRemovalEpoch,
             governanceObservation: commitObservation,
             // C4 leave proofs share the C7 settings channel.
-            c7Settings: message.kind == 'welcome' && c7SealedBodies
-                ? <String, String?>{
-                    ...commitSettings,
-                    // The re-add wipe and the newcomer's floor (decision 5).
-                    c7GroupSetting(message.conversationId): C7GroupState.joined(
-                            device.groupEpoch(message.conversationId).epoch)
-                        .encode(),
-                  }
-                : <String, String?>{...c7Settings, ...commitSettings},
+            c7Settings: <String, String?>{
+              ...c7Settings,
+              ...?welcomeC7,
+              ...commitSettings,
+            },
           ));
           _rememberVerdicts(approval);
         } catch (_) {
@@ -2951,6 +2982,10 @@ class NativeCryptoService
             if (communityId == null || communityId.isEmpty) {
               throw StateError('C7 needs the community of this conversation');
             }
+            // A post in a `full` and `ok` channel seals under the current
+            // generation's key; everything else under a random key (I4).
+            final generation = await _c7SealGen(
+                conversationId, channelId ?? c7Private, type, epoch);
             final sealed = c7SealMessage(
               bindings: bindings,
               sign: (message) => device.c7Sign(
@@ -2962,6 +2997,8 @@ class NativeCryptoService
               actionId: idempotencyKey,
               epoch: epoch,
               paddedVap1: payload,
+              chk: generation?.key,
+              generation: generation?.epoch ?? 0,
             );
             mlsPlaintext = sealed.reference;
             sealedBody = sealed.sealedBody;
@@ -3129,7 +3166,11 @@ class NativeCryptoService
       if (envelope.senderDeviceId == _deviceId) {
         operationFence();
         // Our own message: its text was stored when it was encrypted, and
-        // MLS cannot decrypt a message for its own sender.
+        // MLS cannot decrypt a message for its own sender. C7: an own
+        // record applies now, in sync order (decision 4).
+        final ownC7 =
+            await _c7OwnEcho(envelope.conversationId, envelope.idempotencyKey);
+        operationFence();
         await localStore.commitSyncEvent(SyncEventCommit(
           checkCanCommit: operationFence,
           eventKey: marker,
@@ -3142,6 +3183,7 @@ class NativeCryptoService
           allowOwnPinEffect: pinAllowed(
               kind: _authority?.conversationKind(envelope.conversationId),
               role: _authority?.roleOf(envelope.conversationId, _accountId!)),
+          c7Settings: ownC7,
         ));
         return null;
       }
@@ -3153,6 +3195,7 @@ class NativeCryptoService
         // clear metadata names (bound into the body's aad).
         var c7TwoPart = false;
         String? c7Channel;
+        C7Opened? c7Opened;
         try {
           final decrypted = await _decryptOrUndecryptable(
               previous,
@@ -3167,6 +3210,7 @@ class NativeCryptoService
             // never held or whose secrets are gone, or damaged bytes. Sync
             // moves past it and the conversation shows a placeholder with
             // no content. The committed group is already back in memory.
+            final miss = await _c7Miss(envelope.conversationId);
             await localStore.commitMlsTransition(MlsStateTransition(
               checkCanCommit: operationFence,
               messageId: marker,
@@ -3176,6 +3220,7 @@ class NativeCryptoService
               state: _sealNext(previous),
               cursor: syncEventId,
               upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+              c7Settings: miss,
               messageEffects: <MessageEffect>[
                 // An `invalid` row holds no content and offers no action;
                 // the timeline reads this key prefix to say "couldn't
@@ -3198,6 +3243,7 @@ class NativeCryptoService
           if (verdict != LeafVerdict.approved &&
               verdict != LeafVerdict.removed) {
             plaintext.fillRange(0, plaintext.length, 0);
+            final miss = await _c7Miss(envelope.conversationId);
             await localStore.commitMlsTransition(MlsStateTransition(
               checkCanCommit: operationFence,
               messageId: marker,
@@ -3206,6 +3252,7 @@ class NativeCryptoService
               expectedCursor: cursor,
               state: _sealNext(previous),
               cursor: syncEventId,
+              c7Settings: miss,
               messageEffects: <MessageEffect>[
                 _placeholderRow(
                     envelope,
@@ -3227,19 +3274,25 @@ class NativeCryptoService
             final metadata = envelope.cryptoMetadata;
             final routeChannel =
                 metadata is Map ? metadata['channel_id'] : null;
-            final opened = c7OpenLive(
-              bindings: bindings,
-              reference: reference,
-              sealedBody: envelope.sealedBody,
-              conversationId: envelope.conversationId,
-              channelId: routeChannel is String ? routeChannel : null,
-              senderDeviceId: envelope.senderDeviceId,
-              actionId: envelope.idempotencyKey,
-            );
+            C7Opened? opened;
+            try {
+              opened = c7OpenLiveParts(
+                bindings: bindings,
+                reference: reference,
+                sealedBody: envelope.sealedBody,
+                conversationId: envelope.conversationId,
+                channelId: routeChannel is String ? routeChannel : null,
+                senderDeviceId: envelope.senderDeviceId,
+                actionId: envelope.idempotencyKey,
+              );
+            } finally {
+              reference.bodyKey.fillRange(0, reference.bodyKey.length, 0);
+            }
             plaintext.fillRange(0, plaintext.length, 0);
             c7TwoPart = true;
             c7Channel = routeChannel is String ? routeChannel : null;
             if (opened == null) {
+              final miss = await _c7Miss(envelope.conversationId);
               await localStore.commitMlsTransition(MlsStateTransition(
                 checkCanCommit: operationFence,
                 messageId: marker,
@@ -3249,19 +3302,22 @@ class NativeCryptoService
                 state: _sealNext(previous),
                 cursor: syncEventId,
                 upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
+                c7Settings: miss,
                 messageEffects: <MessageEffect>[
                   _invalidRow(envelope, syncEventId),
                 ],
               ));
               return null;
             }
-            plaintext = opened;
+            c7Opened = opened;
+            plaintext = opened.paddedVap1;
           }
         } on NativeCryptoException catch (error) {
           if (!error.kind.ratchetAdvanced) rethrow;
           // The ratchet already advanced, so the message can never be
           // decrypted again. Keep going and record a warning instead of
           // the claimed sender's words (D25).
+          final miss = await _c7Miss(envelope.conversationId);
           await localStore.commitMlsTransition(MlsStateTransition(
             checkCanCommit: operationFence,
             messageId: marker,
@@ -3270,6 +3326,7 @@ class NativeCryptoService
             expectedCursor: cursor,
             state: _sealNext(previous),
             cursor: syncEventId,
+            c7Settings: miss,
             upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
             messageEffects: <MessageEffect>[
               // Keyed by the sync event: the claimed idempotency key is
@@ -3291,6 +3348,7 @@ class NativeCryptoService
         FrankReveal? reveal;
         var info = const <CommunityInfoEvent>[];
         var settings = const <String, String?>{};
+        var c7Invalid = false;
         ({String accountId, int headVersion, String listId})? alert;
         try {
           final checked = _checkFranking(
@@ -3347,11 +3405,30 @@ class NativeCryptoService
                               c7Channel != privateChannel)))) {
                 effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
                 reveal = null;
+                c7Invalid = true;
                 break;
               }
               if (c7Kind) {
-                // Records and history_sync are applied by the C7 state
-                // (later slice); the row stands in for the envelope.
+                // C7 records, history_sync and its request change state and
+                // show nothing; a hidden action row stands in for the
+                // envelope (decisions 4 and 5).
+                final opened = c7Opened!;
+                settings = switch (payload.type) {
+                  AppPayloadType.historyChange => opened.trailer.isEmpty
+                      ? await _c7ApplyProposal(envelope, payload,
+                          routeChannel: c7Channel,
+                          epoch: mlsMessageEpoch(
+                              envelope.ciphertext, envelope.conversationId),
+                          verdict: senderVerdict)
+                      : await _c7Miss(envelope.conversationId),
+                  AppPayloadType.historySync => await _c7ApplySync(
+                      envelope, payload, opened.trailer,
+                      verdict: senderVerdict),
+                  AppPayloadType.historySyncRequest => opened.trailer.isEmpty
+                      ? await _c7ApplyRequest(envelope.conversationId, payload)
+                      : const <String, String?>{},
+                  _ => const <String, String?>{},
+                };
                 effects = <MessageEffect>[
                   _placeholderRow(
                     envelope,
@@ -3587,6 +3664,22 @@ class NativeCryptoService
                 reveal = null;
                 break;
               }
+              // C7: a live post sealed under a generation this device
+              // does not hold as current there (decision 5, "Unsure").
+              final postChannel = payload.channelId ?? c7Channel;
+              final postEpoch =
+                  mlsMessageEpoch(envelope.ciphertext, envelope.conversationId);
+              if (c7Opened != null &&
+                  c7Opened.trailer.isEmpty &&
+                  postChannel != null &&
+                  postEpoch != null &&
+                  c7HistoryPostTypes.contains(payload.type)) {
+                settings = await _c7GenCheck(
+                    envelope: envelope,
+                    channelId: postChannel,
+                    epoch: postEpoch,
+                    opened: c7Opened);
+              }
               effects = messageEffectsFor(
                 payload,
                 conversationId: envelope.conversationId,
@@ -3632,6 +3725,7 @@ class NativeCryptoService
               ];
             case InvalidAppPayload():
               effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
+              c7Invalid = true;
           }
         } catch (_) {
           effects = <MessageEffect>[_invalidRow(envelope, syncEventId)];
@@ -3641,6 +3735,13 @@ class NativeCryptoService
           info = const <CommunityInfoEvent>[];
           settings = const <String, String?>{};
           alert = null;
+          c7Invalid = true;
+        }
+        c7Opened?.bodyKey.fillRange(0, c7Opened.bodyKey.length, 0);
+        // C7: a message this device could not fully apply (decision 5,
+        // "Unsure"; a P1 `invalid` body).
+        if (c7Invalid) {
+          settings = await _c7Miss(envelope.conversationId);
         }
         // L1 (design, "Messages from a leaf"): a leaf that was approved once
         // and has been removed from its account's list since is still shown,

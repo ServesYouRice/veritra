@@ -3056,7 +3056,8 @@ class SecureLocalStore implements LocalStore {
 
   @override
   Future<void> importC7History(List<MessageEffect> effects,
-          {Map<String, String?> c7Settings = const <String, String?>{}}) async =>
+          {Map<String, String?> c7Settings =
+              const <String, String?>{}}) async =>
       (await _database()).importC7History(effects, c7Settings: c7Settings);
 
   @override
