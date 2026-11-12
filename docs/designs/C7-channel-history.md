@@ -1502,7 +1502,8 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     current tree and that actor may record now.
   - The moved import (`c7ImportMoved`) uses the wrap the device stored,
     walks back through the old group's stored slots (`c7WalkMoved`: one
-    unique previous per step, a dispute stops it), opens bodies only
+    unique previous per step; at a dispute the fair candidates below are
+    kept, never adopted), opens bodies only
     with the old group's ids and route epochs inside
     `E_prev <= epoch <= close_epoch`, verifies the signature under a key
     from the new group's tree or the server's moved-keys list (then
@@ -1548,6 +1549,60 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   group's ids and route epoch, and is a body the server stored in the
   old stream before its cutoff. A period sealed in `members_from_join`
   used random keys, so no wrap reaches it.
+  Review fixes (2026-11-12). Server and app wire changes are in
+  docs/crypto.md (C3 entry, "Review fixes"). Client C7 rules:
+  - **The move's wrap is taken when the move is noted.** It is the old
+    group's sealing generation at the old group's epoch then, not when
+    the record is sent. If a member of the old group is removed between
+    the server's move and the new group's first add, the old group
+    rekeys. The record would then wrap a generation no post of the
+    channel was sealed under, and the walk back from it lies past the
+    server's cutoff: a gap for every reader. The note carries
+    `wrapEpoch`, `wrapKey` and `wrapClose`, and the record uses them.
+  - **Owing a move.** Only a device that holds the old group owes the
+    record. A stale owed note for a group it does not hold is never due,
+    and proposing it clears it. Noting the same own move again (a
+    replayed conversion) never re-owes a record already sent. An own
+    note replaces only a note made from the server's event.
+  - **Moved imports.** One is due only while C7 is on in its new home,
+    the community is known, and the new home's book is still `full`. One
+    that returns early, for example because the channel left `full`, is
+    marked imported, so a pass does not fetch it again.
+  - **The newcomer import is per channel**, not gated on `joinSynced`.
+    Each channel is imported once it has a head with status `ok`, and
+    later pages need its own cursor.
+  - **Zero-head handovers (L-1).** A handover that settles a channel
+    with a zero head leaves the newcomer asking again once a day
+    (`reask`), until every channel it knows holds a working key. A live
+    record that brings one ends the re-ask without a request.
+  - **Fair candidates (L-2).** Both walks take candidates breadth first,
+    round-robin by the sending device, at most 4 per device per step and
+    64 in all (`c7FairCandidates`).
+  - **Evicting moves (L-7).** When `c7.moves` is full, settled moves are
+    dropped oldest first. An owed or not yet imported move never is.
+  - **Device-list judgments (L-10).** A former member's device list is
+    judged before the import's serialized section, so other crypto work
+    does not wait up to 10 s per fetch. Inside, only those judgments and
+    the stored pin are read.
+  - **Warning before opening (INFO).** The warning before a private
+    channel is made open says the earlier posts become visible to
+    everyone only with channel history on and the channel `full`, or its
+    setting unknown or changing. Otherwise it says they stay with the
+    people who already had them.
+
+  Residuals of the review fixes:
+  - Round-robin fairness holds against one junk sender, not against a
+    server colluding with several member devices. Such senders each add
+    4 per step, and the 64 cap can still be reached.
+  - A conversion finished from its own event re-POSTs. If the first
+    request never reached the server and another device of the same
+    account then made the same conversion, the replay answers that
+    device's move as this one's, and both devices set up the new group.
+    That needs the same admin to convert the same channel on two devices
+    within one lost answer. A request id in the move POST would close it.
+  - Open to private still stores `channels.kind = 'private'`, so the
+    posting mode survives only through a later move back.
+
   Tests: `mobile/test/c3_channel_move_native_test.dart` (both directions
   through real OpenMLS devices, the walk back across a removal in the old
   group, the later newcomer, the window bound, a post of another

@@ -638,8 +638,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     its actor's key in the current tree (never a server-listed key) and
     that actor may record now. The import always uses the wrap the device
     stored, never one handed in. The old group's earlier generations come
-    from its stored slots, one unique wrap per step; a dispute stops the
-    walk (a gap). A slot's head bounds that walk without a record
+    from its stored slots, one unique wrap per step; at a dispute the
+    candidates are kept for the AEAD to decide among, never adopted. A slot's head bounds that walk without a record
     signature check: only an old-group key holder can write a slot, and
     a signature would not stop it placing a genuine older head; it gains
     only what it could leak anyway (C7 design, "Moved slot heads").
@@ -650,6 +650,52 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     with it the earlier posts) reaches exactly them. An unticked reader
     holds no leaf in the new group and never opens the record. Local
     schema and the ABI unchanged; setting `c7.moves`.
+  - **Review fixes (2026-11-12; no migration, ABI or local schema
+    change).** Server:
+    - The move POST is idempotent for its actor. Repeating the actor's
+      own latest move of the channel, into the conversation the channel
+      routes to now with the same access, answers that move (the current
+      route generation) and stores and publishes nothing. Any other
+      same-access request is still 400 `invalid_input`.
+    - The move JSON and the `conversation.channel_moved` payload name
+      `moved_by`, the actor's account.
+    - Private to open restores the posting mode the channel had before it
+      was made private: `announcement` when the move that made it private
+      came from `announcement`. Open to private still records
+      `channels.kind = 'private'`, so a later move back is the only place
+      the mode survives.
+    - The moved-keys route lists only devices that sent a body in the old
+      conversation's streams the moved routes serve: this channel or the
+      group level, at or below the move's cutoff. It no longer lists
+      every device that ever posted there.
+    - A C7 sealed body's declared epoch is refused (400
+      `mls_epoch_out_of_range`) when the group's epoch is tracked but its
+      sender device has no live roster row. Before, that case passed
+      unchecked.
+
+    App:
+    - The app follows a `conversation.channel_moved` event only when it
+      fits what this device knows. The channel must be a known routed
+      channel of a community with a shared conversation. The move must
+      run between that shared conversation and the channel's own private
+      one, in the direction its access names, and start where this device
+      has the channel (or end where a channel list read again already
+      has it). The private side must not be a shared conversation,
+      another channel's conversation, or a listed conversation that is
+      not a channel conversation of the same community. Rows leave only a
+      conversation this device lists.
+    - The answer to a conversion is checked the same way before anything
+      follows it, and an opened channel takes the `to_access` the server
+      restored.
+    - The mover persists its pending conversion before the POST
+      (`c3.pending_conversions`). When the answer is lost and its own
+      `channel_moved` event names it, the mover asks again (a replay) and
+      finishes the conversion. A refusal, a success, or a later different
+      move of the channel forgets it.
+    - A private channel is converted only by a member of it.
+    - A 403 or 404 from the history or moved routes waits a day.
+
+    Client-side C7 rules are in the C7 design, "Review fixes".
   Trust limits, both directions, in the C7 design. Needs the
   independent review.
 - **Message frames name nothing (2026-11-12; was "Found, not fixed" in the
@@ -678,7 +724,9 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   no older than the head record's, and at that epoch match the record's
   key commitment; every slot is read, and disputed wraps are kept as
   candidates the AEAD decides among, never adopted into the book, review
-  M3), the window `E_g <= epoch < E_close` from the route epoch (and
+  M3; candidates are taken breadth first and round-robin by the sending
+  device, at most 4 per device per step and 64 in all, so one device's
+  junk cannot crowd out an honest wrap), the window `E_g <= epoch < E_close` from the route epoch (and
   below the join epoch, review L2), one signature check with `gen = E_g`, the group and the route
   epoch (tree key first; the server's former-member key only for a device
   outside the tree, marked and without a role), the live classify with
