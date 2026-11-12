@@ -1,8 +1,12 @@
 package httpapi_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,10 +19,11 @@ import (
 // C7 is off.
 func TestChannelMoveRoute(t *testing.T) {
 	for _, c7 := range []bool{false, true} {
-		application, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, func(c *config.Config) {
+		logs := &lockedBuffer{}
+		application, handler, ownerToken, _ := newTestAppWithOwnerConfigLog(t, func(c *config.Config) {
 			c.CommunityLayout = true
 			c.C7History = c7
-		})
+		}, slog.New(slog.NewTextHandler(logs, nil)))
 		ownerID := accountIDFromExport(t, handler, ownerToken)
 		carolToken, carolID := registerMemberWithID(t, handler, ownerToken, "carol")
 		status, body := doJSON(t, handler, http.MethodPost, "/api/v1/communities", ownerToken, map[string]interface{}{})
@@ -126,6 +131,11 @@ func TestChannelMoveRoute(t *testing.T) {
 		if got := frames(ownerLive); got != 0 {
 			t.Fatalf("c7=%v: a replay published %d moved frames", c7, got)
 		}
+		// Its events went out with the move: nothing is published without
+		// a stored event (which would warn).
+		if strings.Contains(logs.String(), "realtime_event_without_commit") {
+			t.Fatalf("c7=%v: a replay published events it has none for", c7)
+		}
 		history := "/api/v1/channels/" + channel + "/moves/" + community.SharedConversationID + "/history?stream=" + channel
 		status, body = doJSON(t, handler, http.MethodGet, history, ownerToken, nil)
 		if !c7 && status != http.StatusNotFound {
@@ -137,4 +147,22 @@ func TestChannelMoveRoute(t *testing.T) {
 			t.Fatalf("c7 on, no group: moved history status=%d body=%s", status, body)
 		}
 	}
+}
+
+// lockedBuffer is a log sink a test reads while the app may still write.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
