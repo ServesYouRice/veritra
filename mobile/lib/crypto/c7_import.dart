@@ -26,8 +26,88 @@ const int c7FirstPageBytes = 8 * 1024 * 1024;
 const int c7HistoryRequestLimit = 100;
 
 /// The most candidate generations the walk keeps where stored slots
-/// disagree (review M3).
-const int c7WalkCandidateLimit = 32;
+/// disagree (review M3). Each costs one pass over the stored slots in the
+/// walk and one try per body of its window in the import.
+const int c7WalkCandidateLimit = 64;
+
+/// The most candidates one sender device's slots add per step back (review
+/// L-2). An honest sender names one previous key per generation; a member
+/// that stores junk wraps gets at most this many in, whatever their number
+/// or order, so they cannot crowd out another sender's honest one.
+const int c7WalkPerSenderStep = 4;
+
+/// A previous generation the stored slots name, and the devices whose
+/// slots named it.
+typedef C7Named = ({C7Gen gen, Set<String> senders});
+
+/// The distinct previous generations in [found] (several slots may name
+/// the same one), each with every sender that named it, in first-seen
+/// order.
+List<C7Named> c7MergeNamed(Iterable<C7Named> found) {
+  final out = <C7Named>[];
+  for (final item in found) {
+    final known = out
+        .where((n) =>
+            n.gen.epoch == item.gen.epoch &&
+            c7SameBytes(n.gen.key!, item.gen.key!))
+        .firstOrNull;
+    if (known == null) {
+      out.add((gen: item.gen, senders: <String>{...item.senders}));
+    } else {
+      known.senders.addAll(item.senders);
+    }
+  }
+  return out;
+}
+
+/// The candidates behind a disputed step (review M3, revised for review
+/// L-2): breadth first from [first], each step back taking the senders in
+/// turn, at most [c7WalkPerSenderStep] per sender and step and
+/// [c7WalkCandidateLimit] in all. The cap used to take the first 32 in slot
+/// order, newest first, so 32 junk wraps stored after the honest one
+/// pushed it out; now a sender's junk, however much, leaves room for every
+/// other sender's wrap. [previousOf] gives the generations stored slots
+/// name before one.
+List<C7Gen> c7FairCandidates(
+    List<C7Named> first, List<C7Named> Function(C7Gen gen) previousOf) {
+  final out = <C7Gen>[];
+  bool taken(C7Gen gen) => out.any(
+      (held) => held.epoch == gen.epoch && c7SameBytes(held.key!, gen.key!));
+  var step = first;
+  while (step.isNotEmpty && out.length < c7WalkCandidateLimit) {
+    final bySender = <String, List<C7Gen>>{};
+    for (final named in step) {
+      for (final sender in named.senders) {
+        (bySender[sender] ??= <C7Gen>[]).add(named.gen);
+      }
+    }
+    final picked = <C7Gen>[];
+    final per = <String, int>{};
+    var progress = true;
+    while (progress && out.length < c7WalkCandidateLimit) {
+      progress = false;
+      for (final MapEntry(key: sender, value: queue) in bySender.entries) {
+        if (out.length >= c7WalkCandidateLimit) break;
+        if ((per[sender] ?? 0) >= c7WalkPerSenderStep) continue;
+        while (queue.isNotEmpty) {
+          final gen = queue.removeAt(0);
+          if (taken(gen)) continue;
+          out.add(gen);
+          picked.add(gen);
+          per[sender] = (per[sender] ?? 0) + 1;
+          progress = true;
+          break;
+        }
+      }
+    }
+    step = c7MergeNamed(<C7Named>[
+      for (final gen in picked)
+        for (final named in previousOf(gen))
+          if (!taken(named.gen)) named,
+    ]);
+  }
+  return out;
+}
 
 /// The walk through the stored `history_sync` messages in [syncs] for
 /// [book] (decision 5, "Generation entry and backward walk"): starting from
@@ -42,10 +122,11 @@ const int c7WalkCandidateLimit = 32;
 /// slots that name a generation agree on its previous key, it joins
 /// [book]'s generations, as before. Where they disagree (a member stored a
 /// junk wrap), the walk keeps each distinct previous key, and the walks
-/// back from them, as `candidates` (at most [c7WalkCandidateLimit]): the
-/// import tries every candidate whose window holds a body's epoch and the
-/// AEAD decides. Candidates never join the book, so a key whose wrap was
-/// disputed is never handed on.
+/// back from them, as `candidates` ([c7FairCandidates]: fair across the
+/// senders, so junk cannot crowd out an honest wrap): the import tries
+/// every candidate whose window holds a body's epoch and the AEAD decides.
+/// Candidates never join the book, so a key whose wrap was disputed is
+/// never handed on.
 ({C7ChannelBook book, List<C7Gen> candidates}) c7WalkBack({
   required NativeCryptoBindings bindings,
   required C7ChannelBook book,
@@ -64,14 +145,14 @@ const int c7WalkCandidateLimit = 32;
       if (row.channelId == null) row,
   ];
   // The distinct previous generations the stored slots give for [gen].
-  List<C7Gen> previousOf(C7Gen gen) {
+  List<C7Named> previousOf(C7Gen gen) {
     final key = gen.key;
     if (key == null ||
         gen.groupId != conversationId ||
         gen.epoch <= head.epoch) {
-      return const <C7Gen>[];
+      return const <C7Named>[];
     }
-    final found = <C7Gen>[];
+    final found = <C7Named>[];
     for (final row in stored) {
       final plain = c7TryStoredSlot(
         bindings: bindings,
@@ -102,38 +183,34 @@ const int c7WalkCandidateLimit = 32;
           previous >= head.epoch &&
           (previous != head.epoch ||
               c7SameBytes(c7ChkCommitOf(previousKey), head.chkCommit));
-      if (adopt &&
-          !found.any(
-              (g) => g.epoch == previous && c7SameBytes(g.key!, previousKey))) {
-        found.add(C7Gen(
-          epoch: previous,
-          groupId: conversationId,
-          key: Uint8List.fromList(previousKey),
-          close: gen.epoch,
+      if (adopt) {
+        found.add((
+          gen: C7Gen(
+            epoch: previous,
+            groupId: conversationId,
+            key: Uint8List.fromList(previousKey),
+            close: gen.epoch,
+          ),
+          senders: <String>{row.senderDeviceId},
         ));
       }
       plain.fillRange(0, plain.length, 0);
     }
-    return found;
+    return c7MergeNamed(found);
   }
 
   var gens = book.gens;
-  var frontier = <C7Gen>[];
+  var frontier = const <C7Named>[];
   while (true) {
     final found = previousOf(gens.first);
     if (found.length == 1) {
-      gens = <C7Gen>[found.single, ...gens];
+      gens = <C7Gen>[found.single.gen, ...gens];
       continue;
     }
     frontier = found;
     break;
   }
-  final candidates = <C7Gen>[];
-  while (frontier.isNotEmpty && candidates.length < c7WalkCandidateLimit) {
-    final gen = frontier.removeAt(0);
-    candidates.add(gen);
-    frontier.addAll(previousOf(gen));
-  }
+  final candidates = c7FairCandidates(frontier, previousOf);
   return (
     book: gens.length == book.gens.length ? book : book.copyWith(gens: gens),
     candidates: candidates,

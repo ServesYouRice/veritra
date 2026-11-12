@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/crypto/c7_channel_book.dart';
 import 'package:private_messenger/crypto/c7_history.dart';
 import 'package:private_messenger/crypto/c7_import.dart';
+import 'package:private_messenger/crypto/c7_move.dart';
 import 'package:private_messenger/crypto/c7_sync.dart';
 import 'package:private_messenger/crypto/c7_two_part.dart';
 import 'package:private_messenger/crypto/crypto_service.dart' show C7HistoryRow;
@@ -52,14 +53,15 @@ void main() {
         .copyWith(gens: [C7Gen(epoch: 5, groupId: conversation, key: k5)]);
 
     var ids = 0;
-    C7HistoryRow sync(int current, Uint8List currentKey, int previous,
-        Uint8List previousKey) {
+    C7HistoryRow sync(
+        int current, Uint8List currentKey, int previous, Uint8List previousKey,
+        {String sender = 'dev-member'}) {
       final actionId = 'act-${++ids}';
       final parts = c7BuildHistorySync(
         bindings: bindings,
         communityId: community,
         conversationId: conversation,
-        senderDeviceId: 'dev-member',
+        senderDeviceId: sender,
         actionId: actionId,
         forEpoch: current,
         snapshot: <String, C7SlotSnapshot>{
@@ -83,7 +85,7 @@ void main() {
       expect(c7HistorySyncChannelCount(body.length), 1);
       return C7HistoryRow(
         messageId: 'hist_$ids',
-        senderDeviceId: 'dev-member',
+        senderDeviceId: sender,
         actionId: actionId,
         channelId: null,
         createdAt: DateTime.utc(2026),
@@ -118,5 +120,44 @@ void main() {
     // still leads back to the period's first generation.
     expect(shape(disputed.book.gens), [(5, null, 5)]);
     expect(shape(disputed.candidates), [(3, 5, 9), (3, 5, 3), (1, 3, 1)]);
+
+    // Review L-2: junk wraps from one member, all stored after the honest
+    // one, used to fill the 32 candidate places before it. A sender's junk
+    // now takes at most a few places per step back, so the honest wrap and
+    // the walk back from it stay in, even past the overall limit.
+    final flood = <C7HistoryRow>[
+      for (var i = 0; i < c7WalkCandidateLimit + 6; i++)
+        sync(5, k5, 3, key(100 + i), sender: 'dev-junk'),
+    ];
+    final crowded = c7WalkBack(
+        bindings: bindings,
+        book: book,
+        syncs: [...flood, honest5, honest3],
+        communityId: community,
+        conversationId: conversation);
+    expect(shape(crowded.book.gens), [(5, null, 5)]);
+    expect(shape(crowded.candidates), containsAll([(3, 5, 3), (1, 3, 1)]));
+    expect(crowded.candidates.length, lessThanOrEqualTo(c7WalkCandidateLimit));
+
+    // The moved walk (C3 conversion) used to stop at the first dispute;
+    // it keeps the candidates the same way.
+    final moved = c7WalkMoved(
+        bindings: bindings,
+        start: C7Gen(epoch: 5, groupId: conversation, key: k5),
+        syncs: [...flood, honest5, honest3],
+        communityId: community,
+        fromConversationId: conversation,
+        channelId: channel);
+    expect(shape(moved.gens), [(5, null, 5)]);
+    expect(shape(moved.candidates), containsAll([(3, 5, 3), (1, 3, 1)]));
+    final agreed = c7WalkMoved(
+        bindings: bindings,
+        start: C7Gen(epoch: 5, groupId: conversation, key: k5),
+        syncs: [honest5, honest3],
+        communityId: community,
+        fromConversationId: conversation,
+        channelId: channel);
+    expect(shape(agreed.gens), [(1, 3, 1), (3, 5, 3), (5, null, 5)]);
+    expect(agreed.candidates, isEmpty);
   }, skip: skip);
 }

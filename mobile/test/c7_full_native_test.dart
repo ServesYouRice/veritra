@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -47,8 +48,11 @@ class _Authority
         ConversationCommunitySource,
         VerifiedRoleSource,
         C7ChannelListSource {
-  _Authority(this.admins);
+  _Authority(this.admins, {this.extra = const <String>[]});
   final Set<String> admins;
+
+  /// Channels this device lists in the shared group besides A and B.
+  final List<String> extra;
 
   @override
   String? conversationKind(String conversationId) =>
@@ -58,7 +62,7 @@ class _Authority
       conversationId == _shared ? null : _channel;
   @override
   List<String> c7Channels(String conversationId) => conversationId == _shared
-      ? <String>[_channelA, _channelB]
+      ? <String>[_channelA, _channelB, ...extra]
       : const <String>[];
   @override
   Set<String> memberAccounts(String conversationId) => const {};
@@ -106,6 +110,16 @@ void main() {
   }
 
   /// Alice makes the group with [members] and every one of them joins.
+  /// What is left for [member] once its duties are settled and its join
+  /// handover settled the channel only with a zero slot: the slow re-ask
+  /// of review L-1, a day away.
+  Future<void> expectOnlyReask(_Client member) async {
+    final next = await member.service.c7NextDueAt([_conversation]);
+    expect(next, isNotNull);
+    expect(next!.difference(DateTime.now().toUtc()),
+        greaterThan(c7ZeroHeadReask - const Duration(minutes: 1)));
+  }
+
   Future<void> group(_Client alice, List<_Client> members) async {
     await alice.service
         .initializeConversation(_conversation, <DeviceKeyPackage>[
@@ -722,7 +736,9 @@ void main() {
     final bob = await client('bob');
     final dave = await client('dave');
     await group(alice, [bob]);
-    expect(await bob.service.c7NextDueAt([_conversation]), isNull);
+    // The channel has no record yet, so the handover settled it with a
+    // zero slot: only the slow re-ask is left (review L-1).
+    await expectOnlyReask(bob);
     await alice.service
         .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
     await _accept(alice, [dave], [bob]);
@@ -737,8 +753,8 @@ void main() {
     await alice.store.removePendingEnvelope(sync.idempotencyKey);
     await bob.receive(alice, sync);
     await dave.receive(alice, sync);
-    expect(await bob.service.c7NextDueAt([_conversation]), isNull);
-    expect(await dave.service.c7NextDueAt([_conversation]), isNull);
+    await expectOnlyReask(bob);
+    await expectOnlyReask(dave);
   }, skip: skip);
 
   test(
@@ -762,7 +778,7 @@ void main() {
     // Bob never receives it; the server's answer settles his duty.
     expect(await bob.service.c7NextDueAt([_conversation]), isNotNull);
     await bob.service.c7SyncDelivered(_conversation, joined);
-    expect(await bob.service.c7NextDueAt([_conversation]), isNull);
+    await expectOnlyReask(bob);
     _skew = c7FallbackCap + const Duration(seconds: 1);
     expect(await bob.service.c7DueWork([_conversation]), isEmpty);
     // An epoch without a duty, or one already settled, changes nothing.
@@ -929,7 +945,17 @@ void main() {
           epoch: removal,
           body: Uint8List.fromList(closing.sealedBody!),
         ));
-    final imported = await dave.service.c7ImportHistory(
+    // Review L-10: a former member's device list is fetched before the
+    // import's serialized section; other crypto work goes through while
+    // the fetch hangs.
+    final fetch = Completer<void>();
+    final fetching = Completer<void>();
+    sharedTestDeviceLists.onFetch = () {
+      if (!fetching.isCompleted) fetching.complete();
+      return fetch.future;
+    };
+    addTearDown(() => sharedTestDeviceLists.onFetch = null);
+    final importing = dave.service.c7ImportHistory(
       _conversation,
       groupLevel: C7HistoryPage(groupLevel, complete: true),
       channels: <String, C7HistoryPage>{
@@ -955,6 +981,14 @@ void main() {
             signingKey: carolKey),
       ],
     );
+    // Only once the fetch hangs: the import holds the lock by then if it
+    // fetches inside it.
+    await fetching.future.timeout(const Duration(seconds: 3));
+    await dave.service
+        .c7DueWork([_conversation]).timeout(const Duration(seconds: 3));
+    sharedTestDeviceLists.onFetch = null;
+    fetch.complete();
+    final imported = await importing;
     // The walk adopted the first generation from the removal's
     // history_sync, closing where the second opens; the period's record
     // stops it there.
@@ -1194,6 +1228,113 @@ void main() {
         await alice.sealedUnderChannelKey(fromDave,
             channelId: _channelA, conversationId: _shared),
         isTrue);
+  }, skip: skip);
+
+  test(
+      'a newcomer whose handover settled a channel only with a zero slot '
+      'keeps asking, slowly, until it holds a working key (review L-1)',
+      () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final carol = await client('carol');
+    // The channel has no record: Alice's handover gives Bob a zero slot.
+    await group(alice, [bob]);
+    // A later membership commit keeps it; Alice's handover for it settles
+    // Bob's duty.
+    await alice.service
+        .stageMembershipChange(_conversation, adds: [await carol.keyPackage()]);
+    await _accept(alice, [carol], [bob]);
+    final handover = (await alice.service
+        .c7Send((await alice.service.c7DueWork([_conversation])).single))!;
+    await alice.store.removePendingEnvelope(handover.idempotencyKey);
+    await bob.receive(alice, handover);
+    final joined = await bob.group();
+    expect(joined.joinSynced, isTrue);
+    expect(joined.reask, isTrue);
+    expect(await bob.service.c7DueWork([_conversation]), isEmpty);
+    // A day later Bob asks again, and the next wait is a day too.
+    _skew = c7ZeroHeadReask + const Duration(seconds: 1);
+    final ask = (await bob.service.c7DueWork([_conversation]))
+        .whereType<C7DueRequest>()
+        .single;
+    expect(ask.forEpoch, joined.joinEpoch);
+    final request = (await bob.service.c7Send(ask))!;
+    await bob.store.removePendingEnvelope(request.idempotencyKey);
+    expect(await bob.service.c7DueWork([_conversation]), isEmpty);
+    // A record reaches him live: he holds a working key now, so the next
+    // re-ask sends nothing and stops for good.
+    await propose(alice, [bob], full: true, create: true);
+    expect((await bob.view())!.status, 'ok');
+    _skew += c7ZeroHeadReask + const Duration(seconds: 1);
+    final last = (await bob.service.c7DueWork([_conversation]))
+        .whereType<C7DueRequest>()
+        .single;
+    expect(await bob.service.c7Send(last), isNull);
+    expect((await bob.group()).reask, isFalse);
+    expect(await bob.service.c7NextDueAt([_conversation]), isNull);
+  }, skip: skip);
+
+  test(
+      'a channel still waiting for a working key no longer holds back the '
+      "import of another channel's history (review L-3)", () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    // Dave's layout already lists a third channel the handover cannot
+    // settle, so his join stays unsynced.
+    final channelC = 'chan_${'c' * 32}';
+    dave.service.conversationAuthority =
+        _Authority(const {'acct_bob'}, extra: <String>[channelC]);
+    await alice.service.initializeConversation(
+        _shared, <DeviceKeyPackage>[await bob.keyPackage()]);
+    await _accept(alice, [bob], const [], conversation: _shared);
+    final record = await alice.service.c7ProposeRecord(_shared, _channelA,
+        full: true, create: true, layoutGeneration: 1);
+    await alice.store.removePendingEnvelope(record.idempotencyKey);
+    await bob.receive(alice, record);
+    await alice.receive(alice, record);
+    final inA = await alice.service.encryptChannelPayload(
+        _shared, AppPayloadType.text, <String, Object?>{'text': 'in A'},
+        channelId: _channelA, layoutGeneration: 1);
+    await alice.store.removePendingEnvelope(inA.idempotencyKey);
+    await alice.service
+        .stageMembershipChange(_shared, adds: [await dave.keyPackage()]);
+    await _accept(alice, [dave], [bob], conversation: _shared);
+    final joinEpoch = (await alice.service.groupEpoch(_shared))!.epoch;
+    final sync = (await alice.service.c7Send(
+        (await alice.service.c7DueWork([_shared]))
+            .whereType<C7DueSync>()
+            .where((d) => d.forEpoch == joinEpoch)
+            .single))!;
+    await alice.store.removePendingEnvelope(sync.idempotencyKey);
+    await dave.receive(alice, sync);
+    expect((await dave.view(_channelA, _shared))!.recorded, isTrue);
+    expect((await dave.group(_shared)).joinSynced, isFalse);
+    // A is due on its own.
+    expect(await dave.service.c7ImportDue([_shared]), [_shared]);
+    final imported = await dave.service.c7ImportHistory(_shared,
+        groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+        channels: <String, C7HistoryPage>{
+          _channelA: C7HistoryPage(<C7HistoryRow>[
+            C7HistoryRow(
+              messageId: 'hist_a1',
+              senderDeviceId: alice.deviceId,
+              actionId: inA.idempotencyKey,
+              channelId: _channelA,
+              createdAt: DateTime.now().toUtc(),
+              epoch: (inA.cryptoMetadata as Map)['mls_epoch'] as int,
+              body: Uint8List.fromList(inA.sealedBody!),
+            ),
+          ], complete: true),
+          _channelB: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+          channelC: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+        });
+    expect(imported, 1);
+    expect(
+        (await dave.store.loadMessages(_shared)).where((r) => r.body == 'in A'),
+        hasLength(1));
+    // C, still without a working key, is not due: no fetch loop.
+    expect(await dave.service.c7ImportDue([_shared]), isEmpty);
   }, skip: skip);
 }
 

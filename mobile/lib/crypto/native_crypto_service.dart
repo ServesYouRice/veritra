@@ -175,13 +175,30 @@ class NativeCryptoService
       _serial(() async {
         if (fromConversationId == toConversationId) return;
         final moves = await _c7LoadMoves();
+        // The old group as it stands at the move: its epoch closes the
+        // window, and the generation sealing there is the one the record
+        // wraps. Taken now, not when the record is sent: a removal in the
+        // old group before the new group's first add would otherwise make
+        // the wrap name a later generation, which no post of the channel
+        // was sealed under, and whose walk back lies past the server's
+        // cutoff (a gap for every reader of the move).
+        final oldEpoch = own ? _c7EpochOf(fromConversationId) : null;
+        final oldGen = oldEpoch == null
+            ? null
+            : (await _c7LoadBook(fromConversationId, channelId))
+                .sealGenAt(oldEpoch);
         final noted = _c7NotedMove(
             moves,
             C7Move(
               channelId: channelId,
               fromConversationId: fromConversationId,
               toConversationId: toConversationId,
-              owed: own,
+              // Review L-6: the record continues the chain from the old
+              // group, so a device that holds none owes nothing.
+              owed: own && oldEpoch != null,
+              wrapEpoch: oldGen?.epoch,
+              wrapKey: oldGen == null ? null : Uint8List.fromList(oldGen.key!),
+              wrapClose: oldGen == null ? null : oldEpoch,
               // The mover holds the posts and moves its own rows.
               imported: own,
             ),
@@ -202,19 +219,50 @@ class NativeCryptoService
                 m.toConversationId == due.conversationId)
             .firstOrNull;
         if (move == null || !_c7Active(due.conversationId)) return null;
+        if (_c7EpochOf(due.fromConversationId) == null) {
+          // Review L-6: a device that holds no old group cannot make the
+          // record; it stops owing it instead of failing every pass.
+          final moves = await _c7LoadMoves();
+          await localStore.saveSetting(
+              c7MovesSetting,
+              C7Move.encodeAll(<C7Move>[
+                for (final m in moves)
+                  m.same(move) ? m.copyWith(owed: false) : m,
+              ]));
+          return null;
+        }
         final from = await _c7LoadBook(due.fromConversationId, due.channelId);
+        final wrapEpoch = move.wrapEpoch;
+        final wrapKey = move.wrapKey;
+        final wrapClose = move.wrapClose;
         return _c7Propose(due.conversationId, due.channelId,
             full: from.mode == c7ModeFull,
             create: false,
             layoutGeneration: layoutGeneration,
-            moveFrom: due.fromConversationId);
+            moveFrom: due.fromConversationId,
+            moveAt: wrapEpoch == null || wrapKey == null || wrapClose == null
+                ? null
+                : (epoch: wrapEpoch, key: wrapKey, close: wrapClose));
       });
 
+  /// Review M-B: only a move whose import can run is due: C7 active in its
+  /// new home, the community known, and the new home's book still `full`
+  /// (a channel that left `full` keeps nothing the move would open; its
+  /// import marks the move done). Anything else was fetched again, up to
+  /// two first pages, on every pass.
   @override
-  Future<List<C7Move>> c7MovedImportsDue() async => <C7Move>[
-        for (final move in await _c7LoadMoves())
-          if (move.importDue && _c7Active(move.toConversationId)) move,
-      ];
+  Future<List<C7Move>> c7MovedImportsDue() async {
+    final out = <C7Move>[];
+    for (final move in await _c7LoadMoves()) {
+      final to = move.toConversationId;
+      if (!move.importDue || !_c7Active(to) || _c7CommunityOf(to) == null) {
+        continue;
+      }
+      if ((await _c7LoadBook(to, move.channelId)).mode != c7ModeFull) continue;
+      out.add(move);
+    }
+    return out;
+  }
 
   @override
   Future<int> c7ImportMoved(
@@ -222,9 +270,12 @@ class NativeCryptoService
     required C7HistoryPage channel,
     required C7HistoryPage groupLevel,
     List<C7FormerKey> keys = const <C7FormerKey>[],
-  }) =>
-      _serial(() => _c7ImportMoved(move,
-          channel: channel, groupLevel: groupLevel, keys: keys));
+  }) async {
+    // Review L-10: device lists are fetched before the serialized section.
+    final proofs = await _c7JudgeFormer(keys, channel.rows);
+    return _serial(() => _c7ImportMoved(move,
+        channel: channel, groupLevel: groupLevel, keys: keys, proofs: proofs));
+  }
 
   @override
   Future<Map<String, bool>> c7HistoryLines(String conversationId) async {
@@ -249,9 +300,7 @@ class NativeCryptoService
         if (!duty.settled) consider(duty.dueAtMs);
       }
       final request = group.requestDueAtMs;
-      if (request != null && !group.joinSynced && group.joinEpoch != null) {
-        consider(request);
-      }
+      if (request != null && group.asking) consider(request);
     }
     return next == null
         ? null
@@ -262,14 +311,26 @@ class NativeCryptoService
   Future<void> c7SyncDelivered(String conversationId, int forEpoch) =>
       _serial(() => _c7SyncDelivered(conversationId, forEpoch));
 
+  /// Review L-3: due per channel. A newcomer's group is due while one of
+  /// the channels the app imports there ([_c7ImportChannelsOf]) has a
+  /// settled head of its own ([_c7ImportReady]) and has not been imported
+  /// yet, so one channel still waiting for a working key no longer holds
+  /// back the others. The app still fetches every channel alike.
   @override
   Future<List<String>> c7ImportDue(Iterable<String> conversationIds) async {
     final out = <String>[];
     for (final conversationId in conversationIds) {
       if (!_c7Active(conversationId)) continue;
       final group = await _c7LoadGroup(conversationId);
-      if (group.joinEpoch != null && group.joinSynced && !group.imported) {
-        out.add(conversationId);
+      if (group.joinEpoch == null) continue;
+      final state = C7ImportState.decode(
+          await localStore.loadSetting(c7ImportSetting(conversationId)));
+      for (final channel in _c7ImportChannelsOf(conversationId)) {
+        if (state.cursors.containsKey(channel)) continue;
+        if (_c7ImportReady(await _c7LoadBook(conversationId, channel))) {
+          out.add(conversationId);
+          break;
+        }
       }
     }
     return out;
@@ -282,18 +343,28 @@ class NativeCryptoService
     required Map<String, C7HistoryPage> channels,
     List<C7FormerKey> formerKeys = const <C7FormerKey>[],
     bool first = true,
-  }) =>
-      _serial(() => _c7Import(conversationId,
-          groupLevel: groupLevel,
-          channels: channels,
-          formerKeys: formerKeys,
-          first: first));
+  }) async {
+    // Review L-10: a former member's name is proven from its account's
+    // device list, which may be fetched (up to 10 s each); that happens
+    // here, before the serialized section, never inside it. The keys are
+    // the ones the import will use ([_c7ImportKeys]).
+    final state = C7ImportState.decode(
+        await localStore.loadSetting(c7ImportSetting(conversationId)));
+    final proofs = await _c7JudgeFormer(
+        _c7ImportKeys(state, formerKeys, first: first),
+        <C7HistoryRow>[for (final page in channels.values) ...page.rows]);
+    return _serial(() => _c7Import(conversationId,
+        groupLevel: groupLevel,
+        channels: channels,
+        formerKeys: formerKeys,
+        first: first,
+        proofs: proofs));
+  }
 
   @override
   Future<String?> c7EarlierCursor(
       String conversationId, String channelId) async {
     if (!_c7Active(conversationId)) return null;
-    if (!(await _c7LoadGroup(conversationId)).imported) return null;
     if ((await _c7LoadBook(conversationId, channelId)).mode != c7ModeFull) {
       return null;
     }
@@ -5553,12 +5624,15 @@ extension _C7Engine on NativeCryptoService {
   Future<List<C7Move>> _c7LoadMoves() async =>
       C7Move.decodeAll(await localStore.loadSetting(c7MovesSetting));
 
-  /// [moves] with [move] noted, encoded, or null when nothing changes. A
-  /// move this device made replaces an earlier one of the same channel
-  /// between the same conversations (the server made a new one); one a
-  /// server event names is noted once.
+  /// [moves] with [move] noted, encoded, or null when nothing changes. One
+  /// a server event names is noted once. A move this device made replaces
+  /// a note of the same move from the server's event (its answer was lost,
+  /// review L-6), but never its own earlier note: the same channel, from
+  /// and to is the same move (a private conversation is never reused), so
+  /// a replayed conversion must not owe its record a second time.
   String? _c7NotedMove(List<C7Move> moves, C7Move move, {required bool own}) {
-    if (!own && moves.any(move.same)) return null;
+    final known = moves.where(move.same).firstOrNull;
+    if (known != null && (!own || known.owed || known.imported)) return null;
     return C7Move.encodeAll(<C7Move>[
       for (final known in moves)
         if (!known.same(move)) known,
@@ -5665,6 +5739,39 @@ extension _C7Engine on NativeCryptoService {
         ...(authority as C7ChannelListSource).c7Channels(conversationId),
       if (_c7PrivateChannel(conversationId) case final String channel) channel,
     };
+  }
+
+  /// The channels a newcomer's import takes in [conversationId], as the app
+  /// fetches them: a shared group's listed channels, or a private group's
+  /// own channel (review L-3).
+  List<String> _c7ImportChannelsOf(String conversationId) {
+    final authority = _authority;
+    final private = _c7PrivateChannel(conversationId);
+    if (private != null) return <String>[private];
+    return <String>[
+      if (authority is C7ChannelListSource)
+        ...(authority as C7ChannelListSource).c7Channels(conversationId),
+    ];
+  }
+
+  /// Whether [book]'s channel can be imported: a verified head whose key
+  /// works, as a usable `history_sync` leaves it (review L-3).
+  bool _c7ImportReady(C7ChannelBook book) =>
+      book.hasHead && book.status == C7Status.ok;
+
+  /// The former-member keys an import uses: the kept ones, and, for a
+  /// first page, those the app just fetched (a group imported channel by
+  /// channel fetches them more than once; the first fetch of a device
+  /// wins).
+  List<C7FormerKey> _c7ImportKeys(
+      C7ImportState state, List<C7FormerKey> fetched,
+      {required bool first}) {
+    if (!first) return state.keys;
+    final out = <C7FormerKey>[...state.keys];
+    for (final key in fetched) {
+      if (!out.any((k) => k.deviceId == key.deviceId)) out.add(key);
+    }
+    return out;
   }
 
   /// The settings that store [group] and [books] (each book's channel joins
@@ -6161,9 +6268,10 @@ extension _C7Engine on NativeCryptoService {
     // keyless one cannot stop it asking. Channels it leaves unsettled stay
     // without a head (a later one may fill them); none of its slots is
     // adopted as `keyless`.
-    final newcomer = group.joinEpoch != null &&
-        !group.joinSynced &&
-        forEpoch >= group.joinEpoch!;
+    // Review L-1: a newcomer whose handover settled a channel only with a
+    // zero slot still takes a later one as a newcomer, until every channel
+    // it knows has a working key.
+    final newcomer = group.asking && forEpoch >= group.joinEpoch!;
     final settled = <String>{};
     for (final slot in slots) {
       final own = mine?[slot.channelId];
@@ -6241,14 +6349,26 @@ extension _C7Engine on NativeCryptoService {
     if (newcomer) {
       // Usable: every channel this device knows is settled, by this
       // message or by a verified head it already holds with a working key.
+      // Review L-1: a channel settled only by a zero slot has no working
+      // key yet; it no longer stops the import, but the newcomer keeps
+      // asking for it, slowly.
+      final working = <String>{};
       for (final channel in known) {
-        if (settled.contains(channel)) continue;
         final held = changed.where((b) => b.channelId == channel).firstOrNull ??
             await _c7LoadBook(conversationId, channel);
-        if (held.hasHead && held.status == C7Status.ok) settled.add(channel);
+        if (held.hasHead && held.status == C7Status.ok) working.add(channel);
       }
-      if (settled.containsAll(known)) {
-        group = group.copyWith(joinSynced: true, clearRequest: true);
+      settled.addAll(working);
+      final reask = !working.containsAll(known);
+      if (group.joinSynced) {
+        if (!reask) group = group.copyWith(reask: false, clearRequest: true);
+      } else if (settled.containsAll(known)) {
+        group = reask
+            ? group.copyWith(
+                joinSynced: true,
+                reask: true,
+                requestDueAtMs: _c7NowMs() + c7ZeroHeadReask.inMilliseconds)
+            : group.copyWith(joinSynced: true, clearRequest: true);
       } else if (group.requestDueAtMs == null) {
         group = group.copyWith(
             requestDueAtMs: _c7NowMs() +
@@ -6421,6 +6541,7 @@ extension _C7Engine on NativeCryptoService {
     required bool create,
     required int? layoutGeneration,
     String? moveFrom,
+    ({int epoch, Uint8List key, int close})? moveAt,
   }) async {
     if (!_c7Active(conversationId)) {
       throw StateError('C7 is off for this conversation');
@@ -6474,10 +6595,13 @@ extension _C7Engine on NativeCryptoService {
     // group adopts it (row 1) or takes it over a stale head (row 5).
     final C7ChannelBook? old =
         moveFrom == null ? null : await _c7LoadBook(moveFrom, channelId);
-    final oldEpoch = moveFrom == null ? null : _c7EpochOf(moveFrom);
-    if (moveFrom != null && oldEpoch == null) {
+    if (moveFrom != null && _c7EpochOf(moveFrom) == null) {
       throw StateError('a move needs the old group');
     }
+    // The old group's epoch and generation at the move, as noted then
+    // ([c7NoteMove]); else as they stand now.
+    final oldEpoch =
+        moveFrom == null ? null : moveAt?.close ?? _c7EpochOf(moveFrom);
     final head = old != null ? old.headRecord : book.headRecord;
     if (old == null && create != (head == null && book.chain.highestSeq < 0)) {
       throw StateError(create
@@ -6496,7 +6620,11 @@ extension _C7Engine on NativeCryptoService {
     final key = Uint8List.fromList(_randomBytes(32));
     // The wrap: the old group's current generation, when both modes are
     // `full` and this device holds its key; else 128 random bytes.
-    final oldGen = old == null || !full ? null : old.sealGenAt(oldEpoch!);
+    final oldGen = old == null || !full
+        ? null
+        : moveAt != null
+            ? C7Gen(epoch: moveAt.epoch, groupId: moveFrom!, key: moveAt.key)
+            : old.sealGenAt(oldEpoch!);
     final Uint8List? wrap = old == null
         ? null
         : oldGen != null
@@ -6677,11 +6805,35 @@ extension _C7Engine on NativeCryptoService {
   /// does not already say so) lists it with that key now or did once. A
   /// device list that cannot be fetched or verified proves nothing.
   Future<bool> _c7FormerProven(
-      String account, String deviceId, Uint8List signingKey) async {
+      String account, String deviceId, Uint8List signingKey,
+      {bool network = true}) async {
     final verdict = await _judgeLeaf(
-        LeafPair(idBytes(account), idBytes(deviceId), signingKey));
+        LeafPair(idBytes(account), idBytes(deviceId), signingKey),
+        network: network);
     return verdict == LeafVerdict.approved || verdict == LeafVerdict.removed;
   }
+
+  /// Review L-10: [_c7FormerProven] for every device in [keys] that sent
+  /// one of [rows], judged before an import's serialized section (a
+  /// device-list fetch may take up to 10 s, which would hold every other
+  /// crypto operation). Keyed by [_c7ProofKey], so a proof is only ever
+  /// used for the exact account, device and key it judged.
+  Future<Map<String, bool>> _c7JudgeFormer(
+      Iterable<C7FormerKey> keys, Iterable<C7HistoryRow> rows) async {
+    final senders = <String>{for (final row in rows) row.senderDeviceId};
+    final out = <String, bool>{};
+    for (final key in keys) {
+      if (!senders.contains(key.deviceId)) continue;
+      final at = _c7ProofKey(key.accountId, key.deviceId, key.signingKey);
+      if (out.containsKey(at)) continue;
+      out[at] =
+          await _c7FormerProven(key.accountId, key.deviceId, key.signingKey);
+    }
+    return out;
+  }
+
+  static String _c7ProofKey(String account, String device, Uint8List key) =>
+      '$account\u0000$device\u0000${base64Encode(key)}';
 
   /// A newcomer's request for the `history_sync` of its join, repeated with
   /// backoff until a usable one arrives.
@@ -6689,7 +6841,32 @@ extension _C7Engine on NativeCryptoService {
     if (!_c7Active(conversationId)) return null;
     final group = await _c7LoadGroup(conversationId);
     final joinEpoch = group.joinEpoch;
-    if (group.joinSynced || joinEpoch == null) return null;
+    if (!group.asking || joinEpoch == null) return null;
+    if (group.reask) {
+      // Review L-1: a live record may have brought the working keys the
+      // handover lacked; then there is nothing left to ask for (and after
+      // enough later commits no member holds the join's snapshot anyway).
+      var working = true;
+      for (final channel in _c7KnownChannels(conversationId, group)) {
+        if (!_c7ImportReady(await _c7LoadBook(conversationId, channel))) {
+          working = false;
+          break;
+        }
+      }
+      if (working) {
+        final previous = await _requiredState();
+        await localStore.commitLocalMlsState(
+          expectedCounter: previous.counter,
+          expectedCursor: await localStore.loadSyncCursor(),
+          state: _sealNext(previous),
+          c7Settings: _c7Put(
+              conversationId,
+              group.copyWith(reask: false, clearRequest: true),
+              const <C7ChannelBook>[]),
+        );
+        return null;
+      }
+    }
     return _c7SendHidden(
       conversationId,
       channelId: null,
@@ -6711,7 +6888,10 @@ extension _C7Engine on NativeCryptoService {
           group.copyWith(
             requestsSent: group.requestsSent + 1,
             requestDueAtMs: _c7NowMs() +
-                c7RequestDelayAfter(group.requestsSent + 1).inMilliseconds,
+                (group.joinSynced
+                        ? c7ZeroHeadReask
+                        : c7RequestDelayAfter(group.requestsSent + 1))
+                    .inMilliseconds,
           ),
           const <C7ChannelBook>[]),
       target: <String, Object?>{c7SyncRequestForEpochKey: joinEpoch},
@@ -6737,18 +6917,16 @@ extension _C7Engine on NativeCryptoService {
     required Map<String, C7HistoryPage> channels,
     required List<C7FormerKey> formerKeys,
     required bool first,
+    required Map<String, bool> proofs,
   }) async {
     if (!_c7Active(conversationId)) return 0;
     final community = _c7CommunityOf(conversationId);
     if (community == null) return 0;
     final group = await _c7LoadGroup(conversationId);
-    if (group.joinEpoch == null ||
-        (first ? group.imported || !group.joinSynced : !group.imported)) {
-      return 0;
-    }
+    if (group.joinEpoch == null) return 0;
     final state = C7ImportState.decode(
         await localStore.loadSetting(c7ImportSetting(conversationId)));
-    final keptKeys = first ? formerKeys : state.keys;
+    final keptKeys = _c7ImportKeys(state, formerKeys, first: first);
     final former = <String, C7FormerKey>{
       for (final key in keptKeys) key.deviceId: key,
     };
@@ -6766,12 +6944,23 @@ extension _C7Engine on NativeCryptoService {
     // Pass one: every opened, verified post and action, oldest first.
     final posts = <_C7Post>[];
     final actions = <List<MessageEffect>>[];
+    var took = false;
     for (final MapEntry(key: channel, value: page) in channels.entries) {
       // A shared group's channels, or a private group's own channel.
       if (shared ? channel == privateChannel : channel != privateChannel) {
         continue;
       }
       final stored = await _c7LoadBook(conversationId, channel);
+      // Review L-3: per channel. The first page of a channel is imported
+      // once its own head is settled (a verified head whose key works),
+      // whether or not every other channel is; "Load earlier posts" pages
+      // only a channel already imported.
+      if (first
+          ? state.cursors.containsKey(channel) || !_c7ImportReady(stored)
+          : state.cursors[channel] == null) {
+        continue;
+      }
+      took = true;
       final walked = c7WalkBack(
         bindings: bindings,
         book: stored,
@@ -6845,16 +7034,21 @@ extension _C7Engine on NativeCryptoService {
             conversationId: conversationId,
             posts: posts,
             actions: actions,
-            proven: proven);
+            proven: proven,
+            proofs: proofs);
       }
     }
+    if (!took) return 0;
     final (ordered, imported) = _c7OrderImport(posts, actions);
     final next =
         C7ImportState(cursors: cursors, keys: keptKeys, candidates: candidates);
+    // The group counts as imported once its handover is in (joinSynced):
+    // every channel it left without a head is then known to have none.
+    final done = first && group.joinSynced && !group.imported;
     await localStore.importC7History(ordered, c7Settings: <String, String?>{
-      if (changedBooks.isNotEmpty || first)
-        ..._c7Put(conversationId,
-            first ? group.copyWith(imported: true) : group, changedBooks),
+      if (changedBooks.isNotEmpty || done)
+        ..._c7Put(conversationId, done ? group.copyWith(imported: true) : group,
+            changedBooks),
       c7ImportSetting(conversationId): next.encode(),
       if (!identical(moves, movesBefore))
         c7MovesSetting: C7Move.encodeAll(moves),
@@ -6921,6 +7115,7 @@ extension _C7Engine on NativeCryptoService {
     required C7HistoryPage channel,
     required C7HistoryPage groupLevel,
     required List<C7FormerKey> keys,
+    required Map<String, bool> proofs,
   }) async {
     // The wrap is the one this device stored when the record reached it;
     // [move] only names which move to import.
@@ -6943,7 +7138,17 @@ extension _C7Engine on NativeCryptoService {
     // The new home's book must still hold the move's period: a channel
     // that left `full` since keeps nothing it would have sealed.
     final home = await _c7LoadBook(to, channelId);
-    if (home.mode != c7ModeFull) return 0;
+    if (home.mode != c7ModeFull) {
+      // Review M-B: done; nothing of the move's period is kept to open.
+      final moves = await _c7LoadMoves();
+      await localStore.saveSetting(
+          c7MovesSetting,
+          C7Move.encodeAll(<C7Move>[
+            for (final m in moves)
+              m.same(move) ? m.copyWith(imported: true) : m,
+          ]));
+      return 0;
+    }
     final toShared = _authority?.conversationKind(to) == 'community_shared';
     // The old conversation's kind is the move's other side.
     final fromShared = !toShared;
@@ -6952,7 +7157,7 @@ extension _C7Engine on NativeCryptoService {
     };
     final proven = <String, bool>{};
     final c7keys = C7Keys(bindings);
-    final gens = c7WalkMoved(
+    final walked = c7WalkMoved(
       bindings: bindings,
       start: C7Gen(
           epoch: wrapEpoch, groupId: from, key: wrapKey, close: wrapClose + 1),
@@ -6967,10 +7172,17 @@ extension _C7Engine on NativeCryptoService {
       if (row.channelId != channelId) continue;
       final epoch = row.epoch;
       if (epoch == null || epoch > wrapClose) continue;
-      final gen = gens.where((g) => g.covers(from, epoch)).lastOrNull;
-      if (gen == null) continue;
+      final gen = walked.gens.where((g) => g.covers(from, epoch)).lastOrNull;
+      // Review L-2: past a disputed wrap, every candidate whose window
+      // holds the epoch is tried and the AEAD decides.
+      final tries = <C7Gen>[
+        if (gen != null) gen,
+        for (final candidate in walked.candidates)
+          if (candidate.covers(from, epoch)) candidate,
+      ];
+      if (tries.isEmpty) continue;
       final opened = _c7OpenHistoryRow(row,
-          tries: <C7Gen>[gen],
+          tries: tries,
           keys: c7keys,
           communityId: community,
           channelId: channelId,
@@ -6993,7 +7205,11 @@ extension _C7Engine on NativeCryptoService {
         expiresAtMs: sent.expiresAtMs,
       );
       await _c7CollectHistory(opened, row, payload,
-          conversationId: to, posts: posts, actions: actions, proven: proven);
+          conversationId: to,
+          posts: posts,
+          actions: actions,
+          proven: proven,
+          proofs: proofs);
     }
     final (ordered, imported) = _c7OrderImport(posts, actions);
     final moves = await _c7LoadMoves();
@@ -7115,6 +7331,7 @@ extension _C7Engine on NativeCryptoService {
     required List<_C7Post> posts,
     required List<List<MessageEffect>> actions,
     required Map<String, bool> proven,
+    required Map<String, bool> proofs,
   }) async {
     final isPost = c7HistoryPostTypes.contains(payload.type);
     if (!isPost && !c7TargetedTypes.contains(payload.type)) return;
@@ -7175,8 +7392,13 @@ extension _C7Engine on NativeCryptoService {
       // the key that verified it (owner answer "Hide unproven names",
       // review M2).
       if (listed != null) {
+        // Judged before the serialized section (review L-10); a device it
+        // missed reads only the stored pin here.
         final named = proven[row.senderDeviceId] ??=
-            await _c7FormerProven(account, row.senderDeviceId, opened.signer);
+            proofs[_c7ProofKey(account, row.senderDeviceId, opened.signer)] ??
+                await _c7FormerProven(
+                    account, row.senderDeviceId, opened.signer,
+                    network: false);
         insert = insert.markedC7Former(named: named);
       }
       if (payload.type == AppPayloadType.attachmentManifest) {
@@ -7239,10 +7461,7 @@ extension _C7Engine on NativeCryptoService {
         }
       }
       final request = group.requestDueAtMs;
-      if (request != null &&
-          request <= now &&
-          !group.joinSynced &&
-          group.joinEpoch != null) {
+      if (request != null && request <= now && group.asking) {
         out.add(C7DueRequest(conversationId, group.joinEpoch!));
       }
       for (final channel in group.channels) {
@@ -7262,6 +7481,8 @@ extension _C7Engine on NativeCryptoService {
       for (final move in moves) {
         if (!move.owed || move.toConversationId != conversationId) continue;
         if ((_c7EpochOf(conversationId) ?? 0) == 0) continue;
+        // Review L-6: no record without the old group ([c7ProposeMove]).
+        if (_c7EpochOf(move.fromConversationId) == null) continue;
         final book = await _c7LoadBook(conversationId, move.channelId)
             .then((book) => book.expirePending(now));
         if (book.pending != null && book.ownNotice != 'stale') continue;

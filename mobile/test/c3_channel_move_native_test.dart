@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,7 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/core/roles/posting_verdict.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
+import 'package:private_messenger/crypto/c7_move.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
@@ -430,6 +432,243 @@ void main() {
     final daves = await dave.store.loadMessages(_newPrivate);
     expect(daves.where((r) => r.body != null), isEmpty);
     expect(daves.every((r) => r.key.startsWith('undecryptable:')), isTrue);
+  }, skip: skip);
+
+  /// The private channel (alice and bob, `full`, one post by bob), the
+  /// shared group (alice and carol) and the move, with carol holding its
+  /// wrap. Returns bob's post and the moved page and keys.
+  Future<
+      ({
+        _Client alice,
+        _Client bob,
+        _Client carol,
+        C7HistoryPage page,
+        List<C7FormerKey> keys,
+      })> movedToOpen() async {
+    final alice = await client('alice');
+    final bob = await client('bob', where: {_channel: _private});
+    final carol = await client('carol');
+    home[_channel] = _private;
+    await alice.service.initializeConversation(
+        _private, <DeviceKeyPackage>[await bob.keyPackage()]);
+    await _accept(alice, [bob], const [], conversation: _private);
+    await deliver(
+        alice,
+        await alice.service
+            .c7ProposeRecord(_private, _channel, full: true, create: true),
+        [bob]);
+    final secret = await bob.send(_private, 'said in the private channel');
+    await alice.receive(bob, secret);
+    await alice.service.initializeConversation(
+        _shared, <DeviceKeyPackage>[await carol.keyPackage()]);
+    await _accept(alice, [carol], const [], conversation: _shared);
+    home[_channel] = _shared;
+    await alice.service.c7NoteMove(
+        channelId: _channel,
+        fromConversationId: _private,
+        toConversationId: _shared,
+        own: true);
+    await move(alice, _shared, [carol], layoutGeneration: 1);
+    expect(await carol.service.c7MovedImportsDue(), hasLength(1));
+    final bobKey = await bob.service.currentSigningKey();
+    return (
+      alice: alice,
+      bob: bob,
+      carol: carol,
+      page: C7HistoryPage(<C7HistoryRow>[_served(secret, bob, 's1')],
+          complete: true),
+      keys: <C7FormerKey>[
+        C7FormerKey(
+            deviceId: bob.deviceId,
+            accountId: bob.accountId,
+            signingKey: Uint8List.fromList(bobKey)),
+      ],
+    );
+  }
+
+  test(
+      'a move whose new home left `full` is not due, and its import marks '
+      'it done, so nothing is fetched again (review M-B)', () async {
+    final m = await movedToOpen();
+    final due = (await m.carol.service.c7MovedImportsDue()).single;
+    // Alice switches the channel to members_from_join in its new home.
+    await deliver(
+        m.alice,
+        await m.alice.service.c7ProposeRecord(_shared, _channel,
+            full: false, layoutGeneration: 1),
+        [m.carol]);
+    expect((await m.carol.service.c7ChannelView(_shared, _channel))!.full,
+        isFalse);
+    expect(await m.carol.service.c7MovedImportsDue(), isEmpty);
+    expect(
+        await m.carol.service.c7ImportMoved(due,
+            channel: m.page,
+            groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+            keys: m.keys),
+        0);
+    final stored =
+        C7Move.decodeAll(await m.carol.store.loadSetting(c7MovesSetting))
+            .where(due.same)
+            .single;
+    expect(stored.imported, isTrue);
+  }, skip: skip);
+
+  test(
+      'a device that holds no old group owes no move record, and proposing '
+      'one is a no-op instead of a failure on every pass (review L-6)',
+      () async {
+    final alice = await client('alice');
+    final carol = await client('carol');
+    _admins.add(carol.accountId);
+    home[_channel] = _shared;
+    await alice.service.initializeConversation(
+        _shared, <DeviceKeyPackage>[await carol.keyPackage()]);
+    await _accept(alice, [carol], const [], conversation: _shared);
+    // Carol, an admin who was never in the private channel, converts it.
+    await carol.service.c7NoteMove(
+        channelId: _channel,
+        fromConversationId: _private,
+        toConversationId: _shared,
+        own: true);
+    Future<List<C7Move>> noted() async =>
+        C7Move.decodeAll(await carol.store.loadSetting(c7MovesSetting));
+    expect((await noted()).single.owed, isFalse);
+    expect((await carol.service.c7DueWork([_shared])).whereType<C7DueMove>(),
+        isEmpty);
+    // A note from before this rule still says owed: it is never due, and
+    // proposing it stops owing it instead of failing.
+    await carol.store.saveSetting(
+        c7MovesSetting,
+        C7Move.encodeAll(
+            <C7Move>[(await noted()).single.copyWith(owed: true)]));
+    expect((await carol.service.c7DueWork([_shared])).whereType<C7DueMove>(),
+        isEmpty);
+    expect(
+        await carol.service.c7ProposeMove(
+            C7DueMove(_shared, _channel, _private),
+            layoutGeneration: 1),
+        isNull);
+    expect((await noted()).single.owed, isFalse);
+  }, skip: skip);
+
+  test(
+      "a former member's device list is fetched before the import's "
+      'serialized section, so other crypto work does not wait on it '
+      '(review L-10)', () async {
+    final m = await movedToOpen();
+    final due = (await m.carol.service.c7MovedImportsDue()).single;
+    final fetch = Completer<void>();
+    final fetching = Completer<void>();
+    sharedTestDeviceLists.onFetch = () {
+      if (!fetching.isCompleted) fetching.complete();
+      return fetch.future;
+    };
+    addTearDown(() => sharedTestDeviceLists.onFetch = null);
+    final importing = m.carol.service.c7ImportMoved(due,
+        channel: m.page,
+        groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+        keys: m.keys);
+    // A serialized operation goes through while the fetch hangs.
+    // Only once the fetch hangs: the import holds the lock by then if it
+    // fetches inside it.
+    await fetching.future.timeout(const Duration(seconds: 3));
+    await m.carol.service
+        .c7DueWork([_shared]).timeout(const Duration(seconds: 3));
+    sharedTestDeviceLists.onFetch = null;
+    fetch.complete();
+    expect(await importing, 1);
+    final row = (await m.carol.store.loadMessages(_shared))
+        .where((r) => r.body == 'said in the private channel')
+        .single;
+    // Proven from the list fetched outside: named.
+    expect(row.c7Former, 1);
+  }, skip: skip);
+
+  test(
+      'a member of the open channel removed between the move and the first '
+      'add to the new private group changes nothing: the readers added '
+      'then, and a later newcomer, still get the earlier posts', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    final carol = await client('carol');
+    final erin = await client('erin');
+    home[_channel] = _shared;
+    await alice.service.initializeConversation(_shared,
+        <DeviceKeyPackage>[await bob.keyPackage(), await dave.keyPackage()]);
+    await _accept(alice, [bob, dave], const [], conversation: _shared);
+    await deliver(
+        alice,
+        await alice.service.c7ProposeRecord(_shared, _channel,
+            full: true, create: true, layoutGeneration: 1),
+        [bob, dave]);
+    final open = await bob.sendIn(_shared, 'said in the open channel');
+    await alice.receive(bob, open);
+    // The server moves it; alice is alone in the new group.
+    await alice.service
+        .initializeConversation(_newPrivate, const <DeviceKeyPackage>[]);
+    await _accept(alice, const [], const [], conversation: _newPrivate);
+    home[_channel] = _newPrivate;
+    await alice.service.c7NoteMove(
+        channelId: _channel,
+        fromConversationId: _shared,
+        toConversationId: _newPrivate,
+        own: true);
+    // Before the first add, dave is removed from the shared group: a rekey
+    // there, whose history_sync lies past the move's cutoff (the server
+    // never serves it on the moved routes).
+    await alice.service.stageMembershipChange(_shared,
+        removes: [(accountId: dave.accountId, deviceId: dave.deviceId)]);
+    await _accept(alice, const [], [bob, dave], conversation: _shared);
+    await syncFor(alice, _shared);
+    // Now carol is added, and the record goes out.
+    await alice.service
+        .stageMembershipChange(_newPrivate, adds: [await carol.keyPackage()]);
+    await _accept(alice, [carol], const [], conversation: _newPrivate);
+    await carol.receive(alice, await syncFor(alice, _newPrivate));
+    final record = await move(alice, _newPrivate, [carol]);
+    // The conversion replayed (its answer lost, review L-6) notes the same
+    // move again: it is not owed a second time.
+    await alice.service.c7NoteMove(
+        channelId: _channel,
+        fromConversationId: _shared,
+        toConversationId: _newPrivate,
+        own: true);
+    expect(
+        (await alice.service.c7DueWork([_newPrivate])).whereType<C7DueMove>(),
+        isEmpty);
+    final bobKey = await bob.service.currentSigningKey();
+    final keys = <C7FormerKey>[
+      C7FormerKey(
+          deviceId: bob.deviceId,
+          accountId: bob.accountId,
+          signingKey: Uint8List.fromList(bobKey)),
+    ];
+    final page =
+        C7HistoryPage(<C7HistoryRow>[_served(open, bob, 'o1')], complete: true);
+    const none = C7HistoryPage(<C7HistoryRow>[], complete: true);
+    final due = (await carol.service.c7MovedImportsDue()).single;
+    expect(
+        await carol.service
+            .c7ImportMoved(due, channel: page, groupLevel: none, keys: keys),
+        1);
+    // A later newcomer to the private group, through the move message in
+    // the channel's own stream (option A).
+    await alice.service
+        .stageMembershipChange(_newPrivate, adds: [await erin.keyPackage()]);
+    await _accept(alice, [erin], [carol], conversation: _newPrivate);
+    await erin.receive(alice, await syncFor(alice, _newPrivate));
+    await erin.service.c7ImportHistory(_newPrivate,
+        groupLevel: none,
+        channels: <String, C7HistoryPage>{
+          _channel: C7HistoryPage(<C7HistoryRow>[_served(record, alice, 'r1')],
+              complete: true),
+        });
+    final erinDue = (await erin.service.c7MovedImportsDue()).single;
+    expect(
+        await erin.service.c7ImportMoved(erinDue,
+            channel: page, groupLevel: none, keys: keys),
+        1);
   }, skip: skip);
 }
 

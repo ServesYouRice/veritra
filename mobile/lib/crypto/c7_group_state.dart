@@ -37,6 +37,12 @@ Duration c7RequestDelayAfter(int sent) {
   return wait > const Duration(hours: 1) ? const Duration(hours: 1) : wait;
 }
 
+/// The wait between a newcomer's requests once its handover settled some
+/// channel only with a zero slot (review L-1): it keeps asking, slowly,
+/// until a working key arrives for each. Well above the server's spacing
+/// cap (an hour), so the server accepts every one.
+const Duration c7ZeroHeadReask = Duration(days: 1);
+
 /// One membership commit's `history_sync` as this device sees it.
 final class C7SyncDuty {
   const C7SyncDuty({required this.dueAtMs, this.settled = false});
@@ -71,6 +77,7 @@ final class C7GroupState {
     this.requestDueAtMs,
     this.requestsSent = 0,
     this.joinSynced = false,
+    this.reask = false,
     this.imported = false,
     List<String> released = const <String>[],
   })  : channels = Set<String>.unmodifiable(channels),
@@ -109,6 +116,11 @@ final class C7GroupState {
   /// (owner answer 2026-11-12, "Newcomer keeps asking").
   final int? requestDueAtMs;
 
+  /// Whether this newcomer still asks for the `history_sync` of its join:
+  /// until a usable one, or, after one that settled a channel only with a
+  /// zero slot, slowly until a working key ([reask]).
+  bool get asking => joinEpoch != null && (!joinSynced || reask);
+
   /// How many `history_sync_request`s this newcomer has sent for its join.
   final int requestsSent;
 
@@ -118,6 +130,14 @@ final class C7GroupState {
   /// that leaves a channel `keyless`, or reports it with a slot that does
   /// not check, does not count.
   final bool joinSynced;
+
+  /// Review L-1: [joinSynced] came with a channel settled only by a zero
+  /// slot ("no record"), which a member that won the race may send for a
+  /// channel whose key it lacks. The newcomer keeps asking, every
+  /// [c7ZeroHeadReask], until every channel it knows has a verified head
+  /// whose key works (owner rule: keep asking until it has keys that
+  /// work).
+  final bool reask;
 
   /// The newcomer's history import has run.
   final bool imported;
@@ -148,6 +168,7 @@ final class C7GroupState {
     bool clearRequest = false,
     int? requestsSent,
     bool? joinSynced,
+    bool? reask,
     bool? imported,
     List<String>? released,
   }) =>
@@ -163,6 +184,7 @@ final class C7GroupState {
             clearRequest ? null : (requestDueAtMs ?? this.requestDueAtMs),
         requestsSent: requestsSent ?? this.requestsSent,
         joinSynced: joinSynced ?? this.joinSynced,
+        reask: reask ?? this.reask,
         imported: imported ?? this.imported,
         released: released ?? this.released,
       );
@@ -192,6 +214,7 @@ final class C7GroupState {
         if (requestDueAtMs != null) 'request_due': requestDueAtMs,
         if (requestsSent > 0) 'requests': requestsSent,
         if (joinSynced) 'join_synced': true,
+        if (reask) 'reask': true,
         if (imported) 'imported': true,
         if (released.isNotEmpty) 'released': released,
       };
@@ -242,6 +265,7 @@ final class C7GroupState {
         requestDueAtMs: map['request_due'] as int?,
         requestsSent: (map['requests'] as int?) ?? 0,
         joinSynced: map['join_synced'] == true,
+        reask: map['reask'] == true,
         imported: map['imported'] == true,
         released: <String>[...?(map['released'] as List?)?.cast<String>()],
       );
@@ -270,6 +294,7 @@ final class C7GroupState {
       requestDueAtMs: requestDueAtMs,
       requestsSent: requestsSent,
       joinSynced: joinSynced,
+      reask: reask,
       imported: imported,
       released: released,
     );

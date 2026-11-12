@@ -8,6 +8,7 @@ import 'dart:typed_data';
 
 import 'c7_channel_book.dart';
 import 'c7_history.dart';
+import 'c7_import.dart' show C7Named, c7FairCandidates, c7MergeNamed;
 import 'c7_sync.dart';
 import 'crypto_service.dart' show C7HistoryRow;
 import 'native_crypto_bindings.dart';
@@ -15,7 +16,8 @@ import 'native_crypto_bindings.dart';
 /// The setting that holds every [C7Move] this device knows.
 const String c7MovesSetting = 'c7.moves';
 
-/// At most this many moves are kept; the oldest go first.
+/// At most this many moves are kept; the oldest go first, but a move still
+/// owed or still to import is never dropped (review L-7).
 const int c7MoveLimit = 64;
 
 /// One move of [channelId] from [fromConversationId] to
@@ -145,28 +147,36 @@ final class C7Move {
   }
 
   static String encodeAll(List<C7Move> moves) {
-    final kept = moves.length > c7MoveLimit
-        ? moves.sublist(moves.length - c7MoveLimit)
-        : moves;
+    // Review L-7: only settled moves make room, oldest first; a flood of
+    // noted moves never evicts one this device still owes or imports.
+    var drop = moves.length - c7MoveLimit;
+    final kept = drop <= 0
+        ? moves
+        : <C7Move>[
+            for (final move in moves)
+              if (move.owed || move.importDue || drop-- <= 0) move,
+          ];
     return jsonEncode(<Object?>[for (final move in kept) move.toJson()]);
   }
 }
 
-/// The old group's generations behind a move's wrap: [start] (the wrap's
-/// generation, open-ended: the server's cutoff bounds it) and, walking back
-/// through the old group's stored `history_sync` slots, every earlier
-/// generation of the same period that exactly one wrap names. A slot is
-/// taken only when its entry names the generation it is sealed under and
-/// its head is a `full` record of this channel in the old group; the
-/// head's epoch bounds the walk, as in [c7WalkBack]. A dispute (two
-/// different wraps) stops the walk there: a gap, never a leak.
+/// The old group's generations behind a move's wrap: `gens`, [start] (the
+/// wrap's generation, open-ended: the server's cutoff bounds it) and,
+/// walking back through the old group's stored `history_sync` slots, every
+/// earlier generation of the same period that exactly one wrap names. A
+/// slot is taken only when its entry names the generation it is sealed
+/// under and its head is a `full` record of this channel in the old group;
+/// the head's epoch bounds the walk, as in [c7WalkBack]. Where the slots
+/// disagree (review L-2), each distinct wrap and the walk back from it are
+/// `candidates` ([c7FairCandidates]), as in [c7WalkBack]: the import tries
+/// them and the AEAD decides, so a junk wrap no longer stops the walk.
 ///
 /// The slot's head is taken as the floor without checking its record
 /// signature: only a holder of the old generation key can write a slot
 /// that opens, and a signature would not stop such a member from placing
 /// a genuine older head (see the C7 design, "Moved slot heads"). What it
 /// gains equals leaking the keys it holds.
-List<C7Gen> c7WalkMoved({
+({List<C7Gen> gens, List<C7Gen> candidates}) c7WalkMoved({
   required NativeCryptoBindings bindings,
   required C7Gen start,
   required Iterable<C7HistoryRow> syncs,
@@ -178,13 +188,11 @@ List<C7Gen> c7WalkMoved({
     for (final row in syncs)
       if (row.channelId == null) row,
   ];
-  var gens = <C7Gen>[start];
   int? floor;
-  while (gens.length < 1024) {
-    final gen = gens.first;
+  List<C7Named> previousOf(C7Gen gen) {
     final key = gen.key;
-    if (key == null) break;
-    final found = <C7Gen>[];
+    if (key == null) return const <C7Named>[];
+    final found = <C7Named>[];
     for (final row in stored) {
       final plain = c7TryStoredSlot(
         bindings: bindings,
@@ -222,23 +230,33 @@ List<C7Gen> c7WalkMoved({
                 !c7SameBytes(c7ChkCommitOf(previousKey), head.chkCommit))) {
           continue;
         }
-        if (!found.any(
-            (g) => g.epoch == previous && c7SameBytes(g.key!, previousKey))) {
-          found.add(C7Gen(
+        found.add((
+          gen: C7Gen(
             epoch: previous,
             groupId: fromConversationId,
             key: Uint8List.fromList(previousKey),
             close: gen.epoch,
-          ));
-        }
+          ),
+          senders: <String>{row.senderDeviceId},
+        ));
       } on FormatException {
         continue;
       } finally {
         plain.fillRange(0, plain.length, 0);
       }
     }
-    if (found.length != 1) break;
-    gens = <C7Gen>[found.single, ...gens];
+    return c7MergeNamed(found);
   }
-  return gens;
+
+  var gens = <C7Gen>[start];
+  var frontier = const <C7Named>[];
+  while (gens.length < 1024) {
+    final found = previousOf(gens.first);
+    if (found.length != 1) {
+      frontier = found;
+      break;
+    }
+    gens = <C7Gen>[found.single.gen, ...gens];
+  }
+  return (gens: gens, candidates: c7FairCandidates(frontier, previousOf));
 }
