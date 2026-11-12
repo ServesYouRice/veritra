@@ -730,6 +730,52 @@ Crypto ABI 26 (25 is reserved by another package; this branch goes 24 to
 counts, spent tokens) and 0091 (sealed envelope table). Needs the
 independent crypto review (G25) before the switch is turned on anywhere.
 
+#### As built (2026-11-12, branch `feat/l2-sealed-sender`)
+
+Built and tested: the Rust half (`crypto/rust/src/l2_sealed.rs`, ABI 26,
+Dart bindings in `native_crypto_bindings.dart`), the Go half
+(`server/internal/sealedsender`), the shared vectors
+(`testing/vectors/l2-sealed-v1.json`, checked in Rust, Go and Dart), and the
+server routes, storage and migrations 0090 and 0091 behind
+`PRIVATE_MESSENGER_SEALED_SENDER` (off by default). Server tests cover the
+double spend and its idempotent retry, wrong and relabelled epochs, a stale
+generation after a removal and after a device revocation, the daily cap,
+ineligible conversations, a request carrying a session, forged tokens, no
+sender stored or synced, expiry and pruning, and the report envelope route
+for a sealed envelope.
+
+**Not built:** all app wiring. The app neither fetches tokens, nor sends
+sealed, nor reads `message.sealed.created`, nor checks or stores the
+franking signature `s`; local schema 43 is reserved and unused; the key
+pinning screen and the typing suppression are not built either. **Do not
+turn the switch on until an app that reads sealed events ships:** today's
+apps treat an unknown `message.*` event as fail-closed
+(`_failsClosedEvent`, `SyncFailureKind.unsupportedEvent`), so one member
+holding tokens could pause the conversation (or, without scoped sync, all
+sync) on every other member's device.
+
+**Server residuals.** Sealed envelopes cannot be edited or deleted through
+the server; `GET /conversations/{id}/messages` does not list them (devices
+get them by sync and `GET /messages/{id}`, which also proves expiry), which
+matters when an app falls back to that route after its sync cursor expired;
+W5 receipts read only `message.envelope.created`, so sealed posts get no
+delivery ticks; a sealed post does not move C4 `last_active_at`; and the
+post route takes no session, so it is bounded by the token cap and the
+per-address public budget, not the per-account write budget.
+`push_wake_jobs` needs a sender account, so sealed wake rows name the
+recipient (their block filter is then a no-op; blocking is the receiving
+app's job for sealed posts).
+
+**Invariant for the app step.** Identified envelopes are deduplicated by
+(device, idempotency key) and sealed ones by (conversation, idempotency
+key), so a message sent both ways is stored twice and the second copy fails
+MLS at every receiver. Once a sealed attempt may have reached the server,
+the app must never fall back to identified for that message: it retries
+sealed under the same idempotency key (a retry of a stored post answers 200
+without spending), fetching new tokens after `sealed_generation_changed`.
+The decision to seal is made at encrypt time and stored with the outgoing
+message.
+
 ## Encrypted backup file (VBK2)
 
 The encrypted backup (I45) the device uploads is one file, written by
@@ -821,6 +867,17 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **L2-3 sealed sender (2026-11-12, crypto ABI 26, D122):** RFC 9497
+  POPRF tokens (ristretto255-SHA512; voprf 0.5.0 in Rust, circl 1.6.5 in
+  Go) let a member post to a DM or plain group without a session; the
+  server stores those envelopes without a sender. Four new FFI functions
+  (`pm_crypto_l2_token_request`, `_token_finalize`, `_frank_sign`,
+  `_frank_verify`); the franking signature binds a sealed message's C6
+  commitment to the sender's MLS leaf key so reports still attribute it,
+  at the cost of a transferable proof (owner question). ABI 25 is left to
+  another package. Server side behind `PRIVATE_MESSENGER_SEALED_SENDER`
+  (off); app wiring and local schema 43 not built. "Sealed sender with
+  VOPRF tokens" above has the design, what leaks and what is left.
 - **C4 leave proof in the commit (2026-11-11, crypto ABI 24):** the
   owner-approved design, built with the review's required changes (no
   epoch field; the AAD set inside every stage attempt and checked on the

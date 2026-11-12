@@ -831,6 +831,10 @@ tokens one account gets per conversation and UTC day.
   can no longer be used.
 - Turning the switch off again stops new sealed posts; stored ones stay
   readable until they expire.
+- **Do not turn it on yet.** No released app reads sealed posts: current
+  apps stop on the unknown `message.sealed.created` event, so any member who
+  fetches tokens through the API could pause the conversation on every
+  other member's device. Wait for an app release that supports it.
 
 ## Verify a server build (L2-4)
 
