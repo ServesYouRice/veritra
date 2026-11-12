@@ -9866,6 +9866,11 @@ class AppState extends ChangeNotifier
   /// L2-3: how many owner report keys this app pinned for this server, for
   /// Settings: a message sent sealed can be proven only to those owners
   /// (none: to no one).
+  /// The franking context the sealed token pass loads (tests only).
+  @visibleForTesting
+  Future<SealedFrankContext?> debugSealedFrankContext() =>
+      _sealedFrankContext(session?.baseUrl ?? '');
+
   Future<int> sealedProvableOwnerCount() async {
     final sealed = sealedSender;
     if (sealed == null) return 0;

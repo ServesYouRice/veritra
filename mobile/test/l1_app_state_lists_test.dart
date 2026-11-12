@@ -109,6 +109,94 @@ void main() {
         reason: 'no claims during failed discovery');
   }, skip: skip);
 
+  // L2-3, the real-app path that lists a franking key: a device another
+  // device added (change 2) has none on its list; its first sealed token
+  // pass signs change 7 naming exactly its own key, once.
+  test('a device added without a franking key lists it with change 7, once',
+      () async {
+    final api = _ListApi(bindings);
+    final store = MemoryLocalStore();
+    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    const session = Session(
+        baseUrl: _origin, token: 'tok', accountId: _account, deviceId: _own);
+    await crypto.createEnrollmentCredential(const EnrollmentReservation(
+        id: 'enroll_own',
+        accountId: _account,
+        deviceId: _own,
+        challenge: <int>[1, 2, 3]));
+    await store.saveSession(session);
+    await crypto.activateSession(session);
+    final tablet = bindings.createDevice(_account, 'dev_tablet');
+    addTearDown(tablet.close);
+    final tabletPair =
+        DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey());
+    api.chain.add(tablet.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes(_account),
+          version: 1,
+          prevHash: DeviceListBody.zeroHash,
+          createdAtMs: 1,
+          change: DeviceListChange.genesis,
+          entries: [tabletPair],
+        ),
+        idBytes('dev_tablet')));
+    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
+        .pinChain(_account, api.chain, expectedHead: api.chain.last);
+    state
+      ..api = api
+      ..session = session;
+
+    // Not on the list: no context, nothing signed.
+    expect(await state.debugSealedFrankContext(), isNull);
+    expect(api.chain, hasLength(1));
+
+    // The tablet adds this device: its entry has no franking key.
+    final genesis =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    final add = tablet.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes(_account),
+          version: 2,
+          prevHash: genesis.listHash,
+          createdAtMs: 2,
+          change: DeviceListChange.add,
+          entries: [
+            DeviceListPair(idBytes(_own), await crypto.currentSigningKey()),
+            tabletPair,
+          ],
+        ),
+        idBytes('dev_tablet'));
+    await api.publishDeviceList('tok', add);
+    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
+        .refresh(_account, force: true);
+    expect(
+        bindings
+            .checkDeviceListChain(idBytes(_account), api.chain)
+            .head
+            .frankKeyOf(idBytes(_own)),
+        isNull);
+
+    final own = await crypto.currentFrankKey();
+    final context = await state.debugSealedFrankContext();
+    expect(context, isNotNull);
+    expect(context!.listedKey, own);
+    expect(api.chain, hasLength(3));
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    expect(head.change, DeviceListChange.frankKey);
+    expect(head.frankKeyOf(idBytes(_own)), own);
+    expect(head.frankKeys, hasLength(1));
+    expect(head.entries, hasLength(2));
+    // The pin moved with it.
+    expect((await store.loadDeviceListPin(_account))!.version, 3);
+
+    // The next pass signs nothing.
+    expect((await state.debugSealedFrankContext())!.listedKey, own);
+    expect(api.chain, hasLength(3));
+  }, skip: skip);
+
   test('setup carries a genesis that names this device with its key', () async {
     final api = _ListApi(bindings);
     final crypto =
@@ -122,6 +210,9 @@ void main() {
     expect(chain.head.entries.single.deviceId, idBytes(_own));
     expect(
         chain.head.entries.single.signingKey, await crypto.currentSigningKey());
+    // L2-3: the genesis lists this device's own franking key.
+    expect(
+        chain.head.frankKeyOf(idBytes(_own)), await crypto.currentFrankKey());
     // Review fix: the own genesis is the account's anchor, not something
     // the first refresh takes from the server on trust: a server that shows
     // another chain for the account is not adopted.

@@ -680,4 +680,29 @@ void main() {
           throwsFormatException);
     });
   }, skip: skip);
+
+  // L2-3: a franking key belongs to one device for the whole chain. Each
+  // step of this vector chain passes the native step check alone; the last
+  // gives a removed device's key to another. The pin refuses it whether it
+  // comes from the server or as an own step.
+  test('a franking key once listed is never another device\'s', () async {
+    final v2 = jsonDecode(File('../testing/vectors/l1-device-list-v2.json')
+        .readAsStringSync()) as Map<String, dynamic>;
+    final refused = ((v2['outputs'] as Map)['refused_chains'] as List)
+        .cast<Map<String, dynamic>>()
+        .singleWhere(
+            (item) => item['name'] == 'a_removed_devices_key_given_to_another');
+    final chain = [
+      for (final item in (refused['statements'] as List)) hex(item),
+    ];
+    final accountId = (v2['inputs'] as Map)['account_id'] as String;
+    final prefix = chain.sublist(0, chain.length - 1);
+    await pins.pinChain(accountId, prefix, expectedHead: prefix.last);
+    await expectLater(pins.pinOwnStep(accountId, chain.last),
+        throwsA(isA<NativeCryptoException>()));
+    server.chain = chain;
+    later();
+    await pins.refresh(accountId, force: true);
+    expect((await store.loadDeviceListPin(accountId))!.version, prefix.length);
+  }, skip: skip);
 }
