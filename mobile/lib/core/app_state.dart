@@ -1089,6 +1089,22 @@ class AppState extends ChangeNotifier
   /// C7: per conversation, imported posts verified with a former member's
   /// key from the server (decision 8), by local message key.
   Map<String, Set<String>> _c7Former = <String, Set<String>>{};
+
+  /// C7: a newcomer import that failed is not fetched again (up to
+  /// [c7FirstPageBytes] per channel) before its time: per conversation, the
+  /// failures in a row and when the next try may start. In memory only, so
+  /// an app restart tries once at once.
+  final Map<String, ({int failures, DateTime nextAt})> _c7ImportBackoff =
+      <String, ({int failures, DateTime nextAt})>{};
+
+  /// The first wait after a failed C7 import; it doubles up to
+  /// [c7ImportBackoffCap].
+  static const Duration c7ImportBackoffBase = Duration(minutes: 1);
+  static const Duration c7ImportBackoffCap = Duration(hours: 1);
+
+  /// The clock the C7 import backoff reads; tests move it.
+  @visibleForTesting
+  DateTime Function() c7Clock = () => DateTime.now().toUtc();
   Timer? _expiryTimer;
   bool _purgingExpired = false;
   Duration _expiryBackoff = Duration.zero;
@@ -4499,11 +4515,21 @@ class AppState extends ChangeNotifier
     // channels' modes, once this device has its handover.
     for (final id in await c7.c7ImportDue(ids)) {
       if (!_syncOwnerActive(current, ownerGeneration)) return;
+      final wait = _c7ImportBackoff[id];
+      if (wait != null && c7Clock().isBefore(wait.nextAt)) continue;
       try {
         await _c7ImportFirst(current, c7, id);
+        _c7ImportBackoff.remove(id);
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) rethrow;
-        // Retried on the next pass.
+        // Retried once the wait is over: 1 min, doubling to 1 h.
+        final failures = (wait?.failures ?? 0) + 1;
+        final delay = c7ImportBackoffBase * (1 << min(failures - 1, 6));
+        _c7ImportBackoff[id] = (
+          failures: failures,
+          nextAt: c7Clock()
+              .add(delay > c7ImportBackoffCap ? c7ImportBackoffCap : delay),
+        );
         developer.log('c7_import_failed ${err.runtimeType}',
             name: 'private_messenger.c7');
       }
@@ -4517,7 +4543,11 @@ class AppState extends ChangeNotifier
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     _c7Lines = lines;
     if (queued) unawaited(_flushOutbox());
-    _armC7Timer(await c7.c7NextDueAt(ids));
+    var next = await c7.c7NextDueAt(ids);
+    for (final wait in _c7ImportBackoff.values) {
+      if (next == null || wait.nextAt.isBefore(next)) next = wait.nextAt;
+    }
+    _armC7Timer(next);
     notifyListeners();
   }
 
@@ -8217,6 +8247,7 @@ class AppState extends ChangeNotifier
     _c7Lines = <String, Map<String, bool>>{};
     _c7Earlier = <String, Map<String, String>>{};
     _c7Former = <String, Set<String>>{};
+    _c7ImportBackoff.clear();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
     _l1Joins.clear();

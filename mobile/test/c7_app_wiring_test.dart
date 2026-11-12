@@ -47,11 +47,15 @@ class _Api extends ApiClient {
   final historyAsked = <(String, String?, int)>[];
   var formerAsked = 0;
 
+  /// While set, every history request fails as a server error.
+  var historyFails = false;
+
   @override
   Future<List<Map<String, Object?>>> historyBodies(
       String token, String conversationId,
       {String? channelId, String? beforeId, int limit = 50}) async {
     historyAsked.add((channelId ?? '', beforeId, limit));
+    if (historyFails) throw ApiException(500, '{"error":"internal"}');
     final rows = history[channelId ?? ''] ?? const <Map<String, Object?>>[];
     final start = beforeId == null
         ? 0
@@ -470,6 +474,38 @@ void main() {
       expect(page.complete, isFalse);
     }
     expect(run.keys.map((k) => k.deviceId), ['dev_gone']);
+  });
+
+  test(
+      'a failing import waits before it is fetched again: 1 min, doubling, '
+      'and a success clears the wait', () async {
+    final api = _Api()..historyFails = true;
+    final (state, crypto) = _appWith(api);
+    var now = DateTime.utc(2026, 11, 12, 10);
+    state.c7Clock = () => now;
+    Future<int> pass() async {
+      final before = api.historyAsked.length;
+      crypto.importDue = <String>['conv_shared'];
+      await state.c7WorkPassForTesting();
+      return api.historyAsked.length - before;
+    }
+
+    expect(await pass(), 1);
+    // The next foreground passes fetch nothing until the wait is over.
+    expect(await pass(), 0);
+    now = now.add(const Duration(seconds: 59));
+    expect(await pass(), 0);
+    now = now.add(const Duration(seconds: 1));
+    expect(await pass(), 1);
+    // The second failure waits two minutes.
+    now = now.add(const Duration(minutes: 1));
+    expect(await pass(), 0);
+    now = now.add(const Duration(minutes: 1));
+    api.historyFails = false;
+    expect(await pass(), greaterThan(0));
+    expect(crypto.imports, hasLength(1));
+    // A success clears the wait: the next due import goes at once.
+    expect(await pass(), greaterThan(0));
   });
 
   test(
