@@ -8,9 +8,9 @@ import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'native_test_env.dart';
 
 Uint8List _hex(String text) => Uint8List.fromList([
-  for (var i = 0; i < text.length; i += 2)
-    int.parse(text.substring(i, i + 2), radix: 16),
-]);
+      for (var i = 0; i < text.length; i += 2)
+        int.parse(text.substring(i, i + 2), radix: 16),
+    ]);
 
 String _toHex(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
@@ -20,11 +20,9 @@ String _toHex(List<int> bytes) =>
 /// (which Rust and Go check too), and a sealed message whose signature the
 /// receiver checks against the sender leaf MLS authenticated.
 void main() {
-  final vector =
-      jsonDecode(
-            File('../testing/vectors/l2-sealed-v1.json').readAsStringSync(),
-          )
-          as Map<String, dynamic>;
+  final vector = jsonDecode(
+    File('../testing/vectors/l2-sealed-v1.json').readAsStringSync(),
+  ) as Map<String, dynamic>;
   final skip = nativeCryptoSkip();
 
   group('L2 sealed sender (native)', () {
@@ -102,13 +100,13 @@ void main() {
     test('the vector franking signature verifies only for its sender', () {
       final sig = vector['frank_sig'] as Map<String, dynamic>;
       bool check(String account, String device) => bindings.l2FrankVerify(
-        signingKey: _hex(sig['signing_key'] as String),
-        conversationId: sig['conversation_id'] as String,
-        accountId: account,
-        deviceId: device,
-        commit: _hex(sig['commit'] as String),
-        signature: _hex(sig['signature'] as String),
-      );
+            signingKey: _hex(sig['signing_key'] as String),
+            conversationId: sig['conversation_id'] as String,
+            accountId: account,
+            deviceId: device,
+            commit: _hex(sig['commit'] as String),
+            signature: _hex(sig['signature'] as String),
+          );
       expect(
         check(sig['account_id'] as String, sig['device_id'] as String),
         isTrue,

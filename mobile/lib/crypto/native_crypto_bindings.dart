@@ -41,665 +41,351 @@ final class _PmCryptoHandle extends Opaque {}
 
 typedef _AbiVersionNative = Uint32 Function();
 typedef _AbiVersionDart = int Function();
-typedef _DeviceCreateNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Pointer<_PmCryptoHandle>>,
-    );
-typedef _DeviceCreateDart =
-    int Function(_PmByteSlice, _PmByteSlice, Pointer<Pointer<_PmCryptoHandle>>);
+typedef _DeviceCreateNative = Int32 Function(
+  _PmByteSlice,
+  _PmByteSlice,
+  Pointer<Pointer<_PmCryptoHandle>>,
+);
+typedef _DeviceCreateDart = int Function(
+  _PmByteSlice,
+  _PmByteSlice,
+  Pointer<Pointer<_PmCryptoHandle>>,
+);
 typedef _DeviceDestroyNative = Void Function(Pointer<_PmCryptoHandle>);
 typedef _DeviceDestroyDart = void Function(Pointer<_PmCryptoHandle>);
 typedef _BufferFreeNative = Void Function(_PmOwnedBuffer);
 typedef _BufferFreeDart = void Function(_PmOwnedBuffer);
-typedef _EnrollmentNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _EnrollmentDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _RestoreNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Uint64,
-      _PmByteSlice,
-      Pointer<Pointer<_PmCryptoHandle>>,
-      Pointer<Uint64>,
-    );
-typedef _RestoreDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      int,
-      _PmByteSlice,
-      Pointer<Pointer<_PmCryptoHandle>>,
-      Pointer<Uint64>,
-    );
-typedef _RestoreBeginNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Uint64,
-      _PmByteSlice,
-      Pointer<Uint64>,
-      Pointer<Uint64>,
-    );
-typedef _RestoreBeginDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      int,
-      _PmByteSlice,
-      Pointer<Uint64>,
-      Pointer<Uint64>,
-    );
+typedef _EnrollmentNative = Int32 Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  Pointer<_PmOwnedBuffer>,
+  Pointer<_PmOwnedBuffer>,
+  Pointer<_PmOwnedBuffer>,
+);
+typedef _EnrollmentDart = int Function(
+  Pointer<_PmCryptoHandle>,
+  _PmByteSlice,
+  Pointer<_PmOwnedBuffer>,
+  Pointer<_PmOwnedBuffer>,
+  Pointer<_PmOwnedBuffer>,
+);
+typedef _RestoreNative = Int32 Function(
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Uint64,
+    _PmByteSlice,
+    Pointer<Pointer<_PmCryptoHandle>>,
+    Pointer<Uint64>);
+typedef _RestoreDart = int Function(_PmByteSlice, _PmByteSlice, _PmByteSlice,
+    int, _PmByteSlice, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
+typedef _RestoreBeginNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, Uint64, _PmByteSlice, Pointer<Uint64>, Pointer<Uint64>);
+typedef _RestoreBeginDart = int Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, int, _PmByteSlice, Pointer<Uint64>, Pointer<Uint64>);
 typedef _RestoreAddNative = Int32 Function(Uint64, _PmByteSlice);
 typedef _RestoreAddDart = int Function(int, _PmByteSlice);
-typedef _RestoreFinishNative =
-    Int32 Function(Uint64, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
-typedef _RestoreFinishDart =
-    int Function(int, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
+typedef _RestoreFinishNative = Int32 Function(
+    Uint64, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
+typedef _RestoreFinishDart = int Function(
+    int, Pointer<Pointer<_PmCryptoHandle>>, Pointer<Uint64>);
 typedef _RestoreAbortNative = Int32 Function(Uint64);
 typedef _RestoreAbortDart = int Function(int);
-typedef _GroupDeleteNative =
-    Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint8>);
-typedef _GroupDeleteDart =
-    int Function(Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint8>);
-typedef _PruneNative =
-    Int32 Function(Pointer<_PmCryptoHandle>, Uint64, Pointer<Uint64>);
-typedef _PruneDart =
-    int Function(Pointer<_PmCryptoHandle>, int, Pointer<Uint64>);
-typedef _HandleOutputNative =
-    Int32 Function(Pointer<_PmCryptoHandle>, Pointer<_PmOwnedBuffer>);
-typedef _HandleOutputDart =
-    int Function(Pointer<_PmCryptoHandle>, Pointer<_PmOwnedBuffer>);
-typedef _HandleSliceNative =
-    Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice);
+typedef _GroupDeleteNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint8>);
+typedef _GroupDeleteDart = int Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint8>);
+typedef _PruneNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, Uint64, Pointer<Uint64>);
+typedef _PruneDart = int Function(
+    Pointer<_PmCryptoHandle>, int, Pointer<Uint64>);
+typedef _HandleOutputNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, Pointer<_PmOwnedBuffer>);
+typedef _HandleOutputDart = int Function(
+    Pointer<_PmCryptoHandle>, Pointer<_PmOwnedBuffer>);
+typedef _HandleSliceNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice);
 typedef _HandleSliceDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice);
-typedef _HandleSliceOutputNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _HandleSliceOutputDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _HandleSliceTwoOutputsNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _HandleSliceTwoOutputsDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _HandleTwoSlicesNative =
-    Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice, _PmByteSlice);
-typedef _HandleTwoSlicesDart =
-    int Function(Pointer<_PmCryptoHandle>, _PmByteSlice, _PmByteSlice);
-typedef _HandleTwoSlicesOutputNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _HandleTwoSlicesOutputDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _AddMemberNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _AddMemberDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _RemoveMemberNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _RemoveMemberDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _StageCommitNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _StageCommitDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _GroupEpochNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<Uint64>,
-      Pointer<Uint8>,
-    );
-typedef _GroupEpochDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<Uint64>,
-      Pointer<Uint8>,
-    );
-typedef _DecryptNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _DecryptDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _DecryptSealedNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _DecryptSealedDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
+typedef _HandleSliceOutputNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _HandleSliceOutputDart = int Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _HandleSliceTwoOutputsNative = Int32 Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _HandleSliceTwoOutputsDart = int Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _HandleTwoSlicesNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, _PmByteSlice);
+typedef _HandleTwoSlicesDart = int Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, _PmByteSlice);
+typedef _HandleTwoSlicesOutputNative = Int32 Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _HandleTwoSlicesOutputDart = int Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _AddMemberNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _AddMemberDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _RemoveMemberNative = Int32 Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _RemoveMemberDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _StageCommitNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _StageCommitDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _GroupEpochNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint64>, Pointer<Uint8>);
+typedef _GroupEpochDart = int Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Pointer<Uint64>, Pointer<Uint8>);
+typedef _DecryptNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _DecryptDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _DecryptSealedNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _DecryptSealedDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
 typedef _PaddedSizeNative = Int32 Function(Uint64, Pointer<Uint64>);
 typedef _PaddedSizeDart = int Function(int, Pointer<Uint64>);
-typedef _C7CommitNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _C7CommitDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _C7MergeNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _C7MergeDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _C7DecryptNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _C7DecryptDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _C7MemberKeyNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _C7MemberKeyDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _B6MediaKeyNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Uint8,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _B6MediaKeyDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      int,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _SealNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Uint64,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _SealDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      int,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _AttachmentChunkNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      Uint32,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _AttachmentChunkDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      int,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
+typedef _C7CommitNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7CommitDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7MergeNative = Int32 Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7MergeDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>);
+typedef _C7DecryptNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _C7DecryptDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _C7MemberKeyNative = Int32 Function(Pointer<_PmCryptoHandle>,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _C7MemberKeyDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _B6MediaKeyNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Uint8,
+    Pointer<_PmOwnedBuffer>);
+typedef _B6MediaKeyDart = int Function(Pointer<_PmCryptoHandle>, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, int, Pointer<_PmOwnedBuffer>);
+typedef _SealNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, Uint64, Pointer<_PmOwnedBuffer>);
+typedef _SealDart = int Function(
+    Pointer<_PmCryptoHandle>, _PmByteSlice, int, Pointer<_PmOwnedBuffer>);
+typedef _AttachmentChunkNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    Uint32, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _AttachmentChunkDart = int Function(_PmByteSlice, _PmByteSlice, int,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 
 typedef _LocatorNative = Int32 Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _LocatorDart = int Function(_PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _OutputNative = Int32 Function(Pointer<_PmOwnedBuffer>);
 typedef _OutputDart = int Function(Pointer<_PmOwnedBuffer>);
-typedef _RecoveryDeriveNative =
-    Int32 Function(
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _RecoveryDeriveDart =
-    int Function(
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _HandleByteOutputNative =
-    Int32 Function(Pointer<_PmCryptoHandle>, Pointer<Uint8>);
-typedef _HandleByteOutputDart =
-    int Function(Pointer<_PmCryptoHandle>, Pointer<Uint8>);
-typedef _L1SignRecoveryNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _L1SignRecoveryDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _L1ProcessNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _L1ProcessDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _L1MergeNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _L1MergeDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      Pointer<Uint8>,
-      Pointer<Uint64>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _StageWithRolesNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _StageWithRolesDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _StageProvenNative =
-    Int32 Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _StageProvenDart =
-    int Function(
-      Pointer<_PmCryptoHandle>,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<Uint64>,
-    );
-typedef _RecoveryProofNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _RecoveryProofDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _BackupSealNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      Uint64,
-      Uint64,
-      Uint32,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _BackupSealDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      int,
-      int,
-      int,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _BackupPeekNative =
-    Int32 Function(
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _BackupPeekDart =
-    int Function(
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _BackupOpenNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _BackupOpenDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _ThreeSlicesOutputNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _ThreeSlicesOutputDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _TwoSlicesOutputNative =
-    Int32 Function(_PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
-typedef _TwoSlicesOutputDart =
-    int Function(_PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
-typedef _FourSlicesOutputNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _FourSlicesOutputDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<_PmOwnedBuffer>,
-    );
+typedef _RecoveryDeriveNative = Int32 Function(
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _RecoveryDeriveDart = int Function(
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _HandleByteOutputNative = Int32 Function(
+    Pointer<_PmCryptoHandle>, Pointer<Uint8>);
+typedef _HandleByteOutputDart = int Function(
+    Pointer<_PmCryptoHandle>, Pointer<Uint8>);
+typedef _L1SignRecoveryNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1SignRecoveryDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1ProcessNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1ProcessDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1MergeNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _L1MergeDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    Pointer<Uint8>,
+    Pointer<Uint64>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _StageWithRolesNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _StageWithRolesDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _StageProvenNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _StageProvenDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<Uint64>);
+typedef _RecoveryProofNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _RecoveryProofDart = int Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _BackupSealNative = Int32 Function(_PmByteSlice, _PmByteSlice, Uint64,
+    Uint64, Uint32, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _BackupSealDart = int Function(_PmByteSlice, _PmByteSlice, int, int,
+    int, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _BackupPeekNative = Int32 Function(_PmByteSlice,
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _BackupPeekDart = int Function(_PmByteSlice, Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _BackupOpenNative = Int32 Function(
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _BackupOpenDart = int Function(
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>,
+    Pointer<_PmOwnedBuffer>);
+typedef _ThreeSlicesOutputNative = Int32 Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _ThreeSlicesOutputDart = int Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _TwoSlicesOutputNative = Int32 Function(
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _TwoSlicesOutputDart = int Function(
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _FourSlicesOutputNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+typedef _FourSlicesOutputDart = int Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 
 /// ABI 26 (L2-3): `pm_crypto_l2_token_request`.
-typedef _L2TokenRequestNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      Uint32,
-      Uint64,
-      Uint32,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
-typedef _L2TokenRequestDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      int,
-      int,
-      int,
-      Pointer<_PmOwnedBuffer>,
-      Pointer<_PmOwnedBuffer>,
-    );
+typedef _L2TokenRequestNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    Uint32, Uint64, Uint32, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _L2TokenRequestDart = int Function(_PmByteSlice, _PmByteSlice, int, int,
+    int, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
 
 /// ABI 26 (L2-3): `pm_crypto_l2_frank_verify`.
-typedef _L2FrankVerifyNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-    );
-typedef _L2FrankVerifyDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-    );
+typedef _L2FrankVerifyNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
+typedef _L2FrankVerifyDart = int Function(_PmByteSlice, _PmByteSlice,
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
 
-typedef _VerifyNative =
-    Int32 Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-    );
-typedef _VerifyDart =
-    int Function(
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      _PmByteSlice,
-      Pointer<Uint8>,
-    );
+typedef _VerifyNative = Int32 Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
+typedef _VerifyDart = int Function(
+    _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
 
 /// The public values derived from a K0 recovery key (ABI 11). None is
 /// secret against the device. `rkPub` is integrity-critical and never goes
@@ -754,298 +440,204 @@ class OpenedBackup {
 
 class NativeCryptoBindings {
   NativeCryptoBindings._(DynamicLibrary library)
-    : _abiVersion = library.lookupFunction<_AbiVersionNative, _AbiVersionDart>(
-        'pm_crypto_abi_version',
-      ),
-      _deviceCreate = library
-          .lookupFunction<_DeviceCreateNative, _DeviceCreateDart>(
-            'pm_crypto_device_create',
-          ),
-      _deviceDestroy = library
-          .lookupFunction<_DeviceDestroyNative, _DeviceDestroyDart>(
-            'pm_crypto_device_destroy',
-          ),
-      _bufferFree = library.lookupFunction<_BufferFreeNative, _BufferFreeDart>(
-        'pm_crypto_buffer_free',
-      ),
-      _createEnrollment = library
-          .lookupFunction<_EnrollmentNative, _EnrollmentDart>(
-            'pm_crypto_device_create_enrollment_credential',
-          ),
-      _migrate = library.lookupFunction<_RestoreNative, _RestoreDart>(
-        'pm_crypto_device_migrate_v3',
-      ),
-      _restoreBegin = library
-          .lookupFunction<_RestoreBeginNative, _RestoreBeginDart>(
-            'pm_crypto_restore_begin',
-          ),
-      _restoreAdd = library.lookupFunction<_RestoreAddNative, _RestoreAddDart>(
-        'pm_crypto_restore_add',
-      ),
-      _restoreFinish = library
-          .lookupFunction<_RestoreFinishNative, _RestoreFinishDart>(
-            'pm_crypto_restore_finish',
-          ),
-      _restoreAbort = library
-          .lookupFunction<_RestoreAbortNative, _RestoreAbortDart>(
-            'pm_crypto_restore_abort',
-          ),
-      _groupDelete = library
-          .lookupFunction<_GroupDeleteNative, _GroupDeleteDart>(
-            'pm_crypto_group_delete',
-          ),
-      _pruneKeyPackages = library.lookupFunction<_PruneNative, _PruneDart>(
-        'pm_crypto_device_prune_key_packages',
-      ),
-      _signingKey = library
-          .lookupFunction<_HandleOutputNative, _HandleOutputDart>(
-            'pm_crypto_device_signing_public_key',
-          ),
-      _deviceLinkLocator = library.lookupFunction<_LocatorNative, _LocatorDart>(
-        'pm_crypto_device_link_locator',
-      ),
-      _recoveryGenerate = library.lookupFunction<_OutputNative, _OutputDart>(
-        'pm_crypto_recovery_key_generate',
-      ),
-      _recoveryEncode = library.lookupFunction<_LocatorNative, _LocatorDart>(
-        'pm_crypto_recovery_key_encode',
-      ),
-      _recoveryDecode = library.lookupFunction<_LocatorNative, _LocatorDart>(
-        'pm_crypto_recovery_key_decode',
-      ),
-      _recoveryDerive = library
-          .lookupFunction<_RecoveryDeriveNative, _RecoveryDeriveDart>(
-            'pm_crypto_recovery_key_derive',
-          ),
-      _backupSeal = library.lookupFunction<_BackupSealNative, _BackupSealDart>(
-        'pm_crypto_backup_seal',
-      ),
-      _backupPeek = library.lookupFunction<_BackupPeekNative, _BackupPeekDart>(
-        'pm_crypto_backup_peek',
-      ),
-      _backupOpen = library.lookupFunction<_BackupOpenNative, _BackupOpenDart>(
-        'pm_crypto_backup_open',
-      ),
-      _recoveryProof = library
-          .lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
-            'pm_crypto_recovery_proof_sign',
-          ),
-      _reportKeyGenerate = library.lookupFunction<_OutputNative, _OutputDart>(
-        'pm_crypto_report_key_generate',
-      ),
-      _reportKeyPublic = library.lookupFunction<_LocatorNative, _LocatorDart>(
-        'pm_crypto_report_key_public',
-      ),
-      _reportSeal = library
-          .lookupFunction<_ThreeSlicesOutputNative, _ThreeSlicesOutputDart>(
-            'pm_crypto_report_seal',
-          ),
-      _reportOpen = library
-          .lookupFunction<_ThreeSlicesOutputNative, _ThreeSlicesOutputDart>(
-            'pm_crypto_report_open',
-          ),
-      _frankCommit = library
-          .lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
-            'pm_crypto_frank_commit',
-          ),
-      _c7Derive = library
-          .lookupFunction<_ThreeSlicesOutputNative, _ThreeSlicesOutputDart>(
-            'pm_crypto_c7_derive',
-          ),
-      _c7ChkCommit = library.lookupFunction<_LocatorNative, _LocatorDart>(
-        'pm_crypto_c7_chk_commit',
-      ),
-      _c7Seal = library
-          .lookupFunction<_ThreeSlicesOutputNative, _ThreeSlicesOutputDart>(
-            'pm_crypto_c7_seal',
-          ),
-      _c7Open = library
-          .lookupFunction<_ThreeSlicesOutputNative, _ThreeSlicesOutputDart>(
-            'pm_crypto_c7_open',
-          ),
-      _c7Verify = library.lookupFunction<_VerifyNative, _VerifyDart>(
-        'pm_crypto_c7_verify',
-      ),
-      _c7Sign = library
-          .lookupFunction<
-            _HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart
-          >('pm_crypto_c7_sign'),
-      _l1CheckStep = library
-          .lookupFunction<_FourSlicesOutputNative, _FourSlicesOutputDart>(
-            'pm_crypto_l1_check_step',
-          ),
-      _l1CheckChain = library
-          .lookupFunction<_TwoSlicesOutputNative, _TwoSlicesOutputDart>(
-            'pm_crypto_l1_check_chain',
-          ),
-      _l1Hold = library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
-        'pm_crypto_l1_recovery_hold',
-      ),
-      _l1HoldPublic = library
-          .lookupFunction<_HandleOutputNative, _HandleOutputDart>(
-            'pm_crypto_l1_recovery_hold_public',
-          ),
-      _l1HoldDrop = library
-          .lookupFunction<_HandleByteOutputNative, _HandleByteOutputDart>(
-            'pm_crypto_l1_recovery_hold_drop',
-          ),
-      _l1SignRecovery = library
-          .lookupFunction<_L1SignRecoveryNative, _L1SignRecoveryDart>(
-            'pm_crypto_l1_sign_recovery',
-          ),
-      _groupMembers = library
-          .lookupFunction<_HandleSliceOutputNative, _HandleSliceOutputDart>(
-            'pm_crypto_group_members',
-          ),
-      _groupL1Process = library
-          .lookupFunction<_L1ProcessNative, _L1ProcessDart>(
-            'pm_crypto_group_l1_process_commit',
-          ),
-      _groupL1Merge = library.lookupFunction<_L1MergeNative, _L1MergeDart>(
-        'pm_crypto_group_l1_merge_pending_commit',
-      ),
-      _groupCreateWithRoles = library
-          .lookupFunction<_HandleTwoSlicesNative, _HandleTwoSlicesDart>(
-            'pm_crypto_group_create_with_roles',
-          ),
-      _groupStageWithRoles = library
-          .lookupFunction<_StageWithRolesNative, _StageWithRolesDart>(
-            'pm_crypto_group_stage_commit_with_roles',
-          ),
-      _groupStageIncoming = library
-          .lookupFunction<
-            _HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart
-          >('pm_crypto_group_stage_incoming_commit'),
-      _groupMergeIncoming = library
-          .lookupFunction<_L1ProcessNative, _L1ProcessDart>(
-            'pm_crypto_group_merge_incoming_commit',
-          ),
-      _groupDiscardIncoming = library
-          .lookupFunction<_GroupDeleteNative, _GroupDeleteDart>(
-            'pm_crypto_group_discard_incoming_commit',
-          ),
-      _groupRoleState = library
-          .lookupFunction<_HandleSliceOutputNative, _HandleSliceOutputDart>(
-            'pm_crypto_group_role_state',
-          ),
-      _groupStageProven = library
-          .lookupFunction<_StageProvenNative, _StageProvenDart>(
-            'pm_crypto_group_stage_commit_proven',
-          ),
-      _c4SignLeave = library
-          .lookupFunction<_HandleSliceOutputNative, _HandleSliceOutputDart>(
-            'pm_crypto_c4_sign_leave',
-          ),
-      _memberSignatureKey = library
-          .lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
-            'pm_crypto_group_member_signature_key',
-          ),
-      _createKeyPackage = library
-          .lookupFunction<_HandleOutputNative, _HandleOutputDart>(
-            'pm_crypto_device_create_key_package',
-          ),
-      _seal = library.lookupFunction<_SealNative, _SealDart>(
-        'pm_crypto_device_seal_changes',
-      ),
-      _groupCreate = library
-          .lookupFunction<_HandleSliceNative, _HandleSliceDart>(
-            'pm_crypto_group_create',
-          ),
-      _groupJoin = library
-          .lookupFunction<_HandleTwoSlicesNative, _HandleTwoSlicesDart>(
-            'pm_crypto_group_join',
-          ),
-      _groupAdd = library.lookupFunction<_AddMemberNative, _AddMemberDart>(
-        'pm_crypto_group_add_member',
-      ),
-      _groupCommit = library
-          .lookupFunction<_HandleTwoSlicesNative, _HandleTwoSlicesDart>(
-            'pm_crypto_group_process_commit',
-          ),
-      _groupSafety = library
-          .lookupFunction<
-            _HandleSliceTwoOutputsNative,
-            _HandleSliceTwoOutputsDart
-          >('pm_crypto_group_safety_number'),
-      _groupRemove = library
-          .lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
-            'pm_crypto_group_remove_member',
-          ),
-      _groupStageCommit = library
-          .lookupFunction<_StageCommitNative, _StageCommitDart>(
-            'pm_crypto_group_stage_commit',
-          ),
-      _groupMergePending = library
-          .lookupFunction<_HandleSliceNative, _HandleSliceDart>(
-            'pm_crypto_group_merge_pending_commit',
-          ),
-      _groupClearPending = library
-          .lookupFunction<_HandleSliceNative, _HandleSliceDart>(
-            'pm_crypto_group_clear_pending_commit',
-          ),
-      _groupEpoch = library.lookupFunction<_GroupEpochNative, _GroupEpochDart>(
-        'pm_crypto_group_epoch',
-      ),
-      _groupEncrypt = library
-          .lookupFunction<
-            _HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart
-          >('pm_crypto_group_encrypt'),
-      _groupDecrypt = library.lookupFunction<_DecryptNative, _DecryptDart>(
-        'pm_crypto_group_decrypt',
-      ),
-      _groupDecryptSealed = library
-          .lookupFunction<_DecryptSealedNative, _DecryptSealedDart>(
-            'pm_crypto_group_decrypt_sealed',
-          ),
-      _l2PaddedSize = library
-          .lookupFunction<_PaddedSizeNative, _PaddedSizeDart>(
-            'pm_crypto_l2_padded_size',
-          ),
-      _l2TokenRequest = library
-          .lookupFunction<_L2TokenRequestNative, _L2TokenRequestDart>(
-            'pm_crypto_l2_token_request',
-          ),
-      _l2TokenFinalize = library
-          .lookupFunction<_TwoSlicesOutputNative, _TwoSlicesOutputDart>(
-            'pm_crypto_l2_token_finalize',
-          ),
-      _l2FrankSign = library
-          .lookupFunction<
-            _HandleTwoSlicesOutputNative,
-            _HandleTwoSlicesOutputDart
-          >('pm_crypto_l2_frank_sign'),
-      _l2FrankVerify = library
-          .lookupFunction<_L2FrankVerifyNative, _L2FrankVerifyDart>(
-            'pm_crypto_l2_frank_verify',
-          ),
-      _c7ProcessCommit = library.lookupFunction<_C7CommitNative, _C7CommitDart>(
-        'pm_crypto_group_c7_process_commit',
-      ),
-      _c7MergePending = library.lookupFunction<_C7MergeNative, _C7MergeDart>(
-        'pm_crypto_group_c7_merge_pending_commit',
-      ),
-      _c7GroupDecrypt = library
-          .lookupFunction<_C7DecryptNative, _C7DecryptDart>(
-            'pm_crypto_group_c7_decrypt',
-          ),
-      _c7MemberKey = library
-          .lookupFunction<_C7MemberKeyNative, _C7MemberKeyDart>(
-            'pm_crypto_group_member_signature_key',
-          ),
-      _b6MediaKey = library.lookupFunction<_B6MediaKeyNative, _B6MediaKeyDart>(
-        'pm_crypto_group_b6_media_key',
-      ),
-      _attachmentEncrypt = library
-          .lookupFunction<_AttachmentChunkNative, _AttachmentChunkDart>(
-            'pm_crypto_attachment_encrypt_chunk',
-          ),
-      _attachmentDecrypt = library
-          .lookupFunction<_AttachmentChunkNative, _AttachmentChunkDart>(
-            'pm_crypto_attachment_decrypt_chunk',
-          ) {
+      : _abiVersion =
+            library.lookupFunction<_AbiVersionNative, _AbiVersionDart>(
+                'pm_crypto_abi_version'),
+        _deviceCreate =
+            library.lookupFunction<_DeviceCreateNative, _DeviceCreateDart>(
+                'pm_crypto_device_create'),
+        _deviceDestroy =
+            library.lookupFunction<_DeviceDestroyNative, _DeviceDestroyDart>(
+                'pm_crypto_device_destroy'),
+        _bufferFree =
+            library.lookupFunction<_BufferFreeNative, _BufferFreeDart>(
+                'pm_crypto_buffer_free'),
+        _createEnrollment =
+            library.lookupFunction<_EnrollmentNative, _EnrollmentDart>(
+                'pm_crypto_device_create_enrollment_credential'),
+        _migrate = library.lookupFunction<_RestoreNative, _RestoreDart>(
+            'pm_crypto_device_migrate_v3'),
+        _restoreBegin =
+            library.lookupFunction<_RestoreBeginNative, _RestoreBeginDart>(
+                'pm_crypto_restore_begin'),
+        _restoreAdd =
+            library.lookupFunction<_RestoreAddNative, _RestoreAddDart>(
+                'pm_crypto_restore_add'),
+        _restoreFinish =
+            library.lookupFunction<_RestoreFinishNative, _RestoreFinishDart>(
+                'pm_crypto_restore_finish'),
+        _restoreAbort =
+            library.lookupFunction<_RestoreAbortNative, _RestoreAbortDart>(
+                'pm_crypto_restore_abort'),
+        _groupDelete =
+            library.lookupFunction<_GroupDeleteNative, _GroupDeleteDart>(
+                'pm_crypto_group_delete'),
+        _pruneKeyPackages = library.lookupFunction<_PruneNative, _PruneDart>(
+            'pm_crypto_device_prune_key_packages'),
+        _signingKey =
+            library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
+                'pm_crypto_device_signing_public_key'),
+        _deviceLinkLocator =
+            library.lookupFunction<_LocatorNative, _LocatorDart>(
+                'pm_crypto_device_link_locator'),
+        _recoveryGenerate = library.lookupFunction<_OutputNative, _OutputDart>(
+            'pm_crypto_recovery_key_generate'),
+        _recoveryEncode = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_recovery_key_encode'),
+        _recoveryDecode = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_recovery_key_decode'),
+        _recoveryDerive =
+            library.lookupFunction<_RecoveryDeriveNative, _RecoveryDeriveDart>(
+                'pm_crypto_recovery_key_derive'),
+        _backupSeal =
+            library.lookupFunction<_BackupSealNative, _BackupSealDart>(
+                'pm_crypto_backup_seal'),
+        _backupPeek =
+            library.lookupFunction<_BackupPeekNative, _BackupPeekDart>(
+                'pm_crypto_backup_peek'),
+        _backupOpen =
+            library.lookupFunction<_BackupOpenNative, _BackupOpenDart>(
+                'pm_crypto_backup_open'),
+        _recoveryProof =
+            library.lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
+                'pm_crypto_recovery_proof_sign'),
+        _reportKeyGenerate = library.lookupFunction<_OutputNative, _OutputDart>(
+            'pm_crypto_report_key_generate'),
+        _reportKeyPublic = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_report_key_public'),
+        _reportSeal = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_report_seal'),
+        _reportOpen = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_report_open'),
+        _frankCommit =
+            library.lookupFunction<_RecoveryProofNative, _RecoveryProofDart>(
+                'pm_crypto_frank_commit'),
+        _c7Derive = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_c7_derive'),
+        _c7ChkCommit = library.lookupFunction<_LocatorNative, _LocatorDart>(
+            'pm_crypto_c7_chk_commit'),
+        _c7Seal = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_c7_seal'),
+        _c7Open = library.lookupFunction<_ThreeSlicesOutputNative,
+            _ThreeSlicesOutputDart>('pm_crypto_c7_open'),
+        _c7Verify = library
+            .lookupFunction<_VerifyNative, _VerifyDart>('pm_crypto_c7_verify'),
+        _c7Sign = library.lookupFunction<_HandleTwoSlicesOutputNative,
+            _HandleTwoSlicesOutputDart>('pm_crypto_c7_sign'),
+        _l1CheckStep = library.lookupFunction<_FourSlicesOutputNative,
+            _FourSlicesOutputDart>('pm_crypto_l1_check_step'),
+        _l1CheckChain = library.lookupFunction<_TwoSlicesOutputNative,
+            _TwoSlicesOutputDart>('pm_crypto_l1_check_chain'),
+        _l1Hold = library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
+            'pm_crypto_l1_recovery_hold'),
+        _l1HoldPublic =
+            library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
+                'pm_crypto_l1_recovery_hold_public'),
+        _l1HoldDrop = library.lookupFunction<_HandleByteOutputNative,
+            _HandleByteOutputDart>('pm_crypto_l1_recovery_hold_drop'),
+        _l1SignRecovery =
+            library.lookupFunction<_L1SignRecoveryNative, _L1SignRecoveryDart>(
+                'pm_crypto_l1_sign_recovery'),
+        _groupMembers = library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_group_members'),
+        _groupL1Process =
+            library.lookupFunction<_L1ProcessNative, _L1ProcessDart>(
+                'pm_crypto_group_l1_process_commit'),
+        _groupL1Merge = library.lookupFunction<_L1MergeNative, _L1MergeDart>(
+            'pm_crypto_group_l1_merge_pending_commit'),
+        _groupCreateWithRoles = library.lookupFunction<_HandleTwoSlicesNative,
+            _HandleTwoSlicesDart>('pm_crypto_group_create_with_roles'),
+        _groupStageWithRoles =
+            library.lookupFunction<_StageWithRolesNative, _StageWithRolesDart>(
+                'pm_crypto_group_stage_commit_with_roles'),
+        _groupStageIncoming = library.lookupFunction<
+                _HandleTwoSlicesOutputNative, _HandleTwoSlicesOutputDart>(
+            'pm_crypto_group_stage_incoming_commit'),
+        _groupMergeIncoming =
+            library.lookupFunction<_L1ProcessNative, _L1ProcessDart>(
+                'pm_crypto_group_merge_incoming_commit'),
+        _groupDiscardIncoming =
+            library.lookupFunction<_GroupDeleteNative, _GroupDeleteDart>(
+                'pm_crypto_group_discard_incoming_commit'),
+        _groupRoleState = library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_group_role_state'),
+        _groupStageProven =
+            library.lookupFunction<_StageProvenNative, _StageProvenDart>(
+                'pm_crypto_group_stage_commit_proven'),
+        _c4SignLeave = library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_c4_sign_leave'),
+        _memberSignatureKey =
+            library.lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
+                'pm_crypto_group_member_signature_key'),
+        _createKeyPackage =
+            library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
+                'pm_crypto_device_create_key_package'),
+        _seal = library.lookupFunction<_SealNative, _SealDart>(
+            'pm_crypto_device_seal_changes'),
+        _groupCreate =
+            library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
+                'pm_crypto_group_create'),
+        _groupJoin = library.lookupFunction<_HandleTwoSlicesNative,
+            _HandleTwoSlicesDart>('pm_crypto_group_join'),
+        _groupAdd = library.lookupFunction<_AddMemberNative, _AddMemberDart>(
+            'pm_crypto_group_add_member'),
+        _groupCommit = library.lookupFunction<_HandleTwoSlicesNative,
+            _HandleTwoSlicesDart>('pm_crypto_group_process_commit'),
+        _groupSafety = library.lookupFunction<_HandleSliceTwoOutputsNative,
+            _HandleSliceTwoOutputsDart>('pm_crypto_group_safety_number'),
+        _groupRemove =
+            library.lookupFunction<_RemoveMemberNative, _RemoveMemberDart>(
+                'pm_crypto_group_remove_member'),
+        _groupStageCommit =
+            library.lookupFunction<_StageCommitNative, _StageCommitDart>(
+                'pm_crypto_group_stage_commit'),
+        _groupMergePending =
+            library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
+                'pm_crypto_group_merge_pending_commit'),
+        _groupClearPending =
+            library.lookupFunction<_HandleSliceNative, _HandleSliceDart>(
+                'pm_crypto_group_clear_pending_commit'),
+        _groupEpoch =
+            library.lookupFunction<_GroupEpochNative, _GroupEpochDart>(
+                'pm_crypto_group_epoch'),
+        _groupEncrypt = library.lookupFunction<_HandleTwoSlicesOutputNative,
+            _HandleTwoSlicesOutputDart>('pm_crypto_group_encrypt'),
+        _groupDecrypt = library.lookupFunction<_DecryptNative, _DecryptDart>(
+            'pm_crypto_group_decrypt'),
+        _groupDecryptSealed =
+            library.lookupFunction<_DecryptSealedNative, _DecryptSealedDart>(
+                'pm_crypto_group_decrypt_sealed'),
+        _l2PaddedSize =
+            library.lookupFunction<_PaddedSizeNative, _PaddedSizeDart>(
+                'pm_crypto_l2_padded_size'),
+        _l2TokenRequest =
+            library.lookupFunction<_L2TokenRequestNative, _L2TokenRequestDart>(
+                'pm_crypto_l2_token_request'),
+        _l2TokenFinalize = library.lookupFunction<_TwoSlicesOutputNative,
+            _TwoSlicesOutputDart>('pm_crypto_l2_token_finalize'),
+        _l2FrankSign = library.lookupFunction<_HandleTwoSlicesOutputNative,
+            _HandleTwoSlicesOutputDart>('pm_crypto_l2_frank_sign'),
+        _l2FrankVerify =
+            library.lookupFunction<_L2FrankVerifyNative, _L2FrankVerifyDart>(
+                'pm_crypto_l2_frank_verify'),
+        _c7ProcessCommit =
+            library.lookupFunction<_C7CommitNative, _C7CommitDart>(
+                'pm_crypto_group_c7_process_commit'),
+        _c7MergePending = library.lookupFunction<_C7MergeNative, _C7MergeDart>(
+            'pm_crypto_group_c7_merge_pending_commit'),
+        _c7GroupDecrypt =
+            library.lookupFunction<_C7DecryptNative, _C7DecryptDart>(
+                'pm_crypto_group_c7_decrypt'),
+        _c7MemberKey =
+            library.lookupFunction<_C7MemberKeyNative, _C7MemberKeyDart>(
+                'pm_crypto_group_member_signature_key'),
+        _b6MediaKey =
+            library.lookupFunction<_B6MediaKeyNative, _B6MediaKeyDart>(
+                'pm_crypto_group_b6_media_key'),
+        _attachmentEncrypt = library.lookupFunction<_AttachmentChunkNative,
+            _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
+        _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
+            _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
     if (_abiVersion() != 26) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
@@ -1065,19 +657,14 @@ class NativeCryptoBindings {
         12: 'reveal_sas',
         13: 'source_commitment',
       }.entries)
-        entry.key: library
-            .lookupFunction<_HandleSliceOutputNative, _HandleSliceOutputDart>(
-              'pm_crypto_k2_${entry.value}',
-            ),
+        entry.key: library.lookupFunction<_HandleSliceOutputNative,
+            _HandleSliceOutputDart>('pm_crypto_k2_${entry.value}'),
     };
     _k2Streams = _K2StreamBindings(library);
-    _deviceFinalizer = NativeFinalizer(
-      library
-          .lookup<NativeFunction<_DeviceDestroyNative>>(
-            'pm_crypto_device_destroy',
-          )
-          .cast(),
-    );
+    _deviceFinalizer = NativeFinalizer(library
+        .lookup<NativeFunction<_DeviceDestroyNative>>(
+            'pm_crypto_device_destroy')
+        .cast());
   }
 
   static const _ok = 0;
@@ -1148,9 +735,9 @@ class NativeCryptoBindings {
   /// Fresh recovery key entropy (30 bytes) from the OS RNG (ABI 11). The
   /// caller owns it: wipe it (`fillRange(0, length, 0)`) once it has been
   /// shown, confirmed and used. Never store or log it.
-  Uint8List generateRecoveryKey() => _recoveryEntropy(
-    _output((out) => _recoveryGenerate(out), maximum: recoveryKeyEntropyBytes),
-  );
+  Uint8List generateRecoveryKey() =>
+      _recoveryEntropy(_output((out) => _recoveryGenerate(out),
+          maximum: recoveryKeyEntropyBytes));
 
   /// The canonical 52-character display (upper case, no separators) of
   /// [entropy]. The UI groups it into 13 groups of 4. A Dart string cannot
@@ -1158,12 +745,9 @@ class NativeCryptoBindings {
   String encodeRecoveryKey(Uint8List entropy) {
     _bounded(entropy, recoveryKeyEntropyBytes, exact: true);
     final bytes = _withSlice(
-      entropy,
-      (slice) => _output(
-        (out) => _recoveryEncode(slice, out),
-        maximum: recoveryKeyDisplayChars,
-      ),
-    );
+        entropy,
+        (slice) => _output((out) => _recoveryEncode(slice, out),
+            maximum: recoveryKeyDisplayChars));
     try {
       if (bytes.length != recoveryKeyDisplayChars) {
         throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -1186,15 +770,10 @@ class NativeCryptoBindings {
       if (bytes.isEmpty || bytes.length > 256) {
         throw const NativeCryptoException(NativeCryptoError.invalidArgument);
       }
-      return _recoveryEntropy(
-        _withSlice(
+      return _recoveryEntropy(_withSlice(
           bytes,
-          (slice) => _output(
-            (out) => _recoveryDecode(slice, out),
-            maximum: recoveryKeyEntropyBytes,
-          ),
-        ),
-      );
+          (slice) => _output((out) => _recoveryDecode(slice, out),
+              maximum: recoveryKeyEntropyBytes)));
     } finally {
       _wipe(bytes);
     }
@@ -1222,11 +801,7 @@ class NativeCryptoBindings {
           throw const NativeCryptoException(NativeCryptoError.invalidOutput);
         }
         return RecoveryKeyPublic(
-          rkPub: pub,
-          rkId: id,
-          rkAuthPub: auth,
-          rkListPub: list,
-        );
+            rkPub: pub, rkId: id, rkAuthPub: auth, rkListPub: list);
       } finally {
         if (rkPub.ref.data != nullptr) _free(rkPub.ref);
         if (rkId.ref.data != nullptr) _free(rkId.ref);
@@ -1275,27 +850,14 @@ class NativeCryptoBindings {
     }
     // The plaintext goes through _withSlice, which wipes its native copy; a
     // Dart-side copy of the whole snapshot is never made.
-    return Uint8List.fromList(
-      _withSlice(
+    return Uint8List.fromList(_withSlice(
         plaintext,
         (plainSlice) => _withByteLists(
-          <List<int>>[account, device, rkPub],
-          (slices) => _output(
-            (out) => _backupSeal(
-              slices[0],
-              slices[1],
-              createdAtMs,
-              counter,
-              plaintextVersion,
-              slices[2],
-              plainSlice,
-              out,
-            ),
-            maximum: backupMaxPlaintextBytes + 64 * 1024 * 2 + 4096,
-          ),
-        ),
-      ),
-    );
+            <List<int>>[account, device, rkPub],
+            (slices) => _output(
+                (out) => _backupSeal(slices[0], slices[1], createdAtMs, counter,
+                    plaintextVersion, slices[2], plainSlice, out),
+                maximum: backupMaxPlaintextBytes + 64 * 1024 * 2 + 4096))));
   }
 
   /// Reads the header of a backup from its first [backupPeekBytes] bytes,
@@ -1309,11 +871,8 @@ class NativeCryptoBindings {
       final meta = calloc<_PmOwnedBuffer>();
       try {
         _check(_backupPeek(slice, account, device, meta));
-        return _backupHeader(
-          _take(account.ref, maximum: 128),
-          _take(device.ref, maximum: 128),
-          _take(meta.ref, maximum: 41),
-        );
+        return _backupHeader(_take(account.ref, maximum: 128),
+            _take(device.ref, maximum: 128), _take(meta.ref, maximum: 41));
       } finally {
         if (account.ref.data != nullptr) _free(account.ref);
         if (device.ref.data != nullptr) _free(device.ref);
@@ -1351,34 +910,21 @@ class NativeCryptoBindings {
             final meta = calloc<_PmOwnedBuffer>();
             try {
               // An empty device slice is how Rust reads "do not pin".
-              _check(
-                _backupOpen(
-                  cipherSlice,
-                  entropySlice,
-                  accountSlices[0],
-                  deviceSlice,
-                  payload,
-                  sourceDevice,
-                  meta,
-                ),
-              );
+              _check(_backupOpen(cipherSlice, entropySlice, accountSlices[0],
+                  deviceSlice, payload, sourceDevice, meta));
               // Header first, plaintext last and returned as taken, so no
               // unwiped second copy of the history exists and a header
               // failure cannot leave one behind.
               final header = _backupHeader(
-                account,
-                _take(sourceDevice.ref, maximum: 128),
-                _take(meta.ref, maximum: 41),
-              );
-              final taken = _take(
-                payload.ref,
-                maximum: backupMaxPlaintextBytes,
-              );
+                  account,
+                  _take(sourceDevice.ref, maximum: 128),
+                  _take(meta.ref, maximum: 41));
+              final taken =
+                  _take(payload.ref, maximum: backupMaxPlaintextBytes);
               return OpenedBackup(
                 header: header,
-                plaintext: taken is Uint8List
-                    ? taken
-                    : Uint8List.fromList(taken),
+                plaintext:
+                    taken is Uint8List ? taken : Uint8List.fromList(taken),
               );
             } finally {
               if (payload.ref.data != nullptr) _free(payload.ref);
@@ -1397,9 +943,7 @@ class NativeCryptoBindings {
   /// Like [_withSlice], but null reads as the empty slice (null pointer,
   /// length 0) for the one argument Rust treats as optional.
   T _withOptionalSlice<T>(
-    List<int>? bytes,
-    T Function(_PmByteSlice) operation,
-  ) {
+      List<int>? bytes, T Function(_PmByteSlice) operation) {
     if (bytes == null) {
       final slice = calloc<_PmByteSlice>();
       try {
@@ -1415,10 +959,7 @@ class NativeCryptoBindings {
   }
 
   BackupHeaderInfo _backupHeader(
-    List<int> account,
-    List<int> device,
-    List<int> meta,
-  ) {
+      List<int> account, List<int> device, List<int> meta) {
     if (meta.length != 41) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1465,22 +1006,13 @@ class NativeCryptoBindings {
     final originBytes = utf8.encode(origin);
     _bounded(originBytes, 2048);
     final signature = _withSlice(
-      entropy,
-      (entropySlice) => _withByteLists(
-        <List<int>>[challenge, signingKey, keyPackage, originBytes],
-        (slices) => _output(
-          (out) => _recoveryProof(
-            entropySlice,
-            slices[0],
-            slices[1],
-            slices[2],
-            slices[3],
-            out,
-          ),
-          maximum: 64,
-        ),
-      ),
-    );
+        entropy,
+        (entropySlice) => _withByteLists(
+            <List<int>>[challenge, signingKey, keyPackage, originBytes],
+            (slices) => _output(
+                (out) => _recoveryProof(entropySlice, slices[0], slices[1],
+                    slices[2], slices[3], out),
+                maximum: 64)));
     if (signature.length != 64) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1509,20 +1041,16 @@ class NativeCryptoBindings {
   /// keep it only in protected storage and wipe every Dart copy once used.
   /// Never log or send it.
   Uint8List generateReportKeySeed() => _secretOutput(
-    _output((out) => _reportKeyGenerate(out), maximum: reportKeySeedBytes),
-    reportKeySeedBytes,
-  );
+      _output((out) => _reportKeyGenerate(out), maximum: reportKeySeedBytes),
+      reportKeySeedBytes);
 
   /// The 32-byte report public key for [seed] (ABI 12).
   Uint8List reportPublicKey(Uint8List seed) {
     _bounded(seed, reportKeySeedBytes, exact: true);
     final public = _withSlice(
-      seed,
-      (slice) => _output(
-        (out) => _reportKeyPublic(slice, out),
-        maximum: reportPublicKeyBytes,
-      ),
-    );
+        seed,
+        (slice) => _output((out) => _reportKeyPublic(slice, out),
+            maximum: reportPublicKeyBytes));
     if (public.length != reportPublicKeyBytes) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1542,15 +1070,12 @@ class NativeCryptoBindings {
     _bounded(aad, maxReportAadBytes);
     _bounded(plaintext, maxReportPlaintextBytes);
     final sealed = _withSlice(
-      plaintext,
-      (plain) => _withByteLists(
-        <List<int>>[recipientPublicKey, aad],
-        (slices) => _output(
-          (out) => _reportSeal(slices[0], slices[1], plain, out),
-          maximum: maxSealedReportBytes,
-        ),
-      ),
-    );
+        plaintext,
+        (plain) => _withByteLists(
+            <List<int>>[recipientPublicKey, aad],
+            (slices) => _output(
+                (out) => _reportSeal(slices[0], slices[1], plain, out),
+                maximum: maxSealedReportBytes)));
     if (sealed.length != plaintext.length + 4 + 32 + 16) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1569,15 +1094,12 @@ class NativeCryptoBindings {
     _bounded(aad, maxReportAadBytes);
     _bounded(sealed, maxSealedReportBytes);
     final opened = _withSlice(
-      seed,
-      (seedSlice) => _withByteLists(
-        <List<int>>[aad, sealed],
-        (slices) => _output(
-          (out) => _reportOpen(seedSlice, slices[0], slices[1], out),
-          maximum: maxReportPlaintextBytes,
-        ),
-      ),
-    );
+        seed,
+        (seedSlice) => _withByteLists(
+            <List<int>>[aad, sealed],
+            (slices) => _output(
+                (out) => _reportOpen(seedSlice, slices[0], slices[1], out),
+                maximum: maxReportPlaintextBytes)));
     return _secretOutput(opened, sealed.length - 4 - 32 - 16);
   }
 
@@ -1618,25 +1140,15 @@ class NativeCryptoBindings {
     }
     _bounded(payload, maxFrankPayloadBytes);
     final commit = _withSlice(
-      key,
-      (keySlice) => _withSlice(
-        payload,
-        (payloadSlice) => _withByteLists(
-          ids,
-          (slices) => _output(
-            (out) => _frankCommit(
-              keySlice,
-              slices[0],
-              slices[1],
-              slices[2],
-              payloadSlice,
-              out,
-            ),
-            maximum: 32,
-          ),
-        ),
-      ),
-    );
+        key,
+        (keySlice) => _withSlice(
+            payload,
+            (payloadSlice) => _withByteLists(
+                ids,
+                (slices) => _output(
+                    (out) => _frankCommit(keySlice, slices[0], slices[1],
+                        slices[2], payloadSlice, out),
+                    maximum: 32))));
     if (commit.length != 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1665,19 +1177,9 @@ class NativeCryptoBindings {
       throw ArgumentError('Invalid token epoch or generation');
     }
     final out = _withByteLists(
-      <List<int>>[publicKey, conversation],
-      (slices) => _twoOutputs(
-        (state, request) => _l2TokenRequest(
-          slices[0],
-          slices[1],
-          epoch,
-          generation,
-          count,
-          state,
-          request,
-        ),
-      ),
-    );
+        <List<int>>[publicKey, conversation],
+        (slices) => _twoOutputs((state, request) => _l2TokenRequest(
+            slices[0], slices[1], epoch, generation, count, state, request)));
     if (out.second.length != count * 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1692,19 +1194,15 @@ class NativeCryptoBindings {
   /// key in [state] and returns `count × (32-byte nonce || 64-byte
   /// output)`. A proof that does not verify throws
   /// [NativeCryptoError.operationFailed].
-  Uint8List l2TokenFinalize({
-    required List<int> state,
-    required List<int> response,
-  }) {
+  Uint8List l2TokenFinalize(
+      {required List<int> state, required List<int> response}) {
     _bounded(state, 16 * 1024);
     _bounded(response, 4 * 1024);
     final tokens = _withByteLists(
-      <List<int>>[state, response],
-      (slices) => _output(
-        (out) => _l2TokenFinalize(slices[0], slices[1], out),
-        maximum: l2MaxBatch * l2TokenBytes,
-      ),
-    );
+        <List<int>>[state, response],
+        (slices) => _output(
+            (out) => _l2TokenFinalize(slices[0], slices[1], out),
+            maximum: l2MaxBatch * l2TokenBytes));
     if (tokens.isEmpty || tokens.length % l2TokenBytes != 0) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1735,12 +1233,9 @@ class NativeCryptoBindings {
     }
     final ok = calloc<Uint8>();
     try {
-      final status = _withByteLists(<List<int>>[
-        signingKey,
-        ...ids,
-        commit,
-        signature,
-      ], (s) => _l2FrankVerify(s[0], s[1], s[2], s[3], s[4], s[5], ok));
+      final status = _withByteLists(
+          <List<int>>[signingKey, ...ids, commit, signature],
+          (s) => _l2FrankVerify(s[0], s[1], s[2], s[3], s[4], s[5], ok));
       _check(status);
       return ok.value == 1;
     } finally {
@@ -1781,25 +1276,20 @@ class NativeCryptoBindings {
     _bounded(key, c7KeyBytes, exact: true);
     _bounded(info, c7MaxInfoBytes);
     final derived = _withSlice(
-      key,
-      (keySlice) => _withByteLists(
-        <List<int>>[utf8.encode(label), info],
-        (slices) => _output(
-          (out) => _c7Derive(keySlice, slices[0], slices[1], out),
-          maximum: c7KeyBytes,
-        ),
-      ),
-    );
+        key,
+        (keySlice) => _withByteLists(
+            <List<int>>[utf8.encode(label), info],
+            (slices) => _output(
+                (out) => _c7Derive(keySlice, slices[0], slices[1], out),
+                maximum: c7KeyBytes)));
     return _secretOutput(derived, c7KeyBytes);
   }
 
   /// `sha256("veritra-c7-chk-v1" | key)` (ABI 13): a record's `chk_commit`.
   Uint8List c7ChkCommit(Uint8List key) {
     _bounded(key, c7KeyBytes, exact: true);
-    final commit = _withSlice(
-      key,
-      (slice) => _output((out) => _c7ChkCommit(slice, out), maximum: 32),
-    );
+    final commit = _withSlice(key,
+        (slice) => _output((out) => _c7ChkCommit(slice, out), maximum: 32));
     if (commit.length != 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1818,18 +1308,14 @@ class NativeCryptoBindings {
     _bounded(aad, c7MaxAadBytes);
     _bounded(plaintext, c7MaxPlaintextBytes);
     final sealed = _withSlice(
-      key,
-      (keySlice) => _withSlice(
-        plaintext,
-        (plain) => _withByteLists(
-          <List<int>>[aad],
-          (slices) => _output(
-            (out) => _c7Seal(keySlice, slices[0], plain, out),
-            maximum: c7MaxPlaintextBytes + c7SealOverhead,
-          ),
-        ),
-      ),
-    );
+        key,
+        (keySlice) => _withSlice(
+            plaintext,
+            (plain) => _withByteLists(
+                <List<int>>[aad],
+                (slices) => _output(
+                    (out) => _c7Seal(keySlice, slices[0], plain, out),
+                    maximum: c7MaxPlaintextBytes + c7SealOverhead))));
     if (sealed.length != plaintext.length + c7SealOverhead) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1853,15 +1339,12 @@ class NativeCryptoBindings {
     }
     try {
       final opened = _withSlice(
-        key,
-        (keySlice) => _withByteLists(
-          <List<int>>[aad, sealed],
-          (slices) => _output(
-            (out) => _c7Open(keySlice, slices[0], slices[1], out),
-            maximum: c7MaxPlaintextBytes,
-          ),
-        ),
-      );
+          key,
+          (keySlice) => _withByteLists(
+              <List<int>>[aad, sealed],
+              (slices) => _output(
+                  (out) => _c7Open(keySlice, slices[0], slices[1], out),
+                  maximum: c7MaxPlaintextBytes)));
       return _secretOutput(opened, sealed.length - c7SealOverhead);
     } on NativeCryptoException catch (error) {
       if (error.kind == NativeCryptoError.c7KeyMismatch) return null;
@@ -1886,13 +1369,9 @@ class NativeCryptoBindings {
     final ok = calloc<Uint8>();
     try {
       final status = _withSlice(
-        Uint8List.fromList(utf8.encode(domain)),
-        (d) => _withByteLists(<List<int>>[
-          publicKey,
-          message,
-          signature,
-        ], (s) => _c7Verify(d, s[0], s[1], s[2], ok)),
-      );
+          Uint8List.fromList(utf8.encode(domain)),
+          (d) => _withByteLists(<List<int>>[publicKey, message, signature],
+              (s) => _c7Verify(d, s[0], s[1], s[2], ok)));
       _check(status);
       return ok.value == 1;
     } finally {
@@ -1929,10 +1408,8 @@ class NativeCryptoBindings {
 
   String deviceLinkLocator(List<int> secret) {
     _bounded(secret, 16, exact: true);
-    final bytes = _withSlice(
-      Uint8List.fromList(secret),
-      (slice) => _output((out) => _deviceLinkLocator(slice, out)),
-    );
+    final bytes = _withSlice(Uint8List.fromList(secret),
+        (slice) => _output((out) => _deviceLinkLocator(slice, out)));
     if (bytes.length != 32)
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     return bytes.map((b) => b.toRadixString(16).padLeft(2, "0")).join();
@@ -1983,17 +1460,14 @@ class NativeCryptoBindings {
     final separator = Platform.pathSeparator;
     if (Platform.isWindows) {
       return DynamicLibrary.open(
-        '$appDirectory${separator}private_messenger_crypto.dll',
-      );
+          '$appDirectory${separator}private_messenger_crypto.dll');
     }
     if (Platform.isLinux) {
       return DynamicLibrary.open(
-        '$appDirectory${separator}lib${separator}libprivate_messenger_crypto.so',
-      );
+          '$appDirectory${separator}lib${separator}libprivate_messenger_crypto.so');
     }
     throw UnsupportedError(
-      'No bundled Veritra crypto library for this platform',
-    );
+        'No bundled Veritra crypto library for this platform');
   }
 
   static NativeCryptoBindings open(String path) =>
@@ -2005,14 +1479,9 @@ class NativeCryptoBindings {
     required int chunkIndex,
     required List<int> context,
     required List<int> plaintext,
-  }) => _attachmentChunk(
-    _attachmentEncrypt,
-    key,
-    noncePrefix,
-    chunkIndex,
-    context,
-    plaintext,
-  );
+  }) =>
+      _attachmentChunk(
+          _attachmentEncrypt, key, noncePrefix, chunkIndex, context, plaintext);
 
   List<int> decryptAttachmentChunk({
     required List<int> key,
@@ -2020,14 +1489,9 @@ class NativeCryptoBindings {
     required int chunkIndex,
     required List<int> context,
     required List<int> ciphertext,
-  }) => _attachmentChunk(
-    _attachmentDecrypt,
-    key,
-    noncePrefix,
-    chunkIndex,
-    context,
-    ciphertext,
-  );
+  }) =>
+      _attachmentChunk(_attachmentDecrypt, key, noncePrefix, chunkIndex,
+          context, ciphertext);
 
   List<int> _attachmentChunk(
     _AttachmentChunkDart operation,
@@ -2045,18 +1509,9 @@ class NativeCryptoBindings {
       throw ArgumentError.value(chunkIndex, 'chunkIndex');
     }
     return _withByteLists(
-      <List<int>>[key, noncePrefix, context, input],
-      (slices) => _output(
-        (out) => operation(
-          slices[0],
-          slices[1],
-          chunkIndex,
-          slices[2],
-          slices[3],
-          out,
-        ),
-      ),
-    );
+        <List<int>>[key, noncePrefix, context, input],
+        (slices) => _output((out) => operation(
+            slices[0], slices[1], chunkIndex, slices[2], slices[3], out)));
   }
 
   NativeCryptoDevice createDevice(String accountId, String deviceId) {
@@ -2071,8 +1526,7 @@ class NativeCryptoBindings {
           _check(_deviceCreate(account, device, output));
           if (output.value == nullptr) {
             throw const NativeCryptoException(
-              NativeCryptoError.operationFailed,
-            );
+                NativeCryptoError.operationFailed);
           }
           return NativeCryptoDevice._(this, output.value);
         } finally {
@@ -2087,13 +1541,12 @@ class NativeCryptoBindings {
   /// [minimumGeneration]; the caller requires it to equal its counter. Any
   /// missing, extra, stale or altered record fails the restore.
   ({NativeCryptoDevice device, int generation}) restoreRecords(
-    String accountId,
-    String deviceId,
-    List<int> stateKey,
-    int minimumGeneration,
-    List<int> root,
-    Iterable<List<int>> records,
-  ) {
+      String accountId,
+      String deviceId,
+      List<int> stateKey,
+      int minimumGeneration,
+      List<int> root,
+      Iterable<List<int>> records) {
     _bounded(accountId.codeUnits, 128);
     _bounded(deviceId.codeUnits, 128);
     _bounded(stateKey, 32, exact: true);
@@ -2102,37 +1555,24 @@ class NativeCryptoBindings {
       throw ArgumentError.value(minimumGeneration, 'minimumGeneration');
     }
     final loader = _withByteLists(
-      [accountId.codeUnits, deviceId.codeUnits, stateKey, root],
-      (slices) {
-        final token = calloc<Uint64>();
-        final generation = calloc<Uint64>();
-        try {
-          _check(
-            _restoreBegin(
-              slices[0],
-              slices[1],
-              slices[2],
-              minimumGeneration,
-              slices[3],
-              token,
-              generation,
-            ),
-          );
-          return token.value;
-        } finally {
-          calloc.free(generation);
-          calloc.free(token);
-        }
-      },
-    );
+        [accountId.codeUnits, deviceId.codeUnits, stateKey, root], (slices) {
+      final token = calloc<Uint64>();
+      final generation = calloc<Uint64>();
+      try {
+        _check(_restoreBegin(slices[0], slices[1], slices[2], minimumGeneration,
+            slices[3], token, generation));
+        return token.value;
+      } finally {
+        calloc.free(generation);
+        calloc.free(token);
+      }
+    });
     var open = true;
     try {
       for (final record in records) {
         _bounded(record, _maxSealedRecordBytes);
-        _withSlice(
-          Uint8List.fromList(record),
-          (slice) => _check(_restoreAdd(loader, slice)),
-        );
+        _withSlice(Uint8List.fromList(record),
+            (slice) => _check(_restoreAdd(loader, slice)));
       }
       final handle = calloc<Pointer<_PmCryptoHandle>>();
       final generation = calloc<Uint64>();
@@ -2144,7 +1584,7 @@ class NativeCryptoBindings {
         }
         return (
           device: NativeCryptoDevice._(this, handle.value),
-          generation: generation.value,
+          generation: generation.value
         );
       } finally {
         calloc.free(generation);
@@ -2160,49 +1600,36 @@ class NativeCryptoBindings {
   /// `counter + 1`; [dropped] counts inactive groups and unowned key pairs
   /// left behind.
   ({NativeCryptoDevice device, int dropped}) migrateLegacyState(
-    String accountId,
-    String deviceId,
-    List<int> stateKey,
-    int counter,
-    List<int> sealedState,
-  ) {
+      String accountId,
+      String deviceId,
+      List<int> stateKey,
+      int counter,
+      List<int> sealedState) {
     _bounded(accountId.codeUnits, 128);
     _bounded(deviceId.codeUnits, 128);
     _bounded(stateKey, 32, exact: true);
     _bounded(sealedState, 32 * 1024 * 1024);
     if (counter <= 0) throw ArgumentError.value(counter, 'counter');
     return _withByteLists(
-      [accountId.codeUnits, deviceId.codeUnits, stateKey, sealedState],
-      (slices) {
-        final handle = calloc<Pointer<_PmCryptoHandle>>();
-        final dropped = calloc<Uint64>();
-        try {
-          _check(
-            _migrate(
-              slices[0],
-              slices[1],
-              slices[2],
-              counter,
-              slices[3],
-              handle,
-              dropped,
-            ),
-          );
-          if (handle.value == nullptr) {
-            throw const NativeCryptoException(
-              NativeCryptoError.operationFailed,
-            );
-          }
-          return (
-            device: NativeCryptoDevice._(this, handle.value),
-            dropped: dropped.value,
-          );
-        } finally {
-          calloc.free(dropped);
-          calloc.free(handle);
+        [accountId.codeUnits, deviceId.codeUnits, stateKey, sealedState],
+        (slices) {
+      final handle = calloc<Pointer<_PmCryptoHandle>>();
+      final dropped = calloc<Uint64>();
+      try {
+        _check(_migrate(slices[0], slices[1], slices[2], counter, slices[3],
+            handle, dropped));
+        if (handle.value == nullptr) {
+          throw const NativeCryptoException(NativeCryptoError.operationFailed);
         }
-      },
-    );
+        return (
+          device: NativeCryptoDevice._(this, handle.value),
+          dropped: dropped.value
+        );
+      } finally {
+        calloc.free(dropped);
+        calloc.free(handle);
+      }
+    });
   }
 
   EnrollmentCredential createEnrollmentCredential(
@@ -2214,15 +1641,13 @@ class NativeCryptoBindings {
       final signingKey = calloc<_PmOwnedBuffer>();
       final signature = calloc<_PmOwnedBuffer>();
       try {
-        _check(
-          _createEnrollment(
-            handle,
-            challengeSlice,
-            keyPackage,
-            signingKey,
-            signature,
-          ),
-        );
+        _check(_createEnrollment(
+          handle,
+          challengeSlice,
+          keyPackage,
+          signingKey,
+          signature,
+        ));
         final packageBytes = _take(keyPackage.ref);
         keyPackage.ref.data = nullptr;
         final signingBytes = _take(signingKey.ref);
@@ -2283,10 +1708,8 @@ class NativeCryptoBindings {
     }
   }
 
-  List<int> _output(
-    int Function(Pointer<_PmOwnedBuffer>) operation, {
-    int maximum = 32 * 1024 * 1024,
-  }) {
+  List<int> _output(int Function(Pointer<_PmOwnedBuffer>) operation,
+      {int maximum = 32 * 1024 * 1024}) {
     final output = calloc<_PmOwnedBuffer>();
     try {
       _check(operation(output));
@@ -2302,8 +1725,8 @@ class NativeCryptoBindings {
   }
 
   ({List<int> first, List<int> second}) _twoOutputs(
-    int Function(Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>) operation,
-  ) {
+      int Function(Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>)
+          operation) {
     final first = calloc<_PmOwnedBuffer>();
     final second = calloc<_PmOwnedBuffer>();
     try {
@@ -2356,15 +1779,11 @@ class NativeCryptoBindings {
   }
 
   T _withByteLists<T>(
-    List<List<int>> values,
-    T Function(List<_PmByteSlice>) operation,
-  ) {
+      List<List<int>> values, T Function(List<_PmByteSlice>) operation) {
     T visit(int index, List<_PmByteSlice> slices) {
       if (index == values.length) return operation(slices);
-      return _withSlice(
-        Uint8List.fromList(values[index]),
-        (slice) => visit(index + 1, [...slices, slice]),
-      );
+      return _withSlice(Uint8List.fromList(values[index]),
+          (slice) => visit(index + 1, [...slices, slice]));
     }
 
     return visit(0, const []);
@@ -2458,7 +1877,7 @@ enum NativeCryptoError {
   /// Refused before encrypting; the group state is unchanged.
   plaintextTooLarge,
   invalidOutput,
-  unknown,
+  unknown
 }
 
 extension NativeCryptoErrorRatchet on NativeCryptoError {
@@ -2482,7 +1901,7 @@ class NativeCryptoException implements Exception {
 /// key package. Nothing was sealed.
 class NativeRecordLimitException extends NativeCryptoException {
   const NativeRecordLimitException(this.recordKind, this.recordId)
-    : super(NativeCryptoError.recordLimit);
+      : super(NativeCryptoError.recordLimit);
   final int recordKind;
   final List<int> recordId;
 
@@ -2551,12 +1970,8 @@ NativeChangeSet _parseChangeSet(List<int> bytes, int generation) {
     if (kind < 1 || kind > 3 || changeGeneration != generation) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
-    changes.add((
-      kind: kind,
-      id: id,
-      generation: changeGeneration,
-      sealed: sealed,
-    ));
+    changes.add(
+        (kind: kind, id: id, generation: changeGeneration, sealed: sealed));
   }
   if (offset != data.lengthInBytes) {
     throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -2574,17 +1989,16 @@ class NativeCryptoDevice implements Finalizable {
   ({List<int> commit, List<int> welcome, int epoch}) stageCommitKeyed(
     String groupId, {
     List<
-          ({
-            List<int> keyPackage,
-            List<int> accountId,
-            List<int> deviceId,
-            List<int> signingKey,
-          })
-        >
-        adds =
-        const [],
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
-  }) => _stageCommitKeyedImpl(groupId, adds: adds, removes: removes);
+  }) =>
+      _stageCommitKeyedImpl(groupId, adds: adds, removes: removes);
 
   /// Creates a record group carrying [genesisRecord] (C4, ABI 20); see
   /// `c4_roles.dart`.
@@ -2597,22 +2011,17 @@ class NativeCryptoDevice implements Finalizable {
     String groupId, {
     required List<int> record,
     List<
-          ({
-            List<int> keyPackage,
-            List<int> accountId,
-            List<int> deviceId,
-            List<int> signingKey,
-          })
-        >
-        adds =
-        const [],
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
-  }) => _stageCommitWithRolesImpl(
-    groupId,
-    record: record,
-    adds: adds,
-    removes: removes,
-  );
+  }) =>
+      _stageCommitWithRolesImpl(groupId,
+          record: record, adds: adds, removes: removes);
 
   /// Phase one of receiving a commit (C4, ABI 20); see `c4_roles.dart`.
   IncomingCommitReview stageIncomingCommit(String groupId, List<int> commit) =>
@@ -2641,23 +2050,20 @@ class NativeCryptoDevice implements Finalizable {
     List<int>? record,
     required List<Uint8List> leaveStatements,
     List<
-          ({
-            List<int> keyPackage,
-            List<int> accountId,
-            List<int> deviceId,
-            List<int> signingKey,
-          })
-        >
-        adds =
-        const [],
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
     List<({List<int> accountId, List<int> deviceId})> removes = const [],
-  }) => _stageCommitProvenImpl(
-    groupId,
-    record: record,
-    leaveStatements: leaveStatements,
-    adds: adds,
-    removes: removes,
-  );
+  }) =>
+      _stageCommitProvenImpl(groupId,
+          record: record,
+          leaveStatements: leaveStatements,
+          adds: adds,
+          removes: removes);
 
   /// This device's signed leave statement for [groupId] (C4, ABI 24); see
   /// `c4_roles.dart`.
@@ -2680,15 +2086,9 @@ class NativeCryptoDevice implements Finalizable {
     try {
       _bindings._bounded(bytes, 64 * 1024);
       final result = _bindings._withSlice(
-        bytes,
-        (slice) => _bindings._output(
-          (out) => _bindings._k2Controls[request.operation]!(
-            _liveHandle,
-            slice,
-            out,
-          ),
-        ),
-      );
+          bytes,
+          (slice) => _bindings._output((out) => _bindings
+              ._k2Controls[request.operation]!(_liveHandle, slice, out)));
       return _K2Reader(Uint8List.fromList(result), request.operation);
     } finally {
       bytes.fillRange(0, bytes.length, 0);
@@ -2708,26 +2108,16 @@ class NativeCryptoDevice implements Finalizable {
   /// `pm_crypto_group_member_signature_key`). Fails when this device has no
   /// such group or the group has no such member.
   List<int> memberSignatureKey(
-    String groupId,
-    String accountId,
-    String deviceId,
-  ) {
+      String groupId, String accountId, String deviceId) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(accountId.codeUnits, 128);
     _bindings._bounded(deviceId.codeUnits, 128);
     return _bindings._withByteLists(
-      [groupId.codeUnits, accountId.codeUnits, deviceId.codeUnits],
-      (slices) => _bindings._output(
-        (out) => _bindings._memberSignatureKey(
-          _liveHandle,
-          slices[0],
-          slices[1],
-          slices[2],
-          out,
-        ),
-        maximum: 32,
-      ),
-    );
+        [groupId.codeUnits, accountId.codeUnits, deviceId.codeUnits],
+        (slices) => _bindings._output(
+            (out) => _bindings._memberSignatureKey(
+                _liveHandle, slices[0], slices[1], slices[2], out),
+            maximum: 32));
   }
 
   List<int> createKeyPackage() =>
@@ -2786,29 +2176,22 @@ class NativeCryptoDevice implements Finalizable {
     if (seconds < 0) throw ArgumentError.value(now, 'now');
     final removed = calloc<Uint64>();
     try {
-      _bindings._check(
-        _bindings._pruneKeyPackages(_liveHandle, seconds, removed),
-      );
+      _bindings
+          ._check(_bindings._pruneKeyPackages(_liveHandle, seconds, removed));
       return removed.value;
     } finally {
       calloc.free(removed);
     }
   }
 
-  void createGroup(String groupId) => _withOne(
-    groupId.codeUnits,
-    (group) => _bindings._groupCreate(_liveHandle, group),
-    128,
-  );
+  void createGroup(String groupId) => _withOne(groupId.codeUnits,
+      (group) => _bindings._groupCreate(_liveHandle, group), 128);
 
   void joinGroup(String expectedGroupId, List<int> welcome) {
     _bindings._bounded(expectedGroupId.codeUnits, 128);
     _bindings._bounded(welcome, 4 * 1024 * 1024);
-    _withTwo(
-      expectedGroupId.codeUnits,
-      welcome,
-      (group, value) => _bindings._groupJoin(_liveHandle, group, value),
-    );
+    _withTwo(expectedGroupId.codeUnits, welcome,
+        (group, value) => _bindings._groupJoin(_liveHandle, group, value));
   }
 
   ({List<int> commit, List<int> welcome}) addMember(
@@ -2821,28 +2204,17 @@ class NativeCryptoDevice implements Finalizable {
     _bindings._bounded(keyPackage, 48 * 1024);
     _bindings._bounded(expectedAccountId.codeUnits, 128);
     _bindings._bounded(expectedDeviceId.codeUnits, 128);
-    return _bindings._withByteLists(
-      [
-        groupId.codeUnits,
-        keyPackage,
-        expectedAccountId.codeUnits,
-        expectedDeviceId.codeUnits,
-      ],
-      (slices) {
-        final result = _bindings._twoOutputs(
-          (commit, welcome) => _bindings._groupAdd(
-            _liveHandle,
-            slices[0],
-            slices[1],
-            slices[2],
-            slices[3],
-            commit,
-            welcome,
-          ),
-        );
-        return (commit: result.first, welcome: result.second);
-      },
-    );
+    return _bindings._withByteLists([
+      groupId.codeUnits,
+      keyPackage,
+      expectedAccountId.codeUnits,
+      expectedDeviceId.codeUnits,
+    ], (slices) {
+      final result = _bindings._twoOutputs((commit, welcome) =>
+          _bindings._groupAdd(_liveHandle, slices[0], slices[1], slices[2],
+              slices[3], commit, welcome));
+      return (commit: result.first, welcome: result.second);
+    });
   }
 
   /// Stages one unmerged commit adding [adds] and removing [removes]
@@ -2863,30 +2235,20 @@ class NativeCryptoDevice implements Finalizable {
   /// (periodic self-update). The native side reads an empty change list
   /// this way. Merge it only after the server accepts it, like [stageCommit].
   ({List<int> commit, List<int> welcome, int epoch}) stageSelfUpdate(
-    String groupId,
-  ) => _stage(groupId, emptyMembershipChanges, expectWelcome: false);
+          String groupId) =>
+      _stage(groupId, emptyMembershipChanges, expectWelcome: false);
 
   ({List<int> commit, List<int> welcome, int epoch}) _stage(
-    String groupId,
-    List<int> changes, {
-    required bool expectWelcome,
-  }) {
+      String groupId, List<int> changes,
+      {required bool expectWelcome}) {
     _bindings._bounded(groupId.codeUnits, 128);
     return _bindings._withByteLists([groupId.codeUnits, changes], (slices) {
       final commit = calloc<_PmOwnedBuffer>();
       final welcome = calloc<_PmOwnedBuffer>();
       final epoch = calloc<Uint64>();
       try {
-        _bindings._check(
-          _bindings._groupStageCommit(
-            _liveHandle,
-            slices[0],
-            slices[1],
-            commit,
-            welcome,
-            epoch,
-          ),
-        );
+        _bindings._check(_bindings._groupStageCommit(
+            _liveHandle, slices[0], slices[1], commit, welcome, epoch));
         final commitBytes = _bindings._take(commit.ref);
         commit.ref
           ..data = nullptr
@@ -2917,19 +2279,17 @@ class NativeCryptoDevice implements Finalizable {
   void mergePendingCommit(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._withSlice(
-      Uint8List.fromList(groupId.codeUnits),
-      (group) =>
-          _bindings._check(_bindings._groupMergePending(_liveHandle, group)),
-    );
+        Uint8List.fromList(groupId.codeUnits),
+        (group) =>
+            _bindings._check(_bindings._groupMergePending(_liveHandle, group)));
   }
 
   void clearPendingCommit(String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._withSlice(
-      Uint8List.fromList(groupId.codeUnits),
-      (group) =>
-          _bindings._check(_bindings._groupClearPending(_liveHandle, group)),
-    );
+        Uint8List.fromList(groupId.codeUnits),
+        (group) =>
+            _bindings._check(_bindings._groupClearPending(_liveHandle, group)));
   }
 
   ({int epoch, bool pending}) groupEpoch(String groupId) {
@@ -2938,9 +2298,8 @@ class NativeCryptoDevice implements Finalizable {
       final epoch = calloc<Uint64>();
       final pending = calloc<Uint8>();
       try {
-        _bindings._check(
-          _bindings._groupEpoch(_liveHandle, group, epoch, pending),
-        );
+        _bindings
+            ._check(_bindings._groupEpoch(_liveHandle, group, epoch, pending));
         return (epoch: epoch.value, pending: pending.value != 0);
       } finally {
         calloc.free(epoch);
@@ -2952,22 +2311,16 @@ class NativeCryptoDevice implements Finalizable {
   void processCommit(String groupId, List<int> commit) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(commit, 4 * 1024 * 1024);
-    _withTwo(
-      groupId.codeUnits,
-      commit,
-      (group, value) => _bindings._groupCommit(_liveHandle, group, value),
-    );
+    _withTwo(groupId.codeUnits, commit,
+        (group, value) => _bindings._groupCommit(_liveHandle, group, value));
   }
 
   ({List<int> transcriptHash, String digits}) conversationSafetyNumber(
-    String groupId,
-  ) {
+      String groupId) {
     _bindings._bounded(groupId.codeUnits, 128);
     return _bindings._withSlice(Uint8List.fromList(groupId.codeUnits), (group) {
-      final values = _bindings._twoOutputs(
-        (hash, digits) =>
-            _bindings._groupSafety(_liveHandle, group, hash, digits),
-      );
+      final values = _bindings._twoOutputs((hash, digits) =>
+          _bindings._groupSafety(_liveHandle, group, hash, digits));
       return (
         transcriptHash: values.first,
         digits: utf8.decode(values.second, allowMalformed: false),
@@ -2980,17 +2333,9 @@ class NativeCryptoDevice implements Finalizable {
     _bindings._bounded(accountId.codeUnits, 128);
     _bindings._bounded(deviceId.codeUnits, 128);
     return _bindings._withByteLists(
-      [groupId.codeUnits, accountId.codeUnits, deviceId.codeUnits],
-      (slices) => _bindings._output(
-        (out) => _bindings._groupRemove(
-          _liveHandle,
-          slices[0],
-          slices[1],
-          slices[2],
-          out,
-        ),
-      ),
-    );
+        [groupId.codeUnits, accountId.codeUnits, deviceId.codeUnits],
+        (slices) => _bindings._output((out) => _bindings._groupRemove(
+            _liveHandle, slices[0], slices[1], slices[2], out)));
   }
 
   /// Throws [NativeCryptoError.plaintextTooLarge] above
@@ -3002,10 +2347,7 @@ class NativeCryptoDevice implements Finalizable {
     }
     _bindings._bounded(plaintext, maxSendablePlaintextBytes);
     return _withTwoOutput(
-      groupId.codeUnits,
-      plaintext,
-      _bindings._groupEncrypt,
-    );
+        groupId.codeUnits, plaintext, _bindings._groupEncrypt);
   }
 
   /// Decrypts [ciphertext] and checks that its MLS sender is
@@ -3025,23 +2367,14 @@ class NativeCryptoDevice implements Finalizable {
     _bindings._bounded(senderAccountId.codeUnits, 128);
     _bindings._bounded(senderDeviceId.codeUnits, 128);
     return _bindings._withByteLists(
-      [
-        groupId.codeUnits,
-        ciphertext,
-        senderAccountId.codeUnits,
-        senderDeviceId.codeUnits,
-      ],
-      (slices) => _bindings._output(
-        (out) => _bindings._groupDecrypt(
-          _liveHandle,
-          slices[0],
-          slices[1],
-          slices[2],
-          slices[3],
-          out,
-        ),
-      ),
-    );
+        [
+          groupId.codeUnits,
+          ciphertext,
+          senderAccountId.codeUnits,
+          senderDeviceId.codeUnits,
+        ],
+        (slices) => _bindings._output((out) => _bindings._groupDecrypt(
+            _liveHandle, slices[0], slices[1], slices[2], slices[3], out)));
   }
 
   /// L2-3 (ABI 23, sealed sender): decrypts an application message whose
@@ -3051,9 +2384,7 @@ class NativeCryptoDevice implements Finalizable {
   /// a sender who has left; the ratchet has advanced then. Not used by the
   /// app yet: sealed delivery waits for its credential decision.
   ({List<int> plaintext, String accountId, String deviceId}) decryptSealed(
-    String groupId,
-    List<int> ciphertext,
-  ) {
+      String groupId, List<int> ciphertext) {
     _bindings._bounded(groupId.codeUnits, 128);
     _bindings._bounded(ciphertext, 1024 * 1024 + 4096);
     return _bindings._withByteLists([groupId.codeUnits, ciphertext], (slices) {
@@ -3061,16 +2392,8 @@ class NativeCryptoDevice implements Finalizable {
       final account = calloc<_PmOwnedBuffer>();
       final device = calloc<_PmOwnedBuffer>();
       try {
-        _bindings._check(
-          _bindings._groupDecryptSealed(
-            _liveHandle,
-            slices[0],
-            slices[1],
-            plaintext,
-            account,
-            device,
-          ),
-        );
+        _bindings._check(_bindings._groupDecryptSealed(
+            _liveHandle, slices[0], slices[1], plaintext, account, device));
         final accountBytes = _bindings._take(account.ref, maximum: 128);
         final deviceBytes = _bindings._take(device.ref, maximum: 128);
         final plaintextBytes = _bindings._take(plaintext.ref);
@@ -3105,13 +2428,7 @@ class NativeCryptoDevice implements Finalizable {
       (flags, epoch, root) => _bindings._withByteLists(
         [groupId.codeUnits, commit],
         (slices) => _bindings._c7ProcessCommit(
-          _liveHandle,
-          slices[0],
-          slices[1],
-          flags,
-          epoch,
-          root,
-        ),
+            _liveHandle, slices[0], slices[1], flags, epoch, root),
       ),
     );
   }
@@ -3124,19 +2441,14 @@ class NativeCryptoDevice implements Finalizable {
       (flags, epoch, root) => _bindings._withByteLists(
         [groupId.codeUnits],
         (slices) => _bindings._c7MergePending(
-          _liveHandle,
-          slices[0],
-          flags,
-          epoch,
-          root,
-        ),
+            _liveHandle, slices[0], flags, epoch, root),
       ),
     );
   }
 
   C7CommitOutcome _c7Outcome(
     int Function(Pointer<Uint8>, Pointer<Uint64>, Pointer<_PmOwnedBuffer>)
-    operation,
+        operation,
   ) {
     final flags = calloc<Uint8>();
     final epoch = calloc<Uint64>();
@@ -3209,17 +2521,14 @@ class NativeCryptoDevice implements Finalizable {
           senderAccountId.codeUnits,
           senderDeviceId.codeUnits,
         ],
-        (slices) => _bindings._output(
-          (out) => _bindings._c7GroupDecrypt(
+        (slices) => _bindings._output((out) => _bindings._c7GroupDecrypt(
             _liveHandle,
             slices[0],
             slices[1],
             slices[2],
             slices[3],
             out,
-            epoch,
-          ),
-        ),
+            epoch)),
       );
       if (epoch.value == 0) {
         throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -3243,15 +2552,9 @@ class NativeCryptoDevice implements Finalizable {
     final key = _bindings._withByteLists(
       [groupId.codeUnits, accountId.codeUnits, deviceId.codeUnits],
       (slices) => _bindings._output(
-        (out) => _bindings._c7MemberKey(
-          _liveHandle,
-          slices[0],
-          slices[1],
-          slices[2],
-          out,
-        ),
-        maximum: 32,
-      ),
+          (out) => _bindings._c7MemberKey(
+              _liveHandle, slices[0], slices[1], slices[2], out),
+          maximum: 32),
     );
     if (key.length != 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -3283,20 +2586,12 @@ class NativeCryptoDevice implements Finalizable {
         groupId.codeUnits,
         callId.codeUnits,
         senderAccountId.codeUnits,
-        senderDeviceId.codeUnits,
+        senderDeviceId.codeUnits
       ],
       (slices) => _bindings._output(
-        (out) => _bindings._b6MediaKey(
-          _liveHandle,
-          slices[0],
-          slices[1],
-          slices[2],
-          slices[3],
-          stream,
-          out,
-        ),
-        maximum: 32,
-      ),
+          (out) => _bindings._b6MediaKey(_liveHandle, slices[0], slices[1],
+              slices[2], slices[3], stream, out),
+          maximum: 32),
     );
     if (key.length != 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
@@ -3311,20 +2606,17 @@ class NativeCryptoDevice implements Finalizable {
   /// L2-3 (ABI 26): this device's signature over a sealed message's
   /// 32-byte franking [commit] in [conversationId], with its MLS signing
   /// key and over its own identity (`pm_crypto_l2_frank_sign`).
-  Uint8List l2FrankSign({
-    required String conversationId,
-    required List<int> commit,
-  }) {
+  Uint8List l2FrankSign(
+      {required String conversationId, required List<int> commit}) {
     final conversation = utf8.encode(conversationId);
     _bindings._bounded(conversation, 128);
     _bindings._bounded(commit, 32, exact: true);
     final signature = _bindings._withByteLists(
-      <List<int>>[conversation, commit],
-      (slices) => _bindings._output(
-        (out) => _bindings._l2FrankSign(_liveHandle, slices[0], slices[1], out),
-        maximum: 64,
-      ),
-    );
+        <List<int>>[conversation, commit],
+        (slices) => _bindings._output(
+            (out) =>
+                _bindings._l2FrankSign(_liveHandle, slices[0], slices[1], out),
+            maximum: 64));
     if (signature.length != 64) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -3338,9 +2630,8 @@ class NativeCryptoDevice implements Finalizable {
       (d) => _bindings._withByteLists(
         [message],
         (slices) => _bindings._output(
-          (out) => _bindings._c7Sign(_liveHandle, d, slices[0], out),
-          maximum: 64,
-        ),
+            (out) => _bindings._c7Sign(_liveHandle, d, slices[0], out),
+            maximum: 64),
       ),
     );
     if (signature.length != 64) {
@@ -3350,38 +2641,24 @@ class NativeCryptoDevice implements Finalizable {
   }
 
   void _withOne(
-    List<int> value,
-    int Function(_PmByteSlice) operation,
-    int max,
-  ) {
+      List<int> value, int Function(_PmByteSlice) operation, int max) {
     _bindings._bounded(value, max);
-    _bindings._withSlice(
-      Uint8List.fromList(value),
-      (slice) => _bindings._check(operation(slice)),
-    );
+    _bindings._withSlice(Uint8List.fromList(value),
+        (slice) => _bindings._check(operation(slice)));
   }
 
-  void _withTwo(
-    List<int> first,
-    List<int> second,
-    int Function(_PmByteSlice, _PmByteSlice) operation,
-  ) {
-    _bindings._withByteLists([
-      first,
-      second,
-    ], (slices) => _bindings._check(operation(slices[0], slices[1])));
+  void _withTwo(List<int> first, List<int> second,
+      int Function(_PmByteSlice, _PmByteSlice) operation) {
+    _bindings._withByteLists([first, second],
+        (slices) => _bindings._check(operation(slices[0], slices[1])));
   }
 
-  List<int> _withTwoOutput(
-    List<int> first,
-    List<int> second,
-    _HandleTwoSlicesOutputDart operation,
-  ) => _bindings._withByteLists(
-    [first, second],
-    (slices) => _bindings._output(
-      (out) => operation(_liveHandle, slices[0], slices[1], out),
-    ),
-  );
+  List<int> _withTwoOutput(List<int> first, List<int> second,
+          _HandleTwoSlicesOutputDart operation) =>
+      _bindings._withByteLists(
+          [first, second],
+          (slices) => _bindings._output(
+              (out) => operation(_liveHandle, slices[0], slices[1], out)));
 
   void close() {
     if (_handle == nullptr) return;
@@ -3429,7 +2706,7 @@ const List<int> emptyMembershipChanges = <int>[1, 0, 0, 0, 0];
 
 List<int> encodeMembershipChanges({
   required List<({List<int> keyPackage, String accountId, String deviceId})>
-  adds,
+      adds,
   required List<({String accountId, String deviceId})> removes,
 }) {
   if (adds.isEmpty && removes.isEmpty) {
