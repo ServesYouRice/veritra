@@ -213,6 +213,15 @@ final class C7Pending {
 /// What happened to this device's own proposal when a record came back.
 enum C7OwnOutcome { none, applied, lost }
 
+/// How long an own proposal may stay pending before the app may propose
+/// again (owner, 2026-11-12). It is then reported `timeout` and kept in
+/// [C7ChannelBook.late]: other devices may still apply it, so its echo,
+/// when it comes, is applied here too.
+const Duration c7ProposalTimeout = Duration(minutes: 5);
+
+/// Timed-out proposals kept for a late echo.
+const int c7LateProposalLimit = 4;
+
 /// One channel's C7 state in one group.
 final class C7ChannelBook {
   C7ChannelBook({
@@ -223,11 +232,13 @@ final class C7ChannelBook {
     required List<C7Gen> gens,
     List<int> pastGens = const <int>[],
     this.pending,
+    List<C7Pending> late = const <C7Pending>[],
     this.ownNotice,
     this.lastOwn = C7OwnOutcome.none,
   })  : records = Map<int, Uint8List>.unmodifiable(records),
         gens = List<C7Gen>.unmodifiable(gens),
-        pastGens = List<int>.unmodifiable(pastGens);
+        pastGens = List<int>.unmodifiable(pastGens),
+        late = List<C7Pending>.unmodifiable(late);
 
   /// A channel this device holds no record for: `members_from_join`, no head.
   C7ChannelBook.genesis(this.channelId, this.groupId)
@@ -236,6 +247,7 @@ final class C7ChannelBook {
         gens = const <C7Gen>[],
         pastGens = const <int>[],
         pending = null,
+        late = const <C7Pending>[],
         ownNotice = null,
         lastOwn = C7OwnOutcome.none;
 
@@ -251,6 +263,10 @@ final class C7ChannelBook {
   final List<C7Gen> gens;
   final List<int> pastGens;
   final C7Pending? pending;
+
+  /// This device's own proposals that timed out (newest last): their echo
+  /// may still come, and is applied when it does.
+  final List<C7Pending> late;
 
   /// What became of this device's last own proposal: `lost` (another
   /// record took its seq), `stale` (sequenced after a membership commit; the
@@ -298,6 +314,32 @@ final class C7ChannelBook {
     return gen?.key == null || gen!.epoch == 0 ? null : gen;
   }
 
+  /// [pending] once it has waited [c7ProposalTimeout] at [nowMs]: moved to
+  /// [late] and reported `timeout`, so the app may propose again. A stale
+  /// proposal (its echo came, below the floor) is left for the app.
+  C7ChannelBook expirePending(int nowMs) {
+    final own = pending;
+    if (own == null ||
+        ownNotice == 'stale' ||
+        nowMs - own.sentAtMs < c7ProposalTimeout.inMilliseconds) {
+      return this;
+    }
+    final kept = <C7Pending>[...late, own];
+    return copyWith(
+      clearPending: true,
+      late: kept.length <= c7LateProposalLimit
+          ? kept
+          : kept.sublist(kept.length - c7LateProposalLimit),
+      ownNotice: 'timeout',
+    );
+  }
+
+  /// [late] without the proposal sent as [actionId].
+  C7ChannelBook withoutLate(String actionId) => copyWith(late: <C7Pending>[
+        for (final entry in late)
+          if (entry.actionId != actionId) entry
+      ], pending: pending, ownNotice: ownNotice);
+
   C7ChannelBook copyWith({
     C7ChannelState? chain,
     Map<int, Uint8List>? records,
@@ -305,6 +347,7 @@ final class C7ChannelBook {
     List<int>? pastGens,
     C7Pending? pending,
     bool clearPending = false,
+    List<C7Pending>? late,
     String? ownNotice,
     bool clearNotice = false,
     C7OwnOutcome lastOwn = C7OwnOutcome.none,
@@ -317,6 +360,7 @@ final class C7ChannelBook {
         gens: gens ?? this.gens,
         pastGens: pastGens ?? this.pastGens,
         pending: clearPending ? null : (pending ?? this.pending),
+        late: late ?? this.late,
         ownNotice: clearNotice ? null : (ownNotice ?? this.ownNotice),
         lastOwn: lastOwn,
       );
@@ -396,6 +440,7 @@ final class C7ChannelBook {
           gens: gens,
           pastGens: pastGens,
           pending: pendingNext,
+          late: late,
           ownNotice: notice,
           lastOwn: own,
         ),
@@ -454,6 +499,7 @@ final class C7ChannelBook {
         gens: nextGens,
         pastGens: _retired(),
         pending: pendingNext,
+        late: late,
         ownNotice: notice,
         lastOwn: own,
       ),
@@ -571,6 +617,8 @@ final class C7ChannelBook {
         'gens': <Object?>[for (final gen in gens) gen.toJson()],
         'past': pastGens,
         if (pending != null) 'pending': pending!.toJson(),
+        if (late.isNotEmpty)
+          'late': <Object?>[for (final entry in late) entry.toJson()],
         if (ownNotice != null) 'notice': ownNotice,
       };
 
@@ -620,6 +668,10 @@ final class C7ChannelBook {
         pastGens: (map['past'] as List).cast<int>(),
         pending:
             map['pending'] == null ? null : C7Pending.fromJson(map['pending']),
+        late: <C7Pending>[
+          for (final entry in (map['late'] as List?) ?? const <Object?>[])
+            C7Pending.fromJson(entry),
+        ],
         ownNotice: map['notice'] as String?,
       );
     } on Object {

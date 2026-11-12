@@ -137,7 +137,8 @@ class NativeCryptoService
   Future<C7ChannelView?> c7ChannelView(
       String conversationId, String channelId) async {
     if (!_c7Active(conversationId)) return null;
-    final book = await _c7LoadBook(conversationId, channelId);
+    final book = (await _c7LoadBook(conversationId, channelId))
+        .expirePending(_c7NowMs());
     return C7ChannelView(
       full: book.mode == c7ModeFull,
       status: book.status.name,
@@ -5718,6 +5719,26 @@ extension _C7Engine on NativeCryptoService {
     final community = _c7CommunityOf(conversationId);
     for (final channel in group.channels) {
       final book = await _c7LoadBook(conversationId, channel);
+      final late = book.late.where((p) => p.actionId == actionId).firstOrNull;
+      if (late != null) {
+        // A proposal that timed out came back after all. Other devices
+        // apply it, so this one does too (or this device would keep a key
+        // the channel dropped); a newer own proposal for the same seq is
+        // then lost, as for anyone else's record.
+        final rest = book.withoutLate(actionId);
+        final record = late.full;
+        if (record.epoch < group.floor ||
+            !_c7MayRecord(conversationId, _accountId!)) {
+          return _c7Put(conversationId, group, <C7ChannelBook>[rest]);
+        }
+        final step = rest.applyRecord(record, late.record,
+            source: C7Source.proposalLive, key: late.key);
+        return _c7Put(conversationId, group, <C7ChannelBook>[
+          community == null
+              ? step.book
+              : _c7CatchUp(step.book, group, community),
+        ]);
+      }
       final pending = book.pending;
       if (pending == null || pending.actionId != actionId) continue;
       final record = pending.full;
@@ -6013,7 +6034,10 @@ extension _C7Engine on NativeCryptoService {
       throw StateError('only owners and admins change the history setting');
     }
     final group = await _c7LoadGroup(conversationId);
-    final book = await _c7LoadBook(conversationId, channelId);
+    // A proposal pending past its timeout no longer blocks (owner,
+    // 2026-11-12); it moves to `late` in the write that stores this one.
+    final book = (await _c7LoadBook(conversationId, channelId))
+        .expirePending(_c7NowMs());
     if (book.pending != null && book.ownNotice != 'stale') {
       throw StateError('a history change is already pending here');
     }

@@ -1078,9 +1078,14 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
    shared group's open and announcement channels) or its private group's
    channel. A channel the server leaves out stays `members_from_join` for
    that newcomer (fails closed); one it adds gets a zero slot.
-7. An own proposal that never comes back (the server refuses or loses
-   it) stays pending; the channel then takes no new proposal from this
-   device. No timeout is built.
+7. An own proposal that has not come back after 5 minutes
+   (`c7ProposalTimeout`, owner 2026-11-12: timeout and retry) is reported
+   `timeout` and the device may propose again. It is not forgotten: other
+   devices may still apply it, so it is kept (the last four, `late`) and
+   applied here when its echo arrives; a newer own proposal for the same
+   seq is then `lost`, as for anyone else's record. The expiry is lazy (the
+   channel view and the next proposal read it), so no write happens
+   outside a proposal or a sync step.
 8. A group-level message signs channel `""` (two zero length bytes),
    as its aad already binds it. Settled 2026-11-12 with the smallest
    change: Rust's `post_signed_fields` now takes an empty channel id (as

@@ -81,10 +81,14 @@ class _Authority
 
 int _serverIds = 0;
 
+/// How far every test client's clock runs ahead of the real one.
+Duration _skew = Duration.zero;
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final skip = nativeCryptoSkip();
   late NativeCryptoBindings bindings;
+  setUp(() => _skew = Duration.zero);
 
   /// A device of account `acct_[name]`; [device] names a second device of
   /// the same account.
@@ -459,6 +463,65 @@ void main() {
   }, skip: skip);
 
   test(
+      'an own proposal that never comes back times out, and the device may '
+      'propose again', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    final lost = await alice.service
+        .c7ProposeRecord(_conversation, _channel, full: false);
+    await alice.store.removePendingEnvelope(lost.idempotencyKey);
+    expect((await alice.view())!.pending, isTrue);
+    await expectLater(
+        alice.service.c7ProposeRecord(_conversation, _channel, full: false),
+        throwsStateError);
+    _skew = c7ProposalTimeout + const Duration(seconds: 1);
+    final timedOut = (await alice.view())!;
+    expect(timedOut.pending, isFalse);
+    expect(timedOut.ownNotice, 'timeout');
+    // The first never reaches anyone; the second applies everywhere.
+    await propose(alice, [bob], full: false);
+    for (final device in [alice, bob]) {
+      expect((await device.view())!.full, isFalse);
+    }
+    expect((await alice.view())!.ownNotice, isNull);
+    expect((await alice.book()).late, hasLength(1));
+  }, skip: skip);
+
+  test(
+      'a timed-out proposal that comes back late applies here too, and the '
+      'newer one for the same seq is lost', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    // The switch off is slow to come back; Alice proposes a new period.
+    final slow = await alice.service
+        .c7ProposeRecord(_conversation, _channel, full: false);
+    await alice.store.removePendingEnvelope(slow.idempotencyKey);
+    _skew = c7ProposalTimeout + const Duration(seconds: 1);
+    final newer = await alice.service
+        .c7ProposeRecord(_conversation, _channel, full: true);
+    await alice.store.removePendingEnvelope(newer.idempotencyKey);
+    // The server sequenced the slow one first: Bob switches off, and so
+    // must Alice, or she would keep sealing under a key Bob dropped.
+    await bob.receive(alice, slow);
+    await alice.receive(alice, slow);
+    await bob.receive(alice, newer);
+    await alice.receive(alice, newer);
+    final view = (await alice.view())!;
+    expect(view.full, isFalse);
+    expect(view.pending, isFalse);
+    expect(view.ownNotice, 'lost');
+    expect((await alice.book()).late, isEmpty);
+    expect((await bob.view())!.full, isFalse);
+    expect((await alice.book()).headBytes, (await bob.book()).headBytes);
+    final after = await alice.send('after the switch off');
+    expect(await bob.sealedUnderChannelKey(after), isFalse);
+  }, skip: skip);
+
+  test(
       'in a shared group, records name their channel, one history_sync '
       'covers every channel, and a newcomer adopts each', () async {
     final alice = await client('alice');
@@ -573,8 +636,10 @@ class _Client {
   static Future<_Client> enroll(
       NativeCryptoBindings bindings, String accountId, String deviceId) async {
     final local = MemoryLocalStore();
-    final service =
-        TestNativeCryptoService(bindings: bindings, localStore: local);
+    final service = TestNativeCryptoService(
+        bindings: bindings,
+        localStore: local,
+        clock: () => DateTime.now().add(_skew));
     await service.createEnrollmentCredential(EnrollmentReservation(
       id: 'res_$deviceId',
       accountId: accountId,
