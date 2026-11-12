@@ -240,9 +240,8 @@ class NativeCryptoService
 
   @override
   Future<Set<String>> c7FormerMemberPosts(String conversationId) async =>
-      C7ImportState.decode(
-              await localStore.loadSetting(c7ImportSetting(conversationId)))
-          .former;
+      c7DecodeFormer(
+          await localStore.loadSetting(c7FormerSetting(conversationId)));
 
   @override
   Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone) =>
@@ -6444,7 +6443,10 @@ extension _C7Engine on NativeCryptoService {
     final keys = C7Keys(bindings);
     final changedBooks = <C7ChannelBook>[];
     final cursors = <String, String?>{...state.cursors};
-    final formerPosts = <String>{...state.former};
+    final formerPosts = <String>{
+      ...c7DecodeFormer(
+          await localStore.loadSetting(c7FormerSetting(conversationId))),
+    };
     // Pass one: every opened, verified post and action, oldest first.
     final posts = <({String key, String account, InsertMessageEffect row})>[];
     final actions = <List<MessageEffect>>[];
@@ -6568,6 +6570,12 @@ extension _C7Engine on NativeCryptoService {
           continue;
         }
         final key = messageKey(row.senderDeviceId, row.actionId);
+        // A former member's post is shown marked or not at all.
+        if (listed != null &&
+            !formerPosts.contains(key) &&
+            formerPosts.length >= c7FormerPostLimit) {
+          continue;
+        }
         if (isPost) {
           // The post's own row only: no profile key rides in from history.
           for (final effect in effects) {
@@ -6618,16 +6626,13 @@ extension _C7Engine on NativeCryptoService {
         for (final effect in action)
           if (!deleted.contains(targetOf(effect))) effect,
     ];
-    final next = C7ImportState(
-      cursors: cursors,
-      keys: keptKeys,
-      former: const <String>{},
-    ).copyWith(former: formerPosts);
+    final next = C7ImportState(cursors: cursors, keys: keptKeys);
     await localStore.importC7History(ordered, c7Settings: <String, String?>{
       if (changedBooks.isNotEmpty || first)
         ..._c7Put(conversationId,
             first ? group.copyWith(imported: true) : group, changedBooks),
       c7ImportSetting(conversationId): next.encode(),
+      c7FormerSetting(conversationId): c7EncodeFormer(formerPosts),
     });
     return posts.where((post) => !deleted.contains(post.key)).length;
   }

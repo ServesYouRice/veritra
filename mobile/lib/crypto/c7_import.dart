@@ -27,8 +27,22 @@ const int c7HistoryRequestLimit = 100;
 /// the "from before you joined" placeholder instead.
 const String c7HiddenAttachmentBody = '{"c7":"pre_join_attachment"}';
 
-/// At most this many former-member post keys are kept for the mark.
+/// At most this many former-member posts are marked per group; once full,
+/// a further post from a former member is not imported (never shown
+/// unmarked).
 const int c7FormerPostLimit = 20000;
+
+/// The marked posts stored in `c7FormerSetting`; malformed reads as none.
+Set<String> c7DecodeFormer(String? stored) {
+  if (stored == null) return const <String>{};
+  try {
+    return (jsonDecode(stored) as List).cast<String>().toSet();
+  } on Object {
+    return const <String>{};
+  }
+}
+
+String c7EncodeFormer(Set<String> keys) => jsonEncode(keys.toList()..sort());
 
 /// The walk through the stored `history_sync` messages in [syncs] for
 /// [book] (decision 5, "Generation entry and backward walk"): starting from
@@ -114,41 +128,21 @@ C7ChannelBook c7WalkBack({
 /// A newcomer's import state in one group (`c7ImportSetting`): for each
 /// stream fetched, the oldest history message fetched so far (the cursor
 /// "Load earlier posts" pages before) or null once the route had nothing
-/// older; the former-member keys fetched at join; and the imported posts
-/// verified with them.
+/// older, and the former-member keys fetched at join. Cleared by the re-add
+/// wipe with the rest of the group's C7 state.
 final class C7ImportState {
   C7ImportState({
     required Map<String, String?> cursors,
     required List<C7FormerKey> keys,
-    required Set<String> former,
   })  : cursors = Map<String, String?>.unmodifiable(cursors),
-        keys = List<C7FormerKey>.unmodifiable(keys),
-        former = Set<String>.unmodifiable(former);
+        keys = List<C7FormerKey>.unmodifiable(keys);
 
   static final C7ImportState empty = C7ImportState(
-      cursors: const <String, String?>{},
-      keys: const <C7FormerKey>[],
-      former: const <String>{});
+      cursors: const <String, String?>{}, keys: const <C7FormerKey>[]);
 
   /// By channel id (`''` for the group-level stream).
   final Map<String, String?> cursors;
   final List<C7FormerKey> keys;
-  final Set<String> former;
-
-  C7ImportState copyWith({
-    Map<String, String?>? cursors,
-    List<C7FormerKey>? keys,
-    Set<String>? former,
-  }) {
-    final kept = former ?? this.former;
-    return C7ImportState(
-      cursors: cursors ?? this.cursors,
-      keys: keys ?? this.keys,
-      former: kept.length <= c7FormerPostLimit
-          ? kept
-          : kept.skip(kept.length - c7FormerPostLimit).toSet(),
-    );
-  }
 
   String encode() => jsonEncode(<String, Object?>{
         'v': 1,
@@ -157,7 +151,6 @@ final class C7ImportState {
           for (final key in keys)
             <Object?>[key.deviceId, key.accountId, base64Encode(key.signingKey)]
         ],
-        'former': former.toList(),
       });
 
   /// Anything malformed reads as no import state: no paging, no keys.
@@ -179,7 +172,6 @@ final class C7ImportState {
               signingKey: Uint8List.fromList(base64Decode(raw[2] as String)),
             ),
         ],
-        former: (map['former'] as List).cast<String>().toSet(),
       );
     } on Object {
       return empty;

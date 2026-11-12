@@ -587,10 +587,13 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   outside the tree, marked and without a role), the live classify with
   only posts and targeted actions kept, and the two-pass apply. Pre-join
   attachments are never stored or offered. Deeper paging on demand in
-  `full` channels only. Imported posts are not franked. The server also
-  refuses a `history_sync` tagged with an epoch above the group's
-  recorded epoch. C7 design, "Newcomer import". Needs the independent
-  review.
+  `full` channels only. Imported posts are not franked. A replaced
+  device's posts from before its replacement are not imported (deviation
+  10: the tree key always wins, and the server lists only devices outside
+  the roster). Former-member marks are not carried by K1 or K2 while the
+  rows are. The server also refuses a `history_sync` tagged with an epoch
+  above the group's recorded epoch. C7 design, "Newcomer import". Needs
+  the independent review.
 
 - **C7 targeted `history_sync` delivery (2026-11-12, owner answer Q3):**
   wire change in clear metadata only, behind the server's

@@ -1099,6 +1099,15 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
    missing key from one, and the review's finding 4 (members check each
    other's slots) applies to newcomers only. See "Targeted `history_sync`
    delivery" in the next build status.
+10. A replaced device's posts from before its replacement are not
+   imported (decision 8 says they are verified with the server's list and
+   marked). The importer takes a device's key from the current tree
+   whenever the device has a leaf there, and the former-member route lists
+   only devices outside the roster, so a device id that is back in the
+   tree with a new key has no key that verifies its earlier posts. A gap,
+   never a leak; a server-key fallback for devices in the tree was not
+   added, since it would let the server's list speak for a current member.
+   For the crypto review.
 
 **Not built (left for the next slices):** the newcomer's import (backward
 walk through stored `history_sync` slots, the per-channel and group-level
@@ -1234,9 +1243,16 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     generation's `E_g`, this group and the route epoch. The signer is the
     device's key in the current tree when it has a leaf there, even if the
     server lists another key for it; otherwise the server's former-member
-    key, and the post is then marked "From a former member" (kept as a set
-    of message keys in the sealed import setting; no schema change) and
-    never acts with a role. A device with neither is dropped.
+    key, and the post is then marked "From a former member" and never
+    acts with a role. A device with neither is dropped. The marks are a
+    set of message keys in their own sealed setting (`c7.former.<group>`;
+    no schema change), which the re-add wipe leaves with the rows; at
+    20,000 marks a further former member's post is not imported rather
+    than shown unmarked. Like every C7 setting it is not in K1 backups or
+    K2 bundles, while the rows are: a restored or linked device shows those
+    posts unmarked (for the owner: a schema 42 column carried in
+    snapshots would keep the mark; open until then).
+    A replaced device's earlier posts are a gap (deviation 10).
   - **Types.** The opened VAP1 goes through the live path's classify (the
     conversation, sender, action and channel); only posts and the actions
     that target them are taken. A record, a `history_sync` or any other
@@ -1267,7 +1283,19 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   - **Residuals.** Imported posts are not franked (the history route serves
     no `frank_commit`), so they cannot be reported. The newcomer import
     runs once per join; a device that never receives the `history_sync` of
-    its join imports nothing (nothing would open).
+    its join imports nothing (nothing would open). An import that keeps
+    failing is fetched again on every foreground work pass, with no
+    backoff (up to 8 MiB per channel each time).
+  - **Tests.** Native: a private group with two removals before the add
+    (the walk adopts the first generation), with a relabelled epoch, a
+    closing-epoch label, a record in the stream, a server key listed for a
+    tree device, a device with no key, an author's delete, an edit, the
+    attachment placeholder, re-runs and paging; a shared group where the
+    `full` channel's slot is the second in each `history_sync`. Encrypted
+    store: a delete and an edit imported a page before their targets.
+    App: the same requests for every channel, paging. The history and
+    former-member JSON is pinned on both sides (Go marshals its structs to
+    the text the Dart parser reads).
 - **Not built: C3 conversion (`move`, decision 11).** Left for its own
   slice, with nothing of it on this branch: the compact form's
   `lp(close_group_id)` and 128-byte wrap field, its codec and a Python

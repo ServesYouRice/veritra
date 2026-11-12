@@ -881,6 +881,110 @@ void main() {
   }, skip: skip);
 
   test(
+      'in a shared group the walk finds the channel\'s slot after another '
+      'channel\'s, and imports only that channel\'s posts', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final carol = await client('carol');
+    final erin = await client('erin');
+    final dave = await client('dave');
+    await alice.service.initializeConversation(_shared, <DeviceKeyPackage>[
+      await bob.keyPackage(),
+      await carol.keyPackage(),
+      await erin.keyPackage(),
+    ]);
+    await _accept(alice, [bob, carol, erin], const [], conversation: _shared);
+    // Channel B (sorted after A in every history_sync) goes full.
+    final record = await alice.service.c7ProposeRecord(_shared, _channelB,
+        full: true, create: true, layoutGeneration: 1);
+    await alice.store.removePendingEnvelope(record.idempotencyKey);
+    await alice.receive(alice, record);
+    for (final member in [bob, carol, erin]) {
+      await member.receive(alice, record);
+    }
+    Future<MessageEnvelope> post(String channel, String text) async {
+      final sent = await alice.service.encryptChannelPayload(
+          _shared, AppPayloadType.text, <String, Object?>{'text': text},
+          channelId: channel, layoutGeneration: 1);
+      await alice.store.removePendingEnvelope(sent.idempotencyKey);
+      return sent;
+    }
+
+    Future<MessageEnvelope> syncFor(int epoch) async {
+      final due = (await alice.service.c7DueWork([_shared]))
+          .whereType<C7DueSync>()
+          .where((d) => d.forEpoch == epoch)
+          .single;
+      final sync = (await alice.service.c7Send(due))!;
+      await alice.store.removePendingEnvelope(sync.idempotencyKey);
+      return sync;
+    }
+
+    C7HistoryRow served(MessageEnvelope sent, int id) {
+      final metadata = sent.cryptoMetadata as Map;
+      return C7HistoryRow(
+        messageId: 'hist_$id',
+        senderDeviceId: alice.deviceId,
+        actionId: sent.idempotencyKey,
+        channelId: metadata['channel_id'] as String?,
+        createdAt: DateTime.now().toUtc(),
+        epoch: metadata['mls_epoch'] as int,
+        body: Uint8List.fromList(sent.sealedBody!),
+      );
+    }
+
+    final inB = await post(_channelB, 'in B, first generation');
+    final inA = await post(_channelA, 'in A');
+    final syncs = <MessageEnvelope>[];
+    final members = [bob, carol, erin];
+    for (final gone in [carol, erin]) {
+      await alice.service.stageMembershipChange(_shared,
+          removes: [(accountId: gone.accountId, deviceId: gone.deviceId)]);
+      await _accept(alice, const [], members, conversation: _shared);
+      members.remove(gone);
+      syncs
+          .add(await syncFor((await alice.service.groupEpoch(_shared))!.epoch));
+    }
+    expect(syncs.first.sealedBody!.length, c7HistorySyncBodyLength(2));
+    await alice.service
+        .stageMembershipChange(_shared, adds: [await dave.keyPackage()]);
+    await _accept(alice, [dave], [bob], conversation: _shared);
+    await dave.receive(
+        alice, await syncFor((await alice.service.groupEpoch(_shared))!.epoch));
+    final before = C7ChannelBook.decode(
+        await dave.store.loadSetting(c7ChannelSetting(_shared, _channelB)),
+        _channelB,
+        _shared);
+    expect(before.gens, hasLength(2));
+    final imported = await dave.service.c7ImportHistory(
+      _shared,
+      groupLevel: C7HistoryPage(<C7HistoryRow>[
+        served(syncs[1], 4),
+        served(syncs[0], 3),
+      ], complete: true),
+      channels: <String, C7HistoryPage>{
+        _channelA:
+            C7HistoryPage(<C7HistoryRow>[served(inA, 2)], complete: true),
+        _channelB:
+            C7HistoryPage(<C7HistoryRow>[served(inB, 1)], complete: true),
+      },
+    );
+    expect(imported, 1);
+    final after = C7ChannelBook.decode(
+        await dave.store.loadSetting(c7ChannelSetting(_shared, _channelB)),
+        _channelB,
+        _shared);
+    expect(after.gens, hasLength(3));
+    final rows = await dave.store.loadMessages(_shared);
+    final keyB = '${alice.deviceId}:${inB.idempotencyKey}';
+    final keyA = '${alice.deviceId}:${inA.idempotencyKey}';
+    expect(rows.where((row) => row.key == keyB).single.body,
+        'in B, first generation');
+    expect(rows.where((row) => row.key == keyB).single.channelId, _channelB);
+    expect(rows.where((row) => row.key == keyA), isEmpty);
+  }, skip: skip);
+
+  test(
       'in a shared group, records name their channel, one history_sync '
       'covers every channel, and a newcomer adopts each', () async {
     final alice = await client('alice');

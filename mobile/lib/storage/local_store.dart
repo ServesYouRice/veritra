@@ -380,6 +380,12 @@ String c7ChannelSetting(String conversationId, String channelId) =>
 /// (`mobile/lib/crypto/c7_import.dart`).
 String c7ImportSetting(String conversationId) => 'c7.import.$conversationId';
 
+/// The sealed setting that lists, by local message key, the imported posts
+/// a newcomer verified with a former member's key from the server (decision
+/// 8, the "from a former member" mark). Kept as long as the rows: never
+/// cleared by the re-add wipe.
+String c7FormerSetting(String conversationId) => 'c7.former.$conversationId';
+
 /// Every C7 setting starts with this; the leak tests scan for it.
 const String c7SettingPrefix = 'c7.';
 
