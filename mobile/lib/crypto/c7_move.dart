@@ -160,6 +160,12 @@ final class C7Move {
 /// its head is a `full` record of this channel in the old group; the
 /// head's epoch bounds the walk, as in [c7WalkBack]. A dispute (two
 /// different wraps) stops the walk there: a gap, never a leak.
+///
+/// The slot's head is taken as the floor without checking its record
+/// signature: only a holder of the old generation key can write a slot
+/// that opens, and a signature would not stop such a member from placing
+/// a genuine older head (see the C7 design, "Moved slot heads"). What it
+/// gains equals leaking the keys it holds.
 List<C7Gen> c7WalkMoved({
   required NativeCryptoBindings bindings,
   required C7Gen start,

@@ -1511,6 +1511,21 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     move a record between key homes on the server's topology alone (a
     relabel); the conversion passes `rehome` explicitly, and only it.
 
+  Moved slot heads (review question, 2026-11-12): `c7WalkMoved` checks a
+  slot's head for mode, group, channel and the generation entry, but not
+  the head's record signature, and that is deliberate. Unlike the
+  newcomer's walk, which bounds itself by the head it verified when it
+  adopted it, the moved walk has no verified head of the old group, so it
+  takes the slot's head as its floor. Only a holder of the old
+  generation key can write a slot that opens (the server cannot), and a
+  signature check would not stop such a member: it could place a
+  genuine, older signed head to reach an earlier `full` period. What it
+  gains is what it could give away anyway by handing over the keys it
+  holds (the trust limit "a member can leak what it can read"). Every
+  post taken still needs its author's valid signature over the old
+  group's ids and route epoch, and is a body the server stored in the
+  old stream before its cutoff. A period sealed in `members_from_join`
+  used random keys, so no wrap reaches it.
   Tests: `mobile/test/c3_channel_move_native_test.dart` (both directions
   through real OpenMLS devices, the walk back across a removal in the old
   group, the later newcomer, the window bound, a post of another
@@ -1519,9 +1534,7 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   record and the moved fetch), `c3_community_info_service_test.dart` (the
   explicit rehome), the server tests named in docs/crypto.md. Residuals: only the first page
   of the old streams is imported (no "Load earlier posts" into the old
-  group); moved slot heads are checked for shape, ids, channel and mode
-  but not their record signature (the wrap they extend is authenticated
-  by the move); a channel moved back and forth between the same two
+  group); a channel moved back and forth between the same two
   conversations is noted per direction, the mover's note replacing the
   older one; open-to-private makes a conversation with the mover alone
   and members are added afterwards (owner question below). ABI 25 stays

@@ -639,7 +639,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     that actor may record now. The import always uses the wrap the device
     stored, never one handed in. The old group's earlier generations come
     from its stored slots, one unique wrap per step; a dispute stops the
-    walk (a gap). Local schema and the ABI unchanged; setting `c7.moves`.
+    walk (a gap). A slot's head bounds that walk without a record
+    signature check: only an old-group key holder can write a slot, and
+    a signature would not stop it placing a genuine older head; it gains
+    only what it could leak anyway (C7 design, "Moved slot heads"). Local schema and the ABI unchanged; setting `c7.moves`.
   Trust limits, both directions, in the C7 design. Needs the
   independent review.
 - **Message frames name nothing (2026-11-12; was "Found, not fixed" in the
