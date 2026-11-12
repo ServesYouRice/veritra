@@ -1204,7 +1204,11 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   never receives one; the only paths left to a member are its own
   records and rekeys. A removal-only commit's `history_sync` reaches no
   device but its sender's echo, and is still sent and stored, because a
-  later newcomer's backward walk may need the wrap it carries. Finding 4
+  later newcomer's backward walk may need the wrap it carries. **Owner
+  answer (2026-11-12): keep sending and storing them; the egress (one
+  upload of about `P(N) + 124 + 700 × N` bytes per removal commit, and its
+  storage until retention) is accepted.** No server or app change follows
+  from it. Finding 4
   of the review (members check each other's slots) no longer applies:
   only newcomers check slots. Two members whose fallbacks race can both
   pass the check; the server's dedup then refuses the later one, and
@@ -1323,7 +1327,8 @@ C are answered in round 3.
 2. **Pre-join attachments.** Downloading one shows the server the channel
    was `full`. Proposed: offer them on tap with that cost accepted.
    Alternatives: never offer them, or prefetch them all within the depth.
-3. **`history_sync` cost.** About `P(N) + 124 + 700 × N` bytes per
+3. **`history_sync` cost** (answered 2026-11-12: targeted delivery, Q3;
+   removal-only ones are still sent and stored, egress accepted). About `P(N) + 124 + 700 × N` bytes per
    membership commit: 25 KB at 30 channels, so about 25 MB of egress per
    membership commit at 1,000 devices (0.6 MB for the add commit itself;
    C0 batches joins). Accept, or add targeted delivery of add-time
