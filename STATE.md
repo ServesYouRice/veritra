@@ -124,6 +124,7 @@ and keep each change small. Missing product features are packages in the
 
 | Item | What | Notes |
 |---|---|---|
+| Workflows after D118 | `ci.yml` also runs the Linux checks that run locally, `release.yml` pushes the image on a version tag, `rust-policy.yml` runs daily | Keep only the jobs for platforms the dev PC cannot build. The image release stays with `scripts/release-image.sh`, which should print the digest and not write into `infra` (handbook, 2026-11-11). Update the scripts that require the workflow files: `scripts/check-go-toolchain.sh`, `scripts/check-demo-boundary.sh`, `scripts/check-ci-evidence.py` |
 | T42B | Native incoming-call lifecycle (CallKit, PushKit, Android Telecom) | Deferred by D16/D20; design in [`docs/call-platform-design-proposal.md`](docs/call-platform-design-proposal.md) needs the owner's approval when it starts |
 | Long soak and tier M on real hardware | The 2-hour soak was not run here (shared CPU); tier M was rerun on a quieter shared host | Run `scripts/capacity.sh` on the owner's host |
 | Deploy, untested here | Rollback across a schema change, a live R2 restore, cert-manager issuance, Flux reading the real `infra` repo | Try on the first real deployment |
@@ -286,6 +287,7 @@ Recorded decisions that still apply. Full wording of D01–D30 is in Git history
 | **D115** (2026-11-11, owner; C3) | Moderators may remove members from private channels; only owners and admins (by the verified C4 record) rotate the channel or community info key. The device that made the removal rotates at once; other owner or admin devices that observe it rotate after 15 s + 30 s × rank + 0–10 s jitter (rank from a per-removal hash order of the verified owner and admins, capped at 8, about 4.5 min at most), unless another owner or admin device has already delivered a fresh key, which ends the obligation for every device. The schedule changes timing only and never ends an obligation; with no admin online the saved obligation waits for one ([C3](docs/designs/C3-private-channels-and-info.md)) |
 | **D116** (2026-11-11, owner) | `PRIVATE_MESSENGER_COMMUNITY_LAYOUT` is on by default (servers and demos); `0`/`false` turns it off and any other value refuses to start. Community and channel names are searched on the device only, since the server holds none (C3) |
 | **D117** (2026-11-11, coordinator) | Counters after the `ai/integ` round: crypto ABI 22, mobile local schema 36, server migration 0084 |
+| **D118** (2026-11-11, owner; handbook) | Hosted CI is allowed only to build and test on platforms the dev PC cannot run (macOS, iOS, Windows, Android, arm64). Checks that run on Linux run locally, and deploys, releases and secrets never run on hosted CI. Narrows D31; the workflows are reduced to those jobs under [Open work](#open-work) |
 
 ## Roadmap
 

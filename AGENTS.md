@@ -25,7 +25,9 @@ paths for any of this, and never ship a demo build as a release.
 
 ## Governing principle
 
-Set by the owner (hosting handbook, 2026-10-04): build Veritra as a full,
+Set by the owner in the handbook (GitHub: `ServesYouRice/handbook`; read its
+`README.md`, `standards.md` and `projects/veritra.md` before hosting, deployment
+or architecture work; first set 2026-10-04): build Veritra as a full,
 full-featured product with best practices and the right technology, not as a
 demo or the cheapest option for now. Build what the product's promise depends
 on properly now; where something only matters under load, build the seam and
@@ -54,9 +56,10 @@ The release gate below is a safety rule, not a "do not build" list.
 Report a change done only after a real check exercised it: the tests, the
 analyzer or type-checker, the build, or the changed command itself. A
 syntax-only check, or a check command that failed to start, does not count.
-Where a toolchain is missing locally (Flutter with no Docker, for example),
-push and let CI run it; a green CI run on the PR counts. Otherwise say which
-check you did not run and why.
+Run every check that can run on this machine here (D118). Where a platform's
+toolchain cannot run locally (an iOS, macOS, Windows or Android build), push
+and let CI run it; a green CI run on the PR counts for that check. Otherwise
+say which check you did not run and why.
 
 Use judgment and match nearby code. Historical audits, the old board, the
 audit consensus and task contracts live only in Git history (`docs/board.md`,
