@@ -901,6 +901,21 @@ void main() {
       for (final row in rows.reversed)
         if (row.channelId == _channel) row
     ];
+    // Review L2: a post from after Dave's join, which history serves at its
+    // own epoch. It opens under the current generation, but history is
+    // only what came before the join, so it is refused there.
+    final afterJoin = await alice.send('after the join');
+    channel.insert(
+        0,
+        C7HistoryRow(
+          messageId: 'hist_after_join',
+          senderDeviceId: alice.deviceId,
+          actionId: afterJoin.idempotencyKey,
+          channelId: _channel,
+          createdAt: DateTime.now().toUtc(),
+          epoch: await alice.epoch(),
+          body: Uint8List.fromList(afterJoin.sealedBody!),
+        ));
     // Closing-epoch body, served under the removal's epoch label: the
     // window there is the next generation's, so it never opens.
     channel.insert(
@@ -962,6 +977,7 @@ void main() {
       (bob, closing), // served in its generation's closing epoch
       (bob, gone), // deleted by its author
       (alice, record), // a record is never applied from history
+      (alice, afterJoin), // at or after the join: not history (review L2)
     ]) {
       expect(byKey.containsKey(keyOf(from, sent)), isFalse,
           reason: sent.idempotencyKey);

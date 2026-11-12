@@ -581,8 +581,10 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   transaction: the backward walk through the stored slots (an entry must
   name the generation whose key opened the slot, wrap to an earlier epoch
   no older than the head record's, and at that epoch match the record's
-  key commitment), the window `E_g <= epoch < E_close` from the route
-  epoch, one signature check with `gen = E_g`, the group and the route
+  key commitment; every slot is read, and disputed wraps are kept as
+  candidates the AEAD decides among, never adopted into the book, review
+  M3), the window `E_g <= epoch < E_close` from the route epoch (and
+  below the join epoch, review L2), one signature check with `gen = E_g`, the group and the route
   epoch (tree key first; the server's former-member key only for a device
   outside the tree, marked and without a role), the live classify with
   only posts and targeted actions kept, and the two-pass apply. Pre-join

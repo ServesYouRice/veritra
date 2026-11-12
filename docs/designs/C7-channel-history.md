@@ -1327,10 +1327,23 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     until nothing is added; never before the head record's epoch, and at
     that epoch only with the record's own key commitment; only in the
     conversation's own group. The adopted generations are kept in the
-    channel's book, so later pages use them.
+    channel's book, so later pages use them. **Review M3 (2026-11-12):**
+    the walk took the first slot that matched, so a member could store a
+    junk wrap after the honest one (newer, so read first) and cut the
+    newcomer's history short. Every slot is read now. While the slots
+    that name a generation agree on its previous key, it joins the book as
+    before; where they disagree, each distinct previous key and the walk
+    back from it become candidates (at most 32, kept in the import state
+    for later pages), never the book, so a disputed key is never handed
+    on. A body is tried under every candidate whose window holds its epoch
+    and the AEAD decides. At the period's first generation no dispute is
+    possible: the head record's key commitment pins it. Test:
+    `mobile/test/c7_walk_candidates_test.dart`.
   - **Windows and signatures.** A body opens only under the generation
     whose window holds its route epoch (`E_g <= epoch < E_close`; no route
-    epoch, no import), and its signature is checked once, with that
+    epoch, no import; **review L2:** no route epoch at or after the
+    newcomer's join epoch either, since history is what came before the
+    join), and its signature is checked once, with that
     generation's `E_g`, this group and the route epoch. The signer is the
     device's key in the current tree when it has a leaf there, even if the
     server lists another key for it; otherwise the server's former-member

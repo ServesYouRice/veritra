@@ -6535,6 +6535,7 @@ extension _C7Engine on NativeCryptoService {
     final keys = C7Keys(bindings);
     final changedBooks = <C7ChannelBook>[];
     final cursors = <String, String?>{...state.cursors};
+    final candidates = <String, List<C7Gen>>{...state.candidates};
     // Pass one: every opened, verified post and action, oldest first.
     final posts = <({String key, String account, InsertMessageEffect row})>[];
     final actions = <List<MessageEffect>>[];
@@ -6544,46 +6545,74 @@ extension _C7Engine on NativeCryptoService {
         continue;
       }
       final stored = await _c7LoadBook(conversationId, channel);
-      final book = c7WalkBack(
+      final walked = c7WalkBack(
         bindings: bindings,
         book: stored,
         syncs: groupLevel.rows,
         communityId: community,
         conversationId: conversationId,
       );
+      final book = walked.book;
       if (!identical(book, stored)) changedBooks.add(book);
+      // Review M3: generations whose wraps the stored slots disputed; each
+      // is tried and the AEAD decides per body. Kept for later pages.
+      final disputed = walked.candidates.isNotEmpty
+          ? walked.candidates
+          : (state.candidates[channel] ?? const <C7Gen>[]);
+      if (disputed.isNotEmpty) candidates[channel] = disputed;
       cursors[channel] =
           page.complete || page.rows.isEmpty ? null : page.rows.last.messageId;
       for (final row in page.rows.reversed) {
         if (row.channelId != channel) continue;
         final epoch = row.epoch;
-        if (epoch == null) continue;
-        // The window: E_g <= epoch < E_close.
-        final gen = book.genAt(conversationId, epoch);
-        final chk = gen?.key;
-        if (gen == null || chk == null || gen.epoch == 0) continue;
+        // Review L2: history is what came before this device's join. A body
+        // the route labels with the join epoch or later reached this device
+        // live, or should have; taken from history it could stand in for a
+        // live message under a label the server chose.
+        if (epoch == null || epoch >= group.joinEpoch!) continue;
+        // The window: E_g <= epoch < E_close, in the book's generations or
+        // among the disputed candidates.
+        final held = book.genAt(conversationId, epoch);
+        final tries = <C7Gen>[
+          if (held != null) held,
+          for (final candidate in disputed)
+            if (candidate.epoch <= epoch &&
+                (candidate.close == null || epoch < candidate.close!))
+              candidate,
+        ];
         final aad = C7Keys.bodyAad(
           conversationId: conversationId,
           channelId: channel,
           senderDeviceId: row.senderDeviceId,
           actionId: row.actionId,
         );
-        final bodyKey = keys.postBodyKey(
-          chk: chk,
-          communityId: community,
-          channelId: channel,
-          senderDeviceId: row.senderDeviceId,
-          actionId: row.actionId,
-        );
+        C7Gen? gen;
         ({Uint8List signature, Uint8List paddedVap1})? opened;
-        try {
-          opened = keys.openBody(bodyKey: bodyKey, aad: aad, sealed: row.body);
-        } on Object {
-          opened = null;
-        } finally {
-          bodyKey.fillRange(0, bodyKey.length, 0);
+        for (final candidate in tries) {
+          final key = candidate.key;
+          if (key == null || candidate.epoch == 0) continue;
+          final bodyKey = keys.postBodyKey(
+            chk: key,
+            communityId: community,
+            channelId: channel,
+            senderDeviceId: row.senderDeviceId,
+            actionId: row.actionId,
+          );
+          try {
+            opened =
+                keys.openBody(bodyKey: bodyKey, aad: aad, sealed: row.body);
+          } on Object {
+            opened = null;
+          } finally {
+            bodyKey.fillRange(0, bodyKey.length, 0);
+          }
+          if (opened != null) {
+            gen = candidate;
+            break;
+          }
         }
-        if (opened == null) continue;
+        final chk = gen?.key;
+        if (gen == null || chk == null || opened == null) continue;
         // Decision 8: a key in the current tree wins over anything the
         // server lists for the same device.
         final tree = _c7TreeKey(conversationId, row.senderDeviceId);
@@ -6718,7 +6747,8 @@ extension _C7Engine on NativeCryptoService {
         for (final effect in action)
           if (!deleted.contains(targetOf(effect))) effect,
     ];
-    final next = C7ImportState(cursors: cursors, keys: keptKeys);
+    final next =
+        C7ImportState(cursors: cursors, keys: keptKeys, candidates: candidates);
     await localStore.importC7History(ordered, c7Settings: <String, String?>{
       if (changedBooks.isNotEmpty || first)
         ..._c7Put(conversationId,
