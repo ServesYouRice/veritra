@@ -381,7 +381,7 @@ int32_t pm_crypto_group_decrypt_sealed(PmCryptoHandle *handle,
  * (extension 0xF0A2, zero bytes); joins refuse a pad that is not zeros.
  * Vector: testing/vectors/l2-padding-v1.json. */
 int32_t pm_crypto_l2_padded_size(uint64_t length, uint64_t *out_padded);
-/* ABI 26 (L2-3, D122): sealed sender tokens, RFC 9497 POPRF over
+/* ABI 26 (L2-3, D123): sealed sender tokens, RFC 9497 POPRF over
  * ristretto255-SHA512 (docs/crypto.md, "Sealed sender with VOPRF tokens";
  * vector testing/vectors/l2-sealed-v1.json). token_request blinds `count`
  * (1-32) fresh 32-byte nonces for the server key under info =

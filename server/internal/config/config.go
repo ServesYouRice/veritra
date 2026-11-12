@@ -38,7 +38,7 @@ type Config struct {
 	// edit, delete and paging routes answer 409 there. Off by default until
 	// the app sends bodies (build step 4); PRIVATE_MESSENGER_C7_HISTORY=1.
 	C7History bool
-	// SealedSender turns on L2-3 sealed sender (D122; docs/crypto.md,
+	// SealedSender turns on L2-3 sealed sender (D123; docs/crypto.md,
 	// "Sealed sender with VOPRF tokens"): the token issuance and sealed post
 	// routes. Off by default; PRIVATE_MESSENGER_SEALED_SENDER=1.
 	SealedSender bool

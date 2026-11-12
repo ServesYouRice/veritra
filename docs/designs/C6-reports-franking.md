@@ -490,7 +490,7 @@ Residuals:
 
 ## Sealed messages (L2-3, 2026-11-12)
 
-A sealed message (L2-3, D122) has no sender in the server's row, so G1's
+A sealed message (L2-3, D123) has no sender in the server's row, so G1's
 "honest server row" cannot attribute it. Instead (owner decision
 2026-11-12, "a leak proves nothing to anyone else") the sender adds, inside
 the ciphertext, one designated-verifier tag (`frank.d`) per instance owner

@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// SealedMessageEnvelope is an L2-3 sealed-sender envelope (D122,
+// SealedMessageEnvelope is an L2-3 sealed-sender envelope (D123,
 // docs/crypto.md "Sealed sender with VOPRF tokens"): posted with a token,
 // not a session, so it has no sender fields at all. Sealed is always true
 // so a reader can tell it from a MessageEnvelope.

@@ -1,4 +1,4 @@
--- L2-3 sealed sender (D122): envelopes posted with a token instead of a
+-- L2-3 sealed sender (D123): envelopes posted with a token instead of a
 -- session. There is no sender column at all; the sender is only inside the
 -- MLS ciphertext. The franking commitment is written once, as for
 -- message_envelopes (C6). Sealed envelopes are not edited or deleted through

@@ -9,7 +9,7 @@ import '../storage/local_store.dart'
 import 'api_client.dart';
 import 'models.dart';
 
-// L2-3 sealed sender, the app side (D122; docs/crypto.md, "Sealed sender
+// L2-3 sealed sender, the app side (D123; docs/crypto.md, "Sealed sender
 // with VOPRF tokens" and its "App step, as built").
 //
 // - [SealedSender] keeps the per-conversation token state, fetches tokens on

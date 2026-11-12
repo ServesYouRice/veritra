@@ -20,7 +20,7 @@ import (
 	"private-messenger/server/internal/sealedsender"
 )
 
-// L2-3 sealed sender (D122). The client half here is circl's POPRF client;
+// L2-3 sealed sender (D123). The client half here is circl's POPRF client;
 // the app uses the Rust core, and both match testing/vectors/l2-sealed-v1.json.
 
 type sealedTestToken struct {

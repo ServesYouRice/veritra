@@ -12,7 +12,7 @@ import (
 	"private-messenger/server/internal/sealedsender"
 )
 
-// L2-3 sealed sender (D122; docs/crypto.md, "Sealed sender with VOPRF
+// L2-3 sealed sender (D123; docs/crypto.md, "Sealed sender with VOPRF
 // tokens"). Issuance is per account and rate-limited; redemption names no
 // account or device, and nothing stored here links a spent token to the
 // account it was issued to.

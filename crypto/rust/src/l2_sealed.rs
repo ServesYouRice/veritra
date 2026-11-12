@@ -1,4 +1,4 @@
-//! L2-3 sealed sender (D122, ABI 26): the client half of the RFC 9497 POPRF
+//! L2-3 sealed sender (D123, ABI 26): the client half of the RFC 9497 POPRF
 //! tokens a device spends to post without naming itself. What keeps a
 //! sealed message reportable is designated-verifier franking, in
 //! `crate::l2_frank` (there is no franking signature).

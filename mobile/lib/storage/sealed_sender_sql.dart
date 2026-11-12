@@ -1,6 +1,6 @@
 part of 'encrypted_database.dart';
 
-// Local schema 43 (L2-3 sealed sender, D122; docs/crypto.md, "Sealed sender
+// Local schema 43 (L2-3 sealed sender, D123; docs/crypto.md, "Sealed sender
 // with VOPRF tokens"). Raw SQL like the other late tables, so the generated
 // drift code does not change, and every step is idempotent (IF NOT EXISTS
 // and a column check) so the step can be renumbered when C7's 41-42 land.

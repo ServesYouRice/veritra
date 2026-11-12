@@ -1756,7 +1756,7 @@ fn sealed_error(error: crate::l2_sealed::SealedError) -> i32 {
     }
 }
 
-/// ABI 26 (L2-3, D122): makes `count` (1 to 32) fresh token nonces and
+/// ABI 26 (L2-3, D123): makes `count` (1 to 32) fresh token nonces and
 /// blinds them for the server's POPRF `public_key` under
 /// `info(conversation_id, epoch)`. `out_request` gets
 /// `count × 32` blinded elements to send; `out_state` the secret client

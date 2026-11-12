@@ -1188,7 +1188,7 @@ class NativeCryptoBindings {
     return Uint8List.fromList(commit);
   }
 
-  /// L2-3 (ABI 26, D122): blinds [count] (1 to 32) fresh token nonces for
+  /// L2-3 (ABI 26, D123): blinds [count] (1 to 32) fresh token nonces for
   /// the server's POPRF [publicKey] under the conversation and UTC-day
   /// [epoch] (`docs/crypto.md`, "Sealed sender with VOPRF tokens"). `request` is `count × 32` blinded elements for the server;
   /// `state` holds the blinds: pass it to [l2TokenFinalize] and wipe it.

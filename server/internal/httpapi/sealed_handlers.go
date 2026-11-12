@@ -12,7 +12,7 @@ import (
 	"private-messenger/server/internal/storage"
 )
 
-// L2-3 sealed sender (D122; docs/crypto.md, "Sealed sender with VOPRF
+// L2-3 sealed sender (D123; docs/crypto.md, "Sealed sender with VOPRF
 // tokens"). Registered only while config.SealedSender is on; off, every
 // route here answers 404.
 //

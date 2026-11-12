@@ -15,7 +15,7 @@ Uint8List _hex(String text) => Uint8List.fromList([
 String _toHex(List<int> bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
-/// L2-3 sealed sender (crypto ABI 26, D122) on the real core: the token
+/// L2-3 sealed sender (crypto ABI 26, D123) on the real core: the token
 /// exchange of testing/vectors/l2-sealed-v1.json (which Rust and Go check
 /// too). The franking designation has its own vector and test
 /// (l2_frank_dv_native_test.dart).

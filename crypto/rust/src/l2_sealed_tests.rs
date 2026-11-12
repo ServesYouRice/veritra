@@ -282,7 +282,7 @@ fn generate_vector() {
         ]
     });
     let out = serde_json::json!({
-        "description": "L2-3 sealed sender (D122): RFC 9497 POPRF ristretto255-SHA512 token exchange, info layout, key id and the RFC's own POPRF vectors (sealed franking is l2-frank-dv-v1.json). Rules: docs/crypto.md, Sealed sender with VOPRF tokens.",
+        "description": "L2-3 sealed sender (D123): RFC 9497 POPRF ristretto255-SHA512 token exchange, info layout, key id and the RFC's own POPRF vectors (sealed franking is l2-frank-dv-v1.json). Rules: docs/crypto.md, Sealed sender with VOPRF tokens.",
         "suite": SUITE,
         "server_seed": hex(&seed),
         "key_info": key_info,

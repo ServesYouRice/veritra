@@ -20,7 +20,7 @@ openmls = { version = "=0.9.2", default-features = false }
 openmls_basic_credential = "=0.6.0"
 openmls_rust_crypto = "=0.6.0"
 openmls_traits = "=0.6.0"
-# L2-3 (D122): the token client (RFC 9497 POPRF) and its OS randomness.
+# L2-3 (D123): the token client (RFC 9497 POPRF) and its OS randomness.
 # rand_core 0.6 with getrandom is already in the graph through ed25519-dalek 2.
 rand_core = { version = "=0.6.4", default-features = false, features = ["getrandom"] }
 sha2 = "=0.11.1"

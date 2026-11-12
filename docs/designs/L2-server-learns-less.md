@@ -1,6 +1,6 @@
 # L2: server learns less
 
-**Status: proposed (2026-11-07). L2-1 and L2-5 built in round 7; L2-3 designed 2026-11-12 (D122); its crypto core, server half and app half are built behind a server switch that is off (docs/crypto.md, "As built" and "App step, as built").** A design only, against `main`
+**Status: proposed (2026-11-07). L2-1 and L2-5 built in round 7; L2-3 designed 2026-11-12 (D123); its crypto core, server half and app half are built behind a server switch that is off (docs/crypto.md, "As built" and "App step, as built").** A design only, against `main`
 (crypto ABI 13, server migration 0049, local schema 20). Steps L2-3 (sealed
 sender) and L2-5 (own-device alert) touch security, MLS and credential
 decisions, so each needs an independent review (AGENTS.md) and the owner's
@@ -118,7 +118,7 @@ The adversary is the server operator, or someone who has taken the host.
 
 ### L2-3 Sealed sender for application messages (Opus designs)
 
-**Design delta (2026-11-12, D122).** The owner chose VOPRF credentials
+**Design delta (2026-11-12, D123).** The owner chose VOPRF credentials
 (option B). The design that replaces the "delivery token" bullet below is in
 [`docs/crypto.md`, "Sealed sender with VOPRF tokens"](../crypto.md#sealed-sender-with-voprf-tokens-d122-crypto-abi-26-design-2026-11-12):
 RFC 9497 POPRF over ristretto255-SHA512 (`voprf` 0.5.0 in Rust, `circl`

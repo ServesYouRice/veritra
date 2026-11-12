@@ -1074,7 +1074,7 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
   the sender only when its own message comes back in sync order (stale
   when a membership commit was sequenced first: kept, reported, proposed
   again by the app; lost when another record took the seq). A live record
-  is checked before the table: the sender's leaf is `approved` (D119), its
+  is checked before the table: the sender's leaf is `approved` (D120), its
   epoch is at or above the floor, the actor is owner or admin in the
   verified role record (`VerifiedRoleSource`; a private channel's group is
   judged by its shared group's), and the signature verifies against the

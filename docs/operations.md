@@ -804,7 +804,7 @@ by one day to match, so an active device is never counted as idle.
 
 ## Sealed sender (L2-3, off by default)
 
-`PRIVATE_MESSENGER_SEALED_SENDER=1` turns on sealed sender (D122;
+`PRIVATE_MESSENGER_SEALED_SENDER=1` turns on sealed sender (D123;
 `docs/crypto.md`, "Sealed sender with VOPRF tokens"). Off, the four routes
 (`GET /api/v1/sealed/key`, `GET /api/v1/sealed/conversations/{id}`,
 `POST /api/v1/sealed/conversations/{id}/tokens`,

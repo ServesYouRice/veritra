@@ -1,5 +1,5 @@
 {
-  "description": "L2-3 sealed sender (D122): RFC 9497 POPRF ristretto255-SHA512 token exchange, info layout, key id and the RFC's own POPRF vectors (sealed franking is l2-frank-dv-v1.json). Rules: docs/crypto.md, Sealed sender with VOPRF tokens.",
+  "description": "L2-3 sealed sender (D123): RFC 9497 POPRF ristretto255-SHA512 token exchange, info layout, key id and the RFC's own POPRF vectors (sealed franking is l2-frank-dv-v1.json). Rules: docs/crypto.md, Sealed sender with VOPRF tokens.",
   "exchange": {
     "count": 2,
     "request": "4ca72b970e4300af772ff9704bc8c1349a5aba2574293e929cc42b054e6e712e40683a1a67a67d51e90e1fffa4e4262986ef776b4ba41c35c0e0ac385e748e7c",

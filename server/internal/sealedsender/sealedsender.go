@@ -1,4 +1,4 @@
-// Package sealedsender is the server half of L2-3 sealed sender (D122,
+// Package sealedsender is the server half of L2-3 sealed sender (D123,
 // docs/crypto.md "Sealed sender with VOPRF tokens"): an RFC 9497 POPRF
 // (mode 0x02, ristretto255-SHA512) that evaluates blinded token nonces with
 // a batch DLEQ proof at issuance and recomputes the output of a spent nonce

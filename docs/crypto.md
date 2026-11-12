@@ -458,12 +458,12 @@ It is in ABI 23 so that sealed delivery needs no further ABI bump.
 
 ABI 23 recorded two facts that stopped the rest of L2-3: every message is
 franked (so sealed sending would apply to none), and the credential must
-verify in Go as well as Rust. The owner chose option B, VOPRF tokens (D122;
+verify in Go as well as Rust. The owner chose option B, VOPRF tokens (D123;
 the A and C options are in Git history). The design follows.
 
-### Sealed sender with VOPRF tokens (D122, crypto ABI 26, design 2026-11-12)
+### Sealed sender with VOPRF tokens (D123, crypto ABI 26, design 2026-11-12)
 
-Owner decision D122 chose option B: Privacy Pass style tokens from an
+Owner decision D123 chose option B: Privacy Pass style tokens from an
 oblivious PRF (RFC 9497). This section is the design; "As built" at its end
 says what exists. Everything is behind the server switch
 `PRIVATE_MESSENGER_SEALED_SENDER=1` (off by default). The two open facts the
@@ -1559,7 +1559,7 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `move`) are listed in the design's "Build status (2026-11-12)". Needs
   the independent review before the switch is turned on anywhere.
 
-- **L2-3 sealed sender (2026-11-12, crypto ABI 26, D122):** RFC 9497
+- **L2-3 sealed sender (2026-11-12, crypto ABI 26, D123):** RFC 9497
   POPRF tokens (ristretto255-SHA512; voprf 0.5.0 in Rust, circl 1.6.5 in
   Go) let a member post to a DM or plain group without a session; the
   server stores those envelopes without a sender. Five new FFI functions

@@ -6428,7 +6428,7 @@ extension _C7Engine on NativeCryptoService {
   // ---- records ----------------------------------------------------------------
 
   /// A `history_change` proposal that decrypted live (decision 4). Checked
-  /// before the table: a sender its list has not removed (D119), freshness
+  /// before the table: a sender its list has not removed (D120), freshness
   /// against the membership floor, the actor's authority in the verified
   /// role record, and the signature against the actor's key in the current
   /// tree. An invalid record leaves its hidden action row and changes
@@ -6627,7 +6627,7 @@ extension _C7Engine on NativeCryptoService {
       actionId: envelope.idempotencyKey,
     );
     if (slots == null) return _c7Miss(conversationId);
-    // D119: a leaf its list removed hands nothing over.
+    // D120: a leaf its list removed hands nothing over.
     if (verdict != LeafVerdict.approved) return _c7None;
     final forEpoch = payload.body['for_epoch']! as int;
     var group = await _c7LoadGroup(conversationId);
