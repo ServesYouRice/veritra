@@ -219,7 +219,9 @@ enum C7OwnOutcome { none, applied, lost }
 /// when it comes, is applied here too.
 const Duration c7ProposalTimeout = Duration(minutes: 5);
 
-/// Timed-out proposals kept for a late echo.
+/// Timed-out proposals kept for a late echo. A device refuses a new
+/// proposal while it holds this many (review M1): one dropped from the list
+/// could still come back, and every other device would apply it.
 const int c7LateProposalLimit = 4;
 
 /// Record messages kept as system lines (decision 1), newest last.
@@ -342,12 +344,11 @@ final class C7ChannelBook {
         nowMs - own.sentAtMs < c7ProposalTimeout.inMilliseconds) {
       return this;
     }
-    final kept = <C7Pending>[...late, own];
+    // Never trimmed: a new proposal is refused while [late] is full, so it
+    // holds at most [c7LateProposalLimit] (review M1).
     return copyWith(
       clearPending: true,
-      late: kept.length <= c7LateProposalLimit
-          ? kept
-          : kept.sublist(kept.length - c7LateProposalLimit),
+      late: <C7Pending>[...late, own],
       ownNotice: 'timeout',
     );
   }

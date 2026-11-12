@@ -5895,6 +5895,15 @@ extension _C7Engine on NativeCryptoService {
             messageKey(_deviceId!, actionId)),
       ]);
     }
+    // Review M1: an own record this device released (cancelled while it
+    // was being sent, or given up after a refusal) came back after all.
+    // Every other device has applied it, and its key and mode are gone
+    // here, so the group fails closed: every `full` channel turns `unsure`
+    // and seals under random keys until a rekey, as for a message this
+    // device could not apply.
+    if (group.released.contains(actionId)) {
+      return _c7Miss(conversationId);
+    }
     return _c7None;
   }
 
@@ -6231,10 +6240,32 @@ extension _C7Engine on NativeCryptoService {
     final group = await _c7LoadGroup(conversationId);
     // A proposal pending past its timeout no longer blocks (owner,
     // 2026-11-12); it moves to `late` in the write that stores this one.
-    final book = (await _c7LoadBook(conversationId, channelId))
+    var book = (await _c7LoadBook(conversationId, channelId))
         .expirePending(_c7NowMs());
     if (book.pending != null && book.ownNotice != 'stale') {
       throw StateError('a history change is already pending here');
+    }
+    // Review M1: a late proposal still in the outbox and never tried, or
+    // refused there for good, never reaches the server, so it is cancelled
+    // and leaves `late`. One that left the outbox may still come back, so it
+    // stays, and while `late` is full no new proposal is made: a proposal
+    // dropped from it would be applied by every other device but this one.
+    final queued = <String, PendingEnvelopeRecord>{
+      for (final record in await localStore.pendingEnvelopeRecords())
+        if (record.envelope.conversationId == conversationId)
+          record.envelope.idempotencyKey: record,
+    };
+    final cancelled = <String>[
+      for (final entry in book.late)
+        if (queued[entry.actionId] case final record?
+            when record.terminal || record.attemptCount == 0)
+          entry.actionId,
+    ];
+    for (final actionId in cancelled) {
+      book = book.withoutLate(actionId);
+    }
+    if (book.late.length >= c7LateProposalLimit) {
+      throw StateError('too many history changes are waiting for the server');
     }
     final head = book.headRecord;
     if (create != (head == null && book.chain.highestSeq < 0)) {
@@ -6252,7 +6283,7 @@ extension _C7Engine on NativeCryptoService {
     final key = Uint8List.fromList(_randomBytes(32));
     final device = _requiredDevice();
     C7Record? signed;
-    return _c7SendHidden(
+    final sent = await _c7SendHidden(
       conversationId,
       channelId: channelId,
       layoutGeneration: layoutGeneration,
@@ -6317,7 +6348,7 @@ extension _C7Engine on NativeCryptoService {
         );
       },
       settingsFor: (actionId, _) =>
-          _c7Put(conversationId, group, <C7ChannelBook>[
+          _c7Put(conversationId, group.withReleased(cancelled), <C7ChannelBook>[
         book.copyWith(
           pending: C7Pending(
             actionId: actionId,
@@ -6329,6 +6360,13 @@ extension _C7Engine on NativeCryptoService {
         ),
       ]),
     );
+    // Only once the book no longer lists them: an envelope sent in between
+    // comes back as an own record this device no longer knows, and that
+    // fails closed ([_c7OwnEcho]).
+    for (final actionId in cancelled) {
+      await localStore.removePendingEnvelope(actionId);
+    }
+    return sent;
   }
 
   /// Sends the `history_sync` for the commit that produced [forEpoch] from

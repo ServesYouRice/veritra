@@ -622,6 +622,77 @@ void main() {
   }, skip: skip);
 
   test(
+      'four timed-out proposals that left the outbox fill late: a fifth is '
+      'refused, and all four flushed together leave one head everywhere '
+      '(review M1)', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    final step = c7ProposalTimeout + const Duration(seconds: 1);
+    final sent = <MessageEnvelope>[];
+    for (var i = 1; i <= c7LateProposalLimit; i++) {
+      final proposal = await alice.service
+          .c7ProposeRecord(_conversation, _channel, full: false);
+      // Sent, but the server is slow to send it back.
+      await alice.store.removePendingEnvelope(proposal.idempotencyKey);
+      sent.add(proposal);
+      _skew = step * i;
+    }
+    // A fifth would push the first out of late; should that one come back,
+    // Bob would apply it and Alice would not.
+    await expectLater(
+        alice.service.c7ProposeRecord(_conversation, _channel, full: false),
+        throwsStateError);
+    for (final proposal in sent) {
+      await bob.receive(alice, proposal);
+      await alice.receive(alice, proposal);
+    }
+    expect((await alice.book()).headBytes, (await bob.book()).headBytes);
+    expect((await alice.view())!.full, isFalse);
+    expect((await bob.view())!.full, isFalse);
+    expect((await alice.book()).late, isEmpty);
+    // With the echoes back, Alice may propose again.
+    await propose(alice, [bob], full: true);
+    expect((await alice.book()).headBytes, (await bob.book()).headBytes);
+    expect((await bob.view())!.full, isTrue);
+  }, skip: skip);
+
+  test(
+      'a timed-out proposal still waiting in the outbox is cancelled by the '
+      'next one, so an offline admin is never blocked; one that was sent '
+      'after all fails closed (review M1)', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    await propose(alice, [bob], full: true, create: true);
+    final step = c7ProposalTimeout + const Duration(seconds: 1);
+    final made = <MessageEnvelope>[];
+    for (var i = 0; i <= c7LateProposalLimit + 1; i++) {
+      _skew = step * i;
+      made.add(await alice.service
+          .c7ProposeRecord(_conversation, _channel, full: false));
+    }
+    final queued = <String>{
+      for (final record in await alice.store.pendingEnvelopeRecords())
+        record.envelope.idempotencyKey,
+    };
+    expect(queued.intersection({for (final e in made) e.idempotencyKey}),
+        {made.last.idempotencyKey});
+    expect((await alice.book()).late, isEmpty);
+    expect((await alice.group()).released,
+        [for (final e in made.take(made.length - 1)) e.idempotencyKey]);
+    // The first was already on its way when it was cancelled: Bob applies
+    // it, and Alice, who no longer holds it, fails closed.
+    await bob.receive(alice, made.first);
+    await alice.receive(alice, made.first);
+    expect((await bob.view())!.full, isFalse);
+    expect((await alice.view())!.status, 'unsure');
+    final post = await alice.send('after the lost switch');
+    expect(await alice.sealedUnderChannelKey(post), isFalse);
+  }, skip: skip);
+
+  test(
       'a record that changes the setting is a system line on every device; '
       'a create in the default mode is none', () async {
     final alice = await client('alice');

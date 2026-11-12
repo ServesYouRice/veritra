@@ -20,6 +20,11 @@ import 'native_crypto_bindings.dart' show C7CommitOutcome;
 /// a later one; a gap at worst).
 const int c7SnapshotLimit = 4;
 
+/// Released own proposals remembered for a late echo ([C7GroupState.released]).
+/// A cancelled one can only come back while it was already being sent, and
+/// one refused for good never does, so this is generous.
+const int c7ReleasedLimit = 32;
+
 /// The wait before a newcomer's next `history_sync_request` once it has
 /// sent [sent] of them: 60 s (the first, after the Welcome), then 60 s,
 /// 2 min, 4 min and so on, doubling up to 1 h. The server enforces the
@@ -67,7 +72,9 @@ final class C7GroupState {
     this.requestsSent = 0,
     this.joinSynced = false,
     this.imported = false,
+    List<String> released = const <String>[],
   })  : channels = Set<String>.unmodifiable(channels),
+        released = List<String>.unmodifiable(released),
         snapshots =
             Map<int, Map<String, C7SlotSnapshot>>.unmodifiable(snapshots),
         duties = Map<int, C7SyncDuty>.unmodifiable(duties);
@@ -115,6 +122,21 @@ final class C7GroupState {
   /// The newcomer's history import has run.
   final bool imported;
 
+  /// This device's own proposals it cancelled or gave up on while they
+  /// were late (review M1), newest last, at most [c7ReleasedLimit]. Should
+  /// one come back after all, every other device has applied it, so this
+  /// one fails closed.
+  final List<String> released;
+
+  /// This group's state with [actionIds] added to [released].
+  C7GroupState withReleased(Iterable<String> actionIds) {
+    final kept = <String>[...released, ...actionIds];
+    return copyWith(
+        released: kept.length <= c7ReleasedLimit
+            ? kept
+            : kept.sublist(kept.length - c7ReleasedLimit));
+  }
+
   C7GroupState copyWith({
     int? floor,
     int? rootEpoch,
@@ -127,6 +149,7 @@ final class C7GroupState {
     int? requestsSent,
     bool? joinSynced,
     bool? imported,
+    List<String>? released,
   }) =>
       C7GroupState(
         floor: floor ?? this.floor,
@@ -141,6 +164,7 @@ final class C7GroupState {
         requestsSent: requestsSent ?? this.requestsSent,
         joinSynced: joinSynced ?? this.joinSynced,
         imported: imported ?? this.imported,
+        released: released ?? this.released,
       );
 
   Map<String, Object?> toJson() => <String, Object?>{
@@ -169,6 +193,7 @@ final class C7GroupState {
         if (requestsSent > 0) 'requests': requestsSent,
         if (joinSynced) 'join_synced': true,
         if (imported) 'imported': true,
+        if (released.isNotEmpty) 'released': released,
       };
 
   String encode() => jsonEncode(toJson());
@@ -218,6 +243,7 @@ final class C7GroupState {
         requestsSent: (map['requests'] as int?) ?? 0,
         joinSynced: map['join_synced'] == true,
         imported: map['imported'] == true,
+        released: <String>[...?(map['released'] as List?)?.cast<String>()],
       );
     } on Object {
       return empty;
@@ -245,6 +271,7 @@ final class C7GroupState {
       requestsSent: requestsSent,
       joinSynced: joinSynced,
       imported: imported,
+      released: released,
     );
   }
 

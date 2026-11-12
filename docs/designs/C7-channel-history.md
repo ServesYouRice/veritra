@@ -1081,11 +1081,28 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
 7. An own proposal that has not come back after 5 minutes
    (`c7ProposalTimeout`, owner 2026-11-12: timeout and retry) is reported
    `timeout` and the device may propose again. It is not forgotten: other
-   devices may still apply it, so it is kept (the last four, `late`) and
-   applied here when its echo arrives; a newer own proposal for the same
-   seq is then `lost`, as for anyone else's record. The expiry is lazy (the
-   channel view and the next proposal read it), so no write happens
-   outside a proposal or a sync step.
+   devices may still apply it, so it is kept (`late`) and applied here
+   when its echo arrives; a newer own proposal for the same seq is then
+   `lost`, as for anyone else's record. The expiry is lazy (the channel
+   view and the next proposal read it), so no write happens outside a
+   proposal or a sync step. **Review M1 (2026-11-12):** `late` used to keep
+   the last four, so a fifth timeout dropped the oldest, and if that one
+   came back every other device applied it and this one did not (a fork).
+   Now `late` is never trimmed. At each proposal, a late proposal still
+   in the outbox and never tried, or refused there for good, is cancelled
+   (removed from the outbox once the book no longer lists it) and leaves
+   `late`: it cannot reach the server. One that left the outbox stays,
+   and while `late` holds four (`c7LateProposalLimit`) a new proposal is
+   refused until echoes come back. A cancelled proposal's action id is
+   remembered (`C7GroupState.released`, the last 32); if it was already
+   being sent and comes back, the device fails closed: every `full`
+   channel of the group turns `unsure` (random keys, as for a message it
+   could not apply) until a rekey. Native tests: four sent timeouts block
+   a fifth and, flushed together, leave one head everywhere; six offline
+   timeouts leave only the newest in the outbox, and a cancelled one that
+   came back makes the group `unsure`. Residual: in that last case the
+   device's chain differs from the others' until a later record or rekey
+   reaches it; it seals nothing under a history key meanwhile.
 8. A group-level message signs channel `""` (two zero length bytes),
    as its aad already binds it. Settled 2026-11-12 with the smallest
    change: Rust's `post_signed_fields` now takes an empty channel id (as
