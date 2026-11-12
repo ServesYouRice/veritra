@@ -539,7 +539,9 @@ abstract interface class SealedSendingCryptoService {
   /// a fresh identified message under the same idempotency key (a new MLS
   /// ciphertext and franking key, no token, no sealed signature), and puts
   /// it in that outbox entry's place. Only for the one answer that proves
-  /// the sealed route stored nothing under the key (`sealed_not_eligible`).
+  /// the sealed route stored nothing under the key (`sealed_not_eligible`),
+  /// and only once the person chose "Send normally" (owner decision
+  /// 2026-11-12): never on that answer alone.
   /// Null when the message cannot be sent identified (its plaintext is no
   /// longer kept, or the entry is gone); the caller then fails it.
   Future<MessageEnvelope?> reencryptSealedAsIdentified(MessageEnvelope sealed);

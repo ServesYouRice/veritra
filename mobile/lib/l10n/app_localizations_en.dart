@@ -2432,6 +2432,21 @@ class AppLocalizationsEn extends AppLocalizations {
       'This encrypted message could not be sent. Copy it or discard it.';
 
   @override
+  String get outboxSealedRefused =>
+      'Couldn’t send hidden: the server would not take this message without your name. Send it normally, and the server will see it is from you, or discard it.';
+
+  @override
+  String get chatSendNormally => 'Send normally';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'This chat is updating its encryption. Try again in a moment.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'This message can no longer be sent normally. Copy it or discard it.';
+
+  @override
   String get recoveryRestoreFailed =>
       'This device could not restore its encrypted session. Retry or continue to sign in without clearing local data.';
 
@@ -4411,6 +4426,13 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get c6VerdictSenderUnverifiedDetail =>
       'The message matches, but its sender\'s key could not be checked against their signed device list.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Matches, if the server is honest';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'The proof checks, but this device first got the sender’s signed device list from the server only after this report arrived. A dishonest server could have made up that list and this proof. Treat the sender as unconfirmed unless you trust the server.';
 
   @override
   String get c6VerdictNotDesignated => 'Not provable to you';

@@ -1790,7 +1790,18 @@ class AppState extends ChangeNotifier
         records.map((record) => record.envelope).toList(growable: false);
   }
 
+  /// L2-3 (owner decision 2026-11-12, "Ask before re-sending"): whether
+  /// [idempotencyKey] is a message the server would not take hidden, which
+  /// waits for the person to send it normally or discard it.
+  bool outboxNeedsSealedChoice(String idempotencyKey) {
+    final record = _outboxRecords[idempotencyKey];
+    return record != null && sealedNeedsResendChoice(record);
+  }
+
   String outboxFailureMessage(String idempotencyKey) {
+    if (outboxNeedsSealedChoice(idempotencyKey)) {
+      return l10n.outboxSealedRefused;
+    }
     final failure = _outboxRecords[idempotencyKey]?.failureClass ?? '';
     if (failure.contains('storage_quota_exceeded') ||
         failure.contains(':507:')) {
@@ -4919,6 +4930,63 @@ class AppState extends ChangeNotifier
     // local failure of the pass carrying this retry is reported under
     // [Ops.send] by the worker itself.
     await _flushOutbox();
+  }
+
+  /// L2-3 (owner decision 2026-11-12): "Send normally" on a message the
+  /// server would not take hidden ([outboxNeedsSealedChoice]). The one path
+  /// on which a message chosen to go sealed is sent identified, and only on
+  /// this tap: it is encrypted afresh, identified, under the same key, in
+  /// its outbox entry's place, and the outbox worker sends it once. Acts
+  /// only while the entry still waits for the choice, so a second tap does
+  /// nothing. Completes after that flush.
+  Future<void> sendSealedNormally(String idempotencyKey) async {
+    final owner = session;
+    if (owner == null) return;
+    final ownerGeneration = _sessionGeneration;
+    var flush = false;
+    await _runScoped(Ops.send, () async {
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // Read from the store, not the cached list, so a tap that raced a
+      // first one (or a discard) finds the entry already changed.
+      final record = (await localStore.pendingEnvelopeRecords())
+          .where((item) => item.envelope.idempotencyKey == idempotencyKey)
+          .firstOrNull;
+      if (record == null ||
+          !sealedNeedsResendChoice(record) ||
+          !_syncOwnerActive(owner, ownerGeneration)) {
+        return;
+      }
+      final conversationId = record.envelope.conversationId;
+      if (mlsConversationFailed(conversationId)) {
+        throw const ConversationPausedException();
+      }
+      if (conversationSyncPaused(conversationId)) {
+        throw ConversationSyncPausedException(conversationId);
+      }
+      // D68: a removal under way would let the removed member read it.
+      if (_mlsCrypto != null && await _heldForRemoval(conversationId)) {
+        throw UserFacingException(l10n.outboxSealedResendHeld);
+      }
+      final result = await reencryptSealedForResend(
+          crypto: cryptoService,
+          localStore: localStore,
+          sealed: record.envelope);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      switch (result) {
+        case SealedResend.held:
+          throw UserFacingException(l10n.outboxSealedResendHeld);
+        case SealedResend.unavailable:
+          throw UserFacingException(l10n.outboxSealedResendUnavailable);
+        case SealedResend.queued:
+          break;
+      }
+      _setOutboxRecords(await localStore.pendingEnvelopeRecords());
+      _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
+      notifyListeners();
+      _manualRetryKey = idempotencyKey;
+      flush = true;
+    });
+    if (flush) await _flushOutbox();
   }
 
   Future<void> discardEnvelope(String idempotencyKey) async {
@@ -8312,16 +8380,15 @@ class AppState extends ChangeNotifier
   }
 
   /// L2-3: posts a message chosen to go sealed, on the sealed client. It is
-  /// never sent identified, with one exception: once a sealed attempt may
-  /// have landed, an identified copy would be a second message. A refused
-  /// token is replaced and the same message (same idempotency key and
-  /// bytes) posted again; the server answers a post it already stored with
-  /// 200 whatever token comes with it. With no token to replace it, or
-  /// while the sealed routes are off, the message waits (retrying). The
-  /// exception (review M2) is `sealed_not_eligible`, which proves nothing is
-  /// stored under the key: the message is encrypted afresh, identified,
-  /// under the same key, in its outbox entry's place, and sent. Any other
-  /// refusal fails the message.
+  /// never sent identified here, whatever the answer. A refused token is
+  /// replaced and the same message (same idempotency key and bytes) posted
+  /// again; the server answers a post it already stored with 200 whatever
+  /// token comes with it. With no token to replace it, or while the sealed
+  /// routes are off, the message waits (retrying). A 409
+  /// `sealed_not_eligible` leaves it terminal in the outbox, marked
+  /// "couldn't send hidden": only the person's "Send normally"
+  /// ([sendSealedNormally]) encrypts it again identified (owner decision
+  /// 2026-11-12). Any other refusal fails the message.
   Future<void> _postSealed(Session current, ApiClient client,
           MessageEnvelope envelope, int ownerGeneration) =>
       postSealedMessage(
@@ -8330,13 +8397,6 @@ class AppState extends ChangeNotifier
         tokens: sealedSender,
         rewrite: localStore.rewriteQueuedEnvelope,
         owned: () => _syncOwnerActive(current, ownerGeneration),
-        sendIdentified: (sealed) => sendSealedAsIdentified(
-          crypto: cryptoService,
-          localStore: localStore,
-          sealed: sealed,
-          owned: () => _syncOwnerActive(current, ownerGeneration),
-          send: (identified) => client.sendEnvelope(current.token, identified),
-        ),
       );
 
   /// Builds the sealed post client (tests use a loopback server).

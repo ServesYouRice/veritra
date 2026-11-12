@@ -19,8 +19,8 @@ part of 'encrypted_database.dart';
 //   beforehand (never by the idempotency key alone, which every member
 //   reads), and, while the message is queued, the plaintext needed to send
 //   it identified instead after the server proved nothing sealed was stored
-//   (`sealed_not_eligible`). The plaintext is cleared when the outbox entry
-//   goes.
+//   (`sealed_not_eligible`) and the person chose "Send normally". The
+//   plaintext is cleared when the outbox entry goes or is replaced.
 // - local_frank_reveals gains the sealed message's designation `d` (tags
 //   only the designated owners can check; never a signature) and the sender
 //   account MLS authenticated, so a report of a sealed message can be

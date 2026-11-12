@@ -2449,6 +2449,21 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ова шифрована порука није могла да се пошаље. Копирајте је или је одбаците.';
 
   @override
+  String get outboxSealedRefused =>
+      'Није послато скривено: сервер није хтео да прими ову поруку без вашег имена. Пошаљите је нормално, и сервер ће видети да је од вас, или је одбаците.';
+
+  @override
+  String get chatSendNormally => 'Пошаљи нормално';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'Овај разговор ажурира шифровање. Покушајте поново за тренутак.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'Ова порука више не може да се пошаље нормално. Копирајте је или је одбаците.';
+
+  @override
   String get recoveryRestoreFailed =>
       'Овај уређај није могао да врати своју шифровану сесију. Покушајте поново или наставите на пријаву без брисања локалних података.';
 
@@ -4428,6 +4443,13 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get c6VerdictSenderUnverifiedDetail =>
       'Порука се поклапа, али кључ пошиљаоца није могао да се провери у његовој потписаној листи уређаја.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Поклапа се, ако је сервер поштен';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'Доказ се слаже, али је овај уређај први пут добио потписану листу уређаја пошиљаоца од сервера тек пошто је ова пријава стигла. Непоштен сервер је могао да измисли ту листу и овај доказ. Сматрајте пошиљаоца непотврђеним осим ако верујете серверу.';
 
   @override
   String get c6VerdictNotDesignated => 'Није доказиво вама';
@@ -6972,6 +6994,21 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ova šifrovana poruka nije mogla da se pošalje. Kopirajte je ili je odbacite.';
 
   @override
+  String get outboxSealedRefused =>
+      'Nije poslato skriveno: server nije hteo da primi ovu poruku bez vašeg imena. Pošaljite je normalno, i server će videti da je od vas, ili je odbacite.';
+
+  @override
+  String get chatSendNormally => 'Pošalji normalno';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'Ovaj razgovor ažurira šifrovanje. Pokušajte ponovo za trenutak.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'Ova poruka više ne može da se pošalje normalno. Kopirajte je ili je odbacite.';
+
+  @override
   String get recoveryRestoreFailed =>
       'Ovaj uređaj nije mogao da vrati svoju šifrovanu sesiju. Pokušajte ponovo ili nastavite na prijavu bez brisanja lokalnih podataka.';
 
@@ -8953,6 +8990,13 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get c6VerdictSenderUnverifiedDetail =>
       'Poruka se poklapa, ali ključ pošiljaoca nije mogao da se proveri u njegovoj potpisanoj listi uređaja.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Poklapa se, ako je server pošten';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'Dokaz se slaže, ali je ovaj uređaj prvi put dobio potpisanu listu uređaja pošiljaoca od servera tek pošto je ova prijava stigla. Nepošten server je mogao da izmisli tu listu i ovaj dokaz. Smatrajte pošiljaoca nepotvrđenim osim ako verujete serveru.';
 
   @override
   String get c6VerdictNotDesignated => 'Nije dokazivo vama';

@@ -4,7 +4,8 @@ import 'dart:io';
 
 import '../crypto/crypto_service.dart'
     show SealedFrankContext, SealedSendingCryptoService, SealedTokenSource;
-import '../storage/local_store.dart' show LocalStore, SealedKeyPin;
+import '../storage/local_store.dart'
+    show LocalStore, PendingEnvelopeRecord, SealedKeyPin;
 import 'api_client.dart';
 import 'models.dart';
 
@@ -20,37 +21,69 @@ import 'models.dart';
 // - [sealedPostOutcome] classifies a refused post for the outbox. A message
 //   chosen to go sealed stays sealed: it is retried under the same
 //   idempotency key (with a fresh token where the token was the problem),
-//   never posted identified, so a post that may have landed is never
-//   stored twice.
+//   never posted identified on its own, so a post that may have landed is
+//   never stored twice and a server cannot unmask a sender by refusing.
+//   After a 409 `sealed_not_eligible` the message waits in the outbox,
+//   marked "couldn't send hidden", until the person chooses to send it
+//   normally ([reencryptSealedForResend]) or discards it (owner decision
+//   2026-11-12, "Ask before re-sending").
 
 /// The sync event of a sealed post. Only an app that reads sealed events
 /// (`sealed=1`) is ever served one.
 const String sealedMessageEventType = 'message.sealed.created';
 
-/// Review M2, the identified fallback of [postSealedMessage] (`sendIdentified`)
-/// as the app wires it: re-encrypts [sealed] afresh, identified, under the
-/// same key, and sends it with [send]. Returns false (the message fails as
-/// before) when [crypto] cannot seal or nothing is left to fall back with.
+/// The failure class the outbox records for a sealed post the server
+/// refused with 409 `sealed_not_eligible`.
+const String sealedRefusedFailureClass = 'terminal:409:sealed_not_eligible';
+
+/// Whether [record] is a sealed message the server would not take hidden
+/// (409 `sealed_not_eligible`), waiting for the person's choice: send it
+/// normally, or discard it. Nothing is sent for it until they choose.
+bool sealedNeedsResendChoice(PendingEnvelopeRecord record) =>
+    record.terminal &&
+    record.envelope.sealed &&
+    record.failureClass == sealedRefusedFailureClass;
+
+/// What [reencryptSealedForResend] did.
+enum SealedResend {
+  /// The message was encrypted afresh, identified, under the same key, and
+  /// took the sealed entry's place in the outbox; the outbox worker sends
+  /// it like any other.
+  queued,
+
+  /// An MLS control message is queued for the conversation (I34, D68):
+  /// nothing was encrypted; the person can try again once it is delivered.
+  held,
+
+  /// It cannot be sent identified (this build cannot seal, its plaintext is
+  /// no longer kept, or the entry is gone). Nothing changed.
+  unavailable,
+}
+
+/// Owner decision 2026-11-12 ("Ask before re-sending"), the one way a
+/// message chosen to go sealed is ever sent identified: only after the
+/// person tapped "Send normally" on a message the server refused to take
+/// hidden ([sealedNeedsResendChoice]). Re-encrypts [sealed] afresh,
+/// identified, under the same idempotency key, in its outbox entry's place
+/// (a new MLS ciphertext and franking key, no token, no sealed tags). It
+/// sends nothing itself: the outbox worker does, once, under the I34 hold.
 /// An MLS control message queued for the conversation keeps the fresh
-/// encrypt waiting (I34), and a session that changed after the encrypt
-/// sends nothing: both throw a retryable 503 and the sealed entry stays.
-Future<bool> sendSealedAsIdentified({
+/// encrypt waiting ([SealedResend.held]).
+Future<SealedResend> reencryptSealedForResend({
   required Object? crypto,
   required LocalStore localStore,
   required MessageEnvelope sealed,
-  required bool Function() owned,
-  required Future<void> Function(MessageEnvelope identified) send,
 }) async {
-  if (crypto is! SealedSendingCryptoService) return false;
+  if (crypto is! SealedSendingCryptoService || !sealed.sealed) {
+    return SealedResend.unavailable;
+  }
   if ((await localStore.pendingMlsMessages())
       .any((message) => message.conversationId == sealed.conversationId)) {
-    throw ApiException(503, '{"error":"mls_control_pending"}');
+    return SealedResend.held;
   }
   final identified = await crypto.reencryptSealedAsIdentified(sealed);
-  if (identified == null || identified.sealed) return false;
-  if (!owned()) throw ApiException(503, '{"error":"session_changed"}');
-  await send(identified);
-  return true;
+  if (identified == null || identified.sealed) return SealedResend.unavailable;
+  return SealedResend.queued;
 }
 
 /// The UTC day number the server calls a token's epoch. The app takes it
@@ -71,7 +104,8 @@ enum SealedPostOutcome {
 
   /// The server will not take the message sealed and stored nothing (the
   /// conversation is not eligible, or the request is malformed): the
-  /// message fails. It is never sent identified instead.
+  /// message fails. It is never sent identified instead, unless the person
+  /// chooses that for a `sealed_not_eligible` refusal.
   terminal,
 
   /// Try again later, same token (rate limit, server or network trouble).
@@ -96,30 +130,27 @@ SealedPostOutcome sealedPostOutcome(Object error) {
 }
 
 /// Posts [envelope], a message chosen to go sealed, on [poster]. It is
-/// never sent identified, whatever the answer, with one exception: once a
-/// sealed attempt may have landed, an identified copy would be a second
-/// message. The exception is a 409 `sealed_not_eligible`, which the server
-/// answers only after finding nothing stored under the key (review M2):
-/// then [sendIdentified], when given, encrypts the message afresh as an
-/// identified one and sends it, and its answer is the message's. It returns
-/// false when it cannot, and the refusal fails the message. A 404 means the
+/// never sent identified, whatever the answer: a hostile server could
+/// otherwise unmask the sender of any post it chose by refusing it. A 409
+/// `sealed_not_eligible` (which the server answers only after finding
+/// nothing stored under the key, review M2) drops the conversation's tokens
+/// and is rethrown: the outbox keeps the message, terminal, for the person
+/// to send normally or discard ([sealedNeedsResendChoice]). A 404 means the
 /// server's sealed routes are off: the message waits (a retryable 503
-/// class) rather than fail. A refused
-/// token is replaced from [tokens] and the same message (same idempotency
-/// key and bytes) posted again, after [rewrite] keeps the new token in its
-/// outbox entry; the server answers a post it already stored with 200
-/// whatever token comes with it. With no token to replace it, the message
-/// waits (a retryable 503 class) for the next token pass. A refusal that
-/// stored nothing (not eligible, malformed) is rethrown, and fails the
-/// message. Returns normally when the post landed, or when [rewrite] finds
-/// the entry gone (its echo arrived: it landed).
+/// class) rather than fail. A refused token is replaced from [tokens] and
+/// the same message (same idempotency key and bytes) posted again, after
+/// [rewrite] keeps the new token in its outbox entry; the server answers a
+/// post it already stored with 200 whatever token comes with it. With no
+/// token to replace it, the message waits (a retryable 503 class) for the
+/// next token pass. Any other refusal that stored nothing (malformed) is
+/// rethrown, and fails the message. Returns normally when the post landed,
+/// or when [rewrite] finds the entry gone (its echo arrived: it landed).
 Future<void> postSealedMessage({
   required SealedPostClient poster,
   required MessageEnvelope envelope,
   required SealedSender? tokens,
   required Future<bool> Function(MessageEnvelope envelope) rewrite,
   bool Function()? owned,
-  Future<bool> Function(MessageEnvelope sealed)? sendIdentified,
 }) async {
   if (!envelope.sealed) throw StateError('not a sealed envelope');
   var attempt = envelope;
@@ -138,9 +169,6 @@ Future<void> postSealedMessage({
           if (error.statusCode == 409 &&
               error.serverCode == 'sealed_not_eligible') {
             await tokens?.notEligible(envelope.conversationId);
-            if (sendIdentified != null && await sendIdentified(attempt)) {
-              return;
-            }
           }
           rethrow;
         case SealedPostOutcome.replaceToken:

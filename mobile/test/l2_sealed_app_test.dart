@@ -246,80 +246,64 @@ void main() {
       expect(server.requests, hasLength(1));
     });
 
-    test('not eligible, and only that, may send the message identified',
+    test('not eligible never sends identified; the message waits for a choice',
         () async {
-      // Review M2: the server answers sealed_not_eligible only after
-      // finding nothing stored under the key.
+      // Owner decision 2026-11-12 ("Ask before re-sending"): a hostile
+      // server could answer sealed_not_eligible to unmask the sender of a
+      // post it chose. The refusal is rethrown and the outbox keeps the
+      // message for the person; only their tap re-sends it identified.
       final poster = SealedPostClient(baseUrl: server.origin);
       addTearDown(poster.close);
       final store = MemoryLocalStore();
       final tokens = _tokens(store: store);
       await tokens.debugTrust(store, _conversation);
       final envelope = _envelope(_token(1));
-      final asked = <MessageEnvelope>[];
-      Future<bool> identified(MessageEnvelope sealed) async {
-        asked.add(sealed);
-        return true;
-      }
-
-      server.refuseNext.add('sealed_not_eligible');
-      await postSealedMessage(
-          poster: poster,
-          envelope: envelope,
-          tokens: tokens,
-          rewrite: (_) async => true,
-          sendIdentified: identified);
-      expect(asked.single.idempotencyKey, envelope.idempotencyKey);
-      expect(server.stored, isEmpty);
-      expect(tokens.activeIn(_conversation), isFalse);
-
-      // Without a fallback to offer, the refusal fails the message.
       server.refuseNext.add('sealed_not_eligible');
       await expectLater(
           postSealedMessage(
               poster: poster,
               envelope: envelope,
               tokens: tokens,
-              rewrite: (_) async => true,
-              sendIdentified: (_) async => false),
+              rewrite: (_) async => true),
           throwsA(isA<ApiException>()
+              .having((e) => e.statusCode, 'status', 409)
               .having((e) => e.serverCode, 'code', 'sealed_not_eligible')));
-
-      // Every other answer keeps it sealed: it waits or fails, never goes
-      // identified.
-      asked.clear();
-      for (final refusal in <String>[
-        '409:idempotency_conflict',
-        '400:invalid_encrypted_envelope',
-        '403:forbidden',
-        '404:not_found',
-        '429:rate_limited',
-        '503:unavailable',
-        '400:sealed_not_eligible',
-      ]) {
-        server.refuseNext.add(refusal);
-        await expectLater(
-            postSealedMessage(
-                poster: poster,
-                envelope: _envelope(_token(2)),
-                tokens: _tokens(),
-                rewrite: (_) async => true,
-                sendIdentified: identified),
-            throwsA(isA<ApiException>()),
-            reason: refusal);
-      }
-      // A refused token with none to replace it waits too.
-      server.refuseNext.add('sealed_token_spent');
-      await expectLater(
-          postSealedMessage(
-              poster: poster,
-              envelope: _envelope(_token(2)),
-              tokens: _tokens(),
-              rewrite: (_) async => true,
-              sendIdentified: identified),
-          throwsA(isA<ApiException>()));
-      expect(asked, isEmpty);
+      expect(server.requests, hasLength(1));
       expect(server.stored, isEmpty);
+      expect(tokens.activeIn(_conversation), isFalse);
+
+      // The outbox records it terminal under the class that offers the
+      // choice; nothing else does.
+      PendingEnvelopeRecord record(MessageEnvelope envelope,
+              {required bool terminal, String? failure}) =>
+          PendingEnvelopeRecord(
+              envelope: envelope,
+              attemptCount: 1,
+              terminal: terminal,
+              failureClass: failure);
+      expect(
+          sealedNeedsResendChoice(record(envelope,
+              terminal: true, failure: sealedRefusedFailureClass)),
+          isTrue);
+      expect(
+          sealedNeedsResendChoice(record(envelope,
+              terminal: false, failure: sealedRefusedFailureClass)),
+          isFalse);
+      expect(
+          sealedNeedsResendChoice(record(envelope,
+              terminal: true, failure: 'terminal:409:idempotency_conflict')),
+          isFalse);
+      final identified = MessageEnvelope(
+        conversationId: envelope.conversationId,
+        idempotencyKey: envelope.idempotencyKey,
+        ciphertext: const <int>[4, 5, 6],
+        cryptoProtocol: envelope.cryptoProtocol,
+        cryptoMetadata: envelope.cryptoMetadata,
+      );
+      expect(
+          sealedNeedsResendChoice(record(identified,
+              terminal: true, failure: sealedRefusedFailureClass)),
+          isFalse);
     });
 
     test('a 404 from the sealed routes waits instead of failing', () async {
@@ -354,9 +338,9 @@ void main() {
           SealedPostOutcome.retry);
     });
 
-    // The identified fallback exactly as AppState wires it into
-    // postSealedMessage (AppState._postSealed passes sendSealedAsIdentified).
-    test('the identified fallback re-encrypts, waits, or refuses', () async {
+    // The re-encryption "Send normally" runs (AppState.sendSealedNormally).
+    test('send normally re-encrypts, waits, or refuses, and sends nothing',
+        () async {
       final sealed = _envelope(_token(1));
       final identified = MessageEnvelope(
         conversationId: sealed.conversationId,
@@ -367,36 +351,30 @@ void main() {
       );
       final store = _MlsQueue();
       final crypto = _FakeCrypto();
-      final sent = <MessageEnvelope>[];
-      var owned = true;
-      Future<bool> fallback(Object? with_) => sendSealedAsIdentified(
-            crypto: with_,
-            localStore: store,
-            sealed: sealed,
-            owned: () => owned,
-            send: (envelope) async => sent.add(envelope),
-          );
+      Future<SealedResend> resend(Object? with_, [MessageEnvelope? of]) =>
+          reencryptSealedForResend(
+              crypto: with_, localStore: store, sealed: of ?? sealed);
 
-      // A crypto service that cannot seal: the message fails, nothing sent.
-      expect(await fallback(Object()), isFalse);
-      expect(await fallback(null), isFalse);
+      // A crypto service that cannot seal: nothing to do.
+      expect(await resend(Object()), SealedResend.unavailable);
+      expect(await resend(null), SealedResend.unavailable);
 
-      // The fresh identified copy is sent, once.
+      // The fresh identified copy takes the entry's place.
       crypto.reencrypt = (_) => identified;
-      expect(await fallback(crypto), isTrue);
-      expect(sent.single, same(identified));
-      expect(sent.single.sealed, isFalse);
+      expect(await resend(crypto), SealedResend.queued);
+      expect(crypto.reencrypts, 1);
+      // Only a sealed message is ever re-encrypted.
+      expect(await resend(crypto, identified), SealedResend.unavailable);
+      expect(crypto.reencrypts, 1);
 
-      // Nothing left to fall back with, or a copy still sealed: fails.
-      sent.clear();
+      // Nothing left to send it with, or a copy still sealed.
       crypto.reencrypt = (_) => null;
-      expect(await fallback(crypto), isFalse);
+      expect(await resend(crypto), SealedResend.unavailable);
       crypto.reencrypt = (sealed) => sealed;
-      expect(await fallback(crypto), isFalse);
-      expect(sent, isEmpty);
+      expect(await resend(crypto), SealedResend.unavailable);
 
-      // An MLS control message queued for this conversation: waits
-      // (retryable), and nothing is encrypted.
+      // An MLS control message queued for this conversation: waits, and
+      // nothing is encrypted.
       crypto.reencrypt = (_) => identified;
       crypto.reencrypts = 0;
       store.pending = <PendingMlsMessage>[
@@ -406,11 +384,7 @@ void main() {
             kind: 'commit',
             payload: const <int>[1]),
       ];
-      await expectLater(
-          fallback(crypto),
-          throwsA(isA<ApiException>()
-              .having((e) => e.statusCode, 'statusCode', 503)
-              .having((e) => e.serverCode, 'code', 'mls_control_pending')));
+      expect(await resend(crypto), SealedResend.held);
       expect(crypto.reencrypts, 0);
       // One for another conversation does not hold it.
       store.pending = <PendingMlsMessage>[
@@ -420,16 +394,8 @@ void main() {
             kind: 'commit',
             payload: <int>[1]),
       ];
-      expect(await fallback(crypto), isTrue);
-      sent.clear();
-
-      // The session changed during the encrypt: nothing is sent.
-      owned = false;
-      await expectLater(
-          fallback(crypto),
-          throwsA(isA<ApiException>()
-              .having((e) => e.serverCode, 'code', 'session_changed')));
-      expect(sent, isEmpty);
+      expect(await resend(crypto), SealedResend.queued);
+      expect(crypto.reencrypts, 1);
     });
   });
 

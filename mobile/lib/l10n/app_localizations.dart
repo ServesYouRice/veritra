@@ -3975,6 +3975,30 @@ abstract class AppLocalizations {
   /// **'This encrypted message could not be sent. Copy it or discard it.'**
   String get outboxSendFailed;
 
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t send hidden: the server would not take this message without your name. Send it normally, and the server will see it is from you, or discard it.'**
+  String get outboxSealedRefused;
+
+  /// L2-3 sealed sender: the server would not take a message hidden. Sends it with your name visible to the server.
+  ///
+  /// In en, this message translates to:
+  /// **'Send normally'**
+  String get chatSendNormally;
+
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat is updating its encryption. Try again in a moment.'**
+  String get outboxSealedResendHeld;
+
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'This message can no longer be sent normally. Copy it or discard it.'**
+  String get outboxSealedResendUnavailable;
+
   /// No description provided for @recoveryRestoreFailed.
   ///
   /// In en, this message translates to:
@@ -7280,6 +7304,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The message matches, but its sender\'s key could not be checked against their signed device list.'**
   String get c6VerdictSenderUnverifiedDetail;
+
+  /// L2-3 sealed sender: report verdict when the sender's device list was first seen too late to rule out the server.
+  ///
+  /// In en, this message translates to:
+  /// **'Matches, if the server is honest'**
+  String get c6VerdictServerTrusted;
+
+  /// L2-3 sealed sender: report verdict when the sender's device list was first seen too late to rule out the server.
+  ///
+  /// In en, this message translates to:
+  /// **'The proof checks, but this device first got the sender’s signed device list from the server only after this report arrived. A dishonest server could have made up that list and this proof. Treat the sender as unconfirmed unless you trust the server.'**
+  String get c6VerdictServerTrustedDetail;
 
   /// L2-3 sealed sender.
   ///

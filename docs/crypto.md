@@ -608,8 +608,8 @@ route cannot probe ids). Then, in one transaction, in this order:
   events), checked again here (review M2), else 409 `sealed_not_eligible`.
   That answer comes only after the two lookups above, so it proves nothing
   of either kind is stored under (conversation, key): it is the one answer
-  on which the app may resend the message identified (the invariant
-  below).
+  on which the app offers the person to send the message normally
+  (identified), and only on their tap (the invariant below).
 - **Store and fan out.** The row in `sealed_message_envelopes` (migration
   0091) has no sender column at all. One sync event
   `message.sealed.created` goes to every member, the sender's own devices
@@ -886,9 +886,18 @@ database file). A modified app can keep them; that cannot be prevented.
   set is split by day naturally; the server can no longer pick the split,
   but it still sees it.
 - **Forced identified.** The server can answer `eligible: false` or
-  `sealed_not_eligible` to any account at will, which makes its messages go
-  identified. Sealed sender limits what the server stores, not whether a
-  hostile server lets a sender be sealed.
+  `sealed_not_eligible` to any account at will. `eligible: false` makes
+  that account's next messages go identified from the start. A
+  `sealed_not_eligible` refusal of a sealed post never sends that post
+  identified on its own (owner decision 2026-11-12, "Ask before
+  re-sending"): the app would otherwise re-send it under the same
+  idempotency key, which tells the server who sent the sealed post it
+  chose to refuse. The message waits in the outbox, marked "couldn't send
+  hidden", and the chat offers "Send normally" (the server then sees it is
+  from this account, and the person is told so) or "Discard". Sealed
+  sender limits what the server stores, not whether a hostile server lets
+  a sender be sealed; it can still refuse, and then learns the sender of
+  a post only if the person chooses to send it normally.
 - **Copies after expiry (review low b).** Once the original sealed envelope
   has expired, a member can re-post its ciphertext and commitment under
   the same key, and a report about that copy verifies for the sender.
@@ -1038,12 +1047,22 @@ sealed post client and its retry rules), `NativeCryptoService`
   503-class failure for the next token pass; 408, 429, 5xx and transport
   errors retry as other outbox entries do; a 404 (the server's switch is
   off) waits as the retryable `sealed_unavailable` (review low a); other
-  4xx fail the message. **It never falls back to identified, except on 409
-  `sealed_not_eligible`** (the invariant below): then
-  `reencryptSealedAsIdentified` encrypts the message afresh, identified,
-  under the same key (new MLS ciphertext and franking key, no token, no
-  `d`), puts it in the outbox entry's place with its failure cleared, and
-  the app sends it. The plaintext for that is kept only in
+  4xx fail the message. **It never falls back to identified on its own.**
+  A 409 `sealed_not_eligible` (the invariant below) drops the
+  conversation's tokens and leaves the entry terminal under
+  `terminal:409:sealed_not_eligible` (`sealedNeedsResendChoice`): the chat
+  shows "couldn't send hidden" with "Send normally" and "Discard" (owner
+  decision 2026-11-12). Only "Send normally" (`AppState.sendSealedNormally`,
+  `reencryptSealedForResend`) has `reencryptSealedAsIdentified` encrypt the
+  message afresh, identified, under the same key (new MLS ciphertext and
+  franking key, no token, no `d`) and put it in the outbox entry's place
+  with its failure cleared; the outbox worker then sends it once, under the
+  I34 hold. It acts only while the entry still waits for the choice, so a
+  second tap does nothing, and an MLS control message queued for the
+  conversation (or a D68 removal hold) makes it wait and say so. Tests:
+  `mobile/test/l2_sealed_resend_choice_test.dart` (no identified request
+  across passes, a resume, a retry and a restart before the tap; exactly
+  one after it; none after "Discard"). The plaintext for that is kept only in
   `local_sealed_own_posts` while the message is queued, never in the outbox
   JSON or on the wire. It is dropped when the entry is replaced or goes;
   the digest stays (30 days), so the echo of an earlier sealed attempt
@@ -1090,8 +1109,9 @@ sealed post client and its retry rules), `NativeCryptoService`
   newest identified message (the server keeps no read position on a sealed
   row).
 
-**App residuals.** A message chosen sealed is sent identified only on
-`sealed_not_eligible`, so otherwise it can wait. Once its token is past its
+**App residuals.** A message chosen sealed is sent identified only after
+`sealed_not_eligible` and the person's "Send normally", so otherwise it can
+wait. Once its token is past its
 day (`sealed_token_expired`) it needs a fresh one, and while the
 conversation is ineligible the token pass fetches none and drops what it
 held: the message stays queued as a retryable failure until a token pass
@@ -1102,10 +1122,11 @@ Own-post digests stay 30 days after their entry is gone. If the server
 switch is turned off for good, queued sealed messages wait as
 `sealed_unavailable` until the person discards them. A queued sealed
 message with no fallback row (after a restore from backup, which does not
-carry `local_sealed_own_posts`) fails on `sealed_not_eligible` instead of
-going identified. The `sendIdentified` hook in `AppState._postSealed` is
-`sendSealedAsIdentified`, tested on its own (every branch) and through the
-native re-encrypt; the AppState wiring is one call. The server's unread
+carry `local_sealed_own_posts`) waits for the choice on
+`sealed_not_eligible` like any other, but "Send normally" then says it can
+no longer be sent normally, and only "Copy" and "Discard" help.
+`reencryptSealedForResend` is tested on its own (every branch) and through
+the native re-encrypt, and the choice through AppState. The server's unread
 count ignores sealed posts. A device whose list names no franking key
 (any device until its first sealed token pass publishes change 7, or one
 added by change 2 that has not yet published) sends identified. The
@@ -1134,8 +1155,10 @@ sealed under the same idempotency key (a retry of a stored post answers 200
 without spending), fetching new tokens after a token refusal. The one
 exception is 409 `sealed_not_eligible`, which the server answers only after
 finding nothing of either kind stored under (conversation, key), in a
-transaction on its single writer connection; a fresh identified encrypt
-under the same key is then the only copy, unless an earlier sealed attempt
+transaction on its single writer connection; after the person chooses
+"Send normally" (never on its own: the answer could be a hostile server's
+way to learn the sender), a fresh identified encrypt under the same key is
+then the only copy, unless an earlier sealed attempt
 the app gave up on (a timeout does not cancel it) reaches the server later,
 after the conversation became eligible again. Then the sealed copy is
 stored, the identified send is refused (`idempotency_conflict`, keys do

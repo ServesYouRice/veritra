@@ -1425,6 +1425,11 @@ class _MessageList extends StatelessWidget {
                       ClipboardData(text: record!.draftText!),
                     ),
             onDiscard: terminal ? () => state.discardEnvelope(key) : null,
+            // L2-3: the server would not take it hidden; only this tap
+            // sends it identified (owner decision 2026-11-12).
+            onSendNormally: terminal && state.outboxNeedsSealedChoice(key)
+                ? () => state.sendSealedNormally(key)
+                : null,
           );
         }
         final messageIndex = index - pending.length;
@@ -1619,6 +1624,7 @@ class _PendingMessageBubble extends StatelessWidget {
     this.failureMessage,
     this.onCopy,
     this.onDiscard,
+    this.onSendNormally,
   });
 
   final OutboxDeliveryState state;
@@ -1627,6 +1633,10 @@ class _PendingMessageBubble extends StatelessWidget {
   final String? failureMessage;
   final VoidCallback? onCopy;
   final VoidCallback? onDiscard;
+
+  /// L2-3: re-sends a message the server would not take hidden, with the
+  /// sender visible to the server.
+  final VoidCallback? onSendNormally;
 
   @override
   Widget build(BuildContext context) {
@@ -1708,9 +1718,14 @@ class _PendingMessageBubble extends StatelessWidget {
                 ),
               ],
               if (!sending)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Wrap(
+                  alignment: WrapAlignment.end,
                   children: <Widget>[
+                    if (onSendNormally != null)
+                      TextButton(
+                        onPressed: onSendNormally,
+                        child: Text(l10n.chatSendNormally),
+                      ),
                     if (onRetry != null)
                       TextButton(
                         onPressed: onRetry,
