@@ -486,12 +486,11 @@ and day, and everything listed under "What still leaks".
   Inputs, blinds and the token output stay with the client; the server sees
   blinded elements at issuance and an unblinded `(nonce, output)` pair at
   redemption, and cannot link the two.
-- **Why POPRF and not plain VOPRF.** `info` carries the conversation, the
-  day and the conversation's token generation, so one long-lived server key
-  serves every conversation and every day. A token for conversation X does
-  not open conversation Y, and a token from yesterday's generation fails
-  after a removal. With plain VOPRF that needs one key per conversation and
-  day, and many keys make per-user key tagging easier to hide.
+- **Why POPRF and not plain VOPRF.** `info` carries the conversation and
+  the day, so one long-lived server key serves every conversation and every
+  day. A token for conversation X does not open conversation Y. With plain
+  VOPRF that needs one key per conversation and day, and many keys make
+  per-user key tagging easier to hide.
 - **Server key.** One POPRF key per instance, made at random on first use
   and kept in the database (`sealed_sender_keys`, migration 0090). Its
   public half is published at `GET /api/v1/sealed/key`
@@ -501,39 +500,44 @@ and day, and everything listed under "What still leaks".
   post junk into conversations whose ids it knows; it reads nothing.
 - **Epoch.** The UTC day, `e = floor(unix_seconds / 86400)`. Tokens are
   issued for `e` in {today, tomorrow} and redeemed for `e` in {yesterday,
-  today}, so a token fetched ahead of midnight still works the next day,
-  and no token lives longer than about 72 hours.
-- **Generation.** A per-conversation counter (`sealed_conversation_state`).
-  A database trigger raises it whenever a membership row of the
-  conversation is deleted (leave, remove, ban, account deletion) and
-  whenever a device of a member account is revoked. Tokens name the
-  generation they were issued under; redemption requires the current one,
-  so a removed member's leftover tokens die at once, along with everyone
-  else's (members fetch again; removals are rare).
+  today} (server days), so a token fetched ahead of midnight still works
+  the next day, and no token lives longer than about 72 hours. The app
+  takes `e` from its own clock; the server never names it (review M1).
+- **No generation (review M1, owner decision 2026-11-12).** An earlier
+  draft bound a per-conversation counter, raised on each removal, into
+  `info`. The server could set it per account and so split the anonymity
+  set (a post made with account A's generation is A's). It is removed from
+  the token, from `info`, from the routes and from migration 0090. The
+  cost: a removed member's (or revoked device's) leftover tokens stay
+  valid until their day ends, see "What still leaks".
 - **`info`** (bytes, RFC 9497 limit 65535):
 
   ```text
   "veritra-l2-sealed-v1" || u16 len(conversation_id) || conversation_id
-                         || u32 e || u64 generation        (big-endian)
+                         || u32 e                          (big-endian)
   ```
 - **Token.** Input is a fresh 32-byte random `nonce`; the token is
-  `(key_id, e, generation, nonce, output)`, `output` being the 64-byte
+  `(key_id, e, nonce, output)`, `output` being the 64-byte
   POPRF output. Tokens are bearer credentials kept only in the device's
   encrypted local database (schema 43).
 
 #### Issuance (authenticated, rate-limited)
 
 1. `GET /api/v1/sealed/conversations/{id}` (session): `{key_id,
-   public_key, generation, epoch, eligible, remaining}`. Members only.
+   public_key, eligible, remaining}`. Members only. There is no epoch and
+   no counter in the answer: nothing the server sends is bound into a
+   token. `remaining` is `cap - (issued(t-1) + issued(t) + issued(t+1))`
+   for the server's today `t`, a lower bound for either day.
 2. The app (Rust, `pm_crypto_l2_token_request`) makes `n` nonces (1 to 32)
    and blinds them under `info`; it keeps the client state blob.
 3. `POST /api/v1/sealed/conversations/{id}/tokens` (session, write budget)
-   with `{epoch, generation, blinded: [n × 32 bytes]}`. The server checks:
-   switch on, member, conversation eligible, epoch in {today, tomorrow},
-   generation current (else 409 `sealed_generation_changed`), and the
-   per-account, per-conversation, per-day cap
+   with `{epoch, blinded: [n × 32 bytes]}`. The server checks: switch on,
+   member, conversation eligible (with the issuance gate below), epoch in
+   {today, tomorrow}, and the per-account, per-conversation cap
    (`PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY`, default 200; 429
-   `sealed_token_limit`). It answers `{key_id, evaluated: [n × 32], proof
+   `sealed_token_limit`). Two consecutive days are redeemable at once, so
+   the cap holds for each such pair: `issued(e-1) + issued(e) + n` and
+   `issued(e) + issued(e+1) + n` must both stay within it (review low c). It answers `{key_id, evaluated: [n × 32], proof
    (64)}` and adds `n` to `sealed_token_issuance(account, conversation,
    epoch)`.
 4. The app (`pm_crypto_l2_token_finalize`) verifies the batch proof against
@@ -541,8 +545,8 @@ and day, and everything listed under "What still leaks".
    refused (`PM_CRYPTO_ERROR`) and no token is kept.
 
 Rationing is per account, not per device: the server never learns which
-device redeems. The counts in `sealed_token_issuance` are deleted when their
-epoch can no longer be redeemed.
+device redeems. The counts in `sealed_token_issuance` are deleted when they
+cap nothing (epoch before yesterday).
 
 **When the app fetches.** Not right before a send: a fetch followed seconds
 later by a sealed post links the two by time. The app fetches a fixed batch
@@ -569,8 +573,8 @@ carries an `Authorization` header or session cookie is refused (400
 `sealed_request_authenticated`) so a client bug fails closed. Body:
 
 ```json
-{"conversation_id", "token": {"key_id", "epoch", "generation", "nonce",
- "output"}, "idempotency_key", "ciphertext", "crypto_protocol",
+{"conversation_id", "token": {"key_id", "epoch", "nonce", "output"},
+ "idempotency_key", "ciphertext", "crypto_protocol",
  "crypto_metadata", "frank_commit", "expires_at"}
 ```
 
@@ -578,11 +582,10 @@ The server checks, in order: switch on; no plaintext keys (as for every
 envelope); `crypto_metadata` holds only `protocol_version`, `group_id`
 (= the conversation), `content_type` = `application`, `payload_version` and
 `mls_epoch`; the key is the current one; the epoch is yesterday or today
-(else 409 `sealed_token_expired`); the conversation exists and is eligible;
-the generation is current (409 `sealed_generation_changed`); `output`
-equals the POPRF evaluation of `nonce` under `info`, compared in constant
-time (else 403 `sealed_token_invalid`, the same answer for an unknown
-conversation, so the route cannot probe ids). Then, in one transaction:
+(else 409 `sealed_token_expired`); `output` equals the POPRF evaluation of
+`nonce` under `info`, compared in constant time (else 403
+`sealed_token_invalid`, the same answer for an unknown conversation, so the
+route cannot probe ids). Then, in one transaction, in this order:
 
 - **Double spend.** `sealed_spent_tokens(key_id, epoch, nonce)` is the
   primary key. A second use of a nonce is 409 `sealed_token_spent`, unless
@@ -593,7 +596,20 @@ conversation, so the route cannot probe ids). Then, in one transaction:
 - **Dedupe.** `UNIQUE(conversation_id, idempotency_key)` on the sealed
   envelope table; the key must be at least 128 random bits (22 to 128
   characters). A different post under a stored key is 409
-  `idempotency_conflict`.
+  `idempotency_conflict`. This comes first, so the retry of a stored post
+  answers 200 even after the conversation became ineligible.
+- **Keys do not cross (review H1).** A sealed post under a key that names
+  an identified envelope in the same conversation is 409
+  `idempotency_conflict`, and so is an identified send under a key a
+  sealed envelope there holds. Every member reads every key, so without
+  this a member could post under another member's key.
+- **Eligibility, then spend.** The conversation must be eligible and pass
+  the issuance gate (every live device of every member reads sealed
+  events), checked again here (review M2), else 409 `sealed_not_eligible`.
+  That answer comes only after the two lookups above, so it proves nothing
+  of either kind is stored under (conversation, key): it is the one answer
+  on which the app may resend the message identified (the invariant
+  below).
 - **Store and fan out.** The row in `sealed_message_envelopes` (migration
   0091) has no sender column at all. One sync event
   `message.sealed.created` goes to every member, the sender's own devices
@@ -613,10 +629,13 @@ packages, reports, receipts, typing and every admin route stay identified.
 **Receive.** The app reads `message.sealed.created`, decrypts with
 `pm_crypto_group_decrypt_sealed`, and takes the sender only from MLS. The
 sending device cannot decrypt its own `PrivateMessage`; it recognises its
-own post by the idempotency key of a message it holds under its own device
-key, and commits past it. A server that replays that key with other bytes
-gets the event skipped, which it could do by dropping the event anyway.
-Blocked senders are hidden by the receiving app only.
+own post by the SHA-256 of the exact ciphertext it sent sealed, recorded at
+encrypt time in the encrypted local table `local_sealed_own_posts`, and
+commits past it (review H1: the key alone is readable by every member, so
+a member's post under it was taken for the victim's own and hidden, and
+re-pointed the victim's row). An own echo never overwrites a server id a
+local row already holds. Blocked senders are hidden by the receiving app
+only.
 
 #### Franking a sealed message (C6 still works)
 
@@ -654,6 +673,12 @@ commitment to the sender's key, inside the ciphertext:
   `"sealed": true`); `s` verifies under the key; and the key is the claimed
   device's key in the claimed account's L1 device list, which that account
   signed (the server cannot forge it). Framing fails: M cannot sign as S.
+  The route also serves the sealed envelope's `idempotency_key`, and the
+  verifier requires it to equal the report's action id (review low b): a
+  member's copy of S's ciphertext and commitment under another key is not
+  attributed to S. The franking check sits in `_verifySealed`
+  (`reports_service.dart`) alone, so a designated-verifier scheme can
+  replace the `s` check there without touching the rest.
   A moderator who is a member checks against its own MLS copy as before.
 - **Cost: deniability.** C6 v1 said "no signature over the text". With `s`,
   a revealed `(P, kf, s)` is a proof anyone can check that S's device
@@ -687,6 +712,22 @@ commitment to the sender's key, inside the ciphertext:
   conversation and day; in a DM it is two people.
 - **Key tagging at first contact.** A server can give one account a unique
   key before it ever pins one. Not detected yet.
+- **Leftover tokens (review M1).** With no generation, a removed member or
+  a revoked device keeps its unspent tokens until their day ends (about 72
+  hours at most). Its MLS state no longer decrypts for the group, so what
+  it posts is junk: receivers show it as an undecryptable or unverifiable
+  placeholder. It reads nothing.
+- **Day split.** The anonymity set of a post is the members who fetched
+  for that day. Near midnight, and for a device whose clock is off, that
+  set is split by day naturally; the server can no longer pick the split,
+  but it still sees it.
+- **Forced identified.** The server can answer `eligible: false` or
+  `sealed_not_eligible` to any account at will, which makes its messages go
+  identified. Sealed sender limits what the server stores, not whether a
+  hostile server lets a sender be sealed.
+- **Copies after expiry (review low b).** Once the original sealed envelope
+  has expired, a member can re-post its ciphertext and commitment under
+  the same key, and a report about that copy verifies for the sender.
 - **Sizes and counts** as before (L2-1).
 - **Server rules.** C2, C5 and C7 checks need the sender, so those
   conversations stay identified; so do attachments and every commit.
@@ -708,8 +749,8 @@ finalizes in voprf to circl's `FullEvaluate` output
 
 #### ABI 26
 
-- `pm_crypto_l2_token_request(public_key, conversation_id, epoch,
-  generation, count, out_state, out_request)`: `count` 1 to 32;
+- `pm_crypto_l2_token_request(public_key, conversation_id, epoch, count,
+  out_state, out_request)`: `count` 1 to 32;
   `out_request` is `count × 32` blinded elements; `out_state` is
   `"VLT1" || u8 count || 32-byte public key || u16 len(info) || info ||
   count × (32-byte nonce || 64-byte voprf client state)`.
@@ -726,8 +767,11 @@ finalizes in voprf to circl's `FullEvaluate` output
 #### Counters
 
 Crypto ABI 26 (25 is reserved by another package; this branch goes 24 to
-26), local schema 43, server migrations 0090 (keys, generations, issuance
-counts, spent tokens) and 0091 (sealed envelope table). Needs the
+26), local schema 43, server migrations 0090 (keys, issuance counts, spent
+tokens) and 0091 (sealed envelope table, capable devices, an index on
+`message_envelopes(idempotency_key)`). The review fixes of 2026-11-12
+amended ABI 26, schema 43, 0090 and 0091 in place (none had merged): the
+numbers did not change. Needs the
 independent crypto review (G25) before the switch is turned on anywhere.
 
 #### As built (2026-11-12, branch `feat/l2-sealed-sender`)
@@ -738,8 +782,9 @@ Dart bindings in `native_crypto_bindings.dart`), the Go half
 (`testing/vectors/l2-sealed-v1.json`, checked in Rust, Go and Dart), and the
 server routes, storage and migrations 0090 and 0091 behind
 `PRIVATE_MESSENGER_SEALED_SENDER` (off by default). Server tests cover the
-double spend and its idempotent retry, wrong and relabelled epochs, a stale
-generation after a removal and after a device revocation, the daily cap,
+double spend and its idempotent retry, wrong and relabelled epochs, a
+removed member's leftover token (it still posts, review M1), the cap
+across redeemable days,
 ineligible conversations, a request carrying a session, forged tokens, no
 sender stored or synced, expiry and pruning, and the report envelope route
 for a sealed envelope.
@@ -760,10 +805,10 @@ from happening:
   not merged). `GET /sealed/conversations/{id}` reports `eligible: false`,
   and token issuance answers 409 `sealed_not_eligible`, until every live
   device of every member is listed. So no member device that would miss a
-  sealed post is in a conversation that gets tokens. Redemption does not
-  check the gate: a device linked (or an older app installed) after tokens
-  were issued misses the sealed posts of the token days already issued
-  (today and tomorrow at most), and holds issuance shut until it updates.
+  sealed post is in a conversation that gets tokens. Redemption checks
+  the gate too (review M2), after the retry lookup: a device linked (or an
+  older app installed) after tokens were issued closes it for new posts at
+  once, and those go identified (below).
 
 **App step, as built (2026-11-12, branch `feat/l2-sealed-app`, local schema
 43).** Code: `mobile/lib/core/sealed_sender.dart` (token pass, key pin,
@@ -798,8 +843,8 @@ sealed post client and its retry rules), `NativeCryptoService`
 - **Choice at encrypt time.** `_encryptPayload` seals a payload only when
   its type is a message type (`sealedPayloadTypes`), it has no attachments,
   the conversation is `dm` or `group`, not a shared group, carries no C7
-  body, and a token is held for the current generation under the pinned
-  key; otherwise the message goes identified, as before. The sealed payload
+  body, and a token is held under the pinned key; otherwise the message
+  goes identified, as before. The sealed payload
   carries `s` (`pm_crypto_l2_frank_sign`). The choice and its token are
   stored in the outbox entry with the ciphertext; the local message row
   holds no flag (the echo arrives as `message.sealed.created`).
@@ -807,14 +852,21 @@ sealed post client and its retry rules), `NativeCryptoService`
   shared connection), sends no `Authorization` header and no cookie, and
   posts `POST /sealed/messages`; `ApiClient.sendEnvelope` refuses a sealed
   envelope. Retry rules (`postSealedMessage`): a refused token
-  (`sealed_generation_changed`, `_token_expired`, `_token_spent`,
-  `_token_invalid`) is replaced from the store and the same message posted
+  (`sealed_token_expired`, `_token_spent`, `_token_invalid`) is replaced
+  from the store and the same message posted
   again (same idempotency key and ciphertext; the outbox entry is rewritten
   with the new token first); with no token left it waits as a retryable
   503-class failure for the next token pass; 408, 429, 5xx and transport
-  errors retry as other outbox entries do; `sealed_not_eligible` and other
-  4xx fail the message (nothing was stored). **It never falls back to
-  identified** (the invariant below).
+  errors retry as other outbox entries do; a 404 (the server's switch is
+  off) waits as the retryable `sealed_unavailable` (review low a); other
+  4xx fail the message. **It never falls back to identified, except on 409
+  `sealed_not_eligible`** (the invariant below): then
+  `reencryptSealedAsIdentified` encrypts the message afresh, identified,
+  under the same key (new MLS ciphertext and franking key, no token, no
+  `s`), puts it in the outbox entry's place with its failure cleared, and
+  the app sends it. The plaintext for that is kept only in
+  `local_sealed_own_posts` while the message is queued, never in the outbox
+  JSON or on the wire, and is dropped with the entry.
 - **Receive.** The `message.sealed.created` case decrypts through
   `processSealedApplicationMessage` (`pm_crypto_group_decrypt_sealed`),
   which refuses identified envelopes, as the identified path refuses sealed
@@ -822,8 +874,7 @@ sealed post client and its retry rules), `NativeCryptoService`
   a message type; any other type is `invalid`. Undecryptable posts become
   D54 placeholders after the usual retries, and a post from a removed
   sender becomes the "unverifiable" placeholder, so neither stops sync.
-  The own post is recognised by the idempotency key of a message the device
-  holds under its own device key or of a queued sealed outbox entry; a
+  The own post is recognised by the digest of its ciphertext (above); a
   decrypted sender equal to this device is refused. Messages from blocked
   senders are hidden from the timeline.
 - **Franking.** `_checkFranking` requires `s` exactly when the envelope is
@@ -846,17 +897,15 @@ sealed post client and its retry rules), `NativeCryptoService`
   newest identified message (the server keeps no read position on a sealed
   row).
 
-**App residuals.** A message chosen sealed is never sent identified, so
-it can wait. Once its token is past its day (`sealed_token_expired`) it
-needs a fresh one, and while the conversation is ineligible (C2
-admins-only, a C5 timeout, or the issuance gate closed by a member device
-on an older app) the token pass fetches none and drops what it held: the
-message stays queued as a retryable failure, possibly for good, until the
-conversation is eligible again or the person discards it. Only a post that
-reaches the server with a valid token while the conversation is ineligible
-is refused (`sealed_not_eligible`) and fails. Failing the waiting message
-on its own is not done: after a lost answer it may already be stored, and
-a resend would then show twice. The server's unread count
+**App residuals.** A message chosen sealed is sent identified only on
+`sealed_not_eligible`, so otherwise it can wait. Once its token is past its
+day (`sealed_token_expired`) it needs a fresh one, and while the
+conversation is ineligible the token pass fetches none and drops what it
+held: the message stays queued as a retryable failure until a token pass
+refills, the conversation is eligible again, or the person discards it.
+Failing or resending the waiting message on its own is not done: after a
+lost answer it may already be stored, and a resend would then show twice.
+Own-post digests stay 30 days after their entry is gone. The server's unread count
 ignores sealed posts. The signing key checked on receive is the sender
 leaf's current key, so a sender that rotated its leaf key between sending
 and the receiver's decrypt would read as `invalid`. The notice owner of a
@@ -881,9 +930,12 @@ key), so a message sent both ways is stored twice and the second copy fails
 MLS at every receiver. Once a sealed attempt may have reached the server,
 the app must never fall back to identified for that message: it retries
 sealed under the same idempotency key (a retry of a stored post answers 200
-without spending), fetching new tokens after `sealed_generation_changed`.
-The decision to seal is made at encrypt time and stored with the outgoing
-message.
+without spending), fetching new tokens after a token refusal. The one
+exception is 409 `sealed_not_eligible`, which the server answers only after
+finding nothing of either kind stored under (conversation, key), in a
+write transaction on its single writer connection; a fresh identified
+encrypt under the same key is then the only copy. The decision to seal is
+made at encrypt time and stored with the outgoing message.
 
 ## Encrypted backup file (VBK2)
 
