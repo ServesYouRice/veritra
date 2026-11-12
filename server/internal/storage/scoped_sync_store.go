@@ -94,6 +94,17 @@ func (s *Store) ListConversationSyncEvents(ctx context.Context, accountID, devic
 // are block-hidden, which D92 lets the cursor pass: an unblock does not
 // replay them through sync.
 func (s *Store) ListConversationSyncPage(ctx context.Context, accountID, deviceID, conversationID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
+	return s.ListConversationSyncPageWith(ctx, accountID, deviceID, conversationID, afterID, limit, SyncReadOptions{Bounded: bounded})
+}
+
+// ListConversationSyncPageWith is ListConversationSyncPage with every
+// opt-in: sealed posts (L2-3) only for a device that reads them.
+func (s *Store) ListConversationSyncPageWith(ctx context.Context, accountID, deviceID, conversationID string, afterID int64, limit int, opts SyncReadOptions) (SyncPage, error) {
+	bounded := opts.Bounded
+	visible := syncEventVisibleTo
+	if opts.Sealed {
+		visible = syncEventVisibleToSealed
+	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -106,9 +117,9 @@ func (s *Store) ListConversationSyncPage(ctx context.Context, accountID, deviceI
 	}
 	// Hidden events do not count towards the page, as in the legacy merge,
 	// so the query has no LIMIT and the loop stops after limit visible rows.
-	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN se.account_id IS NOT NULL THEN 1 ELSE (`+syncEventVisibleTo+`) END,
+	rows, err := s.db.QueryContext(ctx, `SELECT CASE WHEN se.account_id IS NOT NULL THEN 1 ELSE (`+visible+`) END,
 		se.id, se.event_type, se.account_id, se.conversation_id,
-		CASE WHEN se.account_id IS NOT NULL OR (`+syncEventVisibleTo+`) THEN se.payload_json ELSE '' END, se.created_at
+		CASE WHEN se.account_id IS NOT NULL OR (`+visible+`) THEN se.payload_json ELSE '' END, se.created_at
 		FROM sync_events se
 		WHERE se.conversation_id = ?4 AND se.id > ?2
 		  AND (+se.account_id IS NULL OR (se.account_id = ?1 AND (se.device_id IS NULL OR se.device_id = ?3)))

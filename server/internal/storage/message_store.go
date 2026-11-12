@@ -1090,10 +1090,26 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 // join filter only grows, dead envelopes stay dead) or are block-hidden,
 // which D92 lets the cursor pass.
 func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
+	return s.ListSyncPageWith(ctx, accountID, deviceID, afterID, limit, SyncReadOptions{Bounded: bounded})
+}
+
+// SyncReadOptions are what a sync request opted in to. Bounded is the scan
+// budget (?scan=bounded, D92). Sealed (?sealed=1, L2-3) says the app reads
+// message.sealed.created; without it those events are hidden rows, so an
+// app from before sealed sender never meets an event type it would stop
+// sync at (an unknown message.* event fails closed in the app).
+type SyncReadOptions struct {
+	Bounded bool
+	Sealed  bool
+}
+
+// ListSyncPageWith is ListSyncPage with every opt-in.
+func (s *Store) ListSyncPageWith(ctx context.Context, accountID, deviceID string, afterID int64, limit int, opts SyncReadOptions) (SyncPage, error) {
+	bounded := opts.Bounded
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	page, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit, bounded)
+	page, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit, opts)
 	if err != nil {
 		return SyncPage{}, err
 	}
@@ -1117,11 +1133,16 @@ func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, af
 	return page, nil
 }
 
-func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
+func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, opts SyncReadOptions) (SyncPage, error) {
+	bounded := opts.Bounded
+	query := listSyncEventsQuery
+	if opts.Sealed {
+		query = listSyncEventsQuerySealed
+	}
 	// The query streams candidates in id order and has no LIMIT, since
 	// hidden ones do not count towards the page: the page ends here, after
 	// limit visible events, and closing rows stops the merge.
-	rows, err := s.db.QueryContext(ctx, listSyncEventsQuery, accountID, afterID, deviceID)
+	rows, err := s.db.QueryContext(ctx, query, accountID, afterID, deviceID)
 	if err != nil {
 		return SyncPage{}, err
 	}
@@ -1274,7 +1295,13 @@ func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
 // whose ciphertext the delete redacted, are hidden the same way. The clock
 // is SQLite's, in the stored fixed-width format, because the query takes no
 // time parameter.
-var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
+//
+// A sealed post (L2-3) is visible only to a request that opted in to it
+// (SyncReadOptions.Sealed): syncEventVisibleTo hides it, and
+// syncEventVisibleToSealed is the same predicate without that rule.
+var syncEventVisibleTo = `se.event_type <> '` + SealedMessageEventType + `' AND ` + syncEventVisibleToSealed
+
+var syncEventVisibleToSealed = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
 	        OR se.event_type = '` + SealedMessageEventType + `' OR se.event_type LIKE 'call.%')
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
 	AND NOT ` + syncEventBlockedFor("?1") + `
@@ -1324,7 +1351,8 @@ const sqlNowText = `(strftime('%Y-%m-%dT%H:%M:%S', 'now') || substr(strftime('%f
 //
 // first_events is MATERIALIZED so its subquery runs once per chain. The
 // unary + keeps account_id IS NULL off idx_sync_events_account.
-var listSyncEventsQuery = `
+func listSyncEventsQueryFor(visible string) string {
+	return `
 	WITH RECURSIVE
 	first_events(id, chain) AS MATERIALIZED (
 	  SELECT (SELECT se.id FROM sync_events se
@@ -1337,10 +1365,10 @@ var listSyncEventsQuery = `
 	          ORDER BY id ASC LIMIT 1), NULL
 	),
 	candidates(id, chain, visible) AS (
-	  SELECT se.id, f.chain, CASE WHEN f.chain IS NULL THEN 1 ELSE (` + syncEventVisibleTo + `) END
+	  SELECT se.id, f.chain, CASE WHEN f.chain IS NULL THEN 1 ELSE (` + visible + `) END
 	  FROM first_events f JOIN sync_events se ON se.id = f.id
 	  UNION ALL
-	  SELECT se.id, q.chain, CASE WHEN q.chain IS NULL THEN 1 ELSE (` + syncEventVisibleTo + `) END
+	  SELECT se.id, q.chain, CASE WHEN q.chain IS NULL THEN 1 ELSE (` + visible + `) END
 	  FROM candidates q
 	  JOIN sync_events se ON se.id = CASE WHEN q.chain IS NULL
 	    THEN (SELECT n.id FROM sync_events n
@@ -1354,6 +1382,14 @@ var listSyncEventsQuery = `
 	SELECT q.visible, se.id, se.event_type, se.account_id, se.conversation_id,
 	       CASE WHEN q.visible THEN se.payload_json ELSE '' END, se.created_at
 	FROM candidates q CROSS JOIN sync_events se ON se.id = q.id`
+}
+
+// listSyncEventsQuery hides sealed posts; listSyncEventsQuerySealed serves
+// them to a device that opted in (SyncReadOptions.Sealed).
+var (
+	listSyncEventsQuery       = listSyncEventsQueryFor(syncEventVisibleTo)
+	listSyncEventsQuerySealed = listSyncEventsQueryFor(syncEventVisibleToSealed)
+)
 
 // syncEventBlockedFor is true when the conversation event se is hidden from
 // blocker: it comes from an account that blocker blocked or, for a read

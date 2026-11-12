@@ -149,7 +149,8 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 	// ?scan=bounded opts in to the scan budget and the scan position
 	// (D92, TASK-209). Without it the response is the legacy one.
 	bounded := r.URL.Query().Get("scan") == "bounded"
-	page, err := a.Store.ListSyncPage(r.Context(), principal.AccountID, principal.DeviceID, after, limit, bounded)
+	sealed := a.noteSealedReader(r, principal)
+	page, err := a.Store.ListSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, after, limit, storage.SyncReadOptions{Bounded: bounded, Sealed: sealed})
 	if err != nil {
 		if errors.Is(err, storage.ErrSyncCursorExpired) {
 			epoch, oldest, latest, boundsErr := a.Store.SyncBounds(r.Context(), principal.AccountID)
@@ -195,6 +196,36 @@ func (a *API) syncEvents(w http.ResponseWriter, r *http.Request, principal domai
 	candidates := a.deliveryCandidates(r.Context(), principal.AccountID, events)
 	writeJSON(w, http.StatusOK, body)
 	a.recordDeliveredAsync(principal.AccountID, candidates)
+}
+
+// syncReadsSealed is the L2-3 opt-in (?sealed=1): the app reads
+// message.sealed.created. An app from before sealed sender stops sync at an
+// unknown message.* event (fail closed), so it is never sent one; it misses
+// sealed posts instead, which the issuance gate (sealedEligible) keeps from
+// happening while one of its devices is a member. The opt-in is the same
+// whether or not the switch is on, and records nothing.
+func syncReadsSealed(r *http.Request) bool {
+	return r.URL.Query().Get("sealed") == "1"
+}
+
+// noteSealedReader returns the request's sealed opt-in and, while the
+// switch is on, records the device as one that reads sealed events (once
+// per device and process; the issuance gate reads it). A failed write only
+// delays issuance, so it is logged and the read goes on.
+func (a *API) noteSealedReader(r *http.Request, principal domain.Principal) bool {
+	if !syncReadsSealed(r) {
+		return false
+	}
+	if a.SealedSender && principal.DeviceID != "" {
+		if _, done := a.sealedReaders.Load(principal.DeviceID); !done {
+			if err := a.Store.NoteSealedCapableDevice(r.Context(), principal.DeviceID); err != nil {
+				a.warn("sealed_reader_note_failed", "err", err)
+			} else {
+				a.sealedReaders.Store(principal.DeviceID, struct{}{})
+			}
+		}
+	}
+	return true
 }
 
 func (a *API) searchMetadata(w http.ResponseWriter, r *http.Request, principal domain.Principal) {

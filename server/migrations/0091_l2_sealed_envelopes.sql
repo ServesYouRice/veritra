@@ -24,3 +24,14 @@ WHEN NEW.frank_commit IS NOT OLD.frank_commit
 BEGIN
   SELECT RAISE(ABORT, 'frank_commit is write-once');
 END;
+
+-- Devices whose app reads message.sealed.created (it asked sync for them
+-- with ?sealed=1 while the switch was on). Tokens are issued for a
+-- conversation only while every live device of every member is listed, so
+-- no member device that would never see a sealed post is left out of one
+-- (an older app is not sent sealed events at all; see syncReadsSealed).
+-- Holds no secret and names no conversation.
+CREATE TABLE IF NOT EXISTS sealed_capable_devices (
+  device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+  noted_at TEXT NOT NULL
+) WITHOUT ROWID;

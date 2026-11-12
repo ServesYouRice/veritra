@@ -184,6 +184,17 @@ func sealedHandler(t *testing.T, mutate func(*config.Config)) (http.Handler, str
 	return handler, ownerToken, dbPath, prune
 }
 
+// sealedReaders reads sync with the sealed opt-in as each device's app
+// would, which records the device for the issuance gate.
+func sealedReaders(t *testing.T, handler http.Handler, tokens ...string) {
+	t.Helper()
+	for _, token := range tokens {
+		if status, body := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=1&sealed=1", token, nil); status != http.StatusOK {
+			t.Fatalf("sealed reader status=%d body=%s", status, body)
+		}
+	}
+}
+
 const sealedKey1 = "sealed-key-000000000000001"
 
 func TestSealedSenderIsOffByDefault(t *testing.T) {
@@ -207,6 +218,7 @@ func TestSealedPostStoresNoSenderAndSpendsItsToken(t *testing.T) {
 	outsiderToken, _ := registerMemberWithID(t, handler, ownerToken, "outsider")
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, memberID)
+	sealedReaders(t, handler, ownerToken, memberToken)
 
 	status, info := sealedInfo(t, handler, memberToken, conversationID)
 	if status != http.StatusOK || !info.Eligible || info.Remaining != 200 || info.Epoch != sealedsender.Epoch(time.Now().UTC()) {
@@ -292,7 +304,7 @@ func TestSealedPostStoresNoSenderAndSpendsItsToken(t *testing.T) {
 	// Every member, the sender included, gets it by sync and by id; an
 	// outsider does not.
 	for name, token := range map[string]string{"owner": ownerToken, "sender": memberToken} {
-		status, events := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", token, nil)
+		status, events := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100&sealed=1", token, nil)
 		if status != http.StatusOK || !bytes.Contains(events, []byte("message.sealed.created")) || !bytes.Contains(events, []byte(stored.ID)) {
 			t.Fatalf("%s sync status=%d body=%s", name, status, events)
 		}
@@ -304,7 +316,7 @@ func TestSealedPostStoresNoSenderAndSpendsItsToken(t *testing.T) {
 	if status, _ := doJSON(t, handler, http.MethodGet, "/api/v1/messages/"+stored.ID, outsiderToken, nil); status != http.StatusNotFound {
 		t.Fatalf("outsider by id status=%d", status)
 	}
-	if status, events := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", outsiderToken, nil); status != http.StatusOK || bytes.Contains(events, []byte(stored.ID)) {
+	if status, events := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100&sealed=1", outsiderToken, nil); status != http.StatusOK || bytes.Contains(events, []byte(stored.ID)) {
 		t.Fatalf("outsider sync status=%d body=%s", status, events)
 	}
 }
@@ -314,6 +326,7 @@ func TestSealedPostRefusesSessionsAndBadTokens(t *testing.T) {
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedbad")
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, memberID)
+	sealedReaders(t, handler, ownerToken, memberToken)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
 	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2)
 	if status != http.StatusOK {
@@ -392,6 +405,7 @@ func TestSealedPostRefusesSessionsAndBadTokens(t *testing.T) {
 func TestSealedTokensAreBoundToTheirEpoch(t *testing.T) {
 	handler, ownerToken, _, _ := sealedHandler(t, nil)
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedepoch")
+	sealedReaders(t, handler, ownerToken, memberToken)
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
@@ -422,10 +436,11 @@ func TestSealedTokensAreBoundToTheirEpoch(t *testing.T) {
 func TestSealedTokensDieWhenAMemberLeaves(t *testing.T) {
 	handler, ownerToken, dbPath, _ := sealedHandler(t, nil)
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedstay")
-	_, leaverID := registerMemberWithID(t, handler, ownerToken, "sealedleave")
+	leaverToken, leaverID := registerMemberWithID(t, handler, ownerToken, "sealedleave")
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	addMember(t, handler, ownerToken, conversationID, leaverID)
+	sealedReaders(t, handler, ownerToken, memberToken, leaverToken)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
 	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2)
 	if status != http.StatusOK {
@@ -475,6 +490,7 @@ func TestSealedTokensDieWhenAMemberLeaves(t *testing.T) {
 func TestSealedTokensAreCappedAndOnlyForEligibleConversations(t *testing.T) {
 	handler, ownerToken, dbPath, _ := sealedHandler(t, func(cfg *config.Config) { cfg.SealedTokensPerDay = 3 })
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedcap")
+	sealedReaders(t, handler, ownerToken, memberToken)
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
@@ -537,6 +553,7 @@ func TestReportEnvelopeOfASealedMessage(t *testing.T) {
 	ownerID := accountIDFromExport(t, handler, ownerToken)
 	senderToken, senderID := registerMemberWithID(t, handler, ownerToken, "sealedreported")
 	reporterToken, reporterID := registerMemberWithID(t, handler, ownerToken, "sealedreporter")
+	sealedReaders(t, handler, ownerToken, senderToken, reporterToken)
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, senderID)
 	addMember(t, handler, ownerToken, conversationID, reporterID)
@@ -593,6 +610,7 @@ func TestReportEnvelopeOfASealedMessage(t *testing.T) {
 func TestSealedEnvelopesExpireAndArePruned(t *testing.T) {
 	handler, ownerToken, dbPath, prune := sealedHandler(t, nil)
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedexpire")
+	sealedReaders(t, handler, ownerToken, memberToken)
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
@@ -622,7 +640,7 @@ func TestSealedEnvelopesExpireAndArePruned(t *testing.T) {
 		t.Fatalf("expired by id status=%d", status)
 	}
 	encoded := base64.StdEncoding.EncodeToString(ciphertext)
-	if _, events := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100", ownerToken, nil); bytes.Contains(events, []byte(encoded)) {
+	if _, events := doJSON(t, handler, http.MethodGet, "/api/v1/sync/events?after=0&limit=100&sealed=1", ownerToken, nil); bytes.Contains(events, []byte(encoded)) {
 		t.Fatalf("expired envelope served by sync: %s", events)
 	}
 	if removed := prune(); removed < 1 {

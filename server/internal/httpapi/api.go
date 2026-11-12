@@ -88,6 +88,10 @@ type API struct {
 	// daily token cap per account and conversation (200 when zero).
 	SealedSender       bool
 	SealedTokensPerDay int
+	// sealedReaders caches the device ids already recorded as reading
+	// sealed events (noteSealedReader), so a sync page writes at most once
+	// per device and process.
+	sealedReaders sync.Map
 	// Attest is the L3 proof hook. Nil (the default) leaves
 	// GET /api/v1/attestation unregistered, so it answers 404.
 	Attest       attest.Provider

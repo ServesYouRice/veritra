@@ -105,6 +105,33 @@ func sealedEligible(ctx context.Context, q sealedQuerier, conversationID string,
 	return eligible, err
 }
 
+// sealedMembersCapable reports whether every live device of every member of
+// the conversation reads sealed events (sealed_capable_devices). Issuance
+// needs it; redemption does not, so a device linked after tokens were issued
+// does not turn a sender's queued post into a failure (that device misses
+// the post instead, docs/crypto.md "As built").
+func sealedMembersCapable(ctx context.Context, q sealedQuerier, conversationID string) (bool, error) {
+	var capable bool
+	err := q.QueryRowContext(ctx, `
+		SELECT NOT EXISTS (
+		  SELECT 1 FROM memberships m JOIN devices d ON d.account_id = m.account_id
+		  WHERE m.conversation_id = ? AND d.revoked_at IS NULL
+		    AND NOT EXISTS (SELECT 1 FROM sealed_capable_devices c WHERE c.device_id = d.id))`, conversationID).Scan(&capable)
+	return capable, err
+}
+
+// NoteSealedCapableDevice records that the device's app reads sealed
+// events. Idempotent.
+func (s *Store) NoteSealedCapableDevice(ctx context.Context, deviceID string) error {
+	if deviceID == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO sealed_capable_devices(device_id, noted_at)
+		SELECT id, ? FROM devices WHERE id = ? AND revoked_at IS NULL
+		ON CONFLICT(device_id) DO NOTHING`, nowString(), deviceID)
+	return err
+}
+
 // SealedConversationForAccount returns the generation, eligibility and the
 // tokens already issued for epoch, to a member only (ErrNotFound otherwise,
 // so the route cannot probe conversation ids).
@@ -115,6 +142,11 @@ func (s *Store) SealedConversationForAccount(ctx context.Context, conversationID
 	eligible, err := sealedEligible(ctx, s.db, conversationID, time.Now().UTC())
 	if err != nil {
 		return SealedConversationState{}, err
+	}
+	if eligible {
+		if eligible, err = sealedMembersCapable(ctx, s.db, conversationID); err != nil {
+			return SealedConversationState{}, err
+		}
 	}
 	generation, err := sealedGeneration(ctx, s.db, conversationID)
 	if err != nil {
@@ -159,6 +191,11 @@ func (s *Store) ReserveSealedTokens(ctx context.Context, conversationID, account
 	if err != nil {
 		return err
 	}
+	if eligible {
+		if eligible, err = sealedMembersCapable(ctx, tx, conversationID); err != nil {
+			return err
+		}
+	}
 	if !eligible {
 		return ErrSealedNotEligible
 	}
@@ -198,10 +235,12 @@ func (s *Store) SealedGeneration(ctx context.Context, conversationID string) (ui
 // member account (the sender is unknown, so none is left out).
 //
 // Order: the conversation must exist (else ErrSealedTokenInvalid, as an
-// unknown id) and be eligible; the generation must still be the token's; a
-// stored post under the same idempotency key answers as a retry when it is
-// the same post (without spending this token) and as a conflict otherwise;
-// then the nonce is spent (ErrSealedTokenSpent on reuse).
+// unknown id); a stored post under the same idempotency key answers as a
+// retry when it is the same post (without spending this token, whatever its
+// generation, and even if the conversation is no longer eligible) and as a
+// conflict otherwise; then the conversation must be eligible, the
+// generation still the token's, and the nonce is spent (ErrSealedTokenSpent
+// on reuse).
 func (s *Store) SaveSealedEnvelope(ctx context.Context, envelope domain.SealedMessageEnvelope, token domain.SealedToken) (domain.SealedMessageEnvelope, bool, int64, []string, error) {
 	if len(envelope.CryptoMetadata) == 0 {
 		envelope.CryptoMetadata = json.RawMessage(`{}`)
@@ -222,16 +261,11 @@ func (s *Store) SaveSealedEnvelope(ctx context.Context, envelope domain.SealedMe
 	if err != nil {
 		return domain.SealedMessageEnvelope{}, false, 0, nil, err
 	}
-	if !eligible {
-		return domain.SealedMessageEnvelope{}, false, 0, nil, ErrSealedNotEligible
-	}
-	generation, err := sealedGeneration(ctx, tx, envelope.ConversationID)
-	if err != nil {
-		return domain.SealedMessageEnvelope{}, false, 0, nil, err
-	}
-	if generation != token.Generation {
-		return domain.SealedMessageEnvelope{}, false, 0, nil, ErrSealedGenerationChanged
-	}
+	// The retry of a stored post comes before eligibility and the
+	// generation: once a sealed attempt may have landed the app never posts
+	// that message identified (it would be stored twice), so a retry must
+	// still answer 200 after the conversation became admins-only or a
+	// member left. The token was already checked for this conversation.
 	existing, err := scanSealedEnvelope(tx.QueryRowContext(ctx, `SELECT `+sealedEnvelopeColumns+` FROM sealed_message_envelopes WHERE conversation_id = ? AND idempotency_key = ?`, envelope.ConversationID, envelope.IdempotencyKey))
 	if err == nil {
 		if existing.ExpiresAt == nil || existing.ExpiresAt.After(now) {
@@ -249,6 +283,16 @@ func (s *Store) SaveSealedEnvelope(ctx context.Context, envelope domain.SealedMe
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return domain.SealedMessageEnvelope{}, false, 0, nil, err
+	}
+	if !eligible {
+		return domain.SealedMessageEnvelope{}, false, 0, nil, ErrSealedNotEligible
+	}
+	generation, err := sealedGeneration(ctx, tx, envelope.ConversationID)
+	if err != nil {
+		return domain.SealedMessageEnvelope{}, false, 0, nil, err
+	}
+	if generation != token.Generation {
+		return domain.SealedMessageEnvelope{}, false, 0, nil, ErrSealedGenerationChanged
 	}
 	envelope.ID, err = domain.NewID("sealed")
 	if err != nil {
