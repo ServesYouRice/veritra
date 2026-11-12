@@ -573,6 +573,29 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C7 full mode in the client (2026-11-12):** no ABI, local schema,
+  migration or dependency change; behind `c7SealedBodies` (the server's
+  `c7_history`, off by default). Records (create, switch) under C4
+  authority and applied in sync order, per-channel chains and generation
+  keys in sealed settings written with the MLS step that causes them, the
+  rekey from the exporter root at every removal merge, `keyless` and
+  `unsure` with their triggers, and `history_sync` (slots, duties, jitter,
+  the newcomer's request) as in
+  [`C7-channel-history.md`](designs/C7-channel-history.md) decisions 2 to
+  5. Posts (text, reply, attachment manifest, poll) seal under
+  `HKDF(CHK_g, "veritra-c7-post-v1", ...)` with the signed `gen = E_g`
+  only while the channel is `full` and `ok`; every other message, targeted
+  actions included, stays under a random key with `gen = 0`. Wire: a
+  `history_sync`'s body0 is a VAP1 padded to exactly `P(N)` and its slots
+  follow it under the reference's hash, so the sealed body is
+  `P(N) + 124 + 700 N` bytes (vector `testing/vectors/c7-sync-v1.json`,
+  from an independent Python generator, checked by Rust, Go and Dart).
+  Receivers now accept a group-level two-part message only as a
+  `history_sync` or its request. Deviations, residuals and what is not
+  built (the newcomer's import and backward walk, the app wiring, C3
+  `move`) are listed in the design's "Build status (2026-11-12)". Needs
+  the independent review before the switch is turned on anywhere.
+
 - **C4 leave proof in the commit (2026-11-11, crypto ABI 24):** the
   owner-approved design, built with the review's required changes (no
   epoch field; the AAD set inside every stage attempt and checked on the

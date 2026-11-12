@@ -982,6 +982,114 @@ newcomer's import, backward walk and prefetch have nothing to carry. Also
 left: sending `history_sync` (all slots random until then) and its request
 with the jitter, the per-channel chain state and its storage.
 
+### Build status (2026-11-12): step 4, full mode in the client
+
+Built on `feat/c7-full`, client only, behind the same switch
+(`c7SealedBodies`, which follows the server's `c7_history`; off by
+default). No crypto ABI, local schema or server migration change: every C7
+state is a sealed setting written in the same local transaction as the MLS
+step that causes it (`setting:c7.group.<conversation>` and
+`setting:c7.chan.<conversation>|<channel>`, through `c7Settings` on the
+sync, merge, outgoing and import transitions). Settings never enter a
+history snapshot, so no generation key reaches a K1 backup or a K2 bundle
+(checked in `mobile/test/c7_full_native_test.dart`).
+
+- **State** (`mobile/lib/crypto/c7_channel_book.dart`,
+  `c7_group_state.dart` v2): per channel the chain of decision 4 (head,
+  kept records with their full forms, highest `seq`, status, miss epoch),
+  the current period's generations with their keys and closing epochs, the
+  retired generation epochs, and this device's pending own proposal; per
+  group the membership floor, the kept removal root, a slot snapshot and a
+  `history_sync` duty per membership commit (the newest four), and a
+  newcomer's join epoch and request time. Anything malformed reads as
+  `closed` (a channel) or empty (a group): nothing is sealed under a
+  history key and nothing is handed over.
+- **Records** (create, switch): proposed by an owner or admin, applied by
+  the sender only when its own message comes back in sync order (stale
+  when a membership commit was sequenced first: kept, reported, proposed
+  again by the app; lost when another record took the seq). A live record
+  is checked before the table: the sender's leaf is `approved` (D119), its
+  epoch is at or above the floor, the actor is owner or admin in the
+  verified role record (`VerifiedRoleSource`; a private channel's group is
+  judged by its shared group's), and the signature verifies against the
+  actor's key in the current tree. A record that opens `full` seals its own
+  message under its key, as the design says.
+- **Rekey at merge**: a removal derives every `full` channel's next
+  generation from the exporter root MLS returned, at all three merge
+  sites; a record applied after a later removal catches up from the kept
+  root. Every membership commit fixes the slot snapshot and the duty (the
+  committer at once, others after 20 s plus up to 2 s per member, at most
+  10 min, unless a `history_sync` carrying their own snapshot arrives).
+  Own removal and a Welcome delete the group's C7 state (Trace 4).
+- **Unsure**: an undecryptable message (D54), an unapproved sender, a
+  missing or damaged body, a ratchet-advanced message, an invalid payload
+  and a misrouted C7 type mark every `full` channel of the group with the
+  group's current epoch. The `gen` trigger is below. `unsure` clears by a
+  record above the miss epoch or by a `history_sync` slot, for a later
+  membership epoch, with the device's own head and current key.
+- **`history_sync`**: built from the snapshot fixed at merge, naming the
+  channels with state plus the server's list (`C7ChannelListSource`) and a
+  private group's channel, body0 padded to exactly `P(N)`; opened by
+  members (check against the chain, a missing key taken, `unsure`
+  cleared, the duty settled when the slots carry this device's own
+  snapshot) and by newcomers (heads and generations adopted; a head whose
+  actor has left on the word of the MLS-authenticated sender, trust
+  limits). A newcomer that gets none asks once with
+  `history_sync_request` after 60 s; members holding that snapshot send
+  again after their delay.
+- **Sealing**: text, reply, attachment manifest and poll seal under the
+  current generation only while the channel is `full` and `ok` and the key
+  is held; everything else, every targeted action included, seals under a
+  random key.
+- **Vector**: `testing/vectors/c7-sync-v1.json`, one whole `history_sync`
+  as sent, made by an independent Python implementation
+  (`testing/vectors/c7-sync-v1.py`) and opened by Rust, Go (with the
+  server's size rule) and Dart.
+
+**Deviations and interpretations (for the crypto review):**
+
+1. Freshness (epoch at or above the floor) is checked for proposals only;
+   a slot's head is older than its `for_epoch` by construction and is
+   bounded instead by `head.epoch <= for_epoch`.
+2. `for_epoch` counts only when it is a membership epoch this device
+   merged or joined at (its snapshot, its floor or its join epoch) and is
+   not above the epoch MLS authenticated for the message. Otherwise any
+   member could clear `unsure` or settle a duty with no commit.
+3. The `gen` trigger: a live member does not learn the signed `gen`
+   directly. A post is in step when its body key equals the post key of
+   the generation held at its epoch; otherwise its signature is checked
+   with `gen` 0 and with each retired generation below the period start
+   this device remembers; failing all, the channel turns `unsure`. A
+   sender in an older period whose `gen` this device never held is so
+   taken as out of step: a gap, never a leak.
+4. A generation opened at MLS epoch 0 (a group no one has joined yet)
+   seals nothing under its key: `gen` 0 means a random key.
+5. Targeted actions stay under random keys until each local row records
+   the period it was sealed in (decision 7 needs a row column: local
+   schema 41, not taken). A gap for newcomers, never a leak.
+6. A newcomer adopts a slot only for a channel it already knows: the
+   server's list (`AppState` answers `C7ChannelListSource` with the
+   shared group's open and announcement channels) or its private group's
+   channel. A channel the server leaves out stays `members_from_join` for
+   that newcomer (fails closed); one it adds gets a zero slot.
+7. An own proposal that never comes back (the server refuses or loses
+   it) stays pending; the channel then takes no new proposal from this
+   device. No timeout is built.
+8. A group-level message signs channel `""`; Rust's
+   `post_signed_fields` refuses an empty id. Only Dart verifies those
+   signatures today; the review should fix one side.
+
+**Not built (left for the next slices):** the newcomer's import (backward
+walk through stored `history_sync` slots, the per-channel and group-level
+fetch, window and signature checks, former members, two-pass import),
+the prefetch depth (owner question 1), the app wiring (a create record
+from `createChannel`, a work pass
+calling `c7DueWork` and `c7Send` after sync, the setting toggle and its
+system line), C3 conversion (`move`, its wrap, the server route and
+migrations 0088-0089), targeted-action sealing under generation keys, and
+the gaps in decision 5's skip list (a message passed over as expired is
+not yet an `unsure` trigger).
+
 ## Open questions for the owner
 
 Earlier questions: 1 (off/on) and 2 (server sees the flag) are answered in
