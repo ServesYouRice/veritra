@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:drift/drift.dart' hide isNull, isNotNull;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/storage/encrypted_database.dart';
 
 /// Round 8 integration: C7 numbered its columns 41 and 42, L2-3 its step 43.

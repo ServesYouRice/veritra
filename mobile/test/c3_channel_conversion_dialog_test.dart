@@ -68,7 +68,8 @@ class _State extends AppState {
   @override
   Future<bool> convertChannel(Channel channel,
       {required bool toPrivate,
-      List<String> members = const <String>[]}) async {
+      List<String> members = const <String>[],
+      String? requestId}) async {
     conversions.add((channel.id, toPrivate, members.join(',')));
     channelConversionNotAdded = <String>[
       for (final member in members)
