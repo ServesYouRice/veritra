@@ -375,6 +375,11 @@ String c7GroupSetting(String conversationId) => 'c7.group.$conversationId';
 String c7ChannelSetting(String conversationId, String channelId) =>
     'c7.chan.$conversationId|$channelId';
 
+/// The sealed setting that holds a newcomer's C7 import state in one group:
+/// paging cursors, the former-member keys and the posts verified with them
+/// (`mobile/lib/crypto/c7_import.dart`).
+String c7ImportSetting(String conversationId) => 'c7.import.$conversationId';
+
 /// Every C7 setting starts with this; the leak tests scan for it.
 const String c7SettingPrefix = 'c7.';
 

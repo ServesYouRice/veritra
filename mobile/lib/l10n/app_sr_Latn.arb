@@ -1305,5 +1305,6 @@
   "channelHistoryLost": "Drugi administrator je istovremeno promenio ovo podešavanje. Proveri ga i pokušaj ponovo.",
   "channelHistoryPaused": "Istorija za nove članove je pauzirana do sledeće promene članstva.",
   "channelHistoryEarlier": "Učitaj ranije objave",
-  "channelHistoryAttachmentHidden": "Prilog od pre nego što si se pridružio"
+  "channelHistoryAttachmentHidden": "Prilog od pre nego što si se pridružio",
+  "channelHistoryFormerMember": "Od bivšeg člana"
 }

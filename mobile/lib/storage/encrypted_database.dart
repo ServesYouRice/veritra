@@ -193,7 +193,12 @@ final class InsertMessageEffect extends MessageEffect {
   /// This row, recorded as sealed under the C7 generation [gen].
   InsertMessageEffect withC7Gen(String gen) => _with(c7Gen: gen);
 
-  InsertMessageEffect _with({bool? senderRemoved, String? c7Gen}) =>
+  /// This row with [value] as its body (C7: a pre-join attachment's
+  /// manifest is never stored).
+  InsertMessageEffect withBody(String value) => _with(body: value);
+
+  InsertMessageEffect _with(
+          {bool? senderRemoved, String? c7Gen, String? body}) =>
       InsertMessageEffect(
         key: key,
         conversationId: conversationId,
@@ -203,7 +208,7 @@ final class InsertMessageEffect extends MessageEffect {
         createdAt: createdAt,
         state: state,
         serverMessageId: serverMessageId,
-        body: body,
+        body: body ?? this.body,
         replyTo: replyTo,
         expiresAt: expiresAt,
         formatJson: formatJson,

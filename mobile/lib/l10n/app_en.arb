@@ -1545,5 +1545,6 @@
   "channelHistoryLost": "Another admin changed this setting at the same time. Check it and try again.",
   "channelHistoryPaused": "History for new members is paused until the next membership change.",
   "channelHistoryEarlier": "Load earlier posts",
-  "channelHistoryAttachmentHidden": "Attachment from before you joined"
+  "channelHistoryAttachmentHidden": "Attachment from before you joined",
+  "channelHistoryFormerMember": "From a former member"
 }

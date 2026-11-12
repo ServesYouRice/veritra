@@ -1208,6 +1208,66 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   device of every member account, whatever the I51 join filter would
   serve that device in sync. The app only uses a frame as a signal to
   sync, so the frame could carry the event alone.
+  A `history_sync` for an epoch above the group's recorded epoch is
+  refused too (400): a junk one tagged with a future epoch would make the
+  committer's real one look delivered when that commit comes.
+- **Newcomer import (decision 10, owner answers Q1 and Q2).** Once a
+  newcomer has applied the `history_sync` of its join (`joinSynced`), the
+  work pass after sync fetches, for every channel the server lists in the
+  group and for the group-level stream, the same first page: newest first,
+  100 bodies per request, until 1,000 bodies, 8 MiB or the end of the data
+  (never on what opens), plus the former-member keys in one call. The app
+  does not read a channel's mode before or during this fetch (app test:
+  two channels, the same requests). One crypto call then imports it in one
+  local transaction (`c7ImportHistory`, `mobile/lib/crypto/c7_import.dart`):
+  - **Backward walk.** From the oldest generation held, each stored
+    `history_sync` slot is tried with that generation's key; an entry whose
+    `E_cur` and key commitment name that generation, with a non-zero wrap
+    `E_prev < E_g`, adds the previous generation closing at `E_g`. Repeated
+    until nothing is added; never before the head record's epoch, and at
+    that epoch only with the record's own key commitment; only in the
+    conversation's own group. The adopted generations are kept in the
+    channel's book, so later pages use them.
+  - **Windows and signatures.** A body opens only under the generation
+    whose window holds its route epoch (`E_g <= epoch < E_close`; no route
+    epoch, no import), and its signature is checked once, with that
+    generation's `E_g`, this group and the route epoch. The signer is the
+    device's key in the current tree when it has a leaf there, even if the
+    server lists another key for it; otherwise the server's former-member
+    key, and the post is then marked "From a former member" (kept as a set
+    of message keys in the sealed import setting; no schema change) and
+    never acts with a role. A device with neither is dropped.
+  - **Types.** The opened VAP1 goes through the live path's classify (the
+    conversation, sender, action and channel); only posts and the actions
+    that target them are taken. A record, a `history_sync` or any other
+    payload in a channel stream is never applied (records come only from
+    slot heads and live sync). C2's restricted-post drop applies as live.
+    Profile keys riding on a post are not taken from history.
+  - **Two passes.** The authors' own deletes are applied as a set first (a
+    deleted post is never inserted, nor any action on it), then the posts
+    oldest first, then the other actions in order (a moderator's delete
+    is one of them); an edit whose target is outside the page takes the
+    existing deferred-effect path. Rows are `received` (no notice, and
+    unread counts come from the server), keyed by message key with
+    insert-or-ignore, so a re-run after a crash or a later page adds no
+    duplicate. Each post's row records its generation (`c7_gen`, decision
+    7). The signed expiry applies; the route serves no server expiry.
+  - **Pre-join attachments (Q2).** Never offered: the manifest is replaced
+    before storage by a marker body that is not an attachment list, so no
+    blob id, name or size reaches the database, nothing can be downloaded,
+    and the timeline shows "Attachment from before you joined".
+  - **Paging on demand (Q1).** The import keeps, per channel, the oldest
+    history message fetched, or nothing once the route had no more. "Load
+    earlier posts" is offered at the end of a `full` channel's timeline
+    only and fetches the next page the same way (count, bytes, end), with
+    the former-member keys kept from the join. Accepted leak: it shows the
+    server the channel is `full`. The group-level stream is not paged
+    further, so generations older than the first group-level page are a
+    gap for deeper pages.
+  - **Residuals.** Imported posts are not franked (the history route serves
+    no `frank_commit`), so they cannot be reported. The newcomer import
+    runs once per join; a device that never receives the `history_sync` of
+    its join imports nothing (nothing would open).
 
 ## Open questions for the owner
 

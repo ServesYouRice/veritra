@@ -4449,4 +4449,7 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get channelHistoryAttachmentHidden =>
       'Attachment from before you joined';
+
+  @override
+  String get channelHistoryFormerMember => 'From a former member';
 }

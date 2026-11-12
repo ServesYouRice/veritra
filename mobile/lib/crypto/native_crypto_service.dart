@@ -49,6 +49,7 @@ import 'app_payload.dart';
 import 'c7_channel_book.dart';
 import 'c7_group_state.dart';
 import 'c7_history.dart';
+import 'c7_import.dart';
 import 'c7_keys.dart';
 import 'c7_sync.dart';
 import 'c7_two_part.dart';
@@ -196,6 +197,52 @@ class NativeCryptoService
   @override
   Future<void> c7SyncDelivered(String conversationId, int forEpoch) =>
       _serial(() => _c7SyncDelivered(conversationId, forEpoch));
+
+  @override
+  Future<List<String>> c7ImportDue(Iterable<String> conversationIds) async {
+    final out = <String>[];
+    for (final conversationId in conversationIds) {
+      if (!_c7Active(conversationId)) continue;
+      final group = await _c7LoadGroup(conversationId);
+      if (group.joinEpoch != null && group.joinSynced && !group.imported) {
+        out.add(conversationId);
+      }
+    }
+    return out;
+  }
+
+  @override
+  Future<int> c7ImportHistory(
+    String conversationId, {
+    required C7HistoryPage groupLevel,
+    required Map<String, C7HistoryPage> channels,
+    List<C7FormerKey> formerKeys = const <C7FormerKey>[],
+    bool first = true,
+  }) =>
+      _serial(() => _c7Import(conversationId,
+          groupLevel: groupLevel,
+          channels: channels,
+          formerKeys: formerKeys,
+          first: first));
+
+  @override
+  Future<String?> c7EarlierCursor(
+      String conversationId, String channelId) async {
+    if (!_c7Active(conversationId)) return null;
+    if (!(await _c7LoadGroup(conversationId)).imported) return null;
+    if ((await _c7LoadBook(conversationId, channelId)).mode != c7ModeFull) {
+      return null;
+    }
+    return C7ImportState.decode(
+            await localStore.loadSetting(c7ImportSetting(conversationId)))
+        .cursors[channelId];
+  }
+
+  @override
+  Future<Set<String>> c7FormerMemberPosts(String conversationId) async =>
+      C7ImportState.decode(
+              await localStore.loadSetting(c7ImportSetting(conversationId)))
+          .former;
 
   @override
   Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone) =>
@@ -5488,6 +5535,7 @@ extension _C7Engine on NativeCryptoService {
   Map<String, String?> _c7Wipe(String conversationId, C7GroupState group) =>
       <String, String?>{
         c7GroupSetting(conversationId): null,
+        c7ImportSetting(conversationId): null,
         for (final channel in group.channels)
           c7ChannelSetting(conversationId, channel): null,
       };
@@ -6350,6 +6398,238 @@ extension _C7Engine on NativeCryptoService {
           group.copyWith(clearRequest: true), const <C7ChannelBook>[]),
       target: <String, Object?>{c7SyncRequestForEpochKey: joinEpoch},
     );
+  }
+
+  // ---- newcomer import (decision 10) ----------------------------------------
+
+  /// The import of what the app fetched (see [c7ImportHistory]). Per
+  /// channel: the backward walk over the group-level page first, then every
+  /// body that opens under the generation whose window holds its route
+  /// epoch (`E_g <= epoch < E_close`, decision 6) and whose signature checks
+  /// with that generation's `E_g`, this group and the route epoch (decision
+  /// 8: a sender in the current tree by its tree key, any other device by
+  /// the server's former-member key, and then marked). Only posts and the
+  /// actions that target them are taken, through the live path's classify;
+  /// a record, a `history_sync` or any other payload in a channel stream is
+  /// never applied. Not franked: the history route serves no
+  /// `frank_commit`, so an imported post cannot be reported.
+  Future<int> _c7Import(
+    String conversationId, {
+    required C7HistoryPage groupLevel,
+    required Map<String, C7HistoryPage> channels,
+    required List<C7FormerKey> formerKeys,
+    required bool first,
+  }) async {
+    if (!_c7Active(conversationId)) return 0;
+    final community = _c7CommunityOf(conversationId);
+    if (community == null) return 0;
+    final group = await _c7LoadGroup(conversationId);
+    if (group.joinEpoch == null ||
+        (first ? group.imported || !group.joinSynced : !group.imported)) {
+      return 0;
+    }
+    final state = C7ImportState.decode(
+        await localStore.loadSetting(c7ImportSetting(conversationId)));
+    final keptKeys = first ? formerKeys : state.keys;
+    final former = <String, C7FormerKey>{
+      for (final key in keptKeys) key.deviceId: key,
+    };
+    final privateChannel = _c7PrivateChannel(conversationId);
+    final shared =
+        _authority?.conversationKind(conversationId) == 'community_shared';
+    final authority = _authority;
+    final VerifiedRoleSource? roles = authority is VerifiedRoleSource
+        ? authority as VerifiedRoleSource
+        : null;
+    final keys = C7Keys(bindings);
+    final changedBooks = <C7ChannelBook>[];
+    final cursors = <String, String?>{...state.cursors};
+    final formerPosts = <String>{...state.former};
+    // Pass one: every opened, verified post and action, oldest first.
+    final posts = <({String key, String account, InsertMessageEffect row})>[];
+    final actions = <List<MessageEffect>>[];
+    for (final MapEntry(key: channel, value: page) in channels.entries) {
+      // A shared group's channels, or a private group's own channel.
+      if (shared ? channel == privateChannel : channel != privateChannel) {
+        continue;
+      }
+      final stored = await _c7LoadBook(conversationId, channel);
+      final book = c7WalkBack(
+        bindings: bindings,
+        book: stored,
+        syncs: groupLevel.rows,
+        communityId: community,
+        conversationId: conversationId,
+      );
+      if (!identical(book, stored)) changedBooks.add(book);
+      cursors[channel] =
+          page.complete || page.rows.isEmpty ? null : page.rows.last.messageId;
+      for (final row in page.rows.reversed) {
+        if (row.channelId != channel) continue;
+        final epoch = row.epoch;
+        if (epoch == null) continue;
+        // The window: E_g <= epoch < E_close.
+        final gen = book.genAt(conversationId, epoch);
+        final chk = gen?.key;
+        if (gen == null || chk == null || gen.epoch == 0) continue;
+        final aad = C7Keys.bodyAad(
+          conversationId: conversationId,
+          channelId: channel,
+          senderDeviceId: row.senderDeviceId,
+          actionId: row.actionId,
+        );
+        final bodyKey = keys.postBodyKey(
+          chk: chk,
+          communityId: community,
+          channelId: channel,
+          senderDeviceId: row.senderDeviceId,
+          actionId: row.actionId,
+        );
+        ({Uint8List signature, Uint8List paddedVap1})? opened;
+        try {
+          opened = keys.openBody(bodyKey: bodyKey, aad: aad, sealed: row.body);
+        } on Object {
+          opened = null;
+        } finally {
+          bodyKey.fillRange(0, bodyKey.length, 0);
+        }
+        if (opened == null) continue;
+        // Decision 8: a key in the current tree wins over anything the
+        // server lists for the same device.
+        final tree = _c7TreeKey(conversationId, row.senderDeviceId);
+        final listed = tree == null ? former[row.senderDeviceId] : null;
+        final signer = tree?.key ?? listed?.signingKey;
+        final account = tree?.accountId ?? listed?.accountId;
+        if (signer == null || account == null) continue;
+        bool valid;
+        try {
+          valid = bindings.c7Verify(
+            domain: c7PostSignatureDomain,
+            publicKey: signer,
+            message: c7PostSignedFields(
+              communityId: community,
+              channelId: channel,
+              actionId: row.actionId,
+              groupId: conversationId,
+              epoch: epoch,
+              senderDeviceId: row.senderDeviceId,
+              generation: gen.epoch,
+              paddedVap1: opened.paddedVap1,
+            ),
+            signature: opened.signature,
+          );
+        } on Object {
+          valid = false;
+        }
+        if (!valid) continue;
+        final outcome = AppPayloadCodec().classify(
+          opened.paddedVap1,
+          conversationId: conversationId,
+          senderDeviceId: row.senderDeviceId,
+          actionId: row.actionId,
+          communityShared: shared,
+          channelId: channel,
+        );
+        if (outcome is! DecodedAppPayload) continue;
+        final payload = outcome.payload;
+        final isPost = c7HistoryPostTypes.contains(payload.type);
+        if (!isPost && !c7TargetedTypes.contains(payload.type)) continue;
+        // C2, as live: a restricted post from a sender below admin.
+        if (roles != null &&
+            restrictedPostTypes.contains(payload.type) &&
+            shouldDropRestrictedPost(
+              record: roles.governanceOf(conversationId),
+              sender: account,
+              channelId: payload.channelId,
+              serverRestricts: roles.serverRestrictsPosting(
+                  conversationId, payload.channelId),
+              senderRemoved: listed != null,
+            )) {
+          continue;
+        }
+        final List<MessageEffect> effects;
+        try {
+          effects = messageEffectsFor(
+            payload,
+            conversationId: conversationId,
+            senderAccountId: account,
+            senderDeviceId: row.senderDeviceId,
+            serverMessageId: row.messageId,
+            createdAt: row.createdAt.millisecondsSinceEpoch,
+            state: LocalMessageState.received,
+            // The sender's signed expiry; the route serves none of its own.
+            expiresAt: effectiveExpiryMillis(
+                senderMs: payload.expiresAtMs, serverMs: null),
+            authority: authority,
+            // A device no longer in the group never acts with a role.
+            senderActsWithRole: listed == null,
+          );
+        } on Object {
+          continue;
+        }
+        final key = messageKey(row.senderDeviceId, row.actionId);
+        if (isPost) {
+          // The post's own row only: no profile key rides in from history.
+          for (final effect in effects) {
+            if (effect is! InsertMessageEffect || effect.key != key) continue;
+            var insert = effect.withC7Gen(c7GenTag(chk));
+            if (payload.type == AppPayloadType.attachmentManifest) {
+              // Owner answer Q2: never offered, so never stored.
+              insert = insert.withBody(c7HiddenAttachmentBody);
+            }
+            posts.add((key: key, account: account, row: insert));
+          }
+        } else {
+          actions.add(<MessageEffect>[
+            for (final effect in effects)
+              if (effect is! ProfileKeyEffect) effect,
+          ]);
+        }
+        if (listed != null) formerPosts.add(key);
+      }
+    }
+    // Pass two: the authors' own deletes as a set first (a deleted post is
+    // never inserted, nor is any action on it), then the posts oldest first,
+    // then the other actions in order. A moderator's delete applies like
+    // any other action, after its target.
+    final authors = <String, String>{
+      for (final post in posts) post.key: post.account,
+    };
+    final deleted = <String>{
+      for (final action in actions)
+        for (final effect in action)
+          if (effect is DeleteMessageEffect &&
+              authors[effect.targetKey] == effect.deleterAccountId)
+            effect.targetKey,
+    };
+    String? targetOf(MessageEffect effect) => switch (effect) {
+          EditMessageEffect(:final targetKey) => targetKey,
+          DeleteMessageEffect(:final targetKey) => targetKey,
+          ReactionEffect(:final targetKey) => targetKey,
+          PinMessageEffect(:final targetKey) => targetKey,
+          PollVoteEffect(:final targetKey) => targetKey,
+          PollCloseEffect(:final targetKey) => targetKey,
+          _ => null,
+        };
+    final ordered = <MessageEffect>[
+      for (final post in posts)
+        if (!deleted.contains(post.key)) post.row,
+      for (final action in actions)
+        for (final effect in action)
+          if (!deleted.contains(targetOf(effect))) effect,
+    ];
+    final next = C7ImportState(
+      cursors: cursors,
+      keys: keptKeys,
+      former: const <String>{},
+    ).copyWith(former: formerPosts);
+    await localStore.importC7History(ordered, c7Settings: <String, String?>{
+      if (changedBooks.isNotEmpty || first)
+        ..._c7Put(conversationId,
+            first ? group.copyWith(imported: true) : group, changedBooks),
+      c7ImportSetting(conversationId): next.encode(),
+    });
+    return posts.where((post) => !deleted.contains(post.key)).length;
   }
 
   Future<List<C7Due>> _c7Due(Iterable<String> conversationIds) async {

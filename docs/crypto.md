@@ -573,6 +573,25 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C7 newcomer import (2026-11-12, owner answers Q1 and Q2):** app only,
+  no wire, ABI, schema or server change. After the `history_sync` of its
+  join, a newcomer fetches the same first page of every channel and of the
+  group-level stream (1,000 bodies or 8 MiB, 100 per request, whatever the
+  mode) and the former-member keys, then imports them in one local
+  transaction: the backward walk through the stored slots (an entry must
+  name the generation whose key opened the slot, wrap to an earlier epoch
+  no older than the head record's, and at that epoch match the record's
+  key commitment), the window `E_g <= epoch < E_close` from the route
+  epoch, one signature check with `gen = E_g`, the group and the route
+  epoch (tree key first; the server's former-member key only for a device
+  outside the tree, marked and without a role), the live classify with
+  only posts and targeted actions kept, and the two-pass apply. Pre-join
+  attachments are never stored or offered. Deeper paging on demand in
+  `full` channels only. Imported posts are not franked. The server also
+  refuses a `history_sync` tagged with an epoch above the group's
+  recorded epoch. C7 design, "Newcomer import". Needs the independent
+  review.
+
 - **C7 targeted `history_sync` delivery (2026-11-12, owner answer Q3):**
   wire change in clear metadata only, behind the server's
   `PRIVATE_MESSENGER_C7_HISTORY`. A group-level C7 message names its type

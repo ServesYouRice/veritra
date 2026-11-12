@@ -18,6 +18,7 @@ import '../../core/message_history.dart';
 import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../crypto/poll.dart' show PollView, parsePollBody;
+import '../../crypto/c7_import.dart' show c7HiddenAttachmentBody;
 import '../../crypto/link_preview.dart';
 import '../../crypto/message_format.dart'
     show decodeDecoration, unapprovedSenderKeyPrefix;
@@ -1381,13 +1382,15 @@ class _MessageList extends StatelessWidget {
         .toList(growable: false);
     final hasMore = state.hasMoreHistory(conversationId);
     final loadingOlder = state.isLoadingOlder(conversationId);
+    // C7 (owner answer Q1): earlier posts of a `full` channel, on demand.
+    final earlier = !hasMore && state.channelHistoryEarlier(conversationId);
     // Messages arrive newest-first; the list is reversed so index 0 renders
     // at the bottom. Because older items are appended to the end of the
     // reversed list, prepending history does not move the visible messages,
     // which is what preserves the scroll position across a page load. A day
     // separator is emitted whenever the calendar day changes relative to the
     // next-older message.
-    final footerCount = hasMore || loadingOlder ? 1 : 0;
+    final footerCount = hasMore || loadingOlder || earlier ? 1 : 0;
     return ListView.builder(
       controller: controller,
       reverse: true,
@@ -1403,7 +1406,10 @@ class _MessageList extends StatelessWidget {
         if (index == pending.length + messages.length) {
           return _HistoryFooter(
             loading: loadingOlder,
-            onLoad: () => state.loadOlderMessages(conversationId),
+            label: hasMore ? null : context.l10n.channelHistoryEarlier,
+            onLoad: hasMore
+                ? () => state.loadOlderMessages(conversationId)
+                : () => state.loadEarlierChannelPosts(conversationId),
           );
         }
         if (index < pending.length) {
@@ -1477,6 +1483,8 @@ class _MessageList extends StatelessWidget {
                 local: local,
                 copiedHistory: local?.state == LocalMessageState.restored ||
                     (local != null && history.copiedKeys.contains(local.key)),
+                formerMember: local != null &&
+                    state.channelHistoryFormerMember(conversationId, local.key),
                 replyPreview: local?.replyTo == null
                     ? null
                     : quotedPreview(context.l10n, replyTarget),
@@ -1601,10 +1609,14 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
 /// flight, and an explicit button otherwise so history is reachable without
 /// relying on a scroll gesture.
 class _HistoryFooter extends StatelessWidget {
-  const _HistoryFooter({required this.loading, required this.onLoad});
+  const _HistoryFooter(
+      {required this.loading, required this.onLoad, this.label});
 
   final bool loading;
   final VoidCallback onLoad;
+
+  /// The button's text; null: "Load older".
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -1619,7 +1631,7 @@ class _HistoryFooter extends StatelessWidget {
             : TextButton.icon(
                 onPressed: onLoad,
                 icon: const Icon(Icons.history),
-                label: Text(context.l10n.chatLoadOlder),
+                label: Text(label ?? context.l10n.chatLoadOlder),
               ),
       ),
     );
@@ -1825,6 +1837,7 @@ class _MessageBubble extends StatelessWidget {
     this.onMention,
     this.starred = false,
     this.copiedHistory = false,
+    this.formerMember = false,
     this.ownAccountId,
     this.pollMembers,
     this.onVote,
@@ -1854,6 +1867,10 @@ class _MessageBubble extends StatelessWidget {
   final void Function(String accountId)? onMention;
   final bool starred;
   final bool copiedHistory;
+
+  /// C7 (decision 8): an imported post whose signature was checked with the
+  /// server's key for a device no longer in the group.
+  final bool formerMember;
 
   final ReceivedMessageEnvelope message;
 
@@ -1921,13 +1938,14 @@ class _MessageBubble extends StatelessWidget {
   /// list when this arrived (recorded at entry, schema 40). The words are
   /// still shown, marked, so a device that is on its way out never speaks
   /// as the account unmarked.
-  String? _removedSenderLabel(
-          AppLocalizations l10n) =>
+  String? _removedSenderLabel(AppLocalizations l10n) =>
       local?.senderRemoved == true
           ? (mine
               ? l10n.chatSentFromOwnRemovedDevice
               : l10n.chatSentFromRemovedDevice(senderLabel))
-          : null;
+          : formerMember
+              ? l10n.channelHistoryFormerMember
+              : null;
 
   /// A peer message this device can never decrypt (D54). The crypto service
   /// stores it as an `invalid` row, which holds no content and offers no
@@ -1986,7 +2004,10 @@ class _MessageBubble extends StatelessWidget {
     if (entries.isEmpty) {
       return <Widget>[
         Text(
-          context.l10n.chatAttachmentUnopenable,
+          // C7 (owner answer Q2): a pre-join attachment is never offered.
+          local?.body == c7HiddenAttachmentBody
+              ? context.l10n.channelHistoryAttachmentHidden
+              : context.l10n.chatAttachmentUnopenable,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),

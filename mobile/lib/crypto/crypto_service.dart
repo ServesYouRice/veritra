@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import '../core/models.dart';
@@ -598,6 +599,104 @@ final class C7DueRepropose extends C7Due {
   final bool full;
 }
 
+/// One body the history route served (C7, decision 10): a body sync did
+/// not give this device, in its conversation's stream for [channelId] (null:
+/// the group-level stream, which holds `history_sync` messages and their
+/// requests). [epoch] is the route's `mls_epoch`, null when the body named
+/// none.
+final class C7HistoryRow {
+  const C7HistoryRow({
+    required this.messageId,
+    required this.senderDeviceId,
+    required this.actionId,
+    required this.channelId,
+    required this.createdAt,
+    required this.epoch,
+    required this.body,
+  });
+
+  /// A row of `GET /conversations/{id}/history`; throws [FormatException]
+  /// on a malformed one.
+  factory C7HistoryRow.fromJson(Map<String, Object?> json) {
+    final channel = json['channel_id'];
+    final epoch = json['epoch'];
+    final created = json['created_at'];
+    if (json['message_id'] is! String ||
+        json['sender_device_id'] is! String ||
+        json['action_id'] is! String ||
+        json['body'] is! String ||
+        created is! String ||
+        (channel != null && channel is! String) ||
+        (epoch != null && epoch is! int)) {
+      throw const FormatException('C7 history row');
+    }
+    return C7HistoryRow(
+      messageId: json['message_id']! as String,
+      senderDeviceId: json['sender_device_id']! as String,
+      actionId: json['action_id']! as String,
+      channelId: channel == '' ? null : channel as String?,
+      createdAt: DateTime.parse(created).toUtc(),
+      epoch: epoch as int?,
+      body: Uint8List.fromList(base64Decode(json['body']! as String)),
+    );
+  }
+
+  final String messageId;
+  final String senderDeviceId;
+  final String actionId;
+  final String? channelId;
+  final DateTime createdAt;
+  final int? epoch;
+  final Uint8List body;
+}
+
+/// One page of one stream as the app fetched it, newest first. [complete]:
+/// the route had nothing older (the fetch stopped at the end of the data,
+/// not at a count or byte limit).
+final class C7HistoryPage {
+  const C7HistoryPage(this.rows, {required this.complete});
+  final List<C7HistoryRow> rows;
+  final bool complete;
+}
+
+/// A device the server says posted in the conversation and is no longer in
+/// its group (`GET /conversations/{id}/former-member-keys`; owner decision
+/// B). Used only for posts, never for records or slots, and only for a
+/// device that holds no leaf in the current tree.
+final class C7FormerKey {
+  const C7FormerKey({
+    required this.deviceId,
+    required this.accountId,
+    required this.signingKey,
+  });
+
+  /// A row of the former-member key route, or null when it is malformed.
+  static C7FormerKey? tryParse(Map<String, Object?> json) {
+    final key = json['signing_key'];
+    if (json['device_id'] is! String ||
+        json['account_id'] is! String ||
+        key is! String) {
+      return null;
+    }
+    final Uint8List bytes;
+    try {
+      bytes = Uint8List.fromList(base64Decode(key));
+    } on FormatException {
+      return null;
+    }
+    if (bytes.length != 32) return null;
+    return C7FormerKey(
+      deviceId: json['device_id']! as String,
+      accountId: json['account_id']! as String,
+      signingKey: bytes,
+    );
+  }
+
+  final String deviceId;
+  final String accountId;
+  final Uint8List signingKey;
+}
+
 /// What the app shows about one channel's history setting.
 final class C7ChannelView {
   const C7ChannelView({
@@ -675,6 +774,40 @@ abstract interface class C7HistoryService {
   /// When the next `history_sync` duty or newcomer request in
   /// [conversationIds] falls due, or null when none is waiting.
   Future<DateTime?> c7NextDueAt(Iterable<String> conversationIds);
+
+  /// The conversations in [conversationIds] whose newcomer import is due:
+  /// this device joined by a Welcome, applied the `history_sync` of its
+  /// join, and has not imported yet. Whatever the channels' modes (decision
+  /// 10): the app then fetches the same first page of every channel and of
+  /// the group-level stream, and the former-member keys.
+  Future<List<String>> c7ImportDue(Iterable<String> conversationIds);
+
+  /// Imports what the app fetched for [conversationId] (decision 10): walks
+  /// back through the stored `history_sync` slots in [groupLevel], opens
+  /// each channel's bodies under the generation whose window holds the
+  /// route epoch, checks the signature, and applies what is left in two
+  /// passes, in one local transaction with the generations it adopted and
+  /// the paging cursors. [first]: the import at join (marks it done; the
+  /// former-member keys are kept for paging); otherwise a page of earlier
+  /// posts for the channels named. Safe to run again. Returns the number of
+  /// posts imported.
+  Future<int> c7ImportHistory(
+    String conversationId, {
+    required C7HistoryPage groupLevel,
+    required Map<String, C7HistoryPage> channels,
+    List<C7FormerKey> formerKeys = const <C7FormerKey>[],
+    bool first = true,
+  });
+
+  /// The history message to page before for "Load earlier posts" in
+  /// [channelId] (owner answer Q1), or null: the channel is not `full` here,
+  /// the import has not run, or the route has nothing older.
+  Future<String?> c7EarlierCursor(String conversationId, String channelId);
+
+  /// The imported posts this device verified with a key from the server's
+  /// former-member list, by local message key: the timeline marks them
+  /// "from a former member" (decision 8).
+  Future<Set<String>> c7FormerMemberPosts(String conversationId);
 }
 
 /// Off by default. AppState enables this only for the current verified

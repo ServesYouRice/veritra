@@ -1,8 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
-import 'package:private_messenger/core/api_errors.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/roles/governance.dart';
@@ -40,6 +40,40 @@ class _Api extends ApiClient {
   /// Epochs the server reports a history_sync delivered for.
   final delivered = <(String, int)>{};
   final asked = <(String, int)>[];
+
+  /// History rows the server holds per stream (`''`: group-level), newest
+  /// first, and every history request as (channel, before, limit).
+  final history = <String, List<Map<String, Object?>>>{};
+  final historyAsked = <(String, String?, int)>[];
+  var formerAsked = 0;
+
+  @override
+  Future<List<Map<String, Object?>>> historyBodies(
+      String token, String conversationId,
+      {String? channelId, String? beforeId, int limit = 50}) async {
+    historyAsked.add((channelId ?? '', beforeId, limit));
+    final rows = history[channelId ?? ''] ?? const <Map<String, Object?>>[];
+    final start = beforeId == null
+        ? 0
+        : rows.indexWhere((row) => row['message_id'] == beforeId) + 1;
+    return rows.sublist(start, (start + limit).clamp(0, rows.length));
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> formerMemberKeys(
+      String token, String conversationId) async {
+    formerAsked++;
+    return <Map<String, Object?>>[
+      <String, Object?>{
+        'device_id': 'dev_gone',
+        'account_id': 'gone',
+        'signing_key': base64Encode(List<int>.filled(32, 7)),
+        'revoked': false,
+      },
+      // Malformed: skipped.
+      <String, Object?>{'device_id': 'dev_bad', 'signing_key': 'x'},
+    ];
+  }
 
   /// What a send of each envelope answers; absent is success.
   final refusals = <String, ApiException>{};
@@ -102,6 +136,16 @@ class _C7Crypto extends UnavailableCryptoService
   List<C7Due> due = const <C7Due>[];
   DateTime? next;
   Map<String, bool> lines = const <String, bool>{};
+  List<String> importDue = const <String>[];
+  final imports = <({
+    String conversation,
+    C7HistoryPage groupLevel,
+    Map<String, C7HistoryPage> channels,
+    List<C7FormerKey> keys,
+    bool first,
+  })>[];
+  Map<String, String> earlier = const <String, String>{};
+  Set<String> former = const <String>{};
   C7ChannelView view =
       const C7ChannelView(full: false, status: 'ok', pending: false);
 
@@ -160,7 +204,54 @@ class _C7Crypto extends UnavailableCryptoService
 
   @override
   Future<DateTime?> c7NextDueAt(Iterable<String> conversationIds) async => next;
+
+  @override
+  Future<List<String>> c7ImportDue(Iterable<String> conversationIds) async {
+    final out = importDue;
+    importDue = const <String>[];
+    return out;
+  }
+
+  @override
+  Future<int> c7ImportHistory(String conversationId,
+      {required C7HistoryPage groupLevel,
+      required Map<String, C7HistoryPage> channels,
+      List<C7FormerKey> formerKeys = const <C7FormerKey>[],
+      bool first = true}) async {
+    imports.add((
+      conversation: conversationId,
+      groupLevel: groupLevel,
+      channels: channels,
+      keys: formerKeys,
+      first: first,
+    ));
+    return 0;
+  }
+
+  @override
+  Future<String?> c7EarlierCursor(
+          String conversationId, String channelId) async =>
+      conversationId == 'conv_shared' ? earlier[channelId] : null;
+
+  @override
+  Future<Set<String>> c7FormerMemberPosts(String conversationId) async =>
+      conversationId == 'conv_shared' ? former : const <String>{};
 }
+
+/// [count] history rows of [stream], newest first.
+List<Map<String, Object?>> _rows(String stream, int count) =>
+    <Map<String, Object?>>[
+      for (var i = count; i > 0; i--)
+        <String, Object?>{
+          'message_id': 'm_${stream}_$i',
+          'sender_device_id': 'dev_x',
+          'action_id': 'a_$i',
+          if (stream.isNotEmpty) 'channel_id': stream,
+          'created_at': '2026-11-01T00:00:00Z',
+          'epoch': 3,
+          'body': base64Encode(<int>[1, 2, 3]),
+        },
+    ];
 
 (AppState, _C7Crypto) _app() => _appWith(_Api());
 
@@ -332,6 +423,82 @@ void main() {
     final left = await state.localStore.pendingEnvelopeRecords();
     expect(left.map((r) => r.envelope.idempotencyKey), ['action-2']);
     expect(left.single.terminal, isTrue);
+  });
+
+  test(
+      'a newcomer fetches the same first page of every channel and the '
+      'group-level stream whatever the modes, and the former-member keys '
+      'once (decision 10, owner answer Q1)', () async {
+    final api = _Api();
+    final (state, crypto) = _appWith(api);
+    final second = 'chan_${'4' * 32}';
+    state.channelsByCommunity = {
+      _community: [
+        ...state.channelsByCommunity[_community]!,
+        Channel(
+            id: second,
+            communityId: _community,
+            name: '',
+            kind: 'open',
+            conversationId: 'conv_shared',
+            layoutGeneration: 3),
+      ],
+    };
+    // Whatever each channel's mode: the app never asks before fetching.
+    api.history[_open] = _rows(_open, 1500);
+    api.history[second] = _rows(second, 1500);
+    api.history[''] = _rows('', 30);
+    crypto.importDue = <String>['conv_shared'];
+    await state.c7WorkPassForTesting();
+    List<(String?, int)> asked(String stream) => <(String?, int)>[
+          for (final (channel, before, limit) in api.historyAsked)
+            if (channel == stream) (before?.replaceFirst(stream, 'S'), limit),
+        ];
+    // The first page stops at 1,000 bodies, 100 per request, in both.
+    expect(asked(_open), hasLength(10));
+    expect(asked(_open), asked(second));
+    expect(asked(_open).first, (null, 100));
+    expect(asked(''), [(null, 100)]);
+    expect(api.formerAsked, 1);
+    final run = crypto.imports.single;
+    expect(run.first, isTrue);
+    expect(run.groupLevel.complete, isTrue);
+    expect(run.groupLevel.rows, hasLength(30));
+    expect(run.channels.keys.toSet(), {_open, second});
+    for (final page in run.channels.values) {
+      expect(page.rows, hasLength(1000));
+      expect(page.complete, isFalse);
+    }
+    expect(run.keys.map((k) => k.deviceId), ['dev_gone']);
+  });
+
+  test(
+      '"Load earlier posts" pages a full channel on demand, and imported '
+      'posts from former members are marked', () async {
+    final api = _Api();
+    final (state, crypto) = _appWith(api);
+    api.history[_open] = _rows(_open, 1200);
+    crypto.earlier = <String, String>{_open: 'm_${_open}_201'};
+    crypto.former = <String>{'dev_gone:a_1'};
+    state.selectChannel('conv_shared', _open);
+    expect(state.channelHistoryEarlier('conv_shared'), isFalse);
+    await state.c7WorkPassForTesting();
+    expect(state.channelHistoryEarlier('conv_shared'), isTrue);
+    expect(state.channelHistoryFormerMember('conv_shared', 'dev_gone:a_1'),
+        isTrue);
+    expect(
+        state.channelHistoryFormerMember('conv_shared', 'dev_x:a_1'), isFalse);
+    await state.loadEarlierChannelPosts('conv_shared');
+    expect(api.historyAsked.first, (_open, 'm_${_open}_201', 100));
+    final run = crypto.imports.single;
+    expect(run.first, isFalse);
+    expect(run.channels.keys, [_open]);
+    expect(run.channels[_open]!.rows, hasLength(200));
+    expect(run.channels[_open]!.complete, isTrue);
+    expect(api.formerAsked, 0);
+    // Not offered where the crypto service has no cursor (another mode).
+    state.selectChannel('conv_shared', null);
+    expect(state.channelHistoryEarlier('conv_shared'), isFalse);
   });
 
   test('the switch proposes a switch, or a create for a channel with none',

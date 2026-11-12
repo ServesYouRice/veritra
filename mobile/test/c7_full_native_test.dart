@@ -15,8 +15,10 @@ import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/core/attachments.dart';
+import 'package:private_messenger/crypto/c7_import.dart';
 import 'package:private_messenger/storage/encrypted_database.dart'
-    show LocalMessage;
+    show LocalMessage, LocalMessageKind, LocalMessageState;
 import 'package:private_messenger/storage/local_store.dart';
 
 import 'l1_test_lists.dart';
@@ -640,8 +642,8 @@ void main() {
         .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
     await _accept(alice, [dave], [bob]);
     final joined = await dave.epoch();
-    final sync = (await alice.service.c7Send(
-        (await alice.service.c7DueWork([_conversation])).single))!;
+    final sync = (await alice.service
+        .c7Send((await alice.service.c7DueWork([_conversation])).single))!;
     await alice.store.removePendingEnvelope(sync.idempotencyKey);
     expect(sync.cryptoMetadata[c7SyncForEpochKey], joined);
     expect(sync.cryptoMetadata.containsKey(c7SyncRequestForEpochKey), isFalse);
@@ -657,11 +659,225 @@ void main() {
     await bob.service.c7SyncDelivered(_conversation, joined);
     expect(await bob.service.c7DueWork([_conversation]), isEmpty);
     // Dave's request names his own join epoch.
-    final request = (await dave.service.c7Send(
-        (await dave.service.c7DueWork([_conversation])).single))!;
+    final request = (await dave.service
+        .c7Send((await dave.service.c7DueWork([_conversation])).single))!;
     await dave.store.removePendingEnvelope(request.idempotencyKey);
     expect(request.cryptoMetadata[c7SyncRequestForEpochKey], joined);
     expect(request.cryptoMetadata.containsKey(c7SyncForEpochKey), isFalse);
+  }, skip: skip);
+
+  test(
+      'a newcomer imports the whole period through the backward walk, with '
+      'every window, signature and type check (decisions 5, 6, 8 and 10)',
+      () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final carol = await client('carol');
+    final erin = await client('erin');
+    final dave = await client('dave');
+    await group(alice, [bob, carol]);
+    var ids = 0;
+    final rows = <C7HistoryRow>[];
+    // What the history route would serve dave, newest first in the end.
+    void served(MessageEnvelope sent, String device, {int? epoch}) {
+      final metadata = sent.cryptoMetadata as Map;
+      rows.add(C7HistoryRow(
+        messageId: 'hist_${++ids}',
+        senderDeviceId: device,
+        actionId: sent.idempotencyKey,
+        channelId: metadata['channel_id'] as String?,
+        createdAt: DateTime.now().toUtc(),
+        epoch: epoch ?? metadata['mls_epoch'] as int,
+        body: Uint8List.fromList(sent.sealedBody!),
+      ));
+    }
+
+    Future<MessageEnvelope> syncFor(int epoch) async {
+      final due = (await alice.service.c7DueWork([_conversation]))
+          .whereType<C7DueSync>()
+          .where((d) => d.forEpoch == epoch)
+          .single;
+      final sync = (await alice.service.c7Send(due))!;
+      await alice.store.removePendingEnvelope(sync.idempotencyKey);
+      return sync;
+    }
+
+    String keyOf(_Client from, MessageEnvelope sent) =>
+        '${from.deviceId}:${sent.idempotencyKey}';
+    final carolKey = await carol.service.currentSigningKey();
+    final before = await alice.send('before the period');
+    served(before, alice.deviceId);
+    final record = await propose(alice, [bob, carol], full: true, create: true);
+    served(record, alice.deviceId);
+    final opened = await alice.epoch();
+    final first = await bob.send('first period');
+    served(first, bob.deviceId);
+    final fromCarol = await carol.send('from carol');
+    served(fromCarol, carol.deviceId);
+    // An add keeps the generation: its window now spans two epochs.
+    await alice.service
+        .stageMembershipChange(_conversation, adds: [await erin.keyPackage()]);
+    await _accept(alice, [erin], [bob, carol]);
+    final added = await alice.epoch();
+    served(await syncFor(added), alice.deviceId);
+    final inWindow = await bob.send('second epoch of the window');
+    served(inWindow, bob.deviceId);
+    // Signed at `added`, served as the window's other epoch: dropped.
+    final relabelled = await bob.send('relabelled');
+    served(relabelled, bob.deviceId, epoch: opened);
+    // Sealed under the first generation; served below in its closing
+    // epoch.
+    final closing = await bob.send('closing epoch');
+    final fromErin = await erin.send('from erin');
+    served(fromErin, erin.deviceId);
+    final gone = await bob.send('deleted by its author');
+    served(gone, bob.deviceId);
+    served(
+        await bob.act(AppPayloadType.delete,
+            <String, Object?>{'message_id': keyOf(bob, gone)}),
+        bob.deviceId);
+    // Two removals: dave's own slot wraps back one generation only.
+    await alice.service.stageMembershipChange(_conversation,
+        removes: [(accountId: 'acct_carol', deviceId: 'dev_carol')]);
+    await _accept(alice, const [], [bob, carol, erin]);
+    final removal = await alice.epoch();
+    served(await syncFor(removal), alice.deviceId);
+    final firstKey = (await bob.book()).genAt(_conversation, opened)!.key!;
+    expect(await bob.sealedUnderChannelKey(closing, key: firstKey), isTrue);
+    final attachment =
+        await alice.act(AppPayloadType.attachmentManifest, <String, Object?>{
+      'attachments': <Object?>[
+        <String, Object?>{
+          'id': 'blob_pre_join',
+          'file_name': 'pre-join.txt',
+          'media_type': 'text/plain',
+          'plaintext_size': 1,
+          'ciphertext_size': 21,
+          'conversation_id': _conversation,
+        },
+      ],
+    });
+    served(attachment, alice.deviceId);
+    await alice.service.stageMembershipChange(_conversation,
+        removes: [(accountId: 'acct_erin', deviceId: 'dev_erin')]);
+    await _accept(alice, const [], [bob, erin]);
+    final second = await alice.epoch();
+    served(await syncFor(second), alice.deviceId);
+    final last = await alice.send('last generation');
+    served(last, alice.deviceId);
+    served(
+        await bob.act(AppPayloadType.edit, <String, Object?>{
+          'message_id': keyOf(bob, first),
+          'text': 'first, edited'
+        }),
+        bob.deviceId);
+    // Dave joins and takes his handover live.
+    await alice.service
+        .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
+    await _accept(alice, [dave], [bob]);
+    final join = await syncFor(await alice.epoch());
+    await dave.receive(alice, join);
+    expect((await dave.book()).gens.map((gen) => gen.epoch), [removal, second]);
+    expect(await dave.service.c7ImportDue([_conversation]), [_conversation]);
+    final groupLevel = <C7HistoryRow>[
+      for (final row in rows.reversed)
+        if (row.channelId == null) row
+    ];
+    final channel = <C7HistoryRow>[
+      for (final row in rows.reversed)
+        if (row.channelId == _channel) row
+    ];
+    // Closing-epoch body, served under the removal's epoch label: the
+    // window there is the next generation's, so it never opens.
+    channel.insert(
+        0,
+        C7HistoryRow(
+          messageId: 'hist_closing',
+          senderDeviceId: bob.deviceId,
+          actionId: closing.idempotencyKey,
+          channelId: _channel,
+          createdAt: DateTime.now().toUtc(),
+          epoch: removal,
+          body: Uint8List.fromList(closing.sealedBody!),
+        ));
+    final imported = await dave.service.c7ImportHistory(
+      _conversation,
+      groupLevel: C7HistoryPage(groupLevel, complete: true),
+      channels: <String, C7HistoryPage>{
+        _channel: C7HistoryPage(channel, complete: false),
+      },
+      formerKeys: <C7FormerKey>[
+        C7FormerKey(
+            deviceId: carol.deviceId,
+            accountId: carol.accountId,
+            signingKey: carolKey),
+        // The server lists a key for a device in the tree: never used.
+        C7FormerKey(
+            deviceId: bob.deviceId,
+            accountId: bob.accountId,
+            signingKey: carolKey),
+      ],
+    );
+    // The walk adopted the first generation from the removal's
+    // history_sync, closing where the second opens; the period's record
+    // stops it there.
+    expect((await dave.book()).gens.map((gen) => (gen.epoch, gen.close)),
+        [(opened, removal), (removal, second), (second, null)]);
+    final byKey = <String, LocalMessage>{
+      for (final row in await dave.rows()) row.key: row,
+    };
+    String text(_Client from, MessageEnvelope sent) =>
+        byKey[keyOf(from, sent)]!.body!;
+    expect(text(bob, first), 'first, edited');
+    expect(text(bob, inWindow), 'second epoch of the window');
+    expect(text(alice, last), 'last generation');
+    expect(text(carol, fromCarol), 'from carol');
+    expect(imported, 5);
+    for (final (from, sent) in <(_Client, MessageEnvelope)>[
+      (alice, before), // before the period: no key opens it
+      (bob, relabelled), // its signed epoch is not the route's
+      (bob, closing), // served in its generation's closing epoch
+      (erin, fromErin), // no key: neither in the tree nor listed
+      (bob, gone), // deleted by its author
+      (alice, record), // a record is never applied from history
+    ]) {
+      expect(byKey.containsKey(keyOf(from, sent)), isFalse,
+          reason: sent.idempotencyKey);
+    }
+    // Every imported post records its generation; the attachment is a
+    // placeholder whose stored row holds nothing of its manifest.
+    expect(byKey[keyOf(bob, first)]!.c7Gen, c7GenTag(firstKey));
+    final hidden = byKey[keyOf(alice, attachment)]!;
+    expect(hidden.kind, LocalMessageKind.attachment);
+    expect(hidden.body, c7HiddenAttachmentBody);
+    expect(AttachmentEntry.listFromBody(hidden.body), isEmpty);
+    for (final row in byKey.values) {
+      expect(row.body ?? '', isNot(contains('blob_pre_join')));
+      expect(row.state, LocalMessageState.received);
+    }
+    expect(await dave.service.c7FormerMemberPosts(_conversation),
+        {keyOf(carol, fromCarol)});
+    // Paging: the channel is full and the page was cut short.
+    expect(await dave.service.c7EarlierCursor(_conversation, _channel),
+        channel.last.messageId);
+    // Run again (a crash before the app saw the result): nothing doubles.
+    expect(await dave.service.c7ImportDue([_conversation]), isEmpty);
+    expect(
+        await dave.service.c7ImportHistory(_conversation,
+            groupLevel: C7HistoryPage(groupLevel, complete: true),
+            channels: <String, C7HistoryPage>{
+              _channel: C7HistoryPage(channel, complete: false),
+            }),
+        0);
+    final again = await dave.service.c7ImportHistory(_conversation,
+        groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+        channels: <String, C7HistoryPage>{
+          _channel: C7HistoryPage(channel, complete: true),
+        },
+        first: false);
+    expect(again, 5);
+    expect((await dave.rows()).length, byKey.length);
+    expect(await dave.service.c7EarlierCursor(_conversation, _channel), isNull);
   }, skip: skip);
 
   test(

@@ -7340,6 +7340,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Attachment from before you joined'**
   String get channelHistoryAttachmentHidden;
+
+  /// No description provided for @channelHistoryFormerMember.
+  ///
+  /// In en, this message translates to:
+  /// **'From a former member'**
+  String get channelHistoryFormerMember;
 }
 
 class _AppLocalizationsDelegate
