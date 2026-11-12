@@ -1057,7 +1057,12 @@ sealed post client and its retry rules), `NativeCryptoService`
   `proofFailed` are new; neither is ever shown as verified.
 - **Log residue.** A sync page that opened a sealed message ends with
   `PRAGMA wal_checkpoint(TRUNCATE)` (`checkpointSealedResidue`), best
-  effort.
+  effort. Review L1: the need is written durably (setting
+  `l2.sealed_residue_pending`) just before the first sealed open, the sync
+  pass clears it in a `finally` too (a page that threw or returned early
+  skipped its own clear), and a flag a killed app left is cleared on the
+  next start's first pass. It is reset only after a checkpoint that
+  truncated the log (`app_state_catch_up_followups_test.dart`).
 - **Typing and read state.** In a conversation that is eligible while the
   switch is on (`SealedSender.activeIn`), the app sends no server typing
   event and only the private read cursor, and its read marker names the

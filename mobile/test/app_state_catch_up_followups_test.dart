@@ -67,6 +67,45 @@ void main() {
     harness.dispose();
   });
 
+  // Review L1: a page that opened a sealed message and then failed still
+  // clears the log, and the need is durable from before the open.
+  test('a page that opened a sealed message and then threw still checkpoints',
+      () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[
+        _sealedEvent(5, 'sealed_one'),
+        _envelopeEvent(6, 'msg_bad'),
+      ];
+    final store = MemoryLocalStore();
+    final harness = await _Harness.start(api,
+        store: store,
+        sealing: true,
+        configure: (state) => (state.cryptoService as _FakeMlsCrypto)
+            .applyError = StateError('boom'));
+    await harness.waitFor(() => harness.crypto.applied.contains('msg_bad'));
+    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+    expect(await store.loadSyncCursor(), 5);
+    expect(
+        (harness.crypto as _FakeSealingCrypto).residueSettingAtOpen, <String?>[
+      '1',
+    ]);
+    expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
+    harness.dispose();
+  });
+
+  test('a residue flag a killed app left is cleared on the next start',
+      () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_plain')];
+    final store = MemoryLocalStore();
+    await store.saveSetting(AppState.sealedResidueSetting, '1');
+    final harness = await _Harness.start(api, store: store, sealing: true);
+    await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+    expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
+    harness.dispose();
+  });
+
   test('a failed one-time clear of a pre-D54 stop is tried again', () async {
     final api = _ScriptedApi()
       ..events = <SyncEvent>[
@@ -574,10 +613,15 @@ class _FakeSealingCrypto extends _FakeMlsCrypto
   @override
   set sealedTokenSource(SealedTokenSource? source) {}
 
+  /// [AppState.sealedResidueSetting] as each open found it.
+  final List<String?> residueSettingAtOpen = <String?>[];
+
   @override
   Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
       ReceivedMessageEnvelope envelope, int syncEventId,
       {void Function()? checkCanCommit}) async {
+    residueSettingAtOpen
+        .add(await store.loadSetting(AppState.sealedResidueSetting));
     applied.add(envelope.id);
     await store.commitSyncEvent(SyncEventCommit(
       eventKey: 'application:$syncEventId:${envelope.id}',

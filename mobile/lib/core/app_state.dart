@@ -6600,6 +6600,10 @@ class AppState extends ChangeNotifier
       notifyListeners();
       _scheduleCatchUpRetry(
           retryAfter: err is ApiException ? err.retryAfter : null);
+    } finally {
+      // Review L1: a page that opened a sealed message and then threw or
+      // returned early skipped its own clear; the pass clears it here.
+      await _clearSealedResidue();
     }
   }
 
@@ -7030,17 +7034,49 @@ class AppState extends ChangeNotifier
   /// then checkpoints the database log once for the page.
   bool _sealedResiduePending = false;
 
+  /// Whether this AppState has read [sealedResidueSetting] yet.
+  bool _sealedResidueLoaded = false;
+
+  /// Review L1: the durable copy of [_sealedResiduePending], `1` from just
+  /// before a sealed open until a checkpoint succeeded. One left at `1` by
+  /// a killed app is cleared on the next start's first sync pass.
+  static const String sealedResidueSetting = 'l2.sealed_residue_pending';
+
+  /// Records, durably and before the open, that a sealed message is about
+  /// to be opened. Written once until the next successful checkpoint.
+  Future<void> _markSealedResidue() async {
+    if (_sealedResiduePending) return;
+    await localStore.saveSetting(sealedResidueSetting, '1');
+    _sealedResiduePending = true;
+  }
+
   /// L2-3 (`docs/crypto.md`, "Franking a sealed message", residue): the
   /// MLS state from before a sealed message could decrypt it again, and an
   /// old copy of it can sit in write-ahead log frames after the new state
   /// is committed. Once per sync page that opened a sealed message the log
-  /// is checkpointed and truncated. Best effort, never fails the pass.
+  /// is checkpointed and truncated, and once more when a sync pass ends
+  /// for any reason (a page that threw or returned early included). A flag
+  /// a killed app left is honoured on the next start. A checkpoint that
+  /// could not truncate (a reader held the log) stays due. Best effort,
+  /// never fails the pass.
   Future<void> _clearSealedResidue() async {
-    if (!_sealedResiduePending) return;
-    _sealedResiduePending = false;
     try {
-      await localStore.checkpointSealedResidue();
-    } catch (_) {}
+      if (!_sealedResidueLoaded) {
+        _sealedResidueLoaded = true;
+        if (await localStore.loadSetting(sealedResidueSetting) == '1') {
+          _sealedResiduePending = true;
+        }
+      }
+      if (!_sealedResiduePending) return;
+      _sealedResiduePending = false;
+      if (await localStore.checkpointSealedResidue()) {
+        await localStore.saveSetting(sealedResidueSetting, '0');
+      } else {
+        _sealedResiduePending = true;
+      }
+    } catch (_) {
+      // Still due: the setting says so until a checkpoint succeeds.
+    }
   }
 
   /// Whether the server's event at the id that failed is not the one that
@@ -7586,6 +7622,9 @@ class AppState extends ChangeNotifier
             client: client);
         final ReceivedMessageEnvelope opened;
         try {
+          // Review L1: durable before the open commits, so a kill before
+          // the checkpoint leaves it to the next start.
+          await _markSealedResidue();
           opened = await sealedCrypto.processSealedApplicationMessage(
               inline, event.id,
               checkCanCommit: wake?.checkCanCommit);
@@ -7602,8 +7641,7 @@ class AppState extends ChangeNotifier
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         // L2-3: the pass ends by clearing the log of the state that could
-        // open this ciphertext again.
-        _sealedResiduePending = true;
+        // open this ciphertext again ([_markSealedResidue] above).
         // This device's own post came back: it landed, whatever the
         // outbox last heard (a lost answer), so it leaves the outbox.
         if (opened.senderDeviceId == current.deviceId && wake == null) {
