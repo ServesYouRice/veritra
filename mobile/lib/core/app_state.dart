@@ -54,6 +54,7 @@ import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
 import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
+import 'sealed_sender.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
@@ -410,6 +411,12 @@ class AppState extends ChangeNotifier
 
   Session? session;
   ApiClient? api;
+
+  /// L2-3: the sealed sender state for [api]'s origin, while the crypto
+  /// service can send and open sealed messages; and the client that posts
+  /// them, which never carries the session.
+  SealedSender? sealedSender;
+  SealedPostClient? _sealedPost;
   SyncService? sync;
   StreamSubscription<Map<String, Object?>>? _syncSubscription;
   StreamSubscription<PushEvent>? _pushSubscription;
@@ -2444,8 +2451,8 @@ class AppState extends ChangeNotifier
     if (!_refreshOwned(current, generation)) return;
     conversations = list;
     _conversationsFromServer = true;
-    if (cryptoService case final C7HistoryConsumer c7) {
-      unawaited(_followC7Switch(client, c7));
+    if (cryptoService is C7HistoryConsumer || sealedSender != null) {
+      unawaited(_followServerSwitches(client, current));
     }
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
@@ -3750,11 +3757,19 @@ class AppState extends ChangeNotifier
       await receiptPreferences.loaded;
       // The app may have gone to the background while the choice was read.
       if (!_isForeground) return;
-      if (receiptPreferences.shareReadReceipts) {
-        await client.markRead(current.token, conversationId, messages.first.id);
+      // L2-3: where messages go sealed the shared read cursor would move
+      // right around a sealed post, so the receipt stays private there, and
+      // it names the newest identified message: the server keeps no read
+      // position on a sealed row.
+      final sealedHere = sealedSender?.activeIn(conversationId) ?? false;
+      final target = sealedHere
+          ? messages.where((message) => !message.sealed).firstOrNull
+          : messages.first;
+      if (target == null) return;
+      if (receiptPreferences.shareReadReceipts && !sealedHere) {
+        await client.markRead(current.token, conversationId, target.id);
       } else {
-        await client.markReadPrivate(
-            current.token, conversationId, messages.first.id);
+        await client.markReadPrivate(current.token, conversationId, target.id);
       }
       // Clear the unread badge immediately rather than waiting for the next
       // conversation refresh; the receipt has landed server-side.
@@ -4373,10 +4388,23 @@ class AppState extends ChangeNotifier
   /// C7: sends go in two parts exactly while the server reports
   /// `c7_history` (PRIVATE_MESSENGER_C7_HISTORY). A failed read keeps the
   /// last answer; the server refuses a mismatched send either way.
-  Future<void> _followC7Switch(ApiClient client, C7HistoryConsumer c7) async {
+  ///
+  /// L2-3: sealed sending follows `sealed_sender`
+  /// (PRIVATE_MESSENGER_SEALED_SENDER) the same way; turning on starts a
+  /// token pass when the app is in the foreground.
+  Future<void> _followServerSwitches(ApiClient client, Session current) async {
     try {
       final status = await client.setupStatus();
-      c7.c7SealedBodies = status['c7_history'] == true;
+      if (cryptoService case final C7HistoryConsumer c7) {
+        c7.c7SealedBodies = status['c7_history'] == true;
+      }
+      final sealed = sealedSender;
+      if (sealed != null && sealed.origin == client.baseUrl) {
+        sealed.enabled = status['sealed_sender'] == true;
+        if (sealed.enabled && _isForeground && _sameSession(current)) {
+          unawaited(sealed.refresh(client, current.token, conversations));
+        }
+      }
     } catch (_) {
       // Keep the current setting until the next refresh.
     }
@@ -5237,6 +5265,9 @@ class AppState extends ChangeNotifier
     final members =
         known > 0 ? known : receipts.receiptsFor(conversationId).length + 1;
     if (members < 2 || members > typingMaxMembers) return;
+    // L2-3: a server-seen typing event names the account seconds before
+    // its sealed post, so none is sent where messages go sealed.
+    if (sealedSender?.activeIn(conversationId) ?? false) return;
     if (!typing.takeSendSlot(conversationId)) return;
     unawaited(
       client
@@ -5851,6 +5882,7 @@ class AppState extends ChangeNotifier
       return failed;
     }
     final client = apiClientFactory(current.baseUrl);
+    client.readsSealedEvents = cryptoService is SealedSendingCryptoService;
     final unregister = wake.onCancel(client.close);
     _wakeRun = wake;
     _wakeApi = client;
@@ -6130,6 +6162,12 @@ class AppState extends ChangeNotifier
     }
     await _syncOwner?.request();
     _retryOwedKeyPackages();
+    // L2-3: tokens are fetched on the foreground pass, for every eligible
+    // conversation whether or not it will send, never right before a send.
+    final sealed = sealedSender, client = api, current = session;
+    if (sealed != null && client != null && current != null && _isForeground) {
+      unawaited(sealed.refresh(client, current.token, conversations));
+    }
     // C3: keys and announcements arrive over MLS; look again at most once
     // a minute.
     final last = _lastInfoRefresh;
@@ -7159,6 +7197,7 @@ class AppState extends ChangeNotifier
   bool _isCryptoSyncEvent(String type) =>
       type == 'mls.message.created' ||
       type.startsWith('message.envelope.') ||
+      type == sealedMessageEventType ||
       type == 'call.signaling' ||
       type == 'call.state';
 
@@ -7423,6 +7462,10 @@ class AppState extends ChangeNotifier
         if (inline == null && event.type != 'message.envelope.created') {
           throw failure(SyncFailureKind.applicationMissing);
         }
+        // L2-3: a sealed envelope comes only as `message.sealed.created`.
+        if (inline?.sealed ?? false) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
         final ReceivedMessageEnvelope resolved;
         if (inline != null) {
           resolved = inline;
@@ -7435,7 +7478,8 @@ class AppState extends ChangeNotifier
           }
           resolved = fetched;
         }
-        if (resolved.id != id ||
+        if (resolved.sealed ||
+            resolved.id != id ||
             (event.conversationId != null &&
                 resolved.conversationId != event.conversationId)) {
           throw failure(SyncFailureKind.applicationUndecryptable);
@@ -7474,6 +7518,59 @@ class AppState extends ChangeNotifier
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         return resolved;
+      case sealedMessageEventType:
+        // L2-3: a sealed post. The server names no sender; the crypto
+        // service takes it from MLS. The envelope always comes inline.
+        final id = _messageIdFromSyncEvent(event);
+        if (id == null) throw failure(SyncFailureKind.applicationMissing);
+        final ReceivedMessageEnvelope? inline;
+        try {
+          inline = _envelopeFromSyncEvent(event);
+        } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        if (inline == null) throw failure(SyncFailureKind.applicationMissing);
+        final payload = event.payload;
+        if (!inline.sealed ||
+            payload is! Map ||
+            payload['sealed'] != true ||
+            inline.id != id ||
+            (event.conversationId != null &&
+                inline.conversationId != event.conversationId)) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        final sealedCrypto = mls is SealedSendingCryptoService
+            ? mls as SealedSendingCryptoService
+            : throw failure(SyncFailureKind.applicationUndecryptable);
+        await _ensureConversationAuthority(inline.conversationId,
+            client: client);
+        final ReceivedMessageEnvelope opened;
+        try {
+          opened = await sealedCrypto.processSealedApplicationMessage(
+              inline, event.id,
+              checkCanCommit: wake?.checkCanCommit);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage, err);
+          }
+          if (_provenExpired(inline.expiresAt)) {
+            await _commitExpiredTombstone(event, id, wake);
+            return null;
+          }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        // This device's own post came back: it landed, whatever the
+        // outbox last heard (a lost answer), so it leaves the outbox.
+        if (opened.senderDeviceId == current.deviceId && wake == null) {
+          final queued = (await localStore.pendingEnvelopes()).where((item) =>
+              item.sealed &&
+              item.idempotencyKey == opened.idempotencyKey &&
+              item.conversationId == opened.conversationId);
+          if (queued.isNotEmpty) await _removeFromOutbox(queued.first);
+        }
+        return opened;
       case 'call.signaling':
       case 'call.state':
         final payload = event.payload;
@@ -8109,7 +8206,11 @@ class AppState extends ChangeNotifier
       _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
       try {
-        await client.sendEnvelope(current.token, envelope);
+        if (envelope.sealed) {
+          await _postSealed(current, envelope, ownerGeneration);
+        } else {
+          await client.sendEnvelope(current.token, envelope);
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         await _removeFromOutbox(envelope);
         _selfUpdatePolicyFor(current)?.recordSent(envelope.conversationId);
@@ -8128,6 +8229,54 @@ class AppState extends ChangeNotifier
     }
     notifyListeners();
   }
+
+  /// L2-3: posts a message chosen to go sealed, on the sealed client. It is
+  /// never sent identified, whatever the answer: once a sealed attempt may
+  /// have landed, an identified copy would be a second message. A refused
+  /// token is replaced and the same message (same idempotency key and
+  /// bytes) posted again; the server answers a post it already stored with
+  /// 200 whatever token comes with it. With no token to replace it, the
+  /// message waits (retrying) for the next token pass. A refusal that
+  /// stored nothing (not eligible, malformed) fails the message.
+  Future<void> _postSealed(
+      Session current, MessageEnvelope envelope, int ownerGeneration) async {
+    final poster = _sealedPostClient(current.baseUrl);
+    var attempt = envelope;
+    for (var round = 0; round < 3; round++) {
+      try {
+        await poster.post(attempt);
+        return;
+      } on ApiException catch (error) {
+        if (!_syncOwnerActive(current, ownerGeneration)) rethrow;
+        final sealed = sealedSender;
+        switch (sealedPostOutcome(error)) {
+          case SealedPostOutcome.retry:
+            rethrow;
+          case SealedPostOutcome.terminal:
+            if (error.serverCode == 'sealed_not_eligible') {
+              await sealed?.notEligible(envelope.conversationId);
+            }
+            rethrow;
+          case SealedPostOutcome.replaceToken:
+            await sealed?.tokenRefused(envelope.conversationId, error);
+            final next = await sealed?.takeFor(envelope.conversationId);
+            if (next == null) throw _sealedTokenNeeded();
+            attempt = attempt.withSealedToken(next);
+            if (!await localStore.rewriteQueuedEnvelope(attempt)) {
+              // Gone from the outbox meanwhile (its echo arrived).
+              await sealed?.putBack(next);
+              return;
+            }
+        }
+      }
+    }
+    throw _sealedTokenNeeded();
+  }
+
+  /// A sealed message that has no token to go with: it stays queued and
+  /// retrying (a 503 class) until a token pass refills.
+  static ApiException _sealedTokenNeeded() =>
+      ApiException(503, '{"error":"sealed_token_needed"}');
 
   Future<void> _recordOutboxFailure(
     MessageEnvelope envelope,
@@ -9671,6 +9820,32 @@ class AppState extends ChangeNotifier
     }
     api?.close();
     api = apiClientFactory(baseUrl);
+    _followSealedOrigin(api!);
+  }
+
+  /// L2-3: points the sealed sender at [client]'s origin. Sync reads ask for
+  /// sealed events only when this app can open them; until the server says
+  /// `sealed_sender`, every send goes identified.
+  void _followSealedOrigin(ApiClient client) {
+    final crypto = switch (cryptoService) {
+      final SealedSendingCryptoService sealing => sealing,
+      _ => null,
+    };
+    client.readsSealedEvents = crypto != null;
+    if (crypto == null) return;
+    _sealedPost?.close();
+    _sealedPost = null;
+    final sealed = SealedSender(
+        origin: client.baseUrl, localStore: localStore, crypto: crypto);
+    sealedSender = sealed;
+    crypto.sealedTokenSource = sealed;
+  }
+
+  SealedPostClient _sealedPostClient(String origin) {
+    final open = _sealedPost;
+    if (open != null && open.baseUrl == origin) return open;
+    open?.close();
+    return _sealedPost = SealedPostClient(baseUrl: origin);
   }
 
   /// Operation-scoped variant of [_run]. Tracks busy/error under [op] and
@@ -9846,6 +10021,7 @@ class AppState extends ChangeNotifier
     unawaited(_switchResourceClose);
     unawaited(_callSignals.close());
     api?.close();
+    _sealedPost?.close();
     super.dispose();
   }
 }

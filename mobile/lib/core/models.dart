@@ -1200,3 +1200,51 @@ class SealedToken {
   @override
   String toString() => 'SealedToken($conversationId, $epoch)';
 }
+
+/// L2-3: the POPRF suite the app's crypto core speaks.
+const String sealedSuite = 'ristretto255-SHA512';
+
+/// The server's sealed sender POPRF key (`GET /api/v1/sealed/key`).
+class SealedServerKey {
+  SealedServerKey({required this.keyId, required List<int> publicKey})
+      : publicKey = List<int>.unmodifiable(publicKey) {
+    if (keyId.length != 32 || publicKey.length != 32) {
+      throw const FormatException('invalid sealed server key');
+    }
+  }
+
+  final String keyId;
+  final List<int> publicKey;
+
+  bool sameAs(String otherKeyId, List<int> otherPublicKey) {
+    if (otherKeyId != keyId || otherPublicKey.length != publicKey.length) {
+      return false;
+    }
+    var diff = 0;
+    for (var i = 0; i < publicKey.length; i++) {
+      diff |= publicKey[i] ^ otherPublicKey[i];
+    }
+    return diff == 0;
+  }
+}
+
+/// `GET /api/v1/sealed/conversations/{id}`.
+class SealedConversationState {
+  const SealedConversationState({
+    required this.key,
+    required this.generation,
+    required this.epoch,
+    required this.eligible,
+    required this.remaining,
+  });
+
+  final SealedServerKey key;
+  final int generation;
+
+  /// The server's UTC day.
+  final int epoch;
+  final bool eligible;
+
+  /// Tokens this account may still be issued today in the conversation.
+  final int remaining;
+}

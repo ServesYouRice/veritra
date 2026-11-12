@@ -483,6 +483,37 @@ abstract interface class SealedTokenSource {
 /// A crypto service that can send sealed (L2-3).
 abstract interface class SealedSendingCryptoService {
   set sealedTokenSource(SealedTokenSource? source);
+
+  /// Applies a `message.sealed.created` envelope ([envelope] must be
+  /// sealed; its server sender fields are ignored). Returns the envelope
+  /// with the sender MLS authenticated, this device's own for its own post,
+  /// or with no sender when it became a placeholder.
+  Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {void Function()? checkCanCommit});
+
+  /// Blinds [count] fresh token nonces (1 to 32) for the server's
+  /// [publicKey]. `state` holds the blinds for [sealedTokenFinalize]; the
+  /// caller wipes it. `request` goes to the server.
+  ({Uint8List state, Uint8List request}) sealedTokenRequest({
+    required List<int> publicKey,
+    required String conversationId,
+    required int epoch,
+    required int generation,
+    required int count,
+  });
+
+  /// Checks the server's batch proof against the key in [state] and
+  /// returns the tokens. Throws when the proof does not verify; no token
+  /// is returned then.
+  List<SealedToken> sealedTokenFinalize({
+    required List<int> state,
+    required List<int> response,
+    required String conversationId,
+    required String keyId,
+    required int epoch,
+    required int generation,
+  });
 }
 
 /// Cached server roles today; C4 will replace this source with encrypted roles.

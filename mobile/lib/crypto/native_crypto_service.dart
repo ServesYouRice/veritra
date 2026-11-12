@@ -124,6 +124,51 @@ class NativeCryptoService
   @override
   SealedTokenSource? sealedTokenSource;
 
+  @override
+  ({Uint8List state, Uint8List request}) sealedTokenRequest({
+    required List<int> publicKey,
+    required String conversationId,
+    required int epoch,
+    required int generation,
+    required int count,
+  }) =>
+      bindings.l2TokenRequest(
+          publicKey: publicKey,
+          conversationId: conversationId,
+          epoch: epoch,
+          generation: generation,
+          count: count);
+
+  @override
+  List<SealedToken> sealedTokenFinalize({
+    required List<int> state,
+    required List<int> response,
+    required String conversationId,
+    required String keyId,
+    required int epoch,
+    required int generation,
+  }) {
+    final out = bindings.l2TokenFinalize(state: state, response: response);
+    try {
+      const size = SealedToken.nonceBytes + SealedToken.outputBytes;
+      return <SealedToken>[
+        for (var offset = 0; offset + size <= out.length; offset += size)
+          SealedToken(
+            conversationId: conversationId,
+            keyId: keyId,
+            epoch: epoch,
+            generation: generation,
+            nonce: Uint8List.sublistView(
+                out, offset, offset + SealedToken.nonceBytes),
+            output: Uint8List.sublistView(
+                out, offset + SealedToken.nonceBytes, offset + size),
+          ),
+      ];
+    } finally {
+      out.fillRange(0, out.length, 0);
+    }
+  }
+
   /// The C7 group state change a merged commit makes, for the same MLS
   /// transition. Empty while C7 is off or outside community conversations;
   /// a commit that removed this device deletes the state (re-add wipe).
@@ -3139,19 +3184,47 @@ class NativeCryptoService
   Future<List<int>?> processApplicationMessage(
     ReceivedMessageEnvelope envelope,
     int syncEventId,
-  ) =>
-      _processApplicationMessage(envelope, syncEventId);
+  ) {
+    // L2-3: a sealed envelope only through processSealedApplicationMessage.
+    if (envelope.sealed) {
+      return Future<List<int>?>.error(
+          const FormatException('sealed envelope on the identified path'));
+    }
+    return _processApplicationMessage(envelope, syncEventId);
+  }
+
+  @override
+  Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {void Function()? checkCanCommit}) async {
+    if (!envelope.sealed) {
+      throw const FormatException('identified envelope on the sealed path');
+    }
+    var resolved = envelope.withSender('', '');
+    final plaintext = await _processApplicationMessage(envelope, syncEventId,
+        checkCanCommit: checkCanCommit,
+        onSender: (named) => resolved = named);
+    if (plaintext != null) plaintext.fillRange(0, plaintext.length, 0);
+    return resolved;
+  }
 
   @override
   Future<List<int>?> processApplicationMessageBounded(
-          ReceivedMessageEnvelope envelope, int syncEventId,
-          {required void Function() checkCanCommit}) =>
-      _processApplicationMessage(envelope, syncEventId,
-          checkCanCommit: checkCanCommit);
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {required void Function() checkCanCommit}) {
+    if (envelope.sealed) {
+      return Future<List<int>?>.error(
+          const FormatException('sealed envelope on the identified path'));
+    }
+    return _processApplicationMessage(envelope, syncEventId,
+        checkCanCommit: checkCanCommit);
+  }
 
+  /// [onSender] hears the sender a sealed envelope resolved to (L2-3).
   Future<List<int>?> _processApplicationMessage(
       ReceivedMessageEnvelope incoming, int syncEventId,
-      {void Function()? checkCanCommit}) {
+      {void Function()? checkCanCommit,
+      void Function(ReceivedMessageEnvelope)? onSender}) {
     // L2-3: a sealed envelope names no sender; whatever it says about one is
     // dropped here, and the sender comes from MLS only (decryptSealed).
     final sealed = incoming.sealed;
@@ -3197,6 +3270,7 @@ class NativeCryptoService
           await _isOwnSealedPost(
               envelope.conversationId, envelope.idempotencyKey)) {
         envelope = envelope.withSender(_accountId!, _deviceId!);
+        onSender?.call(envelope);
       }
       if (envelope.senderDeviceId == _deviceId) {
         operationFence();
@@ -3258,6 +3332,7 @@ class NativeCryptoService
                   NativeCryptoError.operationFailed);
             }
             envelope = envelope.withSender(opened.accountId, opened.deviceId);
+            onSender?.call(envelope);
             // The sender leaf's signing key, read in the same turn as the
             // decrypt (before anything can change the tree), for the
             // franking signature. A leaf without one leaves it null and a
