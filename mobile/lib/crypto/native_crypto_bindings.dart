@@ -2381,8 +2381,9 @@ class NativeCryptoDevice implements Finalizable {
   /// sender the transport does not name, and returns the sender MLS
   /// authenticated. Nothing the server says about the sender is used.
   /// Throws [NativeCryptoError.senderRemoved] for a past-epoch message from
-  /// a sender who has left; the ratchet has advanced then. Not used by the
-  /// app yet: sealed delivery waits for its credential decision.
+  /// a sender who has left; the ratchet has advanced then. The app calls it
+  /// for `message.sealed.created` events (NativeCryptoService's
+  /// processSealedApplicationMessage).
   ({List<int> plaintext, String accountId, String deviceId}) decryptSealed(
       String groupId, List<int> ciphertext) {
     _bindings._bounded(groupId.codeUnits, 128);

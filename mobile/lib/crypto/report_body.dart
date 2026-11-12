@@ -39,7 +39,8 @@ class ReportBody {
     List<int>? signingKey,
   })  : payload = List<int>.unmodifiable(payload),
         frankKey = List<int>.unmodifiable(frankKey),
-        signature = signature == null ? null : List<int>.unmodifiable(signature),
+        signature =
+            signature == null ? null : List<int>.unmodifiable(signature),
         signingKey =
             signingKey == null ? null : List<int>.unmodifiable(signingKey);
 

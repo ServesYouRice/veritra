@@ -1,6 +1,6 @@
 # L2: server learns less
 
-**Status: proposed (2026-11-07). L2-1 and L2-5 built in round 7; L2-3 designed 2026-11-12 (D122); its crypto core and server half are built behind a server switch that is off, and the app half is not built (docs/crypto.md, "As built").** A design only, against `main`
+**Status: proposed (2026-11-07). L2-1 and L2-5 built in round 7; L2-3 designed 2026-11-12 (D122); its crypto core, server half and app half are built behind a server switch that is off (docs/crypto.md, "As built" and "App step, as built").** A design only, against `main`
 (crypto ABI 13, server migration 0049, local schema 20). Steps L2-3 (sealed
 sender) and L2-5 (own-device alert) touch security, MLS and credential
 decisions, so each needs an independent review (AGENTS.md) and the owner's

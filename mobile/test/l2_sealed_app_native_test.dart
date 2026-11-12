@@ -27,8 +27,8 @@ void main() {
   // Skipped without the library, unless VERITRA_REQUIRE_NATIVE_CRYPTO=1.
   final skip = nativeCryptoSkip();
   late NativeCryptoBindings bindings;
-  setUp(() =>
-      bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary()));
+  setUp(
+      () => bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary()));
 
   test('a sealed message reaches the other member with the MLS sender',
       () async {
@@ -58,8 +58,8 @@ void main() {
     expect(MessageEnvelope.fromJson(sent.toJson()).sealed, isTrue);
 
     final event = alice.nextEvent();
-    final opened = await alice.service.processSealedApplicationMessage(
-        alice.sealedFrom(sent), event);
+    final opened = await alice.service
+        .processSealedApplicationMessage(alice.sealedFrom(sent), event);
     expect(opened.senderAccountId, 'acct_bob');
     expect(opened.senderDeviceId, 'dev_bob');
     expect(await alice.store.loadSyncCursor(), event);
@@ -185,16 +185,15 @@ void main() {
     expect(await alice.store.loadFrankReveal(row.key), isNull);
   }, skip: skip);
 
-  test('a franked payload without s is invalid when it comes sealed',
-      () async {
+  test('a franked payload without s is invalid when it comes sealed', () async {
     final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
     final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
     await _startConversation(alice, bob);
     final sent = await bob
         .send(AppPayloadType.text, <String, Object?>{'text': 'unsigned'});
     expect(sent.sealed, isFalse);
-    final opened = await alice.service
-        .processSealedApplicationMessage(alice.sealedFrom(sent), alice.nextEvent());
+    final opened = await alice.service.processSealedApplicationMessage(
+        alice.sealedFrom(sent), alice.nextEvent());
     expect(opened.senderAccountId, 'acct_bob');
     final row = (await alice.history()).single;
     expect(row.kind, LocalMessageKind.invalid);
@@ -210,8 +209,8 @@ void main() {
         await bob.send(AppPayloadType.text, <String, Object?>{'text': 'y'});
     final cursor = await alice.store.loadSyncCursor();
     await expectLater(
-        alice.service
-            .processApplicationMessage(alice.sealedFrom(sent), alice.nextEvent()),
+        alice.service.processApplicationMessage(
+            alice.sealedFrom(sent), alice.nextEvent()),
         throwsFormatException);
     await expectLater(
         alice.service.processSealedApplicationMessage(
@@ -262,8 +261,7 @@ void main() {
       'sealed': true,
       'created_at': DateTime.now().toUtc().toIso8601String(),
     }));
-    Future<ReportVerification> verifyAs(
-        ReportBody reported,
+    Future<ReportVerification> verifyAs(ReportBody reported,
         Future<bool> Function(String, String, List<int>)? listed) async {
       final owner = ReportsService(
         api: server,
@@ -278,9 +276,7 @@ void main() {
     }
 
     Future<bool> bobsList(String account, String device, List<int> key) async =>
-        account == 'acct_bob' &&
-        device == 'dev_bob' &&
-        _sameBytes(key, bobKey);
+        account == 'acct_bob' && device == 'dev_bob' && _sameBytes(key, bobKey);
 
     final verified = await verifyAs(body, bobsList);
     expect(verified.verdict, ReportVerdict.verified);
@@ -288,8 +284,8 @@ void main() {
     expect(verified.record!.senderDeviceId, 'dev_bob');
 
     // No device-list check wired: never attributed (fails closed).
-    expect((await verifyAs(body, null)).verdict,
-        ReportVerdict.senderUnverified);
+    expect(
+        (await verifyAs(body, null)).verdict, ReportVerdict.senderUnverified);
     // The key is not on the claimed account's list.
     expect((await verifyAs(body, (a, d, k) async => false)).verdict,
         ReportVerdict.senderUnverified);
@@ -339,7 +335,8 @@ void main() {
   test('the frank member reads in exactly one spelling of each form', () {
     final canonical = Uint8List.fromList(utf8.encode('{"t":"x"}'));
     final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
-    final signature = Uint8List.fromList(List<int>.generate(64, (i) => 255 - i));
+    final signature =
+        Uint8List.fromList(List<int>.generate(64, (i) => 255 - i));
     final sealed = frankWireJson(canonical, key, signature: signature);
     final plain = frankWireJson(canonical, key);
     final readSealed = splitFrank(sealed) as Franked;

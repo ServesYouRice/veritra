@@ -8243,44 +8243,19 @@ class AppState extends ChangeNotifier
   /// message waits (retrying) for the next token pass. A refusal that
   /// stored nothing (not eligible, malformed) fails the message.
   Future<void> _postSealed(
-      Session current, MessageEnvelope envelope, int ownerGeneration) async {
-    final poster = _sealedPostClient(current.baseUrl);
-    var attempt = envelope;
-    for (var round = 0; round < 3; round++) {
-      try {
-        await poster.post(attempt);
-        return;
-      } on ApiException catch (error) {
-        if (!_syncOwnerActive(current, ownerGeneration)) rethrow;
-        final sealed = sealedSender;
-        switch (sealedPostOutcome(error)) {
-          case SealedPostOutcome.retry:
-            rethrow;
-          case SealedPostOutcome.terminal:
-            if (error.serverCode == 'sealed_not_eligible') {
-              await sealed?.notEligible(envelope.conversationId);
-            }
-            rethrow;
-          case SealedPostOutcome.replaceToken:
-            await sealed?.tokenRefused(envelope.conversationId, error);
-            final next = await sealed?.takeFor(envelope.conversationId);
-            if (next == null) throw _sealedTokenNeeded();
-            attempt = attempt.withSealedToken(next);
-            if (!await localStore.rewriteQueuedEnvelope(attempt)) {
-              // Gone from the outbox meanwhile (its echo arrived).
-              await sealed?.putBack(next);
-              return;
-            }
-        }
-      }
-    }
-    throw _sealedTokenNeeded();
-  }
+          Session current, MessageEnvelope envelope, int ownerGeneration) =>
+      postSealedMessage(
+        poster: _sealedPostClient(current.baseUrl),
+        envelope: envelope,
+        tokens: sealedSender,
+        rewrite: localStore.rewriteQueuedEnvelope,
+        owned: () => _syncOwnerActive(current, ownerGeneration),
+      );
 
-  /// A sealed message that has no token to go with: it stays queued and
-  /// retrying (a 503 class) until a token pass refills.
-  static ApiException _sealedTokenNeeded() =>
-      ApiException(503, '{"error":"sealed_token_needed"}');
+  /// Builds the sealed post client (tests use a loopback server).
+  @visibleForTesting
+  SealedPostClient Function(String origin) sealedPostClientFactory =
+      (origin) => SealedPostClient(baseUrl: origin);
 
   Future<void> _recordOutboxFailure(
     MessageEnvelope envelope,
@@ -9863,9 +9838,11 @@ class AppState extends ChangeNotifier
 
   SealedPostClient _sealedPostClient(String origin) {
     final open = _sealedPost;
-    if (open != null && open.baseUrl == origin) return open;
+    if (open != null && open.baseUrl == canonicalizeServerOrigin(origin)) {
+      return open;
+    }
     open?.close();
-    return _sealedPost = SealedPostClient(baseUrl: origin);
+    return _sealedPost = sealedPostClientFactory(origin);
   }
 
   /// Operation-scoped variant of [_run]. Tracks busy/error under [op] and

@@ -67,6 +67,60 @@ SealedPostOutcome sealedPostOutcome(Object error) {
   return SealedPostOutcome.terminal;
 }
 
+/// Posts [envelope], a message chosen to go sealed, on [poster]. It is
+/// never sent identified, whatever the answer: once a sealed attempt may
+/// have landed, an identified copy would be a second message. A refused
+/// token is replaced from [tokens] and the same message (same idempotency
+/// key and bytes) posted again, after [rewrite] keeps the new token in its
+/// outbox entry; the server answers a post it already stored with 200
+/// whatever token comes with it. With no token to replace it, the message
+/// waits (a retryable 503 class) for the next token pass. A refusal that
+/// stored nothing (not eligible, malformed) is rethrown, and fails the
+/// message. Returns normally when the post landed, or when [rewrite] finds
+/// the entry gone (its echo arrived: it landed).
+Future<void> postSealedMessage({
+  required SealedPostClient poster,
+  required MessageEnvelope envelope,
+  required SealedSender? tokens,
+  required Future<bool> Function(MessageEnvelope envelope) rewrite,
+  bool Function()? owned,
+}) async {
+  if (!envelope.sealed) throw StateError('not a sealed envelope');
+  var attempt = envelope;
+  for (var round = 0; round < 3; round++) {
+    try {
+      await poster.post(attempt);
+      return;
+    } on ApiException catch (error) {
+      if (owned != null && !owned()) rethrow;
+      switch (sealedPostOutcome(error)) {
+        case SealedPostOutcome.retry:
+          rethrow;
+        case SealedPostOutcome.terminal:
+          if (error.serverCode == 'sealed_not_eligible') {
+            await tokens?.notEligible(envelope.conversationId);
+          }
+          rethrow;
+        case SealedPostOutcome.replaceToken:
+          await tokens?.tokenRefused(envelope.conversationId, error);
+          final next = await tokens?.takeFor(envelope.conversationId);
+          if (next == null) throw sealedTokenNeeded();
+          attempt = attempt.withSealedToken(next);
+          if (!await rewrite(attempt)) {
+            await tokens?.putBack(next);
+            return;
+          }
+      }
+    }
+  }
+  throw sealedTokenNeeded();
+}
+
+/// A sealed message with no token to go with: it stays queued and retrying
+/// (a 503 class) until a token pass refills.
+ApiException sealedTokenNeeded() =>
+    ApiException(503, '{"error":"sealed_token_needed"}');
+
 /// Posts sealed messages. Its [HttpClient] is its own: the session client's
 /// pooled TLS connection would tie the post to the session, and nothing
 /// here ever sets an `Authorization` header or a cookie.
@@ -221,8 +275,8 @@ class SealedSender implements SealedTokenSource {
   /// One fetch pass, on the foreground sync pass (at most every
   /// [refreshInterval], one at a time). Errors end the pass quietly: the
   /// next pass tries again, and sends go identified meanwhile.
-  Future<void> refresh(ApiClient client, String sessionToken,
-      List<Conversation> conversations) {
+  Future<void> refresh(
+      ApiClient client, String sessionToken, List<Conversation> conversations) {
     if (!enabled) return Future<void>.value();
     final last = _lastRefresh;
     final now = _clock();

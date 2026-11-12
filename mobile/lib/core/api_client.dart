@@ -2825,8 +2825,7 @@ class ApiClient {
   Future<SealedConversationState> sealedConversation(
       String token, String conversationId) async {
     final id = Uri.encodeComponent(conversationId);
-    final json = await _jsonRequest(
-        'GET', '/api/v1/sealed/conversations/$id',
+    final json = await _jsonRequest('GET', '/api/v1/sealed/conversations/$id',
         token: token);
     return _decode(() {
       final generation = json['generation'] as int;

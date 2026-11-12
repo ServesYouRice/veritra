@@ -50,7 +50,9 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
     if (confirmed != true || !mounted) return;
     await widget.state.acceptSealedKey();
     if (!mounted) return;
-    setState(() => _pin = widget.state.sealedKeyPin());
+    setState(() {
+      _pin = widget.state.sealedKeyPin();
+    });
   }
 
   @override
@@ -77,8 +79,7 @@ class _SealedKeyScreenState extends State<SealedKeyScreen> {
               else if (pin == null)
                 Text(l10n.l2SealedKeyNone)
               else ...<Widget>[
-                Text(l10n.l2SealedKeyPinned,
-                    style: theme.textTheme.titleSmall),
+                Text(l10n.l2SealedKeyPinned, style: theme.textTheme.titleSmall),
                 const SizedBox(height: BoneSpacing.xs),
                 SelectableText(
                   reportKeyFingerprint(pin.publicKey),

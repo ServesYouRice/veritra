@@ -3225,8 +3225,7 @@ class NativeCryptoService
     }
     var resolved = envelope.withSender('', '');
     final plaintext = await _processApplicationMessage(envelope, syncEventId,
-        checkCanCommit: checkCanCommit,
-        onSender: (named) => resolved = named);
+        checkCanCommit: checkCanCommit, onSender: (named) => resolved = named);
     if (plaintext != null) plaintext.fillRange(0, plaintext.length, 0);
     return resolved;
   }
@@ -3335,8 +3334,11 @@ class NativeCryptoService
             }
             final device = _requiredDevice();
             envelope = envelope.withSender('', '');
-            final ({List<int> plaintext, String accountId, String deviceId})
-                opened;
+            final ({
+              List<int> plaintext,
+              String accountId,
+              String deviceId
+            }) opened;
             try {
               opened = device.decryptSealed(
                   envelope.conversationId, envelope.ciphertext);

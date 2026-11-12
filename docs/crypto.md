@@ -744,15 +744,117 @@ ineligible conversations, a request carrying a session, forged tokens, no
 sender stored or synced, expiry and pruning, and the report envelope route
 for a sealed envelope.
 
-**Not built:** all app wiring. The app neither fetches tokens, nor sends
-sealed, nor reads `message.sealed.created`, nor checks or stores the
-franking signature `s`; local schema 43 is reserved and unused; the key
-pinning screen and the typing suppression are not built either. **Do not
-turn the switch on until an app that reads sealed events ships:** today's
-apps treat an unknown `message.*` event as fail-closed
+**Older apps (built on branch `feat/l2-sealed-app`).** Apps from before
+the app step treat an unknown `message.*` event as fail-closed
 (`_failsClosedEvent`, `SyncFailureKind.unsupportedEvent`), so one member
-holding tokens could pause the conversation (or, without scoped sync, all
-sync) on every other member's device.
+holding tokens could otherwise pause the conversation (or, without scoped
+sync, all sync) on every other member's device. Two server rules keep that
+from happening:
+
+- **Opt-in.** Every sync read (legacy, `?scan=bounded` and the per
+  conversation route) hides `message.sealed.created` rows unless the request
+  carries `?sealed=1`. They are hidden rows, not a filter after the page, so
+  an older app still pages past a run of sealed posts and never sees one.
+- **Issuance gate.** While the switch is on, a read with `?sealed=1`
+  records its device in `sealed_capable_devices` (added to 0091, which has
+  not merged). `GET /sealed/conversations/{id}` reports `eligible: false`,
+  and token issuance answers 409 `sealed_not_eligible`, until every live
+  device of every member is listed. So no member device that would miss a
+  sealed post is in a conversation that gets tokens. Redemption does not
+  check the gate: a device linked (or an older app installed) after tokens
+  were issued misses the sealed posts of the token days already issued
+  (today and tomorrow at most), and holds issuance shut until it updates.
+
+**App step, as built (2026-11-12, branch `feat/l2-sealed-app`, local schema
+43).** Code: `mobile/lib/core/sealed_sender.dart` (token pass, key pin,
+sealed post client and its retry rules), `NativeCryptoService`
+(`_encryptPayload`, `processSealedApplicationMessage`, `_checkFranking`),
+`AppState` (`_followServerSwitches`, the `message.sealed.created` case,
+`_flushOutboxOnce`). Tests: `mobile/test/l2_sealed_app_native_test.dart`
+(two native clients), `l2_sealed_app_test.dart` (a loopback server),
+`l2_schema43_test.dart`, `l2_sealed_key_screen_test.dart`.
+
+- **Switch.** Sealed sending is on only while the server's setup status
+  says `sealed_sender: true` (read with each conversation list refresh).
+  An app with the native crypto service sends `?sealed=1` on every sync
+  read, whether or not the switch is on (off, the server records nothing).
+- **Token pass.** On the foreground catch-up (at most every 10 minutes, one
+  pass at a time) and when the switch turns on, for each `dm` or `group`
+  conversation outside a community or channel: read
+  `GET /sealed/conversations/{id}`; if it is eligible and the app holds no
+  token for today, ask for `min(32, remaining)` for today and again for
+  tomorrow. The per-day cap is the server's `remaining`; nothing is asked
+  past it. An ineligible conversation drops its tokens. Tokens live in the
+  encrypted local database (`local_sealed_tokens`, at most
+  `maxSealedTokensPerConversation` per conversation), never in a backup,
+  and each is taken once (oldest usable day first).
+- **Key pin.** The first issuer key seen for an origin is pinned
+  (`local_sealed_key_pins`, trust on first use). A different key afterwards
+  is recorded as seen and stops sealed sending and token fetches for that
+  origin until the person accepts it in Settings, Privacy, "Sealed sender
+  key" (`features/settings/sealed_key_screen.dart`), which shows both
+  fingerprints and warns what accepting risks. Tagging at first contact is
+  still not detected.
+- **Choice at encrypt time.** `_encryptPayload` seals a payload only when
+  its type is a message type (`sealedPayloadTypes`), it has no attachments,
+  the conversation is `dm` or `group`, not a shared group, carries no C7
+  body, and a token is held for the current generation under the pinned
+  key; otherwise the message goes identified, as before. The sealed payload
+  carries `s` (`pm_crypto_l2_frank_sign`). The choice and its token are
+  stored in the outbox entry with the ciphertext; the local message row
+  holds no flag (the echo arrives as `message.sealed.created`).
+- **Post.** `SealedPostClient` has its own `HttpClient` (no keep-alive, no
+  shared connection), sends no `Authorization` header and no cookie, and
+  posts `POST /sealed/messages`; `ApiClient.sendEnvelope` refuses a sealed
+  envelope. Retry rules (`postSealedMessage`): a refused token
+  (`sealed_generation_changed`, `_token_expired`, `_token_spent`,
+  `_token_invalid`) is replaced from the store and the same message posted
+  again (same idempotency key and ciphertext; the outbox entry is rewritten
+  with the new token first); with no token left it waits as a retryable
+  503-class failure for the next token pass; 408, 429, 5xx and transport
+  errors retry as other outbox entries do; `sealed_not_eligible` and other
+  4xx fail the message (nothing was stored). **It never falls back to
+  identified** (the invariant below).
+- **Receive.** The `message.sealed.created` case decrypts through
+  `processSealedApplicationMessage` (`pm_crypto_group_decrypt_sealed`),
+  which refuses identified envelopes, as the identified path refuses sealed
+  ones; the server's sender fields are never read. A sealed payload must be
+  a message type; any other type is `invalid`. Undecryptable posts become
+  D54 placeholders after the usual retries, and a post from a removed
+  sender becomes the "unverifiable" placeholder, so neither stops sync.
+  The own post is recognised by the idempotency key of a message the device
+  holds under its own device key or of a queued sealed outbox entry; a
+  decrypted sender equal to this device is refused. Messages from blocked
+  senders are hidden from the timeline.
+- **Franking.** `_checkFranking` requires `s` exactly when the envelope is
+  sealed and verifies it under `pm_crypto_group_member_signature_key` of
+  the MLS sender; an identified payload with `s`, a sealed franked payload
+  without it, or a bad `s` is `invalid`. Schema 43 adds `signature`,
+  `signing_key` and `sender_account_id` to `local_frank_reveals`.
+- **Reports.** Report body version 2 (`report_body.dart`, 10 fields) adds
+  the sender's account id, `s` and the signing key, and is used only for
+  sealed envelopes; version 1 is unchanged for identified ones. The
+  verifier (`reports_service.dart`) recomputes `c`, checks it against the
+  sealed envelope the server serves (`sealed: true`, no sender), verifies
+  `s`, and requires the key to be the claimed device's key in the claimed
+  account's device list, approved or removed
+  (`DeviceListsService.listsOrListed`); a list it cannot read or that
+  conflicts gives the new verdict `senderUnverified`, never `verified`.
+- **Typing and read state.** In a conversation that is eligible while the
+  switch is on (`SealedSender.activeIn`), the app sends no server typing
+  event and only the private read cursor, and its read marker names the
+  newest identified message (the server keeps no read position on a sealed
+  row).
+
+**App residuals.** A message chosen sealed whose tokens all expire offline
+retries until the next token pass refills (it is never sent identified; in
+a conversation that stopped being eligible it fails with
+`sealed_not_eligible` and the person resends it). The server's unread count
+ignores sealed posts. The signing key checked on receive is the sender
+leaf's current key, so a sender that rotated its leaf key between sending
+and the receiver's decrypt would read as `invalid`. The notice owner of a
+sealed post is captured inside the serial receive turn, not before it.
+Sealed posts get no delivery ticks (W5).
 
 **Server residuals.** Sealed envelopes cannot be edited or deleted through
 the server; `GET /conversations/{id}/messages` does not list them (devices
@@ -876,8 +978,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   commitment to the sender's MLS leaf key so reports still attribute it,
   at the cost of a transferable proof (owner question). ABI 25 is left to
   another package. Server side behind `PRIVATE_MESSENGER_SEALED_SENDER`
-  (off); app wiring and local schema 43 not built. "Sealed sender with
-  VOPRF tokens" above has the design, what leaks and what is left.
+  (off). The app step (local schema 43: `local_sealed_tokens`,
+  `local_sealed_key_pins`, sealed columns on `local_frank_reveals`; report
+  body v2; the sync opt-in `?sealed=1` and the server's issuance gate on
+  sealed-capable devices, amending the unmerged 0091) is built on
+  `feat/l2-sealed-app`. Schema 43 was reserved for it; C7's 41 and 42 may
+  renumber at integration, and the 43 step is idempotent so it can move.
+  "Sealed sender with VOPRF tokens" above has the design, what leaks and
+  what is left.
 - **C4 leave proof in the commit (2026-11-11, crypto ABI 24):** the
   owner-approved design, built with the review's required changes (no
   epoch field; the AAD set inside every stage attempt and checked on the

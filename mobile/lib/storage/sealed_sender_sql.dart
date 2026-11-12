@@ -29,8 +29,9 @@ class SealedKeyPin {
     this.seenKeyId,
     List<int>? seenPublicKey,
   })  : publicKey = List<int>.unmodifiable(publicKey),
-        seenPublicKey =
-            seenPublicKey == null ? null : List<int>.unmodifiable(seenPublicKey);
+        seenPublicKey = seenPublicKey == null
+            ? null
+            : List<int>.unmodifiable(seenPublicKey);
 
   final String origin;
   final String keyId;
@@ -112,14 +113,17 @@ extension SealedSenderSql on EncryptedLocalDatabase {
 
   /// Keeps [tokens] (ignoring any not well formed and any nonce already
   /// held), up to [maxSealedTokensPerConversation] per conversation.
-  Future<int> writeSealedTokens(List<SealedToken> tokens) => transaction(() async {
+  Future<int> writeSealedTokens(List<SealedToken> tokens) =>
+      transaction(() async {
         var written = 0;
         final now = DateTime.now().toUtc().millisecondsSinceEpoch;
         for (final token in tokens) {
           if (!token.isWellFormed) continue;
           final held = await customSelect(
               'SELECT COUNT(*) AS n FROM local_sealed_tokens WHERE conversation_id = ?',
-              variables: [Variable.withString(token.conversationId)]).getSingle();
+              variables: [
+                Variable.withString(token.conversationId)
+              ]).getSingle();
           if (held.read<int>('n') >= maxSealedTokensPerConversation) continue;
           await customStatement(
               'INSERT OR IGNORE INTO local_sealed_tokens '
@@ -160,8 +164,8 @@ extension SealedSenderSql on EncryptedLocalDatabase {
             ]).getSingleOrNull();
         if (row == null) return null;
         final nonce = row.read<Uint8List>('nonce');
-        await customStatement(
-            'DELETE FROM local_sealed_tokens WHERE nonce = ?', <Object?>[nonce]);
+        await customStatement('DELETE FROM local_sealed_tokens WHERE nonce = ?',
+            <Object?>[nonce]);
         return SealedToken(
           conversationId: row.read<String>('conversation_id'),
           keyId: row.read<String>('key_id'),
@@ -199,12 +203,12 @@ extension SealedSenderSql on EncryptedLocalDatabase {
       String? conversationId,
       int? generation}) async {
     if (minEpoch != null) {
-      await customStatement(
-          'DELETE FROM local_sealed_tokens WHERE epoch < ?', <Object?>[minEpoch]);
+      await customStatement('DELETE FROM local_sealed_tokens WHERE epoch < ?',
+          <Object?>[minEpoch]);
     }
     if (keyId != null) {
-      await customStatement(
-          'DELETE FROM local_sealed_tokens WHERE key_id <> ?', <Object?>[keyId]);
+      await customStatement('DELETE FROM local_sealed_tokens WHERE key_id <> ?',
+          <Object?>[keyId]);
     }
     if (conversationId != null) {
       if (generation == null) {
