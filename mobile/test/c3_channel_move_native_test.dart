@@ -83,11 +83,13 @@ void main() {
   final home = <String, String>{};
   setUp(home.clear);
 
-  Future<_Client> client(String name) async {
+  /// [where]: this client's own view of the channel's home (default: the
+  /// shared one the test moves).
+  Future<_Client> client(String name, {Map<String, String>? where}) async {
     bindings = NativeCryptoBindings.open(requireNativeCryptoLibrary());
     final c = await _Client.enroll(bindings, 'acct_$name', 'dev_$name');
     addTearDown(c.service.dispose);
-    c.service.conversationAuthority = _Authority(home);
+    c.service.conversationAuthority = _Authority(where ?? home);
     c.service.c7SealedBodies = true;
     return c;
   }
@@ -129,9 +131,12 @@ void main() {
       'a shared-group member who was never in the channel imports its '
       'earlier posts, live and as a later newcomer (option A)', () async {
     final alice = await client('alice');
-    final bob = await client('bob');
+    // Bob never learns of the move: he keeps posting in the old group, as
+    // a server that ignored its own route check would serve.
+    final bob = await client('bob', where: {_channel: _private});
     final carol = await client('carol');
     final dave = await client('dave');
+    final erin = await client('erin');
     home[_channel] = _private;
     // The private channel: alice and bob, `full`.
     await alice.service.initializeConversation(
@@ -173,10 +178,17 @@ void main() {
     expect(due, hasLength(1));
     expect(due.single.fromConversationId, _private);
     expect(due.single.wrapClose, oldEpoch);
+    // After the move's close epoch: an add keeps the old generation, so
+    // this post opens under the wrapped key and its signature checks, but
+    // it is past the window and never taken.
+    await alice.service
+        .stageMembershipChange(_private, adds: [await erin.keyPackage()]);
+    await _accept(alice, [erin], [bob], conversation: _private);
     final late = await bob.send(_private, 'after the move, refused');
+    expect(late.cryptoMetadata['mls_epoch'], oldEpoch + 1);
     final channel = C7HistoryPage(<C7HistoryRow>[
       // A body labelled past the move's close epoch is never taken.
-      _served(late, bob, 'h4', epoch: oldEpoch + 1),
+      _served(late, bob, 'h4'),
       _served(mine, alice, 'h3'),
       _served(secret, bob, 'h2'),
     ], complete: true);
