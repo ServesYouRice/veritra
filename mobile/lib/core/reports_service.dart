@@ -569,7 +569,31 @@ class ReportsService {
       if (next.length < 50) break;
       after = next.last.id;
     }
+    for (final row in rows) {
+      try {
+        await _firstSeen(row);
+      } on Object {
+        // Best effort here; a check that cannot read or write it reads the
+        // weaker verdict.
+      }
+    }
     return rows;
+  }
+
+  /// Review M2: when this device first saw the report copy [row], written
+  /// once and never moved. The server's `created_at` for a copy is only its
+  /// word: a time it names later would otherwise let a list first pinned
+  /// after this device already had the report read verified on a later
+  /// check.
+  Future<DateTime> _firstSeen(ReportCopyRow row) async {
+    final name = reportFirstSeenSetting(api.baseUrl, row.id);
+    final stored = int.tryParse(await store.loadSetting(name) ?? '');
+    if (stored != null) {
+      return DateTime.fromMillisecondsSinceEpoch(stored, isUtc: true);
+    }
+    final now = _clock().toUtc();
+    await store.saveSetting(name, '${now.millisecondsSinceEpoch}');
+    return now;
   }
 
   /// Opens [row] with this device's seed. Never throws for a report that
@@ -689,7 +713,8 @@ class ReportsService {
   /// server could have made up the whole chain then. So the result is
   /// [ReportVerdict.verified] only when this device first pinned the
   /// sender's list before the report arrived (the earlier of the copy's
-  /// server time and the start of this check), and
+  /// server time and this device's first sight of the copy, kept in a
+  /// setting so a later check cannot move it), and
   /// [ReportVerdict.verifiedServerTrusted] otherwise.
   Future<ReportVerification> _verifySealed(
       OpenedReport report, ReportEnvelopeRecord record) async {
@@ -765,10 +790,18 @@ class ReportsService {
         return const ReportVerification(ReportVerdict.proofFailed);
       }
       // Review M2: the report arrived at the earlier of the server's time
-      // for this copy and the start of this check (a time the server named
-      // later than now cannot move it).
+      // for this copy and this device's first sight of it (a time the
+      // server named later cannot move it, on this check or any later one).
+      // Unknown first sight: the weaker verdict.
+      DateTime seen;
+      try {
+        seen = await _firstSeen(report.row);
+      } on Object {
+        seen = DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+      }
+      if (startedAt.isBefore(seen)) seen = startedAt;
       final created = report.row.createdAt.toUtc();
-      final arrived = created.isBefore(startedAt) ? created : startedAt;
+      final arrived = created.isBefore(seen) ? created : seen;
       passed = senderKey.pinnedAt.toUtc().isBefore(arrived)
           ? ReportVerdict.verified
           : ReportVerdict.verifiedServerTrusted;
@@ -791,6 +824,11 @@ class ReportsService {
   /// Dismisses this owner's copy of a report.
   Future<void> dismiss(ReportCopyRow row) => api.deleteReport(token, row.id);
 }
+
+/// Review M2: the local setting that holds when this device first saw the
+/// report copy [copyId] of the server at [origin] (milliseconds, UTC).
+String reportFirstSeenSetting(String origin, String copyId) =>
+    'l2.report_first_seen.${base64Url.encode(utf8.encode(origin))}.$copyId';
 
 bool _sameBytes(List<int> a, List<int> b) {
   if (a.length != b.length) return false;

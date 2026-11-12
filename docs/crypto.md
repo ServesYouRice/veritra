@@ -810,15 +810,21 @@ is refused is skipped, never fatal.
   made up the whole chain, with a franking key its accomplice holds. So a
   passing proof reads **verified** only when this device first pinned the
   sender account's list before the report arrived, taken as the earlier of
-  the report copy's server `created_at` and the start of this check
-  (`local_device_list_heads.pinned_at`, kept as the pin advances). A list
+  the report copy's server `created_at` and this device's first sight of
+  the copy (`local_device_list_heads.pinned_at`, kept as the pin advances;
+  the first sight is the setting `l2.report_first_seen.<origin>.<copy id>`,
+  written once when the inbox is listed or the copy first checked, and
+  never moved, so a later check cannot move the bound; unreadable, the
+  verdict is the weaker one). A list
   first pinned during the check, or after the server's time for the
   report, reads **verifiedServerTrusted**: shown as a warning, "Matches, if
   the server is honest", naming the sender with that caveat.
   Residuals: the server sets `created_at`, so against a hostile server
-  the rule means "pinned before this check started" (a later time cannot
-  move the bound past the check's start; an earlier one only makes the
-  verdict weaker). A chain the server made up and showed this device at
+  the rule means "pinned before this device first saw the report copy"
+  (a later time cannot move the bound past that first sight, on this
+  check or any later one; an earlier one only makes the verdict weaker).
+  A first-sight setting is not removed when a copy is dismissed (one
+  small row per copy). A chain the server made up and showed this device at
   an earlier first sight, before any report, still reads verified; that
   is the trust-on-first-use limit L1 accepts for every list. `pinned_at`
   is this device's clock and `created_at` the server's, so skew between

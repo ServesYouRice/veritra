@@ -666,7 +666,11 @@ void main() {
     // An owner whose current report seed is [seed]; [frankKey] answers what
     // the claimed account's verified device list says.
     Future<ReportVerification> verifyAs(ReportBody reported, List<int>? seed,
-        {Future<SenderFrankKey?> Function(String, String)? frankKey}) async {
+        {Future<SenderFrankKey?> Function(String, String)? frankKey,
+        LocalStore? store,
+        DateTime Function()? clock,
+        ReportCopyRow? row,
+        bool listFirst = false}) async {
       final seeds = MemoryReportSeedStore();
       if (seed != null) {
         await seeds.save(
@@ -677,11 +681,17 @@ void main() {
         token: 'acct_owner',
         accountId: 'acct_owner',
         crypto: alice.service,
-        store: MemoryLocalStore(),
+        store: store ?? MemoryLocalStore(),
         seeds: seeds,
         senderFrankKey: frankKey,
+        clock: clock,
       );
-      return owner.verify(OpenedReport(_row(), body: reported));
+      final copy = row ?? _row();
+      if (listFirst) {
+        server.rows = [copy];
+        expect((await owner.list()).single.id, copy.id);
+      }
+      return owner.verify(OpenedReport(copy, body: reported));
     }
 
     // The owner pinned Bob's list well before the report arrived (the
@@ -721,6 +731,62 @@ void main() {
           reason: '$pinnedAt');
       expect(weaker.record!.senderAccountId, 'acct_bob');
     }
+    // Advisor finding on M2: a server that names a time for the copy
+    // later than the truth must not turn the weaker verdict into verified
+    // on a later check. The first sight of the copy is kept.
+    {
+      final store = MemoryLocalStore();
+      var clockNow = DateTime.utc(2026, 11, 12, 9);
+      final future = _row(createdAt: DateTime.utc(2026, 11, 13, 9));
+      final firstPin = clockNow.add(const Duration(seconds: 1));
+      Future<SenderFrankKey?> pinnedDuringFirst(String a, String d) async =>
+          SenderFrankKey(bobFrankKey, pinnedAt: firstPin);
+      Future<ReportVerdict> check() async =>
+          (await verifyAs(body, _ownerSeeds[0],
+                  frankKey: pinnedDuringFirst,
+                  store: store,
+                  clock: () => clockNow,
+                  row: future))
+              .verdict;
+      expect(await check(), ReportVerdict.verifiedServerTrusted);
+      clockNow = DateTime.utc(2026, 11, 20);
+      expect(await check(), ReportVerdict.verifiedServerTrusted);
+
+      // Seen in the inbox first, then the sender's list pinned, then
+      // checked days later: still the weaker verdict.
+      final listed = MemoryLocalStore();
+      clockNow = DateTime.utc(2026, 11, 12, 9);
+      final seenFirst = _row(id: 'row_2', createdAt: DateTime.utc(2026, 12, 1));
+      Future<SenderFrankKey?> pinnedAfterSight(String a, String d) async =>
+          SenderFrankKey(bobFrankKey, pinnedAt: DateTime.utc(2026, 11, 12, 10));
+      final firstOwner = await verifyAs(body, _ownerSeeds[0],
+          frankKey: (a, d) async => null,
+          store: listed,
+          clock: () => clockNow,
+          row: seenFirst,
+          listFirst: true);
+      expect(firstOwner.verdict, ReportVerdict.senderUnverified);
+      clockNow = DateTime.utc(2026, 11, 15);
+      expect(
+          (await verifyAs(body, _ownerSeeds[0],
+                  frankKey: pinnedAfterSight,
+                  store: listed,
+                  clock: () => clockNow,
+                  row: seenFirst))
+              .verdict,
+          ReportVerdict.verifiedServerTrusted);
+      // A list pinned before the first sight still verifies.
+      expect(
+          (await verifyAs(body, _ownerSeeds[0],
+                  frankKey: (a, d) async => SenderFrankKey(bobFrankKey,
+                      pinnedAt: DateTime.utc(2026, 11, 12, 8)),
+                  store: listed,
+                  clock: () => clockNow,
+                  row: seenFirst))
+              .verdict,
+          ReportVerdict.verified);
+    }
+
     // A pin from before the report still verifies, and a wrong proof is
     // still wrong whenever the list was pinned.
     expect(
@@ -1023,8 +1089,8 @@ class _Client {
       service.processApplicationMessage(envelopeFrom(from, sent), nextEvent());
 }
 
-ReportCopyRow _row() => ReportCopyRow(
-      id: 'row_1',
+ReportCopyRow _row({String id = 'row_1', DateTime? createdAt}) => ReportCopyRow(
+      id: id,
       reportId: 'report_1',
       inboxKind: 'instance_owner',
       inboxId: 'acct_owner',
@@ -1033,13 +1099,19 @@ ReportCopyRow _row() => ReportCopyRow(
       conversationId: 'conv_1',
       reporterAccountId: 'acct_alice',
       sealed: const <int>[1],
-      createdAt: DateTime.utc(2026, 11, 12),
+      createdAt: createdAt ?? DateTime.utc(2026, 11, 12),
     );
 
 class _ReportServer extends ApiClient {
   _ReportServer(this.record) : super(baseUrl: 'https://chat.example.org');
 
   ReportEnvelopeRecord record;
+  List<ReportCopyRow> rows = const <ReportCopyRow>[];
+
+  @override
+  Future<List<ReportCopyRow>> listOwnerReports(String token,
+          {String? afterId, int limit = 50}) async =>
+      afterId == null ? rows : const <ReportCopyRow>[];
 
   @override
   Future<ReportEnvelopeRecord> getReportEnvelope(
