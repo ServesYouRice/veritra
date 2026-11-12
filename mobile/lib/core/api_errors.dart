@@ -180,6 +180,10 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   // C7 sealed bodies (server step 3, behind PRIVATE_MESSENGER_C7_HISTORY).
   'invalid_sealed_body': ApiErrorKind.invalidRequest,
   'history_route_only': ApiErrorKind.conflict,
+  // C7 targeted history_sync delivery (owner answer Q3).
+  'invalid_history_sync_target': ApiErrorKind.invalidRequest,
+  'history_sync_delivered': ApiErrorKind.conflict,
+  'invalid_for_epoch': ApiErrorKind.invalidRequest,
 
   // C6 franking and abuse reports.
   'invalid_frank_commit': ApiErrorKind.invalidRequest,
