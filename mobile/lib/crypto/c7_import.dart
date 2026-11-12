@@ -12,6 +12,10 @@ import 'c7_sync.dart';
 import 'crypto_service.dart' show C7FormerKey, C7HistoryRow;
 import 'native_crypto_bindings.dart';
 
+// The pre-join attachment placeholder lives with the history snapshot
+// reader, which must accept it (K1 backups, K2 link bundles).
+export '../storage/history_snapshot.dart' show c7HiddenAttachmentBody;
+
 /// The first page per stream (owner answer Q1): at most this many bodies...
 const int c7FirstPagePosts = 1000;
 
@@ -20,12 +24,6 @@ const int c7FirstPageBytes = 8 * 1024 * 1024;
 
 /// Bodies per history request.
 const int c7HistoryRequestLimit = 100;
-
-/// The stored body of a pre-join attachment post (owner answer Q2: never
-/// offered). Not a JSON list, so no attachment entry, key or blob id ever
-/// reaches the database and the timeline has nothing to download; it shows
-/// the "from before you joined" placeholder instead.
-const String c7HiddenAttachmentBody = '{"c7":"pre_join_attachment"}';
 
 /// At most this many former-member posts are marked per group; once full,
 /// a further post from a former member is not imported (never shown

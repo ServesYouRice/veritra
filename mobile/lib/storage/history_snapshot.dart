@@ -782,7 +782,16 @@ LocalMessage _readMessage(Object? raw) {
   return LocalMessage.fromJson(j);
 }
 
+/// The stored body of a C7 pre-join attachment post (owner answer Q2: never
+/// offered). Not a JSON list, so no attachment entry, key or blob id ever
+/// reaches the database and the timeline has nothing to download; it shows
+/// the "from before you joined" placeholder instead. A snapshot carries it
+/// as it is (K1 backups and K2 bundles of an imported channel); any other
+/// attachment body that is not a list is refused.
+const String c7HiddenAttachmentBody = '{"c7":"pre_join_attachment"}';
+
 void _validateAttachments(LocalMessage m) {
+  if (m.body == c7HiddenAttachmentBody) return;
   final list = strictHistoryJson(utf8.encode(m.body!));
   if (list is! List || list.length > 32) _invalid();
   for (final item in list) {
