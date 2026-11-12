@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -112,6 +113,11 @@ class _Api extends ApiClient {
   final movedAsked = <(String, String, bool)>[];
   final moves = <(String, String)>[];
 
+  /// Awaited, then thrown, by the next move (once each): the server moved
+  /// the channel, and the answer is late or lost.
+  Completer<void>? moveGate;
+  Object? moveThrows;
+
   /// Changes to the next answers to a move: fields over the move, and
   /// the conversation in place of the usual one.
   _Answer? answer;
@@ -120,6 +126,11 @@ class _Api extends ApiClient {
   Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
       String token, String channelId, String accessMode) async {
     final usual = await _moveAnswer(channelId, accessMode);
+    await moveGate?.future;
+    moveGate = null;
+    final thrown = moveThrows;
+    moveThrows = null;
+    if (thrown != null) throw thrown;
     final change = answer;
     if (change == null) return usual;
     return (
@@ -800,6 +811,204 @@ void main() {
     expect(await state.convertChannel(channel, toPrivate: false), isTrue);
     expect(privateChannel().kind, 'announcement');
     expect(privateChannel().conversationId, 'conv_shared');
+  });
+
+  Map<String, Object?> ownMove() => <String, Object?>{
+        'channel_id': _open,
+        'from_conversation_id': 'conv_shared',
+        'to_conversation_id': 'conv_new',
+        'access_mode': 'private',
+        'moved_by': 'alice',
+      };
+
+  Future<void> settle(bool Function() done) async {
+    for (var i = 0; i < 200 && !done(); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+  }
+
+  Future<String?> pending(AppState state) async {
+    final raw = await state.localStore.loadSetting('c3.pending_conversions');
+    final all =
+        raw == null ? const <String, Object?>{} : jsonDecode(raw) as Map;
+    return all.isEmpty ? null : all.keys.join(',');
+  }
+
+  for (final lost in <Object>[
+    const SocketException('lost'),
+    ApiException(502, '{"error":"bad_gateway"}'),
+  ])
+    test(
+        'a conversion whose answer was lost ($lost) is finished from its own '
+        'move event: asked again, its readers added, its move owed here '
+        '(review L-6)', () async {
+      final api = _Api()..moveThrows = lost;
+      final (state, crypto) = _appWith(api);
+      final channel = state.channelsByCommunity[_community]!
+          .where((c) => c.id == _open)
+          .single;
+      expect(
+          await state
+              .convertChannel(channel, toPrivate: true, members: ['bob']),
+          isFalse);
+      expect(api.added, isEmpty);
+      expect(await pending(state), _open);
+      await state.channelMovedForTesting(ownMove());
+      await settle(() => api.added.isNotEmpty);
+      expect(api.moves, [(_open, 'private'), (_open, 'private')]);
+      expect(api.added, [('conv_new', 'bob')]);
+      expect(crypto.notes.map((n) => n.own), [false, true]);
+      expect(await pending(state), isNull);
+    });
+
+  for (final other in ['alice', 'bob']) {
+    test(
+        'a conversion pending here is forgotten, not asked again, when its '
+        'channel moved on (${other == 'alice' ? 'by another device of this account' : 'by another admin'}, review L-6)',
+        () async {
+      final api = _Api()..moveThrows = const SocketException('lost');
+      final (state, crypto) = _appWith(api);
+      final channel = state.channelsByCommunity[_community]!
+          .where((c) => c.id == _open)
+          .single;
+      expect(
+          await state
+              .convertChannel(channel, toPrivate: true, members: ['bob']),
+          isFalse);
+      expect(await pending(state), _open);
+      // The request never reached the server; the channel was made
+      // private and open again since.
+      await state.channelMovesForTesting([
+        {...ownMove(), 'moved_by': other, 'to_conversation_id': 'conv_other'},
+        <String, Object?>{
+          'channel_id': _open,
+          'from_conversation_id': 'conv_other',
+          'to_conversation_id': 'conv_shared',
+          'access_mode': 'open',
+          'moved_by': other,
+        },
+      ]);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(api.moves, [(_open, 'private')]);
+      expect(await pending(state), isNull);
+      // A later move like the one asked for finishes nothing either.
+      await state.channelMovedForTesting(ownMove());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(api.moves, [(_open, 'private')]);
+      expect(crypto.notes.map((n) => n.own), [false, false, false]);
+    });
+  }
+
+  test(
+      'an own move event finishes nothing here when this device did not '
+      'ask, or its request was refused (review L-6)', () async {
+    // Another device of this account converted it.
+    final api = _Api();
+    final (state, crypto) = _appWith(api);
+    await state.channelMovedForTesting(ownMove());
+    // Lost here, but the move is another admin's.
+    final lost = _Api()..moveThrows = const SocketException('lost');
+    final (third, _) = _appWith(lost);
+    expect(
+        await third.convertChannel(
+            third.channelsByCommunity[_community]!
+                .where((c) => c.id == _open)
+                .single,
+            toPrivate: true,
+            members: ['bob']),
+        isFalse);
+    expect(await pending(third), _open);
+    await third.channelMovedForTesting({...ownMove(), 'moved_by': 'bob'});
+    // Refused: nothing moved.
+    final refused = _Api()
+      ..moveThrows = ApiException(403, '{"error":"forbidden"}');
+    final (other, otherCrypto) = _appWith(refused);
+    expect(
+        await other.convertChannel(
+            other.channelsByCommunity[_community]!
+                .where((c) => c.id == _open)
+                .single,
+            toPrivate: true,
+            members: ['bob']),
+        isFalse);
+    expect(await pending(other), isNull);
+    await other.channelMovedForTesting(ownMove());
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(api.moves, isEmpty);
+    expect(crypto.notes.map((n) => n.own), [false]);
+    expect(refused.moves, [(_open, 'private')]);
+    expect(lost.moves, [(_open, 'private')]);
+    expect(await pending(third), isNull);
+    expect(otherCrypto.notes.map((n) => n.own), [false]);
+  });
+
+  for (final lost in [true, false]) {
+    test(
+        'an own move event while the answer is awaited '
+        '${lost ? 'finishes the conversion once the answer is lost' : 'asks nothing again once it comes'} '
+        '(review L-6)', () async {
+      final api = _Api()
+        ..moveGate = Completer<void>()
+        ..moveThrows = lost ? const SocketException('lost') : null;
+      final (state, crypto) = _appWith(api);
+      final channel = state.channelsByCommunity[_community]!
+          .where((c) => c.id == _open)
+          .single;
+      final converting =
+          state.convertChannel(channel, toPrivate: true, members: ['bob']);
+      await settle(() => api.moves.isNotEmpty);
+      await state.channelMovedForTesting(ownMove());
+      api.moveGate!.complete();
+      expect(await converting, !lost);
+      await settle(() => api.added.isNotEmpty);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(api.moves.length, lost ? 2 : 1);
+      expect(api.added, [('conv_new', 'bob')]);
+      expect(crypto.notes.map((n) => n.own), [false, true]);
+      expect(await pending(state), isNull);
+    });
+  }
+
+  test('a second conversion of a channel while one runs asks nothing',
+      () async {
+    final api = _Api()..moveGate = Completer<void>();
+    final (state, _) = _appWith(api);
+    final channel = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _open)
+        .single;
+    final first =
+        state.convertChannel(channel, toPrivate: true, members: ['bob']);
+    expect(
+        await state.convertChannel(channel, toPrivate: true, members: ['bob']),
+        isFalse);
+    await settle(() => api.moves.isNotEmpty);
+    api.moveGate!.complete();
+    expect(await first, isTrue);
+    expect(api.moves, [(_open, 'private')]);
+  });
+
+  test(
+      'an admin who is not in a private channel cannot open it '
+      '(review L-6)', () async {
+    final api = _Api();
+    final (state, _) = _appWith(api);
+    final channel = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _private)
+        .single;
+    expect(state.mayConvertChannel(channel), isTrue);
+    state.conversations = [
+      for (final c in state.conversations)
+        if (c.id != 'conv_private') c,
+    ];
+    expect(state.mayConvertChannel(channel), isFalse);
+    expect(await state.convertChannel(channel, toPrivate: false), isFalse);
+    expect(api.moves, isEmpty);
+    // An open channel is still made private by any admin.
+    expect(
+        state.mayConvertChannel(state.channelsByCommunity[_community]!
+            .where((c) => c.id == _open)
+            .single),
+        isTrue);
   });
 
   test(

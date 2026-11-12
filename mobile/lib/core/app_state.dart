@@ -7754,9 +7754,7 @@ class AppState extends ChangeNotifier
       // after the batch, so profile rotation need not wait for the daily check.
       await _profileLoadRosters();
     }
-    for (final move in moves) {
-      await _followChannelMove(move);
-    }
+    await _followChannelMoves(moves);
     if (moves.isNotEmpty) unawaited(refreshCommunities());
     if (selectedMessages) {
       await refreshSelectedMessages(notify: false, persist: false);
@@ -7848,9 +7846,9 @@ class AppState extends ChangeNotifier
   /// there, and C7 then counts it as holding them (it holds the old
   /// group). C7 notes the move, so a `move` record's wrap can open the old
   /// posts for a member who never held them.
-  Future<void> _followChannelMove(_ChannelMove move) async {
+  Future<bool> _followChannelMove(_ChannelMove move) async {
     final channel = _channelMoveFits(move);
-    if (channel == null) return;
+    if (channel == null) return false;
     final before = channel.conversationId == move.from;
     if (before) {
       // The channel's new home, until the channel list is read again: a
@@ -7890,6 +7888,7 @@ class AppState extends ChangeNotifier
         fromConversationId: move.from,
         toConversationId: move.to,
         own: false);
+    return true;
   }
 
   /// The ticked readers the last open-to-private conversion could not add
@@ -7903,9 +7902,121 @@ class AppState extends ChangeNotifier
 
   /// The handling of one `conversation.channel_moved` event's [payload].
   @visibleForTesting
-  Future<void> channelMovedForTesting(Object? payload) async {
-    final move = _channelMoveOf(payload);
-    if (move != null) await _followChannelMove(move);
+  Future<void> channelMovedForTesting(Object? payload) =>
+      channelMovesForTesting(<Object?>[payload]);
+
+  /// The handling of a run of `conversation.channel_moved` events.
+  @visibleForTesting
+  Future<void> channelMovesForTesting(List<Object?> payloads) =>
+      _followChannelMoves(<_ChannelMove>[
+        for (final payload in payloads)
+          if (_channelMoveOf(payload) case final move?) move,
+      ]);
+
+  /// Follows [moves] in order. A move this account made from this device
+  /// whose answer never came (review L-6) is finished after the run, as
+  /// the conversion would have: the request again (the server answers
+  /// a replay with the same move) and everything after it.
+  Future<void> _followChannelMoves(List<_ChannelMove> moves) async {
+    final last = <String, _ChannelMove>{};
+    for (final move in moves) {
+      if (await _followChannelMove(move)) last[move.channel] = move;
+    }
+    for (final MapEntry(key: channel, value: move) in last.entries) {
+      unawaited(_finishOwnConversion(channel, move));
+    }
+  }
+
+  /// The conversions this device asked for whose answer it has not seen,
+  /// by channel: what [convertChannel] needs to ask again. Persisted
+  /// before the request, so a restart still finishes one; a device of
+  /// the same account that did not ask holds none, and never sets up the
+  /// new group a second time or owes its record.
+  static const String _pendingConversionsSetting = 'c3.pending_conversions';
+
+  /// The channels a [convertChannel] is running for, and those of them an
+  /// own move event named meanwhile (finished after a lost answer).
+  final Set<String> _converting = <String>{};
+  final Set<String> _convertedMeanwhile = <String>{};
+
+  Future<Map<String, Object?>> _pendingConversions() async {
+    try {
+      final raw = await localStore.loadSetting(_pendingConversionsSetting);
+      if (raw == null) return <String, Object?>{};
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return Map<String, Object?>.from(decoded);
+    } catch (_) {}
+    return <String, Object?>{};
+  }
+
+  Future<void> _savePendingConversion(String channelId, Object? entry) async {
+    final all = await _pendingConversions();
+    if (entry == null) {
+      if (all.remove(channelId) == null) return;
+    } else {
+      all[channelId] = entry;
+    }
+    await localStore.saveSetting(_pendingConversionsSetting, jsonEncode(all));
+  }
+
+  /// The conversion of [channelId] pending here, when [move] is it.
+  Future<({Channel channel, bool toPrivate, List<String> members})?>
+      _pendingConversionOf(String channelId, _ChannelMove move) async {
+    final entry = (await _pendingConversions())[channelId];
+    if (entry is! Map) return null;
+    final community = entry['community_id'];
+    final from = entry['from'];
+    final kind = entry['kind'];
+    final layout = entry['layout_generation'];
+    final toPrivate = entry['to_private'];
+    final members = entry['members'];
+    if (community is! String ||
+        from is! String ||
+        kind is! String ||
+        layout is! int ||
+        toPrivate is! bool ||
+        members is! List ||
+        // A move that fits starts in the shared conversation exactly when
+        // it makes the channel private: the same start is the same move.
+        from != move.from) {
+      return null;
+    }
+    return (
+      channel: Channel(
+          id: channelId,
+          communityId: community,
+          name: '',
+          kind: kind,
+          conversationId: from,
+          layoutGeneration: layout),
+      toPrivate: toPrivate,
+      members: <String>[
+        for (final member in members)
+          if (member is String) member
+      ],
+    );
+  }
+
+  /// After [move], the last of [channelId] followed in a run: finishes
+  /// the conversion pending here when [move] is it and this account made
+  /// it, and otherwise forgets one pending (the channel moved on: asked
+  /// again, the server would move it once more, or answer another
+  /// device's move of this account as this one's).
+  Future<void> _finishOwnConversion(String channelId, _ChannelMove move) async {
+    final account = session?.accountId;
+    final own = account != null && move.movedBy == account;
+    if (_converting.contains(channelId)) {
+      if (own) _convertedMeanwhile.add(channelId);
+      return;
+    }
+    final pending = await _pendingConversionOf(channelId, move);
+    if (_converting.contains(channelId)) return;
+    if (pending == null || !own) {
+      await _savePendingConversion(channelId, null);
+      return;
+    }
+    await convertChannel(pending.channel,
+        toPrivate: pending.toPrivate, members: pending.members);
   }
 
   /// The readers of an open [channel] other than this account: the
@@ -7930,13 +8041,24 @@ class AppState extends ChangeNotifier
   /// Whether [channel] can be converted here: a routed channel of a
   /// community with the shared layout, and an owner or admin (the server
   /// checks every move).
+  ///
+  /// A private channel only by a member of it (review L-6): its earlier
+  /// posts open for the shared group through the `move` record, which
+  /// only a device in the private group can send.
   bool mayConvertChannel(Channel channel) {
     if (!channel.isRouted) return false;
+    if (channel.kind == 'private' && !_inConversation(channel.conversationId)) {
+      return false;
+    }
     final community =
         communities.where((c) => c.id == channel.communityId).firstOrNull;
     return community?.sharedConversationId != null &&
         canCreateChannel(channel.communityId);
   }
+
+  bool _inConversation(String? conversationId) =>
+      conversationId != null &&
+      conversations.any((c) => c.id == conversationId);
 
   /// C3 conversion: turns [channel] private ([toPrivate]) or a private one
   /// open. Owners and admins only; the server re-routes it. Earlier posts
@@ -7971,6 +8093,10 @@ class AppState extends ChangeNotifier
     Object? addFailure;
     final notAdded = <String>[];
     channelConversionNotAdded = const <String>[];
+    if (!_converting.add(channel.id)) return false;
+    // Review L-6: kept for an answer that may still come as an event; any
+    // other end of this conversion forgets it.
+    var keepPending = false;
     await _run(() async {
       final current = session;
       final client = api;
@@ -7978,13 +8104,35 @@ class AppState extends ChangeNotifier
       if (from == null || (channel.kind == 'private') == toPrivate) {
         throw StateError('this channel cannot be converted that way');
       }
+      if (!toPrivate && !_inConversation(from)) {
+        throw StateError('only a member of a private channel opens it');
+      }
       // Checked before the move, so a conversion never strands the
       // channel with nobody added.
       if (adds.isNotEmpty && !membershipChangesAvailable) {
         throw StateError('adding members is not available in this build');
       }
-      final result = await client.moveChannel(
-          current.token, channel.id, toPrivate ? 'private' : 'open');
+      await _savePendingConversion(channel.id, <String, Object?>{
+        'community_id': channel.communityId,
+        'from': from,
+        'kind': channel.kind,
+        'layout_generation': channel.layoutGeneration,
+        'to_private': toPrivate,
+        'members': adds.toList(),
+      });
+      final ({Map<String, Object?> move, Conversation conversation}) result;
+      try {
+        result = await client.moveChannel(
+            current.token, channel.id, toPrivate ? 'private' : 'open');
+      } on ApiException catch (err) {
+        // A refusal is final; a server error may have moved it.
+        keepPending = err.statusCode >= 500;
+        rethrow;
+      } catch (_) {
+        // No answer: it may have moved.
+        keepPending = true;
+        rethrow;
+      }
       final conversation = result.conversation;
       // Review M-A: the answer is this move, into the home its direction
       // allows, before anything here follows it.
@@ -8052,7 +8200,16 @@ class AppState extends ChangeNotifier
         _mlsChangeRetries.remove(conversation.id);
       }
     });
+    _converting.remove(channel.id);
+    final meanwhile = _convertedMeanwhile.remove(channel.id);
     final next = moved;
+    if (!keepPending || next != null) {
+      await _savePendingConversion(channel.id, null);
+    } else if (meanwhile) {
+      // Its own move event came while the answer was awaited.
+      unawaited(
+          convertChannel(channel, toPrivate: toPrivate, members: members));
+    }
     if (error != null || next == null) return false;
     final failure = addFailure;
     if (failure != null) {
