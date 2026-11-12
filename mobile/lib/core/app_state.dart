@@ -289,6 +289,19 @@ int passFetchedFloor({
 /// both conversations a channel moved (server `ChannelMovedEventType`).
 const String channelMovedEventType = 'conversation.channel_moved';
 
+/// One `conversation.channel_moved` event: ids and the new access mode.
+typedef _ChannelMove = ({
+  String channel,
+  String from,
+  String to,
+  String access,
+  String? movedBy,
+});
+
+extension on _ChannelMove {
+  bool get private => access == 'private';
+}
+
 class AppState extends ChangeNotifier
     implements
         ConversationAuthority,
@@ -7661,7 +7674,7 @@ class AppState extends ChangeNotifier
     var conversationList = false;
     var selectedMessages = false;
     final receipts = <String>{};
-    final moves = <({String channel, String from, String to, bool private})>[];
+    final moves = <_ChannelMove>[];
     for (final event in events) {
       final type = event.type;
       _profileSyncEvent(event);
@@ -7753,22 +7766,79 @@ class AppState extends ChangeNotifier
     }
   }
 
-  static ({String channel, String from, String to, bool private})?
-      _channelMoveOf(Object? payload) {
+  static _ChannelMove? _channelMoveOf(Object? payload) {
     if (payload is! Map) return null;
     final channel = payload['channel_id'];
     final from = payload['from_conversation_id'];
     final to = payload['to_conversation_id'];
     final access = payload['access_mode'];
+    final movedBy = payload['moved_by'];
     if (channel is! String ||
         from is! String ||
         to is! String ||
         access is! String ||
         from == to ||
-        channel.isEmpty) {
+        channel.isEmpty ||
+        !const <String>{'private', 'open', 'announcement'}.contains(access)) {
       return null;
     }
-    return (channel: channel, from: from, to: to, private: access == 'private');
+    return (
+      channel: channel,
+      from: from,
+      to: to,
+      access: access,
+      movedBy: movedBy is String ? movedBy : null,
+    );
+  }
+
+  /// Review M-A: the channel [move] names, as this device knows it, when
+  /// the move fits what this device knows; null when it does not, and the
+  /// event is ignored. The server is not trusted to say which rows move
+  /// where: a move is followed only for a known routed channel of a
+  /// community with a shared conversation, between that shared
+  /// conversation and the channel's own private one, in the direction its
+  /// kind allows. The channel's local conversation is [move]'s `from`, or
+  /// already its `to` (the channel list can be read again before a
+  /// catch-up reaches the event: both run at once when sync starts).
+  Channel? _channelMoveFits(_ChannelMove move) {
+    final channel = channelsByCommunity.values
+        .expand((list) => list)
+        .where((c) => c.id == move.channel)
+        .firstOrNull;
+    if (channel == null) return null;
+    final shared = communities
+        .where((c) => c.id == channel.communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (shared == null) return null;
+    final current = channel.conversationId;
+    final before = current == move.from;
+    if (!before && current != move.to) return null;
+    final private = move.private ? move.to : move.from;
+    if ((move.private ? move.from : move.to) != shared) return null;
+    return _mayBePrivateHomeOf(channel, private) ? channel : null;
+  }
+
+  /// Whether [conversationId] may be [channel]'s own private conversation:
+  /// no community's shared conversation, no other channel's, and, when
+  /// this device lists it, a channel conversation of the same community
+  /// that names no other channel. One it does not list is a new home this
+  /// device is not yet a member of.
+  bool _mayBePrivateHomeOf(Channel channel, String conversationId) {
+    if (communities.any((c) => c.sharedConversationId == conversationId)) {
+      return false;
+    }
+    for (final c in channelsByCommunity.values.expand((list) => list)) {
+      if (c.id != channel.id && c.conversationId == conversationId) {
+        return false;
+      }
+    }
+    final known =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return known == null ||
+        (known.kind == 'community_channel' &&
+            known.communityId == channel.communityId &&
+            (known.channelId == null || known.channelId == channel.id));
   }
 
   /// C3 conversion: [move] happened on the server. This device's rows of
@@ -7778,14 +7848,41 @@ class AppState extends ChangeNotifier
   /// there, and C7 then counts it as holding them (it holds the old
   /// group). C7 notes the move, so a `move` record's wrap can open the old
   /// posts for a member who never held them.
-  Future<void> _followChannelMove(
-      ({String channel, String from, String to, bool private}) move) async {
-    await localStore.moveChannelRows(
-      fromConversationId: move.from,
-      fromChannelId: move.private ? move.channel : null,
-      toConversationId: move.to,
-      toChannelId: move.private ? null : move.channel,
-    );
+  Future<void> _followChannelMove(_ChannelMove move) async {
+    final channel = _channelMoveFits(move);
+    if (channel == null) return;
+    final before = channel.conversationId == move.from;
+    if (before) {
+      // The channel's new home, until the channel list is read again: a
+      // second move of the same channel in this run starts from it.
+      final next = Channel(
+        id: channel.id,
+        communityId: channel.communityId,
+        name: channel.name,
+        kind: move.private ? 'private' : move.access,
+        conversationId: move.to,
+        layoutGeneration: channel.layoutGeneration,
+      );
+      channelsByCommunity = <String, List<Channel>>{
+        ...channelsByCommunity,
+        channel.communityId: <Channel>[
+          for (final c
+              in channelsByCommunity[channel.communityId] ?? const <Channel>[])
+            c.id == channel.id ? next : c,
+        ],
+      };
+    }
+    // Rows move out of the channel's home as this device knows it, or out
+    // of a conversation it lists; not out of one it does not (a channel
+    // list read again names only where the channel is now).
+    if (before || conversations.any((c) => c.id == move.from)) {
+      await localStore.moveChannelRows(
+        fromConversationId: move.from,
+        fromChannelId: move.private ? move.channel : null,
+        toConversationId: move.to,
+        toChannelId: move.private ? null : move.channel,
+      );
+    }
     _history.remove(move.from);
     _history.remove(move.to);
     await _c7?.c7NoteMove(
@@ -7889,6 +7986,13 @@ class AppState extends ChangeNotifier
       final result = await client.moveChannel(
           current.token, channel.id, toPrivate ? 'private' : 'open');
       final conversation = result.conversation;
+      // Review M-A: the answer is this move, into the home its direction
+      // allows, before anything here follows it.
+      final access =
+          _moveAnswerFits(channel, result.move, conversation, toPrivate);
+      if (access == null) {
+        throw StateError('the server answered with a different move');
+      }
       if (!conversation.isCommunityShared) {
         await _setUpConversationGroup(conversation.id, kind: conversation.kind);
       }
@@ -7897,7 +8001,7 @@ class AppState extends ChangeNotifier
         id: channel.id,
         communityId: channel.communityId,
         name: channel.name,
-        kind: toPrivate ? 'private' : 'open',
+        kind: access,
         conversationId: conversation.id,
         layoutGeneration: layout is int ? layout : channel.layoutGeneration,
       );
@@ -7968,6 +8072,50 @@ class AppState extends ChangeNotifier
       await _catchUpSyncEvents();
     }());
     return true;
+  }
+
+  /// Review M-A: the converted channel's kind when the server's answer to
+  /// moving [channel] ([toPrivate] or open) is that move: the same channel,
+  /// from its current home, into [conversation], which is the community's
+  /// shared conversation for an open channel and a channel conversation of
+  /// the same community for a private one. Null when it is not. An open
+  /// channel keeps the posting mode the server restored (review L-8): its
+  /// `to_access` is `open` or `announcement`.
+  String? _moveAnswerFits(Channel channel, Map<String, Object?> move,
+      Conversation conversation, bool toPrivate) {
+    final shared = communities
+        .where((c) => c.id == channel.communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    final from = channel.conversationId;
+    if (shared == null ||
+        from == null ||
+        move['channel_id'] != channel.id ||
+        move['from_conversation_id'] != from ||
+        move['to_conversation_id'] != conversation.id) {
+      return null;
+    }
+    final access = move['to_access'];
+    if (toPrivate) {
+      final fits = from == shared &&
+          conversation.kind == 'community_channel' &&
+          conversation.communityId == channel.communityId &&
+          (conversation.channelId == null ||
+              conversation.channelId == channel.id) &&
+          _mayBePrivateHomeOf(channel, conversation.id) &&
+          (access == null || access == 'private');
+      return fits ? 'private' : null;
+    }
+    if (from == shared ||
+        conversation.id != shared ||
+        !conversation.isCommunityShared) {
+      return null;
+    }
+    return switch (access) {
+      null || 'open' => 'open',
+      'announcement' => 'announcement',
+      _ => null,
+    };
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {

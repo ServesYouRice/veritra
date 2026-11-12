@@ -41,6 +41,8 @@ class _QuietSync implements SyncService {
   Future<void> dispose() async {}
 }
 
+typedef _Answer = ({Map<String, Object?> move, Conversation? conversation});
+
 class _Api extends ApiClient {
   _Api() : super(baseUrl: 'https://example.test');
 
@@ -110,9 +112,24 @@ class _Api extends ApiClient {
   final movedAsked = <(String, String, bool)>[];
   final moves = <(String, String)>[];
 
+  /// Changes to the next answers to a move: fields over the move, and
+  /// the conversation in place of the usual one.
+  _Answer? answer;
+
   @override
   Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
       String token, String channelId, String accessMode) async {
+    final usual = await _moveAnswer(channelId, accessMode);
+    final change = answer;
+    if (change == null) return usual;
+    return (
+      move: <String, Object?>{...usual.move, ...change.move},
+      conversation: change.conversation ?? usual.conversation,
+    );
+  }
+
+  Future<({Map<String, Object?> move, Conversation conversation})> _moveAnswer(
+      String channelId, String accessMode) async {
     moves.add((channelId, accessMode));
     if (accessMode == 'private') {
       return (
@@ -490,6 +507,299 @@ void main() {
     expect(rows.single.channelId, isNull);
     expect(crypto.notes,
         [(channel: _open, from: 'conv_shared', to: 'conv_new', own: false)]);
+  });
+
+  Future<void> seedRows(AppState state) async {
+    InsertMessageEffect row(
+            String key, String conversation, String? channel, String body) =>
+        InsertMessageEffect(
+            key: key,
+            conversationId: conversation,
+            senderAccountId: 'bob',
+            senderDeviceId: 'dev_bob',
+            kind: LocalMessageKind.text,
+            createdAt: 1,
+            state: LocalMessageState.received,
+            body: body,
+            channelId: channel);
+    await state.localStore.importC7History(<MessageEffect>[
+      row('dev_bob:s1', 'conv_shared', _open, 'open post'),
+      row('dev_bob:p1', 'conv_private', null, 'private post'),
+      row('dev_bob:d1', 'conv_dm', null, 'direct post'),
+      row('dev_bob:g1', 'conv_ghost', null, 'unlisted post'),
+    ]);
+  }
+
+  Future<List<(String, String?, String?)>> rowsOf(AppState state) async => [
+        for (final id in [
+          'conv_shared',
+          'conv_private',
+          'conv_dm',
+          'conv_new',
+          'conv_ghost'
+        ])
+          for (final row in await state.localStore.loadMessages(id))
+            (id, row.channelId, row.body),
+      ];
+
+  for (final c7 in [true, false]) {
+    test(
+        'a move event that does not fit the channel as this device knows it '
+        'moves no rows and notes nothing (review M-A, C7 ${c7 ? 'on' : 'off'})',
+        () async {
+      final (state, crypto) = _app();
+      crypto.c7SealedBodies = c7;
+      // A group the server says is of the community is still no channel's.
+      state.conversations = [
+        ...state.conversations,
+        Conversation(
+            id: 'conv_group',
+            kind: 'group',
+            communityId: _community,
+            createdBy: 'alice'),
+      ];
+      await seedRows(state);
+      final before = await rowsOf(state);
+      Map<String, Object?> event(
+              String channel, String from, String to, String access) =>
+          <String, Object?>{
+            'channel_id': channel,
+            'from_conversation_id': from,
+            'to_conversation_id': to,
+            'access_mode': access,
+            'moved_by': 'mallory',
+          };
+      for (final forged in [
+        // Into a direct conversation.
+        event(_open, 'conv_shared', 'conv_dm', 'private'),
+        event(_open, 'conv_shared', 'conv_group', 'private'),
+        // Into another channel's private conversation.
+        event(_open, 'conv_shared', 'conv_private', 'private'),
+        // Another channel's private conversation into the shared one.
+        event(_open, 'conv_private', 'conv_shared', 'open'),
+        event(_open, 'conv_dm', 'conv_shared', 'open'),
+        // Not from where the channel is.
+        event(_private, 'conv_shared', 'conv_new', 'private'),
+        // An open channel cannot be made open, a private one private.
+        event(_private, 'conv_private', 'conv_new', 'private'),
+        // A private channel opens only into the community's shared one.
+        event(_private, 'conv_private', 'conv_dm', 'open'),
+        event(_private, 'conv_private', 'conv_new', 'open'),
+        // A channel this device does not know.
+        event('chan_unknown', 'conv_shared', 'conv_new', 'private'),
+        // An access mode no move has.
+        event(_private, 'conv_private', 'conv_shared', 'everyone'),
+      ]) {
+        await state.channelMovedForTesting(forged);
+        expect(await rowsOf(state), before, reason: '$forged');
+      }
+      expect(crypto.notes, isEmpty);
+      expect(
+          state.channelsByCommunity[_community]!
+              .map((c) => (c.id, c.kind, c.conversationId)),
+          [
+            (_open, 'open', 'conv_shared'),
+            (_private, 'private', 'conv_private')
+          ]);
+    });
+  }
+
+  test(
+      'a channel moved twice in one run follows both moves, and a move '
+      'already in the channel list is followed too (review M-A)', () async {
+    final (state, crypto) = _app();
+    await seedRows(state);
+    await state.channelMovedForTesting(<String, Object?>{
+      'channel_id': _open,
+      'from_conversation_id': 'conv_shared',
+      'to_conversation_id': 'conv_new',
+      'access_mode': 'private',
+    });
+    expect(
+        state.channelsByCommunity[_community]!
+            .where((c) => c.id == _open)
+            .map((c) => (c.kind, c.conversationId)),
+        [('private', 'conv_new')]);
+    await state.channelMovedForTesting(<String, Object?>{
+      'channel_id': _open,
+      'from_conversation_id': 'conv_new',
+      'to_conversation_id': 'conv_shared',
+      'access_mode': 'announcement',
+    });
+    expect(
+        state.channelsByCommunity[_community]!
+            .where((c) => c.id == _open)
+            .map((c) => (c.kind, c.conversationId)),
+        [('announcement', 'conv_shared')]);
+    expect(
+        (await state.localStore.loadMessages('conv_shared'))
+            .map((row) => (row.channelId, row.body)),
+        [(_open, 'open post')]);
+    expect(await state.localStore.loadMessages('conv_new'), isEmpty);
+    // The channel list was read again before the event (sync start runs
+    // both at once): the private channel already opens into the shared
+    // conversation, and its rows still follow.
+    state.channelsByCommunity = {
+      _community: [
+        for (final c in state.channelsByCommunity[_community]!)
+          if (c.id == _private)
+            Channel(
+                id: _private,
+                communityId: _community,
+                name: '',
+                kind: 'open',
+                conversationId: 'conv_shared',
+                layoutGeneration: 4)
+          else
+            c,
+      ],
+    };
+    await state.channelMovedForTesting(<String, Object?>{
+      'channel_id': _private,
+      'from_conversation_id': 'conv_private',
+      'to_conversation_id': 'conv_shared',
+      'access_mode': 'open',
+    });
+    expect(await state.localStore.loadMessages('conv_private'), isEmpty);
+    // There, a conversation this device does not list gives up no rows:
+    // the channel list names only where the channel is now. The move is
+    // still noted, for the import its record allows.
+    await state.channelMovedForTesting(<String, Object?>{
+      'channel_id': _open,
+      'from_conversation_id': 'conv_ghost',
+      'to_conversation_id': 'conv_shared',
+      'access_mode': 'open',
+    });
+    expect((await state.localStore.loadMessages('conv_ghost')).single.body,
+        'unlisted post');
+    expect(crypto.notes.map((n) => (n.channel, n.from, n.to)), [
+      (_open, 'conv_shared', 'conv_new'),
+      (_open, 'conv_new', 'conv_shared'),
+      (_private, 'conv_private', 'conv_shared'),
+      (_open, 'conv_ghost', 'conv_shared'),
+    ]);
+  });
+
+  for (final (name, answer) in <(String, _Answer)>[
+    (
+      'another channel',
+      (move: {'channel_id': 'chan_other'}, conversation: null)
+    ),
+    (
+      'from elsewhere',
+      (move: {'from_conversation_id': 'conv_dm'}, conversation: null)
+    ),
+    (
+      'a different conversation than its move',
+      (move: {'to_conversation_id': 'conv_other'}, conversation: null)
+    ),
+    (
+      'into a direct conversation',
+      (
+        move: {'to_conversation_id': 'conv_direct'},
+        conversation: Conversation(
+            id: 'conv_direct',
+            kind: 'direct',
+            communityId: _community,
+            createdBy: 'alice')
+      )
+    ),
+    (
+      "into another channel's conversation",
+      (
+        move: {'to_conversation_id': 'conv_private'},
+        conversation: Conversation(
+            id: 'conv_private',
+            kind: 'community_channel',
+            communityId: _community,
+            createdBy: 'alice')
+      )
+    ),
+    (
+      'that names another channel',
+      (
+        move: <String, Object?>{},
+        conversation: Conversation(
+            id: 'conv_new',
+            kind: 'community_channel',
+            communityId: _community,
+            channelId: 'chan_other',
+            createdBy: 'alice')
+      )
+    ),
+    (
+      'into another community',
+      (
+        move: <String, Object?>{},
+        conversation: Conversation(
+            id: 'conv_new',
+            kind: 'community_channel',
+            communityId: 'comm_other',
+            createdBy: 'alice')
+      )
+    ),
+    (
+      'to an access it did not ask for',
+      (move: {'to_access': 'open'}, conversation: null)
+    ),
+  ]) {
+    test(
+        'an answer to making a channel private $name is not followed (review M-A)',
+        () async {
+      final api = _Api()..answer = answer;
+      final (state, crypto) = _appWith(api);
+      await seedRows(state);
+      final before = await rowsOf(state);
+      final channel = state.channelsByCommunity[_community]!
+          .where((c) => c.id == _open)
+          .single;
+      expect(await state.convertChannel(channel, toPrivate: true), isFalse);
+      expect(await rowsOf(state), before);
+      expect(crypto.notes, isEmpty);
+      expect(
+          state.channelsByCommunity[_community]!
+              .where((c) => c.id == _open)
+              .single
+              .conversationId,
+          'conv_shared');
+    });
+  }
+
+  test(
+      'making a private channel open keeps the posting mode the server '
+      'restored, and refuses an answer that is not the shared conversation '
+      '(review L-8, M-A)', () async {
+    final api = _Api();
+    final (state, _) = _appWith(api);
+    Channel privateChannel() => state.channelsByCommunity[_community]!
+        .where((c) => c.id == _private)
+        .single;
+    final channel = privateChannel();
+    api.answer = (
+      move: {'to_conversation_id': 'conv_new'},
+      conversation: Conversation(
+          id: 'conv_new',
+          kind: 'community_shared',
+          communityId: _community,
+          createdBy: 'alice'),
+    );
+    expect(await state.convertChannel(channel, toPrivate: false), isFalse);
+    api.answer = (
+      move: <String, Object?>{},
+      conversation: Conversation(
+          id: 'conv_shared',
+          kind: 'community_channel',
+          communityId: _community,
+          createdBy: 'alice'),
+    );
+    expect(await state.convertChannel(channel, toPrivate: false), isFalse);
+    api.answer = (move: {'to_access': 'private'}, conversation: null);
+    expect(await state.convertChannel(channel, toPrivate: false), isFalse);
+    expect(privateChannel().conversationId, 'conv_private');
+    api.answer = (move: {'to_access': 'announcement'}, conversation: null);
+    expect(await state.convertChannel(channel, toPrivate: false), isTrue);
+    expect(privateChannel().kind, 'announcement');
+    expect(privateChannel().conversationId, 'conv_shared');
   });
 
   test(
