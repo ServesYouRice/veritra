@@ -137,18 +137,30 @@ void main() {
     final carol = await client('carol');
     final dave = await client('dave');
     final erin = await client('erin');
+    final frank = await client('frank');
     home[_channel] = _private;
-    // The private channel: alice and bob, `full`.
-    await alice.service.initializeConversation(
-        _private, <DeviceKeyPackage>[await bob.keyPackage()]);
-    await _accept(alice, [bob], const [], conversation: _private);
+    // The private channel: alice, bob and frank, `full`.
+    await alice.service.initializeConversation(_private,
+        <DeviceKeyPackage>[await bob.keyPackage(), await frank.keyPackage()]);
+    await _accept(alice, [bob, frank], const [], conversation: _private);
     await deliver(
         alice,
         await alice.service
             .c7ProposeRecord(_private, _channel, full: true, create: true),
-        [bob]);
+        [bob, frank]);
     final secret = await bob.send(_private, 'said in the private channel');
     await alice.receive(bob, secret);
+    // Frank's removal rekeys the old group: the wrap names the newer
+    // generation, and only the removal's stored slot leads back to the
+    // one `secret` was sealed under.
+    await alice.service.stageMembershipChange(_private,
+        removes: [(accountId: frank.accountId, deviceId: frank.deviceId)]);
+    await _accept(alice, const [], [bob, frank], conversation: _private);
+    final removal = await syncFor(alice, _private);
+    await bob.receive(alice, removal);
+    final slots = C7HistoryPage(
+        <C7HistoryRow>[_served(removal, alice, 'g1', groupLevel: true)],
+        complete: true);
     final mine = await alice.send(_private, 'alice in private');
     await bob.receive(alice, mine);
     final oldEpoch = await alice.epoch(_private);
@@ -201,9 +213,7 @@ void main() {
     ];
     expect(
         await carol.service.c7ImportMoved(due.single,
-            channel: channel,
-            groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
-            keys: keys),
+            channel: channel, groupLevel: slots, keys: keys),
         2);
     final rows = await carol.store.loadMessages(_shared);
     LocalMessage row(_Client from, MessageEnvelope sent) => rows
@@ -245,9 +255,7 @@ void main() {
     expect(daveDue, hasLength(1));
     expect(
         await dave.service.c7ImportMoved(daveDue.single,
-            channel: channel,
-            groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
-            keys: keys),
+            channel: channel, groupLevel: slots, keys: keys),
         2);
     expect(
         (await dave.store.loadMessages(_shared))
@@ -332,13 +340,15 @@ void main() {
 }
 
 C7HistoryRow _served(MessageEnvelope sent, _Client from, String id,
-    {int? epoch, String? channelId}) {
+    {int? epoch, String? channelId, bool groupLevel = false}) {
   final metadata = sent.cryptoMetadata as Map;
   return C7HistoryRow(
     messageId: 'hist_$id',
     senderDeviceId: from.deviceId,
     actionId: sent.idempotencyKey,
-    channelId: channelId ?? metadata['channel_id'] as String? ?? _channel,
+    channelId: groupLevel
+        ? null
+        : channelId ?? metadata['channel_id'] as String? ?? _channel,
     createdAt: DateTime.now().toUtc(),
     epoch: epoch ?? metadata['mls_epoch'] as int,
     body: Uint8List.fromList(sent.sealedBody!),

@@ -8,6 +8,12 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/roles/governance.dart';
 import 'package:private_messenger/crypto/c7_move.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/storage/encrypted_database.dart'
+    show
+        InsertMessageEffect,
+        LocalMessageKind,
+        LocalMessageState,
+        MessageEffect;
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -99,6 +105,42 @@ class _Api extends ApiClient {
     if (refusal != null) throw refusal;
     return envelope;
   }
+
+  final moved = <String, List<Map<String, Object?>>>{};
+  final movedAsked = <(String, String, bool)>[];
+  final moves = <(String, String)>[];
+
+  @override
+  Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
+      String token, String channelId, String accessMode) async {
+    moves.add((channelId, accessMode));
+    return (
+      move: <String, Object?>{
+        'channel_id': channelId,
+        'from_conversation_id': 'conv_private',
+        'to_conversation_id': 'conv_shared',
+        'layout_generation': 4,
+      },
+      conversation: Conversation(
+          id: 'conv_shared',
+          kind: 'community_shared',
+          communityId: _community,
+          createdBy: 'alice'),
+    );
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> movedHistoryBodies(
+      String token, String channelId, String fromConversationId,
+      {required bool group, String? beforeId, int limit = 50}) async {
+    movedAsked.add((channelId, fromConversationId, group));
+    return moved[group ? '' : channelId] ?? const <Map<String, Object?>>[];
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> movedMemberKeys(
+          String token, String channelId, String fromConversationId) async =>
+      const <Map<String, Object?>>[];
 
   @override
   Future<ChannelCreation> createChannel(
@@ -374,6 +416,92 @@ void main() {
         layoutGeneration: 3,
       ),
     ]);
+  });
+
+  test(
+      'a move event rehomes the rows even before this device is in the new '
+      'conversation, and notes the move', () async {
+    final (state, crypto) = _app();
+    await state.localStore.importC7History(<MessageEffect>[
+      InsertMessageEffect(
+          key: 'dev_bob:a1',
+          conversationId: 'conv_shared',
+          senderAccountId: 'bob',
+          senderDeviceId: 'dev_bob',
+          kind: LocalMessageKind.text,
+          createdAt: 1,
+          state: LocalMessageState.received,
+          body: 'earlier',
+          channelId: _open),
+    ]);
+    // Malformed: nothing happens.
+    await state.channelMovedForTesting(<String, Object?>{'channel_id': _open});
+    await state.channelMovedForTesting(<String, Object?>{
+      'channel_id': _open,
+      'from_conversation_id': 'conv_shared',
+      'to_conversation_id': 'conv_new',
+      'access_mode': 'private',
+    });
+    expect(state.conversations.any((c) => c.id == 'conv_new'), isFalse);
+    expect(await state.localStore.loadMessages('conv_shared'), isEmpty);
+    final rows = await state.localStore.loadMessages('conv_new');
+    expect(rows.single.body, 'earlier');
+    expect(rows.single.channelId, isNull);
+    expect(crypto.notes,
+        [(channel: _open, from: 'conv_shared', to: 'conv_new', own: false)]);
+  });
+
+  test(
+      'converting moves the rows and notes an owed move; the work pass '
+      'proposes it with its layout generation and fetches moved pages',
+      () async {
+    final api = _Api();
+    final (state, crypto) = _appWith(api);
+    await state.localStore.importC7History(<MessageEffect>[
+      InsertMessageEffect(
+          key: 'dev_bob:p1',
+          conversationId: 'conv_private',
+          senderAccountId: 'bob',
+          senderDeviceId: 'dev_bob',
+          kind: LocalMessageKind.text,
+          createdAt: 1,
+          state: LocalMessageState.received,
+          body: 'private earlier'),
+    ]);
+    final channel = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _private)
+        .single;
+    expect(state.mayConvertChannel(channel), isTrue);
+    expect(await state.convertChannel(channel, toPrivate: false), isTrue);
+    expect(api.moves, [(_private, 'open')]);
+    final rows = await state.localStore.loadMessages('conv_shared');
+    expect(rows.single.channelId, _private);
+    expect(crypto.notes.first, (
+      channel: _private,
+      from: 'conv_private',
+      to: 'conv_shared',
+      own: true
+    ));
+    final converted = state.channelsByCommunity[_community]!
+        .where((c) => c.id == _private)
+        .single;
+    expect(converted.kind, 'open');
+    expect(converted.conversationId, 'conv_shared');
+    expect(converted.layoutGeneration, 4);
+    final due = C7DueMove('conv_shared', _private, 'conv_private');
+    crypto.due = <C7Due>[due];
+    api.moved['chan_x'] = _rows('chan_x', 2);
+    crypto.movesDue = <C7Move>[
+      const C7Move(
+          channelId: 'chan_x',
+          fromConversationId: 'conv_private',
+          toConversationId: 'conv_shared'),
+    ];
+    await state.c7WorkPassForTesting();
+    expect(crypto.moveProposals.last, (due, 4));
+    expect(api.movedAsked, contains(('chan_x', 'conv_private', true)));
+    expect(api.movedAsked, contains(('chan_x', 'conv_private', false)));
+    expect(crypto.movedImports, hasLength(1));
   });
 
   test('with C7 off nothing is proposed', () async {

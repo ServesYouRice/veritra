@@ -7772,27 +7772,34 @@ class AppState extends ChangeNotifier
   }
 
   /// C3 conversion: [move] happened on the server. This device's rows of
-  /// the channel follow it when it is a member of the new home (earlier
-  /// posts carry over, owner answer 2026-11-12), and C7 notes it, so a
-  /// `move` record's wrap can open the old posts for a member who never
-  /// held them.
+  /// the channel follow it (earlier posts carry over, owner answer
+  /// 2026-11-12), also before this device is a member of the new home: a
+  /// member of the open channel added to the private one later finds them
+  /// there, and C7 then counts it as holding them (it holds the old
+  /// group). C7 notes the move, so a `move` record's wrap can open the old
+  /// posts for a member who never held them.
   Future<void> _followChannelMove(
       ({String channel, String from, String to, bool private}) move) async {
-    if (conversations.any((c) => c.id == move.to)) {
-      await localStore.moveChannelRows(
-        fromConversationId: move.from,
-        fromChannelId: move.private ? move.channel : null,
-        toConversationId: move.to,
-        toChannelId: move.private ? null : move.channel,
-      );
-      _history.remove(move.from);
-      _history.remove(move.to);
-    }
+    await localStore.moveChannelRows(
+      fromConversationId: move.from,
+      fromChannelId: move.private ? move.channel : null,
+      toConversationId: move.to,
+      toChannelId: move.private ? null : move.channel,
+    );
+    _history.remove(move.from);
+    _history.remove(move.to);
     await _c7?.c7NoteMove(
         channelId: move.channel,
         fromConversationId: move.from,
         toConversationId: move.to,
         own: false);
+  }
+
+  /// The handling of one `conversation.channel_moved` event's [payload].
+  @visibleForTesting
+  Future<void> channelMovedForTesting(Object? payload) async {
+    final move = _channelMoveOf(payload);
+    if (move != null) await _followChannelMove(move);
   }
 
   /// Whether [channel] can be converted here: a routed channel of a
@@ -7872,12 +7879,13 @@ class AppState extends ChangeNotifier
     unawaited(() async {
       if (name != null) {
         await publishChannelInfo(next,
-            name: name, topic: topic, mint: toPrivate);
+            name: name, topic: topic, mint: toPrivate, rehome: true);
       }
       await publishCommunityInfo(next.communityId);
       await refreshCommunities();
-      final current = session;
-      if (current != null) await _c7WorkPass(current, _sessionGeneration);
+      // The move record, when owed now, goes out with the next sync pass's
+      // C7 work (never a second work pass beside it).
+      await _catchUpSyncEvents();
     }());
     return true;
   }

@@ -1484,8 +1484,10 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   - A live receiver applies the move like any record (sender, freshness,
     authority, signature in the new group's tree) and, when it lands in
     `full`, keeps the wrap and owes an import, unless it holds the old
-    group itself (it moves its own rows on the server's
-    `conversation.channel_moved` event). `history_sync` slots now accept
+    group itself. Every device moves its own rows of the channel on the
+    server's `conversation.channel_moved` event, also before it is a
+    member of the new home, so an open channel's member added to the new
+    private channel later finds them there. `history_sync` slots now accept
     a move head.
   - A newcomer who joins the new group later takes the wrap from the move
     message in its own import of the channel's stream (option A), only
@@ -1505,12 +1507,17 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     (`confirmChannelConversion`), open to private does not. The channel
     record is published again in the new home: a private channel's under
     a newly minted key, an open one's under the community key, and the
-    community record lists the open channels.
+    community record lists the open channels. The info service refuses to
+    move a record between key homes on the server's topology alone (a
+    relabel); the conversion passes `rehome` explicitly, and only it.
 
   Tests: `mobile/test/c3_channel_move_native_test.dart` (both directions
-  through real OpenMLS devices, the later newcomer, the window bound, a
-  post of another channel), `c3_channel_conversion_dialog_test.dart`, the
-  server tests named in docs/crypto.md. Residuals: only the first page
+  through real OpenMLS devices, the walk back across a removal in the old
+  group, the later newcomer, the window bound, a post of another
+  channel), `c3_channel_conversion_dialog_test.dart`,
+  `c7_app_wiring_test.dart` (the move event, the conversion, the owed
+  record and the moved fetch), `c3_community_info_service_test.dart` (the
+  explicit rehome), the server tests named in docs/crypto.md. Residuals: only the first page
   of the old streams is imported (no "Load earlier posts" into the old
   group); moved slot heads are checked for shape, ids, channel and mode
   but not their record signature (the wrap they extend is authenticated
