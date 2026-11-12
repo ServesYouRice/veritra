@@ -538,7 +538,7 @@ and day, and everything listed under "What still leaks".
    epoch)`.
 4. The app (`pm_crypto_l2_token_finalize`) verifies the batch proof against
    the public key it pinned (below) and derives the outputs. A bad proof is
-   refused (`PM_CRYPTO_INVALID_MESSAGE`) and no token is kept.
+   refused (`PM_CRYPTO_ERROR`) and no token is kept.
 
 Rationing is per account, not per device: the server never learns which
 device redeems. The counts in `sealed_token_issuance` are deleted when their
@@ -642,7 +642,7 @@ commitment to the sender's key, inside the ciphertext:
 - **Receive rule.** On a sealed message, a franked payload must carry `s`,
   and `s` must verify (`pm_crypto_l2_frank_verify`) under the signing key
   of the sender's leaf in this group
-  (`pm_crypto_group_member_signing_key`, the leaf MLS authenticated), else
+  (`pm_crypto_group_member_signature_key`, the leaf MLS authenticated), else
   the payload is `invalid`. An identified message carrying `s` is `invalid`.
   An unfranked sealed payload is accepted as unreportable (the G5 rule).
 - **Report.** The reveal kept with the message (schema 43 adds the
@@ -720,9 +720,8 @@ finalizes in voprf to circl's `FullEvaluate` output
 - `pm_crypto_l2_frank_sign(device, conversation_id, commit)` and
   `pm_crypto_l2_frank_verify(signing_key, conversation_id, account_id,
   device_id, commit, signature)`.
-- `pm_crypto_group_member_signing_key(device, group, account_id,
-  device_id)`: the leaf signing key of that member in the current tree, or
-  `PM_CRYPTO_INVALID_IDENTITY` when absent.
+- The receiver reads the sender leaf's key with the existing
+  `pm_crypto_group_member_signature_key` (ABI 13, C7); no new lookup.
 
 #### Counters
 

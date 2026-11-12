@@ -1749,6 +1749,152 @@ pub unsafe extern "C" fn pm_crypto_group_decrypt_sealed(
     })
 }
 
+fn sealed_error(error: crate::l2_sealed::SealedError) -> i32 {
+    match error {
+        crate::l2_sealed::SealedError::InvalidInput => PM_CRYPTO_INVALID_ARGUMENT,
+        crate::l2_sealed::SealedError::Verification => PM_CRYPTO_ERROR,
+    }
+}
+
+/// ABI 26 (L2-3, D122): makes `count` (1 to 32) fresh token nonces and
+/// blinds them for the server's POPRF `public_key` under
+/// `info(conversation_id, epoch, generation)`. `out_request` gets
+/// `count × 32` blinded elements to send; `out_state` the secret client
+/// state (`VLT1`, see `docs/crypto.md`) that only
+/// [`pm_crypto_l2_token_finalize`] reads. The caller wipes the state.
+///
+/// # Safety
+/// Every slice must be readable and the outputs writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_l2_token_request(
+    public_key: PmByteSlice,
+    conversation_id: PmByteSlice,
+    epoch: u32,
+    generation: u64,
+    count: u32,
+    out_state: *mut PmOwnedBuffer,
+    out_request: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_state.is_null() || out_request.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let public_key = unsafe { borrowed(public_key, crate::l2_sealed::PUBLIC_KEY_BYTES)? };
+        let conversation_id = unsafe { borrowed(conversation_id, crate::l2_sealed::MAX_ID_BYTES)? };
+        let count = usize::try_from(count).map_err(|_| PM_CRYPTO_INVALID_ARGUMENT)?;
+        let request = crate::l2_sealed::token_request(
+            public_key,
+            conversation_id,
+            epoch,
+            generation,
+            count,
+            &mut rand_core::OsRng,
+        )
+        .map_err(sealed_error)?;
+        unsafe { two_outputs(out_state, request.state, out_request, request.request) }
+    })
+}
+
+/// ABI 26: checks the server's batch proof (`response` = `count × 32`
+/// evaluated elements `|| 64-byte proof`) against the key named in `state`
+/// and writes `count × (32-byte nonce || 64-byte output)` to `out_tokens`.
+/// A proof that does not verify is `PM_CRYPTO_ERROR` and yields no
+/// token; a malformed state or length `PM_CRYPTO_INVALID_ARGUMENT`.
+///
+/// # Safety
+/// Every slice must be readable and the output writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_l2_token_finalize(
+    state: PmByteSlice,
+    response: PmByteSlice,
+    out_tokens: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_tokens.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let state = unsafe { borrowed(state, 16 * 1024)? };
+        let response = unsafe { borrowed(response, 4 * 1024)? };
+        let tokens = crate::l2_sealed::token_finalize(state, response).map_err(sealed_error)?;
+        unsafe { output(out_tokens, tokens) }
+    })
+}
+
+/// ABI 26: this device's Ed25519 signature (its MLS signing key) over
+/// `"veritra-frank-sig-v1" || lp(conversation_id) || lp(own account id) ||
+/// lp(own device id) || commit` for a sealed message's 32-byte franking
+/// commitment. The identity is always the device's own.
+///
+/// # Safety
+/// `handle` must be live, slices readable and `out_signature` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_l2_frank_sign(
+    handle: *mut PmCryptoHandle,
+    conversation_id: PmByteSlice,
+    commit: PmByteSlice,
+    out_signature: *mut PmOwnedBuffer,
+) -> i32 {
+    ffi_call(|| {
+        if out_signature.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let conversation_id = unsafe { borrowed(conversation_id, crate::l2_sealed::MAX_ID_BYTES)? };
+        let commit = unsafe { borrowed(commit, crate::l2_sealed::COMMIT_BYTES)? };
+        if commit.len() != crate::l2_sealed::COMMIT_BYTES {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let signature = unsafe {
+            with_device(handle, |device| {
+                device
+                    .l2_frank_sign(conversation_id, commit)
+                    .map_err(|_| PM_CRYPTO_ERROR)
+            })?
+        };
+        unsafe { output(out_signature, signature) }
+    })
+}
+
+/// ABI 26: strict Ed25519 check of a sealed message's franking signature
+/// under `signing_key`. Writes 1 or 0 to `out_valid`; wrong lengths are
+/// `PM_CRYPTO_INVALID_ARGUMENT`.
+///
+/// # Safety
+/// Every slice must be readable and `out_valid` writable.
+#[no_mangle]
+pub unsafe extern "C" fn pm_crypto_l2_frank_verify(
+    signing_key: PmByteSlice,
+    conversation_id: PmByteSlice,
+    account_id: PmByteSlice,
+    device_id: PmByteSlice,
+    commit: PmByteSlice,
+    signature: PmByteSlice,
+    out_valid: *mut u8,
+) -> i32 {
+    ffi_call(|| {
+        if out_valid.is_null() {
+            return Err(PM_CRYPTO_INVALID_ARGUMENT);
+        }
+        let signing_key = unsafe { borrowed(signing_key, 64)? };
+        let conversation_id = unsafe { borrowed(conversation_id, crate::l2_sealed::MAX_ID_BYTES)? };
+        let account_id = unsafe { borrowed(account_id, crate::l2_sealed::MAX_ID_BYTES)? };
+        let device_id = unsafe { borrowed(device_id, crate::l2_sealed::MAX_ID_BYTES)? };
+        let commit = unsafe { borrowed(commit, 64)? };
+        let signature = unsafe { borrowed(signature, 128)? };
+        let valid = crate::l2_sealed::frank_verify(
+            signing_key,
+            conversation_id,
+            account_id,
+            device_id,
+            commit,
+            signature,
+        )
+        .map_err(sealed_error)?;
+        // SAFETY: checked non-null above; the caller provides one byte.
+        unsafe { out_valid.write(u8::from(valid)) };
+        Ok(())
+    })
+}
+
 /// ABI 23 (L2-1): the size bucket for a blob of `length` bytes (256-byte
 /// steps up to 4 KiB, then powers of two up to 8 MiB). Writes it to
 /// `out_padded` and returns `PM_CRYPTO_OK`, or `PM_CRYPTO_INVALID_ARGUMENT`

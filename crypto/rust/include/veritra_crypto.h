@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (24u)
+#define PM_CRYPTO_ABI_VERSION (26u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -381,6 +381,37 @@ int32_t pm_crypto_group_decrypt_sealed(PmCryptoHandle *handle,
  * (extension 0xF0A2, zero bytes); joins refuse a pad that is not zeros.
  * Vector: testing/vectors/l2-padding-v1.json. */
 int32_t pm_crypto_l2_padded_size(uint64_t length, uint64_t *out_padded);
+/* ABI 26 (L2-3, D122): sealed sender tokens, RFC 9497 POPRF over
+ * ristretto255-SHA512 (docs/crypto.md, "Sealed sender with VOPRF tokens";
+ * vector testing/vectors/l2-sealed-v1.json). token_request blinds `count`
+ * (1-32) fresh 32-byte nonces for the server key under info =
+ * "veritra-l2-sealed-v1" || u16 len || conversation || u32 epoch ||
+ * u64 generation; out_request is count x 32 blinded elements and out_state
+ * the secret client state (VLT1) the caller wipes after finalize.
+ * token_finalize takes count x 32 evaluated elements || 64-byte proof,
+ * checks the proof against the state's key (PM_CRYPTO_ERROR if it fails)
+ * and writes count x (32-byte nonce || 64-byte output). */
+int32_t pm_crypto_l2_token_request(PmByteSlice public_key,
+                                   PmByteSlice conversation_id,
+                                   uint32_t epoch, uint64_t generation,
+                                   uint32_t count, PmOwnedBuffer *out_state,
+                                   PmOwnedBuffer *out_request);
+int32_t pm_crypto_l2_token_finalize(PmByteSlice state, PmByteSlice response,
+                                    PmOwnedBuffer *out_tokens);
+/* ABI 26: the franking signature of a sealed message. frank_sign signs
+ * "veritra-frank-sig-v1" || lp(conversation) || lp(own account) ||
+ * lp(own device) || 32-byte commit with the device's MLS signing key (the
+ * identity is always its own); frank_verify writes 1 or 0. A receiver takes
+ * the sender's key from pm_crypto_group_member_signature_key (ABI 13). */
+int32_t pm_crypto_l2_frank_sign(PmCryptoHandle *handle,
+                                PmByteSlice conversation_id,
+                                PmByteSlice commit,
+                                PmOwnedBuffer *out_signature);
+int32_t pm_crypto_l2_frank_verify(PmByteSlice signing_key,
+                                  PmByteSlice conversation_id,
+                                  PmByteSlice account_id,
+                                  PmByteSlice device_id, PmByteSlice commit,
+                                  PmByteSlice signature, uint8_t *out_valid);
 /* ABI 13 (C7, docs/designs/C7-channel-history.md revision 7). Nothing is
  * wired into the app, and every piece needs the independent crypto review
  * before release, the exporter use in particular. Vector:

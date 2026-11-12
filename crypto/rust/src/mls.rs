@@ -963,6 +963,28 @@ impl MlsDevice {
 
     /// C7 (ABI 13): signs `domain | message` with this device's credential
     /// key. `domain` must be one of [`c7::SIGN_DOMAINS`].
+    /// L2-3 (ABI 26): signs a franking commitment for a sealed message with
+    /// this device's MLS signing key, over this device's own identity
+    /// (`crate::l2_sealed::frank_sig_input`). The caller names only the
+    /// conversation and the 32-byte commitment, so no other bytes and no
+    /// other identity can be signed through it.
+    pub fn l2_frank_sign(
+        &self,
+        conversation_id: &[u8],
+        commit: &[u8],
+    ) -> Result<Vec<u8>, MlsError> {
+        let input = crate::l2_sealed::frank_sig_input(
+            conversation_id,
+            &self.account_id,
+            &self.device_id,
+            commit,
+        )
+        .map_err(|_| MlsError::InvalidMessage)?;
+        self.signer
+            .sign(&input)
+            .map_err(|_| MlsError::GroupOperation)
+    }
+
     pub fn c7_sign(&self, domain: &[u8], message: &[u8]) -> Result<Vec<u8>, MlsError> {
         let input = c7::signing_input(domain, message).map_err(|_| MlsError::InvalidMessage)?;
         self.signer
