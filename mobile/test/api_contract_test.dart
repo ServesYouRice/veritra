@@ -8,10 +8,13 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/device_link_v3_models.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/sealed_sender.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
+import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/crypto/sha256.dart';
+import 'package:private_messenger/storage/local_store.dart';
 
 import 'api_bounded_decoding.dart';
 
@@ -758,6 +761,192 @@ void main() {
   },
       skip: linkBaseUrl == null || libraryPath == null
           ? 'live link contract server or native library not configured'
+          : false,
+      timeout: const Timeout(Duration(minutes: 2)));
+
+  // L2-3 sealed sender against a real server with the switch on: the Go
+  // POPRF issuer and the Rust client agree, the issuance gate waits for
+  // every member device to read sealed events, the post carries no session,
+  // a retry of a stored post answers 200, and sync shows the sealed event
+  // with no sender only to reads that ask for it.
+  final sealedBaseUrl =
+      Platform.environment['VERITRA_CONTRACT_SEALED_BASE_URL'];
+  test('live server issues and redeems sealed sender tokens (L2-3)', () async {
+    final legacy = ApiClient(baseUrl: sealedBaseUrl!);
+    final reader = ApiClient(baseUrl: sealedBaseUrl)..readsSealedEvents = true;
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    addTearDown(legacy.close);
+    addTearDown(reader.close);
+    final ownerReservation = await legacy.reserveOwnerEnrollment(
+      setupToken: 'contract-setup-token',
+    );
+    final ownerNative = bindings.createDevice(
+      ownerReservation.accountId,
+      ownerReservation.deviceId,
+    );
+    addTearDown(ownerNative.close);
+    final owner = await legacy.createOwner(
+      username: 'contract-sealed-owner',
+      password: 'owner-password-123',
+      deviceName: 'contract owner device',
+      enrollment: ownerReservation,
+      credential: ownerNative.createEnrollmentCredential(
+        ownerReservation.challenge,
+      ),
+      setupToken: 'contract-setup-token',
+      instanceName: 'Contract Sealed Instance',
+    );
+    final invite = await legacy.createInvite(owner.token);
+    final memberReservation =
+        await legacy.reserveRegistrationEnrollment(invite.code);
+    final memberNative = bindings.createDevice(
+      memberReservation.accountId,
+      memberReservation.deviceId,
+    );
+    addTearDown(memberNative.close);
+    final member = await legacy.register(
+      inviteCode: invite.code,
+      username: 'contract-sealed-member',
+      password: 'member-password-123',
+      deviceName: 'contract member device',
+      enrollment: memberReservation,
+      credential: memberNative.createEnrollmentCredential(
+        memberReservation.challenge,
+      ),
+    );
+    expect((await legacy.setupStatus())['sealed_sender'], isTrue);
+
+    final dm = await legacy.createConversationDetailed(
+      owner.token,
+      kind: 'dm',
+      memberAccountIds: <String>[member.accountId!],
+    );
+    final key = await legacy.sealedKey();
+    expect(key.keyId, hasLength(32));
+    expect(key.publicKey, hasLength(32));
+
+    // The issuance gate: no tokens until every member device has read sync
+    // with the opt-in.
+    expect((await legacy.sealedConversation(owner.token, dm.id)).eligible,
+        isFalse);
+    await reader.syncEvents(owner.token);
+    expect((await legacy.sealedConversation(owner.token, dm.id)).eligible,
+        isFalse);
+    await reader.syncEvents(member.token);
+    final state = await legacy.sealedConversation(owner.token, dm.id);
+    expect(state.eligible, isTrue);
+    expect(state.key.sameAs(key.keyId, key.publicKey), isTrue);
+
+    // The app's token pass, with the real native client against the Go
+    // issuer: today's and tomorrow's tokens, the key pinned on first use.
+    final store = MemoryLocalStore();
+    final tokens = SealedSender(
+      origin: sealedBaseUrl,
+      localStore: store,
+      crypto: NativeCryptoService(bindings: bindings, localStore: store),
+    )..enabled = true;
+    await tokens.refresh(reader, owner.token, <Conversation>[dm]);
+    final pin = (await store.loadSealedKeyPin(tokens.origin))!;
+    expect(pin.changed, isFalse);
+    expect(key.sameAs(pin.keyId, pin.publicKey), isTrue);
+    final first = (await tokens.takeFor(dm.id))!;
+    expect(first.keyId, key.keyId);
+    expect(first.generation, state.generation);
+
+    // The metadata a sealed post may carry (the app's own, with no
+    // channel or leave mark). Idempotency keys need 22 or more characters.
+    final sealedMetadata = <String, Object?>{
+      'protocol_version': 1,
+      'group_id': dm.id,
+      'content_type': 'application',
+      'payload_version': 1,
+      'mls_epoch': 0,
+    };
+    final envelope = MessageEnvelope(
+      conversationId: dm.id,
+      idempotencyKey: 'contract-sealed-post-0001',
+      ciphertext: List<int>.generate(64, (index) => 200 - index),
+      cryptoProtocol: 'mls10-openmls-v1',
+      cryptoMetadata: sealedMetadata,
+      frankCommit: List<int>.filled(32, 0x5a),
+    ).withSealedToken(first);
+    // The session client refuses a sealed envelope outright.
+    await expectLater(
+        legacy.sendEnvelope(owner.token, envelope), throwsStateError);
+    final poster = SealedPostClient(baseUrl: sealedBaseUrl);
+    addTearDown(poster.close);
+    await poster.post(envelope);
+
+    // A lost answer: the same post again, with a new token, is a 200 that
+    // stores nothing new and spends nothing.
+    final second = (await tokens.takeFor(dm.id))!;
+    await poster.post(envelope.withSealedToken(second));
+    // A spent token on another post is refused as one to replace, and the
+    // app's retry posts the same message with a fresh token.
+    final other = MessageEnvelope(
+      conversationId: dm.id,
+      idempotencyKey: 'contract-sealed-post-0002',
+      ciphertext: List<int>.generate(64, (index) => index),
+      cryptoProtocol: 'mls10-openmls-v1',
+      cryptoMetadata: sealedMetadata,
+    ).withSealedToken(first);
+    await expectLater(
+        poster.post(other),
+        throwsA(isA<ApiException>()
+            .having((e) => e.statusCode, 'statusCode', 409)
+            .having((e) => e.serverCode, 'serverCode', 'sealed_token_spent')
+            .having((e) => sealedPostOutcome(e), 'outcome',
+                SealedPostOutcome.replaceToken)));
+    MessageEnvelope? rewritten;
+    await postSealedMessage(
+      poster: poster,
+      envelope: other,
+      tokens: tokens,
+      rewrite: (next) async {
+        rewritten = next;
+        return true;
+      },
+    );
+    expect(rewritten!.idempotencyKey, 'contract-sealed-post-0002');
+    expect(rewritten!.sealedToken!.nonce, isNot(first.nonce));
+
+    // The server refuses a sealed post that carries a session.
+    final raw = HttpClient();
+    addTearDown(() => raw.close(force: true));
+    final withSession = await raw
+        .postUrl(Uri.parse(sealedBaseUrl).resolve('/api/v1/sealed/messages'));
+    withSession.headers
+      ..contentType = ContentType.json
+      ..set(HttpHeaders.authorizationHeader, 'Bearer ${owner.token}');
+    withSession.add(utf8.encode(jsonEncode(envelope
+        .withSealedToken((await tokens.takeFor(dm.id))!)
+        .toSealedPostJson())));
+    final refused = await withSession.close();
+    expect(refused.statusCode, 400);
+    expect(await utf8.decodeStream(refused),
+        contains('sealed_request_authenticated'));
+
+    // Sync: the member's opted-in read shows two sealed posts, inline and
+    // with no sender; a read without the opt-in shows none.
+    final events = (await reader.syncEvents(member.token))
+        .where((event) => event.type == sealedMessageEventType)
+        .toList();
+    expect(events, hasLength(2));
+    final payload = Map<String, Object?>.from(events.first.payload! as Map);
+    expect(payload['sealed'], isTrue);
+    final inline = Map<String, Object?>.from(payload['envelope']! as Map);
+    expect(inline.keys.where((name) => name.startsWith('sender')), isEmpty);
+    final received = ReceivedMessageEnvelope.fromJson(inline);
+    expect(received.sealed, isTrue);
+    expect(received.ciphertext, envelope.ciphertext);
+    expect(received.conversationId, dm.id);
+    expect(
+        (await legacy.syncEvents(member.token))
+            .where((event) => event.type == sealedMessageEventType),
+        isEmpty);
+  },
+      skip: sealedBaseUrl == null || libraryPath == null
+          ? 'live sealed contract server or native library not configured'
           : false,
       timeout: const Timeout(Duration(minutes: 2)));
 }
