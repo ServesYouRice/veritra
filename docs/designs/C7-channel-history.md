@@ -570,17 +570,45 @@ and private-channel groups) is sent in two parts:
 
 11. **Moves** (C0/C3) are `move` records, proposed in the **new** group;
     a generation lives in one group, so a move of a `full` channel opens a
-    new generation there with the record's random key.
+    new generation there with the record's random key. Revised
+    2026-11-12 with the owner's answers (earlier posts carry into the new
+    channel in both directions; name and topic carry over).
     - The compact form adds `lp(close_group_id)` (the old group) and a
-      128-byte wrap field, always present: for a narrowing move (open to
-      private) of a `full` channel it wraps the old group's current
-      generation as `u64 E_prev | CHK_prev[32] | lp(prev_group_id) |
-      u64 E_prev_close` (at most 114 bytes, zero-padded), and the move message's body is
-      sealed under the new key, so a newcomer walking back opens it;
-      otherwise it is 128 random bytes. A widening move (private to open)
-      starts a new period with no wrap. Same size in every mode.
+      128-byte wrap field, always present. When the old and the new mode
+      are both `full` and the actor holds the old key, it wraps the old
+      group's current generation as `u64 E_prev | CHK_prev[32] |
+      lp(prev_group_id) | u64 E_prev_close` (at most 114 bytes,
+      zero-padded), in both directions; otherwise it is 128 random bytes.
+      The move message's body is sealed under the new key, so a newcomer
+      holding that key opens it. Same size in every mode.
     - `close_epoch` is the old group's epoch when the actor sent the move.
       Freshness of the new key is judged by the new group's floor.
+    - **Chain.** A move continues the channel's chain: `seq` is the
+      highest `seq` the actor saw in the old group plus one (1 when it saw
+      none), `prev` the old head's hash (zero when none). In the new group
+      the channel has no head, so row 1 adopts it, or a stale head from an
+      earlier stay in that group, below it, so row 5 does (live). A
+      newcomer cannot check `prev` across groups and does not need to:
+      row 1 never does.
+    - **Where a newcomer gets the wrap (option A).** A `history_sync` slot
+      carries the head record and an entry, and neither has room for the
+      wrap. So a newcomer reaches the old group only through the move
+      message, in the new channel's history stream: when its paging
+      reaches the move message, the wrap's generation becomes the start
+      of a walk in the old group's stored `history_sync` slots, and the
+      next pages come from the old conversation's streams (server route
+      below), inside `[E_prev, E_prev_close)` and the older windows the
+      walk finds there. In a busy channel the move message is past the
+      first page, so the old posts come with "Load earlier posts".
+    - **Old-group posts** are opened and verified with the old group's
+      ids (aad, signed fields) and epochs; the L2 join rule applies to the
+      new group only. A sender key comes from the new group's tree, else
+      from the server's list of the devices that posted in the old
+      conversation, with the former-member mark (named only when proven,
+      review M2).
+    - **Devices that hold the posts** move their local rows of the
+      channel from the old conversation to the new one when they apply
+      the move.
 
 ## Trace 1: removal, then an add
 
@@ -814,6 +842,17 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   sees no difference, and it can already delete bodies.
 - Until L1, a server that adds a hidden device can read new live posts and
   forge history from that device: the same limit as live groups today.
+- **Private to open conversion exposes earlier posts** (owner answer
+  2026-11-12). Every current and later member of the shared group gets
+  the private group's last generation through the move wrap and the walk
+  behind it, including members who were removed from the private channel
+  earlier but are still in the community: whatever the private channel
+  held is readable by everyone who can read the open channel. The app
+  asks first and says so in plain words.
+- **Open to private conversion** gives the private channel's members the
+  open channel's history. Shared members outside the new private channel
+  keep the old key and the posts they already hold, but cannot derive the
+  new random key, so they read nothing posted after the move.
 - **Posts in a `full` channel are not deniable** (owner answer 2026-11-12,
   "Stronger warning"). Each post's body carries its sender's signature
   (decision 8) so that newcomers can check it, and the body is sealed
