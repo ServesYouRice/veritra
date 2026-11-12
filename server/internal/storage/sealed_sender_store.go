@@ -117,10 +117,12 @@ func (s *Store) NoteSealedCapableDevice(ctx context.Context, deviceID string) er
 }
 
 // SealedConversationForAccount returns the eligibility and the tokens
-// already issued for epoch, to a member only (ErrNotFound otherwise, so the
-// route cannot probe conversation ids). There is no per-conversation
-// counter to report: nothing the server could set per account is bound
-// into a token (review M1).
+// already issued for the days around epoch (the day before, the day and
+// the day after), to a member only (ErrNotFound otherwise, so the route
+// cannot probe conversation ids). Their sum bounds from below what the
+// cap still allows for either day an app may ask for (review low c).
+// There is no per-conversation counter to report: nothing the server could
+// set per account is bound into a token (review M1).
 func (s *Store) SealedConversationForAccount(ctx context.Context, conversationID, accountID string, epoch uint32) (SealedConversationState, error) {
 	if err := s.requireConversationMember(ctx, conversationID, accountID); err != nil {
 		return SealedConversationState{}, err
@@ -134,12 +136,25 @@ func (s *Store) SealedConversationForAccount(ctx context.Context, conversationID
 			return SealedConversationState{}, err
 		}
 	}
-	var issued int
-	err = s.db.QueryRowContext(ctx, `SELECT issued FROM sealed_token_issuance WHERE account_id = ? AND conversation_id = ? AND epoch = ?`, accountID, conversationID, int64(epoch)).Scan(&issued)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	before, day, after, err := sealedIssuedAround(ctx, s.db, conversationID, accountID, epoch)
+	if err != nil {
 		return SealedConversationState{}, err
 	}
-	return SealedConversationState{Eligible: eligible, Issued: issued}, nil
+	return SealedConversationState{Eligible: eligible, Issued: before + day + after}, nil
+}
+
+// sealedIssuedAround returns the tokens issued to (account, conversation)
+// for epoch-1, epoch and epoch+1.
+func sealedIssuedAround(ctx context.Context, q sealedQuerier, conversationID, accountID string, epoch uint32) (int, int, int, error) {
+	var before, day, after int
+	e := int64(epoch)
+	err := q.QueryRowContext(ctx, `SELECT
+		COALESCE(SUM(CASE WHEN epoch = ? THEN issued END), 0),
+		COALESCE(SUM(CASE WHEN epoch = ? THEN issued END), 0),
+		COALESCE(SUM(CASE WHEN epoch = ? THEN issued END), 0)
+		FROM sealed_token_issuance WHERE account_id = ? AND conversation_id = ? AND epoch BETWEEN ? AND ?`,
+		e-1, e, e+1, accountID, conversationID, e-1, e+1).Scan(&before, &day, &after)
+	return before, day, after, err
 }
 
 func (s *Store) requireConversationMember(ctx context.Context, conversationID, accountID string) error {
@@ -153,7 +168,9 @@ func (s *Store) requireConversationMember(ctx context.Context, conversationID, a
 
 // ReserveSealedTokens charges count tokens for (account, conversation,
 // epoch) against limit, after checking membership (ErrNotFound) and
-// eligibility. The caller evaluates the blinded nonces
+// eligibility. Two consecutive days are redeemable at once, so the cap
+// holds for every such pair: epoch with the day before, and epoch with the
+// day after (review low c). The caller evaluates the blinded nonces
 // only after this commits; a failed evaluation leaves the charge, which
 // costs the caller nothing but its own budget.
 func (s *Store) ReserveSealedTokens(ctx context.Context, conversationID, accountID string, epoch uint32, count, limit int) error {
@@ -181,12 +198,11 @@ func (s *Store) ReserveSealedTokens(ctx context.Context, conversationID, account
 	if !eligible {
 		return ErrSealedNotEligible
 	}
-	var issued int
-	err = tx.QueryRowContext(ctx, `SELECT issued FROM sealed_token_issuance WHERE account_id = ? AND conversation_id = ? AND epoch = ?`, accountID, conversationID, int64(epoch)).Scan(&issued)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	before, issued, after, err := sealedIssuedAround(ctx, tx, conversationID, accountID, epoch)
+	if err != nil {
 		return err
 	}
-	if issued+count > limit {
+	if before+issued+count > limit || issued+after+count > limit {
 		return ErrSealedTokenLimit
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -498,12 +514,13 @@ func pruneSealedTx(ctx context.Context, tx *sql.Tx, now time.Time) (int64, error
 		return 0, err
 	}
 	today := int64(sealedsender.Epoch(now))
-	// Redeemable: yesterday and today. Issued: today and tomorrow, so a
-	// count for yesterday no longer caps anything.
+	// Redeemable: yesterday and today. Issued: today and tomorrow. The
+	// count for yesterday still caps today's (review low c); older ones
+	// cap nothing.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sealed_spent_tokens WHERE epoch < ?`, today-1); err != nil {
 		return 0, err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sealed_token_issuance WHERE epoch < ?`, today); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM sealed_token_issuance WHERE epoch < ?`, today-1); err != nil {
 		return 0, err
 	}
 	return int64(len(ids)), nil

@@ -509,9 +509,32 @@ func TestSealedTokensAreCappedAndOnlyForEligibleConversations(t *testing.T) {
 	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 2); status != http.StatusTooManyRequests || !strings.Contains(body, "sealed_token_limit") {
 		t.Fatalf("over cap status=%d body=%s", status, body)
 	}
-	// The cap is per epoch: tomorrow has its own.
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch+1, 3); status != http.StatusOK {
+	// Review low (c): today's and tomorrow's tokens are redeemable together
+	// tomorrow, so the cap holds across both.
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch+1, 2); status != http.StatusTooManyRequests || !strings.Contains(body, "sealed_token_limit") {
+		t.Fatalf("tomorrow over the pair cap status=%d body=%s", status, body)
+	}
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch+1, 1); status != http.StatusOK {
 		t.Fatalf("tomorrow batch status=%d body=%s", status, body)
+	}
+	if _, state := sealedInfo(t, handler, memberToken, conversationID); state.Remaining != 0 {
+		t.Fatalf("remaining after the pair cap %d", state.Remaining)
+	}
+	// Yesterday's tokens, still redeemable today, count against today.
+	seeded := createConversation(t, handler, ownerToken)
+	addMember(t, handler, ownerToken, seeded, memberID)
+	seedDB := openSQLite(t, dbPath)
+	if _, err := seedDB.Exec(`INSERT INTO sealed_token_issuance(account_id, conversation_id, epoch, issued) VALUES(?, ?, ?, 3)`, memberID, seeded, int64(info.Epoch)-1); err != nil {
+		t.Fatal(err)
+	}
+	if _, state := sealedInfo(t, handler, memberToken, seeded); state.Remaining != 0 {
+		t.Fatalf("remaining with yesterday's tokens %d", state.Remaining)
+	}
+	if _, status, body := requestSealedTokens(t, handler, memberToken, seeded, info.Epoch, 1); status != http.StatusTooManyRequests || !strings.Contains(body, "sealed_token_limit") {
+		t.Fatalf("today after yesterday's cap status=%d body=%s", status, body)
+	}
+	if _, status, body := requestSealedTokens(t, handler, memberToken, seeded, info.Epoch+1, 3); status != http.StatusOK {
+		t.Fatalf("tomorrow after yesterday's cap status=%d body=%s", status, body)
 	}
 	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 33); status != http.StatusBadRequest {
 		t.Fatalf("oversized batch status=%d body=%s", status, body)
@@ -673,19 +696,26 @@ func TestSealedEnvelopesExpireAndArePruned(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO sealed_spent_tokens(key_id, epoch, nonce, message_id) VALUES(?, ?, ?, 'old')`, tokens[0].KeyID, info.Epoch-2, bytes.Repeat([]byte{1}, 32)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`UPDATE sealed_token_issuance SET epoch = ? WHERE conversation_id = ?`, info.Epoch-1, conversationID); err != nil {
+	if _, err := db.Exec(`UPDATE sealed_token_issuance SET epoch = ? WHERE conversation_id = ?`, info.Epoch-2, conversationID); err != nil {
+		t.Fatal(err)
+	}
+	// Yesterday's count still caps today's issuance (review low c): kept.
+	if _, err := db.Exec(`INSERT INTO sealed_token_issuance(account_id, conversation_id, epoch, issued) VALUES(?, ?, ?, 1)`, memberID, conversationID, info.Epoch-1); err != nil {
 		t.Fatal(err)
 	}
 	prune()
-	var oldSpent, oldIssued int
+	var oldSpent, oldIssued, yesterday int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sealed_spent_tokens WHERE epoch < ?`, info.Epoch-1).Scan(&oldSpent); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sealed_token_issuance WHERE epoch < ?`, info.Epoch).Scan(&oldIssued); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sealed_token_issuance WHERE epoch < ?`, info.Epoch-1).Scan(&oldIssued); err != nil {
 		t.Fatal(err)
 	}
-	if oldSpent != 0 || oldIssued != 0 {
-		t.Fatalf("dead token rows kept: spent=%d issued=%d", oldSpent, oldIssued)
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sealed_token_issuance WHERE epoch = ?`, info.Epoch-1).Scan(&yesterday); err != nil {
+		t.Fatal(err)
+	}
+	if oldSpent != 0 || oldIssued != 0 || yesterday != 1 {
+		t.Fatalf("token rows after prune: spent=%d issued=%d yesterday=%d", oldSpent, oldIssued, yesterday)
 	}
 }
 

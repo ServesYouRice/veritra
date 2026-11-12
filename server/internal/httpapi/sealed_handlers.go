@@ -79,7 +79,8 @@ func (a *API) sealedConversation(w http.ResponseWriter, r *http.Request, princip
 	}
 	// No epoch and no counter: the app takes the day from its own clock,
 	// so the server has no per-account value to bind into a token (review
-	// M1). remaining is for the server's today.
+	// M1). remaining is what the cap still allows for either day an app
+	// may ask for, at least (review low c).
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"key_id":     key.ID(),
 		"public_key": key.PublicKey(),
