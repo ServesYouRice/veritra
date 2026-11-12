@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -10,7 +9,6 @@ import 'package:private_messenger/core/reports_service.dart';
 import 'package:private_messenger/crypto/report_body.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
-import 'package:private_messenger/crypto/franking.dart';
 import 'package:private_messenger/crypto/mls_commit_bundle.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
@@ -342,28 +340,6 @@ void main() {
     expect((await verifyAs(plain, (a, d, k) async => true)).verdict,
         ReportVerdict.mismatch);
   }, skip: skip);
-
-  test('the frank member reads in exactly one spelling of each form', () {
-    final canonical = Uint8List.fromList(utf8.encode('{"t":"x"}'));
-    final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
-    final signature =
-        Uint8List.fromList(List<int>.generate(64, (i) => 255 - i));
-    final sealed = frankWireJson(canonical, key, signature: signature);
-    final plain = frankWireJson(canonical, key);
-    final readSealed = splitFrank(sealed) as Franked;
-    expect(readSealed.signature, signature);
-    expect(readSealed.key, key);
-    expect(readSealed.canonical, canonical);
-    final readPlain = splitFrank(plain) as Franked;
-    expect(readPlain.signature, isNull);
-    // A non-canonical signature spelling is refused.
-    final text = utf8.decode(sealed);
-    final bent = text.replaceFirst('","s":"', '","s" :"');
-    expect(splitFrank(Uint8List.fromList(utf8.encode(bent))),
-        isA<MalformedFrank>());
-    expect(() => frankWireJson(canonical, key, signature: Uint8List(63)),
-        throwsFormatException);
-  });
 }
 
 int _serverIds = 0;

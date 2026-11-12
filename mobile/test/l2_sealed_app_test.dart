@@ -7,6 +7,7 @@ import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/sealed_sender.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/franking.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
 /// L2-3 app step, without the native core: the sealed post client never
@@ -15,6 +16,29 @@ import 'package:private_messenger/storage/local_store.dart';
 /// events only when told to, and the token pass pins the issuer key and
 /// stays within the server's count.
 void main() {
+  // C6 wire form of a sealed payload's frank member (pure Dart).
+  test('the frank member reads in exactly one spelling of each form', () {
+    final canonical = Uint8List.fromList(utf8.encode('{"t":"x"}'));
+    final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
+    final signature =
+        Uint8List.fromList(List<int>.generate(64, (i) => 255 - i));
+    final sealed = frankWireJson(canonical, key, signature: signature);
+    final plain = frankWireJson(canonical, key);
+    final readSealed = splitFrank(sealed) as Franked;
+    expect(readSealed.signature, signature);
+    expect(readSealed.key, key);
+    expect(readSealed.canonical, canonical);
+    final readPlain = splitFrank(plain) as Franked;
+    expect(readPlain.signature, isNull);
+    // A non-canonical signature spelling is refused.
+    final text = utf8.decode(sealed);
+    final bent = text.replaceFirst('","s":"', '","s" :"');
+    expect(splitFrank(Uint8List.fromList(utf8.encode(bent))),
+        isA<MalformedFrank>());
+    expect(() => frankWireJson(canonical, key, signature: Uint8List(63)),
+        throwsFormatException);
+  });
+
   group('sealed posts', () {
     late _Loopback server;
     setUp(() async => server = await _Loopback.start());
