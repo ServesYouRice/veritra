@@ -1421,13 +1421,21 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     App: the same requests for every channel, paging. The history and
     former-member JSON is pinned on both sides (Go marshals its structs to
     the text the Dart parser reads).
-- **Not built: C3 conversion (`move`, decision 11).** Left for its own
-  slice, with nothing of it on this branch: the compact form's
-  `lp(close_group_id)` and 128-byte wrap field, its codec and a Python
-  vector checked in Rust, Go and Dart, the server route and migrations
-  0088-0089 (still free; 0090-0091 are sealed sender's), the record kind
-  in the ordering table and the walk, and the native tests. ABI 25 stays
-  unused. Until then a C3 conversion works as before: the channel holds no
+- **C3 conversion (`move`, decision 11): the wrap codec only.** Built:
+  the 128-byte wrap's codec, `u64 E_prev | CHK_prev[32] |
+  lp(prev_group_id) | u64 E_prev_close` zero-padded, in Rust
+  (`c7::MoveWrap`, no ABI) and Dart (`C7MoveWrap`, with `decodeFor`,
+  which takes a wrap only when it names the record's own
+  `close_group_id` and `close_epoch`; anything else, the random bytes of
+  every other move included, is "no wrap"), and the vector
+  `testing/vectors/c7-move-v1.json` from an independent Python
+  generator, checked in Rust, Go and Dart (the compact form's
+  `lp(close_group_id)` and wrap field were already in both codecs). Not
+  built: the server route that moves a channel to another conversation
+  and its migration (0089 is the only one left free: 0088 is
+  `c7_membership_epochs`, 0090-0091 are sealed sender's), the record kind
+  in the ordering table and the walk, the app flow and the native tests;
+  receivers still drop every `move` record. ABI 25 stays unused. Until then a C3 conversion works as before: the channel holds no
   record in its new group, so posts there seal under random keys until an
   owner or admin switches it to `full` again (a `create`, since it has no
   record there), and newcomers read nothing from before that switch (a

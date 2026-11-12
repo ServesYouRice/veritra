@@ -1006,3 +1006,61 @@ fn assembled_history_sync_opens_slot_by_slot() {
         }
     }
 }
+
+/// `testing/vectors/c7-move-v1.json`: the move wrap and the compact move
+/// record that carries it, made by `testing/vectors/c7-move-v1.py`. Go
+/// (`server/internal/c7vector`) and Dart (`mobile/test/c7_move_wrap_test.dart`)
+/// check the same file.
+const MOVE_VECTOR: &str = include_str!("../../../testing/vectors/c7-move-v1.json");
+
+#[test]
+fn move_wrap_vector() {
+    let vector: Value = serde_json::from_str(MOVE_VECTOR).unwrap();
+    assert_eq!(MOVE_WRAP_USED_MAX, 114);
+    for case in vector["valid_wraps"].as_array().unwrap() {
+        let bytes = unhex(&case["wrap_hex"]);
+        let wrap = MoveWrap::decode(&bytes).unwrap();
+        assert_eq!(wrap.prev_epoch, case["prev_epoch"].as_u64().unwrap());
+        assert_eq!(hex(&wrap.prev_key), case["prev_key_hex"]);
+        assert_eq!(wrap.prev_group_id, text(&case["prev_group_id"]));
+        assert_eq!(
+            wrap.prev_close_epoch,
+            case["prev_close_epoch"].as_u64().unwrap()
+        );
+        assert_eq!(wrap.encode().unwrap().to_vec(), bytes);
+    }
+    for case in vector["invalid_wraps"].as_array().unwrap() {
+        assert!(
+            MoveWrap::decode(&unhex(&case["wrap_hex"])).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+    let record = &vector["record"];
+    let compact = unhex(&record["compact_hex"]);
+    assert_eq!(
+        compact.len() as u64,
+        record["compact_length"].as_u64().unwrap()
+    );
+    let decoded = CompactRecord::decode(&compact).unwrap();
+    assert_eq!(decoded.reason, REASON_MOVE);
+    assert_eq!(decoded.encode().unwrap(), compact);
+    let (group, wrap_bytes) = decoded.moved.as_ref().unwrap();
+    assert_eq!(group.as_slice(), text(&record["close_group_id"]));
+    let wrap = MoveWrap::decode(wrap_bytes).unwrap();
+    assert!(wrap.fits(group, decoded.close_epoch));
+    for case in vector["mismatched_wraps"].as_array().unwrap() {
+        let other = MoveWrap::decode(&unhex(&case["wrap_hex"])).unwrap();
+        assert!(!other.fits(group, decoded.close_epoch), "{}", case["name"]);
+    }
+    // Encoding refuses what decoding refuses.
+    let mut bad = wrap.clone();
+    bad.prev_key = [0; KEY_BYTES];
+    assert!(bad.encode().is_err());
+    let mut bad = wrap.clone();
+    bad.prev_epoch = bad.prev_close_epoch + 1;
+    assert!(bad.encode().is_err());
+    let mut bad = wrap;
+    bad.prev_group_id = vec![b'g'; MAX_ID_BYTES + 1];
+    assert!(bad.encode().is_err());
+}

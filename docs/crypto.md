@@ -573,6 +573,29 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **C7 move wrap, codec only (2026-11-12; C3 conversion, decision 11):**
+  no ABI, wire, schema or server change, and nothing sends or reads a
+  move yet: receivers still drop a `move` record (`_c7None`) and C3
+  conversion stays unbuilt. A move record's 128-byte field is, for a
+  narrowing move (open to private) of a `full` channel, the old group's
+  current generation `u64 E_prev | CHK_prev[32] | lp(prev_group_id) |
+  u64 E_prev_close`, zero-padded (at most 114 bytes used); for every
+  other move, 128 random bytes. Rules, the same in Rust
+  (`c7::MoveWrap`), Dart (`C7MoveWrap`) and Go (the vector check): a
+  1-64 byte group id, a non-zero key, zero padding and
+  `E_prev <= E_prev_close`; a receiver takes a wrap only when it names
+  the record's own `close_group_id` and `close_epoch`
+  (`C7MoveWrap.decodeFor`). Anything else is "no wrap": the newcomer's
+  walk stops at the move (a gap, never a leak). Random bytes pass the
+  structure check with probability below 2^-100 (at least 14 padding
+  bytes must be zero, and the id length must fall in 1-64). The wrap is
+  not under the record's signature; it is inside the move message's
+  body, sealed under the new key and covered by the post signature, like
+  every other body byte. Vector `testing/vectors/c7-move-v1.json` from
+  an independent Python generator. Still to design with the owner before
+  the rest is built: the server route that moves a channel to another
+  conversation (migration 0089, the only one left free before sealed
+  sender's 0090-0091), and what the app shows for pre-move posts.
 - **Message frames name nothing (2026-11-12; was "Found, not fixed" in the
   C7 design):** the realtime frame for a new, an edited or a deleted
   message, a C7 targeted `history_sync` included, is now the bare
