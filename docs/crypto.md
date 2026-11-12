@@ -613,7 +613,9 @@ route cannot probe ids). Then, in one transaction, in this order:
 - **Store and fan out.** The row in `sealed_message_envelopes` (migration
   0091) has no sender column at all. One sync event
   `message.sealed.created` goes to every member, the sender's own devices
-  included, and push wakes go to every member. Retention clamps
+  included, and push wakes go to every member. Live sockets get only the
+  bare `sync.available` frame every message event gets (C7), never the
+  envelope; the app reads the event from sync. Retention clamps
   `expires_at` as for identified envelopes.
 
 **Eligible conversations.** `kind` `dm` or `group`, no community or channel,

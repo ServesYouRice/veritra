@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"private-messenger/server/internal/domain"
-	"private-messenger/server/internal/realtime"
 	"private-messenger/server/internal/sealedsender"
 	"private-messenger/server/internal/storage"
 )
@@ -261,7 +260,10 @@ func (a *API) sealedMessage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, stored)
 		return
 	}
-	a.publishCommittedEvent(r.Context(), recipients, realtime.Event{Version: "v1", Type: storage.SealedMessageEventType, ID: eventID, ConversationID: stored.ConversationID, Payload: stored, CreatedAt: now})
+	// The bare frame every message event gets (C7): no event id,
+	// conversation id or envelope. A device reads the sealed event from sync,
+	// which applies the join filter and the `sealed=1` opt-in.
+	a.publishSyncAvailable(r.Context(), recipients, eventID)
 	writeJSON(w, http.StatusCreated, stored)
 }
 
