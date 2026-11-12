@@ -223,10 +223,12 @@ pub fn designate(
         if entries.iter().any(|(seen, _)| *seen == id) {
             continue;
         }
+        // The input first: checked above, so this cannot fail, and no
+        // shared secret exists yet if it ever did.
+        let input = tag_input(conversation_id, account_id, device_id, &id, commit)?;
         let Some(mut z) = shared(secret, &verifier) else {
             continue;
         };
-        let input = tag_input(conversation_id, account_id, device_id, &id, commit)?;
         let result = tag(&z, &sender_public, &verifier, &input);
         wipe_array(&mut z);
         entries.push((id, result?));
@@ -305,10 +307,11 @@ pub fn verify(
     let Ok(sender) = check_public(sender_public) else {
         return Ok(DvVerdict::Mismatch);
     };
+    // Before the shared secret, as in `designate`.
+    let input = tag_input(conversation_id, account_id, device_id, &own, commit)?;
     let Some(mut z) = shared(secret, &sender) else {
         return Ok(DvVerdict::Mismatch);
     };
-    let input = tag_input(conversation_id, account_id, device_id, &own, commit)?;
     let expected = tag(&z, &sender, &verifier_public, &input);
     wipe_array(&mut z);
     Ok(if tags_equal(received, &expected?) {
