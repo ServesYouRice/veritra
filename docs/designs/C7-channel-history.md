@@ -1356,9 +1356,16 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     device's `joined_epoch` and the group's recorded epoch (400
     `mls_epoch_out_of_range`), so a device cannot place a post or a sync
     in an epoch it was never in.
-  Residuals: a member can still send a sync whose slots are all zero, and
-  the newcomer accepts it as "nothing to hand over" (a gap, never a leak;
-  withholding is already a trust limit). If no member holds a working key
+  The server refuses (400 `invalid_history_sync_target`) a tagged
+  `history_sync` whose sealed body0 or any 700-byte slot is all zero
+  bytes: each part is AEAD output, which an honest sender never makes all
+  zero (`c7SyncBodyShaped`; server test
+  `TestC7AllZeroHistorySyncRefused`). That stops junk sent without any
+  key before it can mark the epoch delivered.
+  Residuals: a member can still seal honest-looking slots over a zero
+  head and entry; the server sees only ciphertext and cannot tell them
+  apart, and the newcomer accepts them as "nothing to hand over" (a gap,
+  never a leak; withholding is already a trust limit). If no member holds a working key
   for a channel, the newcomer asks hourly for as long as it is in the
   group and never imports; each request is one channel-sized body.
 - **Newcomer import (decision 10, owner answers Q1 and Q2).** Once a
@@ -1504,7 +1511,19 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     conversation). Only posts and the actions that target them.
   - The UI: "Make this channel private" / "Make this channel open" in the
     channel's settings for owners and admins; private to open asks first
-    (`confirmChannelConversion`), open to private does not. The channel
+    (`confirmChannelConversion`). Open to private lists the channel's
+    current readers (the shared conversation's roster, less the admin),
+    all ticked (owner answer 2026-11-12, "Admin picks during switch";
+    `pickChannelConversionMembers`); the admin can untick anyone, and
+    cannot accept until the list has loaded, so a failed load never reads
+    as "nobody". After the move, `convertChannel` adds each reader left
+    ticked through the add-member route, then asks reconcile to stage one
+    commit that adds all their devices; the `move` record goes out in
+    that commit's epoch, so they all take its wrap live and import the
+    earlier posts. Unticked readers and the admin are never added; an
+    unticked reader holds no leaf in the new group, so the record never
+    opens for it and no wrap is its. An add the server refuses leaves the
+    channel converted, stops the adds after it, and shows the error. The channel
     record is published again in the new home: a private channel's under
     a newly minted key, an open one's under the community key, and the
     community record lists the open channels. The info service refuses to
@@ -1561,11 +1580,11 @@ C are answered in round 3.
    membership commit at 1,000 devices (0.6 MB for the add commit itself;
    C0 batches joins). Accept, or add targeted delivery of add-time
    messages to the new devices only (a server feature, C8)?
-4. **Who is in a channel made private (C3 conversion).** Built: the new
-   private conversation holds only the owner or admin who converted it;
-   everyone else is added afterwards, one by one, and the `move` record
-   (with the earlier posts) waits for the first add. Keep that, or offer
-   to add the open channel's readers (or a chosen set) at conversion?
+4. **Who is in a channel made private (C3 conversion).** Answered
+   2026-11-12, "Admin picks during switch": the conversion screen lists
+   the open channel's readers, all ticked, and everyone left ticked is
+   added as part of the conversion and receives the earlier posts (see
+   "C3 conversion" in the build status).
 
 ## Owner decisions (2026-11-01)
 

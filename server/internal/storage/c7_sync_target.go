@@ -143,7 +143,7 @@ func (s *Store) checkC7SyncTag(ctx context.Context, tx *sql.Tx, conversationID, 
 	// says which it is.
 	switch tag.kind {
 	case c7SyncBody:
-		if !c7SyncBodySize(len(sealed)) {
+		if !c7SyncBodyShaped(sealed) {
 			return c7SyncTag{}, ErrInvalidHistorySyncTarget
 		}
 	case c7SyncRequest:

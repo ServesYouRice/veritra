@@ -642,7 +642,14 @@ Stage 1. Every later change is listed here for the G25 reviewer.
     walk (a gap). A slot's head bounds that walk without a record
     signature check: only an old-group key holder can write a slot, and
     a signature would not stop it placing a genuine older head; it gains
-    only what it could leak anyway (C7 design, "Moved slot heads"). Local schema and the ABI unchanged; setting `c7.moves`.
+    only what it could leak anyway (C7 design, "Moved slot heads").
+    Open to private (owner answer "Admin picks during switch"): the
+    screen lists the open channel's readers, all ticked; after the move
+    the app adds each reader left ticked through the add-member route and
+    one reconcile commit adds their devices, so the `move` record (and
+    with it the earlier posts) reaches exactly them. An unticked reader
+    holds no leaf in the new group and never opens the record. Local
+    schema and the ABI unchanged; setting `c7.moves`.
   Trust limits, both directions, in the C7 design. Needs the
   independent review.
 - **Message frames name nothing (2026-11-12; was "Found, not fixed" in the
@@ -728,7 +735,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   produced (`c7_membership_epochs`, written with the commit bundle) or
   that is some device's `joined_epoch`. Any C7 sealed body's declared
   `mls_epoch` must lie between its sender device's `joined_epoch` and the
-  group epoch (400 `mls_epoch_out_of_range`). The server learns nothing
+  group epoch (400 `mls_epoch_out_of_range`). A tagged `history_sync`
+  whose sealed body0 or any 700-byte slot is all zero bytes is refused
+  (400 `invalid_history_sync_target`): honest AEAD output never is. Slots
+  sealed honestly over a zero head stay invisible to the server (a
+  client-side trust limit). The server learns nothing
   new: it already stores every commit's added and removed devices. No
   ABI, payload or local schema change. C7 design, "Newcomer keeps
   asking". Needs the independent review.

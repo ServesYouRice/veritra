@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -311,5 +312,49 @@ func TestC7DeclaredEpochMustBeOneTheSenderIsIn(t *testing.T) {
 		if !errors.Is(err, want) && !(want == nil && err == nil) {
 			t.Errorf("epoch %d: err = %v, want %v", epoch, err, want)
 		}
+	}
+}
+
+// Residual (d): a history_sync whose sealed body0 or any slot is all zero
+// bytes is junk (each part is AEAD output, never all zero when sealed
+// honestly). It is refused before it can mark the newcomer's epoch
+// delivered, so the honest committer's sync still goes through.
+func TestC7AllZeroHistorySyncRefused(t *testing.T) {
+	ctx := context.Background()
+	f := newC7Fixture(t, ctx)
+	f.inGroup(t, ctx, f.shared, f.owner, 0, 0)
+	f.inGroup(t, ctx, f.shared, f.member, 0, 1)
+	syncAt1 := f.syncMetadata(EnvelopeC7SyncKey, 1, 1)
+	// A two-channel body: P(2) = 768, + 124, then two 700-byte slots.
+	const twoChannels = 768 + c7BodyFraming + 2*c7SyncSlotBytes
+	if c7SyncChannels(twoChannels) != 2 {
+		t.Fatalf("size %d is not a two-channel history_sync", twoChannels)
+	}
+	zeroed := func(from, to int) []byte {
+		body := c7Body(twoChannels, 9)
+		for i := from; i < to; i++ {
+			body[i] = 0
+		}
+		return body
+	}
+	slot1 := twoChannels - 2*c7SyncSlotBytes
+	slot2 := twoChannels - c7SyncSlotBytes
+	for name, body := range map[string][]byte{
+		"whole body":  make([]byte, twoChannels),
+		"body0":       zeroed(0, slot1),
+		"first slot":  zeroed(slot1, slot2),
+		"last slot":   zeroed(slot2, twoChannels),
+		"one-channel": make([]byte, c7PrivateSyncBytes),
+	} {
+		if _, _, err := f.postBody(ctx, f.shared, f.owner, "zero-"+strings.ReplaceAll(name, " ", "-"), syncAt1, body); !errors.Is(err, ErrInvalidHistorySyncTarget) {
+			t.Fatalf("%s: err = %v, want ErrInvalidHistorySyncTarget", name, err)
+		}
+	}
+	// Zero bytes inside a part, short of the whole part, are ciphertext like
+	// any other.
+	partly := zeroed(slot1+1, twoChannels)
+	partly[twoChannels-1] = 1
+	if _, _, err := f.postBody(ctx, f.shared, f.owner, "honest", syncAt1, partly); err != nil {
+		t.Fatalf("a sync with no all-zero part, after the refused ones: %v", err)
 	}
 }
