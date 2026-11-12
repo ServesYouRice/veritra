@@ -325,9 +325,38 @@ func deviceListHistoryTx(ctx context.Context, q interface {
 	if err := rows.Err(); err != nil {
 		return devicelist.History{}, err
 	}
+	// Franking keys (L2-3) are not in device_list_devices: read them from the
+	// stored versions (at most the chain's statements, each parsed before it
+	// was stored). A key is one device's for the whole chain.
+	frankOwners := map[string]string{}
+	versions, err := q.QueryContext(ctx, `SELECT statement FROM device_list_versions WHERE account_id = ?`, accountID)
+	if err != nil {
+		return devicelist.History{}, err
+	}
+	defer versions.Close()
+	for versions.Next() {
+		var raw []byte
+		if err := versions.Scan(&raw); err != nil {
+			return devicelist.History{}, err
+		}
+		parsed, err := devicelist.Parse(raw)
+		if err != nil {
+			return devicelist.History{}, fmt.Errorf("stored device list for %s does not parse: %w", accountID, err)
+		}
+		for _, frank := range parsed.Body.FrankKeys {
+			frankOwners[string(frank.Key)] = frank.DeviceID
+		}
+	}
+	if err := versions.Err(); err != nil {
+		return devicelist.History{}, err
+	}
 	return devicelist.History{
 		SeenDevice: func(deviceID string) bool { return devices[deviceID] },
 		SeenKey:    func(key []byte) bool { return keys[string(key)] },
+		SeenFrankKeyElsewhere: func(key []byte, deviceID string) bool {
+			owner, seen := frankOwners[string(key)]
+			return seen && owner != deviceID
+		},
 	}, nil
 }
 
@@ -398,6 +427,10 @@ func (s *Store) PublishDeviceList(ctx context.Context, accountID, deviceID strin
 		rule = DeviceListRule{Changes: []devicelist.Change{devicelist.ChangeMigrationGenesis}, Signer: deviceID}
 	case devicelist.ChangeRemove:
 		rule = DeviceListRule{Changes: []devicelist.Change{devicelist.ChangeRemove}, Signer: deviceID, RemovedRevoked: true}
+	case devicelist.ChangeFrankKey:
+		// L2-3: the caller sets its own franking key; CheckStep holds the
+		// rest (nothing else changes).
+		rule = DeviceListRule{Changes: []devicelist.Change{devicelist.ChangeFrankKey}, Signer: deviceID}
 	case devicelist.ChangeRecovery:
 		// Only from the device recovery completion enrolled, while it is the
 		// account's one active device.

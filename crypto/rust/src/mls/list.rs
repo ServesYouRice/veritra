@@ -128,11 +128,17 @@ impl MlsDevice {
     /// The body is parsed strictly first. It must name this device's own
     /// account, and a genesis (change 1) must list exactly this device and
     /// its own key; a migration genesis (change 6) must list this device with
-    /// its own key. The rest of the rules need the previous version and are
-    /// checked by [`l1::check_step`] before a version is used.
+    /// its own key. A franking key the body lists for this device must be
+    /// this device's own (L2-3), and change 7 must list it. The rest of the
+    /// rules need the previous version and are checked by
+    /// [`l1::check_step`] before a version is used.
     pub fn l1_sign_device_list(&self, body: &[u8]) -> Result<Vec<u8>, MlsError> {
         let parsed = l1::parse_body(body).map_err(|_| MlsError::InvalidMessage)?;
         if parsed.account_id != self.account_id {
+            return Err(MlsError::InvalidIdentity);
+        }
+        let own_frank = parsed.frank_key(&self.device_id);
+        if own_frank.is_some_and(|key| *key != self.l2_frank_public_key()) {
             return Err(MlsError::InvalidIdentity);
         }
         let own_pair = |pair: &l1::Pair| {
@@ -153,6 +159,11 @@ impl MlsDevice {
             // A device that is not on the previous version cannot sign for
             // it; the verifier refuses such a statement.
             Change::Add | Change::Remove | Change::RecoveryKey => {}
+            Change::FrankKey => {
+                if own_frank.is_none() {
+                    return Err(MlsError::InvalidIdentity);
+                }
+            }
             // Only the recovery key signs a recovery version.
             Change::Recovery => return Err(MlsError::InvalidIdentity),
         }
@@ -214,6 +225,9 @@ impl MlsDevice {
             || parsed.entries.len() != 1
             || parsed.entries[0].device_id != self.device_id
             || parsed.entries[0].signing_key.as_slice() != self.signing_public_key()
+            || parsed
+                .frank_key(&self.device_id)
+                .is_some_and(|key| *key != self.l2_frank_public_key())
         {
             return Err(refused(L1Error::Rule));
         }
