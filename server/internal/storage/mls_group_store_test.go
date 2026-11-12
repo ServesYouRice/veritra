@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -213,6 +214,11 @@ func TestMLSCommitBundlesOrderByEpochAndTrackTheRoster(t *testing.T) {
 	if pending, err := store.ListMLSPendingChanges(ctx, bob.Account.ID, bob.Device.ID); err != nil || len(pending) != 0 {
 		t.Fatalf("pending after removal=%#v err=%v", pending, err)
 	}
+	// C7 (review M3): each epoch an add or a removal produced is recorded,
+	// so a history_sync may name it.
+	if got := c7MembershipEpochs(t, ctx, store, conversation.ID); got != "1,2,3" {
+		t.Fatalf("membership epochs = %q", got)
+	}
 
 	// Revoking the tablet makes a group device coordinate its removal.
 	if _, err := store.RevokeDeviceWithSyncEvent(ctx, bob.Account.ID, "dev_bob_tablet"); err != nil {
@@ -314,4 +320,14 @@ func TestMLSCommitBundleRejectsOutsidersAndLegacyGroups(t *testing.T) {
 	if len(events) == 0 {
 		t.Fatal("legacy events are hidden")
 	}
+}
+
+func c7MembershipEpochs(t *testing.T, ctx context.Context, store *Store, conversationID string) string {
+	t.Helper()
+	var got sql.NullString
+	if err := store.db.QueryRowContext(ctx, `SELECT GROUP_CONCAT(epoch, ',') FROM (SELECT epoch FROM c7_membership_epochs
+		WHERE conversation_id = ? ORDER BY epoch)`, conversationID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	return got.String
 }

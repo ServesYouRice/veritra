@@ -250,12 +250,15 @@ extension CommunityInfoActions on AppState {
   ///
   /// [categoryId] moves a private channel (its record holds its place);
   /// [moveCategory] says whether to apply it, so null can mean "none".
+  /// [rehome] only from a C3 conversion this account just made: the record
+  /// moves to the key home the channel has now.
   Future<bool> publishChannelInfo(Channel channel,
       {required String name,
       String topic = '',
       bool mint = false,
       bool moveCategory = false,
-      String? categoryId}) async {
+      String? categoryId,
+      bool rehome = false}) async {
     final service = _info;
     if (service == null) return false;
     final private = channel.kind == 'private';
@@ -295,6 +298,7 @@ extension CommunityInfoActions on AppState {
         ),
         mint: mint && private,
         expectedRevision: current?.revision ?? 0,
+        rehome: rehome,
       );
       return true;
     } catch (err) {

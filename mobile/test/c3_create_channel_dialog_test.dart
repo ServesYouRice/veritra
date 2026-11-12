@@ -71,7 +71,7 @@ class _State extends AppState {
 
   @override
   Future<Channel?> createChannel(String communityId, String name,
-      {String? kind}) async {
+      {String? kind, bool fullHistory = false}) async {
     creates++;
     chosenKind = kind;
     chosenName = name;

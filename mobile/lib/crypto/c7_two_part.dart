@@ -4,11 +4,11 @@
 // reference `"C7R1" | body_key[32] | sha256(sealed_body)[32]` plus a sealed
 // body stored beside the envelope.
 //
-// This slice seals every body under a random `body_key`: the behaviour of a
-// `members_from_join` channel, which is every channel until C7 records exist
-// (the implicit genesis, decision 3). Live members read as before; newcomers
-// can open nothing, which is exactly `members_from_join`. Generation keys,
-// records and `history_sync` (the `full` mode) are later slices.
+// A body is sealed under a random `body_key` unless the sender holds the
+// channel as `full` and `ok`, when the key is derived from the current
+// generation's `CHK` (decision 3). Live members read either the same way;
+// newcomers open only what a generation key they hold derives.
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -72,17 +72,32 @@ Uint8List c7PostSignedFields({
   required String senderDeviceId,
   required int generation,
   required List<int> paddedVap1,
-}) =>
-    Uint8List.fromList(<int>[
-      ...c7Lp(communityId),
-      ...c7Lp(channelId),
-      ...c7Lp(actionId),
-      ...c7Lp(groupId),
-      ..._u64(epoch),
-      ...c7Lp(senderDeviceId),
-      ..._u64(generation),
-      ...sha256(paddedVap1),
-    ]);
+}) {
+  // As Rust's `post_signed_fields`: every id 1 to 64 bytes, except the
+  // channel, which is empty for a group-level message.
+  for (final (id, mayBeEmpty) in <(String, bool)>[
+    (communityId, false),
+    (channelId, true),
+    (actionId, false),
+    (groupId, false),
+    (senderDeviceId, false),
+  ]) {
+    final length = utf8.encode(id).length;
+    if ((length == 0 && !mayBeEmpty) || length > 64) {
+      throw ArgumentError('invalid C7 signed id');
+    }
+  }
+  return Uint8List.fromList(<int>[
+    ...c7Lp(communityId),
+    ...c7Lp(channelId),
+    ...c7Lp(actionId),
+    ...c7Lp(groupId),
+    ..._u64(epoch),
+    ...c7Lp(senderDeviceId),
+    ..._u64(generation),
+    ...sha256(paddedVap1),
+  ]);
+}
 
 /// One message sealed in two parts.
 final class C7SealedMessage {
@@ -95,8 +110,12 @@ final class C7SealedMessage {
   final Uint8List sealedBody;
 }
 
-/// Seals [paddedVap1] under a fresh random body key (the `members_from_join`
-/// case, generation 0). [sign] is the device's `c7Sign`. The sender keeps
+/// Seals [paddedVap1] in two parts. With [chk] the body key is the post key
+/// of that generation key and the signature names [generation] (`E_g`: a
+/// `full` channel that is `ok`); without it, a fresh random body key and
+/// generation 0 (every other case, decision 3 and I4). [trailer] is appended
+/// after the sealed VAP1 and covered by the reference's hash (a
+/// `history_sync`'s slots). [sign] is the device's `c7Sign`. The sender keeps
 /// both parts in its outbox and resends them unchanged; an action is never
 /// sealed twice.
 C7SealedMessage c7SealMessage({
@@ -109,11 +128,26 @@ C7SealedMessage c7SealMessage({
   required String actionId,
   required int epoch,
   required List<int> paddedVap1,
+  Uint8List? chk,
+  int generation = 0,
+  List<int> trailer = const <int>[],
   Random? random,
 }) {
+  if ((chk == null) != (generation == 0) ||
+      (chk != null && channelId == null)) {
+    throw ArgumentError('a generation key needs its channel and generation');
+  }
   final source = random ?? Random.secure();
-  final bodyKey =
-      Uint8List.fromList(List<int>.generate(32, (_) => source.nextInt(256)));
+  final keys = C7Keys(bindings);
+  final bodyKey = chk == null
+      ? Uint8List.fromList(List<int>.generate(32, (_) => source.nextInt(256)))
+      : keys.postBodyKey(
+          chk: chk,
+          communityId: communityId,
+          channelId: channelId!,
+          senderDeviceId: senderDeviceId,
+          actionId: actionId,
+        );
   try {
     final signature = sign(c7PostSignedFields(
       communityId: communityId,
@@ -122,10 +156,10 @@ C7SealedMessage c7SealMessage({
       groupId: conversationId,
       epoch: epoch,
       senderDeviceId: senderDeviceId,
-      generation: 0,
+      generation: generation,
       paddedVap1: paddedVap1,
     ));
-    final sealed = C7Keys(bindings).sealBody(
+    final body = keys.sealBody(
       bodyKey: bodyKey,
       aad: C7Keys.bodyAad(
         conversationId: conversationId,
@@ -136,6 +170,11 @@ C7SealedMessage c7SealMessage({
       signature: signature,
       paddedVap1: paddedVap1,
     );
+    final sealed = trailer.isEmpty
+        ? body
+        : (Uint8List(body.length + trailer.length)
+          ..setRange(0, body.length, body)
+          ..setRange(body.length, body.length + trailer.length, trailer));
     return C7SealedMessage(
       reference: encodeC7Reference(bodyKey, sealed),
       sealedBody: sealed,
@@ -145,13 +184,51 @@ C7SealedMessage c7SealMessage({
   }
 }
 
+/// `P(N) = 256 * ceil((512 + 128 N) / 256)`: the padded VAP1 of a
+/// `history_sync`'s body0 for [channels] channels.
+int c7Body0PaddedLength(int channels) =>
+    ((512 + 128 * channels + 255) ~/ 256) * 256;
+
+/// `P(N) + 124 + 700 N`: the sealed body of a `history_sync`.
+int c7HistorySyncBodyLength(int channels) =>
+    c7Body0PaddedLength(channels) + 124 + 700 * channels;
+
+/// The `N` a `history_sync` body of [length] bytes names, or null.
+int? c7HistorySyncChannelCount(int length) {
+  for (var n = 1; c7Body0PaddedLength(n) <= 65536; n++) {
+    final expected = c7HistorySyncBodyLength(n);
+    if (expected == length) return n;
+    if (expected > length) return null;
+  }
+  return null;
+}
+
+/// A live member's open of a two-part message: the padded VAP1 and, for a
+/// `history_sync`, the slots after body0 ([trailer], empty otherwise).
+final class C7Opened {
+  const C7Opened(this.paddedVap1, this.trailer,
+      {required this.bodyKey, required this.signature});
+  final Uint8List paddedVap1;
+  final Uint8List trailer;
+
+  /// The sender's signature over the post fields; a live member checks it
+  /// only for the `unsure` trigger (decision 8).
+  final Uint8List signature;
+
+  /// The reference's body key, kept so the receiver can tell which
+  /// generation sealed the body (the `unsure` trigger); the caller wipes it.
+  final Uint8List bodyKey;
+}
+
 /// A live member's open: the body must hash to the reference and open under
-/// its key, bound to the envelope's own fields. Returns the padded VAP1, or
-/// null for a missing, swapped or damaged body (a P1 `invalid` row: the MLS
-/// state and cursor still commit, so a server that strips a body cannot stop
-/// the conversation). No signature check: MLS authenticated the reference,
-/// which fixes the body (decision 8).
-Uint8List? c7OpenLive({
+/// its key, bound to the envelope's own fields. Returns null for a missing,
+/// swapped or damaged body (a P1 `invalid` row: the MLS state and cursor
+/// still commit, so a server that strips a body cannot stop the
+/// conversation). No signature check: MLS authenticated the reference,
+/// which fixes the body (decision 8). A group-level body whose length is a
+/// `history_sync`'s opens body0 alone when the whole body does not open, and
+/// the rest is returned as the slots.
+C7Opened? c7OpenLiveParts({
   required NativeCryptoBindings bindings,
   required C7Reference reference,
   required List<int>? sealedBody,
@@ -168,20 +245,66 @@ Uint8List? c7OpenLive({
     diff |= hash[i] ^ reference.bodyHash[i];
   }
   if (diff != 0) return null;
+  final keys = C7Keys(bindings);
+  final aad = C7Keys.bodyAad(
+    conversationId: conversationId,
+    channelId: channelId,
+    senderDeviceId: senderDeviceId,
+    actionId: actionId,
+  );
+  final bytes = Uint8List.fromList(body);
+  ({Uint8List signature, Uint8List paddedVap1})? tryOpen(Uint8List sealed) {
+    try {
+      return keys.openBody(
+          bodyKey: reference.bodyKey, aad: aad, sealed: sealed);
+    } on Object {
+      return null;
+    }
+  }
+
+  if (bytes.length <= 65536 + 124) {
+    final whole = tryOpen(bytes);
+    if (whole != null) {
+      return C7Opened(Uint8List.fromList(whole.paddedVap1), Uint8List(0),
+          bodyKey: Uint8List.fromList(reference.bodyKey),
+          signature: Uint8List.fromList(whole.signature));
+    }
+  }
+  final n = channelId == null ? c7HistorySyncChannelCount(bytes.length) : null;
+  if (n == null) return null;
+  final split = c7Body0PaddedLength(n) + 124;
+  final first = tryOpen(Uint8List.sublistView(bytes, 0, split));
+  if (first == null) return null;
+  return C7Opened(Uint8List.fromList(first.paddedVap1),
+      Uint8List.fromList(Uint8List.sublistView(bytes, split)),
+      bodyKey: Uint8List.fromList(reference.bodyKey),
+      signature: Uint8List.fromList(first.signature));
+}
+
+/// [c7OpenLiveParts] for a message that is not a `history_sync`: the padded
+/// VAP1 only. Wipes the reference's key.
+Uint8List? c7OpenLive({
+  required NativeCryptoBindings bindings,
+  required C7Reference reference,
+  required List<int>? sealedBody,
+  required String conversationId,
+  required String? channelId,
+  required String senderDeviceId,
+  required String actionId,
+}) {
   try {
-    final opened = C7Keys(bindings).openBody(
-      bodyKey: reference.bodyKey,
-      aad: C7Keys.bodyAad(
-        conversationId: conversationId,
-        channelId: channelId,
-        senderDeviceId: senderDeviceId,
-        actionId: actionId,
-      ),
-      sealed: Uint8List.fromList(body),
+    final opened = c7OpenLiveParts(
+      bindings: bindings,
+      reference: reference,
+      sealedBody: sealedBody,
+      conversationId: conversationId,
+      channelId: channelId,
+      senderDeviceId: senderDeviceId,
+      actionId: actionId,
     );
-    return opened == null ? null : Uint8List.fromList(opened.paddedVap1);
-  } on Object {
-    return null;
+    if (opened == null) return null;
+    opened.bodyKey.fillRange(0, 32, 0);
+    return opened.trailer.isEmpty ? opened.paddedVap1 : null;
   } finally {
     reference.bodyKey.fillRange(0, reference.bodyKey.length, 0);
   }

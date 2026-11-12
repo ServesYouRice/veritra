@@ -22,6 +22,7 @@ import 'package:private_messenger/sync/sync_service.dart';
 
 void main() {
   _removedSenderTests();
+  _formerMemberTests();
   testWidgets(
       'spoilers stay concealed until tapped and reset on a changed message',
       (tester) async {
@@ -487,6 +488,44 @@ void _removedSenderTests() {
     expect(semantics.label, contains('Sent from a device '));
     expect(tester.getSemantics(find.text('plain words')).label,
         isNot(contains('Sent from a device')));
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+}
+
+void _formerMemberTests() {
+  testWidgets(
+      "C7 review M2: a former member's imported post shows its name only when "
+      'proven; otherwise "Former member" with no name', (tester) async {
+    final store = MemoryLocalStore(), state = _state();
+    state.localStoreOverride = store;
+    InsertMessageEffect post(String key, String account, String body,
+            {required bool named}) =>
+        InsertMessageEffect(
+          key: '$key:r',
+          conversationId: 'conv',
+          senderAccountId: account,
+          senderDeviceId: key,
+          kind: LocalMessageKind.text,
+          body: body,
+          createdAt: 2,
+          state: LocalMessageState.received,
+        ).markedC7Former(named: named);
+    await _seed(store, key: 'dev:plain', body: 'plain words', extra: [
+      post('bobdev', 'bob', 'proven words', named: true),
+      post('maldev', 'carol', 'unproven words', named: false),
+    ]);
+    await state.refreshHistory('conv');
+    await tester.pumpWidget(
+        MaterialApp(home: ChatScreen(state: state, conversationId: 'conv')));
+    await tester.pumpAndSettle();
+    final proven = tester.getSemantics(find.text('proven words')).label;
+    final unproven = tester.getSemantics(find.text('unproven words')).label;
+    expect(proven, contains(englishL10n.channelHistoryFormerMember));
+    expect(unproven, contains(englishL10n.channelHistoryFormerMemberUnnamed));
+    // The account the server named for the unproven device never shows.
+    expect(unproven, isNot(contains('carol')));
+    expect(find.textContaining('carol'), findsNothing);
     await tester.pumpWidget(const SizedBox());
     state.dispose();
   });

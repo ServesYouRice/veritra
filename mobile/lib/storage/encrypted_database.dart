@@ -98,6 +98,21 @@ String? bodyAfterUnsupportedDelete(String? rawJson) {
 }
 
 /// Kinds stored in [LocalMessages.kind].
+/// [LocalMessages.c7Former]: how an imported post from a device no longer
+/// in the group is shown (C7 decision 8; owner answer 2026-11-12, "Hide
+/// unproven names", review M2). The server names the account a former
+/// device belonged to, and the server and any holder of the generation key
+/// could forge such a post, so the account's name is shown only when this
+/// device holds a signed device list of that account that lists (or once
+/// listed) the device with the key that verified the post.
+abstract final class C7FormerMark {
+  /// "From a former member", with the account's name.
+  static const int named = 1;
+
+  /// "Former member", with no name.
+  static const int unnamed = 2;
+}
+
 abstract final class LocalMessageKind {
   /// A visible message with [LocalMessages.body] text.
   static const text = 'text';
@@ -156,6 +171,8 @@ final class InsertMessageEffect extends MessageEffect {
     this.channelId,
     this.senderHidden = false,
     this.senderRemoved = false,
+    this.c7Gen,
+    this.c7Former,
   });
 
   final String key;
@@ -182,8 +199,33 @@ final class InsertMessageEffect extends MessageEffect {
   /// arrived ([LocalMessages.senderRemoved]).
   final bool senderRemoved;
 
+  /// C7 (schema 41): the generation this post's body was sealed under
+  /// ([LocalMessages.c7Gen]); null for a random key.
+  final String? c7Gen;
+
+  /// C7 (schema 42): an imported post verified with a former member's key
+  /// from the server, as a [C7FormerMark] value ([LocalMessages.c7Former]);
+  /// null for any other row.
+  final int? c7Former;
+
   /// This row, marked as sent from a removed device.
-  InsertMessageEffect markedSenderRemoved() => InsertMessageEffect(
+  InsertMessageEffect markedSenderRemoved() => _with(senderRemoved: true);
+
+  /// This row, recorded as sealed under the C7 generation [gen].
+  InsertMessageEffect withC7Gen(String gen) => _with(c7Gen: gen);
+
+  /// This row, marked as a former member's (C7 decision 8). [named] when
+  /// this device proved the signing device was its account's (review M2).
+  InsertMessageEffect markedC7Former({required bool named}) =>
+      _with(c7Former: named ? C7FormerMark.named : C7FormerMark.unnamed);
+
+  /// This row with [value] as its body (C7: a pre-join attachment's
+  /// manifest is never stored).
+  InsertMessageEffect withBody(String value) => _with(body: value);
+
+  InsertMessageEffect _with(
+          {bool? senderRemoved, String? c7Gen, String? body, int? c7Former}) =>
+      InsertMessageEffect(
         key: key,
         conversationId: conversationId,
         senderAccountId: senderAccountId,
@@ -192,14 +234,16 @@ final class InsertMessageEffect extends MessageEffect {
         createdAt: createdAt,
         state: state,
         serverMessageId: serverMessageId,
-        body: body,
+        body: body ?? this.body,
         replyTo: replyTo,
         expiresAt: expiresAt,
         formatJson: formatJson,
         forwardHops: forwardHops,
         channelId: channelId,
         senderHidden: senderHidden,
-        senderRemoved: true,
+        senderRemoved: senderRemoved ?? this.senderRemoved,
+        c7Gen: c7Gen ?? this.c7Gen,
+        c7Former: c7Former ?? this.c7Former,
       );
 }
 
@@ -553,6 +597,27 @@ class LocalMessages extends Table {
   /// removed". Null and false mean an approved sender.
   BoolColumn get senderRemoved => boolean().nullable()();
 
+  /// C7 (schema 41, decision 7): the generation this row's body was sealed
+  /// under, as the lowercase hex `sha256("veritra-c7-chk-v1" | CHK_g)`; it
+  /// names the period and the generation at once. The sender records it, a
+  /// live member when the body key it opened is that generation's, an
+  /// import when it opens the body under it. Null means a random key or a
+  /// conversation without C7. An action naming this row (an edit, a delete,
+  /// a reaction, a pin, a poll vote or close) seals under the current
+  /// generation only while this is one of the current period's.
+  TextColumn get c7Gen => text().nullable()();
+
+  /// C7 (schema 42, decision 8): an imported pre-join post whose signature
+  /// was verified with the server's former-member key for a device no longer
+  /// in the group. The chat marks it "From a former member", and it never
+  /// acts with a role. Unlike every other C7 state this travels in history
+  /// snapshots (owner, 2026-11-12: keep labels in backups), so a restored or
+  /// linked device never shows such a post unmarked. A [C7FormerMark]
+  /// value; null is unmarked. Edits never clear it.
+  IntColumn get c7Former => integer()
+      .nullable()
+      .check(c7Former.isIn(const [C7FormerMark.named, C7FormerMark.unnamed]))();
+
   @override
   Set<Column<Object>> get primaryKey => {key};
 }
@@ -658,7 +723,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 40;
+  static const currentSchemaVersion = 42;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -901,6 +966,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // generated rows. A store from before schema 7 creates the table
             // whole further down. Idempotent, so it can be renumbered.
             if (from >= 7 && from < 40) await _addSenderRemovedColumn();
+            // C7 (schemas 41 and 42): the generation a row's body was sealed
+            // under, and the former-member mark. First too, for the same
+            // reason. Gated on the column check alone, not on the version,
+            // so a store another package numbered past them (L2's 43) still
+            // gets both.
+            if (from >= 7) {
+              await _addC7GenColumn();
+              await _addC7FormerColumn();
+            }
             // K2/K0: the pending device enrollment. The waiting K0 claim
             // moves out of its schema 16 setting in this same transaction.
             if (from < 17) {
@@ -1058,6 +1132,25 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
           await customStatement('PRAGMA secure_delete = ON');
         },
       );
+
+  /// Adds `local_messages.c7_gen` unless it is there already.
+  Future<void> _addC7GenColumn() async {
+    final columns = await customSelect(
+            "SELECT name FROM pragma_table_info('local_messages')")
+        .get();
+    if (columns.any((row) => row.read<String>('name') == 'c7_gen')) return;
+    await customStatement('ALTER TABLE local_messages ADD COLUMN c7_gen TEXT');
+  }
+
+  /// Adds `local_messages.c7_former` unless it is there already.
+  Future<void> _addC7FormerColumn() async {
+    final columns = await customSelect(
+            "SELECT name FROM pragma_table_info('local_messages')")
+        .get();
+    if (columns.any((row) => row.read<String>('name') == 'c7_former')) return;
+    await customStatement('ALTER TABLE local_messages ADD COLUMN c7_former '
+        'INTEGER CHECK (c7_former IN (1, 2))');
+  }
 
   /// Adds `local_messages.sender_removed` unless it is there already.
   Future<void> _addSenderRemovedColumn() async {
@@ -1744,6 +1837,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     bool allowOwnPinEffect = false,
     String? leaseKey,
     void Function()? checkCanCommit,
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) =>
       transaction(() async {
         checkCanCommit?.call();
@@ -1752,6 +1846,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               ..where((table) => table.messageId.equals(eventKey)))
             .getSingleOrNull();
         if (processed != null) return;
+        await _writeC7SettingsInTransaction(c7Settings);
         if (ownMessageKey != null && envelope != null) {
           final echo = jsonDecode(envelope.payloadJson) as Map;
           final echoMetadata = echo['crypto_metadata'];
@@ -2001,6 +2096,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     GovernanceObservationChange? governanceObservation,
     String? leaseKey,
+    Map<String, String?> c7Settings = const <String, String?>{},
   }) =>
       transaction(() async {
         await _assertSyncLeaseInTransaction(leaseKey);
@@ -2015,6 +2111,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             counter != expectedCounter + 1) {
           throw StateError('stale outgoing application MLS transition');
         }
+        await _writeC7SettingsInTransaction(c7Settings);
         // Nothing is encrypted for a paused conversation (C1 P1).
         await _assertConversationNotPausedInTransaction(conversationId);
         if (await (select(localOutboxEntries)
@@ -2424,6 +2521,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   Future<List<LocalMessageReaction>> readAllReactions() =>
       select(localMessageReactions).get();
 
+  /// One decrypted row by its key, expired or not; null if there is none.
+  Future<LocalMessage?> readMessage(String key) =>
+      (select(localMessages)..where((table) => table.key.equals(key)))
+          .getSingleOrNull();
+
   Future<List<LocalMessage>> readMessages(String conversationId) =>
       (select(localMessages)
             ..where((table) =>
@@ -2449,6 +2551,33 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
 
   Future<void> applyMessageEffects(List<MessageEffect> effects) =>
       transaction(() => _applyMessageEffects(effects));
+
+  /// C7: a newcomer's imported history and its C7 state, in one
+  /// transaction (no MLS state or cursor moves).
+  Future<void> importC7History(List<MessageEffect> effects,
+          {Map<String, String?> c7Settings = const <String, String?>{}}) =>
+      transaction(() async {
+        await _applyMessageEffects(effects);
+        await _writeC7SettingsInTransaction(c7Settings);
+      });
+
+  /// C3 conversion ([LocalStore.moveChannelRows]).
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  }) =>
+      (update(localMessages)
+            ..where((t) =>
+                t.conversationId.equals(fromConversationId) &
+                (fromChannelId == null
+                    ? t.channelId.isNull()
+                    : t.channelId.equals(fromChannelId))))
+          .write(LocalMessagesCompanion(
+        conversationId: Value(toConversationId),
+        channelId: Value(toChannelId),
+      ));
 
   Future<void> _applyMessageEffects(List<MessageEffect> effects) async {
     HistoryNamespace? historyNamespace;

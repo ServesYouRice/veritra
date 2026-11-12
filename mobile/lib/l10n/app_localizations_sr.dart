@@ -4421,6 +4421,110 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Само администратори објављују';
+
+  @override
+  String get channelHistoryTitle => 'Историја за нове чланове';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'Људи који се придруже касније могу да читају раније објаве';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'Нове објаве ће моћи да читају и људи који се придруже касније.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'Људи који се придруже касније неће видети раније објаве. Чланови који их већ имају задржавају их.';
+
+  @override
+  String get channelHistoryProofConfirm =>
+      'Објаве у овом каналу се потписују да би људи који се придруже касније могли да провере ко их је написао. То значи да се може доказати ко је написао објаву: свако ко добије историју овог канала, на пример копију са сервера заједно са кључем са уређаја једног члана, може да покаже ко је написао сваку објаву. Аутори не могу да порекну своје објаве.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Може се доказати ко је написао сваку објаву';
+
+  @override
+  String get channelHistoryProofAccept => 'Укључи';
+
+  @override
+  String get channelHistoryLineFull =>
+      'Нове објаве могу да читају и људи који се придруже касније';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'Нове објаве могу да читају само људи који су чланови када су послате';
+
+  @override
+  String get channelHistoryPending => 'Чека се да промена прође';
+
+  @override
+  String get channelHistoryTimeout => 'Промена није прошла. Покушај поново.';
+
+  @override
+  String get channelHistoryLost =>
+      'Други администратор је истовремено променио ово подешавање. Провери га и покушај поново.';
+
+  @override
+  String get channelHistoryPaused =>
+      'Историја за нове чланове је паузирана до следеће промене чланства.';
+
+  @override
+  String get channelHistoryEarlier => 'Учитај раније објаве';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Прилог од пре него што си се придружио';
+
+  @override
+  String get channelHistoryFormerMember => 'Од бившег члана';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Бивши члан';
+
+  @override
+  String get channelConvertToPrivate => 'Учини овај канал приватним';
+
+  @override
+  String get channelConvertToOpen => 'Учини овај канал отвореним';
+
+  @override
+  String get channelConvertOpenTitle => 'Учинити овај канал отвореним?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Раније објаве у овом каналу постаће видљиве свима који могу да читају отворени канал, укључујући чланове заједнице који никада нису били у овом приватном каналу.';
+
+  @override
+  String get channelConvertOpenConfirmKept =>
+      'Раније објаве у овом каналу остају код оних који су их већ имали. Чланови заједнице који никада нису били у овом приватном каналу видеће само објаве настале након што канал постане отворен.';
+
+  @override
+  String get channelConvertOpenAccept => 'Учини отвореним';
+
+  @override
+  String get channelConvertPrivateTitle => 'Учинити овај канал приватним?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Сви означени биће додати у приватни канал и задржаће његове раније објаве. Свако коме уклоните ознаку губи приступ каналу и његовим ранијим објавама.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'Још нико други не чита овај канал.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Није могуће учитати ко чита овај канал. Покушајте поново.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Учини приватним';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'Канал је сада приватан, али ови означени читаоци нису могли да буду додати: $names. Додајте их из чланова канала.';
+  }
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8845,4 +8949,108 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';
+
+  @override
+  String get channelHistoryTitle => 'Istorija za nove članove';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'Ljudi koji se pridruže kasnije mogu da čitaju ranije objave';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'Nove objave će moći da čitaju i ljudi koji se pridruže kasnije.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'Ljudi koji se pridruže kasnije neće videti ranije objave. Članovi koji ih već imaju zadržavaju ih.';
+
+  @override
+  String get channelHistoryProofConfirm =>
+      'Objave u ovom kanalu se potpisuju da bi ljudi koji se pridruže kasnije mogli da provere ko ih je napisao. To znači da se može dokazati ko je napisao objavu: svako ko dobije istoriju ovog kanala, na primer kopiju sa servera zajedno sa ključem sa uređaja jednog člana, može da pokaže ko je napisao svaku objavu. Autori ne mogu da poreknu svoje objave.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Može se dokazati ko je napisao svaku objavu';
+
+  @override
+  String get channelHistoryProofAccept => 'Uključi';
+
+  @override
+  String get channelHistoryLineFull =>
+      'Nove objave mogu da čitaju i ljudi koji se pridruže kasnije';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'Nove objave mogu da čitaju samo ljudi koji su članovi kada su poslate';
+
+  @override
+  String get channelHistoryPending => 'Čeka se da promena prođe';
+
+  @override
+  String get channelHistoryTimeout => 'Promena nije prošla. Pokušaj ponovo.';
+
+  @override
+  String get channelHistoryLost =>
+      'Drugi administrator je istovremeno promenio ovo podešavanje. Proveri ga i pokušaj ponovo.';
+
+  @override
+  String get channelHistoryPaused =>
+      'Istorija za nove članove je pauzirana do sledeće promene članstva.';
+
+  @override
+  String get channelHistoryEarlier => 'Učitaj ranije objave';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Prilog od pre nego što si se pridružio';
+
+  @override
+  String get channelHistoryFormerMember => 'Od bivšeg člana';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Bivši član';
+
+  @override
+  String get channelConvertToPrivate => 'Učini ovaj kanal privatnim';
+
+  @override
+  String get channelConvertToOpen => 'Učini ovaj kanal otvorenim';
+
+  @override
+  String get channelConvertOpenTitle => 'Učiniti ovaj kanal otvorenim?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Ranije objave u ovom kanalu postaće vidljive svima koji mogu da čitaju otvoreni kanal, uključujući članove zajednice koji nikada nisu bili u ovom privatnom kanalu.';
+
+  @override
+  String get channelConvertOpenConfirmKept =>
+      'Ranije objave u ovom kanalu ostaju kod onih koji su ih već imali. Članovi zajednice koji nikada nisu bili u ovom privatnom kanalu videće samo objave nastale nakon što kanal postane otvoren.';
+
+  @override
+  String get channelConvertOpenAccept => 'Učini otvorenim';
+
+  @override
+  String get channelConvertPrivateTitle => 'Učiniti ovaj kanal privatnim?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Svi označeni biće dodati u privatni kanal i zadržaće njegove ranije objave. Svako kome uklonite oznaku gubi pristup kanalu i njegovim ranijim objavama.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'Još niko drugi ne čita ovaj kanal.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Nije moguće učitati ko čita ovaj kanal. Pokušajte ponovo.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Učini privatnim';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'Kanal je sada privatan, ali ovi označeni čitaoci nisu mogli da budu dodati: $names. Dodajte ih iz članova kanala.';
+  }
 }

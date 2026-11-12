@@ -193,7 +193,14 @@ or stream. Keys never leave the MLS payload and the encrypted database.
 
 The SDK runs one sync owner per session, like `AccountSyncEngine`: a WebSocket
 wake, `session.wake()` from a host push handler, or a timer all request the same
-coalesced catch-up. Events delivered to `EventSink`:
+coalesced catch-up. A message's realtime frame is the bare
+`{"version":"v1","type":"sync.available","created_at":…}`: it names no
+event, conversation or message and is the same for a new, edited or
+deleted message (and for any later message event type, such as the sealed
+branch's `message.sealed.created`). Treat every frame except
+`typing.updated` and `delivery_receipt.updated` as a wake, and read
+message data from `GET /api/v1/sync/events` only. Events delivered to
+`EventSink`:
 
 | Event | Meaning |
 |---|---|

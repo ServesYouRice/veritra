@@ -1382,6 +1382,72 @@ class ApiClient {
     return _decode(() => ChannelCreation.fromJson(json));
   }
 
+  /// C3 channel conversion (owner or admin): moves [channelId] to
+  /// [accessMode] (`private`, or `open` / `announcement`). The answer is
+  /// `{move: {channel_id, from_conversation_id, to_conversation_id,
+  /// from_access, to_access, layout_generation}, conversation}`.
+  Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
+      String token, String channelId, String accessMode) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/channels/${Uri.encodeComponent(channelId)}/move',
+      token: token,
+      body: <String, Object?>{'access_mode': accessMode},
+    );
+    return _decode(() => (
+          move: Map<String, Object?>.from(json['move'] as Map),
+          conversation: Conversation.fromJson(
+              Map<String, Object?>.from(json['conversation'] as Map)),
+        ));
+  }
+
+  /// C3 conversion, behind C7: [fromConversationId]'s bodies up to the
+  /// move that took [channelId] out of it, in its channel stream
+  /// ([group] false) or its group-level stream, newest first, before
+  /// [beforeId]; rows as [historyBodies]. Member devices of the channel's
+  /// current group only.
+  Future<List<Map<String, Object?>>> movedHistoryBodies(
+    String token,
+    String channelId,
+    String fromConversationId, {
+    required bool group,
+    String? beforeId,
+    int limit = 50,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/channels/${Uri.encodeComponent(channelId)}/moves/'
+            '${Uri.encodeComponent(fromConversationId)}/history',
+        queryParameters: <String, String>{
+          'stream': group ? '' : channelId,
+          if (beforeId != null) 'before': beforeId,
+          'limit': '$limit',
+        },
+      ).toString(),
+      token: token,
+      maxResponseBytes: _maxCiphertextResponseBytes,
+    );
+    return _decode(() => (json['history'] as List)
+        .map((row) => Map<String, Object?>.from(row as Map))
+        .toList());
+  }
+
+  /// C3 conversion, behind C7: the signing keys of the devices that posted
+  /// in [fromConversationId], rows as [formerMemberKeys].
+  Future<List<Map<String, Object?>>> movedMemberKeys(
+      String token, String channelId, String fromConversationId) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/channels/${Uri.encodeComponent(channelId)}/moves/'
+          '${Uri.encodeComponent(fromConversationId)}/keys',
+      token: token,
+    );
+    return _decode(() => (json['devices'] as List)
+        .map((row) => Map<String, Object?>.from(row as Map))
+        .toList());
+  }
+
   Future<void> addConversationMember(
     String token,
     String conversationId,
@@ -1824,6 +1890,24 @@ class ApiClient {
     return _decode(() => (json['devices'] as List)
         .map((row) => Map<String, Object?>.from(row as Map))
         .toList());
+  }
+
+  /// C7 (owner answer Q3): whether a `history_sync` for [forEpoch] is already
+  /// delivered in [conversationId] and not reopened by a newcomer's request.
+  /// A member asks before its fallback send, since it never receives the
+  /// newcomers' `history_sync` itself. 404 while the server has C7 off.
+  Future<bool> historySyncDelivered(
+      String token, String conversationId, int forEpoch) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+            '/history-sync',
+        queryParameters: <String, String>{'for_epoch': '$forEpoch'},
+      ).toString(),
+      token: token,
+    );
+    return _decode(() => json['delivered'] as bool);
   }
 
   /// C7: marks a community post `history_hidden`, so the history route never

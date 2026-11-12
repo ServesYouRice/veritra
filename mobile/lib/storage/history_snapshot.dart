@@ -714,9 +714,11 @@ const _messageFields = {
 };
 
 /// Fields a snapshot row may also carry. `senderRemoved` (L1, schema 40) is
-/// written only when true, so a snapshot without such a message stays one an
-/// older importer reads; a marked message is never copied unmarked.
-const _readMessageFields = {..._messageFields, 'senderRemoved'};
+/// written only when true and `c7Former` (C7, schema 42: 1 named, 2 unnamed,
+/// [C7FormerMark]) only when set, so a snapshot
+/// without such a message stays one an older importer reads; a marked
+/// message is never copied unmarked.
+const _readMessageFields = {..._messageFields, 'senderRemoved', 'c7Former'};
 
 /// A link preview (B2, up to ~22 KiB of thumbnail per row) never travels in a
 /// snapshot: it would push a long history over the 64 MiB cap, and a build
@@ -728,6 +730,7 @@ Map<String, Object?> _messageJson(LocalMessage m) {
   };
   json['formatJson'] = formatJsonWithoutPreview(json['formatJson'] as String?);
   if (m.senderRemoved == true) json['senderRemoved'] = true;
+  if (m.c7Former case final mark?) json['c7Former'] = mark;
   return json;
 }
 
@@ -755,6 +758,9 @@ LocalMessage _readMessage(Object? raw) {
       }.contains(j['kind']) ||
       (j['senderHidden'] != null && j['senderHidden'] is! bool) ||
       (j['senderRemoved'] != null && j['senderRemoved'] != true) ||
+      (j['c7Former'] != null &&
+          j['c7Former'] != C7FormerMark.named &&
+          j['c7Former'] != C7FormerMark.unnamed) ||
       (j['forwardHops'] != null &&
           (j['forwardHops'] is! int ||
               (j['forwardHops'] as int) < 0 ||
@@ -782,7 +788,16 @@ LocalMessage _readMessage(Object? raw) {
   return LocalMessage.fromJson(j);
 }
 
+/// The stored body of a C7 pre-join attachment post (owner answer Q2: never
+/// offered). Not a JSON list, so no attachment entry, key or blob id ever
+/// reaches the database and the timeline has nothing to download; it shows
+/// the "from before you joined" placeholder instead. A snapshot carries it
+/// as it is (K1 backups and K2 bundles of an imported channel); any other
+/// attachment body that is not a list is refused.
+const String c7HiddenAttachmentBody = '{"c7":"pre_join_attachment"}';
+
 void _validateAttachments(LocalMessage m) {
+  if (m.body == c7HiddenAttachmentBody) return;
   final list = strictHistoryJson(utf8.encode(m.body!));
   if (list is! List || list.length > 32) _invalid();
   for (final item in list) {
@@ -860,7 +875,9 @@ LocalMessage historyMessageFromInsert(InsertMessageEffect effect) =>
         forwardHops: effect.forwardHops,
         channelId: effect.channelId,
         senderHidden: effect.senderHidden,
-        senderRemoved: effect.senderRemoved ? true : null);
+        senderRemoved: effect.senderRemoved ? true : null,
+        c7Gen: effect.c7Gen,
+        c7Former: effect.c7Former);
 
 HistorySnapshot captureHistory(
     {required Session session,

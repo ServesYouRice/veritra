@@ -121,6 +121,29 @@ void main() {
     harness.dispose();
   });
 
+  test(
+      'with C7 the expired tombstone is committed by the crypto service, '
+      'with its C7 state in the same commit', () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[
+        _envelopeEvent(4, 'msg_expired',
+            ciphertext: _undecryptable, expiresAt: DateTime.utc(2000)),
+        _envelopeEvent(5, 'msg_ok'),
+      ];
+    final harness = await _Harness.start(api, c7: true);
+    await harness
+        .waitFor(() async => await harness.store.loadSyncCursor() == 5);
+    expect(harness.state.syncRecovery, isNull);
+    expect((harness.crypto as _C7FakeMlsCrypto).expiredSkips,
+        <String>['expired:4:msg_expired']);
+    expect(await harness.store.hasProcessedMlsMessage('expired:4:msg_expired'),
+        isTrue);
+    expect(await harness.store.loadSetting('c7.test.miss'),
+        'expired:4:msg_expired');
+    expect(harness.crypto.applied, <String>['msg_ok']);
+    harness.dispose();
+  });
+
   test('a rejected MLS commit is an MLS state failure and can be retried',
       () async {
     final api = _ScriptedApi()..events = <SyncEvent>[_mlsEvent(2, 'mls_bad')];
@@ -796,10 +819,11 @@ class _Harness {
   final LocalStore store;
   final _FakeMlsCrypto crypto;
 
-  static Future<_Harness> start(_ScriptedApi api, {LocalStore? store}) async {
+  static Future<_Harness> start(_ScriptedApi api,
+      {LocalStore? store, bool c7 = false}) async {
     final local = store ?? MemoryLocalStore();
     if (store == null) await local.saveSession(_session);
-    final crypto = _FakeMlsCrypto(local);
+    final crypto = c7 ? _C7FakeMlsCrypto(local) : _FakeMlsCrypto(local);
     final state = AppState(
       apiClientFactory: (_) => api,
       cryptoService: crypto,
@@ -982,6 +1006,27 @@ class _ScriptedApi extends ApiClient with LegacySyncPageFake {
       throw ApiException(410, '{"error":"message_expired"}');
     }
     throw ApiException(404, '{"error":"not_found"}');
+  }
+}
+
+/// A crypto service with C7: the expired tombstone goes through it, so the
+/// group's full channels can turn `unsure` in the same commit.
+class _C7FakeMlsCrypto extends _FakeMlsCrypto implements C7HistoryService {
+  _C7FakeMlsCrypto(super.store);
+
+  final List<String> expiredSkips = <String>[];
+
+  @override
+  Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone) async {
+    expiredSkips.add(tombstone.eventKey);
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: tombstone.eventKey,
+      conversationId: tombstone.conversationId,
+      expectedCursor: tombstone.expectedCursor,
+      cursor: tombstone.cursor,
+      checkCanCommit: tombstone.checkCanCommit,
+      c7Settings: <String, String?>{'c7.test.miss': tombstone.eventKey},
+    ));
   }
 }
 

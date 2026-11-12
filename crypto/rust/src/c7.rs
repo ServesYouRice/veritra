@@ -418,7 +418,9 @@ pub fn post_signed_fields(
 ) -> Result<Vec<u8>, C7Error> {
     let mut out = Vec::new();
     lp_id(&mut out, community_id)?;
-    lp_id(&mut out, channel_id)?;
+    // Empty for a group-level message (`history_sync` and its request),
+    // as in the body's aad.
+    lp_aad_id(&mut out, channel_id)?;
     lp_id(&mut out, action_id)?;
     lp_id(&mut out, group_id)?;
     out.extend_from_slice(&epoch.to_be_bytes());
@@ -633,6 +635,77 @@ pub const REASON_SWITCH: u8 = 1;
 pub const REASON_MOVE: u8 = 2;
 /// A record with this `seq` is invalid, so `seq` never wraps.
 pub const SEQ_LIMIT: u32 = u32::MAX;
+
+/// The used part of a move wrap: `u64 E_prev | CHK_prev[32] |
+/// lp(prev_group_id) | u64 E_prev_close`, at most 114 bytes.
+pub const MOVE_WRAP_USED_MAX: usize = 8 + KEY_BYTES + 2 + MAX_ID_BYTES + 8;
+
+/// The wrap a narrowing move of a `full` channel carries (decision 11):
+/// the old group's current generation, so a newcomer walking back from the
+/// new group reaches the old group's history. Every other move carries 128
+/// random bytes, which [`MoveWrap::decode`] refuses; a refused wrap means
+/// "no wrap" (a gap, never a leak). No ABI: the app decodes it in Dart and
+/// this is the core's statement of the same structure.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MoveWrap {
+    /// Opening epoch of the old group's current generation.
+    pub prev_epoch: u64,
+    /// Its `CHK`; never all zero.
+    pub prev_key: [u8; KEY_BYTES],
+    /// The old group: the record's `close_group_id`.
+    pub prev_group_id: Vec<u8>,
+    /// The old group's epoch at the move: the record's `close_epoch`.
+    pub prev_close_epoch: u64,
+}
+
+impl MoveWrap {
+    /// Zero-padded to [`MOVE_WRAP_BYTES`].
+    pub fn encode(&self) -> Result<[u8; MOVE_WRAP_BYTES], C7Error> {
+        self.check()?;
+        let mut used = Vec::with_capacity(MOVE_WRAP_USED_MAX);
+        used.extend_from_slice(&self.prev_epoch.to_be_bytes());
+        used.extend_from_slice(&self.prev_key);
+        lp_id(&mut used, &self.prev_group_id)?;
+        used.extend_from_slice(&self.prev_close_epoch.to_be_bytes());
+        let mut out = [0u8; MOVE_WRAP_BYTES];
+        out[..used.len()].copy_from_slice(&used);
+        Ok(out)
+    }
+
+    /// Structure only: a 1-64 byte group id, a non-zero key, zero padding,
+    /// and a generation that opened no later than the move. Whether it names
+    /// its own record is [`MoveWrap::fits`].
+    pub fn decode(bytes: &[u8]) -> Result<Self, C7Error> {
+        let bytes: &[u8; MOVE_WRAP_BYTES] = bytes.try_into().map_err(|_| C7Error::InvalidInput)?;
+        let mut reader = Reader { bytes };
+        let wrap = Self {
+            prev_epoch: reader.u64()?,
+            prev_key: reader.array::<KEY_BYTES>()?,
+            prev_group_id: reader.lp_id()?,
+            prev_close_epoch: reader.u64()?,
+        };
+        reader.zero_rest()?;
+        wrap.check()?;
+        Ok(wrap)
+    }
+
+    /// Whether the wrap names the move record's own old group and close
+    /// epoch; a receiver takes no other.
+    pub fn fits(&self, close_group_id: &[u8], close_epoch: u64) -> bool {
+        self.prev_group_id == close_group_id && self.prev_close_epoch == close_epoch
+    }
+
+    fn check(&self) -> Result<(), C7Error> {
+        if self.prev_key.iter().all(|byte| *byte == 0)
+            || self.prev_group_id.is_empty()
+            || self.prev_group_id.len() > MAX_ID_BYTES
+            || self.prev_epoch > self.prev_close_epoch
+        {
+            return Err(C7Error::InvalidInput);
+        }
+        Ok(())
+    }
+}
 
 /// A history record in full form (decision 3). Encoding and decoding check
 /// structure only (lengths, enumerations, zero padding, `seq` below the

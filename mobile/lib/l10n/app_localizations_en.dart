@@ -4404,4 +4404,109 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Only admins post';
+
+  @override
+  String get channelHistoryTitle => 'History for new members';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'People who join later can read earlier posts';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'New posts can be read by people who join later.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'People who join later won\'t see earlier posts. Members who already have them keep them.';
+
+  @override
+  String get channelHistoryProofConfirm =>
+      'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Posts can be proven to be their author\'s';
+
+  @override
+  String get channelHistoryProofAccept => 'Turn on';
+
+  @override
+  String get channelHistoryLineFull =>
+      'New posts can be read by people who join later';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'New posts can be read only by people who are members when they are sent';
+
+  @override
+  String get channelHistoryPending => 'Waiting for the change to go through';
+
+  @override
+  String get channelHistoryTimeout =>
+      'The change did not go through. Try again.';
+
+  @override
+  String get channelHistoryLost =>
+      'Another admin changed this setting at the same time. Check it and try again.';
+
+  @override
+  String get channelHistoryPaused =>
+      'History for new members is paused until the next membership change.';
+
+  @override
+  String get channelHistoryEarlier => 'Load earlier posts';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Attachment from before you joined';
+
+  @override
+  String get channelHistoryFormerMember => 'From a former member';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Former member';
+
+  @override
+  String get channelConvertToPrivate => 'Make this channel private';
+
+  @override
+  String get channelConvertToOpen => 'Make this channel open';
+
+  @override
+  String get channelConvertOpenTitle => 'Make this channel open?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.';
+
+  @override
+  String get channelConvertOpenConfirmKept =>
+      'Earlier posts in this channel stay with the people who already had them. Community members who were never in this private channel will see only posts made after it opens.';
+
+  @override
+  String get channelConvertOpenAccept => 'Make open';
+
+  @override
+  String get channelConvertPrivateTitle => 'Make this channel private?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'No one else reads this channel yet.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Could not load who reads this channel. Try again.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Make private';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'The channel is private now, but these ticked readers could not be added: $names. Add them from the channel\'s members.';
+  }
 }

@@ -7268,6 +7268,180 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only admins post'**
   String get rolesOnlyAdminsPost;
+
+  /// No description provided for @channelHistoryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'History for new members'**
+  String get channelHistoryTitle;
+
+  /// No description provided for @channelHistoryFullLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'People who join later can read earlier posts'**
+  String get channelHistoryFullLabel;
+
+  /// No description provided for @channelHistoryOnConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read by people who join later.'**
+  String get channelHistoryOnConfirm;
+
+  /// No description provided for @channelHistoryOffConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'People who join later won\'t see earlier posts. Members who already have them keep them.'**
+  String get channelHistoryOffConfirm;
+
+  /// No description provided for @channelHistoryProofConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.'**
+  String get channelHistoryProofConfirm;
+
+  /// No description provided for @channelHistoryProofLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Posts can be proven to be their author\'s'**
+  String get channelHistoryProofLine;
+
+  /// No description provided for @channelHistoryProofAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on'**
+  String get channelHistoryProofAccept;
+
+  /// No description provided for @channelHistoryLineFull.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read by people who join later'**
+  String get channelHistoryLineFull;
+
+  /// No description provided for @channelHistoryLineFromJoin.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read only by people who are members when they are sent'**
+  String get channelHistoryLineFromJoin;
+
+  /// No description provided for @channelHistoryPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the change to go through'**
+  String get channelHistoryPending;
+
+  /// No description provided for @channelHistoryTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'The change did not go through. Try again.'**
+  String get channelHistoryTimeout;
+
+  /// No description provided for @channelHistoryLost.
+  ///
+  /// In en, this message translates to:
+  /// **'Another admin changed this setting at the same time. Check it and try again.'**
+  String get channelHistoryLost;
+
+  /// No description provided for @channelHistoryPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'History for new members is paused until the next membership change.'**
+  String get channelHistoryPaused;
+
+  /// No description provided for @channelHistoryEarlier.
+  ///
+  /// In en, this message translates to:
+  /// **'Load earlier posts'**
+  String get channelHistoryEarlier;
+
+  /// No description provided for @channelHistoryAttachmentHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachment from before you joined'**
+  String get channelHistoryAttachmentHidden;
+
+  /// No description provided for @channelHistoryFormerMember.
+  ///
+  /// In en, this message translates to:
+  /// **'From a former member'**
+  String get channelHistoryFormerMember;
+
+  /// No description provided for @channelHistoryFormerMemberUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Former member'**
+  String get channelHistoryFormerMemberUnnamed;
+
+  /// No description provided for @channelConvertToPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel private'**
+  String get channelConvertToPrivate;
+
+  /// No description provided for @channelConvertToOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel open'**
+  String get channelConvertToOpen;
+
+  /// No description provided for @channelConvertOpenTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel open?'**
+  String get channelConvertOpenTitle;
+
+  /// No description provided for @channelConvertOpenConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.'**
+  String get channelConvertOpenConfirm;
+
+  /// Making a private channel open, when its earlier posts do not open for the shared group: channel history is off, or the channel keeps posts from each member's join.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier posts in this channel stay with the people who already had them. Community members who were never in this private channel will see only posts made after it opens.'**
+  String get channelConvertOpenConfirmKept;
+
+  /// No description provided for @channelConvertOpenAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Make open'**
+  String get channelConvertOpenAccept;
+
+  /// No description provided for @channelConvertPrivateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel private?'**
+  String get channelConvertPrivateTitle;
+
+  /// No description provided for @channelConvertPrivatePick.
+  ///
+  /// In en, this message translates to:
+  /// **'Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.'**
+  String get channelConvertPrivatePick;
+
+  /// No description provided for @channelConvertPrivateNoReaders.
+  ///
+  /// In en, this message translates to:
+  /// **'No one else reads this channel yet.'**
+  String get channelConvertPrivateNoReaders;
+
+  /// No description provided for @channelConvertReadersFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load who reads this channel. Try again.'**
+  String get channelConvertReadersFailed;
+
+  /// No description provided for @channelConvertPrivateAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Make private'**
+  String get channelConvertPrivateAccept;
+
+  /// Shown after an open channel was made private when some ticked readers could not be added.
+  ///
+  /// In en, this message translates to:
+  /// **'The channel is private now, but these ticked readers could not be added: {names}. Add them from the channel\'s members.'**
+  String channelConvertNotAdded(String names);
 }
 
 class _AppLocalizationsDelegate
