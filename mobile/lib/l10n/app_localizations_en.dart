@@ -4428,7 +4428,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get l2SealedProvableNone =>
-      'No owner\'s report key is pinned on this device. A message you send without your name can then be proven to no one if it is reported. A key is pinned when you compare an owner\'s code while reporting.';
+      'No owner\'s report key is pinned on this device yet. A message you send without your name can then be proven to no one if it is reported. The app pins the owners\' keys the first time the server lists them.';
 
   @override
   String l2SealedProvableOwners(int count) {
@@ -4468,4 +4468,40 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get l2SealedKeyAcceptWarning =>
       'Accept only if the server\'s operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else\'s.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'The owners\' report keys changed. Review them.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'The server\'s list of the owners\' report keys differs from the keys this app pinned. Until you accept a change, a message you send without your name is provable only to the owners pinned before.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Owner $account has a different report key.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Owner $account is new.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Owner $account is no longer listed.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Accept';
+
+  @override
+  String get l2OwnerKeyReject => 'Reject';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Accept only if you know the owners or their keys changed. A key the server made itself would let it read the reports you send.';
+
+  @override
+  String get l2OwnerKeyStale => 'The list changed meanwhile. Look at it again.';
 }

@@ -1300,7 +1300,7 @@
   "c6VerdictNotDesignatedDetail": "Poruka se poklapa, ali je poslata bez imena i nije učinjena dokazivom vašem trenutnom ključu za prijave. Aplikacija pošiljaoca nije zakačila vaš ključ, ili ste od tada zamenili ključ. Ovde ne može da se dokaže.",
   "c6VerdictProofFailed": "Dokaz se ne slaže",
   "c6VerdictProofFailedDetail": "Poruka se poklapa, ali njen dokaz za vas se ne slaže sa pošiljaocem kojeg navodi. Ne oslanjajte se na to ko ju je poslao.",
-  "l2SealedProvableNone": "Na ovom uređaju nije zakačen ključ za prijave nijednog vlasnika. Poruka koju pošaljete bez imena tada ne može nikome da se dokaže ako bude prijavljena. Ključ se zakači kada uporedite kod vlasnika tokom prijave.",
+  "l2SealedProvableNone": "Na ovom uređaju još nije zakačen ključ za prijave nijednog vlasnika. Poruka koju pošaljete bez imena tada ne može nikome da se dokaže ako bude prijavljena. Aplikacija zakači ključeve vlasnika kada ih server prvi put navede.",
   "l2SealedProvableOwners": "Poruka koju pošaljete bez imena može, ako bude prijavljena, da se dokaže samo vlasnicima čije ste ključeve za prijave zakačili: {count}. Samo oni mogu da provere dokaz; on nikog drugog ne ubeđuje.",
   "l2SealedKeyTitle": "Ključ skrivenog pošiljaoca",
   "l2SealedKeyTile": "Poruke bez vašeg imena",
@@ -1311,5 +1311,14 @@
   "l2SealedKeyChanged": "Server sada pokazuje drugi ključ. Dok ga ne prihvatite, vaše poruke se šalju sa vašim imenom, kao ranije.",
   "l2SealedKeyNew": "Novi ključ",
   "l2SealedKeyAccept": "Prihvati novi ključ",
-  "l2SealedKeyAcceptWarning": "Prihvatite samo ako vam je operater servera rekao da se ključ promenio. Ključ napravljen samo za vas omogućio bi serveru da vaše poruke razlikuje od tuđih."
+  "l2SealedKeyAcceptWarning": "Prihvatite samo ako vam je operater servera rekao da se ključ promenio. Ključ napravljen samo za vas omogućio bi serveru da vaše poruke razlikuje od tuđih.",
+  "l2OwnerKeysReviewTile": "Ključevi vlasnika za prijave su se promenili. Pregledajte ih.",
+  "l2OwnerKeysReviewIntro": "Spisak ključeva vlasnika za prijave na serveru razlikuje se od ključeva koje je ova aplikacija zakačila. Dok ne prihvatite promenu, poruka koju pošaljete bez imena može da se dokaže samo ranije zakačenim vlasnicima.",
+  "l2OwnerKeyChanged": "Vlasnik {account} ima drugi ključ za prijave.",
+  "l2OwnerKeyAdded": "Vlasnik {account} je nov.",
+  "l2OwnerKeyMissing": "Vlasnik {account} više nije na spisku.",
+  "l2OwnerKeyAccept": "Prihvati",
+  "l2OwnerKeyReject": "Odbij",
+  "l2OwnerKeyAcceptWarning": "Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ključ koji je napravio sam server omogućio bi mu da čita prijave koje šaljete.",
+  "l2OwnerKeyStale": "Spisak se u međuvremenu promenio. Pogledajte ga ponovo."
 }

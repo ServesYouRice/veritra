@@ -4445,7 +4445,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get l2SealedProvableNone =>
-      'На овом уређају није закачен кључ за пријаве ниједног власника. Порука коју пошаљете без имена тада не може никоме да се докаже ако буде пријављена. Кључ се закачи када упоредите код власника током пријаве.';
+      'На овом уређају још није закачен кључ за пријаве ниједног власника. Порука коју пошаљете без имена тада не може никоме да се докаже ако буде пријављена. Апликација закачи кључеве власника када их сервер први пут наведе.';
 
   @override
   String l2SealedProvableOwners(int count) {
@@ -4485,6 +4485,43 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get l2SealedKeyAcceptWarning =>
       'Прихватите само ако вам је оператер сервера рекао да се кључ променио. Кључ направљен само за вас омогућио би серверу да ваше поруке разликује од туђих.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'Кључеви власника за пријаве су се променили. Прегледајте их.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'Списак кључева власника за пријаве на серверу разликује се од кључева које је ова апликација закачила. Док не прихватите промену, порука коју пошаљете без имена може да се докаже само раније закаченим власницима.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Власник $account има други кључ за пријаве.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Власник $account је нов.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Власник $account више није на списку.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Прихвати';
+
+  @override
+  String get l2OwnerKeyReject => 'Одбиј';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Прихватите само ако знате да су се власници или њихови кључеви променили. Кључ који је направио сам сервер омогућио би му да чита пријаве које шаљете.';
+
+  @override
+  String get l2OwnerKeyStale =>
+      'Списак се у међувремену променио. Погледајте га поново.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8933,7 +8970,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get l2SealedProvableNone =>
-      'Na ovom uređaju nije zakačen ključ za prijave nijednog vlasnika. Poruka koju pošaljete bez imena tada ne može nikome da se dokaže ako bude prijavljena. Ključ se zakači kada uporedite kod vlasnika tokom prijave.';
+      'Na ovom uređaju još nije zakačen ključ za prijave nijednog vlasnika. Poruka koju pošaljete bez imena tada ne može nikome da se dokaže ako bude prijavljena. Aplikacija zakači ključeve vlasnika kada ih server prvi put navede.';
 
   @override
   String l2SealedProvableOwners(int count) {
@@ -8973,4 +9010,41 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get l2SealedKeyAcceptWarning =>
       'Prihvatite samo ako vam je operater servera rekao da se ključ promenio. Ključ napravljen samo za vas omogućio bi serveru da vaše poruke razlikuje od tuđih.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'Ključevi vlasnika za prijave su se promenili. Pregledajte ih.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'Spisak ključeva vlasnika za prijave na serveru razlikuje se od ključeva koje je ova aplikacija zakačila. Dok ne prihvatite promenu, poruka koju pošaljete bez imena može da se dokaže samo ranije zakačenim vlasnicima.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Vlasnik $account ima drugi ključ za prijave.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Vlasnik $account je nov.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Vlasnik $account više nije na spisku.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Prihvati';
+
+  @override
+  String get l2OwnerKeyReject => 'Odbij';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ključ koji je napravio sam server omogućio bi mu da čita prijave koje šaljete.';
+
+  @override
+  String get l2OwnerKeyStale =>
+      'Spisak se u međuvremenu promenio. Pogledajte ga ponovo.';
 }

@@ -412,7 +412,15 @@ class SettingsScreen extends StatelessWidget {
                     ListTile(
                       leading: const Icon(Icons.key_outlined),
                       title: Text(l10n.l2SealedKeyTitle),
-                      subtitle: Text(l10n.l2SealedKeyTile),
+                      // L2-3: owner report keys waiting for a decision.
+                      subtitle: state.ownerKeyReview.isEmpty
+                          ? Text(l10n.l2SealedKeyTile)
+                          : Text(
+                              l10n.l2OwnerKeysReviewTile,
+                              key: const ValueKey('owner-key-review-tile'),
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error),
+                            ),
                       onTap: () => Navigator.of(context).push(
                         sharedAxisRoute<void>(
                           (_) => SealedKeyScreen(state: state),

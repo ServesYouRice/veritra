@@ -7,7 +7,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, mapEquals, setEquals, visibleForTesting;
+    show
+        defaultTargetPlatform,
+        listEquals,
+        mapEquals,
+        setEquals,
+        visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
@@ -89,6 +94,9 @@ import '../crypto/profile_record_codec.dart'
 import 'passkeys.dart';
 import 'receipts_state.dart';
 import 'report_key_announcer.dart';
+import 'report_models.dart' show ReportInbox;
+import '../crypto/franking.dart' show reportInboxInstanceOwner;
+import '../crypto/owner_key_watch.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
 import 'typing_state.dart';
@@ -418,6 +426,13 @@ class AppState extends ChangeNotifier
   /// them, which never carries the session.
   SealedSender? sealedSender;
   SealedPostClient? _sealedPost;
+
+  /// L2-3: the owner report key differences waiting for the person (a key
+  /// changed, an owner added or gone), as last read from this device's
+  /// pins and the server's latest listing. Until accepted, sealed messages
+  /// are tagged only to the keys pinned before. Settings shows a warning
+  /// while it is not empty.
+  List<OwnerKeyReviewItem> ownerKeyReview = const <OwnerKeyReviewItem>[];
   SyncService? sync;
   StreamSubscription<Map<String, Object?>>? _syncSubscription;
   StreamSubscription<PushEvent>? _pushSubscription;
@@ -9863,18 +9878,72 @@ class AppState extends ChangeNotifier
     return localStore.loadSealedKeyPin(sealed.origin);
   }
 
-  /// L2-3: how many owner report keys this app pinned for this server, for
-  /// Settings: a message sent sealed can be proven only to those owners
-  /// (none: to no one).
   /// The franking context the sealed token pass loads (tests only).
   @visibleForTesting
   Future<SealedFrankContext?> debugSealedFrankContext() =>
       _sealedFrankContext(session?.baseUrl ?? '');
 
+  /// L2-3: how many owner report keys this app pinned for this server, for
+  /// Settings: a message sent sealed can be proven only to those owners
+  /// (none: to no one). Reads local pins only.
   Future<int> sealedProvableOwnerCount() async {
     final sealed = sealedSender;
     if (sealed == null) return 0;
     return (await _pinnedOwnerKeys(sealed.origin)).length;
+  }
+
+  /// L2-3: rereads [ownerKeyReview] from this device (no request).
+  Future<List<OwnerKeyReviewItem>> loadOwnerKeyReview() async {
+    final sealed = sealedSender;
+    if (sealed == null) return const <OwnerKeyReviewItem>[];
+    await _setOwnerKeyReview(OwnerKeyWatch(localStore, sealed.origin));
+    return ownerKeyReview;
+  }
+
+  /// L2-3: accepts one owner key difference (Settings): pins the listed key,
+  /// or drops the pin of an owner the server no longer lists. False when the
+  /// listing moved since the screen read it. The next token pass tags with
+  /// the new pins.
+  Future<bool> acceptOwnerKey(OwnerKeyReviewItem item) =>
+      _decideOwnerKey(item, accept: true);
+
+  /// L2-3: rejects one owner key difference: the pins stay, and so do the
+  /// tags.
+  Future<bool> rejectOwnerKey(OwnerKeyReviewItem item) =>
+      _decideOwnerKey(item, accept: false);
+
+  Future<bool> _decideOwnerKey(OwnerKeyReviewItem item,
+      {required bool accept}) async {
+    final sealed = sealedSender;
+    if (sealed == null) return false;
+    final watch = OwnerKeyWatch(localStore, sealed.origin);
+    final done = accept ? await watch.accept(item) : await watch.reject(item);
+    if (done && accept) sealed.contextChanged();
+    await _setOwnerKeyReview(watch);
+    notifyListeners();
+    return done;
+  }
+
+  Future<void> _setOwnerKeyReview(OwnerKeyWatch watch) async {
+    final items = await watch.review();
+    final before = ownerKeyReview;
+    ownerKeyReview = List<OwnerKeyReviewItem>.unmodifiable(items);
+    if (!_sameOwnerKeyReview(before, items)) notifyListeners();
+  }
+
+  static bool _sameOwnerKeyReview(
+      List<OwnerKeyReviewItem> a, List<OwnerKeyReviewItem> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      final x = a[index], y = b[index];
+      if (x.inboxId != y.inboxId ||
+          x.change != y.change ||
+          !listEquals(x.listed?.publicKey, y.listed?.publicKey) ||
+          !listEquals(x.pin?.publicKey, y.pin?.publicKey)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Accepts the changed sealed sender key (Settings), then fetches tokens

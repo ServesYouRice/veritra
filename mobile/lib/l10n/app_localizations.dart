@@ -7308,7 +7308,7 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'No owner\'s report key is pinned on this device. A message you send without your name can then be proven to no one if it is reported. A key is pinned when you compare an owner\'s code while reporting.'**
+  /// **'No owner\'s report key is pinned on this device yet. A message you send without your name can then be proven to no one if it is reported. The app pins the owners\' keys the first time the server lists them.'**
   String get l2SealedProvableNone;
 
   /// L2-3 sealed sender.
@@ -7376,6 +7376,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Accept only if the server\'s operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else\'s.'**
   String get l2SealedKeyAcceptWarning;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The owners\' report keys changed. Review them.'**
+  String get l2OwnerKeysReviewTile;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s list of the owners\' report keys differs from the keys this app pinned. Until you accept a change, a message you send without your name is provable only to the owners pinned before.'**
+  String get l2OwnerKeysReviewIntro;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} has a different report key.'**
+  String l2OwnerKeyChanged(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} is new.'**
+  String l2OwnerKeyAdded(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} is no longer listed.'**
+  String l2OwnerKeyMissing(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get l2OwnerKeyAccept;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get l2OwnerKeyReject;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept only if you know the owners or their keys changed. A key the server made itself would let it read the reports you send.'**
+  String get l2OwnerKeyAcceptWarning;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The list changed meanwhile. Look at it again.'**
+  String get l2OwnerKeyStale;
 }
 
 class _AppLocalizationsDelegate

@@ -295,6 +295,12 @@ class SealedSender implements SealedTokenSource {
     await localStore.saveSealedTokens(<SealedToken>[token]);
   }
 
+  /// What the designation is made with changed (an owner key accepted in
+  /// Settings): the next foreground pass loads it again.
+  void contextChanged() {
+    _lastRefresh = null;
+  }
+
   /// A post was refused for its token: an invalid one (a key the server no
   /// longer holds) asks for a fresh pass.
   Future<void> tokenRefused(String conversationId, ApiException error) async {

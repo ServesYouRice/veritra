@@ -182,6 +182,13 @@ extension AppStateDeviceList on AppState {
   /// keys are the instance owners' report keys this app pinned, never a key
   /// fetched for the send.
   Future<SealedFrankContext?> _sealedFrankContext(String origin) async {
+    // The owner listing is read here only to pin on first use and to show
+    // differences; a failure keeps the pins as they are.
+    try {
+      await _observeOwnerKeys(origin);
+    } catch (_) {
+      // Quiet: the pins, and so the tags, stay as they were.
+    }
     final current = session;
     final crypto = _listCrypto;
     final pins = _deviceListPins;
@@ -213,6 +220,47 @@ extension AppStateDeviceList on AppState {
     if (listed == null || !_sameIdBytes(listed, own)) return null;
     return SealedFrankContext(
         listedKey: listed, ownerKeys: await _pinnedOwnerKeys(origin));
+  }
+
+  /// L2-3 (owner decision 2026-11-12, auto-pin on first use): reads the
+  /// instance owners' report keys the server lists now, through a `dm` or
+  /// `group` conversation outside a community (members only), and hands
+  /// them to [OwnerKeyWatch]: pinned if this is the first sight, otherwise
+  /// only recorded, so a change waits for the person. Only
+  /// `report_inbox_unavailable` reads as "no owner has a key"; any other
+  /// error records nothing.
+  Future<void> _observeOwnerKeys(String origin) async {
+    final current = session;
+    final client = api;
+    if (current == null ||
+        client == null ||
+        canonicalizeServerOrigin(client.baseUrl) !=
+            canonicalizeServerOrigin(origin)) {
+      return;
+    }
+    final watch = OwnerKeyWatch(localStore, origin);
+    String? conversationId;
+    for (final conversation in conversations) {
+      if ((conversation.kind == 'dm' || conversation.kind == 'group') &&
+          conversation.communityId == null &&
+          conversation.channelId == null) {
+        conversationId = conversation.id;
+        break;
+      }
+    }
+    if (conversationId != null) {
+      ReportInbox? inbox;
+      try {
+        inbox = await client.getReportInbox(current.token, conversationId);
+      } on ApiException catch (error) {
+        if (error.serverCode == 'report_inbox_unavailable') {
+          inbox =
+              ReportInbox(kind: reportInboxInstanceOwner, recipients: const []);
+        }
+      }
+      if (inbox != null && _sameSession(current)) await watch.observe(inbox);
+    }
+    await _setOwnerKeyReview(watch);
   }
 
   /// The instance owners' report keys pinned for [origin] (owner scope: no
