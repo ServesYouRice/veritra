@@ -1,8 +1,8 @@
 // C7 newcomer import (docs/designs/C7-channel-history.md decisions 5, 6, 8
 // and 10): the backward walk through stored `history_sync` slots and the
 // import state kept between the first page and later pages. The opening,
-// signature checks and the two-pass apply live in NativeCryptoService, next
-// to the live receive path they mirror.
+// signature checks and the two-pass apply live in the native crypto service,
+// next to the live receive path they mirror.
 import 'dart:convert';
 import 'dart:typed_data';
 

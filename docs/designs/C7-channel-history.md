@@ -1268,6 +1268,17 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     no `frank_commit`), so they cannot be reported. The newcomer import
     runs once per join; a device that never receives the `history_sync` of
     its join imports nothing (nothing would open).
+- **Not built: C3 conversion (`move`, decision 11).** Left for its own
+  slice, with nothing of it on this branch: the compact form's
+  `lp(close_group_id)` and 128-byte wrap field, its codec and a Python
+  vector checked in Rust, Go and Dart, the server route and migrations
+  0088-0089 (still free; 0090-0091 are sealed sender's), the record kind
+  in the ordering table and the walk, and the native tests. ABI 25 stays
+  unused. Until then a C3 conversion works as before: the channel holds no
+  record in its new group, so posts there seal under random keys until an
+  owner or admin switches it to `full` again (a `create`, since it has no
+  record there), and newcomers read nothing from before that switch (a
+  gap, never a leak).
 
 ## Open questions for the owner
 
