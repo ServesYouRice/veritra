@@ -1116,6 +1116,27 @@ class AppState extends ChangeNotifier
   static const Duration c7ImportBackoffBase = Duration(minutes: 1);
   static const Duration c7ImportBackoffCap = Duration(hours: 1);
 
+  /// The wait after the server refused an import's routes (403 or 404,
+  /// review L-5): access lost or nothing there, which a retry within the
+  /// hour would only ask again.
+  static const Duration c7ImportRefusedWait = Duration(days: 1);
+
+  /// Records the failure of the C7 import [id] after [wait].
+  void _c7ImportFailed(
+      String id, ({int failures, DateTime nextAt})? wait, Object err) {
+    final failures = (wait?.failures ?? 0) + 1;
+    final Duration delay;
+    if (err is ApiException &&
+        (err.statusCode == 403 || err.statusCode == 404)) {
+      delay = c7ImportRefusedWait;
+    } else {
+      // Retried once the wait is over: 1 min, doubling to 1 h.
+      final doubled = c7ImportBackoffBase * (1 << min(failures - 1, 6));
+      delay = doubled > c7ImportBackoffCap ? c7ImportBackoffCap : doubled;
+    }
+    _c7ImportBackoff[id] = (failures: failures, nextAt: c7Clock().add(delay));
+  }
+
   /// The clock the C7 import backoff reads; tests move it.
   @visibleForTesting
   DateTime Function() c7Clock = () => DateTime.now().toUtc();
@@ -4543,14 +4564,7 @@ class AppState extends ChangeNotifier
         _c7ImportBackoff.remove(id);
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) rethrow;
-        // Retried once the wait is over: 1 min, doubling to 1 h.
-        final failures = (wait?.failures ?? 0) + 1;
-        final delay = c7ImportBackoffBase * (1 << min(failures - 1, 6));
-        _c7ImportBackoff[id] = (
-          failures: failures,
-          nextAt: c7Clock()
-              .add(delay > c7ImportBackoffCap ? c7ImportBackoffCap : delay),
-        );
+        _c7ImportFailed(id, wait, err);
         developer.log('c7_import_failed ${err.runtimeType}',
             name: 'private_messenger.c7');
       }
@@ -4568,13 +4582,7 @@ class AppState extends ChangeNotifier
         _c7ImportBackoff.remove(id);
       } catch (err) {
         if (err is ApiException && err.statusCode == 401) rethrow;
-        final failures = (wait?.failures ?? 0) + 1;
-        final delay = c7ImportBackoffBase * (1 << min(failures - 1, 6));
-        _c7ImportBackoff[id] = (
-          failures: failures,
-          nextAt: c7Clock()
-              .add(delay > c7ImportBackoffCap ? c7ImportBackoffCap : delay),
-        );
+        _c7ImportFailed(id, wait, err);
         developer.log('c7_moved_import_failed ${err.runtimeType}',
             name: 'private_messenger.c7');
       }

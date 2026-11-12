@@ -60,12 +60,17 @@ class _Api extends ApiClient {
   /// While set, every history request fails as a server error.
   var historyFails = false;
 
+  /// While set, the history and moved routes answer with this status.
+  int? historyRefusal;
+
   @override
   Future<List<Map<String, Object?>>> historyBodies(
       String token, String conversationId,
       {String? channelId, String? beforeId, int limit = 50}) async {
     historyAsked.add((channelId ?? '', beforeId, limit));
     if (historyFails) throw ApiException(500, '{"error":"internal"}');
+    final refusal = historyRefusal;
+    if (refusal != null) throw ApiException(refusal, '{"error":"refused"}');
     final rows = history[channelId ?? ''] ?? const <Map<String, Object?>>[];
     final start = beforeId == null
         ? 0
@@ -203,6 +208,8 @@ class _Api extends ApiClient {
       String token, String channelId, String fromConversationId,
       {required bool group, String? beforeId, int limit = 50}) async {
     movedAsked.add((channelId, fromConversationId, group));
+    final refusal = historyRefusal;
+    if (refusal != null) throw ApiException(refusal, '{"error":"refused"}');
     return moved[group ? '' : channelId] ?? const <Map<String, Object?>>[];
   }
 
@@ -1315,6 +1322,43 @@ void main() {
     // A success clears the wait: the next due import goes at once.
     expect(await pass(), greaterThan(0));
   });
+
+  for (final status in [403, 404]) {
+    test(
+        'an import whose routes the server refuses ($status) waits a day, '
+        'for a newcomer import and a moved one (review L-5)', () async {
+      final api = _Api()..historyRefusal = status;
+      final (state, crypto) = _appWith(api);
+      var now = DateTime.utc(2026, 11, 12, 10);
+      state.c7Clock = () => now;
+      api.moved[_open] = _rows(_open, 1);
+      Future<(int, int)> pass() async {
+        final history = api.historyAsked.length;
+        final moved = api.movedAsked.length;
+        crypto.importDue = <String>['conv_shared'];
+        crypto.movesDue = <C7Move>[
+          C7Move(
+              channelId: _open,
+              fromConversationId: 'conv_private',
+              toConversationId: 'conv_shared'),
+        ];
+        await state.c7WorkPassForTesting();
+        return (
+          api.historyAsked.length - history,
+          api.movedAsked.length - moved
+        );
+      }
+
+      expect(await pass(), (1, 1));
+      now = now.add(const Duration(hours: 23, minutes: 59));
+      expect(await pass(), (0, 0));
+      now = now.add(const Duration(minutes: 1));
+      api.historyRefusal = null;
+      final (history, moved) = await pass();
+      expect(history, greaterThan(0));
+      expect(moved, greaterThan(0));
+    });
+  }
 
   test('"Load earlier posts" pages a full channel on demand', () async {
     final api = _Api();
