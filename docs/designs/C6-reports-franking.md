@@ -472,6 +472,19 @@ Residuals:
 - The announcement is as trustworthy as the account's MLS leaf: a device
   the L1 list approves for that account speaks for it, as for its messages.
 
+## Sealed messages (L2-3, 2026-11-12)
+
+A sealed message (L2-3, D122) has no sender in the server's row, so G1's
+"honest server row" cannot attribute it. Instead the sender signs the
+commitment with its device's MLS signing key, inside the ciphertext
+(`frank.s`), receivers refuse a sealed franked payload whose signature does
+not verify under the sender's leaf, and the report reveal carries the
+signature and the key. The verifier checks the key against the claimed
+account's L1 device list (signed by that account, not the server). Rules
+and costs (a transferable proof; the reviewer's device-list fetch names the
+claimed account to the server): [`docs/crypto.md`, "Franking a sealed
+message"](../crypto.md#franking-a-sealed-message-c6-still-works).
+
 ## Departed moderators (accepted)
 
 A moderator who is demoted or leaves keeps what their device already

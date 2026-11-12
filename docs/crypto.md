@@ -456,31 +456,280 @@ its D25 check unchanged. Bound in Dart as `NativeCryptoDevice.decryptSealed`
 and tested in Rust and Dart; **nothing in the app or server uses it yet.**
 It is in ABI 23 so that sealed delivery needs no further ABI bump.
 
-The rest of L2-3 is not built. Two facts found while building ABI 23 stop
-it:
+ABI 23 recorded two facts that stopped the rest of L2-3: every message is
+franked (so sealed sending would apply to none), and the credential must
+verify in Go as well as Rust. The owner chose option B, VOPRF tokens (D122;
+the A and C options are in Git history). The design follows.
 
-1. **Every message is reportable.** Since C6 steps 2 and 3 every message
-   type the app sends is franked, and the design keeps conversations with
-   reporting on identified (franking attribution relies on the
-   authenticated sender row). As built, sealed sender would therefore apply
-   to no message. Either sealed messages go unfranked (unreportable), or
-   L2-3 waits for asymmetric franking, its own crypto package.
-2. **The credential cannot be a Rust crate alone.** The server is pure Go,
-   so whatever proves "a current member of conversation X" must verify in
-   Go. The options, for the owner (D106 allowed one reviewed crate, not a
-   Go module as well):
-   - **A. Per-epoch token from the MLS exporter.** Each epoch's committer
-     registers a verifier (a hash of an exporter-derived key) in the D28
-     bundle; a sender shows the key on an unauthenticated connection. No
-     new dependency on either side. Weaker than the design: one token per
-     conversation and epoch, so per-member rationing becomes per-epoch and
-     per-address limits, and a malicious committer can register a bad
-     verifier (the fallback is to send identified).
-   - **B. Privacy Pass (VOPRF, RFC 9497).** Per-member tokens, unlinkable.
-     Needs a reviewed library in Rust and in Go.
-   - **C. Blind RSA (RFC 9474).** Verification is stdlib RSA-PSS in Go, but
-     issuance needs a constant-time private RSA operation, which in
-     practice means a Go dependency, plus a Rust one for blinding.
+### Sealed sender with VOPRF tokens (D122, crypto ABI 26, design 2026-11-12)
+
+Owner decision D122 chose option B: Privacy Pass style tokens from an
+oblivious PRF (RFC 9497). This section is the design; "As built" at its end
+says what exists. Everything is behind the server switch
+`PRIVATE_MESSENGER_SEALED_SENDER=1` (off by default). The two open facts the
+ABI 23 entry recorded are answered: sealed messages stay reportable through
+a sender signature over the franking commitment ("Franking a sealed
+message"), and the credential verifies in Go and Rust through one library
+on each side ("Libraries").
+
+**What it protects.** For an ordinary application message in a DM or a
+plain group, the server stores and fans out the ciphertext without the
+sending account or device. The server still knows the conversation, that
+the poster is one of the accounts it gave tokens to for that conversation
+and day, and everything listed under "What still leaks".
+
+#### Construction
+
+- **Primitive.** RFC 9497 POPRF (mode `0x02`, partially oblivious, so the
+  server proves its evaluation with a DLEQ proof and binds public `info`),
+  suite `ristretto255-SHA512`. One proof covers a batch (RFC 9497 §2.2).
+  Inputs, blinds and the token output stay with the client; the server sees
+  blinded elements at issuance and an unblinded `(nonce, output)` pair at
+  redemption, and cannot link the two.
+- **Why POPRF and not plain VOPRF.** `info` carries the conversation, the
+  day and the conversation's token generation, so one long-lived server key
+  serves every conversation and every day. A token for conversation X does
+  not open conversation Y, and a token from yesterday's generation fails
+  after a removal. With plain VOPRF that needs one key per conversation and
+  day, and many keys make per-user key tagging easier to hide.
+- **Server key.** One POPRF key per instance, made at random on first use
+  and kept in the database (`sealed_sender_keys`, migration 0090). Its
+  public half is published at `GET /api/v1/sealed/key`
+  (`{"suite":"ristretto255-SHA512","key_id","public_key"}`, no session).
+  `key_id` = hex of the first 16 bytes of
+  `SHA-256("veritra-l2-key-v1" || public_key)`. A leaked key lets its holder
+  post junk into conversations whose ids it knows; it reads nothing.
+- **Epoch.** The UTC day, `e = floor(unix_seconds / 86400)`. Tokens are
+  issued for `e` in {today, tomorrow} and redeemed for `e` in {yesterday,
+  today}, so a token fetched ahead of midnight still works the next day,
+  and no token lives longer than about 72 hours.
+- **Generation.** A per-conversation counter (`sealed_conversation_state`).
+  A database trigger raises it whenever a membership row of the
+  conversation is deleted (leave, remove, ban, account deletion) and
+  whenever a device of a member account is revoked. Tokens name the
+  generation they were issued under; redemption requires the current one,
+  so a removed member's leftover tokens die at once, along with everyone
+  else's (members fetch again; removals are rare).
+- **`info`** (bytes, RFC 9497 limit 65535):
+
+  ```text
+  "veritra-l2-sealed-v1" || u16 len(conversation_id) || conversation_id
+                         || u32 e || u64 generation        (big-endian)
+  ```
+- **Token.** Input is a fresh 32-byte random `nonce`; the token is
+  `(key_id, e, generation, nonce, output)`, `output` being the 64-byte
+  POPRF output. Tokens are bearer credentials kept only in the device's
+  encrypted local database (schema 43).
+
+#### Issuance (authenticated, rate-limited)
+
+1. `GET /api/v1/sealed/conversations/{id}` (session): `{key_id,
+   public_key, generation, epoch, eligible, remaining}`. Members only.
+2. The app (Rust, `pm_crypto_l2_token_request`) makes `n` nonces (1 to 32)
+   and blinds them under `info`; it keeps the client state blob.
+3. `POST /api/v1/sealed/conversations/{id}/tokens` (session, write budget)
+   with `{epoch, generation, blinded: [n × 32 bytes]}`. The server checks:
+   switch on, member, conversation eligible, epoch in {today, tomorrow},
+   generation current (else 409 `sealed_generation_changed`), and the
+   per-account, per-conversation, per-day cap
+   (`PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY`, default 200; 429
+   `sealed_token_limit`). It answers `{key_id, evaluated: [n × 32], proof
+   (64)}` and adds `n` to `sealed_token_issuance(account, conversation,
+   epoch)`.
+4. The app (`pm_crypto_l2_token_finalize`) verifies the batch proof against
+   the public key it pinned (below) and derives the outputs. A bad proof is
+   refused (`PM_CRYPTO_INVALID_MESSAGE`) and no token is kept.
+
+Rationing is per account, not per device: the server never learns which
+device redeems. The counts in `sealed_token_issuance` are deleted when their
+epoch can no longer be redeemed.
+
+**When the app fetches.** Not right before a send: a fetch followed seconds
+later by a sealed post links the two by time. The app fetches a fixed batch
+(32) for each eligible conversation on a foreground sync pass, for today and
+for tomorrow, whether or not it will send. A send with no unspent token goes
+identified, and the next pass refills. Volume above the batch still shows
+(an account that fetches a second batch for X today sent at least 32
+messages there).
+
+**Key pinning.** The app pins the first `(key_id, public_key)` it sees per
+server origin and verifies every proof against the pin. A changed key stops
+sealed sending to that origin (messages go identified) until a person
+accepts it in Settings. This blocks per-user key tagging after first
+contact; a server that gives one account a unique key from its very first
+fetch is not caught (see leaks; cross-member key gossip over MLS is the
+follow-up).
+
+#### Redemption (no session)
+
+`POST /api/v1/sealed/messages`, on its own HTTP client with no session
+token, no cookies and no shared connection pool with the session's client
+(a reused TLS connection would tie the post to the session). A request that
+carries an `Authorization` header or session cookie is refused (400
+`sealed_request_authenticated`) so a client bug fails closed. Body:
+
+```json
+{"conversation_id", "token": {"key_id", "epoch", "generation", "nonce",
+ "output"}, "idempotency_key", "ciphertext", "crypto_protocol",
+ "crypto_metadata", "frank_commit", "expires_at"}
+```
+
+The server checks, in order: switch on; no plaintext keys (as for every
+envelope); `crypto_metadata` holds only `protocol_version`, `group_id`
+(= the conversation), `content_type` = `application`, `payload_version` and
+`mls_epoch`; the key is the current one; the epoch is yesterday or today
+(else 409 `sealed_token_expired`); the conversation exists and is eligible;
+the generation is current (409 `sealed_generation_changed`); `output`
+equals the POPRF evaluation of `nonce` under `info`, compared in constant
+time (else 403 `sealed_token_invalid`, the same answer for an unknown
+conversation, so the route cannot probe ids). Then, in one transaction:
+
+- **Double spend.** `sealed_spent_tokens(key_id, epoch, nonce)` is the
+  primary key. A second use of a nonce is 409 `sealed_token_spent`, unless
+  it is the retry of the same post (same conversation, idempotency key and
+  bytes), which answers 200 with the stored envelope (idempotent retry).
+  Spent rows outlive their envelope (an expired message is pruned, its
+  nonce stays spent) and go when their epoch can no longer be redeemed.
+- **Dedupe.** `UNIQUE(conversation_id, idempotency_key)` on the sealed
+  envelope table; the key must be at least 128 random bits (22 to 128
+  characters). A different post under a stored key is 409
+  `idempotency_conflict`.
+- **Store and fan out.** The row in `sealed_message_envelopes` (migration
+  0091) has no sender column at all. One sync event
+  `message.sealed.created` goes to every member, the sender's own devices
+  included, and push wakes go to every member. Retention clamps
+  `expires_at` as for identified envelopes.
+
+**Eligible conversations.** `kind` `dm` or `group`, no community or channel,
+`posting_policy` `everyone`, and no member under a C5 timeout now. Each rule
+the server enforces by sender cannot hold for a sealed post, so those
+conversations take identified posts only (409 `sealed_not_eligible`): C2
+admins-only, C5 timeouts and slow mode, C0/C7 community conversations (C7
+also needs the sender for its sealed body), and messages with attachments
+(`attachment_envelopes.owner_account_id` names the uploader; the app sends
+any message with `attachment_refs` identified). Commits, Welcomes, key
+packages, reports, receipts, typing and every admin route stay identified.
+
+**Receive.** The app reads `message.sealed.created`, decrypts with
+`pm_crypto_group_decrypt_sealed`, and takes the sender only from MLS. The
+sending device cannot decrypt its own `PrivateMessage`; it recognises its
+own post by the idempotency key of a message it holds under its own device
+key, and commits past it. A server that replays that key with other bytes
+gets the event skipped, which it could do by dropping the event anyway.
+Blocked senders are hidden by the receiving app only.
+
+#### Franking a sealed message (C6 still works)
+
+C6 v1 attributes a report through the server's authenticated sender row
+(G1). A sealed row has no sender, so without a change member M could send a
+sealed message whose commitment names victim S (honest receivers drop it,
+as MLS says M sent it), then report it and frame S. The fix binds the
+commitment to the sender's key, inside the ciphertext:
+
+- **Signature.** The sender signs
+  `"veritra-frank-sig-v1" || u16 len(conversation_id) || conversation_id ||
+  u16 len(account_id) || account_id || u16 len(device_id) || device_id ||
+  c` (c = the 32-byte franking commitment) with its device's MLS signing
+  key (Ed25519), through `pm_crypto_l2_frank_sign`. The fixed ASCII prefix
+  cannot start an RFC 9420 `SignContent` (its first bytes would be a varint
+  label length followed by `MLS 1.0 `), so the call cannot be turned into
+  an MLS signature; there is still no raw signing entry point.
+- **Wire.** Only in a payload sent sealed, the `frank` member gains a
+  second member: `,"frank":{"k":"<44 chars>","s":"<88 chars, standard
+  base64 of the 64-byte signature>"}}`. `P` and `c` are unchanged (both
+  exclude `frank`). The signature is inside the MLS ciphertext; outside it
+  the server could test it against every device key and unseal the sender.
+- **Receive rule.** On a sealed message, a franked payload must carry `s`,
+  and `s` must verify (`pm_crypto_l2_frank_verify`) under the signing key
+  of the sender's leaf in this group
+  (`pm_crypto_group_member_signing_key`, the leaf MLS authenticated), else
+  the payload is `invalid`. An identified message carrying `s` is `invalid`.
+  An unfranked sealed payload is accepted as unreportable (the G5 rule).
+- **Report.** The reveal kept with the message (schema 43 adds the
+  signature to `local_frank_reveals`) and the sealed report body carry `s`,
+  the sender's account and device ids and its signing key. The moderator
+  or owner checks: `c` recomputes from `P`, `kf` and the claimed sender;
+  `c` equals the commitment the server stored for the envelope (the
+  `/reports/{id}/envelope` route serves sealed envelopes with no sender and
+  `"sealed": true`); `s` verifies under the key; and the key is the claimed
+  device's key in the claimed account's L1 device list, which that account
+  signed (the server cannot forge it). Framing fails: M cannot sign as S.
+  A moderator who is a member checks against its own MLS copy as before.
+- **Cost: deniability.** C6 v1 said "no signature over the text". With `s`,
+  a revealed `(P, kf, s)` is a proof anyone can check that S's device
+  committed to `P`, not only the moderator or owner (a transferable proof).
+  MLS application messages are already signed by the sender's leaf, so a
+  member could already hand out such a proof with more work, but this makes
+  it easy. Designated-verifier franking (asymmetric message franking,
+  Tyagi et al., CRYPTO 2019) would convince only the moderator; it is new
+  crypto with no reviewed library here, so it is not built. Owner question.
+- **What the verifier tells the server.** Checking a sealed report fetches
+  the claimed sender's account device list; the server learns, at review
+  time and only from the reviewer, which account a reported sealed message
+  is attributed to. A cached list avoids the fetch.
+
+#### What still leaks (plainly)
+
+- **IP address and connection timing.** The sealed post comes from the same
+  address as the device's session, at the moment its WebSocket is open. An
+  operator who logs addresses (L2-2 turns proxy logs off by default; the
+  live connection still shows them) or watches timing can usually tell who
+  posted, in small conversations almost always. Sealed sender protects the
+  stored record and a later database leak, not a live, watching operator.
+  Tor or a VPN, plus send jitter (L2 owner question 3, default off), are
+  what would help.
+- **Typing and read state.** Until D60 moves them into MLS, the server-seen
+  typing event (D47) names the account seconds before its post, and a
+  shared read cursor can move right after it. With sealed sending on the
+  app stops sending server typing in that conversation.
+- **Issuance.** Who fetched tokens for which conversation and day, and how
+  many. The anonymity set of a post is the members who fetched for that
+  conversation and day; in a DM it is two people.
+- **Key tagging at first contact.** A server can give one account a unique
+  key before it ever pins one. Not detected yet.
+- **Sizes and counts** as before (L2-1).
+- **Server rules.** C2, C5 and C7 checks need the sender, so those
+  conversations stay identified; so do attachments and every commit.
+- **C4 activity.** A sealed post does not mark the sender active for C4
+  server succession. An active owner still self-updates each conversation
+  at least every 7 days with activity, which is identified and counts.
+
+#### Libraries
+
+| Side | Library | Version | Licence | Notes |
+|---|---|---|---|---|
+| Rust (crypto core) | `voprf` (facebook/voprf) | `=0.5.0`, `default-features = false`, `ristretto255-ciphersuite` | MIT | RFC 9497 final. Brings `derive-where` (MIT OR Apache-2.0) and `displaydoc` (MIT OR Apache-2.0); `curve25519-dalek` 4, `sha2` 0.10, `elliptic-curve` 0.13 (features `hash2curve`, `voprf`) are already locked. The NCC Group review of opaque-ke (2021) covered a pre-RFC voprf; **0.5.0 itself has no published audit**. |
+| Go (server) | `github.com/cloudflare/circl` | `v1.6.5` | BSD-3-Clause | `oprf` package, RFC 9497 vectors in its tests. Brings `github.com/bwesterb/go-ristretto` v1.2.4 (MIT). No published audit of the `oprf` package. |
+
+Dart has no crypto dependency; it calls the Rust FFI. The two libraries
+interoperate: a batch blinded by voprf, evaluated by circl, verifies and
+finalizes in voprf to circl's `FullEvaluate` output
+(`testing/vectors/l2-sealed-v1.json`).
+
+#### ABI 26
+
+- `pm_crypto_l2_token_request(public_key, conversation_id, epoch,
+  generation, count, out_state, out_request)`: `count` 1 to 32;
+  `out_request` is `count × 32` blinded elements; `out_state` is
+  `"VLT1" || u8 count || 32-byte public key || u16 len(info) || info ||
+  count × (32-byte nonce || 64-byte voprf client state)`.
+- `pm_crypto_l2_token_finalize(state, response, out_tokens)`: `response` is
+  `count × 32` evaluated elements `|| 64-byte proof`; `out_tokens` is
+  `count × (32-byte nonce || 64-byte output)`. The proof is checked against
+  the key in the state.
+- `pm_crypto_l2_frank_sign(device, conversation_id, commit)` and
+  `pm_crypto_l2_frank_verify(signing_key, conversation_id, account_id,
+  device_id, commit, signature)`.
+- `pm_crypto_group_member_signing_key(device, group, account_id,
+  device_id)`: the leaf signing key of that member in the current tree, or
+  `PM_CRYPTO_INVALID_IDENTITY` when absent.
+
+#### Counters
+
+Crypto ABI 26 (25 is reserved by another package; this branch goes 24 to
+26), local schema 43, server migrations 0090 (keys, generations, issuance
+counts, spent tokens) and 0091 (sealed envelope table). Needs the
+independent crypto review (G25) before the switch is turned on anywhere.
 
 ## Encrypted backup file (VBK2)
 
