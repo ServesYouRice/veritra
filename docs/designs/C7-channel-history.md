@@ -1228,8 +1228,8 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   devices whose `joined_epoch` is E (the server wrote it with the commit:
   the epoch MLS reports after it, and the Welcome's) and to its sender
   device (the echo); the sender's other devices and every other member get
-  nothing. The live frame to those accounts carries neither ciphertext
-  nor body, only the event. A second `history_sync` for E is refused (409
+  nothing. The live frame to those accounts is the bare `sync.available`
+  every message frame now is (below), so it names nothing. A second `history_sync` for E is refused (409
   `history_sync_delivered`) until a request for E arrives after the last
   one. Members, who never see it, ask first:
   `GET /api/v1/conversations/{id}/history-sync?for_epoch=E` answers
@@ -1262,11 +1262,18 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   wrote) would only send the newcomers a duplicate. A request reopens the
   epoch for every member at once: the first fallback after it is
   accepted and the rest are refused.
-  **Found, not fixed (outside C7):** every realtime frame for a message
-  carries the whole envelope, `sealed_body` included, to every connected
-  device of every member account, whatever the I51 join filter would
-  serve that device in sync. The app only uses a frame as a signal to
-  sync, so the frame could carry the event alone.
+  **Fixed 2026-11-12 (outside C7; was "found, not fixed"):** every
+  realtime frame for a message used to carry the whole envelope,
+  `sealed_body` included, to every connected device of every member
+  account, whatever the I51 join filter would serve that device in sync.
+  Now a new, edited or deleted message, a targeted `history_sync`
+  included, sends the bare `{"version":"v1","type":"sync.available",
+  "created_at":…}` to the same accounts: no event id, conversation id or
+  envelope, identical for every kind, so a later sealed-branch event type
+  (`message.sealed.created`) will not show on the socket either. The app
+  already caught up on every frame; the cost is that fetch. Test:
+  `server/internal/httpapi/realtime_message_frames_test.go`;
+  `veritra-load` learns deliveries from sync pages now.
   A `history_sync` for an epoch above the group's recorded epoch is
   refused too (400): a junk one tagged with a future epoch would make the
   committer's real one look delivered when that commit comes.

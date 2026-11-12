@@ -573,6 +573,22 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **Message frames name nothing (2026-11-12; was "Found, not fixed" in the
+  C7 design):** the realtime frame for a new, an edited or a deleted
+  message, a C7 targeted `history_sync` included, is now the bare
+  `{"version":"v1","type":"sync.available","created_at":…}`: no event id,
+  conversation id or envelope, the same bytes for every kind apart from
+  the time. Before, every such frame carried the whole envelope,
+  `sealed_body` included, to every connected device of every member
+  account, whatever the I51 join filter would serve that device in sync.
+  The recipient accounts are unchanged; the device reads the event from
+  sync, which applies the join filter and C7's targeting. Cost: one
+  catch-up fetch before a message shows (the app already caught up on
+  every frame). No ABI, payload, schema or migration change. Clients that
+  read message data from a frame must read it from sync instead
+  (`docs/sdk.md`); `veritra-load` now times a delivery to the sync page.
+  Reaction, receipt, membership and call frames are unchanged (they carry
+  no message body). Needs the independent review.
 - **C7 newcomer import (2026-11-12, owner answers Q1 and Q2):** app only,
   no wire, ABI, schema or server change. After the `history_sync` of its
   join, a newcomer fetches the same first page of every channel and of the
@@ -612,8 +628,8 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `c7_sync_request_for_epoch` on a request (the sender's own join epoch,
   checked by the server against the roster). The server delivers a
   `history_sync` only to the devices whose roster `joined_epoch` is that
-  epoch and to the sender's device, live frames without ciphertext or
-  body, push wakes to those devices only; it refuses a second one for the
+  epoch and to the sender's device, live frames that name nothing (the
+  bare `sync.available`, entry above), push wakes to those devices only; it refuses a second one for the
   same epoch until a request reopens it, and answers members'
   `GET .../history-sync?for_epoch=` check. What the server learns is what
   it already knew: it wrote each device's join epoch with the commit, and

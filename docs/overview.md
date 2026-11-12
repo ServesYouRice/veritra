@@ -164,7 +164,7 @@ sequenceDiagram
     A->>S: POST envelope (ciphertext)
     S->>S: store + sync event (atomic)
     S-->>A: ack
-    S->>B: WebSocket sync event
+    S->>B: WebSocket wake (sync.available, names nothing)
     S->>B: push "new_encrypted_event_available"
     B->>S: GET envelope
     B->>B: 🔓 MLS decrypt + verify (local)

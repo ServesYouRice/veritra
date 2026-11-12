@@ -619,15 +619,7 @@ func (a *API) createMessageEnvelope(w http.ResponseWriter, r *http.Request, prin
 		return
 	}
 	if !result.Duplicate {
-		live := result.Envelope
-		if storage.C7TargetedSync(live.CryptoMetadata) {
-			// C7: a targeted history_sync's frame only says to sync; its
-			// recipients are the newcomers' accounts and the sender's, whose
-			// other devices must not get the slots this way.
-			live.Ciphertext = nil
-			live.SealedBody = nil
-		}
-		a.publishCommittedEvent(r.Context(), result.Recipients, realtime.Event{Version: "v1", Type: "message.envelope.created", ID: result.EventID, ConversationID: result.Envelope.ConversationID, Payload: live, CreatedAt: time.Now().UTC()})
+		a.publishSyncAvailable(r.Context(), result.Recipients, result.EventID)
 	}
 	status := http.StatusCreated
 	if result.Duplicate {
@@ -683,7 +675,7 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 			handleStorageError(w, err)
 			return
 		}
-		a.publishMessageEvent(r, "message.envelope.edited", eventID, envelope)
+		a.publishMessageEvent(r, eventID, envelope)
 		writeJSON(w, http.StatusOK, envelope)
 	case parts[1] == "delete" && r.Method == http.MethodPost:
 		req, ok := decodeEncryptedMutation(w, r)
@@ -695,7 +687,7 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 			handleStorageError(w, err)
 			return
 		}
-		a.publishMessageEvent(r, "message.envelope.deleted", eventID, envelope)
+		a.publishMessageEvent(r, eventID, envelope)
 		writeJSON(w, http.StatusOK, envelope)
 	case parts[1] == "reactions" && r.Method == http.MethodGet:
 		reactions, err := a.Store.ListReactions(r.Context(), messageID, principal.AccountID)
@@ -768,9 +760,29 @@ func decodeEncryptedMutation(w http.ResponseWriter, r *http.Request) (encryptedM
 	return req, true
 }
 
-func (a *API) publishMessageEvent(r *http.Request, eventType string, eventID int64, envelope domain.MessageEnvelope) {
+func (a *API) publishMessageEvent(r *http.Request, eventID int64, envelope domain.MessageEnvelope) {
 	members := a.conversationRecipientsForSender(r.Context(), envelope.ConversationID, envelope.SenderAccountID)
-	a.publishCommittedEvent(r.Context(), members, realtime.Event{Version: "v1", Type: eventType, ID: eventID, ConversationID: envelope.ConversationID, Payload: envelope, CreatedAt: time.Now().UTC()})
+	a.publishSyncAvailable(r.Context(), members, eventID)
+}
+
+// realtimeSyncAvailable is the type of the realtime frame for a message
+// event.
+const realtimeSyncAvailable = "sync.available"
+
+// publishSyncAvailable tells accountIDs' live sockets that sync has
+// something new, after the message event eventID is committed. The frame
+// is the same for a new, an edited and a deleted message and for a C7
+// targeted history_sync: no event id, conversation id or envelope. A device
+// reads the event from sync, which applies the join filter and C7's
+// targeting (I51), so the socket never hands a device a body or ciphertext
+// that sync would withhold, nor tells it which conversation changed or how.
+func (a *API) publishSyncAvailable(ctx context.Context, accountIDs []string, eventID int64) {
+	if eventID <= 0 {
+		a.warn("realtime_event_without_commit", "event_type", realtimeSyncAvailable)
+		return
+	}
+	countRecipients(ctx, len(accountIDs))
+	a.Hub.Publish(accountIDs, realtime.Event{Version: "v1", Type: realtimeSyncAvailable, CreatedAt: time.Now().UTC()})
 }
 
 func (a *API) publishCommittedEvent(ctx context.Context, accountIDs []string, event realtime.Event) {

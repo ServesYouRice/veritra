@@ -1233,7 +1233,9 @@ minutes; half the accounts have a second client; a fifth of the devices
 catch up once from the middle of history, as after a night offline.
 
 **Targets.** Interactive requests (send, sync page, conversation list,
-history): p95 ≤ 150 ms and p99 ≤ 500 ms; realtime delivery p99 ≤ 2 s; a
+history): p95 ≤ 150 ms and p99 ≤ 500 ms; realtime delivery p99 ≤ 2 s
+(since 2026-11-12 measured to the sync page the bare `sync.available`
+frame leads to, one fetch more than the T47 runs measured); a
 cold catch-up page p99 ≤ 1 s; errors < 0.1% and no 5xx; writer wait p99
 ≤ 100 ms; Go memory ≤ 50% of the container limit. A stalled push provider
 loses no wake job and its backlog drains within 5 minutes of recovery. A

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"private-messenger/server/internal/config"
 	"private-messenger/server/internal/realtime"
@@ -101,10 +100,10 @@ func TestC7HistorySyncGoesToTheNewcomersOnly(t *testing.T) {
 	}
 	decodeLayoutBody(t, body, &sent)
 
-	// Live: Dave (the newcomer) and the owner (the echo) get a frame that
-	// only says to sync; Carol gets nothing.
+	// Live: Dave (the newcomer) and the owner (the echo) get the bare frame
+	// that says to sync; Carol gets nothing.
 	for id, client := range clients {
-		frames := drainEnvelopeFrames(t, client)
+		frames := drainSyncAvailableFrames(t, client)
 		want := id != carolID
 		if (len(frames) == 1) != want || len(frames) > 1 {
 			t.Fatalf("realtime frames for %s = %d, want one: %v", id, len(frames), want)
@@ -171,30 +170,6 @@ func TestC7HistorySyncGoesToTheNewcomersOnly(t *testing.T) {
 	_, offHandler, offOwner, _ := newTestAppWithOwnerConfig(t, func(c *config.Config) { c.CommunityLayout = true })
 	if status, body := doJSON(t, offHandler, http.MethodGet, "/api/v1/conversations/"+shared+"/history-sync?for_epoch=2", offOwner, nil); status != http.StatusNotFound {
 		t.Fatalf("c7 off status=%d body=%s", status, body)
-	}
-}
-
-// drainEnvelopeFrames returns the message.envelope.created frames queued
-// for client.
-func drainEnvelopeFrames(t *testing.T, client *realtime.Client) [][]byte {
-	t.Helper()
-	var frames [][]byte
-	deadline := time.After(50 * time.Millisecond)
-	for {
-		select {
-		case raw := <-client.Send():
-			var event struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(raw, &event); err != nil {
-				t.Fatalf("decode realtime event: %v", err)
-			}
-			if event.Type == "message.envelope.created" {
-				frames = append(frames, raw)
-			}
-		case <-deadline:
-			return frames
-		}
 	}
 }
 
