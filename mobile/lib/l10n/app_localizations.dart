@@ -7395,6 +7395,12 @@ abstract class AppLocalizations {
   /// **'Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.'**
   String get channelConvertOpenConfirm;
 
+  /// Making a private channel open, when its earlier posts do not open for the shared group: channel history is off, or the channel keeps posts from each member's join.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier posts in this channel stay with the people who already had them. Community members who were never in this private channel will see only posts made after it opens.'**
+  String get channelConvertOpenConfirmKept;
+
   /// No description provided for @channelConvertOpenAccept.
   ///
   /// In en, this message translates to:

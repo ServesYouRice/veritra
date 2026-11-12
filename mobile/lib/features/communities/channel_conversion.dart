@@ -6,12 +6,14 @@ import '../../l10n/l10n.dart';
 import '../../ui/format.dart';
 
 /// C3 conversion: asks an owner or admin to confirm making a private
-/// channel open (owner answer 2026-11-12). Its earlier posts carry over, so
-/// they become visible to everyone who can read the open channel. Making
-/// an open channel private asks who stays instead
-/// ([pickChannelConversionMembers]).
+/// channel open (owner answer 2026-11-12). Its earlier posts carry over:
+/// with channel history on and the channel keeping its full history
+/// ([earlierOpen]), the `move` record opens them for everyone who can read
+/// the open channel; otherwise they stay with the people who already had
+/// them (review INFO). Making an open channel private asks who stays
+/// instead ([pickChannelConversionMembers]).
 Future<bool> confirmChannelConversion(BuildContext context,
-    {required bool toPrivate}) async {
+    {required bool toPrivate, bool earlierOpen = true}) async {
   if (toPrivate) return true;
   final l10n = context.l10n;
   final confirmed = await showDialog<bool>(
@@ -19,7 +21,9 @@ Future<bool> confirmChannelConversion(BuildContext context,
     builder: (context) => AlertDialog(
       title: Text(l10n.channelConvertOpenTitle),
       content: SingleChildScrollView(
-        child: Text(l10n.channelConvertOpenConfirm),
+        child: Text(earlierOpen
+            ? l10n.channelConvertOpenConfirm
+            : l10n.channelConvertOpenConfirmKept),
       ),
       actions: [
         TextButton(
@@ -163,8 +167,15 @@ class _ChannelConversionActionState extends State<ChannelConversionAction> {
       if (picked == null || !mounted) return;
       members = picked;
     } else {
-      final confirmed =
-          await confirmChannelConversion(context, toPrivate: _toPrivate);
+      // Unknown reads as open: the warning never says less than happens.
+      final view = widget.state.channelHistoryAvailable
+          ? await widget.state.channelHistory(widget.channel)
+          : null;
+      if (!mounted) return;
+      final earlierOpen = widget.state.channelHistoryAvailable &&
+          (view == null || view.full || view.pending);
+      final confirmed = await confirmChannelConversion(context,
+          toPrivate: _toPrivate, earlierOpen: earlierOpen);
       if (!confirmed || !mounted) return;
     }
     setState(() => _sending = true);

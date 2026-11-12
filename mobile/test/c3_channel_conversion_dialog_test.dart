@@ -35,6 +35,18 @@ class _State extends AppState {
         );
 
   final conversions = <(String, bool, String)>[];
+
+  /// Channel history on, and the channel's setting as this device holds
+  /// it.
+  var c7 = true;
+  C7ChannelView? view =
+      const C7ChannelView(full: true, status: 'ok', pending: false);
+
+  @override
+  bool get channelHistoryAvailable => c7;
+
+  @override
+  Future<C7ChannelView?> channelHistory(Channel channel) async => view;
   var refuse = <String>[];
   var readerLoads = 0;
   Future<List<ConversationMember>> Function() readers =
@@ -123,6 +135,45 @@ void main() {
     // Converted: the settings it sat in close.
     expect(find.byType(ChannelConversionAction), findsNothing);
   });
+
+  for (final (name, c7, view, open) in <(String, bool, C7ChannelView?, bool)>[
+    (
+      'its full history',
+      true,
+      const C7ChannelView(full: true, status: 'ok', pending: false),
+      true
+    ),
+    ('channel history off', false, null, false),
+    (
+      'a channel that keeps posts from each join',
+      true,
+      const C7ChannelView(full: false, status: 'ok', pending: false),
+      false
+    ),
+    (
+      'its setting changing',
+      true,
+      const C7ChannelView(full: false, status: 'ok', pending: true),
+      true
+    ),
+    ('its setting unknown', true, null, true),
+  ]) {
+    testWidgets(
+        'the warning before making a private channel open says whether its '
+        'earlier posts open for everyone: $name (review INFO)', (tester) async {
+      final state = _State()
+        ..c7 = c7
+        ..view = view;
+      addTearDown(state.dispose);
+      await _open(tester, state, _channel('private'));
+      await tester.tap(find.text('Make this channel open'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('will become visible to everyone'),
+          open ? findsOneWidget : findsNothing);
+      expect(find.textContaining('stay with the people who already had them'),
+          open ? findsNothing : findsOneWidget);
+    });
+  }
 
   testWidgets(
       'making an open channel private lists its readers all ticked; only '

@@ -4497,6 +4497,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Раније објаве у овом каналу постаће видљиве свима који могу да читају отворени канал, укључујући чланове заједнице који никада нису били у овом приватном каналу.';
 
   @override
+  String get channelConvertOpenConfirmKept =>
+      'Раније објаве у овом каналу остају код оних који су их већ имали. Чланови заједнице који никада нису били у овом приватном каналу видеће само објаве настале након што канал постане отворен.';
+
+  @override
   String get channelConvertOpenAccept => 'Учини отвореним';
 
   @override
@@ -9019,6 +9023,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get channelConvertOpenConfirm =>
       'Ranije objave u ovom kanalu postaće vidljive svima koji mogu da čitaju otvoreni kanal, uključujući članove zajednice koji nikada nisu bili u ovom privatnom kanalu.';
+
+  @override
+  String get channelConvertOpenConfirmKept =>
+      'Ranije objave u ovom kanalu ostaju kod onih koji su ih već imali. Članovi zajednice koji nikada nisu bili u ovom privatnom kanalu videće samo objave nastale nakon što kanal postane otvoren.';
 
   @override
   String get channelConvertOpenAccept => 'Učini otvorenim';

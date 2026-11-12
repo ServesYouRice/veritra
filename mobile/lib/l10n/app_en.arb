@@ -1555,6 +1555,10 @@
   "channelConvertToOpen": "Make this channel open",
   "channelConvertOpenTitle": "Make this channel open?",
   "channelConvertOpenConfirm": "Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.",
+  "channelConvertOpenConfirmKept": "Earlier posts in this channel stay with the people who already had them. Community members who were never in this private channel will see only posts made after it opens.",
+  "@channelConvertOpenConfirmKept": {
+    "description": "Making a private channel open, when its earlier posts do not open for the shared group: channel history is off, or the channel keeps posts from each member's join."
+  },
   "channelConvertOpenAccept": "Make open",
   "channelConvertPrivateTitle": "Make this channel private?",
   "channelConvertPrivatePick": "Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.",
