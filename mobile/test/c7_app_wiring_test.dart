@@ -585,8 +585,8 @@ void main() {
   });
 
   test(
-      'an add the server refuses leaves the channel converted, stops the '
-      'adds after it and reports the error', () async {
+      'an add the server refuses leaves the channel converted, still adds '
+      'the other ticked readers and names the refused one', () async {
     final api = _Api()..addFails = 'carol';
     final (state, _) = _appWith(api);
     final channel = state.channelsByCommunity[_community]!
@@ -596,8 +596,10 @@ void main() {
         await state.convertChannel(channel,
             toPrivate: true, members: ['bob', 'carol', 'dave']),
         isTrue);
-    expect(api.added, [('conv_new', 'bob')]);
+    expect(api.added, [('conv_new', 'bob'), ('conv_new', 'dave')]);
+    expect(state.channelConversionNotAdded, ['carol']);
     expect(state.error, isNotNull);
+    expect(state.mlsReconcileNowForTesting('conv_new'), isTrue);
     final converted = state.channelsByCommunity[_community]!
         .where((c) => c.id == _open)
         .single;

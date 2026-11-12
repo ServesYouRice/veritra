@@ -1287,5 +1287,6 @@
   "channelConvertPrivatePick": "Сви означени биће додати у приватни канал и задржаће његове раније објаве. Свако коме уклоните ознаку губи приступ каналу и његовим ранијим објавама.",
   "channelConvertPrivateNoReaders": "Још нико други не чита овај канал.",
   "channelConvertReadersFailed": "Није могуће учитати ко чита овај канал. Покушајте поново.",
-  "channelConvertPrivateAccept": "Учини приватним"
+  "channelConvertPrivateAccept": "Учини приватним",
+  "channelConvertNotAdded": "Канал је сада приватан, али ови означени читаоци нису могли да буду додати: {names}. Додајте их из чланова канала."
 }

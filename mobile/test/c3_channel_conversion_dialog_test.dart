@@ -35,6 +35,8 @@ class _State extends AppState {
         );
 
   final conversions = <(String, bool, String)>[];
+  var refuse = <String>[];
+  var readerLoads = 0;
   Future<List<ConversationMember>> Function() readers =
       () async => <ConversationMember>[
             ConversationMember(
@@ -46,13 +48,20 @@ class _State extends AppState {
           ];
 
   @override
-  Future<List<ConversationMember>> channelReaders(Channel channel) => readers();
+  Future<List<ConversationMember>> channelReaders(Channel channel) {
+    readerLoads++;
+    return readers();
+  }
 
   @override
   Future<bool> convertChannel(Channel channel,
       {required bool toPrivate,
       List<String> members = const <String>[]}) async {
     conversions.add((channel.id, toPrivate, members.join(',')));
+    channelConversionNotAdded = <String>[
+      for (final member in members)
+        if (refuse.contains(member)) member,
+    ];
     return true;
   }
 }
@@ -142,6 +151,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(state.conversions, [('chan_open', true, 'acct_bob,acct_dave')]);
     expect(find.byType(ChannelConversionAction), findsNothing);
+  });
+
+  testWidgets(
+      'ticked readers the server refused are named before the settings '
+      'close', (tester) async {
+    final state = _State()..refuse = <String>['acct_dave'];
+    addTearDown(state.dispose);
+    await _open(tester, state, _channel('open'));
+    await tester.tap(find.text('Make this channel private'));
+    await tester.pumpAndSettle();
+    expect(state.readerLoads, 1);
+    await tester.tap(find.text('Make private'));
+    await tester.pumpAndSettle();
+    expect(state.conversions,
+        [('chan_open', true, 'acct_bob,acct_carol,acct_dave')]);
+    expect(find.byType(ChannelConversionAction), findsNothing);
+    expect(find.textContaining('could not be added: @dave.'), findsOneWidget);
   });
 
   testWidgets('cancelling the reader list converts nothing', (tester) async {

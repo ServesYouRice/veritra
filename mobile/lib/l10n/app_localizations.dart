@@ -7430,6 +7430,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Make private'**
   String get channelConvertPrivateAccept;
+
+  /// Shown after an open channel was made private when some ticked readers could not be added.
+  ///
+  /// In en, this message translates to:
+  /// **'The channel is private now, but these ticked readers could not be added: {names}. Add them from the channel\'s members.'**
+  String channelConvertNotAdded(String names);
 }
 
 class _AppLocalizationsDelegate

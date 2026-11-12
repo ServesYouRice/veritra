@@ -1560,5 +1560,10 @@
   "channelConvertPrivatePick": "Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.",
   "channelConvertPrivateNoReaders": "No one else reads this channel yet.",
   "channelConvertReadersFailed": "Could not load who reads this channel. Try again.",
-  "channelConvertPrivateAccept": "Make private"
+  "channelConvertPrivateAccept": "Make private",
+  "channelConvertNotAdded": "The channel is private now, but these ticked readers could not be added: {names}. Add them from the channel's members.",
+  "@channelConvertNotAdded": {
+    "description": "Shown after an open channel was made private when some ticked readers could not be added.",
+    "placeholders": {"names": {"type": "String", "example": "@bob, @carol"}}
+  }
 }

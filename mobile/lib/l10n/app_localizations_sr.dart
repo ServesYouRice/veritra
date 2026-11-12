@@ -4516,6 +4516,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get channelConvertPrivateAccept => 'Учини приватним';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'Канал је сада приватан, али ови означени читаоци нису могли да буду додати: $names. Додајте их из чланова канала.';
+  }
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -9035,4 +9040,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get channelConvertPrivateAccept => 'Učini privatnim';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'Kanal je sada privatan, ali ovi označeni čitaoci nisu mogli da budu dodati: $names. Dodajte ih iz članova kanala.';
+  }
 }

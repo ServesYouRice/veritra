@@ -4500,4 +4500,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get channelConvertPrivateAccept => 'Make private';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'The channel is private now, but these ticked readers could not be added: $names. Add them from the channel\'s members.';
+  }
 }

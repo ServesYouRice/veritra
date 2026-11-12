@@ -7795,6 +7795,10 @@ class AppState extends ChangeNotifier
         own: false);
   }
 
+  /// The ticked readers the last open-to-private conversion could not add
+  /// (the server refused them); empty when every add went through.
+  List<String> channelConversionNotAdded = const <String>[];
+
   /// Whether a reconcile of [conversationId] is asked for at once.
   @visibleForTesting
   bool mlsReconcileNowForTesting(String conversationId) =>
@@ -7852,7 +7856,9 @@ class AppState extends ChangeNotifier
   /// join in the one commit reconcile stages for all of them; the `move`
   /// record, with the earlier posts, goes out in that commit's epoch, so
   /// they all receive it. No one else is added. An add the server refuses
-  /// leaves the channel converted and reports the error.
+  /// leaves the channel converted: the other ticked readers are still
+  /// added, and the refused ones are listed in [channelConversionNotAdded]
+  /// (the conversion screen names them) with the error.
   Future<bool> convertChannel(Channel channel,
       {required bool toPrivate,
       List<String> members = const <String>[]}) async {
@@ -7866,6 +7872,8 @@ class AppState extends ChangeNotifier
     };
     Channel? moved;
     Object? addFailure;
+    final notAdded = <String>[];
+    channelConversionNotAdded = const <String>[];
     await _run(() async {
       final current = session;
       final client = api;
@@ -7918,13 +7926,19 @@ class AppState extends ChangeNotifier
           fromConversationId: from,
           toConversationId: conversation.id,
           own: true);
-      try {
-        for (final account in adds) {
+      for (final account in adds) {
+        try {
           await client.addConversationMember(
               current.token, conversation.id, account);
+        } on ApiException catch (err) {
+          // A lost session is _run's to handle.
+          if (err.statusCode == 401) rethrow;
+          addFailure ??= err;
+          notAdded.add(account);
+        } catch (err) {
+          addFailure ??= err;
+          notAdded.add(account);
         }
-      } catch (err) {
-        addFailure = err;
       }
       if (adds.isNotEmpty) {
         // Their devices join through reconcile (card I51): one staged
@@ -7938,6 +7952,7 @@ class AppState extends ChangeNotifier
     if (error != null || next == null) return false;
     final failure = addFailure;
     if (failure != null) {
+      channelConversionNotAdded = List<String>.unmodifiable(notAdded);
       error = describeError(failure, l10n);
       notifyListeners();
     }

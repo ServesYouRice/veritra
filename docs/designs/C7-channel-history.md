@@ -1522,8 +1522,11 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     that commit's epoch, so they all take its wrap live and import the
     earlier posts. Unticked readers and the admin are never added; an
     unticked reader holds no leaf in the new group, so the record never
-    opens for it and no wrap is its. An add the server refuses leaves the
-    channel converted, stops the adds after it, and shows the error. The channel
+    opens for it and no wrap is its. The server has no bulk add, so the
+    adds are one call each; the MLS side is the one commit. An add the
+    server refuses leaves the channel converted; the other ticked readers
+    are still added, and a snack bar names the refused ones so the admin
+    can add them by hand. The channel
     record is published again in the new home: a private channel's under
     a newly minted key, an open one's under the community key, and the
     community record lists the open channels. The info service refuses to

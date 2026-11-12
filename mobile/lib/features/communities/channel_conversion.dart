@@ -38,24 +38,28 @@ Future<bool> confirmChannelConversion(BuildContext context,
 
 /// C3 conversion, open to private (owner answer 2026-11-12, "Admin picks
 /// during switch"): lists the open [channel]'s current readers, all ticked,
-/// and returns the account ids still ticked when the admin accepts, or
-/// null when they cancel. Unticked readers are never added. The admin
-/// cannot accept until the readers have loaded: a failed load must not
-/// read as "nobody ticked".
-Future<List<String>?> pickChannelConversionMembers(
+/// and returns the readers still ticked when the admin accepts, or null
+/// when they cancel. Unticked readers are never added. The admin cannot
+/// accept until the readers have loaded: a failed load must not read as
+/// "nobody ticked".
+Future<List<ConversationMember>?> pickChannelConversionMembers(
     BuildContext context, AppState state, Channel channel) {
-  return showDialog<List<String>>(
+  // Fetched once, whatever rebuilds the dialog's route; a failure is null
+  // here, never an error left unhandled until the dialog listens.
+  final readers = state.channelReaders(channel).then<List<ConversationMember>?>(
+      (readers) => readers,
+      onError: (Object _) => null);
+  return showDialog<List<ConversationMember>>(
     context: context,
-    builder: (_) => _ConversionMembersDialog(
-      readers: state.channelReaders(channel),
-    ),
+    builder: (_) => _ConversionMembersDialog(readers: readers),
   );
 }
 
 class _ConversionMembersDialog extends StatefulWidget {
   const _ConversionMembersDialog({required this.readers});
 
-  final Future<List<ConversationMember>> readers;
+  /// Null when they could not be loaded.
+  final Future<List<ConversationMember>?> readers;
 
   @override
   State<_ConversionMembersDialog> createState() =>
@@ -71,9 +75,11 @@ class _ConversionMembersDialogState extends State<_ConversionMembersDialog> {
   void initState() {
     super.initState();
     widget.readers.then((readers) {
-      if (mounted) setState(() => _readers = readers);
-    }, onError: (Object _) {
-      if (mounted) setState(() => _failed = true);
+      if (!mounted) return;
+      setState(() {
+        _readers = readers;
+        _failed = readers == null;
+      });
     });
   }
 
@@ -117,10 +123,9 @@ class _ConversionMembersDialogState extends State<_ConversionMembersDialog> {
         FilledButton(
           onPressed: readers == null
               ? null
-              : () => Navigator.of(context).pop(<String>[
+              : () => Navigator.of(context).pop(<ConversationMember>[
                     for (final reader in readers)
-                      if (!_unticked.contains(reader.accountId))
-                        reader.accountId,
+                      if (!_unticked.contains(reader.accountId)) reader,
                   ]),
           child: Text(l10n.channelConvertPrivateAccept),
         ),
@@ -131,7 +136,8 @@ class _ConversionMembersDialogState extends State<_ConversionMembersDialog> {
 
 /// The conversion action in a channel's settings, for owners and admins
 /// ([AppState.mayConvertChannel]). On success it closes the dialog it sits
-/// in: the channel has a new home.
+/// in: the channel has a new home. Ticked readers the server refused to add
+/// are named in a snack bar first, so the admin can add them by hand.
 class ChannelConversionAction extends StatefulWidget {
   const ChannelConversionAction(
       {required this.state, required this.channel, super.key});
@@ -150,7 +156,7 @@ class _ChannelConversionActionState extends State<ChannelConversionAction> {
   bool get _toPrivate => widget.channel.kind != 'private';
 
   Future<void> _convert() async {
-    var members = const <String>[];
+    var members = const <ConversationMember>[];
     if (_toPrivate) {
       final picked = await pickChannelConversionMembers(
           context, widget.state, widget.channel);
@@ -163,10 +169,26 @@ class _ChannelConversionActionState extends State<ChannelConversionAction> {
     }
     setState(() => _sending = true);
     final done = await widget.state.convertChannel(widget.channel,
-        toPrivate: _toPrivate, members: members);
+        toPrivate: _toPrivate,
+        members: <String>[for (final member in members) member.accountId]);
     if (!mounted) return;
     setState(() => _sending = false);
-    if (done) Navigator.of(context).pop(false);
+    if (!done) return;
+    final notAdded = widget.state.channelConversionNotAdded;
+    if (notAdded.isNotEmpty) {
+      final names = <String>[
+        for (final account in notAdded)
+          accountLabel(
+              account,
+              members
+                  .where((member) => member.accountId == account)
+                  .firstOrNull
+                  ?.username),
+      ].join(', ');
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(content: Text(context.l10n.channelConvertNotAdded(names))));
+    }
+    Navigator.of(context).pop(false);
   }
 
   @override
