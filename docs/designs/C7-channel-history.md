@@ -1248,14 +1248,18 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
     device's key in the current tree when it has a leaf there, even if the
     server lists another key for it; otherwise the server's former-member
     key, and the post is then marked "From a former member" and never
-    acts with a role. A device with neither is dropped. The marks are a
-    set of message keys in their own sealed setting (`c7.former.<group>`;
-    no schema change), which the re-add wipe leaves with the rows; at
-    20,000 marks a further former member's post is not imported rather
-    than shown unmarked. Like every C7 setting it is not in K1 backups or
-    K2 bundles, while the rows are: a restored or linked device shows those
-    posts unmarked (for the owner: a schema 42 column carried in
-    snapshots would keep the mark; open until then).
+    acts with a role. A device with neither is dropped. The mark is on the
+    row (**local schema 42**, `local_messages.c7_former`; owner answer
+    2026-11-12, "keep labels in backups"), so it lives exactly as long as
+    the row, the re-add wipe leaves it, edits never clear it, and history
+    snapshots carry it (`c7Former: true`, written only when set, so an
+    unmarked snapshot stays readable by an older importer): a restored or
+    linked device shows those posts marked. It is the only C7 state in a
+    snapshot; it names no key. The upgrade step is idempotent and gated on
+    the column check alone, as is schema 41's, so a store another package
+    numbered past them still gets both. The earlier sealed setting
+    `c7.former.<group>` and its 20,000-mark cap never left this branch and
+    are gone.
     A replaced device's earlier posts are a gap (deviation 10).
   - **Types.** The opened VAP1 goes through the live path's classify (the
     conversation, sender, action and channel); only posts and the actions
@@ -1287,9 +1291,10 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   - **Residuals.** Imported posts are not franked (the history route serves
     no `frank_commit`), so they cannot be reported. The newcomer import
     runs once per join; a device that never receives the `history_sync` of
-    its join imports nothing (nothing would open). An import that keeps
-    failing is fetched again on every foreground work pass, with no
-    backoff (up to 8 MiB per channel each time).
+    its join imports nothing (nothing would open). An import that fails
+    waits before it is fetched again (1 min, doubling to 1 h, per
+    conversation, in memory: an app restart tries once at once); "Load
+    earlier posts" is user-initiated and not gated.
   - **Tests.** Native: a private group with two removals before the add
     (the walk adopts the first generation), with a relabelled epoch, a
     closing-epoch label, a record in the stream, a server key listed for a

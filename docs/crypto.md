@@ -590,8 +590,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `full` channels only. Imported posts are not franked. A replaced
   device's posts from before its replacement are not imported (deviation
   10: the tree key always wins, and the server lists only devices outside
-  the roster). Former-member marks are not carried by K1 or K2 while the
-  rows are. The server also refuses a `history_sync` tagged with an epoch
+  the roster). Former-member marks are a row column (local schema 42,
+  `c7_former`) that K1 backups and K2 bundles carry; the pre-join
+  attachment placeholder travels as itself (the snapshot reader accepts
+  exactly that marker body). A failing import backs off (1 min to 1 h).
+  The server also refuses a `history_sync` tagged with an epoch
   above the group's recorded epoch. C7 design, "Newcomer import". Needs
   the independent review.
 

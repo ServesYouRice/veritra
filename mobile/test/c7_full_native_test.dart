@@ -855,8 +855,14 @@ void main() {
       expect(row.body ?? '', isNot(contains('blob_pre_join')));
       expect(row.state, LocalMessageState.received);
     }
-    expect(await dave.service.c7FormerMemberPosts(_conversation),
-        {keyOf(carol, fromCarol)});
+    // The former member's post is marked on its row (schema 42); no other
+    // row is.
+    expect({
+      for (final row in byKey.values)
+        if (row.c7Former == true) row.key
+    }, {
+      keyOf(carol, fromCarol)
+    });
     // Paging: the channel is full and the page was cut short.
     expect(await dave.service.c7EarlierCursor(_conversation, _channel),
         channel.last.messageId);

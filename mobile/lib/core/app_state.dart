@@ -1086,10 +1086,6 @@ class AppState extends ChangeNotifier
   /// message to page before.
   Map<String, Map<String, String>> _c7Earlier = <String, Map<String, String>>{};
 
-  /// C7: per conversation, imported posts verified with a former member's
-  /// key from the server (decision 8), by local message key.
-  Map<String, Set<String>> _c7Former = <String, Set<String>>{};
-
   /// C7: a newcomer import that failed is not fetched again (up to
   /// [c7FirstPageBytes] per channel) before its time: per conversation, the
   /// failures in a row and when the next try may start. In memory only, so
@@ -4635,21 +4631,19 @@ class AppState extends ChangeNotifier
     }
   }
 
-  /// Rereads the paging cursors and former-member marks for [ids].
+  /// Rereads the paging cursors for [ids]. Former-member marks are on the
+  /// rows themselves (local schema 42).
   Future<void> _c7RefreshImport(
       C7HistoryService c7, Iterable<String> ids) async {
     final earlier = <String, Map<String, String>>{..._c7Earlier};
-    final former = <String, Set<String>>{..._c7Former};
     for (final id in ids) {
       earlier[id] = <String, String>{
         for (final channel in _c7ImportChannels(id))
           if (await c7.c7EarlierCursor(id, channel) case final String cursor)
             channel: cursor,
       };
-      former[id] = await c7.c7FormerMemberPosts(id);
     }
     _c7Earlier = earlier;
-    _c7Former = former;
   }
 
   /// The channel the chat shows for [conversationId]: the selected one of a
@@ -4664,11 +4658,6 @@ class AppState extends ChangeNotifier
     final channel = _c7ShownChannel(conversationId);
     return channel != null && _c7Earlier[conversationId]?[channel] != null;
   }
-
-  /// Whether [messageKey] is an imported post verified with a former
-  /// member's key from the server: marked "from a former member".
-  bool channelHistoryFormerMember(String conversationId, String messageKey) =>
-      _c7Former[conversationId]?.contains(messageKey) ?? false;
 
   /// Fetches and imports the next page of earlier posts in the channel
   /// shown in [conversationId], as the first page was fetched.
@@ -8246,7 +8235,6 @@ class AppState extends ChangeNotifier
     _c7Timer = null;
     _c7Lines = <String, Map<String, bool>>{};
     _c7Earlier = <String, Map<String, String>>{};
-    _c7Former = <String, Set<String>>{};
     _c7ImportBackoff.clear();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();

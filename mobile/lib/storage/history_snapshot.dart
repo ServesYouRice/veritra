@@ -713,10 +713,11 @@ const _messageFields = {
   'senderHidden'
 };
 
-/// Fields a snapshot row may also carry. `senderRemoved` (L1, schema 40) is
-/// written only when true, so a snapshot without such a message stays one an
-/// older importer reads; a marked message is never copied unmarked.
-const _readMessageFields = {..._messageFields, 'senderRemoved'};
+/// Fields a snapshot row may also carry. `senderRemoved` (L1, schema 40) and
+/// `c7Former` (C7, schema 42) are written only when true, so a snapshot
+/// without such a message stays one an older importer reads; a marked
+/// message is never copied unmarked.
+const _readMessageFields = {..._messageFields, 'senderRemoved', 'c7Former'};
 
 /// A link preview (B2, up to ~22 KiB of thumbnail per row) never travels in a
 /// snapshot: it would push a long history over the 64 MiB cap, and a build
@@ -728,6 +729,7 @@ Map<String, Object?> _messageJson(LocalMessage m) {
   };
   json['formatJson'] = formatJsonWithoutPreview(json['formatJson'] as String?);
   if (m.senderRemoved == true) json['senderRemoved'] = true;
+  if (m.c7Former == true) json['c7Former'] = true;
   return json;
 }
 
@@ -755,6 +757,7 @@ LocalMessage _readMessage(Object? raw) {
       }.contains(j['kind']) ||
       (j['senderHidden'] != null && j['senderHidden'] is! bool) ||
       (j['senderRemoved'] != null && j['senderRemoved'] != true) ||
+      (j['c7Former'] != null && j['c7Former'] != true) ||
       (j['forwardHops'] != null &&
           (j['forwardHops'] is! int ||
               (j['forwardHops'] as int) < 0 ||
@@ -870,7 +873,8 @@ LocalMessage historyMessageFromInsert(InsertMessageEffect effect) =>
         channelId: effect.channelId,
         senderHidden: effect.senderHidden,
         senderRemoved: effect.senderRemoved ? true : null,
-        c7Gen: effect.c7Gen);
+        c7Gen: effect.c7Gen,
+        c7Former: effect.c7Former ? true : null);
 
 HistorySnapshot captureHistory(
     {required Session session,

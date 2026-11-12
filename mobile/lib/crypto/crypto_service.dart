@@ -803,11 +803,6 @@ abstract interface class C7HistoryService {
   /// [channelId] (owner answer Q1), or null: the channel is not `full` here,
   /// the import has not run, or the route has nothing older.
   Future<String?> c7EarlierCursor(String conversationId, String channelId);
-
-  /// The imported posts this device verified with a key from the server's
-  /// former-member list, by local message key: the timeline marks them
-  /// "from a former member" (decision 8).
-  Future<Set<String>> c7FormerMemberPosts(String conversationId);
 }
 
 /// Off by default. AppState enables this only for the current verified

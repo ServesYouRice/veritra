@@ -65,7 +65,8 @@ void main() {
           (await database.customSelect('PRAGMA user_version').getSingle())
               .read<int>('user_version'),
           EncryptedLocalDatabase.currentSchemaVersion);
-      expect(EncryptedLocalDatabase.currentSchemaVersion, 41);
+      expect(EncryptedLocalDatabase.currentSchemaVersion,
+          greaterThanOrEqualTo(41));
       await database.applyMessageEffects([row('new', c7Gen: gen)]);
       expect((await database.readMessage('dev:new'))!.c7Gen, gen);
       expect((await database.readMessage('dev:old'))!.c7Gen, isNull);

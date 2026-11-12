@@ -157,6 +157,7 @@ final class InsertMessageEffect extends MessageEffect {
     this.senderHidden = false,
     this.senderRemoved = false,
     this.c7Gen,
+    this.c7Former = false,
   });
 
   final String key;
@@ -187,18 +188,25 @@ final class InsertMessageEffect extends MessageEffect {
   /// ([LocalMessages.c7Gen]); null for a random key.
   final String? c7Gen;
 
+  /// C7 (schema 42): an imported post verified with a former member's key
+  /// from the server ([LocalMessages.c7Former]).
+  final bool c7Former;
+
   /// This row, marked as sent from a removed device.
   InsertMessageEffect markedSenderRemoved() => _with(senderRemoved: true);
 
   /// This row, recorded as sealed under the C7 generation [gen].
   InsertMessageEffect withC7Gen(String gen) => _with(c7Gen: gen);
 
+  /// This row, marked "from a former member" (C7 decision 8).
+  InsertMessageEffect markedC7Former() => _with(c7Former: true);
+
   /// This row with [value] as its body (C7: a pre-join attachment's
   /// manifest is never stored).
   InsertMessageEffect withBody(String value) => _with(body: value);
 
   InsertMessageEffect _with(
-          {bool? senderRemoved, String? c7Gen, String? body}) =>
+          {bool? senderRemoved, String? c7Gen, String? body, bool? c7Former}) =>
       InsertMessageEffect(
         key: key,
         conversationId: conversationId,
@@ -217,6 +225,7 @@ final class InsertMessageEffect extends MessageEffect {
         senderHidden: senderHidden,
         senderRemoved: senderRemoved ?? this.senderRemoved,
         c7Gen: c7Gen ?? this.c7Gen,
+        c7Former: c7Former ?? this.c7Former,
       );
 }
 
@@ -580,6 +589,15 @@ class LocalMessages extends Table {
   /// generation only while this is one of the current period's.
   TextColumn get c7Gen => text().nullable()();
 
+  /// C7 (schema 42, decision 8): an imported pre-join post whose signature
+  /// was verified with the server's former-member key for a device no longer
+  /// in the group. The chat marks it "From a former member", and it never
+  /// acts with a role. Unlike every other C7 state this travels in history
+  /// snapshots (owner, 2026-11-12: keep labels in backups), so a restored or
+  /// linked device never shows such a post unmarked. Null and false mean
+  /// unmarked. Edits never clear it.
+  BoolColumn get c7Former => boolean().nullable()();
+
   @override
   Set<Column<Object>> get primaryKey => {key};
 }
@@ -685,7 +703,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 41;
+  static const currentSchemaVersion = 42;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -928,9 +946,15 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // generated rows. A store from before schema 7 creates the table
             // whole further down. Idempotent, so it can be renumbered.
             if (from >= 7 && from < 40) await _addSenderRemovedColumn();
-            // C7 (schema 41): the generation a row's body was sealed under.
-            // First too, for the same reason; idempotent.
-            if (from >= 7 && from < 41) await _addC7GenColumn();
+            // C7 (schemas 41 and 42): the generation a row's body was sealed
+            // under, and the former-member mark. First too, for the same
+            // reason. Gated on the column check alone, not on the version,
+            // so a store another package numbered past them (L2's 43) still
+            // gets both.
+            if (from >= 7) {
+              await _addC7GenColumn();
+              await _addC7FormerColumn();
+            }
             // K2/K0: the pending device enrollment. The waiting K0 claim
             // moves out of its schema 16 setting in this same transaction.
             if (from < 17) {
@@ -1096,6 +1120,16 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         .get();
     if (columns.any((row) => row.read<String>('name') == 'c7_gen')) return;
     await customStatement('ALTER TABLE local_messages ADD COLUMN c7_gen TEXT');
+  }
+
+  /// Adds `local_messages.c7_former` unless it is there already.
+  Future<void> _addC7FormerColumn() async {
+    final columns = await customSelect(
+            "SELECT name FROM pragma_table_info('local_messages')")
+        .get();
+    if (columns.any((row) => row.read<String>('name') == 'c7_former')) return;
+    await customStatement('ALTER TABLE local_messages ADD COLUMN c7_former '
+        'INTEGER CHECK (c7_former IN (0, 1))');
   }
 
   /// Adds `local_messages.sender_removed` unless it is there already.

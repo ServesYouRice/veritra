@@ -149,7 +149,6 @@ class _C7Crypto extends UnavailableCryptoService
     bool first,
   })>[];
   Map<String, String> earlier = const <String, String>{};
-  Set<String> former = const <String>{};
   C7ChannelView view =
       const C7ChannelView(full: false, status: 'ok', pending: false);
 
@@ -236,10 +235,6 @@ class _C7Crypto extends UnavailableCryptoService
   Future<String?> c7EarlierCursor(
           String conversationId, String channelId) async =>
       conversationId == 'conv_shared' ? earlier[channelId] : null;
-
-  @override
-  Future<Set<String>> c7FormerMemberPosts(String conversationId) async =>
-      conversationId == 'conv_shared' ? former : const <String>{};
 }
 
 /// [count] history rows of [stream], newest first.
@@ -508,22 +503,15 @@ void main() {
     expect(await pass(), greaterThan(0));
   });
 
-  test(
-      '"Load earlier posts" pages a full channel on demand, and imported '
-      'posts from former members are marked', () async {
+  test('"Load earlier posts" pages a full channel on demand', () async {
     final api = _Api();
     final (state, crypto) = _appWith(api);
     api.history[_open] = _rows(_open, 1200);
     crypto.earlier = <String, String>{_open: 'm_${_open}_201'};
-    crypto.former = <String>{'dev_gone:a_1'};
     state.selectChannel('conv_shared', _open);
     expect(state.channelHistoryEarlier('conv_shared'), isFalse);
     await state.c7WorkPassForTesting();
     expect(state.channelHistoryEarlier('conv_shared'), isTrue);
-    expect(state.channelHistoryFormerMember('conv_shared', 'dev_gone:a_1'),
-        isTrue);
-    expect(
-        state.channelHistoryFormerMember('conv_shared', 'dev_x:a_1'), isFalse);
     await state.loadEarlierChannelPosts('conv_shared');
     expect(api.historyAsked.first, (_open, 'm_${_open}_201', 100));
     final run = crypto.imports.single;

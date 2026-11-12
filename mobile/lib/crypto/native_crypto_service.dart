@@ -239,11 +239,6 @@ class NativeCryptoService
   }
 
   @override
-  Future<Set<String>> c7FormerMemberPosts(String conversationId) async =>
-      c7DecodeFormer(
-          await localStore.loadSetting(c7FormerSetting(conversationId)));
-
-  @override
   Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone) =>
       _serial(() async {
         final miss = tombstone.conversationId.isEmpty
@@ -6443,10 +6438,6 @@ extension _C7Engine on NativeCryptoService {
     final keys = C7Keys(bindings);
     final changedBooks = <C7ChannelBook>[];
     final cursors = <String, String?>{...state.cursors};
-    final formerPosts = <String>{
-      ...c7DecodeFormer(
-          await localStore.loadSetting(c7FormerSetting(conversationId))),
-    };
     // Pass one: every opened, verified post and action, oldest first.
     final posts = <({String key, String account, InsertMessageEffect row})>[];
     final actions = <List<MessageEffect>>[];
@@ -6570,17 +6561,14 @@ extension _C7Engine on NativeCryptoService {
           continue;
         }
         final key = messageKey(row.senderDeviceId, row.actionId);
-        // A former member's post is shown marked or not at all.
-        if (listed != null &&
-            !formerPosts.contains(key) &&
-            formerPosts.length >= c7FormerPostLimit) {
-          continue;
-        }
         if (isPost) {
           // The post's own row only: no profile key rides in from history.
           for (final effect in effects) {
             if (effect is! InsertMessageEffect || effect.key != key) continue;
             var insert = effect.withC7Gen(c7GenTag(chk));
+            // A former member's post is marked on its row (schema 42), so
+            // the mark travels with it into K1 backups and K2 bundles.
+            if (listed != null) insert = insert.markedC7Former();
             if (payload.type == AppPayloadType.attachmentManifest) {
               // Owner answer Q2: never offered, so never stored.
               insert = insert.withBody(c7HiddenAttachmentBody);
@@ -6593,7 +6581,6 @@ extension _C7Engine on NativeCryptoService {
               if (effect is! ProfileKeyEffect) effect,
           ]);
         }
-        if (listed != null) formerPosts.add(key);
       }
     }
     // Pass two: the authors' own deletes as a set first (a deleted post is
@@ -6632,7 +6619,6 @@ extension _C7Engine on NativeCryptoService {
         ..._c7Put(conversationId,
             first ? group.copyWith(imported: true) : group, changedBooks),
       c7ImportSetting(conversationId): next.encode(),
-      c7FormerSetting(conversationId): c7EncodeFormer(formerPosts),
     });
     return posts.where((post) => !deleted.contains(post.key)).length;
   }

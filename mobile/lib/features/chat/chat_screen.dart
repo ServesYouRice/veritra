@@ -1483,8 +1483,7 @@ class _MessageList extends StatelessWidget {
                 local: local,
                 copiedHistory: local?.state == LocalMessageState.restored ||
                     (local != null && history.copiedKeys.contains(local.key)),
-                formerMember: local != null &&
-                    state.channelHistoryFormerMember(conversationId, local.key),
+                formerMember: local?.c7Former == true,
                 replyPreview: local?.replyTo == null
                     ? null
                     : quotedPreview(context.l10n, replyTarget),

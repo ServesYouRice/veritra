@@ -25,23 +25,6 @@ const int c7FirstPageBytes = 8 * 1024 * 1024;
 /// Bodies per history request.
 const int c7HistoryRequestLimit = 100;
 
-/// At most this many former-member posts are marked per group; once full,
-/// a further post from a former member is not imported (never shown
-/// unmarked).
-const int c7FormerPostLimit = 20000;
-
-/// The marked posts stored in `c7FormerSetting`; malformed reads as none.
-Set<String> c7DecodeFormer(String? stored) {
-  if (stored == null) return const <String>{};
-  try {
-    return (jsonDecode(stored) as List).cast<String>().toSet();
-  } on Object {
-    return const <String>{};
-  }
-}
-
-String c7EncodeFormer(Set<String> keys) => jsonEncode(keys.toList()..sort());
-
 /// The walk through the stored `history_sync` messages in [syncs] for
 /// [book] (decision 5, "Generation entry and backward walk"): starting from
 /// the oldest generation held, a slot that opens under its key and whose
