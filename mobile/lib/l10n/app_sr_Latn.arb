@@ -1319,6 +1319,6 @@
   "l2OwnerKeyMissing": "Vlasnik {account} više nije na spisku.",
   "l2OwnerKeyAccept": "Prihvati",
   "l2OwnerKeyReject": "Odbij",
-  "l2OwnerKeyAcceptWarning": "Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ključ koji je napravio sam server omogućio bi mu da čita prijave koje šaljete.",
+  "l2OwnerKeyAcceptWarning": "Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ko ima ovaj ključ može da proveri ko je poslao poruku bez vašeg imena ako mu je pokažu. Prijave se nikad ne šalju ključu prihvaćenom ovde; prijava traži da uporedite kodove.",
   "l2OwnerKeyStale": "Spisak se u međuvremenu promenio. Pogledajte ga ponovo."
 }

@@ -12,6 +12,7 @@ import 'package:private_messenger/core/report_models.dart';
 import 'package:private_messenger/crypto/franking.dart'
     show reportInboxInstanceOwner;
 import 'package:private_messenger/crypto/owner_key_watch.dart';
+import 'package:private_messenger/crypto/owner_proof_pins.dart';
 import 'package:private_messenger/crypto/report_key_pins.dart';
 import 'package:private_messenger/features/settings/settings_screen.dart';
 import 'package:private_messenger/l10n/l10n.dart';
@@ -189,10 +190,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('owner-key-review')), findsNothing);
 
+    // The decisions act on the proof recipients only: no report pin.
     final pins = {
-      for (final pin in await state.localStore.loadReportKeyPins(origin))
+      for (final pin
+          in await OwnerProofPins(state.localStore, origin).effective())
         pin.ownerAccountId: pin.publicKey
     };
+    expect(await state.localStore.loadReportKeyPins(origin), isEmpty);
     expect(pins, {
       'acct_o1': List<int>.filled(32, 0x41),
       'acct_o3': List<int>.filled(32, 0x43),

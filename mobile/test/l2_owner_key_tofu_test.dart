@@ -13,6 +13,7 @@ import 'package:private_messenger/crypto/franking.dart'
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
 import 'package:private_messenger/crypto/owner_key_watch.dart';
+import 'package:private_messenger/crypto/owner_proof_pins.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
 
@@ -112,6 +113,18 @@ void main() {
   Future<List<List<int>>> tags(AppState state) async =>
       (await state.debugSealedFrankContext())!.ownerKeys;
 
+  /// The proof recipients as stored, owner to key.
+  Future<Map<String, List<int>>> proofPins(LocalStore store) async => {
+        for (final pin in await OwnerProofPins(store, _origin).effective())
+          pin.ownerAccountId: pin.publicKey
+      };
+
+  /// The D95 report pins, owner to key.
+  Future<Map<String, List<int>>> reportPins(LocalStore store) async => {
+        for (final pin in await store.loadReportKeyPins(_origin))
+          pin.ownerAccountId: pin.publicKey
+      };
+
   test('first sight pins the owner keys and the tags go to them', () async {
     final (:state, :api, :store) = await start();
     api.owners = [owner('acct_b', keys[1]), owner('acct_a', keys[0])];
@@ -119,9 +132,10 @@ void main() {
     expect(await tags(state), [keys[0], keys[1]]);
     // Through the conversation outside the community, members only.
     expect(api.inboxReads, ['conv_dm']);
-    final pins = await store.loadReportKeyPins(_origin);
-    expect({for (final pin in pins) pin.ownerAccountId: pin.publicKey},
-        {'acct_a': keys[0], 'acct_b': keys[1]});
+    // Pinned for proofs only (owner decision 2026-11-12, "Keep reports
+    // manual"): no report pin is made without a code comparison.
+    expect(await proofPins(store), {'acct_a': keys[0], 'acct_b': keys[1]});
+    expect(await store.loadReportKeyPins(_origin), isEmpty);
     expect(state.ownerKeyReview, isEmpty);
     expect(await state.sealedProvableOwnerCount(), 2);
 
@@ -229,6 +243,7 @@ void main() {
     expect(await tags(state), [keys[0]]);
     expect(await state.acceptOwnerKey(state.ownerKeyReview.single), isTrue);
     expect(await tags(state), isEmpty);
+    expect(await proofPins(store), isEmpty);
     expect(await store.loadReportKeyPins(_origin), isEmpty);
 
     api
@@ -237,6 +252,7 @@ void main() {
     for (var pass = 0; pass < 3; pass++) {
       expect(await tags(state), isEmpty);
     }
+    expect(await proofPins(store), isEmpty);
     expect(await store.loadReportKeyPins(_origin), isEmpty);
     expect(state.ownerKeyReview.single.change, OwnerKeyChange.added);
 
@@ -262,6 +278,44 @@ void main() {
     expect(state.ownerKeyReview, hasLength(1));
     expect(await state.sealedProvableOwnerCount(), 1);
     expect(api.inboxReads, hasLength(reads));
+  }, skip: skip);
+
+  // Owner decision 2026-11-12, "Keep reports manual": the tags go to the
+  // proof recipients, which are the D95 pins a person made plus what was
+  // pinned on first use or accepted on the sealed key screen; none of the
+  // latter ever becomes a report pin.
+  test('tags go to the proof pins, and the report pins stay manual', () async {
+    final (:state, :api, :store) = await start();
+    // A person pinned acct_a's key while reporting.
+    await ReportKeyPinsShim.pin(store, owner('acct_a', keys[0]));
+    api.owners = [owner('acct_a', keys[0]), owner('acct_b', keys[1])];
+    expect(await tags(state), [keys[0]]);
+
+    // acct_b is accepted on the sealed key screen: tagged, never a report
+    // pin.
+    expect(await state.acceptOwnerKey(state.ownerKeyReview.single), isTrue);
+    expect(await tags(state), [keys[0], keys[1]]);
+    expect(await reportPins(store), {'acct_a': keys[0]});
+
+    // acct_a's listed key changes and is accepted: the proof follows, the
+    // report pin stays the one the person compared.
+    api.owners = [owner('acct_a', keys[2], rev: 2), owner('acct_b', keys[1])];
+    expect(await tags(state), [keys[0], keys[1]]);
+    expect(await state.acceptOwnerKey(state.ownerKeyReview.single), isTrue);
+    expect(await tags(state), [keys[2], keys[1]]);
+    expect(await reportPins(store), {'acct_a': keys[0]});
+
+    // acct_a is gone and accepted as gone: no longer tagged, its report pin
+    // stays (D95 reports it as missing), and no warning comes back.
+    api.owners = [owner('acct_b', keys[1])];
+    await tags(state);
+    final gone = state.ownerKeyReview.single;
+    expect(gone.change, OwnerKeyChange.missing);
+    expect(await state.acceptOwnerKey(gone), isTrue);
+    expect(await tags(state), [keys[1]]);
+    expect(state.ownerKeyReview, isEmpty);
+    expect(await reportPins(store), {'acct_a': keys[0]});
+    expect(await state.sealedProvableOwnerCount(), 1);
   }, skip: skip);
 }
 

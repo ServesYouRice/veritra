@@ -1584,7 +1584,7 @@
   "@l2OwnerKeyAccept": {"description": "L2-3 sealed sender owner keys."},
   "l2OwnerKeyReject": "Reject",
   "@l2OwnerKeyReject": {"description": "L2-3 sealed sender owner keys."},
-  "l2OwnerKeyAcceptWarning": "Accept only if you know the owners or their keys changed. A key the server made itself would let it read the reports you send.",
+  "l2OwnerKeyAcceptWarning": "Accept only if you know the owners or their keys changed. Whoever holds this key can check who sent a message without your name if they are shown it. Reports never go to a key accepted here; reporting asks you to compare codes.",
   "@l2OwnerKeyAcceptWarning": {"description": "L2-3 sealed sender owner keys."},
   "l2OwnerKeyStale": "The list changed meanwhile. Look at it again.",
   "@l2OwnerKeyStale": {"description": "L2-3 sealed sender owner keys."}

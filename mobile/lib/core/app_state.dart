@@ -97,6 +97,7 @@ import 'report_key_announcer.dart';
 import 'report_models.dart' show ReportInbox;
 import '../crypto/franking.dart' show reportInboxInstanceOwner;
 import '../crypto/owner_key_watch.dart';
+import '../crypto/owner_proof_pins.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
 import 'typing_state.dart';
@@ -429,8 +430,8 @@ class AppState extends ChangeNotifier
 
   /// L2-3: the owner report key differences waiting for the person (a key
   /// changed, an owner added or gone), as last read from this device's
-  /// pins and the server's latest listing. Until accepted, sealed messages
-  /// are tagged only to the keys pinned before. Settings shows a warning
+  /// proof recipients and the server's latest listing. Until accepted,
+  /// sealed messages are tagged only to the proof recipients from before. Settings shows a warning
   /// while it is not empty.
   List<OwnerKeyReviewItem> ownerKeyReview = const <OwnerKeyReviewItem>[];
   SyncService? sync;
@@ -9887,9 +9888,10 @@ class AppState extends ChangeNotifier
   Future<SealedFrankContext?> debugSealedFrankContext() =>
       _sealedFrankContext(session?.baseUrl ?? '');
 
-  /// L2-3: how many owner report keys this app pinned for this server, for
-  /// Settings: a message sent sealed can be proven only to those owners
-  /// (none: to no one). Reads local pins only.
+  /// L2-3: how many proof recipients (owner report keys pinned for proofs,
+  /// `OwnerProofPins`) this app has for this server, for Settings: a
+  /// message sent sealed can be proven only to those owners (none: to no
+  /// one). Reads local pins only.
   Future<int> sealedProvableOwnerCount() async {
     final sealed = sealedSender;
     if (sealed == null) return 0;
@@ -9904,15 +9906,17 @@ class AppState extends ChangeNotifier
     return ownerKeyReview;
   }
 
-  /// L2-3: accepts one owner key difference (Settings): pins the listed key,
-  /// or drops the pin of an owner the server no longer lists. False when the
-  /// listing moved since the screen read it. The next token pass tags with
-  /// the new pins.
+  /// L2-3: accepts one owner key difference (Settings), for proofs only:
+  /// makes the listed key a proof recipient, or drops an owner the server
+  /// no longer lists from them. The D95 report pins are untouched, so a
+  /// report still asks for a code comparison. False when the listing moved
+  /// since the screen read it. The next token pass tags with the new
+  /// proof recipients.
   Future<bool> acceptOwnerKey(OwnerKeyReviewItem item) =>
       _decideOwnerKey(item, accept: true);
 
-  /// L2-3: rejects one owner key difference: the pins stay, and so do the
-  /// tags.
+  /// L2-3: rejects one owner key difference: the proof recipients stay, and
+  /// so do the tags.
   Future<bool> rejectOwnerKey(OwnerKeyReviewItem item) =>
       _decideOwnerKey(item, accept: false);
 

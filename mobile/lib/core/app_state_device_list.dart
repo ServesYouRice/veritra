@@ -179,8 +179,8 @@ extension AppStateDeviceList on AppState {
   /// device is on its own verified list with its signing key and the list
   /// names exactly this device's franking key. A listed device whose list
   /// names no franking key for it yet publishes change 7 first. The owner
-  /// keys are the instance owners' report keys this app pinned, never a key
-  /// fetched for the send.
+  /// keys are the proof recipients this app pinned ([_pinnedOwnerKeys]),
+  /// never a key fetched for the send.
   Future<SealedFrankContext?> _sealedFrankContext(String origin) async {
     // The owner listing is read here only to pin on first use and to show
     // differences; a failure keeps the pins as they are.
@@ -225,8 +225,9 @@ extension AppStateDeviceList on AppState {
   /// L2-3 (owner decision 2026-11-12, auto-pin on first use): reads the
   /// instance owners' report keys the server lists now, through a `dm` or
   /// `group` conversation outside a community (members only), and hands
-  /// them to [OwnerKeyWatch]: pinned if this is the first sight, otherwise
-  /// only recorded, so a change waits for the person. Only
+  /// them to [OwnerKeyWatch]: pinned as proof recipients (never as report
+  /// pins) if this is the first sight, otherwise only recorded, so a change
+  /// waits for the person. Only
   /// `report_inbox_unavailable` reads as "no owner has a key"; any other
   /// error records nothing.
   Future<void> _observeOwnerKeys(String origin) async {
@@ -263,15 +264,13 @@ extension AppStateDeviceList on AppState {
     await _setOwnerKeyReview(watch);
   }
 
-  /// The instance owners' report keys pinned for [origin] (owner scope: no
-  /// `:` in the id), at most [SealedFrankContext.maxOwnerKeys], in account
-  /// order.
+  /// The proof recipients for [origin] (`OwnerProofPins.effective`: the
+  /// owner keys pinned for proofs on first use or on the sealed key screen,
+  /// and otherwise the D95 report pins a person made), owner scope (no `:`
+  /// in the id), at most [SealedFrankContext.maxOwnerKeys], in account
+  /// order. Reports never read these; they read only the D95 pins.
   Future<List<List<int>>> _pinnedOwnerKeys(String origin) async {
-    final owners = [
-      for (final pin in await localStore
-          .loadReportKeyPins(canonicalizeServerOrigin(origin)))
-        if (!pin.ownerAccountId.contains(':')) pin,
-    ]..sort((a, b) => a.ownerAccountId.compareTo(b.ownerAccountId));
+    final owners = await OwnerProofPins(localStore, origin).effective();
     return [
       for (final pin in owners.take(SealedFrankContext.maxOwnerKeys))
         pin.publicKey,

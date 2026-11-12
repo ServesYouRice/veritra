@@ -233,11 +233,13 @@ How steps 2 and 3 meet each condition. A wiring review checks the same list.
   aad from the row. Residual: the report public key itself comes from the
   server, so a server that substitutes it can read reports. D95: the app pins
   each owner's key and refuses a changed or unpinned one; the report screens
-  show the fingerprint when asking for a pin. Since L2-3 (owner decision
-  2026-11-12) the first owner keys a device sees are pinned on first use,
-  without a comparison, so a server that substitutes them before that
-  first sight reads that device's reports (`docs/crypto.md`, "What the
-  server can do before the first pin").
+  show the fingerprint when asking for a pin. L2-3 pins the first owner
+  keys a device sees on first use, without a comparison, but only as
+  recipients of sealed-message proofs, kept apart from these pins (owner
+  decision 2026-11-12, "Keep reports manual"): a server that substitutes
+  them before that first sight influences who can verify that device's
+  proofs, never who reads its reports (`docs/crypto.md`, "What the server
+  can do before the first pin").
 - **G5, unfranked payloads.** Decided: accepted as unreportable. A franked
   payload whose commitment is missing or wrong is `invalid`. Rollout: every
   current sender is the new app, older apps and the C7 hidden types send no
@@ -289,9 +291,10 @@ wiring above, and what each part rests on:
   origin and owner. A report is sealed only to keys equal to their pin; a
   changed or never-pinned key is refused until a person pins it after seeing
   its fingerprint; a pinned owner the server omits is surfaced. Closes G4's
-  residual (a server substituting the key) for the apps that pinned. Since
-  L2-3 the first sight pins on its own (trust on first use), so G4's
-  residual stays open until a device's first pin.
+  residual (a server substituting the key) for the apps that pinned. L2-3's
+  first-use pins (trust on first use) are proof recipients only, stored
+  apart (`owner_proof_pins.dart`), and never written here, so they leave
+  G4 as D95 closed it: a report still asks for the code comparison.
 - **Retention.** Dismissed (deleting your copy) or 90 days after filing, by
   the retention sweeper; caps as built (20 reports a day per reporter, 2000
   copies per inbox). This answers open item 2 for reports; an envelope row
@@ -497,8 +500,10 @@ owner's report key. Only that owner can check its tag, and it could have
 made the tag itself, so a tag convinces nobody else. The report reveal
 carries `d` and the claimed sender account; the owner checks its tag
 against the franking key the claimed account's own list names. The owners'
-keys are pinned on first use and later changes wait for the person.
-Accepted residuals: what the server can do before a device's first pin;
+keys are pinned on first use as proof recipients, apart from the D95
+report pins (reports stay manual), and later changes wait for the person.
+Accepted residuals: what the server can do before a device's first pin
+(it decides who can verify that device's proofs, not who reads reports);
 an owner's review tells the server which account a sealed report names
 (the list fetch); and the MLS signature, which a modified app can keep
 as a transferable proof. Rules: [`docs/crypto.md`, "Franking a sealed

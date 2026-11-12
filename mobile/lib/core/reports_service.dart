@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../crypto/crypto_service.dart';
 import '../crypto/franking.dart';
+import '../crypto/owner_proof_pins.dart';
 import '../crypto/report_body.dart';
 import '../crypto/report_key_announcement.dart';
 import '../crypto/report_key_pins.dart';
@@ -366,12 +367,20 @@ class ReportsService {
   }
 
   /// Pins the keys of [plan] that are not pinned yet, or changed. Call only
-  /// after the person compared the fingerprints.
+  /// after the person compared the fingerprints. An instance owner's key
+  /// compared here also becomes that owner's sealed-message proof
+  /// recipient (L2-3, `OwnerProofPins.followReportPin`); this never works
+  /// the other way round.
   Future<void> pinKeys(ReportPlan plan) async {
+    final proofs = OwnerProofPins(store, api.baseUrl);
     for (final assessment in plan.check.recipients) {
       if (assessment.status == ReportKeyStatus.unpinned ||
           assessment.status == ReportKeyStatus.changed) {
         await pins.pin(assessment.recipient);
+        final id = assessment.recipient.inboxId;
+        if (plan.inbox.kind == reportInboxInstanceOwner && !id.contains(':')) {
+          await proofs.followReportPin(id);
+        }
       }
     }
   }

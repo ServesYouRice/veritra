@@ -11,9 +11,11 @@ import '../../ui/widgets/large_title_bar.dart';
 /// L2-3: the server's sealed sender key as this app pinned it, and a changed
 /// key the server shows since, which stops sealed sending until the person
 /// accepts it here (`docs/crypto.md`, "Key pinning"); and the differences
-/// between the owners' report keys the server lists and the ones this app
-/// pinned, for the person to accept or reject (until accepted, sealed
-/// messages are tagged only to the keys pinned before).
+/// between the owners' report keys the server lists and the proof
+/// recipients this app pinned (`owner_proof_pins.dart`), for the person to
+/// accept or reject (until accepted, sealed messages are tagged only to the
+/// proof recipients from before). Nothing here reaches a report: reporting
+/// still asks for a code comparison (D95).
 class SealedKeyScreen extends StatefulWidget {
   const SealedKeyScreen({required this.state, super.key});
 

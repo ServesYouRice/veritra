@@ -4500,7 +4500,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get l2OwnerKeyAcceptWarning =>
-      'Accept only if you know the owners or their keys changed. A key the server made itself would let it read the reports you send.';
+      'Accept only if you know the owners or their keys changed. Whoever holds this key can check who sent a message without your name if they are shown it. Reports never go to a key accepted here; reporting asks you to compare codes.';
 
   @override
   String get l2OwnerKeyStale => 'The list changed meanwhile. Look at it again.';

@@ -4517,7 +4517,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get l2OwnerKeyAcceptWarning =>
-      'Прихватите само ако знате да су се власници или њихови кључеви променили. Кључ који је направио сам сервер омогућио би му да чита пријаве које шаљете.';
+      'Прихватите само ако знате да су се власници или њихови кључеви променили. Ко има овај кључ може да провери ко је послао поруку без вашег имена ако му је покажу. Пријаве се никад не шаљу кључу прихваћеном овде; пријава тражи да упоредите кодове.';
 
   @override
   String get l2OwnerKeyStale =>
@@ -9042,7 +9042,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get l2OwnerKeyAcceptWarning =>
-      'Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ključ koji je napravio sam server omogućio bi mu da čita prijave koje šaljete.';
+      'Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ko ima ovaj ključ može da proveri ko je poslao poruku bez vašeg imena ako mu je pokažu. Prijave se nikad ne šalju ključu prihvaćenom ovde; prijava traži da uporedite kodove.';
 
   @override
   String get l2OwnerKeyStale =>

@@ -5,15 +5,13 @@ import '../storage/local_store.dart';
 /// to each instance owner's own report public key, and the server hands the
 /// keys out. A server that substituted one could read the reports sealed to
 /// it, so the app pins each owner's key (per server origin) and seals only to
-/// a key that matches its pin, the way the K0 recovery key is pinned. A pin
-/// is made in two ways. On first use (L2-3, owner decision 2026-11-12):
-/// the first time the app sees any owner key and has none pinned, it pins
-/// every listed one without a person comparing codes (`owner_key_watch.dart`;
-/// what a server can do before that is in `docs/crypto.md`, "Franking a
-/// sealed message"). After that, only by a person: a report screen after
-/// showing the key's [reportKeyFingerprint], or the sealed key screen's
-/// accept. A key the server later changes, or an owner it adds, is refused
-/// until a person pins it.
+/// a key that matches its pin, the way the K0 recovery key is pinned. Nothing
+/// is pinned silently: a pin is made by [ReportKeyPins.pin], which a screen
+/// calls after showing the person the key's [reportKeyFingerprint]; a key the
+/// server later changes is refused until it is pinned again the same way.
+/// The owner keys L2-3 pins on first use for sealed-message proofs are kept
+/// apart (`owner_proof_pins.dart`, owner decision 2026-11-12, "Keep reports
+/// manual") and never reach a report.
 
 /// A report key as the server lists it for one instance owner.
 class ReportRecipientKey {
