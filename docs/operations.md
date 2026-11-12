@@ -843,6 +843,23 @@ tokens one account gets per conversation and UTC day.
 - **Do not turn it on before the independent crypto review (G25) and an app
   release that supports it.**
 
+**Development databases and libraries from before the review fixes.**
+Migrations 0090 and 0091 and crypto ABI 26 were changed in place on the
+unmerged L2-3 branch (reviews M1 and H1, and the DV franking entries), so
+nothing upgrades what an earlier build made:
+
+- A server database that ran a build of that branch up to e296528 has the
+  old 0090/0091 tables and keeps them, since a migration that ran is never
+  run again. Wipe it (`scripts/demo.sh --reset` for the demo, or delete the
+  dev `PRIVATE_MESSENGER_DB_PATH` file) before running a later build. No real
+  deployment ran these migrations; nothing to do there.
+- An app crypto library built before the DV franking entries still reports
+  ABI 26, so the app's version check passes and the missing
+  `pm_crypto_l2_frank_*` entries fail only at first use.
+  `scripts/verify-mobile-crypto.sh` checks every exported symbol and catches
+  it; rebuild the library (`scripts/build-desktop-crypto.sh`, or the mobile
+  build scripts) after pulling.
+
 ## Verify a server build (L2-4)
 
 `scripts/verify-server-build.sh <tag>` checks out the tag, rebuilds the
