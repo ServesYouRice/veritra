@@ -386,13 +386,21 @@ void main() {
     expect(jsonDecode(utf8.decode(body.encode()))['v'], 2);
 
     final bobKey = await bob.service.currentSigningKey();
-    final server = _ReportServer(ReportEnvelopeRecord.fromJson({
-      'envelope_id': envelope.id,
-      'conversation_id': 'conv_1',
-      'frank_commit': base64Encode(sent.frankCommit!),
-      'sealed': true,
-      'created_at': DateTime.now().toUtc().toIso8601String(),
-    }));
+    Map<String, Object?> recordJson(String key) => <String, Object?>{
+          'envelope_id': envelope.id,
+          'conversation_id': 'conv_1',
+          'frank_commit': base64Encode(sent.frankCommit!),
+          'sealed': true,
+          'idempotency_key': key,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+        };
+    final server = _ReportServer(
+        ReportEnvelopeRecord.fromJson(recordJson(sent.idempotencyKey)));
+    // A sealed record must name its key.
+    expect(
+        () => ReportEnvelopeRecord.fromJson(
+            recordJson(sent.idempotencyKey)..remove('idempotency_key')),
+        throwsFormatException);
     Future<ReportVerification> verifyAs(ReportBody reported,
         Future<bool> Function(String, String, List<int>)? listed) async {
       final owner = ReportsService(
@@ -414,6 +422,14 @@ void main() {
     expect(verified.verdict, ReportVerdict.verified);
     expect(verified.record!.senderAccountId, 'acct_bob');
     expect(verified.record!.senderDeviceId, 'dev_bob');
+
+    // Review low (b): a member re-posts Bob's ciphertext and commitment
+    // sealed under another key. A report naming that copy is not
+    // attributed to Bob.
+    final original = server.record;
+    server.record = ReportEnvelopeRecord.fromJson(recordJson('k' * 48));
+    expect((await verifyAs(body, bobsList)).verdict, ReportVerdict.mismatch);
+    server.record = original;
 
     // No device-list check wired: never attributed (fails closed).
     expect(
@@ -634,7 +650,7 @@ ReportCopyRow _row() => ReportCopyRow(
 class _ReportServer extends ApiClient {
   _ReportServer(this.record) : super(baseUrl: 'https://chat.example.org');
 
-  final ReportEnvelopeRecord record;
+  ReportEnvelopeRecord record;
 
   @override
   Future<ReportEnvelopeRecord> getReportEnvelope(

@@ -599,8 +599,10 @@ func TestReportEnvelopeOfASealedMessage(t *testing.T) {
 		ConversationID string `json:"conversation_id"`
 		FrankCommit    []byte `json:"frank_commit"`
 		Sealed         bool   `json:"sealed"`
+		IdempotencyKey string `json:"idempotency_key"`
 	}
-	if status != http.StatusOK || json.Unmarshal(response, &record) != nil || record.EnvelopeID != stored.ID || record.ConversationID != conversationID || !record.Sealed || !bytes.Equal(record.FrankCommit, commit) {
+	// The key ties a report to this envelope, not to a copy (review low b).
+	if status != http.StatusOK || json.Unmarshal(response, &record) != nil || record.EnvelopeID != stored.ID || record.ConversationID != conversationID || !record.Sealed || !bytes.Equal(record.FrankCommit, commit) || record.IdempotencyKey == "" {
 		t.Fatalf("record status=%d body=%s", status, response)
 	}
 	if bytes.Contains(response, []byte("sender")) || bytes.Contains(response, []byte(senderID)) {

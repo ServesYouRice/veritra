@@ -141,6 +141,7 @@ class ReportEnvelopeRecord {
     required this.frankCommit,
     required this.createdAt,
     this.sealed = false,
+    this.idempotencyKey,
   });
 
   factory ReportEnvelopeRecord.fromJson(Map<String, Object?> json) {
@@ -163,6 +164,7 @@ class ReportEnvelopeRecord {
           ? null
           : List<int>.unmodifiable(_bytes(json['frank_commit'], length: 32)),
       createdAt: DateTime.parse(created).toUtc(),
+      idempotencyKey: sealed ? _id(json['idempotency_key']) : null,
     );
   }
 
@@ -175,6 +177,12 @@ class ReportEnvelopeRecord {
 
   /// L2-3: the server stored the message sealed, with no sender.
   final bool sealed;
+
+  /// L2-3: the key the sealed envelope is stored under (required for a
+  /// [sealed] record, null otherwise). The verifier requires it to equal
+  /// the report's action id, so a member's copy of the ciphertext and
+  /// commitment under another key is not attributed to the sender.
+  final String? idempotencyKey;
 
   /// Null for a message sent without franking.
   final List<int>? frankCommit;

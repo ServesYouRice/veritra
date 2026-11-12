@@ -655,6 +655,10 @@ class ReportsService {
         signature == null ||
         signingKey == null ||
         record.envelopeId != body.envelopeId ||
+        // Review low (b): the envelope the message was first stored in,
+        // not a copy under another key.
+        record.idempotencyKey == null ||
+        record.idempotencyKey != body.actionId ||
         record.conversationId != body.conversationId ||
         record.conversationId != report.row.conversationId ||
         account == report.row.reporterAccountId ||
@@ -707,6 +711,7 @@ class ReportsService {
           frankCommit: commit,
           createdAt: record.createdAt,
           sealed: true,
+          idempotencyKey: record.idempotencyKey,
         ));
   }
 

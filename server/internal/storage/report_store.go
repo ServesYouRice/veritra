@@ -615,11 +615,16 @@ type ReportEnvelopeRecord struct {
 	// The sender fields are empty for a sealed envelope (L2-3), whose
 	// sender the server never learned: the verifier attributes it with the
 	// franking signature in the report instead.
-	SenderAccountID string    `json:"sender_account_id,omitempty"`
-	SenderDeviceID  string    `json:"sender_device_id,omitempty"`
-	FrankCommit     []byte    `json:"frank_commit,omitempty"`
-	Sealed          bool      `json:"sealed,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	SenderAccountID string `json:"sender_account_id,omitempty"`
+	SenderDeviceID  string `json:"sender_device_id,omitempty"`
+	FrankCommit     []byte `json:"frank_commit,omitempty"`
+	Sealed          bool   `json:"sealed,omitempty"`
+	// IdempotencyKey is served for a sealed envelope only: the verifier
+	// requires it to equal the report's action id, which ties the report
+	// to the envelope the message was first stored in, not to a member's
+	// copy of its ciphertext and commitment under another key (L2-3 review).
+	IdempotencyKey string    `json:"idempotency_key,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // ReportEnvelopeRecord returns the recorded envelope data for a message of
@@ -655,9 +660,9 @@ func (s *Store) ReportEnvelopeRecord(ctx context.Context, accountID, reportRowID
 		// L2-3: a sealed envelope, with no sender.
 		record = ReportEnvelopeRecord{Sealed: true}
 		err = s.db.QueryRowContext(ctx, `
-			SELECT id, conversation_id, frank_commit, created_at
+			SELECT id, conversation_id, frank_commit, idempotency_key, created_at
 			FROM sealed_message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, envelopeID, report.ConversationID, nowString()).
-			Scan(&record.EnvelopeID, &record.ConversationID, &record.FrankCommit, &created)
+			Scan(&record.EnvelopeID, &record.ConversationID, &record.FrankCommit, &record.IdempotencyKey, &created)
 	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
