@@ -41,8 +41,9 @@ const (
 )
 
 // ErrInvalidHistorySyncTarget answers a group-level envelope whose C7 sync
-// key is missing, malformed, on the wrong body size, or not the sender's own
-// join epoch, and any C7 sync key outside a group-level C7 envelope.
+// key is missing, malformed, on the wrong body size, not the sender's own
+// join epoch (a request) or above the group's recorded epoch (a
+// history_sync), and any C7 sync key outside a group-level C7 envelope.
 var ErrInvalidHistorySyncTarget = errors.New("invalid history sync target")
 
 // ErrHistorySyncDelivered answers a history_sync for an epoch that already
@@ -144,6 +145,15 @@ func (s *Store) checkC7SyncTag(ctx context.Context, tx *sql.Tx, conversationID, 
 			return c7SyncTag{}, ErrInvalidHistorySyncTarget
 		}
 		return tag, nil
+	}
+	// No commit has produced a later epoch yet: a history_sync claiming one
+	// would make the committer's real one look delivered when it comes.
+	current, _, err := mlsGroupEpoch(ctx, tx, conversationID)
+	if err != nil {
+		return c7SyncTag{}, err
+	}
+	if tag.epoch > current {
+		return c7SyncTag{}, ErrInvalidHistorySyncTarget
 	}
 	delivered, err := historySyncDelivered(ctx, tx, conversationID, tag.epoch)
 	if err != nil {

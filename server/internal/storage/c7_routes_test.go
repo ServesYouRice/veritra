@@ -73,6 +73,17 @@ func (f layoutFixture) inGroup(t *testing.T, ctx context.Context, conversationID
 		conversationID, who.Device.ID, who.Account.ID, joinedAfter, joinedEpoch); err != nil {
 		t.Fatal(err)
 	}
+	// The commit that added the device produced its join epoch.
+	f.atEpoch(t, ctx, conversationID, joinedEpoch)
+}
+
+// atEpoch raises the group's recorded epoch to at least epoch, as the MLS
+// commit routes do.
+func (f layoutFixture) atEpoch(t *testing.T, ctx context.Context, conversationID string, epoch int64) {
+	t.Helper()
+	if _, err := f.store.db.ExecContext(ctx, `UPDATE conversation_mls_groups SET epoch = MAX(epoch, ?) WHERE conversation_id = ?`, epoch, conversationID); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestC7SealedBodyRuleAndReplay(t *testing.T) {
@@ -187,7 +198,9 @@ func TestC7HistoryFetchServesExactlyWhatTheJoinFilterWithheld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A group-level history_sync before the join, in its own stream.
+	// A group-level history_sync before the join, in its own stream, for
+	// the commit that produced epoch 1.
+	f.atEpoch(t, ctx, f.shared, 1)
 	sync, _, err := f.postBody(ctx, f.shared, f.owner, "hs", f.syncMetadata(EnvelopeC7SyncKey, 1, 1), c7Body(768+c7BodyFraming+c7SyncSlotBytes*2+256, 9))
 	if err == nil {
 		t.Fatalf("a body of no valid size was accepted: %s", sync.ID)
@@ -454,6 +467,7 @@ func TestC7GroupLevelExemptionIsOnlyForHistorySyncSizes(t *testing.T) {
 		t.Fatalf("channel-sized group-level request: %v", err)
 	}
 	// One-channel history_sync bodies pass slow mode, one per epoch.
+	f.atEpoch(t, ctx, f.privateConv, 2)
 	for i, key := range []string{"sync1", "sync2"} {
 		if _, _, err := f.postBody(ctx, f.privateConv, f.member, key, f.syncMetadata(EnvelopeC7SyncKey, 2, int64(i+1)), c7Body(c7PrivateSyncBytes, 1)); err != nil {
 			t.Fatalf("member history_sync %s: %v", key, err)

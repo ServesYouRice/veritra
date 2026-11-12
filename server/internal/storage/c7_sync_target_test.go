@@ -146,6 +146,20 @@ func TestC7HistorySyncKeyIsRefusedOutsideGroupLevelC7(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+	// No commit has produced epoch 4 yet: a history_sync claiming it would
+	// make the committer's real one look delivered when the commit comes.
+	f.atEpoch(t, ctx, f.shared, 3)
+	if _, _, err := f.postBody(ctx, f.shared, f.owner, "future", raw(`{"mls_epoch":3,"c7_sync_for_epoch":4}`), sync); !errors.Is(err, ErrInvalidHistorySyncTarget) {
+		t.Fatalf("a history_sync for a future epoch: %v", err)
+	}
+	if delivered, err := f.store.HistorySyncDelivered(ctx, f.owner.Account.ID, f.owner.Device.ID, f.shared, 4); err != nil || delivered {
+		t.Fatalf("future epoch after the refusal: delivered=%v err=%v", delivered, err)
+	}
+	// The current epoch is accepted even when no device joined at it (a
+	// removal-only commit's history_sync, kept for later walks).
+	if _, _, err := f.postBody(ctx, f.shared, f.owner, "removal-only", raw(`{"mls_epoch":3,"c7_sync_for_epoch":3}`), sync); err != nil {
+		t.Fatalf("a removal-only history_sync at the current epoch: %v", err)
+	}
 	// A repeated key is refused before routing (the stored row would be read
 	// differently by Go and SQLite).
 	if _, _, err := f.postBody(ctx, f.shared, f.owner, "repeated", raw(`{"mls_epoch":1,"c7_sync_for_epoch":2,"c7_sync_for_epoch":1}`), sync); !errors.Is(err, ErrInvalidEpochMetadata) && !errors.Is(err, ErrInvalidHistorySyncTarget) {

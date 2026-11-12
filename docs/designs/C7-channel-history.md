@@ -1167,8 +1167,10 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   them, a key on the wrong body size (a sync needs a `history_sync` size,
   a request a channel size), a key anywhere else (a channel post, a
   conversation outside the layout, C7 off), a request whose epoch is not
-  the sender device's `joined_epoch`, and a `history_sync` in a group
-  with no roster (400 `invalid_history_sync_target`). A `history_sync`
+  the sender device's `joined_epoch`, a `history_sync` for an epoch above
+  the group's recorded epoch (one no commit has produced yet, which would
+  make the committer's real one look delivered), and a `history_sync` in a
+  group with no roster (400 `invalid_history_sync_target`). A `history_sync`
   for epoch E goes, in sync, live and as a push wake, only to the group's
   devices whose `joined_epoch` is E (the server wrote it with the commit:
   the epoch MLS reports after it, and the Welcome's) and to its sender
