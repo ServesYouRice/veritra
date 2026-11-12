@@ -37,7 +37,10 @@ const (
 	sigSize  = 64
 
 	formatVersion = 1
-	bodyMagic     = "VDL1"
+	// formatFrank is a body that lists at least one franking key (L2-3). A
+	// body with none is written as format 1, byte for byte.
+	formatFrank = 2
+	bodyMagic   = "VDL1"
 	// signLabel and hashLabel are the domain labels of the signed message and
 	// of list_hash. Every Veritra label starts with "veritra-".
 	signLabel = "veritra-l1-device-list-sig-v1"
@@ -54,6 +57,9 @@ const (
 	ChangeRecovery         Change = 4
 	ChangeRecoveryKey      Change = 5
 	ChangeMigrationGenesis Change = 6
+	// ChangeFrankKey (L2-3): a listed device sets its own franking key, from
+	// none to some, and changes nothing else.
+	ChangeFrankKey Change = 7
 )
 
 // SignerKind says what kind of key signed a version.
@@ -80,6 +86,7 @@ var (
 	ErrBadRecoveryKey  = errors.New("devicelist: recovery key does not follow the rules for this change")
 	ErrReturningDevice = errors.New("devicelist: a removed or recovered-away device or key cannot return")
 	ErrNotGenesis      = errors.New("devicelist: first version must be a genesis")
+	ErrBadFrankKey     = errors.New("devicelist: franking keys do not follow the rules for this change")
 )
 
 // Entry is one approved device: its id and Ed25519 signing key (the MLS
@@ -100,6 +107,26 @@ type Body struct {
 	// RecoveryKey is the 32-byte key derived from the user's recovery key,
 	// or nil when the list has none.
 	RecoveryKey []byte
+	// FrankKeys are the listed devices' X25519 franking keys (format 2),
+	// sorted by device id; every id is listed in Entries. Empty in format 1.
+	FrankKeys []FrankKey
+}
+
+// FrankKey is a listed device's X25519 franking key (L2-3). Once a version
+// lists it, it never changes or goes while the device stays listed.
+type FrankKey struct {
+	DeviceID string
+	Key      []byte
+}
+
+// FrankKeyOf returns the franking key the body lists for deviceID.
+func (b Body) FrankKeyOf(deviceID string) ([]byte, bool) {
+	for _, frank := range b.FrankKeys {
+		if frank.DeviceID == deviceID {
+			return frank.Key, true
+		}
+	}
+	return nil, false
 }
 
 // Statement is a parsed, signed version.
@@ -186,7 +213,11 @@ func Parse(statement []byte) (Statement, error) {
 		return Statement{}, ErrMalformed
 	}
 	r := reader{data: statement, ok: true}
-	if string(r.take(len(bodyMagic))) != bodyMagic || r.u8() != formatVersion {
+	if string(r.take(len(bodyMagic))) != bodyMagic {
+		return Statement{}, ErrMalformed
+	}
+	format := r.u8()
+	if format != formatVersion && format != formatFrank {
 		return Statement{}, ErrMalformed
 	}
 	var body Body
@@ -197,7 +228,7 @@ func Parse(statement []byte) (Statement, error) {
 	body.Change = Change(r.u8())
 	count := int(r.u8())
 	if !r.ok || body.Version == 0 || count < 1 || count > MaxEntries ||
-		body.Change < ChangeGenesis || body.Change > ChangeMigrationGenesis {
+		body.Change < ChangeGenesis || body.Change > ChangeFrankKey {
 		return Statement{}, ErrMalformed
 	}
 	zero := make([]byte, hashSize)
@@ -230,6 +261,30 @@ func Parse(statement []byte) (Statement, error) {
 		}
 	default:
 		return Statement{}, ErrMalformed
+	}
+	if format == formatFrank {
+		// At least one key (a body with none is format 1), at most one per
+		// listed device; ids ascending and listed, keys unique and valid.
+		n := int(r.u8())
+		if !r.ok || n < 1 || n > len(body.Entries) {
+			return Statement{}, ErrMalformed
+		}
+		frankKeys := make(map[string]bool, n)
+		for i := 0; i < n; i++ {
+			deviceID := r.id()
+			key := r.take(keySize)
+			if !r.ok || !ValidFrankKey(key) || frankKeys[string(key)] {
+				return Statement{}, ErrMalformed
+			}
+			if i > 0 && deviceID <= body.FrankKeys[i-1].DeviceID {
+				return Statement{}, ErrMalformed
+			}
+			if _, listed := body.Find(deviceID); !listed {
+				return Statement{}, ErrMalformed
+			}
+			frankKeys[string(key)] = true
+			body.FrankKeys = append(body.FrankKeys, FrankKey{DeviceID: deviceID, Key: append([]byte(nil), key...)})
+		}
 	}
 	if !r.ok {
 		return Statement{}, ErrMalformed
@@ -304,6 +359,10 @@ type History struct {
 	// device id, was listed by any version up to the head.
 	SeenDevice func(deviceID string) bool
 	SeenKey    func(key []byte) bool
+	// SeenFrankKeyElsewhere reports whether any version up to the head
+	// listed this franking key for a device other than deviceID. Nil skips
+	// the check (clients always make it over the whole chain).
+	SeenFrankKeyElsewhere func(key []byte, deviceID string) bool
 }
 
 // CheckStep applies the chain rules to next, given the history. It checks the
@@ -328,6 +387,19 @@ func CheckStep(accountID string, history History, next Statement) error {
 		return ErrPrevHash
 	}
 	prev := head.Body
+	// A franking key is fixed: every device listed before and after keeps
+	// exactly the key (or none) it had. Change 7 is the one exception, for
+	// its signer only, checked below.
+	if body.Change != ChangeFrankKey && !frankKept(prev, body, "") {
+		return ErrBadFrankKey
+	}
+	if history.SeenFrankKeyElsewhere != nil {
+		for _, frank := range body.FrankKeys {
+			if history.SeenFrankKeyElsewhere(frank.Key, frank.DeviceID) {
+				return ErrBadFrankKey
+			}
+		}
+	}
 	switch body.Change {
 	case ChangeAdd:
 		if next.SignerKind != SignerDevice {
@@ -349,6 +421,10 @@ func CheckStep(accountID string, history History, next Statement) error {
 		}
 		if history.SeenDevice(added.DeviceID) || history.SeenKey(added.SigningKey) {
 			return ErrReturningDevice
+		}
+		// The new device starts without a franking key; only it sets one.
+		if _, has := body.FrankKeyOf(added.DeviceID); has {
+			return ErrBadFrankKey
 		}
 	case ChangeRemove:
 		if next.SignerKind != SignerDevice {
@@ -401,6 +477,25 @@ func CheckStep(accountID string, history History, next Statement) error {
 		if _, inPrev := prev.Find(next.SignerDeviceID); !inPrev {
 			return ErrBadSigner
 		}
+	case ChangeFrankKey:
+		if next.SignerKind != SignerDevice {
+			return ErrBadSigner
+		}
+		if _, inPrev := prev.Find(next.SignerDeviceID); !inPrev {
+			return ErrBadSigner
+		}
+		if !sameEntries(prev, body) {
+			return ErrBadEntries
+		}
+		if !sameRecovery(prev, body) {
+			return ErrBadRecoveryKey
+		}
+		// Only the signer's own key changes, from none to some.
+		_, had := prev.FrankKeyOf(next.SignerDeviceID)
+		_, has := body.FrankKeyOf(next.SignerDeviceID)
+		if had || !has || !frankKept(prev, body, next.SignerDeviceID) {
+			return ErrBadFrankKey
+		}
 	default:
 		// A genesis (1, 6) can only be version 1.
 		return ErrBadChange
@@ -443,6 +538,12 @@ func checkGenesis(next Statement) error {
 	if body.Change == ChangeGenesis && len(body.Entries) != 1 {
 		return ErrBadEntries
 	}
+	// A genesis may carry the signer's own franking key and no other.
+	for _, frank := range body.FrankKeys {
+		if frank.DeviceID != next.SignerDeviceID {
+			return ErrBadFrankKey
+		}
+	}
 	if !next.VerifySignature(signer.SigningKey) {
 		return ErrBadSignature
 	}
@@ -451,6 +552,22 @@ func checkGenesis(next Statement) error {
 
 func sameRecovery(prev, next Body) bool {
 	return bytes.Equal(prev.RecoveryKey, next.RecoveryKey) && (prev.RecoveryKey == nil) == (next.RecoveryKey == nil)
+}
+
+// frankKept reports whether every device listed in both prev and next,
+// except the device except, has the same franking key (or none) in both.
+func frankKept(prev, next Body, except string) bool {
+	for _, entry := range next.Entries {
+		if _, inPrev := prev.Find(entry.DeviceID); !inPrev || entry.DeviceID == except {
+			continue
+		}
+		before, had := prev.FrankKeyOf(entry.DeviceID)
+		after, has := next.FrankKeyOf(entry.DeviceID)
+		if had != has || !bytes.Equal(before, after) {
+			return false
+		}
+	}
+	return true
 }
 
 func sameEntries(prev, next Body) bool {
@@ -512,7 +629,11 @@ func Added(prev, next Body) []Entry {
 func Encode(body Body, kind SignerKind, signerDeviceID string, signature []byte) []byte {
 	var out []byte
 	out = append(out, bodyMagic...)
-	out = append(out, formatVersion)
+	if len(body.FrankKeys) == 0 {
+		out = append(out, formatVersion)
+	} else {
+		out = append(out, formatFrank)
+	}
 	out = appendLP(out, body.AccountID)
 	out = appendU64(out, body.Version)
 	out = append(out, body.PrevHash...)
@@ -527,6 +648,13 @@ func Encode(body Body, kind SignerKind, signerDeviceID string, signature []byte)
 	} else {
 		out = append(out, 1)
 		out = append(out, body.RecoveryKey...)
+	}
+	if len(body.FrankKeys) > 0 {
+		out = append(out, byte(len(body.FrankKeys)))
+		for _, frank := range body.FrankKeys {
+			out = appendLP(out, frank.DeviceID)
+			out = append(out, frank.Key...)
+		}
 	}
 	if signature == nil {
 		return out

@@ -35,6 +35,7 @@ import 'invite_screen.dart';
 import 'passkeys_screen.dart';
 import 'profile_screen.dart';
 import 'recovery_key_screen.dart';
+import 'sealed_key_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({required this.state, super.key});
@@ -407,6 +408,25 @@ class SettingsScreen extends StatelessWidget {
                     preferences: state.receiptPreferences,
                     onChanged: state.setSendReadReceipts,
                   ),
+                  if (state.sealedSender != null)
+                    ListTile(
+                      leading: const Icon(Icons.key_outlined),
+                      title: Text(l10n.l2SealedKeyTitle),
+                      // L2-3: owner report keys waiting for a decision.
+                      subtitle: state.ownerKeyReview.isEmpty
+                          ? Text(l10n.l2SealedKeyTile)
+                          : Text(
+                              l10n.l2OwnerKeysReviewTile,
+                              key: const ValueKey('owner-key-review-tile'),
+                              style: TextStyle(
+                                  color: Theme.of(context).colorScheme.error),
+                            ),
+                      onTap: () => Navigator.of(context).push(
+                        sharedAxisRoute<void>(
+                          (_) => SealedKeyScreen(state: state),
+                        ),
+                      ),
+                    ),
                   SwitchListTile(
                       secondary: const Icon(Icons.alternate_email),
                       title: Text(l10n.w8MentionsMuted),

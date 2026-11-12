@@ -72,6 +72,17 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'timed_out': ApiErrorKind.permission,
   'slow_mode': ApiErrorKind.rateLimited,
   'leave_notice_limited': ApiErrorKind.rateLimited,
+  // L2-3 sealed sender (D122; the app does not call these routes yet).
+  'invalid_sealed_epoch': ApiErrorKind.invalidRequest,
+  'invalid_sealed_request': ApiErrorKind.invalidRequest,
+  'invalid_sealed_token': ApiErrorKind.invalidRequest,
+  'sealed_request_authenticated': ApiErrorKind.invalidRequest,
+  'sealed_evaluate_failed': ApiErrorKind.server,
+  'sealed_not_eligible': ApiErrorKind.conflict,
+  'sealed_token_expired': ApiErrorKind.conflict,
+  'sealed_token_spent': ApiErrorKind.conflict,
+  'sealed_token_invalid': ApiErrorKind.permission,
+  'sealed_token_limit': ApiErrorKind.rateLimited,
   'invalid_seconds': ApiErrorKind.invalidRequest,
   // Not found or gone.
   'not_found': ApiErrorKind.notFound,

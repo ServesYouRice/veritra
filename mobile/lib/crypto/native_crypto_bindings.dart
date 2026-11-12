@@ -369,6 +369,49 @@ typedef _FourSlicesOutputNative = Int32 Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
 typedef _FourSlicesOutputDart = int Function(_PmByteSlice, _PmByteSlice,
     _PmByteSlice, _PmByteSlice, Pointer<_PmOwnedBuffer>);
+
+/// ABI 26 (L2-3): `pm_crypto_l2_token_request`.
+typedef _L2TokenRequestNative = Int32 Function(_PmByteSlice, _PmByteSlice,
+    Uint32, Uint32, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+typedef _L2TokenRequestDart = int Function(_PmByteSlice, _PmByteSlice, int, int,
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+
+/// ABI 26 (L2-3): `pm_crypto_l2_frank_designate`.
+typedef _L2FrankDesignateNative = Int32 Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>);
+typedef _L2FrankDesignateDart = int Function(
+    Pointer<_PmCryptoHandle>,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<_PmOwnedBuffer>);
+
+/// ABI 26 (L2-3): `pm_crypto_l2_frank_dv_verify`.
+typedef _L2FrankDvVerifyNative = Int32 Function(
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<Uint8>);
+typedef _L2FrankDvVerifyDart = int Function(
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    _PmByteSlice,
+    Pointer<Uint8>);
+
 typedef _VerifyNative = Int32 Function(
     _PmByteSlice, _PmByteSlice, _PmByteSlice, _PmByteSlice, Pointer<Uint8>);
 typedef _VerifyDart = int Function(
@@ -597,6 +640,18 @@ class NativeCryptoBindings {
         _l2PaddedSize =
             library.lookupFunction<_PaddedSizeNative, _PaddedSizeDart>(
                 'pm_crypto_l2_padded_size'),
+        _l2TokenRequest =
+            library.lookupFunction<_L2TokenRequestNative, _L2TokenRequestDart>(
+                'pm_crypto_l2_token_request'),
+        _l2TokenFinalize = library.lookupFunction<_TwoSlicesOutputNative,
+            _TwoSlicesOutputDart>('pm_crypto_l2_token_finalize'),
+        _l2FrankPublicKey =
+            library.lookupFunction<_HandleOutputNative, _HandleOutputDart>(
+                'pm_crypto_l2_frank_public_key'),
+        _l2FrankDesignate = library.lookupFunction<_L2FrankDesignateNative,
+            _L2FrankDesignateDart>('pm_crypto_l2_frank_designate'),
+        _l2FrankDvVerify = library.lookupFunction<_L2FrankDvVerifyNative,
+            _L2FrankDvVerifyDart>('pm_crypto_l2_frank_dv_verify'),
         _c7ProcessCommit =
             library.lookupFunction<_C7CommitNative, _C7CommitDart>(
                 'pm_crypto_group_c7_process_commit'),
@@ -615,7 +670,7 @@ class NativeCryptoBindings {
             _AttachmentChunkDart>('pm_crypto_attachment_encrypt_chunk'),
         _attachmentDecrypt = library.lookupFunction<_AttachmentChunkNative,
             _AttachmentChunkDart>('pm_crypto_attachment_decrypt_chunk') {
-    if (_abiVersion() != 24) {
+    if (_abiVersion() != 26) {
       throw const NativeCryptoException(NativeCryptoError.abiMismatch);
     }
     _k2Controls = {
@@ -680,6 +735,11 @@ class NativeCryptoBindings {
   final _ThreeSlicesOutputDart _c7Open;
   final _VerifyDart _c7Verify;
   final _HandleTwoSlicesOutputDart _c7Sign;
+  final _L2TokenRequestDart _l2TokenRequest;
+  final _TwoSlicesOutputDart _l2TokenFinalize;
+  final _HandleOutputDart _l2FrankPublicKey;
+  final _L2FrankDesignateDart _l2FrankDesignate;
+  final _L2FrankDvVerifyDart _l2FrankDvVerify;
   final _FourSlicesOutputDart _l1CheckStep;
   final _TwoSlicesOutputDart _l1CheckChain;
   final _HandleSliceDart _l1Hold;
@@ -1128,6 +1188,110 @@ class NativeCryptoBindings {
     return Uint8List.fromList(commit);
   }
 
+  /// L2-3 (ABI 26, D122): blinds [count] (1 to 32) fresh token nonces for
+  /// the server's POPRF [publicKey] under the conversation and UTC-day
+  /// [epoch] (`docs/crypto.md`, "Sealed sender with VOPRF tokens"). `request` is `count × 32` blinded elements for the server;
+  /// `state` holds the blinds: pass it to [l2TokenFinalize] and wipe it.
+  ({Uint8List state, Uint8List request}) l2TokenRequest({
+    required List<int> publicKey,
+    required String conversationId,
+    required int epoch,
+    required int count,
+  }) {
+    _bounded(publicKey, l2PublicKeyBytes, exact: true);
+    final conversation = utf8.encode(conversationId);
+    _bounded(conversation, 128);
+    if (count < 1 || count > l2MaxBatch) {
+      throw ArgumentError.value(count, 'count');
+    }
+    if (epoch < 0 || epoch > 0xffffffff) {
+      throw ArgumentError('Invalid token epoch');
+    }
+    final out = _withByteLists(
+        <List<int>>[publicKey, conversation],
+        (slices) => _twoOutputs((state, request) => _l2TokenRequest(
+            slices[0], slices[1], epoch, count, state, request)));
+    if (out.second.length != count * 32) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return (
+      state: Uint8List.fromList(out.first),
+      request: Uint8List.fromList(out.second),
+    );
+  }
+
+  /// L2-3 (ABI 26): checks the server's batch proof ([response] =
+  /// `count × 32` evaluated elements then the 64-byte proof) against the
+  /// key in [state] and returns `count × (32-byte nonce || 64-byte
+  /// output)`. A proof that does not verify throws
+  /// [NativeCryptoError.operationFailed].
+  Uint8List l2TokenFinalize(
+      {required List<int> state, required List<int> response}) {
+    _bounded(state, 16 * 1024);
+    _bounded(response, 4 * 1024);
+    final tokens = _withByteLists(
+        <List<int>>[state, response],
+        (slices) => _output(
+            (out) => _l2TokenFinalize(slices[0], slices[1], out),
+            maximum: l2MaxBatch * l2TokenBytes));
+    if (tokens.isEmpty || tokens.length % l2TokenBytes != 0) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(tokens);
+  }
+
+  /// L2-3 (ABI 26): the owner's check of a sealed message's designation
+  /// (`docs/crypto.md`, "Franking a sealed message"). [seed] is the owner's
+  /// report seed; [senderFrankKey] is the claimed device's franking key from
+  /// its account's verified L1 list. Returns 1 valid, 0 mismatch, 2 not
+  /// designated to this owner key.
+  int l2FrankDvVerify({
+    required List<int> seed,
+    required List<int> senderFrankKey,
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+    required List<int> commit,
+    required List<int> designation,
+  }) {
+    _bounded(seed, 32, exact: true);
+    _bounded(senderFrankKey, 32, exact: true);
+    _bounded(commit, 32, exact: true);
+    _bounded(designation, l2FrankMaxVerifiers * l2FrankEntryBytes);
+    final ids = <List<int>>[
+      utf8.encode(conversationId),
+      utf8.encode(accountId),
+      utf8.encode(deviceId),
+    ];
+    for (final id in ids) {
+      _bounded(id, 128);
+    }
+    final out = calloc<Uint8>();
+    try {
+      final status = _withByteLists(
+          <List<int>>[seed, senderFrankKey, ...ids, commit, designation],
+          (s) =>
+              _l2FrankDvVerify(s[0], s[1], s[2], s[3], s[4], s[5], s[6], out));
+      _check(status);
+      final verdict = out.value;
+      if (verdict > 2) {
+        throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+      }
+      return verdict;
+    } finally {
+      calloc.free(out);
+    }
+  }
+
+  /// L2-3 designation sizes (ABI 26).
+  static const l2FrankEntryBytes = 48;
+  static const l2FrankMaxVerifiers = 16;
+
+  /// L2-3 token sizes (ABI 26).
+  static const l2PublicKeyBytes = 32;
+  static const l2MaxBatch = 32;
+  static const l2TokenBytes = 96;
+
   /// C7 channel history keys (ABI 13, `docs/designs/C7-channel-history.md`
   /// revision 7). Every key is 32 bytes.
   static const c7KeyBytes = 32;
@@ -1571,7 +1735,13 @@ class NativeCryptoBindings {
     }
   }
 
-  List<int> _take(_PmOwnedBuffer buffer, {int maximum = 32 * 1024 * 1024}) {
+  List<int> _take(_PmOwnedBuffer buffer,
+      {int maximum = 32 * 1024 * 1024, bool allowEmpty = false}) {
+    // Native hands back an empty answer as a null buffer of length 0; only
+    // a call whose empty answer means something accepts it.
+    if (allowEmpty && buffer.data == nullptr && buffer.len == 0) {
+      return const <int>[];
+    }
     if (buffer.data == nullptr || buffer.len == 0 || buffer.len > maximum) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
@@ -1589,11 +1759,11 @@ class NativeCryptoBindings {
   }
 
   List<int> _output(int Function(Pointer<_PmOwnedBuffer>) operation,
-      {int maximum = 32 * 1024 * 1024}) {
+      {int maximum = 32 * 1024 * 1024, bool allowEmpty = false}) {
     final output = calloc<_PmOwnedBuffer>();
     try {
       _check(operation(output));
-      final bytes = _take(output.ref, maximum: maximum);
+      final bytes = _take(output.ref, maximum: maximum, allowEmpty: allowEmpty);
       output.ref
         ..data = nullptr
         ..len = 0;
@@ -2261,8 +2431,8 @@ class NativeCryptoDevice implements Finalizable {
   /// sender the transport does not name, and returns the sender MLS
   /// authenticated. Nothing the server says about the sender is used.
   /// Throws [NativeCryptoError.senderRemoved] for a past-epoch message from
-  /// a sender who has left; the ratchet has advanced then. Not used by the
-  /// app yet: sealed delivery waits for its credential decision.
+  /// a sender who has left; the ratchet has advanced then. The app calls it
+  /// for `message.sealed.created` events (processSealedApplicationMessage).
   ({List<int> plaintext, String accountId, String deviceId}) decryptSealed(
       String groupId, List<int> ciphertext) {
     _bindings._bounded(groupId.codeUnits, 128);
@@ -2477,6 +2647,59 @@ class NativeCryptoDevice implements Finalizable {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }
     return Uint8List.fromList(key);
+  }
+
+  /// L2-3 (ABI 26): this device's X25519 franking key, the key its L1
+  /// entry must list (`pm_crypto_l2_frank_public_key`). Public.
+  Uint8List l2FrankPublicKey() {
+    final key = _bindings._output(
+        (out) => _bindings._l2FrankPublicKey(_liveHandle, out),
+        maximum: 32);
+    if (key.length != 32) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(key);
+  }
+
+  /// L2-3 (ABI 26): the designation of a sealed message's 32-byte franking
+  /// [commit] in [conversationId] to [ownerKeys] (each 32 bytes, 1 to 16),
+  /// over this device's own identity. [listedKey] is the franking key this
+  /// device's verified L1 entry lists; native refuses any other. Empty is the
+  /// plain form (no owner key could be designated).
+  Uint8List l2FrankDesignate({
+    required String conversationId,
+    required List<int> commit,
+    required List<int> listedKey,
+    required List<List<int>> ownerKeys,
+  }) {
+    final conversation = utf8.encode(conversationId);
+    _bindings._bounded(conversation, 128);
+    _bindings._bounded(commit, 32, exact: true);
+    _bindings._bounded(listedKey, 32, exact: true);
+    if (ownerKeys.isEmpty ||
+        ownerKeys.length > NativeCryptoBindings.l2FrankMaxVerifiers ||
+        ownerKeys.any((key) => key.length != 32)) {
+      throw ArgumentError('1 to 16 owner keys of 32 bytes');
+    }
+    final keys = Uint8List(32 * ownerKeys.length);
+    for (var i = 0; i < ownerKeys.length; i++) {
+      keys.setRange(32 * i, 32 * i + 32, ownerKeys[i]);
+    }
+    final designation = _bindings._withByteLists(
+        <List<int>>[conversation, commit, listedKey, keys],
+        (slices) => _bindings._output(
+            (out) => _bindings._l2FrankDesignate(
+                _liveHandle, slices[0], slices[1], slices[2], slices[3], out),
+            maximum: NativeCryptoBindings.l2FrankMaxVerifiers *
+                NativeCryptoBindings.l2FrankEntryBytes,
+            // The plain form: no owner key could be designated.
+            allowEmpty: true));
+    if (designation.length % NativeCryptoBindings.l2FrankEntryBytes != 0 ||
+        designation.length >
+            ownerKeys.length * NativeCryptoBindings.l2FrankEntryBytes) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(designation);
   }
 
   /// Signs `domain | message` with this device's credential key (ABI 13).

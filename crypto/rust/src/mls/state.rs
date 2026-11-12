@@ -196,6 +196,10 @@ impl MlsDevice {
                 pending_transfers,
                 sealed: Default::default(),
                 held_list_seed: None,
+                // Format 3 never held one: the device makes its franking key
+                // now (the L1 entry lists none yet, so nothing is lost).
+                frank_secret: crate::l2_frank::generate_secret()
+                    .map_err(|_| MlsError::KeyGeneration)?,
                 held: Default::default(),
             },
             counter,

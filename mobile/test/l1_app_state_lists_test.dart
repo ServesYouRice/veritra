@@ -109,8 +109,110 @@ void main() {
         reason: 'no claims during failed discovery');
   }, skip: skip);
 
-  test('setup carries a genesis that names this device with its key', () async {
+  // L2-3, the real-app path that lists a franking key: a device another
+  // device added (change 2) has none on its list; its first sealed token
+  // pass signs change 7 naming exactly its own key, once.
+  test('a device added without a franking key lists it with change 7, once',
+      () async {
     final api = _ListApi(bindings);
+    final store = MemoryLocalStore();
+    final crypto = NativeCryptoService(bindings: bindings, localStore: store);
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    const session = Session(
+        baseUrl: _origin, token: 'tok', accountId: _account, deviceId: _own);
+    await crypto.createEnrollmentCredential(const EnrollmentReservation(
+        id: 'enroll_own',
+        accountId: _account,
+        deviceId: _own,
+        challenge: <int>[1, 2, 3]));
+    await store.saveSession(session);
+    await crypto.activateSession(session);
+    final tablet = bindings.createDevice(_account, 'dev_tablet');
+    addTearDown(tablet.close);
+    final tabletPair =
+        DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey());
+    api.chain.add(tablet.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes(_account),
+          version: 1,
+          prevHash: DeviceListBody.zeroHash,
+          createdAtMs: 1,
+          change: DeviceListChange.genesis,
+          entries: [tabletPair],
+        ),
+        idBytes('dev_tablet')));
+    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
+        .pinChain(_account, api.chain, expectedHead: api.chain.last);
+    state
+      ..api = api
+      ..session = session;
+
+    // Not on the list: no context, nothing signed.
+    expect(await state.debugSealedFrankContext(), isNull);
+    expect(api.chain, hasLength(1));
+
+    // The tablet adds this device: its entry has no franking key.
+    final genesis =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    final add = tablet.signDeviceList(
+        DeviceListBody(
+          accountId: idBytes(_account),
+          version: 2,
+          prevHash: genesis.listHash,
+          createdAtMs: 2,
+          change: DeviceListChange.add,
+          entries: [
+            DeviceListPair(idBytes(_own), await crypto.currentSigningKey()),
+            tabletPair,
+          ],
+        ),
+        idBytes('dev_tablet'));
+    await api.publishDeviceList('tok', add);
+    await DeviceListPins(store: store, source: _ApiLists(api), verifier: crypto)
+        .refresh(_account, force: true);
+    expect(
+        bindings
+            .checkDeviceListChain(idBytes(_account), api.chain)
+            .head
+            .frankKeyOf(idBytes(_own)),
+        isNull);
+
+    final own = await crypto.currentFrankKey();
+    final context = await state.debugSealedFrankContext();
+    expect(context, isNotNull);
+    expect(context!.listedKey, own);
+    expect(api.chain, hasLength(3));
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    expect(head.change, DeviceListChange.frankKey);
+    expect(head.frankKeyOf(idBytes(_own)), own);
+    expect(head.frankKeys, hasLength(1));
+    expect(head.entries, hasLength(2));
+    // The pin moved with it.
+    expect((await store.loadDeviceListPin(_account))!.version, 3);
+
+    // The next pass signs nothing.
+    expect((await state.debugSealedFrankContext())!.listedKey, own);
+    expect(api.chain, hasLength(3));
+  }, skip: skip);
+
+  // Condition A: with the server's sealed switch off, every version this
+  // device signs alone is L1 format 1, byte for byte the earlier format
+  // (main's servers and apps refuse format 2); change 7 adds the key later.
+  test('with sealed sending off, the setup genesis is format 1', () async {
+    final api = _ListApi(bindings);
+    final crypto =
+        NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
+    final state = _state(api, crypto);
+    addTearDown(state.dispose);
+    await state.createOwner(_origin, 'owner', 'password', 'setup');
+    expect(api.chain, hasLength(1));
+    await _expectFormat1(crypto, api.chain);
+  }, skip: skip);
+
+  test('setup carries a genesis that names this device with its key', () async {
+    final api = _ListApi(bindings)..sealedSwitch = true;
     final crypto =
         NativeCryptoService(bindings: bindings, localStore: MemoryLocalStore());
     final state = _state(api, crypto);
@@ -122,6 +224,9 @@ void main() {
     expect(chain.head.entries.single.deviceId, idBytes(_own));
     expect(
         chain.head.entries.single.signingKey, await crypto.currentSigningKey());
+    // L2-3: the genesis lists this device's own franking key.
+    expect(
+        chain.head.frankKeyOf(idBytes(_own)), await crypto.currentFrankKey());
     // Review fix: the own genesis is the account's anchor, not something
     // the first refresh takes from the server on trust: a server that shows
     // another chain for the account is not adopted.
@@ -419,6 +524,8 @@ void main() {
         RecoveryActionResult.done);
     var chain = bindings.checkDeviceListChain(idBytes(_account), api.chain);
     expect(chain.head.change, DeviceListChange.migrationGenesis);
+    // Condition A: the switch is off, so no franking key and format 1.
+    await _expectFormat1(crypto, api.chain);
     expect(chain.head.entries.map((e) => utf8.decode(e.deviceId)),
         unorderedEquals([_own, 'dev_phone']));
     // The unticked device was revoked; it was never listed, so no version.
@@ -701,6 +808,8 @@ void main() {
         DeviceListPair(idBytes('dev_tablet'), tablet.signingPublicKey())
       ],
       recoveryKey: head.recoveryKey,
+      // L2-3: devices that stay keep their franking keys.
+      frankKeys: head.frankKeys,
     ));
     await stop(owner);
     return (api: api, key: key, other: other, chained: chained);
@@ -708,8 +817,8 @@ void main() {
 
   /// A device recovered into the owner's account (K0-R) whose held seed is
   /// gone: it is not on the list and nothing was posted.
-  Future<({AppState state, NativeCryptoService crypto})> recovered(
-      _ListApi api) async {
+  Future<({AppState state, NativeCryptoService crypto})> recovered(_ListApi api,
+      {RecoveryKeyDraft? heldKey}) async {
     final store = MemoryLocalStore();
     final crypto = NativeCryptoService(bindings: bindings, localStore: store);
     final state = _state(api, crypto);
@@ -724,6 +833,11 @@ void main() {
         accountId: _account,
         deviceId: 'dev_rec',
         challenge: <int>[4, 5, 6]));
+    // The seed K0-R holds on the waiting identity, before activation.
+    if (heldKey != null) {
+      await crypto.holdRecoveryListSeed(
+          await crypto.decodeRecoveryKey(heldKey.display));
+    }
     await store.saveSession(session);
     await crypto.activateSession(session);
     await store.saveSetting('k0.recovered_device', '$_account\u0000dev_rec');
@@ -757,10 +871,51 @@ void main() {
     expect(head.change, DeviceListChange.recovery);
     expect(head.entries.single.deviceId, idBytes('dev_rec'));
     expect(head.entries.single.signingKey, await crypto.currentSigningKey());
+    // Condition A: the switch is off, so no franking key and format 1.
+    await _expectFormat1(crypto, api.chain);
     expect(state.recoveryListNeedsRetype, isFalse);
     expect(await crypto.localStore.loadSetting('l1.recovery_list_statement'),
         isEmpty);
   }, skip: skip);
+
+  test('with sealed sending on, the typed-key recovery lists its own key',
+      () async {
+    final (:api, :key, other: _, chained: _) = await ownerWithRecoveryKey();
+    final (:state, :crypto) = await recovered(api);
+    api.sealedSwitch = true;
+    await state.refreshDevices();
+    await _until(() => state.recoveryListNeedsRetype);
+    expect(await state.finishRecoveryWithTypedKey(key.display), isTrue);
+    final head =
+        bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+    expect(head.change, DeviceListChange.recovery);
+    expect(head.frankKeyOf(idBytes('dev_rec')), await crypto.currentFrankKey());
+    expect(api.chain.last[4], 2);
+  }, skip: skip);
+
+  for (final sealedOn in [false, true]) {
+    test(
+        'held-seed recovery with sealed sending '
+        '${sealedOn ? 'on lists its own key' : 'off is format 1'}', () async {
+      final (:api, :key, other: _, chained: _) = await ownerWithRecoveryKey();
+      final (:state, :crypto) = await recovered(api, heldKey: key);
+      api.sealedSwitch = sealedOn;
+      final before = api.chain.length;
+      await state.debugPostRecoveryDeviceList();
+      expect(api.chain, hasLength(before + 1));
+      final head =
+          bindings.checkDeviceListChain(idBytes(_account), api.chain).head;
+      expect(head.change, DeviceListChange.recovery);
+      expect(head.entries.single.deviceId, idBytes('dev_rec'));
+      if (sealedOn) {
+        expect(head.frankKeyOf(idBytes('dev_rec')),
+            await crypto.currentFrankKey());
+        expect(api.chain.last[4], 2);
+      } else {
+        await _expectFormat1(crypto, api.chain);
+      }
+    }, skip: skip);
+  }
 
   for (final chains in [false, true]) {
     test(
@@ -899,6 +1054,8 @@ Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
         ...head.entries,
         DeviceListPair(idBytes('dev_phone'), phone.signingPublicKey())
       ],
+      // L2-3: devices that stay keep their franking keys.
+      frankKeys: head.frankKeys,
     ));
     api._take(statement);
     await DeviceListPins(
@@ -914,6 +1071,31 @@ Future<void> _addSignedPhone(NativeCryptoBindings bindings, _DiscoveryApi api,
   } finally {
     phone.close();
   }
+}
+
+/// Condition A: the last statement of [chain] is L1 format 1 with no
+/// franking key. A genesis is also checked to be byte for byte the format-1
+/// encoding of the same content: re-signed from its parsed body, Ed25519
+/// gives the same bytes only if the body is the same.
+Future<void> _expectFormat1(
+    NativeCryptoService crypto, List<Uint8List> chain) async {
+  final statement = chain.last;
+  expect(utf8.decode(statement.sublist(0, 4)), 'VDL1');
+  expect(statement[4], 1, reason: 'L1 format byte');
+  final head =
+      crypto.bindings.checkDeviceListChain(idBytes(_account), chain).head;
+  expect(head.frankKeys, isEmpty);
+  if (chain.length != 1) return;
+  final again = await crypto.signDeviceList(DeviceListBody(
+    accountId: idBytes(_account),
+    version: head.version,
+    prevHash: DeviceListBody.zeroHash,
+    createdAtMs: head.createdAtMs,
+    change: head.change,
+    entries: head.entries,
+    recoveryKey: head.recoveryKey,
+  ));
+  expect(again, statement);
 }
 
 class _DiscoveryApi extends _ListApi {
@@ -1058,6 +1240,14 @@ class _ListApi extends ApiClient with LegacySyncPageFake {
   final Map<String, List<int>?> revoked = <String, List<int>?>{};
   final List<List<int>> recoveryKeyLists = <List<int>>[];
   List<Device> serverDevices = const <Device>[];
+
+  /// The server's `sealed_sender` switch, as its setup status reports it
+  /// (L2-3, condition A). Off by default, like a real server.
+  bool sealedSwitch = false;
+
+  @override
+  Future<Map<String, Object?>> setupStatus() async =>
+      <String, Object?>{'sealed_sender': sealedSwitch};
 
   static const _session = Session(
     baseUrl: _origin,
@@ -1366,6 +1556,8 @@ Future<Uint8List> _signDeviceAdd(NativeCryptoBindings bindings, _AuditApi api,
         ...head.entries,
         DeviceListPair(idBytes(deviceId), device.signingPublicKey())
       ],
+      // L2-3: devices that stay keep their franking keys.
+      frankKeys: head.frankKeys,
     ));
   } finally {
     device.close();

@@ -1085,22 +1085,31 @@ fn a_held_recovery_seed_survives_a_seal_and_a_restore() {
     assert!(forgotten.held_recovery_list_public().unwrap().is_none());
 }
 
+/// L2-3 (ABI 26): the record now always ends with the franking-key section,
+/// so a library from before ABI 26 refuses it (fail closed); with a held
+/// seed the held section comes first.
 #[test]
-fn without_a_seed_the_device_record_is_what_abi_13_wrote_and_with_one_it_is_refused_by_it() {
+fn the_device_record_ends_with_the_frank_section_and_an_older_reader_refuses_it() {
     let mut recovered = device("recovered");
     let plain = recovered.device_plaintext().unwrap();
     let (_, tail) = decode_owner(KIND_DEVICE, plain.as_slice()).unwrap();
-    // No held section: the whole tail is the transfer section, which the
-    // ABI 13 decoder reads to its end.
-    assert_eq!(transfer::extent(tail).unwrap(), tail.len());
+    // No held section: the transfers, then only the franking section.
+    let frank = super::super::list::FRANK_SECTION_BYTES;
+    assert_eq!(transfer::extent(tail).unwrap(), tail.len() - frank);
+    assert_eq!(
+        &tail[tail.len() - frank..tail.len() - frank + 4],
+        super::super::list::FRANK_SECTION_MAGIC
+    );
+    let tail = &tail[..tail.len() - frank];
 
     recovered.hold_recovery_list_seed(&ENTROPY).unwrap();
     let held = recovered.device_plaintext().unwrap();
     let (_, held_tail) = decode_owner(KIND_DEVICE, held.as_slice()).unwrap();
     assert_eq!(
         held_tail.len(),
-        tail.len() + super::super::list::HELD_SECTION_BYTES
+        tail.len() + super::super::list::HELD_SECTION_BYTES + frank
     );
+    let held_tail = &held_tail[..held_tail.len() - frank];
     assert_eq!(transfer::extent(held_tail).unwrap(), tail.len());
     // ABI 13 passed the whole tail to the transfer decoder, which refuses
     // bytes after the section: a state with a seed fails closed there.

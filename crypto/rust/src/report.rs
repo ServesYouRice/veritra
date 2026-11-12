@@ -16,8 +16,9 @@
 //!   lp = u32 big-endian length; the same bytes as server/internal/franking.
 //! ```
 //!
-//! No function returns the X25519 private key: open takes the seed and
-//! derives the pair inside Rust. The info label is fixed so a report key can
+//! No exported function returns the X25519 private key: open (and the
+//! L2-3 franking check, `l2_frank::verify_with_report_seed`) takes the seed
+//! and derives the pair inside Rust. The info label is fixed so a report key can
 //! open nothing sealed for another purpose, and no other HPKE key in this
 //! crate (K0 `rk_pub`, K2 transfer keys) opens a report.
 
@@ -109,6 +110,29 @@ fn key_pair(crypto: &RustCrypto, seed: &[u8]) -> Result<HpkeKeyPair, ReportError
     Ok(pair)
 }
 
+/// L2-3 designated-verifier franking (`l2_frank`): the X25519 secret of the
+/// report key pair, for the owner's static-DH tag check. Crate-internal: no
+/// exported function returns it, and it zeroizes on drop. The pair is
+/// checked to agree with x25519-dalek (`X25519(sk, 9)` must be the HPKE
+/// public key), so the DH secret is the one the published key names.
+pub(crate) fn x25519_secret(seed: &[u8]) -> Result<x25519_dalek::StaticSecret, ReportError> {
+    let pair = key_pair(&RustCrypto::default(), seed)?;
+    let mut bytes: [u8; 32] = pair
+        .private
+        .as_ref()
+        .try_into()
+        .map_err(|_| ReportError::Crypto)?;
+    let secret = x25519_dalek::StaticSecret::from(bytes);
+    for byte in bytes.iter_mut() {
+        // SAFETY: a valid, aligned pointer to a byte of `bytes`.
+        unsafe { core::ptr::write_volatile(byte, 0) };
+    }
+    if x25519_dalek::PublicKey::from(&secret).as_bytes().as_slice() != pair.public.as_slice() {
+        return Err(ReportError::Crypto);
+    }
+    Ok(secret)
+}
+
 /// The report public key for `seed`.
 pub fn public_key(seed: &[u8]) -> Result<[u8; PUBLIC_KEY_BYTES], ReportError> {
     let pair = key_pair(&RustCrypto::default(), seed)?;
@@ -169,7 +193,12 @@ const LOW_ORDER_POINTS: [[u8; 32]; 7] = [
     },
 ];
 
-fn is_low_order(public: &[u8]) -> bool {
+/// The list, for the L2-3 franking tests and vectors.
+#[cfg(test)]
+pub(crate) const LOW_ORDER_POINTS_FOR_TESTS: [[u8; 32]; 7] = LOW_ORDER_POINTS;
+
+/// Also used by `l2_frank` for franking and verifier keys (L2-3).
+pub(crate) fn is_low_order(public: &[u8]) -> bool {
     let mut masked = [0u8; 32];
     masked.copy_from_slice(public);
     masked[31] &= 0x7f;

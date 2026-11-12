@@ -29,6 +29,20 @@ const _session = Session(
 final List<int> _stateKey = List<int>.generate(32, (i) => 0xA0 + (i % 16));
 final List<int> _sealed = utf8.encode('sealed-SENTINEL-7121-mls-state');
 
+// L2-3: sealed sender tokens are bearer credentials too.
+final List<int> _tokenNonce = List<int>.generate(32, (i) => 0x30 + i);
+final List<int> _tokenOutput = List<int>.generate(64, (i) => 0x80 + i);
+final List<int> _queuedNonce = List<int>.generate(32, (i) => 0x60 + i);
+final List<int> _queuedOutput = List<int>.generate(64, (i) => 0x10 + i);
+
+SealedToken _sealedToken(List<int> nonce, List<int> output) => SealedToken(
+      conversationId: 'conv_1',
+      keyId: 'f' * 32,
+      epoch: 20400,
+      nonce: nonce,
+      output: output,
+    );
+
 StoredCryptoState _state(int counter) => StoredCryptoState(
     counter: counter, stateKey: _stateKey, sealedState: _sealed);
 
@@ -50,6 +64,12 @@ List<String> _forbidden() => <String>[
       '"mls_outbox"',
       '"pending_pins"',
       '"cursor"',
+      base64Encode(_tokenNonce),
+      base64Encode(_tokenOutput),
+      base64Encode(_queuedNonce),
+      base64Encode(_queuedOutput),
+      '"l2_sealed_token"',
+      '"sealed_tokens"',
     ];
 
 void main() {
@@ -130,6 +150,18 @@ void main() {
       ciphertext: utf8.encode('plain-outbox-SENTINEL'),
       cryptoProtocol: 'mls10-openmls-v1',
     ));
+    await store.saveSealedTokens(
+        <SealedToken>[_sealedToken(_tokenNonce, _tokenOutput)]);
+    await store.enqueueEnvelope(MessageEnvelope(
+      conversationId: 'conv_1',
+      idempotencyKey: 'sealed_queued_000000000001',
+      ciphertext: utf8.encode('sealed-outbox-SENTINEL'),
+      cryptoProtocol: 'mls10-openmls-v1',
+      sealedToken: _sealedToken(_queuedNonce, _queuedOutput),
+    ));
+    expect(
+        await store.countSealedTokens('conv_1', keyId: 'f' * 32, epoch: 20400),
+        1);
     return store.exportHistorySnapshot();
   }
 
@@ -147,6 +179,28 @@ void main() {
       }
       expect(text, isNot(contains('mls-outbox-SENTINEL')));
       expect(text, isNot(contains('plain-outbox-SENTINEL')));
+      expect(text, isNot(contains('sealed-outbox-SENTINEL')));
+      // Nor the raw token bytes, in any spelling the JSON could hold.
+      for (final bytes in <List<int>>[
+        _tokenNonce,
+        _tokenOutput,
+        _queuedNonce,
+        _queuedOutput
+      ]) {
+        expect(text, isNot(contains(bytes.join(','))));
+        expect(_containsRun(backup, bytes), isFalse);
+      }
     });
   }
+}
+
+bool _containsRun(List<int> haystack, List<int> needle) {
+  for (var i = 0; i + needle.length <= haystack.length; i++) {
+    var j = 0;
+    while (j < needle.length && haystack[i + j] == needle[j]) {
+      j++;
+    }
+    if (j == needle.length) return true;
+  }
+  return false;
 }

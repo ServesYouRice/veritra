@@ -77,6 +77,49 @@ pub(crate) fn decode_held_section(bytes: &[u8]) -> Result<Option<SecretVLBytes>,
     Ok(Some(SecretVLBytes::new(bytes[5..].to_vec())))
 }
 
+/// L2-3 (ABI 26): the sealed record's franking-key section, after the held
+/// seed: `"VFK1" | u8 1 | [32] secret`. A record written before it has
+/// none, and the device makes its key when it is restored.
+pub(crate) const FRANK_SECTION_MAGIC: &[u8; 4] = b"VFK1";
+pub(crate) const FRANK_SECTION_BYTES: usize = 4 + 1 + 32;
+
+pub(crate) fn encode_frank_section(secret: &[u8; 32]) -> SecretVLBytes {
+    let mut out = SecretVLBytes::new(Vec::with_capacity(FRANK_SECTION_BYTES));
+    for byte in FRANK_SECTION_MAGIC
+        .iter()
+        .chain([1u8].iter())
+        .chain(secret.iter())
+    {
+        out.push(*byte);
+    }
+    out
+}
+
+/// The device record's sections after the transfers: an optional held
+/// seed, then an optional franking secret, in that order and nothing else.
+pub(crate) fn decode_device_sections(
+    bytes: &[u8],
+) -> Result<(Option<SecretVLBytes>, Option<x25519_dalek::StaticSecret>), MlsError> {
+    let (held, frank) = if bytes.starts_with(HELD_SECTION_MAGIC) {
+        if bytes.len() < HELD_SECTION_BYTES {
+            return Err(MlsError::InvalidState);
+        }
+        bytes.split_at(HELD_SECTION_BYTES)
+    } else {
+        (&bytes[..0], bytes)
+    };
+    let held = decode_held_section(held)?;
+    if frank.is_empty() {
+        return Ok((held, None));
+    }
+    if frank.len() != FRANK_SECTION_BYTES || &frank[..4] != FRANK_SECTION_MAGIC || frank[4] != 1 {
+        return Err(MlsError::InvalidState);
+    }
+    let secret =
+        crate::l2_frank::secret_from_bytes(&frank[5..]).map_err(|_| MlsError::InvalidState)?;
+    Ok((held, Some(secret)))
+}
+
 impl MlsDevice {
     /// Signs a device-list body as this device (signer kind 1) and returns
     /// the 64-byte signature over
@@ -85,11 +128,17 @@ impl MlsDevice {
     /// The body is parsed strictly first. It must name this device's own
     /// account, and a genesis (change 1) must list exactly this device and
     /// its own key; a migration genesis (change 6) must list this device with
-    /// its own key. The rest of the rules need the previous version and are
-    /// checked by [`l1::check_step`] before a version is used.
+    /// its own key. A franking key the body lists for this device must be
+    /// this device's own (L2-3), and change 7 must list it. The rest of the
+    /// rules need the previous version and are checked by
+    /// [`l1::check_step`] before a version is used.
     pub fn l1_sign_device_list(&self, body: &[u8]) -> Result<Vec<u8>, MlsError> {
         let parsed = l1::parse_body(body).map_err(|_| MlsError::InvalidMessage)?;
         if parsed.account_id != self.account_id {
+            return Err(MlsError::InvalidIdentity);
+        }
+        let own_frank = parsed.frank_key(&self.device_id);
+        if own_frank.is_some_and(|key| *key != self.l2_frank_public_key()) {
             return Err(MlsError::InvalidIdentity);
         }
         let own_pair = |pair: &l1::Pair| {
@@ -110,6 +159,11 @@ impl MlsDevice {
             // A device that is not on the previous version cannot sign for
             // it; the verifier refuses such a statement.
             Change::Add | Change::Remove | Change::RecoveryKey => {}
+            Change::FrankKey => {
+                if own_frank.is_none() {
+                    return Err(MlsError::InvalidIdentity);
+                }
+            }
             // Only the recovery key signs a recovery version.
             Change::Recovery => return Err(MlsError::InvalidIdentity),
         }
@@ -171,6 +225,9 @@ impl MlsDevice {
             || parsed.entries.len() != 1
             || parsed.entries[0].device_id != self.device_id
             || parsed.entries[0].signing_key.as_slice() != self.signing_public_key()
+            || parsed
+                .frank_key(&self.device_id)
+                .is_some_and(|key| *key != self.l2_frank_public_key())
         {
             return Err(refused(L1Error::Rule));
         }

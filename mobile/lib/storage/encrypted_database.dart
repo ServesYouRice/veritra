@@ -10,13 +10,14 @@ import 'package:sqlite3/sqlite3.dart' show sqlite3, OpenMode;
 import 'message_search.dart';
 import 'history_snapshot.dart';
 import 'notice_outbox.dart';
-import '../core/models.dart' show Conversation, Session;
+import '../core/models.dart' show Conversation, SealedToken, Session;
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/conversation_pause.dart';
 import '../sync/sync_recovery.dart' show SyncFailureKind;
 import '../crypto/app_payload.dart' show effectiveExpiryMillis;
 import '../crypto/poll.dart' show applyPollClose, applyPollVote;
+import '../crypto/franking.dart' show designationWellFormed;
 import 'device_list_records.dart';
 import 'invite_anchor.dart';
 import 'profile_records.dart';
@@ -37,6 +38,7 @@ part 'community_info_sql.dart';
 part 'invite_anchor_sql.dart';
 part 'profile_sql.dart';
 part 'governance_observation_sql.dart';
+part 'sealed_sender_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -723,7 +725,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 42;
+  static const currentSchemaVersion = 43;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -939,6 +941,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createFrankReveals();
             await _createConversationPauses();
             await _createDeviceLists();
+            // After the schema 19 and 26 tables it adds columns to.
+            await _createSealedSender();
             await _createFiledReports();
             await _createCommunityInfo();
             await _createInviteAnchors();
@@ -1122,6 +1126,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // C4 (schema 36, the next free number after C3's 35): local
             // receipt clocks only.
             if (from < 36) await _createGovernanceObservations();
+            // L2-3 (schema 43, after C7's 41 and 42): sealed sender tokens,
+            // the server key pin, the designation beside a reveal and the
+            // franking key beside a device-list pair. Idempotent and last, after the schema 19 and
+            // 26 steps that create the tables it adds columns to.
+            if (from < 43) await _createSealedSender();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1130,6 +1139,18 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
           await customStatement('PRAGMA secure_delete = ON');
+          // Review L2: a draft schema 43 kept columns the final step drops.
+          if (details.versionNow >= 43) await _repairSchema43();
+          // Integration of C7 (41, 42) and L2-3 (43): a store the sealed
+          // branch alone wrote at 43 never runs [onUpgrade] again, so it
+          // gets C7's columns here. Both checks are a column lookup; a
+          // no-op once the columns are there.
+          if (details.versionNow >= 43 && !details.wasCreated) {
+            await transaction(() async {
+              await _addC7GenColumn();
+              await _addC7FormerColumn();
+            });
+          }
         },
       );
 
@@ -1200,6 +1221,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await delete(localPeerVerifications).go();
     await _clearHistoryNamespace();
     await _clearFrankReveals();
+    await _clearSealedTokens();
     await _clearDeviceLists();
     await _clearCommunityInfo();
     await _clearInviteAnchors();
@@ -1621,6 +1643,9 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await (delete(localOutboxEntries)
               ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
             .go();
+        // L2-3: the identified fallback of a sealed message is kept only
+        // while it is queued; the digest stays for its echo.
+        await _clearSealedFallbackInTransaction(idempotencyKey);
         await (delete(localMetadata)
               ..where((table) =>
                   table.name.equals(_outboxDraftName(idempotencyKey))))
@@ -1911,17 +1936,26 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
                   .write(LocalMessagesCompanion(expiresAt: Value(merged)));
             }
           }
+          // A row already linked to another server id keeps it: an echo
+          // never re-points it (L2-3 review H1).
           await (update(localMessages)
                 ..where((table) =>
                     table.key.equals(ownMessageKey) &
                     table.conversationId.equals(conversationId) &
                     (channel == null
                         ? table.channelId.isNull()
-                        : table.channelId.equals(channel as String))))
+                        : table.channelId.equals(channel as String)) &
+                    (table.serverMessageId.isNull() |
+                        table.serverMessageId.equals(envelope.id))))
               .write(LocalMessagesCompanion(
             serverMessageId: Value(envelope.id),
             state: const Value(LocalMessageState.sent),
           ));
+          // L2-3: an own sealed post's digest has done its work.
+          final echoKey = echo['idempotency_key'];
+          if (echo['sealed'] == true && echoKey is String) {
+            await _deleteSealedOwnPostInTransaction(conversationId, echoKey);
+          }
         }
         final previousCursor = await (select(localSyncStates)
               ..where((table) => table.singleton.equals(1)))
@@ -2095,6 +2129,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     List<CommunityInfoEvent> communityInfo = const <CommunityInfoEvent>[],
     List<CryptoRecordWrite> recordChanges = const <CryptoRecordWrite>[],
     GovernanceObservationChange? governanceObservation,
+    SealedOwnPost? sealedOwnPost,
+    bool replacesSealedEntry = false,
     String? leaseKey,
     Map<String, String?> c7Settings = const <String, String?>{},
   }) =>
@@ -2114,15 +2150,27 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         await _writeC7SettingsInTransaction(c7Settings);
         // Nothing is encrypted for a paused conversation (C1 P1).
         await _assertConversationNotPausedInTransaction(conversationId);
-        if (await (select(localOutboxEntries)
-                  ..where(
-                      (table) => table.idempotencyKey.equals(idempotencyKey)))
-                .getSingleOrNull() !=
-            null) {
-          throw StateError('outbox idempotency key conflict');
-        }
-        if (await outboxCount() >= maxEntries) {
-          throw StateError('outbox_full');
+        final queued = await (select(localOutboxEntries)
+              ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+            .getSingleOrNull();
+        if (replacesSealedEntry) {
+          // L2-3 (M2): the identified re-encryption of a queued sealed
+          // message takes its entry's place; nothing else may.
+          final previous = queued == null
+              ? null
+              : jsonDecode(queued.payloadJson) as Map<String, Object?>;
+          if (previous == null ||
+              queued!.conversationId != conversationId ||
+              previous['l2_sealed_token'] == null) {
+            throw StateError('no queued sealed entry to replace');
+          }
+        } else {
+          if (queued != null) {
+            throw StateError('outbox idempotency key conflict');
+          }
+          if (await outboxCount() >= maxEntries) {
+            throw StateError('outbox_full');
+          }
         }
         await _applyGovernanceObservation(governanceObservation);
         await _applyCryptoRecordChanges(recordChanges);
@@ -2134,14 +2182,33 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             sealedState: Uint8List.fromList(sealedState),
           ),
         );
-        await into(localOutboxEntries).insert(
-          LocalOutboxEntriesCompanion.insert(
-            idempotencyKey: idempotencyKey,
-            conversationId: conversationId,
-            queuedAt: DateTime.now().microsecondsSinceEpoch,
-            payloadJson: payloadJson,
-          ),
-        );
+        if (replacesSealedEntry) {
+          await (update(localOutboxEntries)
+                ..where((table) => table.idempotencyKey.equals(idempotencyKey)))
+              .write(LocalOutboxEntriesCompanion(
+            payloadJson: Value(payloadJson),
+            attemptCount: const Value(0),
+            nextAttemptAt: const Value(null),
+            failureClass: const Value(null),
+            terminal: const Value(false),
+          ));
+          // The plaintext goes. The digest stays: an earlier sealed attempt
+          // still in flight could land late, and its echo is then this
+          // device's own.
+          await _clearSealedFallbackInTransaction(idempotencyKey);
+        } else {
+          await into(localOutboxEntries).insert(
+            LocalOutboxEntriesCompanion.insert(
+              idempotencyKey: idempotencyKey,
+              conversationId: conversationId,
+              queuedAt: DateTime.now().microsecondsSinceEpoch,
+              payloadJson: payloadJson,
+            ),
+          );
+        }
+        if (sealedOwnPost != null) {
+          await _writeSealedOwnPostInTransaction(sealedOwnPost);
+        }
         if (draftText != null) {
           await _writeMetadataInTransaction(
               _outboxDraftName(idempotencyKey), draftText);

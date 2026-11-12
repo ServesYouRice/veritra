@@ -7,7 +7,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, mapEquals, setEquals, visibleForTesting;
+    show
+        defaultTargetPlatform,
+        listEquals,
+        mapEquals,
+        setEquals,
+        visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
@@ -21,6 +26,7 @@ import '../crypto/k2_transfer_crypto.dart';
 import '../crypto/native_crypto_bindings.dart'
     show
         DeviceListBody,
+        DeviceListFrankKey,
         DeviceListChange,
         DeviceListPair,
         K2LinkContext,
@@ -57,6 +63,7 @@ import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
 import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
+import 'sealed_sender.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
@@ -90,6 +97,10 @@ import '../crypto/profile_record_codec.dart'
 import 'passkeys.dart';
 import 'receipts_state.dart';
 import 'report_key_announcer.dart';
+import 'report_models.dart' show ReportInbox;
+import '../crypto/franking.dart' show reportInboxInstanceOwner;
+import '../crypto/owner_key_watch.dart';
+import '../crypto/owner_proof_pins.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
 import 'typing_state.dart';
@@ -431,6 +442,19 @@ class AppState extends ChangeNotifier
 
   Session? session;
   ApiClient? api;
+
+  /// L2-3: the sealed sender state for [api]'s origin, while the crypto
+  /// service can send and open sealed messages; and the client that posts
+  /// them, which never carries the session.
+  SealedSender? sealedSender;
+  SealedPostClient? _sealedPost;
+
+  /// L2-3: the owner report key differences waiting for the person (a key
+  /// changed, an owner added or gone), as last read from this device's
+  /// proof recipients and the server's latest listing. Until accepted,
+  /// sealed messages are tagged only to the proof recipients from before. Settings shows a warning
+  /// while it is not empty.
+  List<OwnerKeyReviewItem> ownerKeyReview = const <OwnerKeyReviewItem>[];
   SyncService? sync;
   StreamSubscription<Map<String, Object?>>? _syncSubscription;
   StreamSubscription<PushEvent>? _pushSubscription;
@@ -1737,7 +1761,13 @@ class AppState extends ChangeNotifier
   /// left the local cache. Server envelopes without a local record (sent
   /// before this device joined, say) still appear, as redacted bars.
   List<ReceivedMessageEnvelope> timelineFor(String conversationId) {
-    final all = _timelineForConversation(conversationId);
+    // L2-3: the server hides a blocked account's identified posts, but it
+    // cannot tell who sent a sealed one; the app hides those itself, by the
+    // sender MLS named.
+    final all = _timelineForConversation(conversationId)
+        .where((envelope) =>
+            !(envelope.sealed && isBlocked(envelope.senderAccountId)))
+        .toList(growable: false);
     final channel = _selectedChannels[conversationId];
     if (channel == null) return all;
     // A shared group holds every open channel; the chat shows one of them.
@@ -1846,7 +1876,18 @@ class AppState extends ChangeNotifier
         records.map((record) => record.envelope).toList(growable: false);
   }
 
+  /// L2-3 (owner decision 2026-11-12, "Ask before re-sending"): whether
+  /// [idempotencyKey] is a message the server would not take hidden, which
+  /// waits for the person to send it normally or discard it.
+  bool outboxNeedsSealedChoice(String idempotencyKey) {
+    final record = _outboxRecords[idempotencyKey];
+    return record != null && sealedNeedsResendChoice(record);
+  }
+
   String outboxFailureMessage(String idempotencyKey) {
+    if (outboxNeedsSealedChoice(idempotencyKey)) {
+      return l10n.outboxSealedRefused;
+    }
     final failure = _outboxRecords[idempotencyKey]?.failureClass ?? '';
     if (failure.contains('storage_quota_exceeded') ||
         failure.contains(':507:')) {
@@ -2530,8 +2571,8 @@ class AppState extends ChangeNotifier
     if (!_refreshOwned(current, generation)) return;
     conversations = list;
     _conversationsFromServer = true;
-    if (cryptoService case final C7HistoryConsumer c7) {
-      unawaited(_followC7Switch(client, c7));
+    if (cryptoService is C7HistoryConsumer || sealedSender != null) {
+      unawaited(_followServerSwitches(client, current));
     }
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
@@ -3841,11 +3882,17 @@ class AppState extends ChangeNotifier
       await receiptPreferences.loaded;
       // The app may have gone to the background while the choice was read.
       if (!_isForeground) return;
-      if (receiptPreferences.shareReadReceipts) {
-        await client.markRead(current.token, conversationId, messages.first.id);
+      // L2-3: where messages go sealed the shared read cursor would move
+      // right around a sealed post, so the receipt stays private there, and
+      // it names the newest identified message: the server keeps no read
+      // position on a sealed row.
+      final sealedHere = sealedSender?.activeIn(conversationId) ?? false;
+      final target = messages.where((message) => !message.sealed).firstOrNull;
+      if (target == null) return;
+      if (receiptPreferences.shareReadReceipts && !sealedHere) {
+        await client.markRead(current.token, conversationId, target.id);
       } else {
-        await client.markReadPrivate(
-            current.token, conversationId, messages.first.id);
+        await client.markReadPrivate(current.token, conversationId, target.id);
       }
       // Clear the unread badge immediately rather than waiting for the next
       // conversation refresh; the receipt has landed server-side.
@@ -4850,10 +4897,23 @@ class AppState extends ChangeNotifier
   /// C7: sends go in two parts exactly while the server reports
   /// `c7_history` (PRIVATE_MESSENGER_C7_HISTORY). A failed read keeps the
   /// last answer; the server refuses a mismatched send either way.
-  Future<void> _followC7Switch(ApiClient client, C7HistoryConsumer c7) async {
+  ///
+  /// L2-3: sealed sending follows `sealed_sender`
+  /// (PRIVATE_MESSENGER_SEALED_SENDER) the same way; turning on starts a
+  /// token pass when the app is in the foreground.
+  Future<void> _followServerSwitches(ApiClient client, Session current) async {
     try {
       final status = await client.setupStatus();
-      c7.c7SealedBodies = status['c7_history'] == true;
+      if (cryptoService case final C7HistoryConsumer c7) {
+        c7.c7SealedBodies = status['c7_history'] == true;
+      }
+      final sealed = sealedSender;
+      if (sealed != null && sealed.origin == client.baseUrl) {
+        sealed.enabled = status['sealed_sender'] == true;
+        if (sealed.enabled && _isForeground && _sameSession(current)) {
+          unawaited(sealed.refresh(client, current.token, conversations));
+        }
+      }
     } catch (_) {
       // Keep the current setting until the next refresh.
     }
@@ -5349,6 +5409,63 @@ class AppState extends ChangeNotifier
     await _flushOutbox();
   }
 
+  /// L2-3 (owner decision 2026-11-12): "Send normally" on a message the
+  /// server would not take hidden ([outboxNeedsSealedChoice]). The one path
+  /// on which a message chosen to go sealed is sent identified, and only on
+  /// this tap: it is encrypted afresh, identified, under the same key, in
+  /// its outbox entry's place, and the outbox worker sends it once. Acts
+  /// only while the entry still waits for the choice, so a second tap does
+  /// nothing. Completes after that flush.
+  Future<void> sendSealedNormally(String idempotencyKey) async {
+    final owner = session;
+    if (owner == null) return;
+    final ownerGeneration = _sessionGeneration;
+    var flush = false;
+    await _runScoped(Ops.send, () async {
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // Read from the store, not the cached list, so a tap that raced a
+      // first one (or a discard) finds the entry already changed.
+      final record = (await localStore.pendingEnvelopeRecords())
+          .where((item) => item.envelope.idempotencyKey == idempotencyKey)
+          .firstOrNull;
+      if (record == null ||
+          !sealedNeedsResendChoice(record) ||
+          !_syncOwnerActive(owner, ownerGeneration)) {
+        return;
+      }
+      final conversationId = record.envelope.conversationId;
+      if (mlsConversationFailed(conversationId)) {
+        throw const ConversationPausedException();
+      }
+      if (conversationSyncPaused(conversationId)) {
+        throw ConversationSyncPausedException(conversationId);
+      }
+      // D68: a removal under way would let the removed member read it.
+      if (_mlsCrypto != null && await _heldForRemoval(conversationId)) {
+        throw UserFacingException(l10n.outboxSealedResendHeld);
+      }
+      final result = await reencryptSealedForResend(
+          crypto: cryptoService,
+          localStore: localStore,
+          sealed: record.envelope);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      switch (result) {
+        case SealedResend.held:
+          throw UserFacingException(l10n.outboxSealedResendHeld);
+        case SealedResend.unavailable:
+          throw UserFacingException(l10n.outboxSealedResendUnavailable);
+        case SealedResend.queued:
+          break;
+      }
+      _setOutboxRecords(await localStore.pendingEnvelopeRecords());
+      _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
+      notifyListeners();
+      _manualRetryKey = idempotencyKey;
+      flush = true;
+    });
+    if (flush) await _flushOutbox();
+  }
+
   Future<void> discardEnvelope(String idempotencyKey) async {
     final deviceId = session?.deviceId;
     if (deviceId != null)
@@ -5714,6 +5831,9 @@ class AppState extends ChangeNotifier
     final members =
         known > 0 ? known : receipts.receiptsFor(conversationId).length + 1;
     if (members < 2 || members > typingMaxMembers) return;
+    // L2-3: a server-seen typing event names the account seconds before
+    // its sealed post, so none is sent where messages go sealed.
+    if (sealedSender?.activeIn(conversationId) ?? false) return;
     if (!typing.takeSendSlot(conversationId)) return;
     unawaited(
       client
@@ -6328,6 +6448,7 @@ class AppState extends ChangeNotifier
       return failed;
     }
     final client = apiClientFactory(current.baseUrl);
+    client.readsSealedEvents = cryptoService is SealedSendingCryptoService;
     final unregister = wake.onCancel(client.close);
     _wakeRun = wake;
     _wakeApi = client;
@@ -6607,6 +6728,12 @@ class AppState extends ChangeNotifier
     }
     await _syncOwner?.request();
     _retryOwedKeyPackages();
+    // L2-3: tokens are fetched on the foreground pass, for every eligible
+    // conversation whether or not it will send, never right before a send.
+    final sealed = sealedSender, client = api, current = session;
+    if (sealed != null && client != null && current != null && _isForeground) {
+      unawaited(sealed.refresh(client, current.token, conversations));
+    }
     // C3: keys and announcements arrive over MLS; look again at most once
     // a minute.
     final last = _lastInfoRefresh;
@@ -6874,6 +7001,7 @@ class AppState extends ChangeNotifier
           rethrow;
         }
         await _publishReceived(received, current, ownerGeneration);
+        await _clearSealedResidue();
         await advanceToScan(events.last.id);
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         pageCursor = await localStore.loadSyncCursor();
@@ -7030,6 +7158,10 @@ class AppState extends ChangeNotifier
       notifyListeners();
       _scheduleCatchUpRetry(
           retryAfter: err is ApiException ? err.retryAfter : null);
+    } finally {
+      // Review L1: a page that opened a sealed message and then threw or
+      // returned early skipped its own clear; the pass clears it here.
+      await _clearSealedResidue();
     }
   }
 
@@ -7452,6 +7584,56 @@ class AppState extends ChangeNotifier
       } catch (_) {
         // Shown by the next pass, like any committed envelope.
       }
+      await _clearSealedResidue();
+    }
+  }
+
+  /// Set when a sync pass opened a sealed message; [_clearSealedResidue]
+  /// then checkpoints the database log once for the page.
+  bool _sealedResiduePending = false;
+
+  /// Whether this AppState has read [sealedResidueSetting] yet.
+  bool _sealedResidueLoaded = false;
+
+  /// Review L1: the durable copy of [_sealedResiduePending], `1` from just
+  /// before a sealed open until a checkpoint succeeded. One left at `1` by
+  /// a killed app is cleared on the next start's first sync pass.
+  static const String sealedResidueSetting = 'l2.sealed_residue_pending';
+
+  /// Records, durably and before the open, that a sealed message is about
+  /// to be opened. Written once until the next successful checkpoint.
+  Future<void> _markSealedResidue() async {
+    if (_sealedResiduePending) return;
+    await localStore.saveSetting(sealedResidueSetting, '1');
+    _sealedResiduePending = true;
+  }
+
+  /// L2-3 (`docs/crypto.md`, "Franking a sealed message", residue): the
+  /// MLS state from before a sealed message could decrypt it again, and an
+  /// old copy of it can sit in write-ahead log frames after the new state
+  /// is committed. Once per sync page that opened a sealed message the log
+  /// is checkpointed and truncated, and once more when a sync pass ends
+  /// for any reason (a page that threw or returned early included). A flag
+  /// a killed app left is honoured on the next start. A checkpoint that
+  /// could not truncate (a reader held the log) stays due. Best effort,
+  /// never fails the pass.
+  Future<void> _clearSealedResidue() async {
+    try {
+      if (!_sealedResidueLoaded) {
+        _sealedResidueLoaded = true;
+        if (await localStore.loadSetting(sealedResidueSetting) == '1') {
+          _sealedResiduePending = true;
+        }
+      }
+      if (!_sealedResiduePending) return;
+      _sealedResiduePending = false;
+      if (await localStore.checkpointSealedResidue()) {
+        await localStore.saveSetting(sealedResidueSetting, '0');
+      } else {
+        _sealedResiduePending = true;
+      }
+    } catch (_) {
+      // Still due: the setting says so until a checkpoint succeeds.
     }
   }
 
@@ -7649,6 +7831,7 @@ class AppState extends ChangeNotifier
   bool _isCryptoSyncEvent(String type) =>
       type == 'mls.message.created' ||
       type.startsWith('message.envelope.') ||
+      type == sealedMessageEventType ||
       type == 'call.signaling' ||
       type == 'call.state';
 
@@ -8432,6 +8615,10 @@ class AppState extends ChangeNotifier
         if (inline == null && event.type != 'message.envelope.created') {
           throw failure(SyncFailureKind.applicationMissing);
         }
+        // L2-3: a sealed envelope comes only as `message.sealed.created`.
+        if (inline?.sealed ?? false) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
         final ReceivedMessageEnvelope resolved;
         if (inline != null) {
           resolved = inline;
@@ -8444,7 +8631,8 @@ class AppState extends ChangeNotifier
           }
           resolved = fetched;
         }
-        if (resolved.id != id ||
+        if (resolved.sealed ||
+            resolved.id != id ||
             (event.conversationId != null &&
                 resolved.conversationId != event.conversationId)) {
           throw failure(SyncFailureKind.applicationUndecryptable);
@@ -8483,6 +8671,64 @@ class AppState extends ChangeNotifier
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         return resolved;
+      case sealedMessageEventType:
+        // L2-3: a sealed post. The server names no sender; the crypto
+        // service takes it from MLS. The envelope always comes inline.
+        final id = _messageIdFromSyncEvent(event);
+        if (id == null) throw failure(SyncFailureKind.applicationMissing);
+        final ReceivedMessageEnvelope? inline;
+        try {
+          inline = _envelopeFromSyncEvent(event);
+        } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        if (inline == null) throw failure(SyncFailureKind.applicationMissing);
+        final payload = event.payload;
+        if (!inline.sealed ||
+            payload is! Map ||
+            payload['sealed'] != true ||
+            inline.id != id ||
+            (event.conversationId != null &&
+                inline.conversationId != event.conversationId)) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        final sealedCrypto = mls is SealedSendingCryptoService
+            ? mls as SealedSendingCryptoService
+            : throw failure(SyncFailureKind.applicationUndecryptable);
+        await _ensureConversationAuthority(inline.conversationId,
+            client: client);
+        final ReceivedMessageEnvelope opened;
+        try {
+          // Review L1: durable before the open commits, so a kill before
+          // the checkpoint leaves it to the next start.
+          await _markSealedResidue();
+          opened = await sealedCrypto.processSealedApplicationMessage(
+              inline, event.id,
+              checkCanCommit: wake?.checkCanCommit);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage, err);
+          }
+          if (_provenExpired(inline.expiresAt)) {
+            await _commitExpiredTombstone(event, id, wake);
+            return null;
+          }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        // L2-3: the pass ends by clearing the log of the state that could
+        // open this ciphertext again ([_markSealedResidue] above).
+        // This device's own post came back: it landed, whatever the
+        // outbox last heard (a lost answer), so it leaves the outbox.
+        if (opened.senderDeviceId == current.deviceId && wake == null) {
+          final queued = (await localStore.pendingEnvelopes()).where((item) =>
+              item.sealed &&
+              item.idempotencyKey == opened.idempotencyKey &&
+              item.conversationId == opened.conversationId);
+          if (queued.isNotEmpty) await _removeFromOutbox(queued.first);
+        }
+        return opened;
       case 'call.signaling':
       case 'call.state':
         final payload = event.payload;
@@ -9131,7 +9377,11 @@ class AppState extends ChangeNotifier
       _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
       try {
-        await client.sendEnvelope(current.token, envelope);
+        if (envelope.sealed) {
+          await _postSealed(current, client, envelope, ownerGeneration);
+        } else {
+          await client.sendEnvelope(current.token, envelope);
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         await _removeFromOutbox(envelope);
         _selfUpdatePolicyFor(current)?.recordSent(envelope.conversationId);
@@ -9162,6 +9412,31 @@ class AppState extends ChangeNotifier
     }
     notifyListeners();
   }
+
+  /// L2-3: posts a message chosen to go sealed, on the sealed client. It is
+  /// never sent identified here, whatever the answer. A refused token is
+  /// replaced and the same message (same idempotency key and bytes) posted
+  /// again; the server answers a post it already stored with 200 whatever
+  /// token comes with it. With no token to replace it, or while the sealed
+  /// routes are off, the message waits (retrying). A 409
+  /// `sealed_not_eligible` leaves it terminal in the outbox, marked
+  /// "couldn't send hidden": only the person's "Send normally"
+  /// ([sendSealedNormally]) encrypts it again identified (owner decision
+  /// 2026-11-12). Any other refusal fails the message.
+  Future<void> _postSealed(Session current, ApiClient client,
+          MessageEnvelope envelope, int ownerGeneration) =>
+      postSealedMessage(
+        poster: _sealedPostClient(current.baseUrl),
+        envelope: envelope,
+        tokens: sealedSender,
+        rewrite: localStore.rewriteQueuedEnvelope,
+        owned: () => _syncOwnerActive(current, ownerGeneration),
+      );
+
+  /// Builds the sealed post client (tests use a loopback server).
+  @visibleForTesting
+  SealedPostClient Function(String origin) sealedPostClientFactory =
+      (origin) => SealedPostClient(baseUrl: origin);
 
   Future<void> _recordOutboxFailure(
     MessageEnvelope envelope,
@@ -10705,6 +10980,136 @@ class AppState extends ChangeNotifier
     }
     api?.close();
     api = apiClientFactory(baseUrl);
+    _followSealedOrigin(api!);
+  }
+
+  /// L2-3: points the sealed sender at [client]'s origin. Sync reads ask for
+  /// sealed events only when this app can open them; until the server says
+  /// `sealed_sender`, every send goes identified.
+  void _followSealedOrigin(ApiClient client) {
+    final crypto = switch (cryptoService) {
+      final SealedSendingCryptoService sealing => sealing,
+      _ => null,
+    };
+    client.readsSealedEvents = crypto != null;
+    if (crypto == null) return;
+    _sealedPost?.close();
+    _sealedPost = null;
+    final sealed = SealedSender(
+        origin: client.baseUrl,
+        localStore: localStore,
+        crypto: crypto,
+        loadFrankContext: () => _sealedFrankContext(client.baseUrl));
+    sealedSender = sealed;
+    crypto.sealedTokenSource = sealed;
+    // Settings warns about owner key differences recorded on earlier runs
+    // before this run's first token pass.
+    unawaited(loadOwnerKeyReview()
+        .catchError((Object _) => const <OwnerKeyReviewItem>[]));
+  }
+
+  /// L2-3: the sealed sender key pinned for this server, for Settings.
+  Future<SealedKeyPin?> sealedKeyPin() async {
+    final sealed = sealedSender;
+    if (sealed == null) return null;
+    return localStore.loadSealedKeyPin(sealed.origin);
+  }
+
+  /// The franking context the sealed token pass loads (tests only).
+  @visibleForTesting
+  Future<SealedFrankContext?> debugSealedFrankContext() =>
+      _sealedFrankContext(session?.baseUrl ?? '');
+
+  /// Signs and posts the K0-R recovery version from the held seed, as the
+  /// end of an account recovery does (tests only).
+  @visibleForTesting
+  Future<void> debugPostRecoveryDeviceList() async {
+    final current = session;
+    if (current != null) await _postRecoveryDeviceList(current);
+  }
+
+  /// L2-3: how many proof recipients (owner report keys pinned for proofs,
+  /// `OwnerProofPins`) this app has for this server, for Settings: a
+  /// message sent sealed can be proven only to those owners (none: to no
+  /// one). Reads local pins only.
+  Future<int> sealedProvableOwnerCount() async {
+    final sealed = sealedSender;
+    if (sealed == null) return 0;
+    return (await _pinnedOwnerKeys(sealed.origin)).length;
+  }
+
+  /// L2-3: rereads [ownerKeyReview] from this device (no request).
+  Future<List<OwnerKeyReviewItem>> loadOwnerKeyReview() async {
+    final sealed = sealedSender;
+    if (sealed == null) return const <OwnerKeyReviewItem>[];
+    await _setOwnerKeyReview(OwnerKeyWatch(localStore, sealed.origin));
+    return ownerKeyReview;
+  }
+
+  /// L2-3: accepts one owner key difference (Settings), for proofs only:
+  /// makes the listed key a proof recipient, or drops an owner the server
+  /// no longer lists from them. The D95 report pins are untouched, so a
+  /// report still asks for a code comparison. False when the listing moved
+  /// since the screen read it. The next token pass tags with the new
+  /// proof recipients.
+  Future<bool> acceptOwnerKey(OwnerKeyReviewItem item) =>
+      _decideOwnerKey(item, accept: true);
+
+  /// L2-3: rejects one owner key difference: the proof recipients stay, and
+  /// so do the tags.
+  Future<bool> rejectOwnerKey(OwnerKeyReviewItem item) =>
+      _decideOwnerKey(item, accept: false);
+
+  Future<bool> _decideOwnerKey(OwnerKeyReviewItem item,
+      {required bool accept}) async {
+    final sealed = sealedSender;
+    if (sealed == null) return false;
+    final watch = OwnerKeyWatch(localStore, sealed.origin);
+    final done = accept ? await watch.accept(item) : await watch.reject(item);
+    if (done && accept) sealed.contextChanged();
+    await _setOwnerKeyReview(watch);
+    notifyListeners();
+    return done;
+  }
+
+  Future<void> _setOwnerKeyReview(OwnerKeyWatch watch) async {
+    final items = await watch.review();
+    final before = ownerKeyReview;
+    ownerKeyReview = List<OwnerKeyReviewItem>.unmodifiable(items);
+    if (!_sameOwnerKeyReview(before, items)) notifyListeners();
+  }
+
+  static bool _sameOwnerKeyReview(
+      List<OwnerKeyReviewItem> a, List<OwnerKeyReviewItem> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      final x = a[index], y = b[index];
+      if (x.inboxId != y.inboxId ||
+          x.change != y.change ||
+          !listEquals(x.listed?.publicKey, y.listed?.publicKey) ||
+          !listEquals(x.pin?.publicKey, y.pin?.publicKey)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Accepts the changed sealed sender key (Settings), then fetches tokens
+  /// under it on the next foreground pass.
+  Future<void> acceptSealedKey() async {
+    final sealed = sealedSender;
+    if (sealed == null) return;
+    await sealed.acceptChangedKey();
+    notifyListeners();
+  }
+
+  SealedPostClient _sealedPostClient(String origin) {
+    final open = _sealedPost;
+    if (open != null && open.baseUrl == canonicalizeServerOrigin(origin)) {
+      return open;
+    }
+    open?.close();
+    return _sealedPost = sealedPostClientFactory(origin);
   }
 
   /// Operation-scoped variant of [_run]. Tracks busy/error under [op] and
@@ -10882,6 +11287,7 @@ class AppState extends ChangeNotifier
     unawaited(_switchResourceClose);
     unawaited(_callSignals.close());
     api?.close();
+    _sealedPost?.close();
     super.dispose();
   }
 }

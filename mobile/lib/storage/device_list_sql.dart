@@ -7,9 +7,11 @@ part of 'encrypted_database.dart';
 //
 // - `local_device_list_heads`: per account, the pinned head (version, its
 //   `list_hash`, the list identity, the head statement), a state (`ok` or
-//   `conflict`) and when it was last checked.
+//   `conflict`), when it was last checked and (schema 43, review M2) when
+//   this device first pinned the chain.
 // - `local_device_list_keys`: every pair the pinned chain ever listed, with
-//   the version that added it and the one that removed it (0 while listed).
+//   the version that added it and the one that removed it (0 while listed),
+//   and (schema 43, L1 format 2) the franking key the chain gave it.
 // - `local_device_list_conflicts`: the two statements that prove a fork.
 // - `local_approval_leaves`: per conversation, every leaf of its group as
 //   this device judged it. A conversation is held while any row is not
@@ -81,6 +83,8 @@ extension DeviceListSql on EncryptedLocalDatabase {
       headStatement: head.read<Uint8List>('head_statement'),
       conflict: head.read<String>('state') == 'conflict',
       checkedAt: head.read<int>('checked_at'),
+      pinnedAt:
+          head.readNullable<int>('pinned_at') ?? head.read<int>('checked_at'),
       recoveryKey: head.read<Uint8List?>('recovery_key'),
       keys: [
         for (final row in keys)
@@ -89,6 +93,7 @@ extension DeviceListSql on EncryptedLocalDatabase {
             signingKey: row.read<Uint8List>('signing_key'),
             addedVersion: row.read<int>('added_version'),
             removedVersion: row.read<int>('removed_version'),
+            frankKey: row.readNullable<Uint8List>('frank_key'),
           ),
       ],
     );
@@ -101,8 +106,8 @@ extension DeviceListSql on EncryptedLocalDatabase {
           {required int? expectedVersion}) =>
       transaction(() async {
         final current = await customSelect(
-            'SELECT version, state FROM local_device_list_heads '
-            'WHERE account_id = ?',
+            'SELECT version, state, pinned_at, checked_at '
+            'FROM local_device_list_heads WHERE account_id = ?',
             variables: [Variable.withString(pin.accountId)]).getSingleOrNull();
         final currentVersion = current?.read<int>('version');
         if (currentVersion != expectedVersion) return false;
@@ -113,10 +118,15 @@ extension DeviceListSql on EncryptedLocalDatabase {
         if (currentVersion != null && pin.version < currentVersion) {
           return false;
         }
+        // Review M2: the first pin's time stays as the pin advances.
+        final pinnedAt = current == null
+            ? (pin.pinnedAt ?? pin.checkedAt)
+            : (current.readNullable<int>('pinned_at') ??
+                current.read<int>('checked_at'));
         await customStatement(
             'INSERT OR REPLACE INTO local_device_list_heads (account_id, '
             'version, list_hash, list_id, head_statement, state, checked_at, '
-            'recovery_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            'recovery_key, pinned_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
             [
               pin.accountId,
               pin.version,
@@ -128,6 +138,7 @@ extension DeviceListSql on EncryptedLocalDatabase {
               pin.recoveryKey == null
                   ? null
                   : Uint8List.fromList(pin.recoveryKey!),
+              pinnedAt,
             ]);
         await customStatement(
             'DELETE FROM local_device_list_keys WHERE account_id = ?',
@@ -135,14 +146,15 @@ extension DeviceListSql on EncryptedLocalDatabase {
         for (final key in pin.keys) {
           await customStatement(
               'INSERT INTO local_device_list_keys (account_id, device_id, '
-              'signing_key, added_version, removed_version) '
-              'VALUES (?, ?, ?, ?, ?)',
+              'signing_key, added_version, removed_version, frank_key) '
+              'VALUES (?, ?, ?, ?, ?, ?)',
               [
                 pin.accountId,
                 Uint8List.fromList(key.deviceId),
                 Uint8List.fromList(key.signingKey),
                 key.addedVersion,
                 key.removedVersion,
+                key.frankKey == null ? null : Uint8List.fromList(key.frankKey!),
               ]);
         }
         return true;

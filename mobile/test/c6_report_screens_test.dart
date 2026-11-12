@@ -11,6 +11,10 @@ import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/report_models.dart';
 import 'package:private_messenger/core/report_seed_store.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/crypto/franking.dart'
+    show reportInboxInstanceOwner;
+import 'package:private_messenger/crypto/owner_key_watch.dart';
+import 'package:private_messenger/crypto/owner_proof_pins.dart';
 import 'package:private_messenger/features/reports/owner_reports_screen.dart';
 import 'package:private_messenger/features/reports/report_message_screen.dart';
 import 'package:private_messenger/l10n/app_localizations.dart';
@@ -262,6 +266,53 @@ void main() {
     await tester.pumpAndSettle();
     expect(h.api.filed, 1);
     expect(find.text('Report sent.'), findsOneWidget);
+  });
+
+  // L2-3, owner decision 2026-11-12 ("Keep reports manual"): a key pinned
+  // on first use for sealed-message proofs does not skip the comparison.
+  testWidgets('report screen: a key pinned on first use still shows the code',
+      (tester) async {
+    final h = _harness(role: 'member');
+    final key = List<int>.filled(32, 0xab);
+    h.api.recipients = [
+      ReportInboxRecipient(inboxId: 'acct_owner', publicKey: key, keyRev: 1),
+    ];
+    h.store.reveal = FrankReveal(
+      messageKey: 'dev_sender:a1',
+      conversationId: 'conv_1',
+      envelopeId: 'env_1',
+      frankKey: List<int>.filled(32, 7),
+      payload: utf8.encode('{"type":"text","body":{"text":"the exact words"}}'),
+    );
+    await tester.runAsync(() async {
+      expect(
+          await OwnerKeyWatch(h.store, 'https://example.test').observe(
+              ReportInbox(
+                  kind: reportInboxInstanceOwner,
+                  recipients: h.api.recipients)),
+          isTrue);
+      expect(
+          (await OwnerProofPins(h.store, 'https://example.test').effective())
+              .single
+              .publicKey,
+          key);
+    });
+    await tester.pumpWidget(_app(ReportMessageScreen(
+        state: h.state,
+        conversationId: 'conv_1',
+        messageKey: 'dev_sender:a1')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('ABAB-ABAB'), findsOneWidget);
+    expect(find.text('Trust and continue'), findsOneWidget);
+    expect(find.text('Send report'), findsNothing);
+    expect(h.api.filed, 0);
+
+    await tester.tap(find.text('Trust and continue'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Send report'));
+    await tester.pumpAndSettle();
+    expect(h.api.filed, 1);
   });
 
   testWidgets('report screen: a message with no proof is not reportable',

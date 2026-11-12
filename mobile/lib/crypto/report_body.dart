@@ -18,6 +18,14 @@ import 'report_key_pins.dart';
 /// compares it with the commitment the server recorded for [envelopeId]. The
 /// body is untrusted input from the reporter: [decode] bounds every field and
 /// refuses anything it does not know.
+///
+/// L2-3: a report about a sealed message is body version 2. It adds what the
+/// server row of a sealed message lacks: the sender account MLS named
+/// ([senderAccountId]) and the message's [designation] `d` (empty for the
+/// plain form; `docs/crypto.md`, "Franking a sealed message"). Only an owner
+/// whose key `d` names can check its tag, with its own report seed and the
+/// franking key the claimed device's signed L1 list names. Nothing in the
+/// body is a signature anyone else could check.
 class ReportBody {
   ReportBody({
     required this.envelopeId,
@@ -26,8 +34,13 @@ class ReportBody {
     required this.actionId,
     required List<int> payload,
     required List<int> frankKey,
+    this.senderAccountId,
+    List<int>? designation,
   })  : payload = List<int>.unmodifiable(payload),
-        frankKey = List<int>.unmodifiable(frankKey);
+        frankKey = List<int>.unmodifiable(frankKey),
+        designation = senderAccountId == null
+            ? null
+            : List<int>.unmodifiable(designation ?? const <int>[]);
 
   /// The body of a report about the message [reveal] was kept for. The
   /// message key is `<sender_device_id>:<action_id>`.
@@ -43,10 +56,15 @@ class ReportBody {
       actionId: reveal.messageKey.substring(split + 1),
       payload: reveal.payload,
       frankKey: reveal.frankKey,
+      senderAccountId: reveal.sealed ? reveal.senderAccountId : null,
+      designation: reveal.sealed ? reveal.designation : null,
     );
   }
 
   static const int version = 1;
+
+  /// L2-3: the body of a report about a sealed message.
+  static const int sealedVersion = 2;
   static const int maxIdBytes = 128;
   static const int maxPayloadBytes = 64 * 1024;
 
@@ -59,17 +77,31 @@ class ReportBody {
   final List<int> payload;
   final List<int> frankKey;
 
+  /// Set only for a sealed message (version 2); [designation] is then
+  /// non-null and empty for the plain form.
+  final String? senderAccountId;
+  final List<int>? designation;
+
+  /// Whether the report is about a sealed message (explicit: version 2 and
+  /// its sender account, never inferred from what the designation holds).
+  bool get sealed => senderAccountId != null;
+
   Uint8List encode() {
     _check(envelopeId, conversationId, senderDeviceId, actionId, payload,
         frankKey);
+    _checkSealed(senderAccountId, designation);
     return Uint8List.fromList(utf8.encode(jsonEncode({
-      'v': version,
+      'v': sealed ? sealedVersion : version,
       'envelope_id': envelopeId,
       'conversation_id': conversationId,
       'sender_device_id': senderDeviceId,
       'action_id': actionId,
       'payload': base64Encode(payload),
       'frank_key': base64Encode(frankKey),
+      if (sealed) ...{
+        'sender_account_id': senderAccountId,
+        'designation': base64Encode(designation!),
+      },
     })));
   }
 
@@ -82,9 +114,13 @@ class ReportBody {
     } on FormatException {
       throw const FormatException('invalid report body');
     }
+    final sealedBody = decoded is Map && decoded['v'] == sealedVersion;
     if (decoded is! Map ||
-        decoded.length != 7 ||
-        decoded['v'] != version ||
+        decoded.length != (sealedBody ? 9 : 7) ||
+        (decoded['v'] != version && !sealedBody) ||
+        (sealedBody &&
+            (decoded['sender_account_id'] is! String ||
+                decoded['designation'] is! String)) ||
         decoded['envelope_id'] is! String ||
         decoded['conversation_id'] is! String ||
         decoded['sender_device_id'] is! String ||
@@ -94,9 +130,18 @@ class ReportBody {
       throw const FormatException('invalid report body');
     }
     final List<int> payload, frankKey;
+    List<int>? designation;
     try {
       payload = base64Decode(decoded['payload'] as String);
       frankKey = base64Decode(decoded['frank_key'] as String);
+      if (sealedBody) {
+        final text = decoded['designation'] as String;
+        designation = base64Decode(text);
+        // One spelling only.
+        if (base64Encode(designation) != text) {
+          throw const FormatException('invalid report body');
+        }
+      }
     } on FormatException {
       throw const FormatException('invalid report body');
     }
@@ -107,10 +152,29 @@ class ReportBody {
       actionId: decoded['action_id'] as String,
       payload: payload,
       frankKey: frankKey,
+      senderAccountId:
+          sealedBody ? decoded['sender_account_id'] as String : null,
+      designation: designation,
     );
     _check(body.envelopeId, body.conversationId, body.senderDeviceId,
         body.actionId, payload, frankKey);
+    _checkSealed(body.senderAccountId, body.designation);
     return body;
+  }
+
+  static void _checkSealed(String? senderAccountId, List<int>? designation) {
+    if (senderAccountId == null) {
+      if (designation != null) {
+        throw const FormatException('invalid report body');
+      }
+      return;
+    }
+    if (senderAccountId.isEmpty ||
+        utf8.encode(senderAccountId).length > maxIdBytes ||
+        designation == null ||
+        (designation.isNotEmpty && !designationWellFormed(designation))) {
+      throw const FormatException('invalid report body');
+    }
   }
 
   static void _check(

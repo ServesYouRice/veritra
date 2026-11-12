@@ -163,6 +163,10 @@ abstract interface class DeviceListCryptoService implements DeviceListVerifier {
   /// The current (possibly pending) device's MLS signing key.
   Future<Uint8List> currentSigningKey();
 
+  /// L2-3: the current (possibly pending) device's X25519 franking key, the
+  /// one its L1 entry lists (set by genesis, recovery or change 7). Public.
+  Future<Uint8List> currentFrankKey();
+
   /// Keeps the recovery list seed derived from [entropy] in the sealed
   /// pending enrollment (K0-R claim, D94 question 1).
   Future<void> holdRecoveryListSeed(Uint8List entropy);
@@ -470,6 +474,109 @@ class CryptoRecordLimitExceeded implements Exception {
   final String? conversationId;
   @override
   String toString() => 'encrypted state record is over its size limit';
+}
+
+/// L2-3: the sealed sender tokens a send may spend (AppState keeps them,
+/// fetched on the foreground sync pass).
+abstract interface class SealedTokenSource {
+  /// Takes a token for the next message in [conversationId], or null to send
+  /// it identified (sealed off, no token held, the issuer key changed).
+  Future<SealedToken?> takeFor(String conversationId);
+
+  /// Returns a token that was taken but never posted (the encrypt failed).
+  Future<void> putBack(SealedToken token);
+
+  /// What a sealed message is designated with, as the last token pass found
+  /// it. Read at encrypt time without any I/O; null sends identified (this
+  /// device's franking key is not, or not verifiably, on its own L1 list).
+  SealedFrankContext? get frankContext;
+}
+
+/// L2-3 (`docs/crypto.md`, "Franking a sealed message"): what a sealed send
+/// designates its commitment to, read on the token pass and kept until the
+/// next one, so a send makes no request and reads no pin.
+class SealedFrankContext {
+  SealedFrankContext(
+      {required List<int> listedKey, required List<List<int>> ownerKeys})
+      : listedKey = Uint8List.fromList(listedKey),
+        ownerKeys = List<Uint8List>.unmodifiable(
+            [for (final key in ownerKeys) Uint8List.fromList(key)]) {
+    if (this.listedKey.length != 32 ||
+        this.ownerKeys.length > maxOwnerKeys ||
+        this.ownerKeys.any((key) => key.length != 32)) {
+      throw ArgumentError('invalid sealed franking context');
+    }
+  }
+
+  /// This device's franking key exactly as its verified L1 entry lists it.
+  final Uint8List listedKey;
+
+  /// The instance owners' report keys this app pinned, at most
+  /// [maxOwnerKeys]. Empty: no owner can be designated, and a sealed message
+  /// goes in the plain form, provable to nobody.
+  final List<Uint8List> ownerKeys;
+
+  static const int maxOwnerKeys = 16;
+}
+
+/// Checks a sealed message's designation for a report (L2-3), with the
+/// owner's report seed. Returns 1 valid, 0 mismatch, 2 not designated to
+/// this owner's key.
+abstract interface class SealedReportCryptoService {
+  Future<int> frankDesignationVerdict({
+    required List<int> seed,
+    required List<int> senderFrankKey,
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+    required List<int> commit,
+    required List<int> designation,
+  });
+}
+
+/// A crypto service that can send sealed (L2-3).
+abstract interface class SealedSendingCryptoService {
+  set sealedTokenSource(SealedTokenSource? source);
+
+  /// L2-3 (review M2): encrypts the queued sealed message [sealed] again, as
+  /// a fresh identified message under the same idempotency key (a new MLS
+  /// ciphertext and franking key, no token, no sealed signature), and puts
+  /// it in that outbox entry's place. Only for the one answer that proves
+  /// the sealed route stored nothing under the key (`sealed_not_eligible`),
+  /// and only once the person chose "Send normally" (owner decision
+  /// 2026-11-12): never on that answer alone.
+  /// Null when the message cannot be sent identified (its plaintext is no
+  /// longer kept, or the entry is gone); the caller then fails it.
+  Future<MessageEnvelope?> reencryptSealedAsIdentified(MessageEnvelope sealed);
+
+  /// Applies a `message.sealed.created` envelope ([envelope] must be
+  /// sealed; its server sender fields are ignored). Returns the envelope
+  /// with the sender MLS authenticated, this device's own for its own post,
+  /// or with no sender when it became a placeholder.
+  Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {void Function()? checkCanCommit});
+
+  /// Blinds [count] fresh token nonces (1 to 32) for the server's
+  /// [publicKey]. `state` holds the blinds for [sealedTokenFinalize]; the
+  /// caller wipes it. `request` goes to the server.
+  ({Uint8List state, Uint8List request}) sealedTokenRequest({
+    required List<int> publicKey,
+    required String conversationId,
+    required int epoch,
+    required int count,
+  });
+
+  /// Checks the server's batch proof against the key in [state] and
+  /// returns the tokens. Throws when the proof does not verify; no token
+  /// is returned then.
+  List<SealedToken> sealedTokenFinalize({
+    required List<int> state,
+    required List<int> response,
+    required String conversationId,
+    required String keyId,
+    required int epoch,
+  });
 }
 
 /// Cached server roles today; C4 will replace this source with encrypted roles.

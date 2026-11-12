@@ -3975,6 +3975,30 @@ abstract class AppLocalizations {
   /// **'This encrypted message could not be sent. Copy it or discard it.'**
   String get outboxSendFailed;
 
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t send hidden: the server would not take this message without your name. Send it normally, and the server will see it is from you, or discard it.'**
+  String get outboxSealedRefused;
+
+  /// L2-3 sealed sender: the server would not take a message hidden. Sends it with your name visible to the server.
+  ///
+  /// In en, this message translates to:
+  /// **'Send normally'**
+  String get chatSendNormally;
+
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat is updating its encryption. Try again in a moment.'**
+  String get outboxSealedResendHeld;
+
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'This message can no longer be sent normally. Copy it or discard it.'**
+  String get outboxSealedResendUnavailable;
+
   /// No description provided for @recoveryRestoreFailed.
   ///
   /// In en, this message translates to:
@@ -7442,6 +7466,180 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The channel is private now, but these ticked readers could not be added: {names}. Add them from the channel\'s members.'**
   String channelConvertNotAdded(String names);
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sender not confirmed'**
+  String get c6VerdictSenderUnverified;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The message matches, but its sender\'s key could not be checked against their signed device list.'**
+  String get c6VerdictSenderUnverifiedDetail;
+
+  /// L2-3 sealed sender: report verdict when the sender's device list was first seen too late to rule out the server.
+  ///
+  /// In en, this message translates to:
+  /// **'Matches, if the server is honest'**
+  String get c6VerdictServerTrusted;
+
+  /// L2-3 sealed sender: report verdict when the sender's device list was first seen too late to rule out the server.
+  ///
+  /// In en, this message translates to:
+  /// **'The proof checks, but this device first got the sender’s signed device list from the server only after this report arrived. A dishonest server could have made up that list and this proof. Treat the sender as unconfirmed unless you trust the server.'**
+  String get c6VerdictServerTrustedDetail;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Not provable to you'**
+  String get c6VerdictNotDesignated;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The message matches, but it was sent without your name and was not made provable to your current report key. Its sender\'s app had not pinned your key, or you replaced the key since. It cannot be proven here.'**
+  String get c6VerdictNotDesignatedDetail;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Proof does not check'**
+  String get c6VerdictProofFailed;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The message matches, but its proof for you does not check out for the sender it names. Do not rely on who sent it.'**
+  String get c6VerdictProofFailedDetail;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'No owner\'s report key is pinned on this device yet. A message you send without your name can then be proven to no one if it is reported. The app pins the owners\' keys the first time the server lists them.'**
+  String get l2SealedProvableNone;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'A message you send without your name can be proven, if reported, only to the owners whose report keys this app pinned: {count}. Only they can check the proof; it convinces no one else.'**
+  String l2SealedProvableOwners(int count);
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sealed sender key'**
+  String get l2SealedKeyTitle;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages without your name'**
+  String get l2SealedKeyTile;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.'**
+  String get l2SealedKeyIntro;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not offer sealed sending.'**
+  String get l2SealedKeyOff;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'No key pinned yet. It is pinned on the next sync.'**
+  String get l2SealedKeyNone;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned key'**
+  String get l2SealedKeyPinned;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.'**
+  String get l2SealedKeyChanged;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'New key'**
+  String get l2SealedKeyNew;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept new key'**
+  String get l2SealedKeyAccept;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept only if the server\'s operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else\'s.'**
+  String get l2SealedKeyAcceptWarning;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The owners\' report keys changed. Review them.'**
+  String get l2OwnerKeysReviewTile;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s list of the owners\' report keys differs from the keys this app pinned. Until you accept a change, a message you send without your name is provable only to the owners pinned before.'**
+  String get l2OwnerKeysReviewIntro;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} has a different report key.'**
+  String l2OwnerKeyChanged(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} is new.'**
+  String l2OwnerKeyAdded(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} is no longer listed.'**
+  String l2OwnerKeyMissing(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get l2OwnerKeyAccept;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get l2OwnerKeyReject;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept only if you know the owners or their keys changed. Whoever holds this key can check who sent a message without your name if they are shown it. Reports never go to a key accepted here; reporting asks you to compare codes.'**
+  String get l2OwnerKeyAcceptWarning;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The list changed meanwhile. Look at it again.'**
+  String get l2OwnerKeyStale;
 }
 
 class _AppLocalizationsDelegate

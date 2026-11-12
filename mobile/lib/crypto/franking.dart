@@ -18,11 +18,48 @@ const int frankKeyBytes = 32;
 /// Commitment (`frank_commit`) length.
 const int frankCommitBytes = 32;
 
+/// L2-3: one entry of a sealed message's designation `d`: a 16-byte owner
+/// key id and a 32-byte tag (`docs/crypto.md`, "Franking a sealed message").
+const int frankDesignationEntryBytes = 48;
+const int frankDesignationKidBytes = 16;
+
+/// Most owner keys one designation names.
+const int frankDesignationMaxEntries = 16;
+
 const String _frankKey = 'frank';
 final Uint8List _prefix = utf8.encode(',"frank":{"k":"');
 final Uint8List _tail = utf8.encode('"}}');
+// L2-3 designated form: `,"frank":{"k":"<44>","d":"<64 x n>"}}`, 1 <= n <= 16.
+// 48 bytes are 64 base64 characters with no padding, so `d` is the standard
+// base64 of the whole designation and contains no `=`, while the key's 44
+// characters always end in one.
+final Uint8List _designationInfix = utf8.encode('","d":"');
 const int _keyBase64Length = 44;
+const int _entryBase64Length = 64;
 final int _suffixLength = _prefix.length + _keyBase64Length + _tail.length;
+
+/// Whether [designation] is shaped as a designation: 1 to 16 entries of 48
+/// bytes, key ids strictly ascending (sorted, no repeat). Says nothing about
+/// whether any tag is right: only an owner can tell that.
+bool designationWellFormed(List<int> designation) {
+  if (designation.isEmpty ||
+      designation.length % frankDesignationEntryBytes != 0 ||
+      designation.length >
+          frankDesignationMaxEntries * frankDesignationEntryBytes) {
+    return false;
+  }
+  for (var at = frankDesignationEntryBytes;
+      at < designation.length;
+      at += frankDesignationEntryBytes) {
+    var order = 0;
+    for (var i = 0; i < frankDesignationKidBytes && order == 0; i++) {
+      order = designation[at - frankDesignationEntryBytes + i] -
+          designation[at + i];
+    }
+    if (order >= 0) return false;
+  }
+  return true;
+}
 
 /// A fresh franking key from the platform CSPRNG.
 Uint8List generateFrankKey({Random? random}) {
@@ -35,8 +72,15 @@ Uint8List generateFrankKey({Random? random}) {
 /// The wire JSON for [canonical] carrying [key]. Throws [FormatException]
 /// unless [canonical] is a non-empty JSON object without a top-level `frank`
 /// member and [key] is 32 bytes.
-Uint8List frankWireJson(Uint8List canonical, List<int> key) {
+///
+/// L2-3: a payload sent sealed may also carry the sender's [designation]
+/// `d` (1 to 16 entries, [designationWellFormed]), only ever in the form
+/// `,"frank":{"k":"<44 chars>","d":"<64 x n chars>"}}`. A sealed payload
+/// with no owner key to designate is in the plain form (no `d`).
+Uint8List frankWireJson(Uint8List canonical, List<int> key,
+    {List<int>? designation}) {
   if (key.length != frankKeyBytes ||
+      (designation != null && !designationWellFormed(designation)) ||
       canonical.length < 2 ||
       canonical.last != 0x7d /* } */ ||
       (_objectWithoutFrank(canonical)?.isEmpty ?? true)) {
@@ -46,8 +90,13 @@ Uint8List frankWireJson(Uint8List canonical, List<int> key) {
   final out = BytesBuilder(copy: false)
     ..add(Uint8List.sublistView(canonical, 0, canonical.length - 1))
     ..add(_prefix)
-    ..add(encodedKey)
-    ..add(_tail);
+    ..add(encodedKey);
+  if (designation != null) {
+    out
+      ..add(_designationInfix)
+      ..add(ascii.encode(base64.encode(designation)));
+  }
+  out.add(_tail);
   return out.takeBytes();
 }
 
@@ -61,12 +110,16 @@ final class Unfranked extends FrankOutcome {
   const Unfranked();
 }
 
-/// A well-formed `frank` member: [canonical] is `P`, [key] is `kf`.
+/// A well-formed `frank` member: [canonical] is `P`, [key] is `kf`, and
+/// [designation] the designated form's `d` (L2-3), or null for the plain
+/// form. The receiver decides which form is allowed: `d` only on a message
+/// that came sealed; a sealed message may be in either form.
 final class Franked extends FrankOutcome {
-  const Franked({required this.canonical, required this.key});
+  const Franked({required this.canonical, required this.key, this.designation});
 
   final Uint8List canonical;
   final Uint8List key;
+  final Uint8List? designation;
 }
 
 /// A `frank` member that is not in the one fixed form, or JSON that does not
@@ -83,11 +136,45 @@ FrankOutcome splitFrank(List<int> json) {
     final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: false));
     if (decoded is! Map) return const MalformedFrank();
     if (!decoded.containsKey(_frankKey)) return const Unfranked();
-    if (bytes.length <= _suffixLength + 1) return const MalformedFrank();
-    final start = bytes.length - _suffixLength;
+    if (!_equalAt(bytes, bytes.length - _tail.length, _tail)) {
+      return const MalformedFrank();
+    }
+    // The designated form (L2-3): `d` is the run of base64 characters right
+    // before the tail. The key ends in `=`, so in the plain form that run is
+    // empty; in the designated form it is preceded by `","d":"`. An empty
+    // `d` is no designated form and falls to the plain-form checks, which
+    // refuse it.
+    var run = 0;
+    while (run < bytes.length - _tail.length &&
+        _isBase64Char(bytes[bytes.length - _tail.length - 1 - run])) {
+      run++;
+    }
+    Uint8List? designation;
+    var start = bytes.length - _suffixLength;
+    if (run > 0) {
+      final runStart = bytes.length - _tail.length - run;
+      final infixStart = runStart - _designationInfix.length;
+      if (run % _entryBase64Length != 0 ||
+          run > frankDesignationMaxEntries * _entryBase64Length ||
+          !_equalAt(bytes, infixStart, _designationInfix)) {
+        return const MalformedFrank();
+      }
+      final text = ascii.decode(
+          Uint8List.sublistView(bytes, runStart, runStart + run),
+          allowInvalid: false);
+      final decodedDesignation = base64.decode(text);
+      if (base64.encode(decodedDesignation) != text ||
+          !designationWellFormed(decodedDesignation)) {
+        return const MalformedFrank();
+      }
+      designation = Uint8List.fromList(decodedDesignation);
+      start = infixStart - _keyBase64Length - _prefix.length;
+    }
+    if (start <= 1) return const MalformedFrank();
     final keyStart = start + _prefix.length;
     final keyEnd = keyStart + _keyBase64Length;
-    if (!_equalAt(bytes, start, _prefix) || !_equalAt(bytes, keyEnd, _tail)) {
+    if (!_equalAt(bytes, start, _prefix) ||
+        (designation == null && !_equalAt(bytes, keyEnd, _tail))) {
       return const MalformedFrank();
     }
     final keyText = ascii.decode(
@@ -106,7 +193,10 @@ FrankOutcome splitFrank(List<int> json) {
     // necessarily the last top-level member, and P's content is exactly the
     // wire content minus `frank`.
     if (_objectWithoutFrank(canonical) == null) return const MalformedFrank();
-    return Franked(canonical: canonical, key: Uint8List.fromList(key));
+    return Franked(
+        canonical: canonical,
+        key: Uint8List.fromList(key),
+        designation: designation);
   } catch (_) {
     return const MalformedFrank();
   }
@@ -133,6 +223,13 @@ Map<Object?, Object?>? _objectWithoutFrank(Uint8List json) {
     return null;
   }
 }
+
+bool _isBase64Char(int c) =>
+    (c >= 0x41 && c <= 0x5a) || // A-Z
+    (c >= 0x61 && c <= 0x7a) || // a-z
+    (c >= 0x30 && c <= 0x39) || // 0-9
+    c == 0x2b || // +
+    c == 0x2f; // /
 
 bool _equalAt(Uint8List bytes, int offset, Uint8List expected) {
   if (offset < 0 || offset + expected.length > bytes.length) return false;

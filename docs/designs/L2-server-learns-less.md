@@ -1,6 +1,6 @@
 # L2: server learns less
 
-**Status: proposed (2026-11-07), not built.** A design only, against `main`
+**Status: proposed (2026-11-07). L2-1 and L2-5 built in round 7; L2-3 designed 2026-11-12 (D122); its crypto core, server half and app half are built behind a server switch that is off (docs/crypto.md, "As built" and "App step, as built").** A design only, against `main`
 (crypto ABI 13, server migration 0049, local schema 20). Steps L2-3 (sealed
 sender) and L2-5 (own-device alert) touch security, MLS and credential
 decisions, so each needs an independent review (AGENTS.md) and the owner's
@@ -117,6 +117,32 @@ The adversary is the server operator, or someone who has taken the host.
   No ABI, no schema.
 
 ### L2-3 Sealed sender for application messages (Opus designs)
+
+**Design delta (2026-11-12, D122).** The owner chose VOPRF credentials
+(option B). The design that replaces the "delivery token" bullet below is in
+[`docs/crypto.md`, "Sealed sender with VOPRF tokens"](../crypto.md#sealed-sender-with-voprf-tokens-d122-crypto-abi-26-design-2026-11-12):
+RFC 9497 POPRF over ristretto255-SHA512 (`voprf` 0.5.0 in Rust, `circl`
+v1.6.5 in Go), `info` binding conversation, UTC day and a per-conversation
+generation that a removal raises; issuance per account, conversation and
+day; redemption on an unauthenticated route with a spent-nonce table;
+sealed envelopes in their own table with no sender column. Changes against
+the text below:
+
+- **C6 is solved, not refused.** A sealed, franked payload carries the
+  sender's Ed25519 signature over the franking commitment inside the
+  ciphertext (`frank.s`); receivers check it against the sender's leaf and
+  reporters reveal it, so a sealed message stays reportable and framing
+  fails. Cost: a revealed report is a transferable proof (owner question).
+- **Scope.** DMs and plain groups only. Admins-only groups, any
+  conversation with a C5 timeout, communities and channels (C0, C5 slow
+  mode, C7) and messages with attachments stay identified.
+- **Storage.** No nullable column on `message_envelopes` (an SQLite rebuild
+  of a table that many others reference). A separate table and sync event
+  type; the readers that must know it are listed in the crypto section.
+- **Leaks** (IP, timing, typing, issuance counts, first-contact key
+  tagging) are listed there plainly.
+
+Counters: crypto ABI 26, local schema 43, migrations 0090-0091.
 
 Scope: application messages only. Commits, Welcomes, key packages, reports
 and every admin or membership route stay identified.

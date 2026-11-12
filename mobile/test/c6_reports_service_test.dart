@@ -10,6 +10,8 @@ import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/franking.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/crypto/owner_key_watch.dart';
+import 'package:private_messenger/crypto/owner_proof_pins.dart';
 import 'package:private_messenger/crypto/report_key_announcement.dart';
 import 'package:private_messenger/crypto/report_key_pins.dart';
 import 'package:private_messenger/storage/local_store.dart';
@@ -466,6 +468,115 @@ void main() {
       store: store,
       seeds: MemoryReportSeedStore(),
     ).createKey(replace: true);
+    final plan = await reporter.prepare(_conversation);
+    expect(plan.check.recipients.single.status, ReportKeyStatus.changed);
+    expect(plan.canSend, isFalse);
+    await expectLater(
+        reporter.file(
+            conversationId: _conversation, messageKey: '$_sender:$_action'),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
+    expect(server.copies, isEmpty);
+  }, skip: nativeSkip);
+
+  // L2-3, owner decision 2026-11-12 ("Keep reports manual"): an owner key
+  // pinned on first use goes to the sealed-message proofs only. Reporting
+  // still shows the code first, and nothing is sealed to that key until the
+  // person compared it.
+  test('a key pinned on first use for proofs still needs the code to report',
+      () async {
+    await ownerSetsUpKey();
+    final listed = server.keys[_ownerAccount]!.publicKey;
+    final watch = OwnerKeyWatch(store, _origin);
+    expect(
+        await watch.observe(
+            await server.getReportInbox(_reporterAccount, _conversation)),
+        isTrue);
+    expect([
+      for (final pin in await OwnerProofPins(store, _origin).effective())
+        pin.publicKey
+    ], [
+      listed
+    ]);
+    expect(await store.loadReportKeyPins(_origin), isEmpty);
+
+    final reporter = serviceFor(_reporterAccount);
+    final plan = await reporter.prepare(_conversation);
+    expect(plan.canSend, isFalse);
+    expect(plan.check.recipients.single.status, ReportKeyStatus.unpinned);
+    await expectLater(
+        reporter.file(
+            conversationId: _conversation, messageKey: '$_sender:$_action'),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.keysNotPinned)));
+    expect(server.copies, isEmpty);
+    expect(server.filedReports, 0);
+
+    // The person compares the code: then, and only then, it is sent.
+    await reporter.pinKeys(plan);
+    await reporter.file(
+        conversationId: _conversation, messageKey: '$_sender:$_action');
+    expect(server.copies.single.recipientPublicKey, listed);
+  }, skip: nativeSkip);
+
+  test('a key compared while reporting replaces a first-use proof key',
+      () async {
+    // The server lists a key of its own at first sight: pinned for proofs.
+    final made = List<int>.filled(32, 0x5a);
+    server.keys[_ownerAccount] = ReportInboxRecipient(
+        inboxId: _ownerAccount, publicKey: made, keyRev: 1);
+    final watch = OwnerKeyWatch(store, _origin);
+    Future<bool> observe() async => watch
+        .observe(await server.getReportInbox(_reporterAccount, _conversation));
+    expect(await observe(), isTrue);
+
+    // The real owner key is listed later; the person compares its code.
+    await ownerSetsUpKey();
+    final real = server.keys[_ownerAccount]!.publicKey;
+    final reporter = serviceFor(_reporterAccount);
+    await reporter.pinKeys(await reporter.prepare(_conversation));
+    expect([
+      for (final pin in await OwnerProofPins(store, _origin).effective())
+        pin.publicKey
+    ], [
+      real
+    ]);
+    expect(await observe(), isFalse);
+    expect(await watch.review(), isEmpty);
+  }, skip: nativeSkip);
+
+  test('a key accepted on the sealed key screen is not a report key', () async {
+    await ownerSetsUpKey();
+    final reporter = serviceFor(_reporterAccount);
+    // The person compared the owner's first key while reporting.
+    await reporter.pinKeys(await reporter.prepare(_conversation));
+    final watch = OwnerKeyWatch(store, _origin);
+    Future<void> observe() async => watch
+        .observe(await server.getReportInbox(_reporterAccount, _conversation));
+    await observe();
+    expect(await watch.review(), isEmpty);
+
+    // The server lists another key (the owner's new device, or its own),
+    // and the person accepts it for proofs.
+    await ReportsService(
+      api: server,
+      token: _ownerAccount,
+      accountId: _ownerAccount,
+      crypto: crypto,
+      store: store,
+      seeds: MemoryReportSeedStore(),
+    ).createKey(replace: true);
+    final replaced = server.keys[_ownerAccount]!.publicKey;
+    await observe();
+    expect(await watch.accept((await watch.review()).single), isTrue);
+    expect([
+      for (final pin in await OwnerProofPins(store, _origin).effective())
+        pin.publicKey
+    ], [
+      replaced
+    ]);
+
+    // A report still asks for the code and seals nothing to that key.
     final plan = await reporter.prepare(_conversation);
     expect(plan.check.recipients.single.status, ReportKeyStatus.changed);
     expect(plan.canSend, isFalse);

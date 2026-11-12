@@ -80,6 +80,10 @@ func (a *API) setupStatus(w http.ResponseWriter, r *http.Request) {
 	if a.C7History {
 		response["c7_history"] = true
 	}
+	// L2-3: apps fetch tokens and may send sealed exactly while this is on.
+	if a.SealedSender {
+		response["sealed_sender"] = true
+	}
 	writeJSON(w, http.StatusOK, response)
 }
 

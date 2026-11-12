@@ -456,31 +456,757 @@ its D25 check unchanged. Bound in Dart as `NativeCryptoDevice.decryptSealed`
 and tested in Rust and Dart; **nothing in the app or server uses it yet.**
 It is in ABI 23 so that sealed delivery needs no further ABI bump.
 
-The rest of L2-3 is not built. Two facts found while building ABI 23 stop
-it:
+ABI 23 recorded two facts that stopped the rest of L2-3: every message is
+franked (so sealed sending would apply to none), and the credential must
+verify in Go as well as Rust. The owner chose option B, VOPRF tokens (D122;
+the A and C options are in Git history). The design follows.
 
-1. **Every message is reportable.** Since C6 steps 2 and 3 every message
-   type the app sends is franked, and the design keeps conversations with
-   reporting on identified (franking attribution relies on the
-   authenticated sender row). As built, sealed sender would therefore apply
-   to no message. Either sealed messages go unfranked (unreportable), or
-   L2-3 waits for asymmetric franking, its own crypto package.
-2. **The credential cannot be a Rust crate alone.** The server is pure Go,
-   so whatever proves "a current member of conversation X" must verify in
-   Go. The options, for the owner (D106 allowed one reviewed crate, not a
-   Go module as well):
-   - **A. Per-epoch token from the MLS exporter.** Each epoch's committer
-     registers a verifier (a hash of an exporter-derived key) in the D28
-     bundle; a sender shows the key on an unauthenticated connection. No
-     new dependency on either side. Weaker than the design: one token per
-     conversation and epoch, so per-member rationing becomes per-epoch and
-     per-address limits, and a malicious committer can register a bad
-     verifier (the fallback is to send identified).
-   - **B. Privacy Pass (VOPRF, RFC 9497).** Per-member tokens, unlinkable.
-     Needs a reviewed library in Rust and in Go.
-   - **C. Blind RSA (RFC 9474).** Verification is stdlib RSA-PSS in Go, but
-     issuance needs a constant-time private RSA operation, which in
-     practice means a Go dependency, plus a Rust one for blinding.
+### Sealed sender with VOPRF tokens (D122, crypto ABI 26, design 2026-11-12)
+
+Owner decision D122 chose option B: Privacy Pass style tokens from an
+oblivious PRF (RFC 9497). This section is the design; "As built" at its end
+says what exists. Everything is behind the server switch
+`PRIVATE_MESSENGER_SEALED_SENDER=1` (off by default). The two open facts the
+ABI 23 entry recorded are answered: sealed messages stay reportable through
+designated-verifier tags over the franking commitment, one per pinned
+instance owner ("Franking a sealed message"), and the credential verifies in Go and Rust through one library
+on each side ("Libraries").
+
+**What it protects.** For an ordinary application message in a DM or a
+plain group, the server stores and fans out the ciphertext without the
+sending account or device. The server still knows the conversation, that
+the poster is one of the accounts it gave tokens to for that conversation
+and day, and everything listed under "What still leaks".
+
+#### Construction
+
+- **Primitive.** RFC 9497 POPRF (mode `0x02`, partially oblivious, so the
+  server proves its evaluation with a DLEQ proof and binds public `info`),
+  suite `ristretto255-SHA512`. One proof covers a batch (RFC 9497 §2.2).
+  Inputs, blinds and the token output stay with the client; the server sees
+  blinded elements at issuance and an unblinded `(nonce, output)` pair at
+  redemption, and cannot link the two.
+- **Why POPRF and not plain VOPRF.** `info` carries the conversation and
+  the day, so one long-lived server key serves every conversation and every
+  day. A token for conversation X does not open conversation Y. With plain
+  VOPRF that needs one key per conversation and day, and many keys make
+  per-user key tagging easier to hide.
+- **Server key.** One POPRF key per instance, made at random on first use
+  and kept in the database (`sealed_sender_keys`, migration 0090). Its
+  public half is published at `GET /api/v1/sealed/key`
+  (`{"suite":"ristretto255-SHA512","key_id","public_key"}`, no session).
+  `key_id` = hex of the first 16 bytes of
+  `SHA-256("veritra-l2-key-v1" || public_key)`. A leaked key lets its holder
+  post junk into conversations whose ids it knows; it reads nothing.
+- **Epoch.** The UTC day, `e = floor(unix_seconds / 86400)`. Tokens are
+  issued for `e` in {today, tomorrow} and redeemed for `e` in {yesterday,
+  today} (server days), so a token fetched ahead of midnight still works
+  the next day, and no token lives longer than about 72 hours. The app
+  takes `e` from its own clock; the server never names it (review M1).
+- **No generation (review M1, owner decision 2026-11-12).** An earlier
+  draft bound a per-conversation counter, raised on each removal, into
+  `info`. The server could set it per account and so split the anonymity
+  set (a post made with account A's generation is A's). It is removed from
+  the token, from `info`, from the routes and from migration 0090. The
+  cost: a removed member's (or revoked device's) leftover tokens stay
+  valid until their day ends, see "What still leaks".
+- **`info`** (bytes, RFC 9497 limit 65535):
+
+  ```text
+  "veritra-l2-sealed-v1" || u16 len(conversation_id) || conversation_id
+                         || u32 e                          (big-endian)
+  ```
+- **Token.** Input is a fresh 32-byte random `nonce`; the token is
+  `(key_id, e, nonce, output)`, `output` being the 64-byte
+  POPRF output. Tokens are bearer credentials kept only in the device's
+  encrypted local database (schema 43).
+
+#### Issuance (authenticated, rate-limited)
+
+1. `GET /api/v1/sealed/conversations/{id}` (session): `{key_id,
+   public_key, eligible, remaining}`. Members only. There is no epoch and
+   no counter in the answer: nothing the server sends is bound into a
+   token. `remaining` is `cap - (issued(t-1) + issued(t) + issued(t+1))`
+   for the server's today `t`, a lower bound for either day.
+2. The app (Rust, `pm_crypto_l2_token_request`) makes `n` nonces (1 to 32)
+   and blinds them under `info`; it keeps the client state blob.
+3. `POST /api/v1/sealed/conversations/{id}/tokens` (session, write budget)
+   with `{epoch, blinded: [n × 32 bytes]}`. The server checks: switch on,
+   member, conversation eligible (with the issuance gate below), epoch in
+   {today, tomorrow}, and the per-account, per-conversation cap
+   (`PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY`, default 200; 429
+   `sealed_token_limit`). Two consecutive days are redeemable at once, so
+   the cap holds for each such pair: `issued(e-1) + issued(e) + n` and
+   `issued(e) + issued(e+1) + n` must both stay within it (review low c). It answers `{key_id, evaluated: [n × 32], proof
+   (64)}` and adds `n` to `sealed_token_issuance(account, conversation,
+   epoch)`.
+4. The app (`pm_crypto_l2_token_finalize`) verifies the batch proof against
+   the public key it pinned (below) and derives the outputs. A bad proof is
+   refused (`PM_CRYPTO_ERROR`) and no token is kept.
+
+Rationing is per account, not per device: the server never learns which
+device redeems. The counts in `sealed_token_issuance` are deleted when they
+cap nothing (epoch before yesterday).
+
+**When the app fetches.** Not right before a send: a fetch followed seconds
+later by a sealed post links the two by time. The app fetches a fixed batch
+(32) for each eligible conversation on a foreground sync pass, for today and
+for tomorrow, whether or not it will send. A send with no unspent token goes
+identified, and the next pass refills. Volume above the batch still shows
+(an account that fetches a second batch for X today sent at least 32
+messages there).
+
+**Key pinning.** The app pins the first `(key_id, public_key)` it sees per
+server origin and verifies every proof against the pin. A changed key stops
+sealed sending to that origin (messages go identified) until a person
+accepts it in Settings. This blocks per-user key tagging after first
+contact; a server that gives one account a unique key from its very first
+fetch is not caught (see leaks; cross-member key gossip over MLS is the
+follow-up).
+
+#### Redemption (no session)
+
+`POST /api/v1/sealed/messages`, on its own HTTP client with no session
+token, no cookies and no shared connection pool with the session's client
+(a reused TLS connection would tie the post to the session). A request that
+carries an `Authorization` header or session cookie is refused (400
+`sealed_request_authenticated`) so a client bug fails closed. Body:
+
+```json
+{"conversation_id", "token": {"key_id", "epoch", "nonce", "output"},
+ "idempotency_key", "ciphertext", "crypto_protocol",
+ "crypto_metadata", "frank_commit", "expires_at"}
+```
+
+The server checks, in order: switch on; no plaintext keys (as for every
+envelope); `crypto_metadata` holds only `protocol_version`, `group_id`
+(= the conversation), `content_type` = `application`, `payload_version` and
+`mls_epoch`; the key is the current one; the epoch is yesterday or today
+(else 409 `sealed_token_expired`); `output` equals the POPRF evaluation of
+`nonce` under `info`, compared in constant time (else 403
+`sealed_token_invalid`, the same answer for an unknown conversation, so the
+route cannot probe ids). Then, in one transaction, in this order:
+
+- **Double spend.** `sealed_spent_tokens(key_id, epoch, nonce)` is the
+  primary key. A second use of a nonce is 409 `sealed_token_spent`, unless
+  it is the retry of the same post (same conversation, idempotency key and
+  bytes), which answers 200 with the stored envelope (idempotent retry).
+  Spent rows outlive their envelope (an expired message is pruned, its
+  nonce stays spent) and go when their epoch can no longer be redeemed.
+- **Dedupe.** `UNIQUE(conversation_id, idempotency_key)` on the sealed
+  envelope table; the key must be at least 128 random bits (22 to 128
+  characters). A different post under a stored key is 409
+  `idempotency_conflict`. This comes first, so the retry of a stored post
+  answers 200 even after the conversation became ineligible.
+- **Keys do not cross (review H1).** A sealed post under a key that names
+  an identified envelope in the same conversation is 409
+  `idempotency_conflict`, and so is an identified send under a key a
+  sealed envelope there holds. Every member reads every key, so without
+  this a member could post under another member's key.
+- **Eligibility, then spend.** The conversation must be eligible and pass
+  the issuance gate (every live device of every member reads sealed
+  events), checked again here (review M2), else 409 `sealed_not_eligible`.
+  That answer comes only after the two lookups above, so it proves nothing
+  of either kind is stored under (conversation, key): it is the one answer
+  on which the app offers the person to send the message normally
+  (identified), and only on their tap (the invariant below).
+- **Store and fan out.** The row in `sealed_message_envelopes` (migration
+  0091) has no sender column at all. One sync event
+  `message.sealed.created` goes to every member, the sender's own devices
+  included, and push wakes go to every member. Retention clamps
+  `expires_at` as for identified envelopes.
+
+**Eligible conversations.** `kind` `dm` or `group`, no community or channel,
+`posting_policy` `everyone`, and no member under a C5 timeout now. Each rule
+the server enforces by sender cannot hold for a sealed post, so those
+conversations take identified posts only (409 `sealed_not_eligible`): C2
+admins-only, C5 timeouts and slow mode, C0/C7 community conversations (C7
+also needs the sender for its sealed body), and messages with attachments
+(`attachment_envelopes.owner_account_id` names the uploader; the app sends
+any message with `attachment_refs` identified). Commits, Welcomes, key
+packages, reports, receipts, typing and every admin route stay identified.
+
+**Receive.** The app reads `message.sealed.created`, decrypts with
+`pm_crypto_group_decrypt_sealed`, and takes the sender only from MLS. The
+sending device cannot decrypt its own `PrivateMessage`; it recognises its
+own post by the SHA-256 of the exact ciphertext it sent sealed, recorded at
+encrypt time in the encrypted local table `local_sealed_own_posts`, and
+commits past it (review H1: the key alone is readable by every member, so
+a member's post under it was taken for the victim's own and hidden, and
+re-pointed the victim's row). An own echo never overwrites a server id a
+local row already holds. Blocked senders are hidden by the receiving app
+only.
+
+#### Franking a sealed message (C6 still works, owner-only proofs)
+
+C6 v1 attributes a report through the server's authenticated sender row
+(G1). A sealed row has no sender, so without a change member M could send a
+sealed message whose commitment names victim S (honest receivers drop it,
+as MLS says M sent it), then report it and frame S. An earlier draft fixed
+this with an Ed25519 signature `s` anyone could check. The owner chose
+"a leak proves nothing to anyone else" over "every report traceable"
+(2026-11-12), so `s` is gone: in its place the sender adds one
+designated-verifier tag per instance owner its app pinned. Only that owner
+can check its tag, and that owner could have made it itself, so a tag
+convinces nobody else. Built in `crypto/rust/src/l2_frank.rs` (ABI 26),
+`testing/vectors/l2-frank-dv-v1.json` (checked in Rust, in Dart through
+FFI, and independently in Go with `x/crypto/curve25519` and the standard
+HKDF and HMAC).
+
+**The franking key.** Every device has its own random X25519 franking
+secret `f_S`, sealed in its device record (a `VFK1` section). It is not the
+MLS leaf key and is never derived from the Ed25519 key. Its public key
+`F_S` is listed in the account's signed L1 device list (format 2, change 7;
+see `docs/designs/L1-approved-device-list.md`). Invariant: **`F_S` is the
+device's fixed, listed key.** A list may set a device's key once (in its
+genesis 1 or 6, its recovery version 4, or change 7, which only that device
+signs and which sets only its own key from none to some), and no later
+version changes or drops it while the device stays listed. A key belongs to
+one device for the whole chain (enforced in Rust `check_chain`, the Dart pin
+step and the server's `SeenFrankKeyElsewhere`). The record seals the key
+before anything can list it (`currentFrankKey`), so a reload never makes a
+second one. The test `the_franking_key_is_the_one_the_list_names` (Rust)
+and the native Dart tests show the listed key equals `F_S`.
+
+**Only while the switch is on (condition A, review 2026-11-12).** A key
+makes a list version L1 format 2, which main's server and apps refuse. So
+the app lists its own key in a version it signs alone (setup genesis 1,
+migration genesis 6, recovery version 4, from the held seed or the typed
+key) only while the server's setup status reports `sealed_sender` on; with
+it off, or when the status cannot be read, the version carries no key and
+is format 1, byte for byte the earlier format (`_ownFrankKeys`,
+`app_state_device_list.dart`). The key is added later by change 7 on the
+first sealed token pass, which runs only with the switch on. Tests:
+`mobile/test/l1_app_state_lists_test.dart` (each of the four sites, off and
+on, the genesis re-signed from its parsed body to the same bytes).
+
+**Downgrade (not gated).** The `VFK1` record section is written into every
+device record this build seals (`crypto/rust/src/mls/records.rs`,
+`device_plaintext`), switch or not: the franking secret must be sealed
+before any list could name it.
+A crypto core of ABI 25 or earlier refuses such a record (trailing bytes),
+so an app downgraded to such a core cannot open the device record and
+loses its MLS state: it must be linked again or recovered. Never ship an
+older core over a store this build wrote.
+
+```text
+pk_V  = an owner's C6 report public key (X25519, from its report seed)
+Z     = X25519(f_S, pk_V) = X25519(sk_V, F_S); refused when all zero
+kid   = SHA-256("veritra-frank-dv-kid-v1" || pk_V)[0..16]
+K     = HKDF-SHA256(salt = "veritra-frank-dv-v1", ikm = Z,
+                    info = "veritra-frank-dv-v1 key" || F_S || pk_V)
+t     = HMAC-SHA256(K, "veritra-frank-dv-v1" || lp(conversation_id)
+                       || lp(account_id) || lp(device_id) || kid || c)
+entry = kid || t                                (48 bytes)
+d     = entries sorted strictly by kid, 1 to 16 of them; empty = plain form
+```
+
+`c` is the C6 commitment. Public keys are accepted only canonical (bit 255
+clear, u < p) and never at one of the low-order points; an owner key that
+is refused is skipped, never fatal.
+
+- **Send (fail safe).** The sealed token pass, never a send, loads the
+  context: this device must be approved on its own verified list, and the
+  list must name exactly this device's franking key (a listed device with
+  no key publishes change 7 first). The owner keys are the **proof
+  recipients** this app pinned (`OwnerProofPins.effective`,
+  `owner_proof_pins.dart`: per owner, a key pinned for proofs on first use
+  or accepted on the sealed key screen, else the D95 report pin a person
+  made; owner scope, sorted by account, at most 16): the tags read these,
+  never a listing, and nothing is fetched for a send. Without that context no token is handed
+  out and the message goes identified. Native refuses a
+  listed key other than the device's own (`pm_crypto_l2_frank_designate`).
+  With no pinned owner key the message goes sealed in the plain form, which
+  no one can attribute; the sealed key screen says so ("provable to no
+  one", or how many owners).
+- **Owner keys on first use, for proofs only (owner decisions
+  2026-11-12, "auto-pin on first use" and "Keep reports manual").** The
+  same token pass reads `GET /reports/inbox` for one `dm` or `group`
+  conversation outside a community (`OwnerKeyWatch`,
+  `owner_key_watch.dart`). The first time this device sees any owner key
+  for the origin, with no proof recipient (a D95 pin counts) and no
+  earlier first pin (setting `l2.owner_keys_first_pin:<origin>`, also set
+  once a pin a person made while reporting is seen), it pins every listed
+  key as a proof recipient without a code comparison. Proof pins are kept
+  apart from the D95 report pins (setting `l2.owner_proof_pins:<origin>`:
+  owner to key, or a tombstone for an owner accepted as gone); nothing in
+  this flow writes `local_report_key_pins`, so a report is still sealed
+  only to keys a person pinned after comparing codes, and the report
+  screen still asks for that comparison. The other way round, a key a
+  person pins while reporting also becomes that owner's proof recipient
+  (`ReportsService.pinKeys` drops the owner's proof override, tombstone
+  included). After the first pin nothing is
+  pinned automatically: an owner listed with another key than its proof
+  recipient (`changed`), an owner with none (`added`) and a proof recipient
+  no longer listed (`missing`) are recorded (`l2.owner_keys_seen:<origin>`)
+  and shown on the sealed key screen, and Settings warns, for the person
+  to accept (make the listed key the proof recipient, or drop the gone
+  owner from them; the D95 pins stay) or reject (nothing changes; the
+  warning returns only when the server lists something else). Until they
+  accept, the tags go only to the proof recipients from before, a gone
+  owner included. Accept re-reads the listing and refuses if it moved
+  since the screen showed it. Only `report_inbox_unavailable` reads as "no
+  owner has a key"; any other error records nothing. Tests:
+  `mobile/test/l2_owner_key_tofu_test.dart` (AppState, native engine),
+  `l2_sealed_key_screen_test.dart`. The pass runs only while the server's
+  `sealed_sender` switch is on; with it off, nothing is pinned for proofs
+  on first use. Reports in both cases follow D95 (a person compares codes
+  while reporting). Tests that reports stay manual after a first-use pin:
+  `c6_reports_service_test.dart`, `c6_report_screens_test.dart`.
+- **What the server can do before the first pin (accepted with
+  first-use pinning).** It chooses when the first sight happens (it can
+  answer `report_inbox_unavailable` until it is ready; meanwhile sealed
+  messages go in the plain form, provable to no one) and what that
+  listing holds, per account and per device (each device pins on its own;
+  a second device of the same account can be shown other keys, and
+  nothing compares them). That influences only **who can verify this
+  device's sealed-message proofs, never who reads its reports**: reports
+  are sealed only to D95 pins, which a first-use pin never writes. So it
+  can:
+  - **list owner keys it holds**, alone or beside the real ones. They
+    become proof recipients: the holder of such a key can check a tag,
+    and so learn which account sent a sealed message, but only for a
+    message it is shown with its `d`. It learns no tag on its own: `d`
+    travels only inside the MLS ciphertext and the report copies, and no
+    report copy is sealed to a first-use key (the report screen shows the
+    listed key's code and refuses until the person pins it, D95);
+  - **withhold real owners.** They are not proof recipients, a sealed
+    message is not provable to them (`notDesignated`), and when the server
+    lists them later they wait for the person as `added`. Reporting to
+    them is unaffected: it asks for the code comparison as before;
+  - **list more than 16 owners** whose ids sort first, so the real owners
+    fall outside the at most 16 tagged keys (reports are still sealed to
+    every owner a person pinned).
+  None of this is detected. After the first pin it can only raise a
+  warning; what remains is a person accepting a key without comparing it
+  with the owner's code, which again changes only the proof recipients.
+  A device that had pinned while reporting before its first pass (D95,
+  "Pinned owner keys") uses those pins as its proof recipients and never
+  pins on first use; a later code comparison while reporting replaces a
+  first-use proof key for that owner.
+- **Wire.** Only in a payload sent sealed, `frank` may gain `d`:
+  `,"frank":{"k":"<44>","d":"<64·n, standard base64 of n entries>"}}`. The
+  plain form is the identified form. `P` and `c` are unchanged. The tags
+  are inside the MLS ciphertext; outside it the server could test them.
+  `splitFrank` reads exactly what the encoder writes (a property test
+  re-encodes every accepted mutation).
+- **Receive.** Commitment checks are unchanged. On a sealed message the
+  plain form or a well-formed `d`; tags cannot be checked by receivers. An
+  identified message carrying `d` is `invalid`. No native call, and no leaf
+  key is read.
+- **Report.** The reveal (schema 43) and the v2 report body keep `d` and
+  the sender account; nothing else is added. The owner checks, in order:
+  the context and the first-stored envelope's key (review low b); `c`
+  recomputes and equals the stored commitment; its report seed is loaded
+  and its own `kid` is in `d` (else **notDesignated**, with no list fetch);
+  the claimed device's franking key from the claimed account's verified
+  list (none: **senderUnverified**); then `pm_crypto_l2_frank_dv_verify`
+  (2: **notDesignated**, 0: **proofFailed**, 1: **verified** or
+  **verifiedServerTrusted**, below). Framing as another account or device
+  fails: the tag covers both and `Z` needs `f_S`.
+- **First sight of the sender's list (review M2, owner 2026-11-12).** The
+  server cannot forge a step of a list this device has pinned, but the
+  first sight of a list is trust on first use: then the server could have
+  made up the whole chain, with a franking key its accomplice holds. So a
+  passing proof reads **verified** only when this device first pinned the
+  sender account's list before the report arrived, taken as the earlier of
+  the report copy's server `created_at` and this device's first sight of
+  the copy (`local_device_list_heads.pinned_at`, kept as the pin advances;
+  the first sight is the setting `l2.report_first_seen.<origin>.<copy id>`,
+  written once when the inbox is listed or the copy first checked, and
+  never moved, so a later check cannot move the bound; unreadable, the
+  verdict is the weaker one). A list
+  first pinned during the check, or after the server's time for the
+  report, reads **verifiedServerTrusted**: shown as a warning, "Matches, if
+  the server is honest", naming the sender with that caveat.
+  Residuals: the server sets `created_at`, so against a hostile server
+  the rule means "pinned before this device first saw the report copy"
+  (a later time cannot move the bound past that first sight, on this
+  check or any later one; an earlier one only makes the verdict weaker).
+  A first-sight setting is not removed when a copy is dismissed (one
+  small row per copy). A chain the server made up and showed this device at
+  an earlier first sight, before any report, still reads verified; that
+  is the trust-on-first-use limit L1 accepts for every list. `pinned_at`
+  is this device's clock and `created_at` the server's, so skew between
+  them moves only the boundary case. Pins from before the column take
+  their last check time, which is never earlier than their first pin, so
+  they err toward the weaker verdict. Tests: `l2_sealed_app_native_test.dart`
+  ("a sealed message is proven only to the owners it designates"),
+  `l1_device_list_pins_test.dart` ("a franking key lookup tells when the
+  list was first pinned"), `l2_schema43_test.dart`.
+- **Owner keys change: old proofs lapse.** No old report key is kept. A
+  message designated to a key the owner no longer holds reads
+  notDesignated for that owner; other owners still verify.
+
+**Proof sketch** (verification (e); a sketch for the G25 reviewer, not a
+machine proof). Model HKDF and HMAC as random oracles / a PRF, and assume
+gap-CDH in X25519.
+
+1. *No framing toward an honest owner V (P2).* A valid tag for `(S, V)`
+   needs `K`, a function of `Z = CDH(F_S, pk_V)`. A party without `f_S` or
+   `sk_V` that outputs a valid tag on a new `(conv, account, device, c)`
+   either queried the oracle on `Z` (breaking gap-CDH, with the DH oracle
+   answering consistency checks for other queries) or forged HMAC under an
+   unknown key. `F_S` comes from S's own signed list: the server cannot
+   forge a step of a list this device had pinned (L1), but a list first
+   seen during or after the report is trust on first use and may be one
+   the server made up, which is why that case reads only
+   verifiedServerTrusted (review M2). The key is fixed and unique per
+   chain, and the tag binds account and device, so M's own key cannot
+   stand in for S's.
+2. *Non-transferability (P3).* `V` computes the same `K` from `sk_V` and
+   `F_S`, so for every tuple the distribution of tags `V` can make equals
+   the distribution S makes. A third party given `(P, kf, d)` and even `V`'s
+   cooperation learns nothing it could not have got from `V` alone: the
+   transcript is simulatable by `V`. A leaked `d` names `kid`s, which are
+   public-key hashes, not secrets.
+3. *Commitment binding.* `c` binds `P` and `kf` (C6), and the tag binds `c`,
+   so a tag does not move to another message.
+4. *Sealed sender (P5).* `d` is only inside the MLS ciphertext and the
+   report copies (HPKE to owners), so the server sees no tag at post time.
+
+Not covered by the sketch: side channels, a stolen owner seed (which also
+lets its holder frame toward that owner, inherent to every DV scheme), and
+the MLS residual below. ProVerif/Tamarin were not run (not installable in
+this environment).
+
+**What remains provable to others (accepted, owner decision 6).** Every MLS
+application message is signed by the sender's leaf key over the framed
+content and the group context. A member who keeps the decrypted message,
+its signature and the group context (all of which its own client sees)
+can hand them to anyone who trusts the binding of that leaf key to S, and
+that proves authorship. A stock Veritra app keeps none of these: OpenMLS
+deletes the message key once used, so a processed ciphertext row cannot be
+opened again (verification (b)); no column, history export or K2 field
+holds a signature over a payload (verification (c)); and a sync page that
+opened a sealed message checkpoints and truncates the database log, so
+the MLS state from before the message does not linger in old log frames
+(verification (d); `secure_delete` already clears freed pages of the
+database file). A modified app can keep them; that cannot be prevented.
+
+- **What the verifier tells the server (accepted, owner decision
+  2026-11-12).** An owner's check fetches the claimed sender's account
+  device list only when `d` names that owner; the server learns, at review
+  time and only from the reviewer, which account a reported sealed message
+  is attributed to (the copy's id and the request's timing link the two).
+  A cached list avoids the fetch. Accepted as a residual: an owner who
+  reviews a sealed report tells the server which account it names.
+
+#### What still leaks (plainly)
+
+- **IP address and connection timing.** The sealed post comes from the same
+  address as the device's session, at the moment its WebSocket is open. An
+  operator who logs addresses (L2-2 turns proxy logs off by default; the
+  live connection still shows them) or watches timing can usually tell who
+  posted, in small conversations almost always. Sealed sender protects the
+  stored record and a later database leak, not a live, watching operator.
+  Tor or a VPN, plus send jitter (L2 owner question 3, default off), are
+  what would help.
+- **Typing and read state.** Until D60 moves them into MLS, the server-seen
+  typing event (D47) names the account seconds before its post, and a
+  shared read cursor can move right after it. With sealed sending on the
+  app stops sending server typing in that conversation.
+- **Issuance.** Who fetched tokens for which conversation and day, and how
+  many. The anonymity set of a post is the members who fetched for that
+  conversation and day; in a DM it is two people.
+- **Key tagging at first contact.** A server can give one account a unique
+  key before it ever pins one. Not detected yet.
+- **Leftover tokens (review M1).** With no generation, a removed member or
+  a revoked device keeps its unspent tokens until their day ends (about 72
+  hours at most). Its MLS state no longer decrypts for the group, so what
+  it posts is junk: receivers show it as an undecryptable or unverifiable
+  placeholder. It reads nothing.
+- **Day split.** The anonymity set of a post is the members who fetched
+  for that day. Near midnight, and for a device whose clock is off, that
+  set is split by day naturally; the server can no longer pick the split,
+  but it still sees it.
+- **Forced identified.** The server can answer `eligible: false` or
+  `sealed_not_eligible` to any account at will. `eligible: false` makes
+  that account's next messages go identified from the start. A
+  `sealed_not_eligible` refusal of a sealed post never sends that post
+  identified on its own (owner decision 2026-11-12, "Ask before
+  re-sending"): the app would otherwise re-send it under the same
+  idempotency key, which tells the server who sent the sealed post it
+  chose to refuse. The message waits in the outbox, marked "couldn't send
+  hidden", and the chat offers "Send normally" (the server then sees it is
+  from this account, and the person is told so) or "Discard". Sealed
+  sender limits what the server stores, not whether a hostile server lets
+  a sender be sealed; it can still refuse, and then learns the sender of
+  a post only if the person chooses to send it normally.
+- **Copies after expiry (review low b).** Once the original sealed envelope
+  has expired, a member can re-post its ciphertext and commitment under
+  the same key, and a report about that copy verifies for the sender.
+- **Sizes and counts** as before (L2-1).
+- **Server rules.** C2, C5 and C7 checks need the sender, so those
+  conversations stay identified; so do attachments and every commit.
+- **C4 activity.** A sealed post does not mark the sender active for C4
+  server succession. An active owner still self-updates each conversation
+  at least every 7 days with activity, which is identified and counts.
+
+#### Libraries
+
+| Side | Library | Version | Licence | Notes |
+|---|---|---|---|---|
+| Rust (crypto core) | `voprf` (facebook/voprf) | `=0.5.0`, `default-features = false`, `ristretto255-ciphersuite` | MIT | RFC 9497 final. Brings `derive-where` (MIT OR Apache-2.0) and `displaydoc` (MIT OR Apache-2.0); `curve25519-dalek` 4, `sha2` 0.10, `elliptic-curve` 0.13 (features `hash2curve`, `voprf`) are already locked. The NCC Group review of opaque-ke (2021) covered a pre-RFC voprf; **0.5.0 itself has no published audit**. |
+| Rust (crypto core) | `x25519-dalek` | `=3.0.0`, `default-features = false`, features `static_secrets`, `zeroize` | BSD-3-Clause | Owner-approved 2026-11-12 for the franking key and tags. Uses the already locked `curve25519-dalek`. No audit of 3.0.0 itself is known. The Go cross-check uses `golang.org/x/crypto/curve25519` (already a dependency). |
+| Go (server) | `github.com/cloudflare/circl` | `v1.6.5` | BSD-3-Clause | `oprf` package, RFC 9497 vectors in its tests. Brings `github.com/bwesterb/go-ristretto` v1.2.4 (MIT). No published audit of the `oprf` package. |
+
+Dart has no crypto dependency; it calls the Rust FFI. The two libraries
+interoperate: a batch blinded by voprf, evaluated by circl, verifies and
+finalizes in voprf to circl's `FullEvaluate` output
+(`testing/vectors/l2-sealed-v1.json`).
+
+#### ABI 26
+
+- `pm_crypto_l2_token_request(public_key, conversation_id, epoch, count,
+  out_state, out_request)`: `count` 1 to 32;
+  `out_request` is `count × 32` blinded elements; `out_state` is
+  `"VLT1" || u8 count || 32-byte public key || u16 len(info) || info ||
+  count × (32-byte nonce || 64-byte voprf client state)`.
+- `pm_crypto_l2_token_finalize(state, response, out_tokens)`: `response` is
+  `count × 32` evaluated elements `|| 64-byte proof`; `out_tokens` is
+  `count × (32-byte nonce || 64-byte output)`. The proof is checked against
+  the key in the state.
+- `pm_crypto_l2_frank_public_key(device, out_key)`: this device's 32-byte
+  franking public key `F_S`.
+- `pm_crypto_l2_frank_designate(device, conversation_id, commit,
+  listed_key, owner_keys, out_designation)`: `owner_keys` is `n × 32`,
+  `1 ≤ n ≤ 16`; `listed_key` must equal `F_S` (else refused);
+  `out_designation` is `m × 48` sorted by kid, `m ≤ n`, refused owner keys
+  skipped, empty (a null buffer) when none is usable. The identity is
+  always the device's own.
+- `pm_crypto_l2_frank_dv_verify(report_seed, sender_frank_key,
+  conversation_id, account_id, device_id, commit, designation, out_result)`:
+  `out_result` 1 valid, 0 mismatch (also a refused sender key or a zero
+  `Z`), 2 no entry for this seed's key. The X25519 pair is derived from the
+  seed inside; no call returns a private key.
+- The earlier `pm_crypto_l2_frank_sign` and `pm_crypto_l2_frank_verify`
+  are removed (ABI 26 amended in place; never merged).
+
+#### Counters
+
+Crypto ABI 26 (25 is reserved by another package; this branch goes 24 to
+26), local schema 43, server migrations 0090 (keys, issuance counts, spent
+tokens), 0091 (sealed envelope table, capable devices, an index on
+`message_envelopes(idempotency_key)`) and 0092 (device list change 7).
+The franking redesign of 2026-11-12 (owner-only proofs) amended ABI 26 and
+schema 43 in place again and adds L1 list format 2. The review fixes of 2026-11-12
+amended ABI 26, schema 43, 0090 and 0091 in place (none had merged): the
+numbers did not change. Needs the
+independent crypto review (G25) before the switch is turned on anywhere.
+
+#### As built (2026-11-12, branch `feat/l2-sealed-sender`)
+
+Built and tested: the Rust half (`crypto/rust/src/l2_sealed.rs`, ABI 26,
+Dart bindings in `native_crypto_bindings.dart`), the Go half
+(`server/internal/sealedsender`), the shared vectors
+(`testing/vectors/l2-sealed-v1.json`, checked in Rust, Go and Dart), and the
+server routes, storage and migrations 0090 and 0091 behind
+`PRIVATE_MESSENGER_SEALED_SENDER` (off by default). Server tests cover the
+double spend and its idempotent retry, wrong and relabelled epochs, a
+removed member's leftover token (it still posts, review M1), the cap
+across redeemable days,
+ineligible conversations, a request carrying a session, forged tokens, no
+sender stored or synced, expiry and pruning, and the report envelope route
+for a sealed envelope.
+
+**Older apps (built on branch `feat/l2-sealed-app`).** Apps from before
+the app step treat an unknown `message.*` event as fail-closed
+(`_failsClosedEvent`, `SyncFailureKind.unsupportedEvent`), so one member
+holding tokens could otherwise pause the conversation (or, without scoped
+sync, all sync) on every other member's device. Two server rules keep that
+from happening:
+
+- **Opt-in.** Every sync read (legacy, `?scan=bounded` and the per
+  conversation route) hides `message.sealed.created` rows unless the request
+  carries `?sealed=1`. They are hidden rows, not a filter after the page, so
+  an older app still pages past a run of sealed posts and never sees one.
+- **Issuance gate.** While the switch is on, a read with `?sealed=1`
+  records its device in `sealed_capable_devices` (added to 0091, which has
+  not merged). `GET /sealed/conversations/{id}` reports `eligible: false`,
+  and token issuance answers 409 `sealed_not_eligible`, until every live
+  device of every member is listed. So no member device that would miss a
+  sealed post is in a conversation that gets tokens. Redemption checks
+  the gate too (review M2), after the retry lookup: a device linked (or an
+  older app installed) after tokens were issued closes it for new posts at
+  once, and those go identified (below).
+
+**App step, as built (2026-11-12, branch `feat/l2-sealed-app`, local schema
+43).** Code: `mobile/lib/core/sealed_sender.dart` (token pass, key pin,
+sealed post client and its retry rules), `NativeCryptoService`
+(`_encryptPayload`, `processSealedApplicationMessage`, `_checkFranking`),
+`AppState` (`_followServerSwitches`, the `message.sealed.created` case,
+`_flushOutboxOnce`). Tests: `mobile/test/l2_sealed_app_native_test.dart`
+(two native clients), `l2_sealed_app_test.dart` (a loopback server),
+`l2_schema43_test.dart`, `l2_sealed_key_screen_test.dart`.
+
+- **Switch.** Sealed sending is on only while the server's setup status
+  says `sealed_sender: true` (read with each conversation list refresh).
+  An app with the native crypto service sends `?sealed=1` on every sync
+  read, whether or not the switch is on (off, the server records nothing).
+- **Token pass.** On the foreground catch-up (at most every 10 minutes, one
+  pass at a time) and when the switch turns on, for each `dm` or `group`
+  conversation outside a community or channel: read
+  `GET /sealed/conversations/{id}`; if it is eligible and the app holds no
+  token for today, ask for `min(32, remaining)` for today and again for
+  tomorrow. The per-day cap is the server's `remaining`; nothing is asked
+  past it. An ineligible conversation drops its tokens. Tokens live in the
+  encrypted local database (`local_sealed_tokens`, at most
+  `maxSealedTokensPerConversation` per conversation), never in a backup,
+  and each is taken once (oldest usable day first).
+- **Key pin.** The first issuer key seen for an origin is pinned
+  (`local_sealed_key_pins`, trust on first use). A different key afterwards
+  is recorded as seen and stops sealed sending and token fetches for that
+  origin until the person accepts it in Settings, Privacy, "Sealed sender
+  key" (`features/settings/sealed_key_screen.dart`), which shows both
+  fingerprints and warns what accepting risks. Tagging at first contact is
+  still not detected.
+- **Choice at encrypt time.** `_encryptPayload` seals a payload only when
+  its type is a message type (`sealedPayloadTypes`), it has no attachments,
+  the conversation is `dm` or `group`, not a shared group, carries no C7
+  body, a token is held under the pinned key, and the token pass loaded a
+  franking context (own listed key, pinned owner keys); otherwise the
+  message goes identified, as before (a token taken without a context goes
+  back). The sealed payload carries `d` to the pinned owners, or the plain
+  form (`pm_crypto_l2_frank_designate`). The choice and its token are
+  stored in the outbox entry with the ciphertext; the local message row
+  holds no flag (the echo arrives as `message.sealed.created`).
+- **Post.** `SealedPostClient` has its own `HttpClient` (no keep-alive, no
+  shared connection), sends no `Authorization` header and no cookie, and
+  posts `POST /sealed/messages`; `ApiClient.sendEnvelope` refuses a sealed
+  envelope. Retry rules (`postSealedMessage`): a refused token
+  (`sealed_token_expired`, `_token_spent`, `_token_invalid`) is replaced
+  from the store and the same message posted
+  again (same idempotency key and ciphertext; the outbox entry is rewritten
+  with the new token first); with no token left it waits as a retryable
+  503-class failure for the next token pass; 408, 429, 5xx and transport
+  errors retry as other outbox entries do; a 404 (the server's switch is
+  off) waits as the retryable `sealed_unavailable` (review low a); other
+  4xx fail the message. **It never falls back to identified on its own.**
+  A 409 `sealed_not_eligible` (the invariant below) drops the
+  conversation's tokens and leaves the entry terminal under
+  `terminal:409:sealed_not_eligible` (`sealedNeedsResendChoice`): the chat
+  shows "couldn't send hidden" with "Send normally" and "Discard" (owner
+  decision 2026-11-12). Only "Send normally" (`AppState.sendSealedNormally`,
+  `reencryptSealedForResend`) has `reencryptSealedAsIdentified` encrypt the
+  message afresh, identified, under the same key (new MLS ciphertext and
+  franking key, no token, no `d`) and put it in the outbox entry's place
+  with its failure cleared; the outbox worker then sends it once, under the
+  I34 hold. It acts only while the entry still waits for the choice, so a
+  second tap does nothing, and an MLS control message queued for the
+  conversation (or a D68 removal hold) makes it wait and say so. Tests:
+  `mobile/test/l2_sealed_resend_choice_test.dart` (no identified request
+  across passes, a resume, a retry and a restart before the tap; exactly
+  one after it; none after "Discard"). The plaintext for that is kept only in
+  `local_sealed_own_posts` while the message is queued, never in the outbox
+  JSON or on the wire. It is dropped when the entry is replaced or goes;
+  the digest stays (30 days), so the echo of an earlier sealed attempt
+  that lands late is still recognised as this device's own.
+- **Receive.** The `message.sealed.created` case decrypts through
+  `processSealedApplicationMessage` (`pm_crypto_group_decrypt_sealed`),
+  which refuses identified envelopes, as the identified path refuses sealed
+  ones; the server's sender fields are never read. A sealed payload must be
+  a message type; any other type is `invalid`. Undecryptable posts become
+  D54 placeholders after the usual retries, and a post from a removed
+  sender becomes the "unverifiable" placeholder, so neither stops sync.
+  The own post is recognised by the digest of its ciphertext (above); a
+  decrypted sender equal to this device is refused. Messages from blocked
+  senders are hidden from the timeline.
+- **Franking.** `_checkFranking` accepts the plain form or a well-formed
+  `d` on a sealed envelope; an identified payload with `d` is `invalid`.
+  Schema 43 adds `designation` (48 to 768 bytes, whole entries, or null for
+  the plain form) and `sender_account_id` to `local_frank_reveals`, and
+  `frank_key` to `local_device_list_keys`; the draft's `signature` and
+  `signing_key` columns are dropped where they exist. That drop also runs
+  on every open at schema 43 or later (review L2): a draft of the step
+  wrote version 43 on development devices, so the upgrade step never runs
+  there again. It is idempotent, and a drop that removed something is
+  followed by a log checkpoint (`l2_schema43_test.dart`).
+- **Reports.** Report body version 2 (`report_body.dart`, 9 fields) adds
+  the sender's account id and `d` (empty for the plain form), and is used
+  only for sealed envelopes; version 1 is unchanged for identified ones.
+  The verifier (`reports_service.dart`, `_verifySealed`) runs the order in
+  "Franking a sealed message"; the claimed device's franking key comes from
+  the claimed account's verified list, approved or removed
+  (`DeviceListsService.frankKeyOf`, which also returns when this device
+  first pinned that list). Verdicts `notDesignated`, `proofFailed` and
+  `verifiedServerTrusted` are new; the first two are never shown as
+  verified, and the third is shown as verified only with the warning that
+  it relies on the server (review M2). Schema 43 also adds
+  `local_device_list_heads.pinned_at` (the first pin's time, kept as the
+  pin advances); a draft 43 without it gains it on open, filled from
+  `checked_at`.
+- **Log residue.** A sync page that opened a sealed message ends with
+  `PRAGMA wal_checkpoint(TRUNCATE)` (`checkpointSealedResidue`), best
+  effort. Review L1: the need is written durably (setting
+  `l2.sealed_residue_pending`) just before the first sealed open, the sync
+  pass clears it in a `finally` too (a page that threw or returned early
+  skipped its own clear), and a flag a killed app left is cleared on the
+  next start's first pass. It is reset only after a checkpoint that
+  truncated the log (`app_state_catch_up_followups_test.dart`).
+- **Typing and read state.** In a conversation that is eligible while the
+  switch is on (`SealedSender.activeIn`), the app sends no server typing
+  event and only the private read cursor, and its read marker names the
+  newest identified message (the server keeps no read position on a sealed
+  row).
+
+**App residuals.** A message chosen sealed is sent identified only after
+`sealed_not_eligible` and the person's "Send normally", so otherwise it can
+wait. Once its token is past its
+day (`sealed_token_expired`) it needs a fresh one, and while the
+conversation is ineligible the token pass fetches none and drops what it
+held: the message stays queued as a retryable failure until a token pass
+refills, the conversation is eligible again, or the person discards it.
+Failing or resending the waiting message on its own is not done: after a
+lost answer it may already be stored, and a resend would then show twice.
+Own-post digests stay 30 days after their entry is gone. If the server
+switch is turned off for good, queued sealed messages wait as
+`sealed_unavailable` until the person discards them. A queued sealed
+message with no fallback row (after a restore from backup, which does not
+carry `local_sealed_own_posts`) waits for the choice on
+`sealed_not_eligible` like any other, but "Send normally" then says it can
+no longer be sent normally, and only "Copy" and "Discard" help.
+`reencryptSealedForResend` is tested on its own (every branch) and through
+the native re-encrypt, and the choice through AppState. The server's unread
+count ignores sealed posts. A device whose list names no franking key
+(any device until its first sealed token pass publishes change 7, or one
+added by change 2 that has not yet published) sends identified. The
+notice owner of a
+sealed post is captured inside the serial receive turn, not before it.
+Sealed posts get no delivery ticks (W5).
+
+**Server residuals.** Sealed envelopes cannot be edited or deleted through
+the server; `GET /conversations/{id}/messages` does not list them (devices
+get them by sync and `GET /messages/{id}`, which also proves expiry), which
+matters when an app falls back to that route after its sync cursor expired;
+W5 receipts read only `message.envelope.created`, so sealed posts get no
+delivery ticks; a sealed post does not move C4 `last_active_at`; and the
+post route takes no session, so it is bounded by the token cap and the
+per-address public budget, not the per-account write budget.
+`push_wake_jobs` needs a sender account, so sealed wake rows name the
+recipient (their block filter is then a no-op; blocking is the receiving
+app's job for sealed posts).
+
+**Invariant for the app step.** Identified envelopes are deduplicated by
+(device, idempotency key) and sealed ones by (conversation, idempotency
+key), so a message sent both ways is stored twice and the second copy fails
+MLS at every receiver. Once a sealed attempt may have reached the server,
+the app must never fall back to identified for that message: it retries
+sealed under the same idempotency key (a retry of a stored post answers 200
+without spending), fetching new tokens after a token refusal. The one
+exception is 409 `sealed_not_eligible`, which the server answers only after
+finding nothing of either kind stored under (conversation, key), in a
+transaction on its single writer connection; after the person chooses
+"Send normally" (never on its own: the answer could be a hostile server's
+way to learn the sender), a fresh identified encrypt under the same key is
+then the only copy, unless an earlier sealed attempt
+the app gave up on (a timeout does not cancel it) reaches the server later,
+after the conversation became eligible again. Then the sealed copy is
+stored, the identified send is refused (`idempotency_conflict`, keys do
+not cross), and the sealed echo, still recognised by its digest, links the
+local row; the outbox entry shows as failed until the person discards it.
+One copy is stored either way. The decision to seal is
+made at encrypt time and stored with the outgoing message.
 
 ## Encrypted backup file (VBK2)
 
@@ -831,6 +1557,31 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   `move`) are listed in the design's "Build status (2026-11-12)". Needs
   the independent review before the switch is turned on anywhere.
 
+- **L2-3 sealed sender (2026-11-12, crypto ABI 26, D122):** RFC 9497
+  POPRF tokens (ristretto255-SHA512; voprf 0.5.0 in Rust, circl 1.6.5 in
+  Go) let a member post to a DM or plain group without a session; the
+  server stores those envelopes without a sender. Five new FFI functions
+  (`pm_crypto_l2_token_request`, `_token_finalize`, `_frank_public_key`,
+  `_frank_designate`, `_frank_dv_verify`); designated-verifier tags bind a
+  sealed message's C6 commitment to the sender device's dedicated X25519
+  franking key (listed in L1 format 2) for each instance owner the sender
+  pinned, so reports still attribute it to those owners and to nobody else
+  (owner decision 2026-11-12, replacing a transferable signature). The
+  owners' report keys are pinned on first use as proof recipients only
+  (owner decisions 2026-11-12, "auto-pin on first use" and "Keep reports
+  manual"; kept apart from the D95 report pins, which still need a code
+  comparison while reporting), and later changes wait for the person; an owner's review of a sealed report
+  telling the server the attributed account is accepted. New
+  direct dependency `x25519-dalek =3.0.0`. ABI 25 is left to
+  another package. Server side behind `PRIVATE_MESSENGER_SEALED_SENDER`
+  (off). The app step (local schema 43: `local_sealed_tokens`,
+  `local_sealed_key_pins`, sealed columns on `local_frank_reveals`; report
+  body v2; the sync opt-in `?sealed=1` and the server's issuance gate on
+  sealed-capable devices, amending the unmerged 0091) is built on
+  `feat/l2-sealed-app`. Schema 43 was reserved for it; C7's 41 and 42 may
+  renumber at integration, and the 43 step is idempotent so it can move.
+  "Sealed sender with VOPRF tokens" above has the design, what leaks and
+  what is left.
 - **C4 leave proof in the commit (2026-11-11, crypto ABI 24):** the
   owner-approved design, built with the review's required changes (no
   epoch field; the AAD set inside every stage attempt and checked on the
@@ -3644,11 +4395,16 @@ the reporter's own; the recipient does, against the revealed body.
 
 **Pinned owner keys** (`report_key_pins.dart`). The server lists each owner's
 report key; the app seals only to keys that equal their pin
-(`ReportKeyPins.requirePinned`). A pin is made by an explicit
-`ReportKeyPins.pin` after the person saw `reportKeyFingerprint(key)`; a key
-the server changes is `changed` and refused until pinned again, a key for an
-owner never pinned is `unpinned` and refused (a server cannot add its own
-owner), and a pinned owner the server omits is reported as `missing`.
+(`ReportKeyPins.requirePinned`). Nothing is pinned silently: a pin is made
+only by an explicit `ReportKeyPins.pin` after the person saw
+`reportKeyFingerprint(key)`. A key the server changes is `changed` and
+refused until pinned again, a key for an owner never pinned is `unpinned`
+and refused, and a pinned owner the server omits is reported as
+`missing`. The owner keys L2-3 pins on first use are proof recipients for
+sealed-message tags only, kept apart (`owner_proof_pins.dart`, owner
+decision 2026-11-12, "Keep reports manual"; "Franking a sealed message"),
+and never reach a report; a pin made here also counts as a proof
+recipient.
 
 **Unfranked switch** (`FrankingPolicy`, `app_payload.dart`, passed to
 `NativeCryptoService`). `acceptUnfranked` is true today. With false, a

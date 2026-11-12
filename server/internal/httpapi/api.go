@@ -83,6 +83,15 @@ type API struct {
 	ScopedSync bool
 	// C7History mirrors config.C7History for the setup status (c7_history).
 	C7History bool
+	// SealedSender registers the L2-3 sealed sender routes
+	// (sealed_handlers.go); off, they answer 404. SealedTokensPerDay is the
+	// daily token cap per account and conversation (200 when zero).
+	SealedSender       bool
+	SealedTokensPerDay int
+	// sealedReaders caches the device ids already recorded as reading
+	// sealed events (noteSealedReader), so a sync page writes at most once
+	// per device and process.
+	sealedReaders sync.Map
 	// Attest is the L3 proof hook. Nil (the default) leaves
 	// GET /api/v1/attestation unregistered, so it answers 404.
 	Attest       attest.Provider
@@ -211,6 +220,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/conversations/", a.withAuth(a.withWriteBudget(a.conversationSubroute)))
 	mux.HandleFunc("/api/v1/communities/", a.withAuth(a.withWriteBudget(a.communitySubroute)))
 	mux.HandleFunc("/api/v1/device-links/", a.deviceLinkSubroute)
+	a.registerSealedSender(mux)
 }
 
 func bearerToken(r *http.Request) string {

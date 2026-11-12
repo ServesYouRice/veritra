@@ -408,6 +408,7 @@ class MessageEnvelope {
     this.threadRootId,
     this.frankCommit,
     this.sealedBody,
+    this.sealedToken,
   });
 
   final String conversationId;
@@ -415,6 +416,47 @@ class MessageEnvelope {
   final List<int> ciphertext;
   final String cryptoProtocol;
   final Map<String, Object?> cryptoMetadata;
+
+  /// L2-3: set when the message was encrypted to go sealed (its payload then
+  /// carries the franking signature), with the token chosen for it. The
+  /// choice is made once, at encrypt time, and kept in the outbox entry:
+  /// such a message is only ever posted sealed, never on the session route
+  /// ([toSealedPostJson]), retried under the same idempotency key with
+  /// this or a replacement token.
+  final SealedToken? sealedToken;
+
+  bool get sealed => sealedToken != null;
+
+  /// The same envelope with another token (a sealed retry).
+  MessageEnvelope withSealedToken(SealedToken token) => MessageEnvelope(
+        conversationId: conversationId,
+        idempotencyKey: idempotencyKey,
+        ciphertext: ciphertext,
+        cryptoProtocol: cryptoProtocol,
+        cryptoMetadata: cryptoMetadata,
+        attachmentRefs: attachmentRefs,
+        replyToId: replyToId,
+        threadRootId: threadRootId,
+        frankCommit: frankCommit,
+        sealedBody: sealedBody,
+        sealedToken: token,
+      );
+
+  /// The body of `POST /api/v1/sealed/messages`: the post and its token,
+  /// nothing about the device.
+  Map<String, Object?> toSealedPostJson() {
+    final token = sealedToken;
+    if (token == null) throw StateError('not a sealed envelope');
+    return <String, Object?>{
+      'conversation_id': conversationId,
+      'token': token.toWireJson(),
+      'idempotency_key': idempotencyKey,
+      'ciphertext': base64Encode(ciphertext),
+      'crypto_protocol': cryptoProtocol,
+      'crypto_metadata': cryptoMetadata,
+      if (frankCommit != null) 'frank_commit': base64Encode(frankCommit!),
+    };
+  }
 
   /// The C7 sealed body sent beside a two-part message's MLS reference, or
   /// null. Kept in the outbox so a retry is byte-identical.
@@ -439,6 +481,9 @@ class MessageEnvelope {
       'attachment_refs': attachmentRefs,
       if (replyToId != null) 'reply_to_id': replyToId,
       if (threadRootId != null) 'thread_root_id': threadRootId,
+      // Local only (the outbox entry); the session route is never given a
+      // sealed envelope (ApiClient.sendEnvelope refuses one).
+      if (sealedToken != null) 'l2_sealed_token': sealedToken!.toLocalJson(),
     };
   }
 
@@ -459,6 +504,9 @@ class MessageEnvelope {
           ReceivedMessageEnvelope.frankCommitFromJson(json['frank_commit']),
       sealedBody:
           ReceivedMessageEnvelope.frankCommitFromJson(json['sealed_body']),
+      sealedToken: json['l2_sealed_token'] == null
+          ? null
+          : SealedToken.fromLocalJson(json['l2_sealed_token']),
     );
   }
 }
@@ -662,13 +710,44 @@ class ReceivedMessageEnvelope {
     this.expiresAt,
     this.frankCommit,
     this.sealedBody,
+    this.sealed = false,
   });
 
   final String id;
   final String conversationId;
+
+  /// The sender the server named. Empty for a [sealed] envelope until the
+  /// receiver has decrypted it and taken the sender from MLS.
   final String senderAccountId;
   final String senderDeviceId;
   final String idempotencyKey;
+
+  /// L2-3: posted with a token, so the server row names no sender
+  /// (`message.sealed.created`, `"sealed": true`).
+  final bool sealed;
+
+  /// This sealed envelope with the sender MLS authenticated.
+  ReceivedMessageEnvelope withSender(String accountId, String deviceId) =>
+      ReceivedMessageEnvelope(
+        id: id,
+        conversationId: conversationId,
+        senderAccountId: accountId,
+        senderDeviceId: deviceId,
+        idempotencyKey: idempotencyKey,
+        ciphertext: ciphertext,
+        cryptoProtocol: cryptoProtocol,
+        createdAt: createdAt,
+        cryptoMetadata: cryptoMetadata,
+        attachmentRefs: attachmentRefs,
+        replyToId: replyToId,
+        threadRootId: threadRootId,
+        editedAt: editedAt,
+        deletedAt: deletedAt,
+        expiresAt: expiresAt,
+        frankCommit: frankCommit,
+        sealedBody: sealedBody,
+        sealed: sealed,
+      );
 
   /// The C7 sealed body the server served with this envelope, or null.
   /// Untrusted: a two-part message's reference fixes its hash.
@@ -690,11 +769,21 @@ class ReceivedMessageEnvelope {
   final List<int>? frankCommit;
 
   factory ReceivedMessageEnvelope.fromJson(Map<String, Object?> json) {
+    // L2-3: the server's sealed envelope has no sender fields. The local
+    // copy of one carries the sender MLS authenticated. Whatever a sealed
+    // envelope from the server says about a sender is never read: the
+    // receive path takes it from MLS only.
+    final sealed = json['sealed'] == true;
     return ReceivedMessageEnvelope(
       id: json['id'] as String,
       conversationId: json['conversation_id'] as String,
-      senderAccountId: json['sender_account_id'] as String,
-      senderDeviceId: json['sender_device_id'] as String,
+      senderAccountId: sealed
+          ? (json['sender_account_id'] as String?) ?? ''
+          : json['sender_account_id'] as String,
+      senderDeviceId: sealed
+          ? (json['sender_device_id'] as String?) ?? ''
+          : json['sender_device_id'] as String,
+      sealed: sealed,
       idempotencyKey: json['idempotency_key'] as String,
       ciphertext: _decodeBytes(json['ciphertext']),
       cryptoProtocol: json['crypto_protocol'] as String,
@@ -745,6 +834,7 @@ class ReceivedMessageEnvelope {
           'deleted_at': deletedAt!.toUtc().toIso8601String(),
         if (expiresAt != null)
           'expires_at': expiresAt!.toUtc().toIso8601String(),
+        if (sealed) 'sealed': true,
       };
 
   static List<int> _decodeBytes(Object? value) {
@@ -1038,4 +1128,116 @@ class MemberReceipt {
       readThrough: _parseStrictOptionalTime(json['read_through']),
     );
   }
+}
+
+/// One unspent sealed sender token (ABI 26): `output` is the POPRF output
+/// for `nonce` under the conversation and UTC-day [epoch], nothing else
+/// (review M1: no per-account number the server could tag tokens with).
+class SealedToken {
+  SealedToken({
+    required this.conversationId,
+    required this.keyId,
+    required this.epoch,
+    required List<int> nonce,
+    required List<int> output,
+  })  : nonce = List<int>.unmodifiable(nonce),
+        output = List<int>.unmodifiable(output);
+
+  static const nonceBytes = 32;
+  static const outputBytes = 64;
+
+  final String conversationId;
+  final String keyId;
+  final int epoch;
+  final List<int> nonce;
+  final List<int> output;
+
+  bool get isWellFormed =>
+      conversationId.isNotEmpty &&
+      conversationId.length <= 128 &&
+      keyId.length == 32 &&
+      epoch >= 0 &&
+      nonce.length == nonceBytes &&
+      output.length == outputBytes;
+
+  /// The `token` member of `POST /api/v1/sealed/messages`.
+  Map<String, Object?> toWireJson() => <String, Object?>{
+        'key_id': keyId,
+        'epoch': epoch,
+        'nonce': base64Encode(nonce),
+        'output': base64Encode(output),
+      };
+
+  /// The local form kept inside an outbox entry (never sent as is).
+  Map<String, Object?> toLocalJson() => <String, Object?>{
+        'conversation_id': conversationId,
+        ...toWireJson(),
+      };
+
+  /// Reads [toLocalJson]. Throws [FormatException] for anything else.
+  factory SealedToken.fromLocalJson(Object? json) {
+    if (json is! Map) throw const FormatException('invalid sealed token');
+    try {
+      final token = SealedToken(
+        conversationId: json['conversation_id'] as String,
+        keyId: json['key_id'] as String,
+        epoch: json['epoch'] as int,
+        nonce: base64Decode(json['nonce'] as String),
+        output: base64Decode(json['output'] as String),
+      );
+      if (!token.isWellFormed) throw const FormatException();
+      return token;
+    } catch (_) {
+      throw const FormatException('invalid sealed token');
+    }
+  }
+
+  /// Never prints the credential.
+  @override
+  String toString() => 'SealedToken($conversationId, $epoch)';
+}
+
+/// L2-3: the POPRF suite the app's crypto core speaks.
+const String sealedSuite = 'ristretto255-SHA512';
+
+/// The server's sealed sender POPRF key (`GET /api/v1/sealed/key`).
+class SealedServerKey {
+  SealedServerKey({required this.keyId, required List<int> publicKey})
+      : publicKey = List<int>.unmodifiable(publicKey) {
+    if (keyId.length != 32 || publicKey.length != 32) {
+      throw const FormatException('invalid sealed server key');
+    }
+  }
+
+  final String keyId;
+  final List<int> publicKey;
+
+  bool sameAs(String otherKeyId, List<int> otherPublicKey) {
+    if (otherKeyId != keyId || otherPublicKey.length != publicKey.length) {
+      return false;
+    }
+    var diff = 0;
+    for (var i = 0; i < publicKey.length; i++) {
+      diff |= publicKey[i] ^ otherPublicKey[i];
+    }
+    return diff == 0;
+  }
+}
+
+/// `GET /api/v1/sealed/conversations/{id}`.
+class SealedConversationState {
+  const SealedConversationState({
+    required this.key,
+    required this.eligible,
+    required this.remaining,
+  });
+
+  final SealedServerKey key;
+
+  // No server day and no counter (review M1): the app takes the day from
+  // its own clock, so the server has no per-account value to steer tokens.
+  final bool eligible;
+
+  /// Tokens this account may still be issued today in the conversation.
+  final int remaining;
 }

@@ -19,13 +19,35 @@ class DeviceListKeyRow {
     required List<int> signingKey,
     required this.addedVersion,
     required this.removedVersion,
+    List<int>? frankKey,
   })  : deviceId = Uint8List.fromList(deviceId),
-        signingKey = Uint8List.fromList(signingKey);
+        signingKey = Uint8List.fromList(signingKey),
+        frankKey = frankKey == null ? null : Uint8List.fromList(frankKey);
 
   final Uint8List deviceId;
   final Uint8List signingKey;
   final int addedVersion;
   final int removedVersion;
+
+  /// L2-3: the X25519 franking key the chain gave this device (L1 format 2),
+  /// fixed once set; null while it has none.
+  final Uint8List? frankKey;
+
+  DeviceListKeyRow withFrankKey(List<int>? key) => DeviceListKeyRow(
+        deviceId: deviceId,
+        signingKey: signingKey,
+        addedVersion: addedVersion,
+        removedVersion: removedVersion,
+        frankKey: key,
+      );
+
+  DeviceListKeyRow removedAt(int version) => DeviceListKeyRow(
+        deviceId: deviceId,
+        signingKey: signingKey,
+        addedVersion: addedVersion,
+        removedVersion: version,
+        frankKey: frankKey,
+      );
 
   bool get listed => removedVersion == 0;
 }
@@ -43,6 +65,7 @@ class DeviceListPin {
     required this.checkedAt,
     required this.keys,
     List<int>? recoveryKey,
+    this.pinnedAt,
   })  : listHash = Uint8List.fromList(listHash),
         listId = Uint8List.fromList(listId),
         headStatement = Uint8List.fromList(headStatement),
@@ -58,7 +81,8 @@ class DeviceListPin {
           if (key.listed) key
       ];
 
-  DeviceListPin copyWith({bool? conflict, int? checkedAt}) => DeviceListPin(
+  DeviceListPin copyWith({bool? conflict, int? checkedAt, int? pinnedAt}) =>
+      DeviceListPin(
         accountId: accountId,
         version: version,
         listHash: listHash,
@@ -68,6 +92,7 @@ class DeviceListPin {
         checkedAt: checkedAt ?? this.checkedAt,
         keys: keys,
         recoveryKey: recoveryKey,
+        pinnedAt: pinnedAt ?? this.pinnedAt,
       );
 
   final String accountId;
@@ -79,6 +104,15 @@ class DeviceListPin {
   /// A sticky fork: a validly signed statement disagreed with the pin.
   final bool conflict;
   final int checkedAt;
+
+  /// Review M2: when this device first pinned the account's chain (its
+  /// clock, milliseconds since the epoch), kept as the pin advances. The
+  /// first sight is trust on first use: the server could have shown any
+  /// chain then. Null on a pin not yet stored: the store sets it to
+  /// [checkedAt] when it writes the first pin for the account. Pins from
+  /// before this field carry their last check, a later time, so they err
+  /// toward the weaker report verdict.
+  final int? pinnedAt;
   final List<DeviceListKeyRow> keys;
 
   /// What the pin says about `(deviceId, signingKey)`.
@@ -95,6 +129,25 @@ class DeviceListPin {
       if (sameDevice || sameKey) seen = true;
     }
     return seen ? PinStanding.mismatch : PinStanding.unknown;
+  }
+
+  /// L2-3: the franking key the pinned chain gave [deviceId], listed now or
+  /// removed since (a report may be older than a removal), or null.
+  Uint8List? frankKeyOf(List<int> deviceId) {
+    for (final key in keys) {
+      if (key.frankKey != null && _same(key.deviceId, deviceId)) {
+        return key.frankKey;
+      }
+    }
+    return null;
+  }
+
+  /// L2-3: the franking key the head lists for [deviceId], or null.
+  Uint8List? listedFrankKey(List<int> deviceId) {
+    for (final key in keys) {
+      if (key.listed && _same(key.deviceId, deviceId)) return key.frankKey;
+    }
+    return null;
   }
 
   /// The signing key the pin lists now for [deviceId], or null.

@@ -2449,6 +2449,21 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ова шифрована порука није могла да се пошаље. Копирајте је или је одбаците.';
 
   @override
+  String get outboxSealedRefused =>
+      'Није послато скривено: сервер није хтео да прими ову поруку без вашег имена. Пошаљите је нормално, и сервер ће видети да је од вас, или је одбаците.';
+
+  @override
+  String get chatSendNormally => 'Пошаљи нормално';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'Овај разговор ажурира шифровање. Покушајте поново за тренутак.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'Ова порука више не може да се пошаље нормално. Копирајте је или је одбаците.';
+
+  @override
   String get recoveryRestoreFailed =>
       'Овај уређај није могао да врати своју шифровану сесију. Покушајте поново или наставите на пријаву без брисања локалних података.';
 
@@ -4525,6 +4540,114 @@ class AppLocalizationsSr extends AppLocalizations {
   String channelConvertNotAdded(String names) {
     return 'Канал је сада приватан, али ови означени читаоци нису могли да буду додати: $names. Додајте их из чланова канала.';
   }
+
+  @override
+  String get c6VerdictSenderUnverified => 'Пошиљалац није потврђен';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'Порука се поклапа, али кључ пошиљаоца није могао да се провери у његовој потписаној листи уређаја.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Поклапа се, ако је сервер поштен';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'Доказ се слаже, али је овај уређај први пут добио потписану листу уређаја пошиљаоца од сервера тек пошто је ова пријава стигла. Непоштен сервер је могао да измисли ту листу и овај доказ. Сматрајте пошиљаоца непотврђеним осим ако верујете серверу.';
+
+  @override
+  String get c6VerdictNotDesignated => 'Није доказиво вама';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'Порука се поклапа, али је послата без имена и није учињена доказивом вашем тренутном кључу за пријаве. Апликација пошиљаоца није закачила ваш кључ, или сте од тада заменили кључ. Овде не може да се докаже.';
+
+  @override
+  String get c6VerdictProofFailed => 'Доказ се не слаже';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'Порука се поклапа, али њен доказ за вас се не слаже са пошиљаоцем којег наводи. Не ослањајте се на то ко ју је послао.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'На овом уређају још није закачен кључ за пријаве ниједног власника. Порука коју пошаљете без имена тада не може никоме да се докаже ако буде пријављена. Апликација закачи кључеве власника када их сервер први пут наведе.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'Порука коју пошаљете без имена може, ако буде пријављена, да се докаже само власницима чије је кључеве за пријаве ова апликација закачила: $count. Само они могу да провере доказ; он никог другог не убеђује.';
+  }
+
+  @override
+  String get l2SealedKeyTitle => 'Кључ скривеног пошиљаоца';
+
+  @override
+  String get l2SealedKeyTile => 'Поруке без вашег имена';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'Овај сервер потписује токене који омогућавају да ваше поруке стигну до њега без вашег имена. Апликација је запамтила његов кључ када га је први пут видела.';
+
+  @override
+  String get l2SealedKeyOff => 'Овај сервер не нуди скривеног пошиљаоца.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'Још нема запамћеног кључа. Биће запамћен при следећој синхронизацији.';
+
+  @override
+  String get l2SealedKeyPinned => 'Запамћени кључ';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'Сервер сада показује други кључ. Док га не прихватите, ваше поруке се шаљу са вашим именом, као раније.';
+
+  @override
+  String get l2SealedKeyNew => 'Нови кључ';
+
+  @override
+  String get l2SealedKeyAccept => 'Прихвати нови кључ';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Прихватите само ако вам је оператер сервера рекао да се кључ променио. Кључ направљен само за вас омогућио би серверу да ваше поруке разликује од туђих.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'Кључеви власника за пријаве су се променили. Прегледајте их.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'Списак кључева власника за пријаве на серверу разликује се од кључева које је ова апликација закачила. Док не прихватите промену, порука коју пошаљете без имена може да се докаже само раније закаченим власницима.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Власник $account има други кључ за пријаве.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Власник $account је нов.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Власник $account више није на списку.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Прихвати';
+
+  @override
+  String get l2OwnerKeyReject => 'Одбиј';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Прихватите само ако знате да су се власници или њихови кључеви променили. Ко има овај кључ може да провери ко је послао поруку без вашег имена ако му је покажу. Пријаве се никад не шаљу кључу прихваћеном овде; пријава тражи да упоредите кодове.';
+
+  @override
+  String get l2OwnerKeyStale =>
+      'Списак се у међувремену променио. Погледајте га поново.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6975,6 +7098,21 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ova šifrovana poruka nije mogla da se pošalje. Kopirajte je ili je odbacite.';
 
   @override
+  String get outboxSealedRefused =>
+      'Nije poslato skriveno: server nije hteo da primi ovu poruku bez vašeg imena. Pošaljite je normalno, i server će videti da je od vas, ili je odbacite.';
+
+  @override
+  String get chatSendNormally => 'Pošalji normalno';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'Ovaj razgovor ažurira šifrovanje. Pokušajte ponovo za trenutak.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'Ova poruka više ne može da se pošalje normalno. Kopirajte je ili je odbacite.';
+
+  @override
   String get recoveryRestoreFailed =>
       'Ovaj uređaj nije mogao da vrati svoju šifrovanu sesiju. Pokušajte ponovo ili nastavite na prijavu bez brisanja lokalnih podataka.';
 
@@ -9053,4 +9191,112 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String channelConvertNotAdded(String names) {
     return 'Kanal je sada privatan, ali ovi označeni čitaoci nisu mogli da budu dodati: $names. Dodajte ih iz članova kanala.';
   }
+
+  @override
+  String get c6VerdictSenderUnverified => 'Pošiljalac nije potvrđen';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'Poruka se poklapa, ali ključ pošiljaoca nije mogao da se proveri u njegovoj potpisanoj listi uređaja.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Poklapa se, ako je server pošten';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'Dokaz se slaže, ali je ovaj uređaj prvi put dobio potpisanu listu uređaja pošiljaoca od servera tek pošto je ova prijava stigla. Nepošten server je mogao da izmisli tu listu i ovaj dokaz. Smatrajte pošiljaoca nepotvrđenim osim ako verujete serveru.';
+
+  @override
+  String get c6VerdictNotDesignated => 'Nije dokazivo vama';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'Poruka se poklapa, ali je poslata bez imena i nije učinjena dokazivom vašem trenutnom ključu za prijave. Aplikacija pošiljaoca nije zakačila vaš ključ, ili ste od tada zamenili ključ. Ovde ne može da se dokaže.';
+
+  @override
+  String get c6VerdictProofFailed => 'Dokaz se ne slaže';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'Poruka se poklapa, ali njen dokaz za vas se ne slaže sa pošiljaocem kojeg navodi. Ne oslanjajte se na to ko ju je poslao.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'Na ovom uređaju još nije zakačen ključ za prijave nijednog vlasnika. Poruka koju pošaljete bez imena tada ne može nikome da se dokaže ako bude prijavljena. Aplikacija zakači ključeve vlasnika kada ih server prvi put navede.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'Poruka koju pošaljete bez imena može, ako bude prijavljena, da se dokaže samo vlasnicima čije je ključeve za prijave ova aplikacija zakačila: $count. Samo oni mogu da provere dokaz; on nikog drugog ne ubeđuje.';
+  }
+
+  @override
+  String get l2SealedKeyTitle => 'Ključ skrivenog pošiljaoca';
+
+  @override
+  String get l2SealedKeyTile => 'Poruke bez vašeg imena';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'Ovaj server potpisuje tokene koji omogućavaju da vaše poruke stignu do njega bez vašeg imena. Aplikacija je zapamtila njegov ključ kada ga je prvi put videla.';
+
+  @override
+  String get l2SealedKeyOff => 'Ovaj server ne nudi skrivenog pošiljaoca.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'Još nema zapamćenog ključa. Biće zapamćen pri sledećoj sinhronizaciji.';
+
+  @override
+  String get l2SealedKeyPinned => 'Zapamćeni ključ';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'Server sada pokazuje drugi ključ. Dok ga ne prihvatite, vaše poruke se šalju sa vašim imenom, kao ranije.';
+
+  @override
+  String get l2SealedKeyNew => 'Novi ključ';
+
+  @override
+  String get l2SealedKeyAccept => 'Prihvati novi ključ';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Prihvatite samo ako vam je operater servera rekao da se ključ promenio. Ključ napravljen samo za vas omogućio bi serveru da vaše poruke razlikuje od tuđih.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'Ključevi vlasnika za prijave su se promenili. Pregledajte ih.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'Spisak ključeva vlasnika za prijave na serveru razlikuje se od ključeva koje je ova aplikacija zakačila. Dok ne prihvatite promenu, poruka koju pošaljete bez imena može da se dokaže samo ranije zakačenim vlasnicima.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Vlasnik $account ima drugi ključ za prijave.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Vlasnik $account je nov.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Vlasnik $account više nije na spisku.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Prihvati';
+
+  @override
+  String get l2OwnerKeyReject => 'Odbij';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ko ima ovaj ključ može da proveri ko je poslao poruku bez vašeg imena ako mu je pokažu. Prijave se nikad ne šalju ključu prihvaćenom ovde; prijava traži da uporedite kodove.';
+
+  @override
+  String get l2OwnerKeyStale =>
+      'Spisak se u međuvremenu promenio. Pogledajte ga ponovo.';
 }
