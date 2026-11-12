@@ -161,18 +161,116 @@ extension RoleActions on AppState {
         },
       );
 
-  /// Votes for [candidate]; the deciding vote makes them owner.
-  Future<bool> voteForOwner(String conversationId, String candidate) =>
-      _roleCommand(
-        conversationId,
-        (commands, observed, now) {
-          if (observed == null) {
-            throw const GovernanceCommandException(
-                'missing_election_observation');
-          }
-          return commands.vote(candidate, observed, now);
-        },
-      );
+  /// Votes for [candidate]; the deciding vote makes them owner. The server's
+  /// owner row then follows through [reconcileServerOwners].
+  Future<bool> voteForOwner(String conversationId, String candidate) {
+    String? heir;
+    return _roleCommand(
+      conversationId,
+      (commands, observed, now) {
+        if (observed == null) {
+          throw const GovernanceCommandException(
+              'missing_election_observation');
+        }
+        final next = commands.vote(candidate, observed, now);
+        if (next.owner case final owner? when owner != commands.state.owner) {
+          heir = governanceSuccessionValue(next.rev, owner);
+        }
+        return next;
+      },
+      // The deciding vote: the next sync pass, once this commit is merged,
+      // asks the server too.
+      server: (current, client) async {
+        final group = recordGroupFor(conversationId);
+        if (heir == null || group == null) return;
+        await localStore.saveSetting(governanceSuccessionSetting(group), heir!);
+      },
+    );
+  }
+
+  /// How often a record owner whose server row still names someone else
+  /// asks again (the server may still be waiting for the owner's quiet time
+  /// or for other admins).
+  static const Duration successionRetry = Duration(hours: 6);
+
+  /// C4 server succession (docs/designs/C4-custom-roles.md, "Server
+  /// succession"): the server's owner row follows the verified record. Each
+  /// sync pass, for every record group this device belongs to:
+  ///
+  /// - a won election or claim it saw (saved with that commit) is asked for
+  ///   once: as an admin, a vote for the move; as the server's owner, the
+  ///   transfer itself;
+  /// - while the record names this account owner and the server does not,
+  ///   it asks for itself every [successionRetry].
+  ///
+  /// The server decides by its own rule; a refusal is final for that ask and
+  /// never changes the record or the roles apps use.
+  Future<void> reconcileServerOwners() async {
+    final current = session;
+    final client = api;
+    final crypto = _roleCrypto;
+    final self = current?.accountId;
+    if (current == null || client == null || crypto == null || self == null) {
+      return;
+    }
+    for (final conversation in List<Conversation>.of(conversations)) {
+      if (!(conversation.isGroup || conversation.isCommunityShared)) continue;
+      final id = conversation.id;
+      final setting = governanceSuccessionSetting(id);
+      final saved = await localStore.loadSetting(setting);
+      final parsed = parseGovernanceSuccessionValue(saved);
+      final GovernanceView? view;
+      try {
+        view = await crypto.governanceView(id);
+      } catch (_) {
+        continue;
+      }
+      final owner = view?.record.owner;
+      if (view == null || owner == null) continue;
+      // Not merged here yet (this device's own deciding vote): wait.
+      if (parsed != null && view.record.rev < parsed.rev) continue;
+      final pending = parsed != null && parsed.owner == owner ? owner : null;
+      if (saved != null && saved.isNotEmpty && pending == null) {
+        // Malformed, or a later commit moved ownership again: stale.
+        await localStore.saveSetting(setting, '');
+      }
+      String? candidate = pending;
+      if (candidate == null &&
+          owner == self &&
+          conversation.currentRole != 'owner') {
+        final last = _successionAskedAt[id];
+        final now = DateTime.now();
+        if (last == null || now.difference(last) >= successionRetry) {
+          _successionAskedAt[id] = now;
+          candidate = self;
+        }
+      }
+      if (candidate == null) continue;
+      final communityId = conversation.isCommunityShared
+          ? (conversation.communityId ??
+              communities
+                  .where((c) => c.sharedConversationId == id)
+                  .firstOrNull
+                  ?.id)
+          : null;
+      if (conversation.isCommunityShared && communityId == null) continue;
+      try {
+        await client.requestOwnerSuccession(
+          current.token,
+          conversationId: communityId == null ? id : null,
+          communityId: communityId,
+          candidateAccountId: candidate,
+        );
+      } on ApiException catch (err) {
+        if (err.statusCode == 401) rethrow;
+        // A refusal is final for this ask; anything else is retried.
+        if (err.statusCode != 403 && err.statusCode != 404) continue;
+      } catch (_) {
+        continue;
+      }
+      if (pending != null) await localStore.saveSetting(setting, '');
+    }
+  }
 
   /// The owner's cancel, or a snapshot member's close.
   Future<bool> closeOwnerElection(String conversationId) => _roleCommand(
@@ -231,6 +329,17 @@ extension RoleActions on AppState {
           'Transfer ownership to an admin before you leave.');
     }
     if (!removalNeedsProof(view.record, self)) return;
+    // C4 (review MEDIUM, round 7): members drop this account's leave proof
+    // when one of its leaves commits after it arrived (that is how a
+    // cancelled leave is voided). A commit of this device's still queued
+    // must therefore go before the proof, or it would void a real leave.
+    // Nothing is sent until the queue is empty, so a refusal here costs no
+    // leave notice.
+    await _settleMlsOutbox();
+    if (await _hasPendingMlsWork(group)) {
+      throw const UserFacingException(
+          'Could not tell the group you are leaving. Try again.');
+    }
     String? channelId;
     final conversation = conversations.where((c) => c.id == group).firstOrNull;
     if (conversation != null && conversation.isCommunityShared) {
@@ -257,6 +366,89 @@ extension RoleActions on AppState {
     if (waiting) {
       throw const UserFacingException(
           'Could not tell the group you are leaving. Try again.');
+    }
+    // C4 leave proof in the commit (ABI 24): the signed statement a
+    // committer carries in the removal for members that join after this.
+    // Best effort: the member_leave above is the proof today's members
+    // hold, and the leave goes on without it.
+    try {
+      if (await _sendPayload(
+          group, AppPayloadType.memberLeaveSigned, const <String, Object?>{},
+          channelId: channelId)) {
+        await _flushOutbox();
+      }
+    } catch (err) {
+      developer.log('c4_leave_signed_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }
+  }
+
+  void _voidCancelledLeavesSoon() {
+    final current = session;
+    if (current == null) return;
+    unawaited(_voidCancelledLeaves(current, _sessionGeneration)
+        .catchError((Object err) {
+      developer.log('c4_leave_void_failed ${err.runtimeType}',
+          name: 'veritra.sync');
+    }));
+  }
+
+  /// C4 leave proof in the commit: a leave this device signed that did not
+  /// go through (the server refused it, the app stopped) leaves a statement
+  /// any committer could use for as long as this leaf is unchanged. A
+  /// self-update voids it; until one of this device's self-updates merges
+  /// in that group (which clears the marker), every sync pass tries again.
+  Future<void> _voidCancelledLeaves(
+      Session current, int ownerGeneration) async {
+    final service = cryptoService;
+    final crypto = service is MlsSelfUpdateCryptoService
+        ? service as MlsSelfUpdateCryptoService
+        : null;
+    if (crypto == null) return;
+    for (final conversation in conversations.toList()) {
+      final id = conversation.id;
+      if (!(conversation.isGroup || conversation.isCommunityShared) ||
+          _leavingRecordGroups.contains(id)) {
+        continue;
+      }
+      final marker =
+          await localStore.loadSetting(governanceLeaveSignedOutSetting(id));
+      if (marker == null || marker.isEmpty) continue;
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      // A self-update already queued there settles it once it merges. The
+      // void has its own spacing, not the periodic policy's backoff: the
+      // server lets it past the self-update interval for an hour after the
+      // leave notice (owner decision A), so a backoff left by an unrelated
+      // periodic refusal must not hold it back. A refused or failed void
+      // waits [AppState.leaveVoidRetry] before the next try.
+      final now = DateTime.now().toUtc();
+      final notBefore = _leaveVoidNotBefore[id];
+      if (await _hasPendingMlsWork(id) ||
+          (notBefore != null && notBefore.isAfter(now))) {
+        continue;
+      }
+      _leaveVoidNotBefore[id] = now.add(AppState.leaveVoidRetry);
+      try {
+        await crypto.stageSelfUpdate(id);
+      } catch (err) {
+        _leaveVoidNotBefore[id] = now.add(MlsSelfUpdatePolicy.failureBackoff);
+        developer.log('c4_leave_void_failed ${err.runtimeType}',
+            name: 'veritra.sync');
+        continue;
+      }
+      await _flushMlsOutbox();
+    }
+  }
+
+  /// The server took this account out of [group]: the leave statement it
+  /// signed there needs no voiding. Empty reads as absent (a setting cannot
+  /// be deleted from here; a Welcome or a self-update deletes it).
+  Future<void> _leaveWentThrough(String group) async {
+    try {
+      await localStore.saveSetting(governanceLeaveSignedOutSetting(group), '');
+    } catch (err) {
+      developer.log('c4_leave_marker_failed ${err.runtimeType}',
+          name: 'veritra.sync');
     }
   }
 
@@ -308,5 +500,6 @@ extension RoleActions on AppState {
       timer.cancel();
     }
     _ownerCancelTimers.clear();
+    _successionAskedAt.clear();
   }
 }

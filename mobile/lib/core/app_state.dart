@@ -86,6 +86,7 @@ import '../crypto/profile_record_codec.dart'
     show ProfileRecordException, ProfilePhoto;
 import 'passkeys.dart';
 import 'receipts_state.dart';
+import 'report_key_announcer.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
 import 'typing_state.dart';
@@ -236,6 +237,9 @@ class Ops {
 
   /// C3: background community info sends (keys, requests, announcements).
   static const communityInfo = 'community_info';
+
+  /// C6: background moderator report key announcements and requests.
+  static const reportKeys = 'report_keys';
   static const blocks = 'blocks';
   static const profile = 'profile';
   static const mute = 'mute';
@@ -465,7 +469,34 @@ class AppState extends ChangeNotifier
   /// C4: the owner's automatic election cancels waiting out their random
   /// delay, by record group ([RoleActions]).
   final Map<String, Timer> _ownerCancelTimers = <String, Timer>{};
+
+  /// C4 leave proof in the commit: record groups this device is leaving
+  /// right now (between its signed leave statement and the server's
+  /// answer), which the sync pass must not void with a self-update.
+  final Set<String> _leavingRecordGroups = <String>{};
+
+  /// C4: when each group's next void of a cancelled leave may be tried
+  /// (`_voidCancelledLeaves`). In memory: a restart tries again at once.
+  final Map<String, DateTime> _leaveVoidNotBefore = <String, DateTime>{};
+
+  /// The spacing between two tries to void one cancelled leave.
+  static const leaveVoidRetry = Duration(minutes: 10);
+
+  /// C6: this account's report public key on this device (canonical base64,
+  /// '' when it holds no seed), cached per server and account so a sync
+  /// pass reads the keystore once. Cleared when the seed changes.
+  ({String baseUrl, String accountId, String key})? _reportKeyMemo;
+
+  /// C6: record groups where the server does not list this device's key as
+  /// this account's moderator inbox, by key: nothing is announced there
+  /// until the seed changes (one lookup per session, not per pass).
+  final Map<String, String> _reportKeyUnlisted = <String, String>{};
+  bool _reportKeyAnnouncing = false;
   final Random _ownerCancelRandom = Random.secure();
+
+  /// C4 server succession: when this device last asked the server to make
+  /// it the owner of a record group it owns by the record ([RoleActions]).
+  final Map<String, DateTime> _successionAskedAt = <String, DateTime>{};
 
   /// Kinds of conversations whose MLS group this device is creating before
   /// they are in [conversations] (C4: the creator's own kind decides
@@ -481,6 +512,10 @@ class AppState extends ChangeNotifier
   DateTime? _lastInfoRefresh;
   final Map<String, bool> _infoAdminOf = {};
   final Map<String, Future<void>> _infoPublishing = {};
+
+  /// Private channels' conversations with a key renewal that no member can
+  /// run: no verified owner or admin is in the channel (C3, D115).
+  Set<String> _infoRenewalStuck = const <String>{};
 
   /// Wakes the info pass when a deferred remote-removal rotation's turn
   /// comes (C3, "Remote removals: who rotates"). Foreground only.
@@ -829,9 +864,14 @@ class AppState extends ChangeNotifier
   bool _k1RerunRequested = false;
   Timer? _k1Timer;
 
-  /// Where the second copy goes (K1-5); tests replace it.
+  /// Where the second copy goes (K1-5): a desktop folder, or an Android
+  /// document tree through the channel. Tests replace it.
   @visibleForTesting
-  K1SecondCopyWriter k1SecondCopyWriter = const FileK1SecondCopyWriter();
+  K1SecondCopyWriter k1SecondCopyWriter = const PlatformK1SecondCopyWriter();
+
+  /// The phone second-copy channel (Android folder pick, iOS export).
+  @visibleForTesting
+  K1SecondCopyChannel k1SecondCopyChannel = const K1SecondCopyChannel();
 
   /// The clock K1 schedules read; tests move it.
   @visibleForTesting
@@ -1008,6 +1048,10 @@ class AppState extends ChangeNotifier
   Timer? _outboxRetryTimer;
   bool _flushingMlsOutbox = false;
   bool _flushMlsOutboxRequested = false;
+
+  /// Completes when the MLS outbox pass running now (with the repeats asked
+  /// for while it ran) ends; null while none runs.
+  Completer<void>? _mlsOutboxPassDone;
   Timer? _mlsOutboxRetryTimer;
   Timer? _catchUpRetryTimer;
   Timer? _expiryTimer;
@@ -2975,30 +3019,40 @@ class AppState extends ChangeNotifier
 
   /// Leaves a conversation and drops its local state.
   Future<bool> leaveConversation(String conversationId) async {
-    // C4: before the leave, outside the members op (it sends).
-    final owner = session;
-    if (owner != null) {
-      try {
-        await _beforeLeavingRecordGroup(owner, conversationId);
-      } on UserFacingException catch (err) {
-        _opErrors[Ops.members] = err.message;
-        notifyListeners();
-        return false;
+    final group = recordGroupFor(conversationId) ?? conversationId;
+    _leavingRecordGroups.add(group);
+    try {
+      // C4: before the leave, outside the members op (it sends).
+      final owner = session;
+      if (owner != null) {
+        try {
+          await _beforeLeavingRecordGroup(owner, conversationId);
+        } on UserFacingException catch (err) {
+          _opErrors[Ops.members] = err.message;
+          notifyListeners();
+          return false;
+        }
       }
+      return await _runScoped(Ops.members, () async {
+        final current = session;
+        final client = api;
+        if (current == null || client == null) {
+          return;
+        }
+        final leaveEventId = await client.removeConversationMember(
+          current.token,
+          conversationId,
+          'me',
+        );
+        await _dropLeftConversationLocally(
+            current, conversationId, leaveEventId);
+        await _leaveWentThrough(group);
+      });
+    } finally {
+      _leavingRecordGroups.remove(group);
+      // A leave that did not go through voids its signed statement.
+      _voidCancelledLeavesSoon();
     }
-    return _runScoped(Ops.members, () async {
-      final current = session;
-      final client = api;
-      if (current == null || client == null) {
-        return;
-      }
-      final leaveEventId = await client.removeConversationMember(
-        current.token,
-        conversationId,
-        'me',
-      );
-      await _dropLeftConversationLocally(current, conversationId, leaveEventId);
-    });
   }
 
   /// Drops the local state of a conversation the server has just taken this
@@ -4352,6 +4406,14 @@ class AppState extends ChangeNotifier
   bool sendHeldForRemoval(String conversationId) =>
       _removalHolds.containsKey(conversationId);
 
+  /// Marks [conversationId] as a private channel whose key renewal has no
+  /// admin to run it (C3, D115), for widget tests.
+  @visibleForTesting
+  void debugKeyRenewalStuck(Set<String> conversationIds) {
+    _infoRenewalStuck = Set<String>.of(conversationIds);
+    notifyListeners();
+  }
+
   /// Holds sends to [conversationId] as a removal would, for widget tests.
   @visibleForTesting
   void debugHoldSendsForRemoval(String conversationId) {
@@ -4671,8 +4733,11 @@ class AppState extends ChangeNotifier
     // C3 info payloads are background work: their failures land under
     // their own op, never in the composer's send error.
     return _runScoped(
-        infoPayloadTypes.contains(type) ? Ops.communityInfo : Ops.send,
-        () async {
+        infoPayloadTypes.contains(type)
+            ? Ops.communityInfo
+            : reportKeyPayloadTypes.contains(type)
+                ? Ops.reportKeys
+                : Ops.send, () async {
       if (!_syncOwnerActive(owner, ownerGeneration)) return;
       final current = session;
       final client = api;
@@ -4720,12 +4785,8 @@ class AppState extends ChangeNotifier
       // when the conversation has a disappearing timer and the service can
       // carry it; otherwise the payload has none and receivers fall back to
       // the server-stamped time.
-      final retention = conversation.retentionSeconds;
-      // C3 info payloads never expire: a key must outlive the timer.
-      final DateTime? senderExpiry =
-          retention != null && retention > 0 && !infoPayloadTypes.contains(type)
-              ? DateTime.now().toUtc().add(Duration(seconds: retention))
-              : null;
+      final DateTime? senderExpiry = senderExpiryFor(
+          type, conversation.retentionSeconds, DateTime.now().toUtc());
       final Object? expiringService = mls;
       if (mls != null &&
           senderExpiry != null &&
@@ -6144,6 +6205,7 @@ class AppState extends ChangeNotifier
       if (wake == null) {
         await _dropLeftConversations(current, ownerGeneration);
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
+        _queueDueHeldPauses();
         await _replayRequestedPauses(current, client, ownerGeneration);
         if (!mayRun() || !_syncOwnerActive(current, ownerGeneration)) return;
       }
@@ -6395,10 +6457,22 @@ class AppState extends ChangeNotifier
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         try {
+          await _voidCancelledLeaves(current, ownerGeneration);
           await _maybeSelfUpdate(current, ownerGeneration);
           await _scheduleOwnerCancels();
+          await reconcileServerOwners();
+          // C6: announce this moderator's report key where it is due. Not
+          // awaited, like the C3 refresh: sending never holds up sync.
+          unawaited(_announceReportKeys());
         } catch (err) {
           // A self-update is optional; it never blocks sync.
+          if (err is ApiException && err.statusCode == 401) rethrow;
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
+        try {
+          await _sendOwnDeviceAlerts(current, ownerGeneration);
+        } catch (err) {
+          // L2-5: an alert is retried on the next pass; it never blocks sync.
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -6703,6 +6777,18 @@ class AppState extends ChangeNotifier
     if (pause == null || !pause.retryable) return;
     _pauseReplayRequests.add(conversationId);
     await _catchUpSyncEvents();
+  }
+
+  /// Queues every held C4 commit whose backoff has run out for replay in
+  /// this pass ([ConversationPause.heldRetryDue]). Other pauses replay only
+  /// on an explicit retry.
+  void _queueDueHeldPauses() {
+    final now = DateTime.now().toUtc();
+    for (final pause in conversationPauses.values) {
+      if (pause.heldRetryDue(now)) {
+        _pauseReplayRequests.add(pause.conversationId);
+      }
+    }
   }
 
   Future<void> _replayRequestedPauses(
@@ -7273,6 +7359,11 @@ class AppState extends ChangeNotifier
             throw failure(SyncFailureKind.localStorage, err);
           }
           if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
+          // C4: a commit waiting for evidence pauses only its
+          // conversation, and sync applies it again by itself.
+          if (err is GovernanceHeldException) {
+            throw failure(SyncFailureKind.governanceHeld);
+          }
           throw failure(err is FormatException
               ? SyncFailureKind.mlsControlMalformed
               : SyncFailureKind.mlsState);
@@ -8163,6 +8254,7 @@ class AppState extends ChangeNotifier
       return;
     }
     _flushingMlsOutbox = true;
+    final done = _mlsOutboxPassDone = Completer<void>();
     try {
       do {
         _flushMlsOutboxRequested = false;
@@ -8178,6 +8270,8 @@ class AppState extends ChangeNotifier
       } while (_flushMlsOutboxRequested && !_disposed);
     } finally {
       _flushingMlsOutbox = false;
+      _mlsOutboxPassDone = null;
+      done.complete();
       unawaited(_scheduleMlsOutboxRetry());
       // Application messages held behind a control message may go now.
       unawaited(_flushOutbox());
@@ -8390,9 +8484,12 @@ class AppState extends ChangeNotifier
     final holdSeq = _removalHoldSeq;
     final changes = await client.mlsPendingChanges(current.token);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
-    _l1Joins.reported = <String>{
-      for (final change in changes) change.conversationId,
-    };
+    // Only conversations whose discovery finishes in this pass count as
+    // covered (review fix): a change listed at a stale epoch, still backing
+    // off or waiting for its coordinator is skipped here, and the audit
+    // must not skip it as well.
+    final covered = <String>{};
+    _l1Joins.reported = covered;
     await _loadMissingJoins(current);
     if (!_syncOwnerActive(current, ownerGeneration)) return;
     final now = DateTime.now().toUtc();
@@ -8408,6 +8505,10 @@ class AppState extends ChangeNotifier
       if (_mlsChangeWaiting(change.conversationId, change.epoch, now)) {
         continue;
       }
+      // C4: a commit of this device's own while it leaves would void the
+      // leave proof it just sent (receivers drop it on the leaver's next
+      // commit). Another member commits it, or the next pass does.
+      if (_leavingRecordGroups.contains(change.conversationId)) continue;
       // The device that made the change commits it too, without waiting.
       final coordinator = change.coordinatorDeviceId == null ||
           change.coordinatorDeviceId == current.deviceId ||
@@ -8435,8 +8536,10 @@ class AppState extends ChangeNotifier
         if (discovery != null) {
           try {
             discovered = await _discoverApprovedAdds(
-                current, client, discovery, change.conversationId);
+                current, client, discovery, change.conversationId,
+                removing: {for (final ref in change.remove) ref.accountId});
             discoveryComplete = true;
+            covered.add(change.conversationId);
           } catch (err) {
             if (err is ApiException && err.statusCode == 401) rethrow;
             if (change.remove.isEmpty) rethrow;
@@ -8544,12 +8647,18 @@ class AppState extends ChangeNotifier
       ApiClient client,
       ApprovedDeviceDiscoveryCryptoService discovery,
       String conversationId,
-      {bool creating = false}) async {
+      {bool creating = false,
+      Set<String> removing = const <String>{}}) async {
     final members =
         await client.conversationMembers(current.token, conversationId);
+    final memberIds = {for (final member in members) member.accountId};
+    // Accounts that already hold a leaf are examined as well (the native
+    // call adds them), except one this change removes from the
+    // conversation: a departing account never gains a device. A device
+    // revoke keeps its account in the list, so its siblings still join.
     final missing = await discovery.missingApprovedDevices(
-        creating ? null : conversationId,
-        members.map((member) => member.accountId));
+        creating ? null : conversationId, memberIds,
+        excluding: removing.difference(memberIds));
     // The server and native commit format cap each bundle at 256 changes.
     return missing.take(256).toList();
   }
@@ -9467,6 +9576,8 @@ class AppState extends ChangeNotifier
         // (or a declined one) and a DM with a blocked peer get none, as
         // they get no read receipt. Their records stay for later.
         if (!_selfUpdateAllowed(conversationId)) continue;
+        // C4: an update now would void the leave statement just sent.
+        if (_leavingRecordGroups.contains(conversationId)) continue;
         if (_revocationPendingGroups.contains(conversationId) ||
             _failedMlsConversations.contains(conversationId) ||
             await _hasPendingMlsWork(conversationId)) {
@@ -9518,6 +9629,14 @@ class AppState extends ChangeNotifier
     if (conversation == null || !conversation.isDm) return conversation != null;
     final peer = conversation.peerAccountId;
     return blocksLoaded && peer != null && !isBlocked(peer);
+  }
+
+  /// Sends what the MLS outbox holds and waits for it, including a pass
+  /// that was already running (a second flush only asks it to go again).
+  Future<void> _settleMlsOutbox() async {
+    await _flushMlsOutbox();
+    final running = _mlsOutboxPassDone;
+    if (running != null) await running.future;
   }
 
   /// Whether MLS work for [conversationId] must wait: control messages

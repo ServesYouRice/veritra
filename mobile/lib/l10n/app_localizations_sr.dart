@@ -760,11 +760,14 @@ class AppLocalizationsSr extends AppLocalizations {
   String get searchClear => 'Обриши претрагу';
 
   @override
+  String get searchLookUpAccount => 'Потражи ово корисничко име';
+
+  @override
   String get searchIntroTitle => 'Претражите људе и заједнице';
 
   @override
   String get searchIntroMessage =>
-      'Заједнице и канали се проналазе по називу на овом уређају. Особе се проналазе на серверу само по тачном корисничком имену. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
+      'Заједнице и канали се проналазе на овом уређају док куцате. Притисните Enter да потражите тачно корисничко име на серверу. Садржај порука је шифрован с краја на крај и на серверу се никада не може претраживати.';
 
   @override
   String get searchNoResultsTitle => 'Нема резултата';
@@ -1957,6 +1960,19 @@ class AppLocalizationsSr extends AppLocalizations {
       'Сакривена је порука са уређаја који није одобрен.';
 
   @override
+  String get chatKeyRenewalNoAdmin =>
+      'Ниједан администратор ни модератор у овом каналу не може да обнови његов кључ; замолите неког од њих да се придружи.';
+
+  @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Послато са уређаја који је уклоњен са налога корисника $name';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice =>
+      'Послато са уређаја који сте уклонили';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Неки уређаји корисника $name се још нису придружили.';
   }
@@ -2038,6 +2054,10 @@ class AppLocalizationsSr extends AppLocalizations {
   @override
   String get chatSyncPausedNotice =>
       'Поруке у овом разговору су паузиране: ажурирање шифровања није могло да се примени. Ниједна порука није прескочена, а остали разговори и даље раде.';
+
+  @override
+  String get chatSyncHeldNotice =>
+      'Поруке у овом разговору чекају: промена чланства или улоге тражи потврду коју овај уређај још нема. Поново се проверава аутоматски. Ниједна порука није прескочена, а остали разговори и даље раде.';
 
   @override
   String get chatRemovalHoldNotice =>
@@ -3624,6 +3644,20 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ова заједница нема проверене улоге, па апликација не зна ко су њени модератори.';
 
   @override
+  String get c6ReportModeratorKeysPending =>
+      'Кључ ниједног модератора још није стигао на овај уређај. Кључеви стижу преко заједнице. Покушај поново касније.';
+
+  @override
+  String c6ReportModeratorCount(int count) {
+    return 'Модератора који добијају копију: $count';
+  }
+
+  @override
+  String c6ReportModeratorsUnconfirmed(int count) {
+    return 'Модератора чији кључ још није стигао на овај уређај и који не добијају копију: $count';
+  }
+
+  @override
   String get c6ReportNoOwnerKey =>
       'Ниједан власник сервера још не може да прима пријаве. Замоли га да подеси кључ за пријаве.';
 
@@ -3939,8 +3973,36 @@ class AppLocalizationsSr extends AppLocalizations {
   String get k1SecondCopyOff => 'Заустави другу копију';
 
   @override
-  String get k1SecondCopyPhone =>
-      'Друга копија у фасцикли је доступна на рачунару. Телефони чувају копију само на серверу.';
+  String get k1SecondCopyUnavailable =>
+      'Овај уређај не може да чува другу копију. Копија остаје на серверу.';
+
+  @override
+  String get k1SecondCopyChosenFolder =>
+      'Друга копија: фасцикла коју сте изабрали';
+
+  @override
+  String get k1SecondCopyPickFailed =>
+      'Та фасцикла не може да се користи. Изаберите другу.';
+
+  @override
+  String get k1SecondCopySave => 'Сачувај копију';
+
+  @override
+  String get k1SecondCopySaveDetail =>
+      'Чува најновију копију са овог телефона где изаберете. Отвара је само кључ за опоравак. Сачувајте је поново с времена на време: ова копија се не ажурира сама.';
+
+  @override
+  String k1SecondCopySavedAt(String date) {
+    return 'Копија сачувана $date';
+  }
+
+  @override
+  String get k1SecondCopyNoneYet =>
+      'Са овог телефона још нема копије. Направите копију сада, па је онда сачувајте.';
+
+  @override
+  String get k1SecondCopySaveFailed =>
+      'Копија није сачувана. Покушајте поново.';
 
   @override
   String get recoveryFollowUpRestoreDetail =>
@@ -5117,11 +5179,14 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get searchClear => 'Obriši pretragu';
 
   @override
+  String get searchLookUpAccount => 'Potraži ovo korisničko ime';
+
+  @override
   String get searchIntroTitle => 'Pretražite ljude i zajednice';
 
   @override
   String get searchIntroMessage =>
-      'Zajednice i kanali se pronalaze po nazivu na ovom uređaju. Osobe se pronalaze na serveru samo po tačnom korisničkom imenu. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
+      'Zajednice i kanali se pronalaze na ovom uređaju dok kucate. Pritisnite Enter da potražite tačno korisničko ime na serveru. Sadržaj poruka je šifrovan s kraja na kraj i na serveru se nikada ne može pretraživati.';
 
   @override
   String get searchNoResultsTitle => 'Nema rezultata';
@@ -6314,6 +6379,19 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Sakrivena je poruka sa uređaja koji nije odobren.';
 
   @override
+  String get chatKeyRenewalNoAdmin =>
+      'Nijedan administrator ni moderator u ovom kanalu ne može da obnovi njegov ključ; zamolite nekog od njih da se pridruži.';
+
+  @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Poslato sa uređaja koji je uklonjen sa naloga korisnika $name';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice =>
+      'Poslato sa uređaja koji ste uklonili';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Neki uređaji korisnika $name se još nisu pridružili.';
   }
@@ -6395,6 +6473,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get chatSyncPausedNotice =>
       'Poruke u ovom razgovoru su pauzirane: ažuriranje šifrovanja nije moglo da se primeni. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.';
+
+  @override
+  String get chatSyncHeldNotice =>
+      'Poruke u ovom razgovoru čekaju: promena članstva ili uloge traži potvrdu koju ovaj uređaj još nema. Ponovo se proverava automatski. Nijedna poruka nije preskočena, a ostali razgovori i dalje rade.';
 
   @override
   String get chatRemovalHoldNotice =>
@@ -7985,6 +8067,20 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ova zajednica nema proverene uloge, pa aplikacija ne zna ko su njeni moderatori.';
 
   @override
+  String get c6ReportModeratorKeysPending =>
+      'Ključ nijednog moderatora još nije stigao na ovaj uređaj. Ključevi stižu preko zajednice. Pokušaj ponovo kasnije.';
+
+  @override
+  String c6ReportModeratorCount(int count) {
+    return 'Moderatora koji dobijaju kopiju: $count';
+  }
+
+  @override
+  String c6ReportModeratorsUnconfirmed(int count) {
+    return 'Moderatora čiji ključ još nije stigao na ovaj uređaj i koji ne dobijaju kopiju: $count';
+  }
+
+  @override
   String get c6ReportNoOwnerKey =>
       'Nijedan vlasnik servera još ne može da prima prijave. Zamoli ga da podesi ključ za prijave.';
 
@@ -8301,8 +8397,36 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get k1SecondCopyOff => 'Zaustavi drugu kopiju';
 
   @override
-  String get k1SecondCopyPhone =>
-      'Druga kopija u fascikli je dostupna na računaru. Telefoni čuvaju kopiju samo na serveru.';
+  String get k1SecondCopyUnavailable =>
+      'Ovaj uređaj ne može da čuva drugu kopiju. Kopija ostaje na serveru.';
+
+  @override
+  String get k1SecondCopyChosenFolder =>
+      'Druga kopija: fascikla koju ste izabrali';
+
+  @override
+  String get k1SecondCopyPickFailed =>
+      'Ta fascikla ne može da se koristi. Izaberite drugu.';
+
+  @override
+  String get k1SecondCopySave => 'Sačuvaj kopiju';
+
+  @override
+  String get k1SecondCopySaveDetail =>
+      'Čuva najnoviju kopiju sa ovog telefona gde izaberete. Otvara je samo ključ za oporavak. Sačuvajte je ponovo s vremena na vreme: ova kopija se ne ažurira sama.';
+
+  @override
+  String k1SecondCopySavedAt(String date) {
+    return 'Kopija sačuvana $date';
+  }
+
+  @override
+  String get k1SecondCopyNoneYet =>
+      'Sa ovog telefona još nema kopije. Napravite kopiju sada, pa je onda sačuvajte.';
+
+  @override
+  String get k1SecondCopySaveFailed =>
+      'Kopija nije sačuvana. Pokušajte ponovo.';
 
   @override
   String get recoveryFollowUpRestoreDetail =>

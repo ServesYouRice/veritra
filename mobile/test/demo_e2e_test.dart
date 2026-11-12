@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -6,6 +7,8 @@ import 'package:private_messenger/core/account_host.dart';
 import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/attachments.dart';
 import 'package:private_messenger/core/client_config.dart';
+import 'package:private_messenger/core/k1_restore.dart';
+import 'package:private_messenger/core/k1_second_copy.dart';
 import 'package:private_messenger/core/transport_policy.dart';
 import 'package:private_messenger/crypto/attachment_crypto.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
@@ -352,6 +355,152 @@ void main() {
     expect(replacement.state.syncRecovery, isNull);
     expect(replacement.state.deviceRecoveryRequired, isFalse);
   }, skip: skip, timeout: const Timeout(Duration(minutes: 12)));
+
+  // K1-7: every device of the owner is lost (signed out, so no live
+  // session and no recovery wait). The account is recovered with the
+  // recovery key (K0-R), its history comes back from the K1 backup the lost
+  // device uploaded, the forced follow-up sets a new key and password, and
+  // alice's device adds the recovered device to the chat (L1 change 4).
+  test('K1-7 recovers an account, restores its backup and chats again',
+      () async {
+    final server = _Server(serverPath!, '$dataDir/k1', port, environment: {
+      // K1 and K0-R stay off without it; the recovery proof names it.
+      'PRIVATE_MESSENGER_PUBLIC_ORIGIN': 'http://127.0.0.1:$port',
+    });
+    addTearDown(server.stop);
+    await server.start();
+    final baseUrl = server.baseUrl;
+    final bindings = NativeCryptoBindings.open(libraryPath!);
+    final owner = _DemoClient(bindings, baseUrl);
+    addTearDown(owner.dispose);
+    await owner.state.createOwner(
+        baseUrl, 'k1owner', 'owner-password-123', 'demo-e2e-setup-token');
+    owner.expectOk();
+    final alice = await owner.invite('k1alice');
+    addTearDown(alice.dispose);
+    // No audit or fallback timing is shortened here: the recovered device's
+    // change-4 version makes the server send alice's coordinator device the
+    // D96 `device.member_linked` notice, live, as a link approval does.
+
+    final dm = await owner.state.startConversation(
+        kind: 'dm', memberAccountIds: <String>[alice.accountId]);
+    owner.expectOk();
+    final conv = dm!.id;
+    expect(await owner.state.sendMessageTo(conv, 'before recovery'), isTrue);
+    await alice.waitFor(conv, (m) => m.body == 'before recovery');
+    expect(await alice.state.acceptMessageRequest(conv), isTrue);
+    expect(await alice.state.sendMessageTo(conv, 'alice before'), isTrue);
+    await owner.waitFor(conv, (m) => m.body == 'alice before');
+
+    // The recovery key, saved on the owner's only device, turns backups on
+    // and starts the first upload.
+    await owner.state.refreshRecoveryKeyStatus();
+    expect(owner.state.recoveryKeyStatus?.available, isTrue);
+    final key = await owner.state.createRecoveryKeyDraft();
+    final typed = key.display;
+    expect(await owner.state.saveRecoveryKey(key), RecoveryActionResult.done,
+        reason: owner.state.errorFor(Ops.recoveryKey));
+    key.dispose();
+    expect(owner.state.k1BackupState?.hasKey, isTrue,
+        reason: 'view ${owner.state.k1BackupView}');
+    // The upload saveRecoveryKey started; no second run is forced, so a
+    // failed first run (its error is in the state) fails here.
+    await owner.waitUntil(
+        () async =>
+            owner.state.k1BackupState?.lastSuccessAt != null ||
+            owner.state.k1BackupState?.lastError != null,
+        timeout: const Duration(minutes: 2));
+    expect(owner.state.k1BackupState?.lastError, isNull);
+    expect(owner.state.k1BackupState?.lastSuccessAt, isNotNull);
+    // The iOS "Save a copy" path against the real server and native peek:
+    // this device's own row is listed, downloads and matches its header.
+    final exported = _RecordingExport();
+    owner.state.k1SecondCopyChannel = exported;
+    expect(await owner.state.exportK1SecondCopy(), K1SecondCopyExport.saved);
+    expect(exported.name,
+        k1SecondCopyFileName(owner.accountId, owner.state.session!.deviceId!));
+    expect(exported.bytes!.length, greaterThanOrEqualTo(k1BackupPeekBytes));
+    expect(owner.state.k1BackupState?.secondCopyAt, isNotNull);
+    final ownerId = owner.accountId;
+    final lostDevice = owner.state.session!.deviceId!;
+    await owner.state.logout();
+    owner.dispose();
+
+    final recovered = _DemoClient(bindings, baseUrl);
+    addTearDown(recovered.dispose);
+    expect(
+        await recovered.state.startAccountRecovery(
+            baseUrl: baseUrl,
+            username: 'k1owner',
+            password: 'owner-password-123',
+            recoveryKey: typed),
+        isTrue,
+        reason: recovered.state.errorFor(Ops.accountRecovery));
+    await recovered.waitUntil(() async {
+      if (recovered.state.session == null) {
+        await recovered.state.checkAccountRecovery();
+      }
+      return recovered.state.session != null;
+    }, timeout: const Duration(minutes: 2));
+    expect(recovered.accountId, ownerId);
+    expect(recovered.state.session!.deviceId, isNot(lostDevice));
+    expect(recovered.state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+
+    final copies = await recovered.state.loadK1RestoreList();
+    final copy = copies!.singleWhere((entry) => entry.deviceId == lostDevice);
+    expect(await recovered.state.restoreFromK1Backup(copy, typed),
+        K1RestoreResult.done);
+    final restored = {
+      for (final m in await recovered.store.loadMessages(conv)) m.body
+    };
+    expect(restored, containsAll(<String>['before recovery', 'alice before']));
+    await recovered.state.finishRecoveryRestoreStep();
+    expect(recovered.state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
+    final fresh = await recovered.state.createRecoveryKeyDraft();
+    var saved = await recovered.state.saveRecoveryKey(fresh);
+    if (saved == RecoveryActionResult.needsRecentAuth) {
+      // As the screen does: the password again, then the same key.
+      expect(await recovered.state.reauthenticate('owner-password-123'), isTrue,
+          reason: recovered.state.error);
+      saved = await recovered.state.saveRecoveryKey(fresh);
+    }
+    expect(saved, RecoveryActionResult.done,
+        reason: recovered.state.errorFor(Ops.recoveryKey));
+    fresh.dispose();
+    expect(recovered.state.recoveryFollowUp, RecoveryFollowUpStep.password);
+    await recovered.state.changePassword('owner-password-456');
+    recovered.expectOk();
+    expect(recovered.state.recoveryFollowUp, isNull);
+
+    // Alice's device adds the recovered one when the server's coordinator
+    // notice for its change-4 version arrives on her open connection
+    // (D96). Nothing nudges her app: no resume, no catch-up forced here.
+    final recoveredMls =
+        recovered.state.cryptoService as MlsConversationCryptoService;
+    await recovered.waitUntil(
+        () async => await recoveredMls.groupEpoch(conv) != null,
+        timeout: const Duration(minutes: 4));
+    expect(await recovered.state.sendMessageTo(conv, 'after recovery'), isTrue);
+    await alice.waitFor(conv, (m) => m.body == 'after recovery',
+        timeout: const Duration(minutes: 2));
+    expect(await alice.state.sendMessageTo(conv, 'welcome back'), isTrue);
+    await recovered.waitFor(conv, (m) => m.body == 'welcome back',
+        timeout: const Duration(minutes: 2));
+    expect(recovered.state.deviceRecoveryRequired, isFalse);
+  }, skip: skip, timeout: const Timeout(Duration(minutes: 14)));
+}
+
+/// Records an iOS export instead of showing the document picker.
+class _RecordingExport extends K1SecondCopyChannel {
+  String? name;
+  Uint8List? bytes;
+
+  @override
+  Future<bool> export(String name, Uint8List bytes) async {
+    this.name = name;
+    this.bytes = bytes;
+    return true;
+  }
 }
 
 class _E2eEraser implements SlotErasing {
@@ -360,11 +509,15 @@ class _E2eEraser implements SlotErasing {
 }
 
 class _Server {
-  _Server(this.path, this.dataDir, this.port);
+  _Server(this.path, this.dataDir, this.port,
+      {this.environment = const <String, String>{}});
 
   final String path;
   final String dataDir;
   final String port;
+
+  /// Added to the base environment (K1-7 sets the public origin).
+  final Map<String, String> environment;
   Process? _process;
 
   String get baseUrl => 'http://127.0.0.1:$port';
@@ -379,6 +532,7 @@ class _Server {
         'PRIVATE_MESSENGER_ENV': 'development',
         'PRIVATE_MESSENGER_SETUP_TOKEN': 'demo-e2e-setup-token',
         'PRIVATE_MESSENGER_LOG_LEVEL': 'error',
+        ...environment,
       },
     );
     // Drain output so the server never blocks on a full pipe.

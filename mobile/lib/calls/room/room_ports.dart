@@ -202,6 +202,14 @@ abstract interface class CallGroupCrypto {
 
   int currentEpoch(Uint8List groupId);
 
+  /// An MLS application message in the call group (the track announcement).
+  Uint8List encryptApplication(Uint8List groupId, Uint8List plaintext);
+
+  /// Opens an application message that claims to come from [sender]; throws
+  /// when it does not decrypt or its MLS sender is someone else.
+  Uint8List decryptApplication(
+      Uint8List groupId, Uint8List ciphertext, CallMember sender);
+
   /// `K(s,t)` of the current epoch for [sender]'s stream slot.
   Uint8List mediaKey(
       Uint8List groupId, String callId, CallMember sender, int stream);
@@ -211,14 +219,24 @@ abstract interface class CallGroupCrypto {
 }
 
 /// The parent conversation's MLS group: the only source of who may be in a
-/// call. A device whose credential and signing key are not a leaf there is
-/// never accepted.
+/// call. A device whose credential and signing key are not a leaf there, or
+/// whose leaf this device's L1 judgment does not approve (its account's
+/// approved-device list), is never accepted.
 abstract interface class ParentGroupView {
-  /// Whether this exact device and signing key are a leaf of the parent.
+  /// Whether this exact device and signing key are a leaf of the parent that
+  /// the L1 judgment approves. False while that judgment is not loaded.
   bool hasMember(String conversationId, CallMember member);
 
-  /// Parent members, to find devices that left it.
-  List<CallMember> members(String conversationId);
+  /// The parent's approved leaves, to find devices that left it or lost
+  /// approval. Null while the L1 judgment is not loaded (a load is started):
+  /// nobody is added or removed until it is.
+  List<CallMember>? members(String conversationId);
+
+  /// Loads the L1 judgment when it is not held, then whether every leaf of
+  /// the parent group is approved. False when any leaf is removed,
+  /// unapproved, still being checked or never judged, and when the group or
+  /// the device is unknown: no call starts or is joined then.
+  Future<bool> allApproved(String conversationId);
 }
 
 /// The frame cryptor settings B6 requires (fail closed).
@@ -289,4 +307,23 @@ abstract interface class RoomMediaControls implements Listenable {
   bool get canShareScreen;
   bool get sharingScreen;
   Future<void> setSharingScreen(bool on);
+}
+
+/// A call group's MLS state, held apart from the messaging device so that it
+/// is never sealed, backed up or transferred (D70). [close] forgets it.
+abstract interface class CallGroupHandle {
+  CallGroupCrypto get crypto;
+  void close();
+}
+
+/// What a crypto service offers for B6: a call-group handle per call and
+/// the parent conversations' current MLS rosters.
+abstract interface class RoomCryptoSource {
+  /// Opens a call-group handle on a copy of this device's committed MLS
+  /// state that is never sealed. Throws when no device is active.
+  Future<CallGroupHandle> openCallGroup();
+
+  /// Reads the active device's parent groups at each call, never a cached
+  /// handle; an unknown conversation or no active device lists nobody.
+  ParentGroupView get parentGroups;
 }

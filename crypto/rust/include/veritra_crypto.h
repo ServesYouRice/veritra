@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (22u)
+#define PM_CRYPTO_ABI_VERSION (24u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -236,6 +236,9 @@ int32_t pm_crypto_k2_source_finish(PmCryptoHandle *, PmHistoryStream *,
 int32_t pm_crypto_k2_receive_finish(PmCryptoHandle *, PmHistoryStream *,
     PmByteSlice, PmOwnedBuffer *);
 void pm_crypto_k2_stream_destroy(PmHistoryStream *);
+/* ABI 23 (L2-1): the key package is padded to a size bucket (see
+ * pm_crypto_l2_padded_size) by one extension of type 0xF0A2 whose data is
+ * zero bytes, and its leaf lists 0xF0A2 in its capabilities. */
 int32_t pm_crypto_device_create_key_package(PmCryptoHandle *handle,
                                             PmOwnedBuffer *out);
 /* ABI 9: the only enrollment signature. It covers
@@ -359,6 +362,25 @@ int32_t pm_crypto_group_decrypt(PmCryptoHandle *handle, PmByteSlice group_id,
                                 PmByteSlice sender_account_id,
                                 PmByteSlice sender_device_id,
                                 PmOwnedBuffer *out_plaintext);
+/* ABI 23 (L2-3, sealed sender; not wired into the app yet): decrypts an
+ * application message and returns the sender MLS authenticated instead of
+ * checking a claimed one. PM_CRYPTO_SENDER_REMOVED for a past-epoch message
+ * from a sender no longer in the group; PM_CRYPTO_SENDER_MISMATCH for a
+ * sender credential that is not a device identity. In both the ratchet has
+ * advanced. pm_crypto_group_decrypt keeps its D25 check. */
+int32_t pm_crypto_group_decrypt_sealed(PmCryptoHandle *handle,
+                                       PmByteSlice group_id,
+                                       PmByteSlice ciphertext,
+                                       PmOwnedBuffer *out_plaintext,
+                                       PmOwnedBuffer *out_sender_account_id,
+                                       PmOwnedBuffer *out_sender_device_id);
+/* ABI 23 (L2-1): the size bucket of a blob of `length` bytes: the next
+ * multiple of 256 (at least 256) up to 4096, then the next power of two up
+ * to 8 MiB. PM_CRYPTO_INVALID_ARGUMENT above 8 MiB. Staged commits that add
+ * devices pad their Welcome to this bucket inside the encrypted GroupInfo
+ * (extension 0xF0A2, zero bytes); joins refuse a pad that is not zeros.
+ * Vector: testing/vectors/l2-padding-v1.json. */
+int32_t pm_crypto_l2_padded_size(uint64_t length, uint64_t *out_padded);
 /* ABI 13 (C7, docs/designs/C7-channel-history.md revision 7). Nothing is
  * wired into the app, and every piece needs the independent crypto review
  * before release, the exporter use in particular. Vector:
@@ -556,13 +578,15 @@ int32_t pm_crypto_group_l1_merge_pending_commit(
  *
  * stage_incoming_commit: processes a remote commit to its staged form,
  * checks it (one record proposal allowed), holds it in memory without
- * merging, and writes the review: u8 format=1 | u8 flags (1 removed, 2 added,
+ * merging, and writes the review: u8 format=2 | u8 flags (1 removed, 2 added,
  * 4 removed self, 8 record proposal, 16 record before present, 32 record
  * after present) | u64 new_epoch | committer lp(account) lp(device) [32] key
  * | u16 n_added {lp(account) lp(device) [32] key}* | u16 n {lp(account)}*
  * roster before | u16 n {lp(account)}* roster after (both sorted by bytes,
  * distinct) | u32 len record_before | u32 len record_after (len 0 when
- * absent). lp = u16 length prefix, big-endian. Staging uses up the commit's
+ * absent) | u16 n_proven {lp(account) lp(device) [32] key}* (ABI 24: the
+ * removed leaves whose own leave statement in the commit's authenticated
+ * data verified). lp = u16 length prefix, big-endian. Staging uses up the commit's
  * handshake ratchet step: after a discard the app restores its committed
  * state instead of sealing.
  *
@@ -597,6 +621,27 @@ int32_t pm_crypto_group_discard_incoming_commit(PmCryptoHandle *handle,
 int32_t pm_crypto_group_role_state(PmCryptoHandle *handle,
                                    PmByteSlice group_id,
                                    PmOwnedBuffer *out_state);
+
+/* ABI 24 (C4 leave proof in the commit, docs/crypto.md).
+ *
+ * c4_sign_leave: this device's leave statement for group_id, 70 bytes:
+ * u32 leaf_index | u16 64 | Ed25519 signature, RFC 9420 SignWithLabel with
+ * the leaf signature key, label "VeritraC4Leave1", over LeaveTBS = VL(group
+ * id) | u32 leaf_index | the leaf's EncryptionKey (opaque<V>). Valid until
+ * this leaf changes.
+ *
+ * stage_commit_proven: stage_commit_with_roles with record optional (len 0:
+ * no record proposal) and leave_proofs, a list "VCL1" | u8 count (1..16) |
+ * statements (distinct leaves; malformed: PM_CRYPTO_INVALID_ARGUMENT). The
+ * statements whose leaf the commit removes and that verify against the tree
+ * go into the commit's authenticated data in the same encoding; none left:
+ * no AAD. */
+int32_t pm_crypto_c4_sign_leave(PmCryptoHandle *handle, PmByteSlice group_id,
+                                PmOwnedBuffer *out_statement);
+int32_t pm_crypto_group_stage_commit_proven(
+    PmCryptoHandle *handle, PmByteSlice group_id, PmByteSlice changes,
+    PmByteSlice record, PmByteSlice leave_proofs, PmOwnedBuffer *out_commit,
+    PmOwnedBuffer *out_welcome, uint64_t *out_epoch);
 
 int32_t pm_crypto_attachment_encrypt_chunk(
     PmByteSlice key, PmByteSlice nonce_prefix, uint32_t chunk_index,

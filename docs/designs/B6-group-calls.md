@@ -1,6 +1,6 @@
 # B6: group calls and voice rooms
 
-**Status: S2 to S6 built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7 and the media transport are not. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
+**Status: S2 to S6 and the voice media transport built as a demo-gated slice (2026-11-11), see "Build status"; S1, S7, camera and screen share are not. The owner accepted every default below (D106).** Revision 2 (2026-11-07). Revision 1
 had one independent review (key schedule, frame encryption, threats); its
 five blocking points are fixed here. Needs the independent crypto review
 before S2 lands.
@@ -171,6 +171,29 @@ K(s,t) = HKDF-SHA256(salt = "veritra-b6-sender-v1", ikm = E,
 - Old keys stay in the ring for 10 s after a switch, then are removed.
   "Removed", not "wiped": keys pass through Dart, Java or Objective-C and
   libwebrtc's own copies, which we cannot zero.
+- **A sender switches only while every call member is approved** (round 7).
+  Until every member of the call group is a parent leaf that this device's
+  L1 judgment approves, the device keeps sending under its previous key, so
+  a member that lost approval never gets media under a key this device
+  switched to afterwards. The committer removes that member (it is no
+  longer in the approved parent roster) and the switch follows. Meanwhile
+  receivers drop the previous key after 10 s: the device is silent, never
+  readable by the member that lost approval.
+- **Receivers: one cryptor per track, keys by alias** (round 7). Each
+  remote track gets one receiver cryptor, created once when it is
+  subscribed, keyed by `rx:<track sid>` and disposed only when the track is
+  unsubscribed or the call ends. Binding the track to `account/device:slot`
+  copies that member's slot keys, at every ring index it holds, into
+  `rx:<track sid>`; later keys of that member are copied as they are
+  installed, the 10 s removal of an old key removes the alias's copy at the
+  same moment, and unbinding or rebinding to another member overwrites
+  every index with random bytes or the new member's keys. Before, binding
+  disposed the cryptor and made a new one on the same RTP receiver, which
+  libwebrtc does not promise to handle (two transformers on one receiver,
+  or none for a moment). To copy keys, `WebRtcFrameKeys` keeps the key
+  bytes in Dart memory while they are installed and zeroes them when they
+  are removed or cleared (they were zeroed at once before; libwebrtc holds
+  them for as long in any case).
 - No periodic rekey is needed for nonce limits at call lengths, but every
   device self-updates once an hour to bound how long one key lives.
 
@@ -297,12 +320,12 @@ Default caps (**O3**): **25 devices with video, 50 voice only.** Bigger
 | Threat | Result |
 |---|---|
 | Server adds a stranger's device | Refused: its key does not match a leaf of the parent group |
-| Server adds a hidden device of a real member (the L1 gap) | **Passes today**, as for messages: the parent group holds that device. L1 closes it. The device shows in the room's roster |
+| Server adds a hidden device of a real member (the L1 gap) | Refused since round 7: only parent leaves this device's L1 judgment approves count (an unapproved leaf can carry any account's id), and no call starts or is joined while the parent holds a leaf that is not approved |
 | Server replays an old join | Refused: the signature binds the call group's id, a fresh nonce and a 60 s expiry; a KeyPackage seen before is refused |
 | Server hands a joiner a fake group of its own leaves | Refused: the joiner checks every Welcome leaf against the parent group |
 | Malicious member adds a stranger | Refused: every member checks every Add it receives |
 | Device removed from the conversation keeps listening | No: the parent group's removal triggers a call-group Remove |
-| A member fakes another sender's frames | **Possible**: every member holds every sender's key (as in DAVE). Accepted; per-frame signatures are a later option |
+| A member fakes another sender's frames | **Possible**: every member holds every sender's key (as in DAVE). Accepted; per-frame signatures are a later option. In practice any call member can impersonate any other member's voice (or, once built, camera and screen): the frame keys are group keys, so a frame that decrypts under `K(s,t)` proves only that some member sent it, not that `s` did. The roster shows who is in the call, not who is speaking. The app must not present a speaking indicator or a recording as proof of who spoke |
 | SFU replays frames within an epoch | Possible to a small extent; S1 checks whether the cryptor refuses repeated IVs. Accepted if not |
 | A lost commit race forks the group | No: commits are staged and merged only on the server's 200 |
 | Server or SFU keeps forwarding to a device that left | It holds only old keys; the next epoch locks it out |
@@ -422,15 +445,104 @@ committer refuses an expired offer (receivers keep 120 s of slack). The
 server refuses room reads, offers and commits from a seat whose account is
 no longer a member of the conversation; leaving stays open.
 
-Not built: the media transport (the SFU client, mute and screen share
-controls behind `RoomMediaControls`, and the frame cryptor key provider
-behind `FrameKeySink`; needs the `livekit_client` package and a licence
-review); the production factory that sets `AppState.roomSession` in
-`main_demo.dart`; the call-group context extension binding `call_id` (core
-change); S1 spike and S7 evidence; Android foreground services and iOS
-broadcast extension. **Before the factory is wired:** a call group must
-stay out of sealed state (D70), K1 backups and K2 transfers. Today it sits
-in the same device provider as the conversations, so the next
-`seal_changes` while a call is open would write it; the core needs to keep
-call groups out of seals (or hold them in a separate handle) first. Needs
-the independent crypto review before S2 lands.
+Media transport and demo factory (2026-11-11, branch `feat/b6-rest`):
+
+- **`livekit_client` 2.13.2** (Apache-2.0) after a licence review of it and
+  every new transitive package (`THIRD_PARTY_NOTICES.md`). Its own E2EE
+  manager is not used (it keys by SFU names, one key per participant).
+- **Separate handle (D70).** Each call opens a scratch device restored from
+  the committed MLS state (`NativeCryptoService.openCallGroup`, a
+  `RoomCryptoSource`). It has the same identity and signing key, so its
+  leaves match the parent group, but nothing ever seals it: the call group
+  and the call-only KeyPackage never reach sealed state, K1 backups or K2
+  transfers, and both go when the call closes. Handles close on sign-out,
+  identity change and dispose. The parent view reads the live messaging
+  device at each call (null lists nobody). A real-MLS test restores from
+  storage after a seal during a call and finds no call group.
+- **Frame keys** (`WebRtcFrameKeys`): libwebrtc's key provider with exactly
+  discard on, no magic bytes, per-participant keys, HKDF (salt
+  `veritra-b6-frame-v1`), ratchet window 0 and a ring of 16; a call is
+  refused before the join if the provider cannot be made. "Removed" keys
+  are overwritten with random bytes (the provider has no delete).
+- **Sending** (`RoomMediaSession`): the voice track is started and disabled,
+  published, its sender cryptor attached and enabled, the key index set,
+  and only then enabled. Any refusal leaves the call (`cryptorNotFailClosed`).
+  DTX and RED off, 32 kbit/s cap (O4).
+- **Receiving binds by MLS, never by SFU names.** Every subscribed track gets
+  a receiver cryptor at once, under its own id with no key (round 7: `rx:<sid>`, kept for the track's life), and stays
+  silent. Each device seals a track announcement (`{sfu identity, track sid
+  -> slot}`) as an MLS application message in the call group and sends it
+  over the SFU data channel; the envelope carries the epoch and the sender's
+  roster position, never an account or device id. A receiver binds a track
+  to `account/device:slot` only when the announcement opens for that MLS
+  sender, names the connection that publishes the track, and the sender is
+  in the roster; otherwise the frames are dropped. Announcements repeat each
+  epoch, and a member heard for the first time in an epoch is answered once
+  (it may have been joining). The SFU token now allows data
+  (`canPublishData`) for this.
+- **Factory** (`RoomCallFactory`, wired in `CallHost` for demo builds): a 2 s
+  poll and a refresh on every parent roster change, so a member removed from
+  the conversation is removed from the call; calls close with the session.
+- **Rejoin.** A device whose new seat waits with an offer while its old leaf
+  is still in the group is removed and re-added in one commit.
+- **Server review fixes.** Only a seat already in the call group may commit;
+  `added_device_ids` marks only seats with an unexpired offer; offers expire
+  within 60 s; a session without a device cannot join a room.
+
+Not built: camera and screen share (`canShareScreen` is false; the generic
+receive path handles every slot); the call-group context extension binding
+`call_id` (core change); S1 spike and S7 evidence; Android foreground
+services and iOS broadcast extension; the core keeping
+`pm_crypto_group_b6_media_key` to call groups (would need an ABI change).
+Known gaps to check in S1: a published track sends clear silence until its
+cryptor is attached (no content); a remote track is muted synchronously
+in LiveKit's subscribe event and dropped if it cannot be muted, but
+libwebrtc may render frames that arrive before that event fires, with no
+cryptor yet; constant bitrate and the
+audio-level header extension cannot be set through `livekit_client` (O4 is
+only partly met). Android and iOS builds of the new plugin are not checked
+here. Needs the independent crypto review before S2 lands; the scratch
+handle, the announcement envelope and the server fixes need it too.
+
+Review fixes (round 7, 2026-11-11):
+
+- **Reconnect fails closed** (HIGH). A LiveKit full reconnect builds a new
+  peer connection and publishes the local tracks again on new RTP senders
+  that carry no frame cryptor, and the track is still enabled. The adapter
+  (`LiveKitSfuConnection`) now disables every local track inside the
+  `RoomReconnectingEvent` callback itself (before LiveKit's republish,
+  which comes after the reconnect's network round trips), poisons the
+  connection (no track is enabled or published on it again; a queued
+  enable throws) and reports the SFU gone, so the call ends
+  (`cryptorNotFailClosed`); the user joins again. As a backstop, any
+  `LocalTrackPublishedEvent` whose RTP sender is not one this connection
+  attached a cryptor to (compared by identity), other than its own publish
+  while the track is still disabled and waiting for its cryptor, does the
+  same. A resume (ICE restart on the same peer connection) keeps the
+  senders and their cryptors and is not affected. The LiveKit room sits
+  behind `LiveKitRoomDriver`, so tests drive a fake room that calls the
+  adapter as LiveKit's listener does.
+- **Re-mute after start** (MEDIUM). LiveKit emits `TrackSubscribedEvent`
+  and then runs `RemoteTrack.start()`, which enables the track again after
+  the adapter had disabled it. The adapter now waits until LiveKit has
+  started the track (`isActive`, plus one event-loop turn for the enable
+  that follows), disables it again, checks that took, and only then hands
+  it to the session, which plays it only once it is bound. A track that
+  does not start within 10 s is unsubscribed. LiveKit's
+  `EngineTrackAddedEvent` would come earlier but is internal API, so it is
+  not used.
+- **Receiver cryptor per track** (MEDIUM): see "Switching keys".
+- **Parent roster filtered by L1** (MEDIUM). `ParentGroupView` lists only
+  parent leaves whose stored L1 verdict is `approved` with the same
+  signing key (as `_approvedAccountsOf` does for C3 and C6). While the
+  verdicts are not loaded the view answers "unknown", not "nobody": the
+  engine then adds, removes and applies nothing (an empty roster would
+  remove everyone) and waits for the next refresh. A call is neither
+  started nor joined while the parent holds a leaf that is not approved
+  (`RoomFailure.parentNotApproved`, shown with the generic failure text).
+- **Send key held** (LOW): see "Switching keys". Not built: refusing a
+  received call-group commit that keeps a member the parent removed. A
+  committer that has not yet seen the parent removal makes exactly such a
+  commit in a normal race, and refusing it means leave and rejoin; the
+  send-key hold and the committer's own Remove cover the member instead.
+- **Impersonation is documented** (Info): see the threat table.

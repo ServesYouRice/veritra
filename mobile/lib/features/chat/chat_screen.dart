@@ -10,7 +10,7 @@ import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 
 import '../../calls/call_controller.dart';
-import '../../calls/room/room_engine.dart' show RoomSession;
+import '../../calls/room/room_engine.dart' show RoomCall, RoomSession;
 import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../core/composer_drafts.dart';
@@ -705,25 +705,41 @@ class _ChatScreenState extends State<ChatScreen> {
   ) {
     final loading = widget.state.isLoadingMessages(conversationId);
     final loadError = widget.state.messageLoadError(conversationId);
+    // C3 (D115): a removal left this private channel's key due for renewal,
+    // and no owner or admin is in the channel to renew it. Moderators never
+    // do; until an admin joins, its info cannot be edited.
+    final renewalStuck = widget.state.channelKeyRenewalStuck(conversationId);
+    final renewalBanner = renewalStuck
+        ? MaterialBanner(
+            key: const ValueKey<String>('channel-key-renewal-no-admin'),
+            content: Text(context.l10n.chatKeyRenewalNoAdmin),
+            leading: const Icon(Icons.key_off_outlined),
+            actions: const <Widget>[SizedBox.shrink()],
+          )
+        : null;
     if (messages.isEmpty && pending.isEmpty) {
+      final Widget empty;
       if (loading) {
-        return const Center(child: CircularProgressIndicator());
-      }
-      if (loadError != null) {
-        return _MessageLoadError(
+        empty = const Center(child: CircularProgressIndicator());
+      } else if (loadError != null) {
+        empty = _MessageLoadError(
           message: loadError,
           onRetry: () => widget.state.loadMessages(conversationId),
         );
+      } else {
+        empty = EmptyState(
+          icon: Icons.lock_outline,
+          title: context.l10n.chatEmptyTitle,
+          message: context.l10n.chatEmptyMessage,
+        );
       }
-      return EmptyState(
-        icon: Icons.lock_outline,
-        title: context.l10n.chatEmptyTitle,
-        message: context.l10n.chatEmptyMessage,
-      );
+      if (renewalBanner == null) return empty;
+      return Column(children: <Widget>[renewalBanner, Expanded(child: empty)]);
     }
     final notJoined = widget.state.incompleteJoinAccounts(conversationId);
     return Column(
       children: <Widget>[
+        if (renewalBanner != null) renewalBanner,
         // L1: an approved device of a member has stayed out of the group
         // for an hour (the server gave no key package, or kept it out).
         for (final accountId in notJoined)
@@ -789,19 +805,32 @@ class _ChatScreenState extends State<ChatScreen> {
   /// B6: opens the group-call screen and joins the room of this chat. The
   /// engine lives only as long as the screen.
   Future<void> _openRoom(RoomSession session, String conversationId) async {
-    final engine = session.createEngine();
+    final RoomCall call;
+    try {
+      call = await session.openCall(conversationId);
+    } catch (_) {
+      if (!mounted) return;
+      // No call without frame encryption (B6, fail closed).
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(context.l10n.roomFailedCryptor)));
+      return;
+    }
+    if (!mounted) {
+      await call.close();
+      return;
+    }
+    final engine = call.engine;
     final route = MaterialPageRoute<void>(
       builder: (_) => RoomScreen(
         engine: engine,
         nameFor: session.nameFor,
-        controls: session.controls,
+        controls: call.controls,
       ),
     );
     final done = Navigator.of(context).push(route);
     unawaited(engine.join(conversationId));
     await done;
-    await engine.leave();
-    engine.dispose();
+    await call.close();
   }
 
   Future<void> _showStarredMessages() async {
@@ -1219,6 +1248,7 @@ List<Object?> _chatScreenSelection(AppState state, String conversationId) {
     state.conversationPauseFor(conversationId)?.generation,
     state.readOnlyWithoutPeer(conversationId),
     state.sendHeldForRemoval(conversationId),
+    state.channelKeyRenewalStuck(conversationId),
     state.isBusy(Ops.send),
     state.isBusy(Ops.attachment),
     state.attachmentsAvailable,
@@ -1872,6 +1902,18 @@ class _MessageBubble extends StatelessWidget {
       local?.kind == LocalMessageKind.unsupported ||
       local?.kind == LocalMessageKind.invalid;
 
+  /// L1: the sending device had been removed from its account's approved
+  /// list when this arrived (recorded at entry, schema 40). The words are
+  /// still shown, marked, so a device that is on its way out never speaks
+  /// as the account unmarked.
+  String? _removedSenderLabel(
+          AppLocalizations l10n) =>
+      local?.senderRemoved == true
+          ? (mine
+              ? l10n.chatSentFromOwnRemovedDevice
+              : l10n.chatSentFromRemovedDevice(senderLabel))
+          : null;
+
   /// A peer message this device can never decrypt (D54). The crypto service
   /// stores it as an `invalid` row, which holds no content and offers no
   /// action, keyed `undecryptable:<sync event>:<server id>`.
@@ -1983,6 +2025,7 @@ class _MessageBubble extends StatelessWidget {
         (poll != null && !deleted && !unverifiable && !placeholder);
     Widget quiet(Widget child) =>
         tileNodes ? ExcludeSemantics(child: child) : child;
+    final removedSender = deleted ? null : _removedSenderLabel(l10n);
     return Semantics(
       container: tileNodes,
       excludeSemantics: !tileNodes,
@@ -2004,6 +2047,7 @@ class _MessageBubble extends StatelessWidget {
                                   ? l10n.chatMessageSemantics(
                                       sender, time, poll.question)
                                   : l10n.chatEncryptedSemantics(sender, time)) +
+          (removedSender == null ? '' : ', $removedSender') +
           (tick == null ? '' : ', ${messageTickLabel(l10n, tick!)}'),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -2047,6 +2091,26 @@ class _MessageBubble extends StatelessWidget {
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: scheme.onSurfaceVariant,
                           ),
+                        ),
+                      )),
+                    // Shown whether or not the sender is (a DM hides it).
+                    if (removedSender != null)
+                      quiet(Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: <Widget>[
+                            Icon(Icons.phonelink_erase_outlined,
+                                size: 14, color: scheme.error),
+                            const SizedBox(width: 4),
+                            Flexible(
+                              child: Text(
+                                removedSender,
+                                style: theme.textTheme.labelSmall
+                                    ?.copyWith(color: scheme.error),
+                              ),
+                            ),
+                          ],
                         ),
                       )),
                     if (replyPreview != null && !deleted)
@@ -2597,8 +2661,8 @@ class _SyncPausedNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final choices = state.conversationPauseFor(conversationId)?.choices ??
-        const <SyncRecoveryChoice>[];
+    final pause = state.conversationPauseFor(conversationId);
+    final choices = pause?.choices ?? const <SyncRecoveryChoice>[];
     return Semantics(
       liveRegion: true,
       container: true,
@@ -2614,7 +2678,9 @@ class _SyncPausedNotice extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              context.l10n.chatSyncPausedNotice,
+              pause?.held == true
+                  ? context.l10n.chatSyncHeldNotice
+                  : context.l10n.chatSyncPausedNotice,
               style: TextStyle(color: scheme.onErrorContainer),
             ),
             Wrap(

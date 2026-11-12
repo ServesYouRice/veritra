@@ -347,8 +347,57 @@ Where the build differs from the text above, and why:
   same ciphertext written as `veritra-backup-<account>-<device>.vhc` through
   a temporary file and rename into a folder picked on Windows, Linux and
   macOS; its failure is a warning of its own and never fails the backup.
-  Not built: Android (picked document tree, native channel) and the iOS
-  manual export; phones say the second copy is a desktop feature.
+  Phones (2026-11-11, question 5a) are below.
+- **Second copy on phones (written, native code not compiled).** Channel
+  `org.veritra.private_messenger/k1_second_copy`, registered on the shared
+  engine before Dart runs (`K1SecondCopy.kt` from `SharedFlutterEngine`,
+  `registerK1SecondCopyChannel` in `AppDelegate.sharedEngine`). Android:
+  "Choose a folder" opens `ACTION_OPEN_DOCUMENT_TREE`; the persistable
+  read and write grant is taken, Settings shows the folder's display name
+  (stored as `second_copy_label`, never the tree URI), and the grant of a
+  folder no longer used is released. No storage permission is declared.
+  After each backup the same ciphertext is written off the main thread:
+  a leftover `<name>.part` is deleted, the new `.part` is written in full
+  and `fsync`ed, the old file is deleted, then the `.part` is renamed. A
+  failure before the delete keeps the old copy; a failed rename after it
+  keeps a complete `.part` until the next run (the warning shows). A
+  provider without rename gets the file rewritten in place. File names are
+  checked against `veritra-backup-<ids>.vhc` on the native side. iOS: "Save
+  a copy" downloads this device's current copy (the row with its own
+  counter and `rk_id`), checks size, SHA-256 and the peeked header
+  (account, device, counter, `rk_id`), writes it to a private temporary
+  folder with complete file protection, and exports it with
+  `UIDocumentPickerViewController(forExporting:asCopy: true)` (iOS 14;
+  `.exportToService` on 13). The folder is removed when the picker closes
+  either way; Settings shows the date of the last save. The Kotlin and Swift
+  code was never compiled here (no Android SDK or Xcode): the Dart side is
+  tested with a mocked channel (`k1_second_copy_phone_test.dart`) and the
+  native files with text checks (`platform_config_test.dart`), which catch
+  a renamed channel or a moved registration, not a compile error.
+- **Backup export fix (K1-7, 2026-11-11).** The snapshot was exported from
+  the stored conversation projection, which could lag a chat started since
+  the last refresh; the export then failed with `invalid history snapshot`
+  and no copy was uploaded. The projection is now persisted before export.
+  The K2 transfer export already refreshes the list before it exports
+  (`app_state_link_v3.dart`, before `service.send`).
+- **K1-7 end-to-end (built).** `demo_e2e_test.dart` "K1-7": a real server
+  and native crypto; the owner chats, saves a recovery key (first copy
+  uploads), signs out; K0-R recovers the account on a new device, restores
+  the lost device's copy (both messages back), sets a new key (with recent
+  auth) and password, and the two accounts chat again. The test also saves
+  the iOS copy against the real server (`exportK1SecondCopy` with a
+  recording channel).
+- **Peers add the recovered device promptly (2026-11-11).** K1-7 found that
+  peers added a recovered device only through the L1 complete-adds audit
+  (15-minute interval, then the 3-minute fallback) and that nothing woke
+  them; the test had to shorten both. Now the recovered device's change-4
+  version makes the server send the D96 `device.member_linked` notice to
+  each peer group's coordinator account, as a link approval does
+  (`docs/crypto.md`, "Coordinator notice for K0-R"); server only, no
+  migration. K1-7 runs with the default audit interval and fallback and no
+  app resume: alice's open connection gets the notice and her device adds
+  the recovered one. A peer whose app is closed gets no push wake (link
+  approval sends none either) and adds the device at its next catch-up.
 - **K1-6 (built): VBK2 and the token route retired.** Owner question 1
   (D91): no compatibility path. `POST /backups` without a K1 `kind` and
   `GET /recovery` answer 410 `backup_format_retired` and

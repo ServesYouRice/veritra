@@ -33,9 +33,23 @@ class TestDeviceLists extends DeviceListPins {
   void remove(String accountId, String deviceId) =>
       _keys.remove(_key(accountId, deviceId));
 
+  /// Devices the list approved once and removed since (judged `removed`:
+  /// a stolen or replaced phone still in the tree).
+  final Set<String> _removed = <String>{};
+
+  void markRemoved(String accountId, String deviceId) =>
+      _removed.add(_key(accountId, deviceId));
+
+  /// Undoes [markRemoved] (for the shared list, which outlives one test).
+  void unmarkRemoved(String accountId, String deviceId) =>
+      _removed.remove(_key(accountId, deviceId));
+
   @override
   Future<Uint8List?> approvedKey(String accountId, String deviceId) async =>
-      unavailable.contains(accountId) ? null : _keys[_key(accountId, deviceId)];
+      unavailable.contains(accountId) ||
+              _removed.contains(_key(accountId, deviceId))
+          ? null
+          : _keys[_key(accountId, deviceId)];
 
   @override
   Future<List<DeviceListPair>> approvedDevices(String accountId,
@@ -43,7 +57,8 @@ class TestDeviceLists extends DeviceListPins {
       [
         if (!unavailable.contains(accountId))
           for (final entry in _keys.entries)
-            if (entry.key.split('\u0000').first == accountId)
+            if (entry.key.split('\u0000').first == accountId &&
+                !_removed.contains(entry.key))
               DeviceListPair(
                   idBytes(entry.key.split('\u0000').last), entry.value),
       ];
@@ -61,6 +76,7 @@ class TestDeviceLists extends DeviceListPins {
       return LeafVerdict.unapproved;
     }
     if (unavailable.contains(account)) return LeafVerdict.checking;
+    if (_removed.contains(_key(account, device))) return LeafVerdict.removed;
     final key = _keys[_key(account, device)];
     if (key == null) return LeafVerdict.unapproved;
     if (key.length != signingKey.length) return LeafVerdict.unapproved;

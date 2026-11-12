@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'community_info_payload.dart';
 import 'franking.dart';
 import 'poll.dart';
+import 'report_key_announcement.dart';
 
 const int appPayloadVersion = 2;
 const int _headerLength = 8;
@@ -46,6 +47,11 @@ enum AppPayloadType {
   /// to the MLS epoch it is sent in (`docs/crypto.md`, "C4 app wiring").
   memberLeave,
 
+  /// C4 leave proof in the commit (ABI 24): the sender's own signed leave
+  /// statement (`{"statement": base64}`), which a committer that removes it
+  /// carries in the commit for members that joined after the leave.
+  memberLeaveSigned,
+
   /// C7: a channel's history record (create, switch, move) in compact form,
   /// proposed in a message of the channel itself.
   historyChange,
@@ -56,7 +62,26 @@ enum AppPayloadType {
 
   /// C7: a newcomer asking for the `history_sync` it did not receive.
   historySyncRequest,
+
+  /// C6: the sender's own report public key, announced in a community's
+  /// shared group so reporters can trust it without a tap.
+  reportKey,
+
+  /// C6: asks the named accounts to announce their report keys again.
+  reportKeyRequest,
+
+  /// L2-5 (D94): this account's own device found a leaf of its account in
+  /// the group that its signed list does not approve, and names the list
+  /// head it holds, so peers whose pin is behind can tell.
+  deviceListAlert,
 }
+
+/// C6 moderator-key types (rules in `report_key_announcement.dart`). Hidden, never
+/// franked, never reportable, never expiring.
+const Set<AppPayloadType> reportKeyPayloadTypes = <AppPayloadType>{
+  AppPayloadType.reportKey,
+  AppPayloadType.reportKeyRequest,
+};
 
 /// C7 hidden types (docs/designs/C7-channel-history.md). Never franked
 /// (design decision 3, "Franking"): their envelopes carry a random
@@ -81,6 +106,52 @@ const Set<AppPayloadType> infoPayloadTypes = <AppPayloadType>{
   AppPayloadType.infoUpdate,
 };
 
+/// C4 types that may ride under the clear leave-notice mark (`c4_leave`),
+/// which the server lets past the posting rules. A marked envelope holding
+/// anything else is an invalid row at every receiver.
+const Set<AppPayloadType> leaveNoticePayloadTypes = <AppPayloadType>{
+  AppPayloadType.memberLeave,
+  AppPayloadType.memberLeaveSigned,
+};
+
+/// A `member_leave_signed` body: exactly `statement`, the canonical base64
+/// of one 70-byte statement (`u32 leaf || u16 64 || signature`). Rust
+/// verifies the signature when a commit carries it; nothing here does.
+bool isValidLeaveSignedBody(Map<String, Object?> body) {
+  final statement = body['statement'];
+  if (body.length != 1 || statement is! String || statement.length != 96) {
+    return false;
+  }
+  final List<int> bytes;
+  try {
+    bytes = base64.decode(statement);
+  } on FormatException {
+    return false;
+  }
+  return bytes.length == 70 &&
+      bytes[4] == 0 &&
+      bytes[5] == 64 &&
+      base64.encode(bytes) == statement;
+}
+
+/// The expiry a sender signs into a payload of [type] in a conversation with
+/// a disappearing timer of [retentionSeconds] (TASK-106), or null. C3 info
+/// payloads never expire (a key must outlive the timer), nor do C6 report key
+/// announcements (their settings outlive the row anyway), nor the L2-5
+/// own-device alert (the native service refuses an expiring one, and the
+/// alert would be lost in every chat with a timer).
+DateTime? senderExpiryFor(
+    AppPayloadType type, int? retentionSeconds, DateTime now) {
+  if (retentionSeconds == null ||
+      retentionSeconds <= 0 ||
+      infoPayloadTypes.contains(type) ||
+      reportKeyPayloadTypes.contains(type) ||
+      type == AppPayloadType.deviceListAlert) {
+    return null;
+  }
+  return now.add(Duration(seconds: retentionSeconds));
+}
+
 extension AppPayloadTypeWire on AppPayloadType {
   /// The string in the payload's `type`. Existing types keep their Dart enum
   /// name (the wire contract of every device); new multi-word types are
@@ -94,9 +165,13 @@ extension AppPayloadTypeWire on AppPayloadType {
         AppPayloadType.profileKey => 'profile_key',
         AppPayloadType.groupProfileKey => 'group_profile_key',
         AppPayloadType.memberLeave => 'member_leave',
+        AppPayloadType.memberLeaveSigned => 'member_leave_signed',
         AppPayloadType.historyChange => 'history_change',
         AppPayloadType.historySync => 'history_sync',
         AppPayloadType.historySyncRequest => 'history_sync_request',
+        AppPayloadType.reportKey => 'report_key',
+        AppPayloadType.reportKeyRequest => 'report_key_request',
+        AppPayloadType.deviceListAlert => 'device_list_alert',
         _ => name,
       };
 
@@ -109,8 +184,10 @@ extension AppPayloadTypeWire on AppPayloadType {
       infoPayloadTypes.contains(this) ||
       this == AppPayloadType.profileKey ||
       this == AppPayloadType.groupProfileKey ||
-      this == AppPayloadType.memberLeave ||
-      c7PayloadTypes.contains(this);
+      leaveNoticePayloadTypes.contains(this) ||
+      this == AppPayloadType.deviceListAlert ||
+      c7PayloadTypes.contains(this) ||
+      reportKeyPayloadTypes.contains(this);
 }
 
 class DecryptedAppPayload {
@@ -221,6 +298,12 @@ class FrankingPolicy {
     'infoUpdate',
     // C4: a leave proof says nothing anyone would report.
     'memberLeave',
+    'memberLeaveSigned',
+    // C6: a report key announcement or request is never reportable.
+    'reportKey',
+    'reportKeyRequest',
+    // L2-5: an alert about the sender's own account, sent identified.
+    'deviceListAlert',
   };
 
   /// Whether a payload without `frank` is accepted (as unreportable).
@@ -263,8 +346,10 @@ class AppPayloadCodec {
             infoPayloadTypes.contains(type) ||
             type == AppPayloadType.profileKey ||
             type == AppPayloadType.groupProfileKey ||
-            type == AppPayloadType.memberLeave ||
+            leaveNoticePayloadTypes.contains(type) ||
+            type == AppPayloadType.deviceListAlert ||
             c7PayloadTypes.contains(type) ||
+            reportKeyPayloadTypes.contains(type) ||
             channelId != null ||
             hidden ||
             body.keys.any(const {
@@ -565,10 +650,17 @@ class AppPayloadCodec {
           body.length == 1 &&
           body['epoch'] is int &&
           (body['epoch'] as int) >= 0,
+      AppPayloadType.memberLeaveSigned =>
+        version >= 2 && isValidLeaveSignedBody(body),
+      AppPayloadType.deviceListAlert =>
+        version >= 2 && isValidDeviceListAlertBody(body),
       AppPayloadType.historyChange => version >= 2 && isValidC7ChangeBody(body),
       AppPayloadType.historySync => version >= 2 && isValidC7SyncBody(body),
       AppPayloadType.historySyncRequest =>
         version >= 2 && isValidC7SyncRequestBody(body),
+      AppPayloadType.reportKey => version >= 2 && isValidReportKeyBody(body),
+      AppPayloadType.reportKeyRequest =>
+        version >= 2 && isValidReportKeyRequestBody(body),
       AppPayloadType.callSignal => body['signal'] is Map &&
           (version >= 2 || body.length == 1) &&
           jsonEncode(body['signal']).length <= 48 * 1024,
@@ -658,4 +750,20 @@ int _compareBytes(List<int> a, List<int> b) {
     if (a[i] != b[i]) return a[i] - b[i];
   }
   return a.length - b.length;
+}
+
+/// L2-5: `{"account_id": <1-128 chars>, "head_version": <int >= 1>,
+/// "list_id": <64 lowercase hex>}` and nothing else.
+bool isValidDeviceListAlertBody(Map<String, Object?> body) {
+  final account = body['account_id'];
+  final head = body['head_version'];
+  final listId = body['list_id'];
+  return body.length == 3 &&
+      account is String &&
+      account.isNotEmpty &&
+      account.length <= 128 &&
+      head is int &&
+      head >= 1 &&
+      listId is String &&
+      RegExp(r'^[0-9a-f]{64}$').hasMatch(listId);
 }

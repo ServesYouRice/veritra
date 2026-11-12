@@ -148,6 +148,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/communities", a.withAuth(a.listCommunities))
 	a.registerMembershipInviteRoutes(mux)
 	a.registerProfileRoutes(mux)
+	a.registerSuccessionRoutes(mux)
 	mux.HandleFunc("POST /api/v1/conversations", a.withAuth(a.withWriteBudget(a.createConversation)))
 	mux.HandleFunc("GET /api/v1/conversations", a.withAuth(a.listConversations))
 	mux.HandleFunc("POST /api/v1/conversations/{id}/key-packages/claim", a.withAuth(a.withWriteBudget(a.claimConversationKeyPackages)))
@@ -556,6 +557,12 @@ func handleStorageError(w http.ResponseWriter, err error) {
 			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(slow.Wait.Seconds()))))
 		}
 		writeError(w, http.StatusTooManyRequests, "slow_mode")
+	case errors.Is(err, storage.ErrLeaveNoticeLimited):
+		var limited storage.LeaveNoticeLimitedError
+		if errors.As(err, &limited) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(limited.Wait.Seconds()))))
+		}
+		writeError(w, http.StatusTooManyRequests, "leave_notice_limited")
 	case errors.Is(err, storage.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, storage.ErrMessageExpired):
@@ -570,7 +577,7 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "mls_change_pending")
 	case errors.Is(err, storage.ErrMLSNotInGroup):
 		writeError(w, http.StatusForbidden, "mls_not_in_group")
-	case errors.Is(err, storage.ErrInvalidChannelRoute):
+	case errors.Is(err, storage.ErrInvalidChannelRoute), errors.Is(err, storage.ErrInvalidEpochMetadata):
 		writeError(w, http.StatusBadRequest, "invalid_crypto_metadata")
 	case errors.Is(err, storage.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid_input")

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -108,6 +109,38 @@ func (s *Store) routeCommunityEnvelope(ctx context.Context, q queryRower, conver
 		return envelopeRoute{}, true, ErrInvalidChannelRoute
 	}
 	return envelopeRoute{channelID: channelID, generation: generation}, true, nil
+}
+
+// ErrInvalidEpochMetadata answers an envelope whose mls_epoch is present but
+// not a non-negative integer.
+var ErrInvalidEpochMetadata = errors.New("invalid mls_epoch")
+
+// checkMetadataEpoch refuses an mls_epoch that is not a non-negative int64
+// integer literal. The sync join filter (mlsJoinFilterEventFor) reads any
+// JSON integer as the epoch, while metadataEpoch and so the history fetch
+// read only non-negative ones: a negative epoch would be withheld by sync
+// and never served by the history fetch. Refused at write time, both
+// readers agree on every stored envelope. An absent epoch stays allowed.
+func checkMetadataEpoch(metadata json.RawMessage) error {
+	fields, ok := metadataFields(metadata)
+	if !ok {
+		return nil
+	}
+	raw, ok := fields["mls_epoch"]
+	if !ok {
+		return nil
+	}
+	// A repeated key is read differently by Go (the last value) and by
+	// SQLite's json_extract (the first), so {"mls_epoch":-4,"mls_epoch":3}
+	// would pass here and be read as -4 by the join filter.
+	if metadataRepeatsKey(metadata) {
+		return ErrInvalidEpochMetadata
+	}
+	value, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil || value < 0 {
+		return ErrInvalidEpochMetadata
+	}
+	return nil
 }
 
 // metadataEpoch is the integer mls_epoch an envelope names, as the I51 join

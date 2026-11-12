@@ -309,15 +309,16 @@ tests do not establish the complete production C3 flow.
 ### Remote removals: who rotates (owner decision 2026-11-11)
 
 **Decision.** In private channels (and the shared group), moderators may
-remove members, but only owners and admins rotate the info key. When a
+remove members, but only owners and admins rotate the info key (except in a
+private channel with no owner or admin among its members, below). When a
 moderator removes someone, an owner or admin device that sees a removal it
 did not make rotates the key by itself (option (a) above).
 
 **Who may rotate.** The community's verified C4 record decides: its owner
-(while in the roster) and its admins. A moderator never makes or sends a
-rotation key, whatever the server says; receivers already trust a key only
-from this account or from an owner or admin (key freshness), so a
-moderator's key would be ignored anyway. Only a community with no verified
+(while in the roster) and its admins. Outside the no-admin private channel
+case below, a moderator never makes or sends a rotation key, whatever the
+server says, and its key never ends anyone's obligation. Only a community
+with no verified
 record still falls back to the server's role, as before C4.
 
 **When.** The device that made the removal rotates at once (its own mark;
@@ -371,6 +372,64 @@ the due mark. An owner or admin device that comes online later processes the
 removal commit, observes it, and after its turn either adopts a key another
 admin sent meanwhile or rotates. Until then, every device keeps refusing
 edits under the old key.
+
+**A private channel with no owner or admin in it (owner decision
+2026-11-11).** A moderator may remove members from a private channel that
+has no owner or admin among its members. Then a verified moderator who is a
+member rotates the channel key, under the same rules with "owner or admin"
+read as "moderator member":
+
+- the no-admin case holds when, by the verified C4 record, none of the
+  owner (while in the roster) and the admins is a member of the channel's
+  MLS group, read from the group's own tree on this device
+  (`MlsRosterSource.groupMemberAccounts`, never the server's member list);
+  without a verified record or a known roster it never holds;
+- the turn order is the same hash order over the verified moderators who
+  are members; the moderator who made the removal rotates at once;
+- dedup: a fresh key delivered by another moderator member in this case
+  ends the obligation, as an owner's or admin's does. Outside this case a
+  moderator's key never counts as delivery, not even from this account's
+  other device;
+- the moderator answers key requests in this case only; owners and admins
+  stay preferred whenever any is a member;
+- key freshness ("C3 key freshness"): in a private channel, when no key from
+  this account or an owner or admin is fresher than the last removal, the
+  freshest verified moderator's key is current. The adder hands it to an
+  owner or admin who joins, so the admin and every member can read what is
+  sealed under it; otherwise they would hold no key at all;
+- an owner or admin who joins mints its own key (owner decision B,
+  2026-11-11; before, it edited and answered under the moderator's key
+  until the next removal). An owner or admin device that is a member, holds
+  the moderator's key and finds no owner's or admin's key current marks the
+  channel key due (`CommunityInfoService.replaceModeratorKey`, called on
+  each info pass before key requests are answered). The mark runs as a
+  removal this device did not make: it waits its turn over the verified
+  owners and admins, so of several joining owner and admin devices one
+  mints and the others adopt its key; the moderator's key never counts as
+  that delivery. While the mark is due the device neither edits nor answers
+  requests under the moderator's key; the pass seals every channel record
+  again under the new key, which goes into the channel's group only. A
+  moderator's key outside the no-admin case is thus only a stand-in for
+  reading and for the short wait before that pass, never a delivery (owner
+  and admin keys are chosen first). A joined admin the adder did not hand
+  the key to has nothing to seal again with and marks nothing (as before:
+  it asks, and only owners and admins answer while one is a member). Test:
+  `c3_community_info_service_test.dart` ("an admin who joins later replaces
+  its key").
+
+A moderator re-seals channel records under its new key. The server lets any
+channel reader write a channel record, and D80 lets any member edit channel
+info, so the re-sealed records verify; if admins later restrict channel
+info, a moderator's re-seal announcement would not verify, and this rule
+has to be revisited then.
+
+When the channel group has no owner, admin or moderator at all, no device
+may rotate and the obligation waits until one joins; every device keeps
+refusing channel-info edits and key answers under the old key, and the
+removed member is out of the MLS group and gets nothing new. The channel
+shows "No admin or moderator in this channel can renew its key; ask one to
+join" (`CommunityInfoService.rotationsWithoutRotator`, checked after each
+info pass).
 
 **Residuals.** Two admins whose turns overlap (clock skew, slow delivery,
 differing record views) may both rotate; the existing freshness rule makes

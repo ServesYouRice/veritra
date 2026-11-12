@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"private-messenger/server/internal/auth"
 	"private-messenger/server/internal/config"
 )
 
@@ -137,12 +139,38 @@ func TestRoomJoinLeaveAndTokenPrivacy(t *testing.T) {
 	}
 }
 
+// postOffer posts a join offer for the seat joined with reply, expiring in
+// expiresIn, and returns the status.
+func postOffer(t *testing.T, handler http.Handler, token, callID string, reply roomJoinReply, expiresIn time.Duration) int {
+	t.Helper()
+	code, _ := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+callID+"/offer", token, map[string]any{
+		"nonce": reply.Nonce, "key_package": bytes.Repeat([]byte{7}, 80), "signature": bytes.Repeat([]byte{8}, 64),
+		"expires_at": time.Now().Add(expiresIn).Unix(),
+	})
+	return code
+}
+
 func TestRoomAcceptsOneCommitPerEpoch(t *testing.T) {
 	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, withSFU)
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "commitmember")
 	conversationID := roomDM(t, handler, ownerToken, memberID)
 	room := joinRoom(t, handler, ownerToken, conversationID)
-	joinRoom(t, handler, memberToken, conversationID)
+	member := joinRoom(t, handler, memberToken, conversationID)
+	if code := postOffer(t, handler, memberToken, room.CallID, member, 30*time.Second); code != http.StatusNoContent {
+		t.Fatalf("offer status=%d", code)
+	}
+	var memberDevice string
+	for _, p := range member.Participants {
+		if p.AccountID == memberID {
+			memberDevice = p.DeviceID
+		}
+	}
+	// The creator adds the member, which may then commit too.
+	if status, response := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+room.CallID+"/commit", ownerToken, map[string]any{
+		"expected_epoch": 0, "commit": []byte{1}, "welcome": []byte{9}, "added_device_ids": []string{memberDevice},
+	}); status != http.StatusOK {
+		t.Fatalf("add commit status=%d body=%s", status, response)
+	}
 
 	var wg sync.WaitGroup
 	codes := make([]int, 2)
@@ -151,7 +179,7 @@ func TestRoomAcceptsOneCommitPerEpoch(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			codes[i], _ = doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+room.CallID+"/commit", token, map[string]any{
-				"expected_epoch": 0, "commit": []byte{1, byte(i)}, "welcome": []byte{9},
+				"expected_epoch": 1, "commit": []byte{1, byte(i)},
 			})
 		}()
 	}
@@ -159,9 +187,9 @@ func TestRoomAcceptsOneCommitPerEpoch(t *testing.T) {
 	if !(codes[0] == 200 && codes[1] == 409) && !(codes[0] == 409 && codes[1] == 200) {
 		t.Fatalf("codes=%v want one 200 and one 409", codes)
 	}
-	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+room.CallID+"/commit", ownerToken, map[string]any{"expected_epoch": 1, "commit": []byte{2}})
+	status, response := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+room.CallID+"/commit", ownerToken, map[string]any{"expected_epoch": 2, "commit": []byte{2}})
 	if status != http.StatusOK {
-		t.Fatalf("epoch 1 commit status=%d body=%s", status, response)
+		t.Fatalf("epoch 2 commit status=%d body=%s", status, response)
 	}
 	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/rooms/"+room.CallID+"/commits?after=0", memberToken, nil)
 	var listed struct {
@@ -169,12 +197,57 @@ func TestRoomAcceptsOneCommitPerEpoch(t *testing.T) {
 			Epoch int64 `json:"epoch"`
 		} `json:"commits"`
 	}
-	if status != http.StatusOK || json.Unmarshal(response, &listed) != nil || len(listed.Commits) != 2 || listed.Commits[1].Epoch != 2 {
+	if status != http.StatusOK || json.Unmarshal(response, &listed) != nil || len(listed.Commits) != 3 || listed.Commits[2].Epoch != 3 {
 		t.Fatalf("commits status=%d body=%s", status, response)
 	}
 	// An empty commit is refused.
-	if status, _ := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+room.CallID+"/commit", ownerToken, map[string]any{"expected_epoch": 2, "commit": []byte{}}); status != http.StatusBadRequest {
+	if status, _ := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+room.CallID+"/commit", ownerToken, map[string]any{"expected_epoch": 3, "commit": []byte{}}); status != http.StatusBadRequest {
 		t.Fatalf("empty commit status=%d", status)
+	}
+}
+
+func TestRoomCommitNeedsASeatInTheGroup(t *testing.T) {
+	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, withSFU)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "waitingmember")
+	conversationID := roomDM(t, handler, ownerToken, memberID)
+	room := joinRoom(t, handler, ownerToken, conversationID)
+	member := joinRoom(t, handler, memberToken, conversationID)
+	commit := func(token string, epoch int64, added []string) int {
+		code, _ := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/"+room.CallID+"/commit", token, map[string]any{
+			"expected_epoch": epoch, "commit": []byte{1}, "added_device_ids": added,
+		})
+		return code
+	}
+	// A seat still waiting for its Welcome cannot take an epoch.
+	if code := commit(memberToken, 0, nil); code != http.StatusForbidden {
+		t.Fatalf("waiting seat commit status=%d want 403", code)
+	}
+	var memberDevice string
+	for _, p := range member.Participants {
+		if p.AccountID == memberID {
+			memberDevice = p.DeviceID
+		}
+	}
+	// Naming a seat that posted no offer does not put it in the group.
+	if code := commit(ownerToken, 0, []string{memberDevice}); code != http.StatusOK {
+		t.Fatalf("owner commit status=%d", code)
+	}
+	if code := commit(memberToken, 1, nil); code != http.StatusForbidden {
+		t.Fatalf("seat without an offer marked in group: status=%d want 403", code)
+	}
+}
+
+func TestRoomOfferExpiresWithinTheWindow(t *testing.T) {
+	_, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, withSFU)
+	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "lateoffer")
+	conversationID := roomDM(t, handler, ownerToken, memberID)
+	room := joinRoom(t, handler, ownerToken, conversationID)
+	member := joinRoom(t, handler, memberToken, conversationID)
+	if code := postOffer(t, handler, memberToken, room.CallID, member, 90*time.Second); code != http.StatusBadRequest {
+		t.Fatalf("90 s offer status=%d want 400", code)
+	}
+	if code := postOffer(t, handler, memberToken, room.CallID, member, 50*time.Second); code != http.StatusNoContent {
+		t.Fatalf("50 s offer status=%d", code)
 	}
 }
 
@@ -255,5 +328,25 @@ func TestRoomOfferNeedsTheIssuedNonceAndIsListedForMembers(t *testing.T) {
 	})
 	if status != http.StatusOK {
 		t.Fatalf("commit status=%d", status)
+	}
+}
+
+// A session without a device holds no MLS device, so it cannot take a seat.
+func TestRoomJoinNeedsADeviceSession(t *testing.T) {
+	application, handler, ownerToken, _ := newTestAppWithOwnerConfig(t, withSFU)
+	ownerID := accountIDFromExport(t, handler, ownerToken)
+	_, memberID := registerMemberWithID(t, handler, ownerToken, "devicelessroom")
+	conversationID := roomDM(t, handler, ownerToken, memberID)
+	db := openSessionTestDB(t, filepath.Join(application.Config.DataDir, "private-messenger.db"))
+	token := "deviceless-session-token-for-rooms"
+	now := time.Now().UTC().Format("2006-01-02T15:04:05.000000000Z")
+	later := time.Now().UTC().Add(time.Hour).Format("2006-01-02T15:04:05.000000000Z")
+	if _, err := db.Exec(`INSERT INTO sessions(token_hash, account_id, device_id, expires_at, created_at, recent_auth_at, last_used_at, absolute_expires_at) VALUES(?, ?, NULL, ?, ?, ?, ?, ?)`,
+		auth.HashToken(token), ownerID, later, now, now, now, later); err != nil {
+		t.Fatal(err)
+	}
+	status, body := doJSON(t, handler, http.MethodPost, "/api/v1/rooms/join", token, map[string]string{"conversation_id": conversationID})
+	if status != http.StatusForbidden || !jsonErrorIs(body, "device_required") {
+		t.Fatalf("deviceless join status=%d body=%s", status, body)
 	}
 }

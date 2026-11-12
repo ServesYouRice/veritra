@@ -755,11 +755,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get searchClear => 'Clear search';
 
   @override
+  String get searchLookUpAccount => 'Look up this username';
+
+  @override
   String get searchIntroTitle => 'Search people and communities';
 
   @override
   String get searchIntroMessage =>
-      'Communities and channels are found by name on this device. People are found on the server by exact username only. Message contents are end-to-end encrypted and never searchable on the server.';
+      'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.';
 
   @override
   String get searchNoResultsTitle => 'No results';
@@ -1943,6 +1946,18 @@ class AppLocalizationsEn extends AppLocalizations {
       'A message from a device that isn\'t approved was hidden.';
 
   @override
+  String get chatKeyRenewalNoAdmin =>
+      'No admin or moderator in this channel can renew its key; ask one to join.';
+
+  @override
+  String chatSentFromRemovedDevice(String name) {
+    return 'Sent from a device $name removed';
+  }
+
+  @override
+  String get chatSentFromOwnRemovedDevice => 'Sent from a device you removed';
+
+  @override
   String chatDevicesNotJoined(String name) {
     return 'Some of $name\'s devices haven\'t joined yet.';
   }
@@ -2024,6 +2039,10 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get chatSyncPausedNotice =>
       'Messages in this conversation are paused: an encryption update could not be applied. Nothing was skipped, and other conversations keep working.';
+
+  @override
+  String get chatSyncHeldNotice =>
+      'Messages in this conversation are waiting: a membership or role change needs a confirmation this device does not have yet. It is checked again automatically. Nothing was skipped, and other conversations keep working.';
 
   @override
   String get chatRemovalHoldNotice =>
@@ -3610,6 +3629,20 @@ class AppLocalizationsEn extends AppLocalizations {
       'This community has no verified roles, so the app can\'t tell who its moderators are.';
 
   @override
+  String get c6ReportModeratorKeysPending =>
+      'No moderator\'s key has reached this device yet. Keys arrive through the community. Try again later.';
+
+  @override
+  String c6ReportModeratorCount(int count) {
+    return 'Moderators who get a copy: $count';
+  }
+
+  @override
+  String c6ReportModeratorsUnconfirmed(int count) {
+    return 'Moderators whose key has not reached this device yet, and who get no copy: $count';
+  }
+
+  @override
   String get c6ReportNoOwnerKey =>
       'No server owner can receive reports yet. Ask them to set up a report key.';
 
@@ -3923,8 +3956,35 @@ class AppLocalizationsEn extends AppLocalizations {
   String get k1SecondCopyOff => 'Stop the second copy';
 
   @override
-  String get k1SecondCopyPhone =>
-      'A second copy in a folder is available on desktop. Phones keep the backup on the server only.';
+  String get k1SecondCopyUnavailable =>
+      'This device cannot keep a second copy. The backup stays on the server.';
+
+  @override
+  String get k1SecondCopyChosenFolder => 'Second copy: the folder you chose';
+
+  @override
+  String get k1SecondCopyPickFailed =>
+      'That folder cannot be used. Pick another one.';
+
+  @override
+  String get k1SecondCopySave => 'Save a copy of the backup';
+
+  @override
+  String get k1SecondCopySaveDetail =>
+      'Saves this phone\'s latest backup where you choose. Only your recovery key opens it. Save again now and then: this copy does not update itself.';
+
+  @override
+  String k1SecondCopySavedAt(String date) {
+    return 'Copy saved $date';
+  }
+
+  @override
+  String get k1SecondCopyNoneYet =>
+      'There is no backup from this phone yet. Back up now, then save a copy.';
+
+  @override
+  String get k1SecondCopySaveFailed =>
+      'The copy could not be saved. Try again.';
 
   @override
   String get recoveryFollowUpRestoreDetail =>

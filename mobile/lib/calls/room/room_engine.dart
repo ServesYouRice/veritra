@@ -9,9 +9,15 @@ import 'room_ports.dart';
 /// crash means leave and rejoin (design, "The call group").
 ///
 /// Rules this class enforces (docs/designs/B6-group-calls.md):
-///  - only devices that are a leaf of the parent conversation's group are
-///    ever accepted into the call, checked by whoever commits, by every
-///    member that receives an Add, and by the joiner on every Welcome leaf;
+///  - only devices that are a leaf of the parent conversation's group, and
+///    that this device's L1 judgment approves, are ever accepted into the
+///    call, checked by whoever commits, by every member that receives an
+///    Add, and by the joiner on every Welcome leaf; no call starts or is
+///    joined while the parent holds a leaf that is not approved, and nobody
+///    is added or removed while that judgment is not loaded;
+///  - this device switches to a new epoch's send key only while every call
+///    member is an approved parent leaf (it keeps the old one, which the
+///    others drop after 10 s, until the member is removed);
 ///  - the lowest leaf commits within 200 ms, the others after 2 s plus
 ///    500 ms per rank; every commit is staged, sent, and merged only on the
 ///    server's yes (a 409 discards it, so no fork);
@@ -30,6 +36,10 @@ enum RoomFailure {
   welcomeRefused,
   welcomeTimeout,
   commitRefused,
+
+  /// The parent conversation holds a leaf this device's L1 judgment does
+  /// not approve (or that judgment could not be loaded).
+  parentNotApproved,
   other,
 }
 
@@ -122,6 +132,19 @@ class RoomEngine extends ChangeNotifier {
     }
     phase = RoomPhase.joining;
     notifyListeners();
+    // Review MEDIUM (round 7): a parent leaf that is removed, unapproved or
+    // not judged yet could be added to the call; start or join none then.
+    final bool clean;
+    try {
+      clean = await parent.allApproved(conversation);
+    } catch (_) {
+      _setFailed(RoomFailure.parentNotApproved);
+      return;
+    }
+    if (!clean) {
+      _setFailed(RoomFailure.parentNotApproved);
+      return;
+    }
     final RoomJoinInfo info;
     try {
       info = await api.join(conversation);
@@ -207,6 +230,7 @@ class RoomEngine extends ChangeNotifier {
       if (phase != RoomPhase.active) return;
       if (!await _apply(record, group, id)) return;
     }
+    _switchSendKey();
     await _afterChange();
   }
 
@@ -220,6 +244,9 @@ class RoomEngine extends ChangeNotifier {
   }
 
   Future<void> _tryWelcome(String id, Uint8List group) async {
+    // The Welcome's leaves are checked against approved parent leaves; while
+    // that judgment is not loaded, wait for the next refresh.
+    if (parent.members(conversationId!) == null) return;
     final commits = await _fetch(id, _joinEpoch);
     if (commits == null) return;
     for (final record in commits) {
@@ -251,6 +278,9 @@ class RoomEngine extends ChangeNotifier {
   Future<bool> _apply(
       RoomCommitRecord record, Uint8List group, String id) async {
     if (record.epoch != crypto.currentEpoch(group) + 1) return true;
+    // Its Adds cannot be checked while the parent's L1 judgment is not
+    // loaded: stop here and apply it on the next refresh.
+    if (parent.members(conversationId!) == null) return false;
     final ProcessedCommit result;
     try {
       result = crypto.processCommit(group, record.commit);
@@ -309,6 +339,81 @@ class RoomEngine extends ChangeNotifier {
     );
   }
 
+  // ---- track announcements ------------------------------------------------
+
+  /// This device's id in the call group, `account/device`.
+  String get selfId => '$selfAccountId/$selfDeviceId';
+
+  /// Seals [plaintext] as an MLS application message of the current epoch,
+  /// in the engine's queue so it never races a commit. The envelope names
+  /// the epoch and the sender's place in the roster, never an account or
+  /// device id (the SFU carries it). Null when the call is not active.
+  Future<Uint8List?> sealSignal(Uint8List plaintext) => _run(() async {
+        final group = _groupId;
+        if (phase != RoomPhase.active || group == null) return null;
+        final members = crypto.members(group);
+        final position = members.indexWhere((m) => m.id == selfId);
+        if (position < 0) return null;
+        final sealed = crypto.encryptApplication(group, plaintext);
+        return Uint8List.fromList([
+          ...signalMagic,
+          ...(ByteData(10)
+                ..setUint64(0, crypto.currentEpoch(group))
+                ..setUint16(8, position))
+              .buffer
+              .asUint8List(),
+          ...sealed,
+        ]);
+      });
+
+  /// Opens a signal from [sealSignal]: its MLS sender must be the roster
+  /// member the envelope names. Null for anything that does not open (an
+  /// old epoch, a forgery, a call that is not active).
+  Future<({CallMember sender, Uint8List plaintext})?> openSignal(
+          Uint8List envelope) =>
+      _run(() async {
+        final group = _groupId;
+        if (phase != RoomPhase.active || group == null) return null;
+        if (envelope.length <= signalMagic.length + 10) return null;
+        for (var i = 0; i < signalMagic.length; i++) {
+          if (envelope[i] != signalMagic[i]) return null;
+        }
+        final header = ByteData.sublistView(
+            envelope, signalMagic.length, signalMagic.length + 10);
+        if (header.getUint64(0) != crypto.currentEpoch(group)) return null;
+        final members = crypto.members(group);
+        final position = header.getUint16(8);
+        if (position >= members.length) return null;
+        final sender = members[position];
+        if (sender.id == selfId) return null;
+        try {
+          final plaintext = crypto.decryptApplication(
+              group, envelope.sublist(signalMagic.length + 10), sender);
+          return (sender: sender, plaintext: plaintext);
+        } catch (_) {
+          return null;
+        }
+      });
+
+  /// `VB6S`, version 1 of the signal envelope.
+  static final signalMagic = Uint8List.fromList([0x56, 0x42, 0x36, 0x53, 1]);
+
+  Future<T?> _run<T>(Future<T?> Function() job) {
+    final done = Completer<T?>();
+    _queue = _queue.then((_) async {
+      if (_disposed) {
+        done.complete(null);
+        return;
+      }
+      try {
+        done.complete(await job());
+      } catch (_) {
+        done.complete(null);
+      }
+    });
+    return done.future;
+  }
+
   // ---- committing ---------------------------------------------------------
 
   Future<void> _afterChange() async {
@@ -344,12 +449,20 @@ class RoomEngine extends ChangeNotifier {
     }
     final members = crypto.members(group);
     final inCall = {for (final m in members) m.id};
-    final parentMembers = {
-      for (final m in parent.members(conversationId!)) m.id: m
-    };
+    // Nobody is added or removed while the parent's L1 judgment is not
+    // loaded: an empty roster would remove everyone.
+    final approved = parent.members(conversationId!);
+    if (approved == null) return null;
+    final parentMembers = {for (final m in approved) m.id: m};
+    final self = '$selfAccountId/$selfDeviceId';
     final adds = <({Uint8List keyPackage, CallMember member})>[];
+    // Devices that left and joined again: the server gave them a new seat
+    // that waits with a fresh offer while their old leaf is still in the
+    // group. The old leaf goes in the same commit that adds the new one.
+    final rejoined = <String>{};
     for (final seat in state.seats) {
-      if (inCall.contains(seat.id) || !seat.hasOffer) continue;
+      if (seat.id == self || !seat.hasOffer) continue;
+      if (inCall.contains(seat.id) && seat.inGroup) continue;
       final known = parentMembers[seat.id];
       if (known == null) continue; // never a stranger
       final member =
@@ -358,12 +471,15 @@ class RoomEngine extends ChangeNotifier {
       if (!_offerValid(group, member, seat, committing: true)) continue;
       if (_seenOffers.contains(_offerKey(seat.offerKeyPackage!))) continue;
       adds.add((keyPackage: seat.offerKeyPackage!, member: member));
+      if (inCall.contains(seat.id)) rejoined.add(seat.id);
     }
     final present = {for (final s in state.seats) s.id};
     final removes = [
       for (final m in members)
-        if (m.id != '$selfAccountId/$selfDeviceId' &&
-            (!present.contains(m.id) || !parentMembers.containsKey(m.id)))
+        if (m.id != self &&
+            (!present.contains(m.id) ||
+                !parentMembers.containsKey(m.id) ||
+                rejoined.contains(m.id)))
           m,
     ];
     if (adds.isEmpty && removes.isEmpty) return null;
@@ -454,8 +570,10 @@ class RoomEngine extends ChangeNotifier {
         participants.add(participant);
       }
     }
-    // A sender switches only after it has merged the commit.
-    keys.useSendKey(index);
+    // A sender switches only after it has merged the commit, and only while
+    // every member is an approved parent leaf ([_switchSendKey]).
+    _pendingSendIndex = index;
+    _switchSendKey();
     final previous = _installed.keys.where((e) => e != epochNow).toList();
     _installed[epochNow] = participants;
     for (final old in previous) {
@@ -468,6 +586,28 @@ class RoomEngine extends ChangeNotifier {
         }
       }));
     }
+  }
+
+  /// The send key index waiting for [_switchSendKey], if any.
+  int? _pendingSendIndex;
+
+  /// Review LOW (round 7): this device's media moves to a new epoch's key
+  /// only while every call member is a leaf of the parent that the L1
+  /// judgment approves. A member that lost approval (or whose parent leaf
+  /// is gone) never gets media under a key this device switched to after
+  /// that; the committer removes it, and the switch follows. Until then
+  /// this device keeps sending under the previous key, which the others
+  /// drop after [oldKeyLifetime] (fail closed: silence, never a leak).
+  void _switchSendKey() {
+    final index = _pendingSendIndex;
+    final group = _groupId;
+    final conversation = conversationId;
+    if (index == null || group == null || conversation == null) return;
+    for (final member in crypto.members(group)) {
+      if (!parent.hasMember(conversation, member)) return;
+    }
+    keys.useSendKey(index);
+    _pendingSendIndex = null;
   }
 
   // ---- leaving and failing ------------------------------------------------
@@ -499,10 +639,19 @@ class RoomEngine extends ChangeNotifier {
     _removals.clear();
     _installed.clear();
     _seenOffers.clear();
+    _pendingSendIndex = null;
     keys.clear();
     _groupId = null;
     phase = next;
     notifyListeners();
+  }
+
+  /// The media transport could not keep frame encryption fail closed: the
+  /// call is left and not rejoined.
+  Future<void> failClosed() async {
+    if (phase == RoomPhase.failed) return;
+    await leave();
+    _setFailed(RoomFailure.cryptorNotFailClosed);
   }
 
   /// A failure that leave-and-rejoin may repair.
@@ -547,17 +696,24 @@ class RoomEngine extends ChangeNotifier {
   }
 }
 
-/// What the app needs to offer group calls: a way to build an engine for one
-/// conversation, the media controls (null when the build has no media
-/// transport), and contact names. Set on the app state only by the demo
+/// One open call: the engine, the media controls (null when the build has
+/// no media transport) and [close], which leaves, ends the media and
+/// forgets the call group.
+class RoomCall {
+  RoomCall({required this.engine, this.controls, required this.close});
+  final RoomEngine engine;
+  final RoomMediaControls? controls;
+  final Future<void> Function() close;
+}
+
+/// What the app needs to offer group calls: a way to open a call for one
+/// conversation and contact names. Set on the app state only by the demo
 /// host, like the one-to-one call controller (B5).
 class RoomSession {
-  const RoomSession({
-    required this.createEngine,
-    required this.nameFor,
-    this.controls,
-  });
-  final RoomEngine Function() createEngine;
+  const RoomSession({required this.openCall, required this.nameFor});
+
+  /// Throws when a call cannot be opened fail closed (no frame encryption,
+  /// no active MLS device).
+  final Future<RoomCall> Function(String conversationId) openCall;
   final String Function(String accountId) nameFor;
-  final RoomMediaControls? controls;
 }

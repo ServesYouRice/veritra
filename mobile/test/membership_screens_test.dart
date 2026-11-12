@@ -573,9 +573,10 @@ class _Api extends ApiClient {
   }
 
   @override
-  Future<void> setMemberTimeout(
+  Future<DateTime?> setMemberTimeout(
       String token, String communityId, String accountId, int seconds) async {
     moderation.add('timeout:$communityId:$accountId:$seconds');
+    return null;
   }
 
   @override

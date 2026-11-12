@@ -1,0 +1,95 @@
+{
+  "name": "l2-padding-v1",
+  "description": "L2-1 (crypto ABI 23) size buckets for key packages and Welcomes: 256-byte steps (at least one block) up to 4096 bytes, then the next power of two up to 8 MiB; above 8 MiB nothing is padded (padded: null). The pad is one MLS extension of type 0xF0A2 whose data is zero bytes, inside the signed key package and inside the encrypted GroupInfo. key_package_hex is a padded key package from the Rust core (identity acct_vector/dev_vector) for the server's structural check; regenerate with the ignored Rust test l2::tests::print_vector_key_package.",
+  "pad_extension_type": 61602,
+  "block": 256,
+  "linear_limit": 4096,
+  "max_padded": 8388608,
+  "buckets": [
+    {
+      "length": 0,
+      "padded": 256
+    },
+    {
+      "length": 1,
+      "padded": 256
+    },
+    {
+      "length": 255,
+      "padded": 256
+    },
+    {
+      "length": 256,
+      "padded": 256
+    },
+    {
+      "length": 257,
+      "padded": 512
+    },
+    {
+      "length": 511,
+      "padded": 512
+    },
+    {
+      "length": 512,
+      "padded": 512
+    },
+    {
+      "length": 1000,
+      "padded": 1024
+    },
+    {
+      "length": 4095,
+      "padded": 4096
+    },
+    {
+      "length": 4096,
+      "padded": 4096
+    },
+    {
+      "length": 4097,
+      "padded": 8192
+    },
+    {
+      "length": 6000,
+      "padded": 8192
+    },
+    {
+      "length": 8192,
+      "padded": 8192
+    },
+    {
+      "length": 8193,
+      "padded": 16384
+    },
+    {
+      "length": 65536,
+      "padded": 65536
+    },
+    {
+      "length": 65537,
+      "padded": 131072
+    },
+    {
+      "length": 300000,
+      "padded": 524288
+    },
+    {
+      "length": 4194304,
+      "padded": 4194304
+    },
+    {
+      "length": 4194305,
+      "padded": 8388608
+    },
+    {
+      "length": 8388608,
+      "padded": 8388608
+    },
+    {
+      "length": 8388609,
+      "padded": null
+    }
+  ],
+  "key_package_hex": "000100012056cea2c1c351c26a91b858720b1117ac18814b6b1c15f98aad831eb27053dd6f2034c9b40fffc3ec662fe581d522c6a915ed04ccd4a1f6a82dd523a1f68deb477b202916907fb73ce38978a5da8c395cd49daf96450b639b07d99445291045d94fdb00011a01000b616363745f766563746f72000a6465765f766563746f720200010600010002000304f0c4f0a20002000101000000006af4aad0000000006b6376e0004040e699c39fc9764e29a52e2363913e89dfcdf412f26135ead0e17ea458b942c51e766d2e120adfb04a0b2840fcf3c1c5d840cb1bfac66d25f31d4f30ec67630d0d40d1f0a240cd0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000040405a9201cce635445f8a2f97cd41ae197b5b1b9daf64c99e3f008bddd7ab8ff6e97fbf1c158c29ffac12e845abde1720e02fdda733ae9215c484235b6db5e38406"
+}

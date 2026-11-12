@@ -3464,6 +3464,15 @@ class $LocalMessagesTable extends LocalMessages
       requiredDuringInsert: false,
       defaultConstraints: GeneratedColumn.constraintIsAlways(
           'CHECK ("sender_hidden" IN (0, 1))'));
+  static const VerificationMeta _senderRemovedMeta =
+      const VerificationMeta('senderRemoved');
+  @override
+  late final GeneratedColumn<bool> senderRemoved = GeneratedColumn<bool>(
+      'sender_removed', aliasedName, true,
+      type: DriftSqlType.bool,
+      requiredDuringInsert: false,
+      defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'CHECK ("sender_removed" IN (0, 1))'));
   @override
   List<GeneratedColumn> get $columns => [
         key,
@@ -3484,7 +3493,8 @@ class $LocalMessagesTable extends LocalMessages
         formatJson,
         forwardHops,
         channelId,
-        senderHidden
+        senderHidden,
+        senderRemoved
       ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -3600,6 +3610,12 @@ class $LocalMessagesTable extends LocalMessages
           senderHidden.isAcceptableOrUnknown(
               data['sender_hidden']!, _senderHiddenMeta));
     }
+    if (data.containsKey('sender_removed')) {
+      context.handle(
+          _senderRemovedMeta,
+          senderRemoved.isAcceptableOrUnknown(
+              data['sender_removed']!, _senderRemovedMeta));
+    }
     return context;
   }
 
@@ -3647,6 +3663,8 @@ class $LocalMessagesTable extends LocalMessages
           .read(DriftSqlType.string, data['${effectivePrefix}channel_id']),
       senderHidden: attachedDatabase.typeMapping
           .read(DriftSqlType.bool, data['${effectivePrefix}sender_hidden']),
+      senderRemoved: attachedDatabase.typeMapping
+          .read(DriftSqlType.bool, data['${effectivePrefix}sender_removed']),
     );
   }
 
@@ -3681,6 +3699,14 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
   final int? forwardHops;
   final String? channelId;
   final bool? senderHidden;
+
+  /// L1 (schema 40): the sender's leaf was on its account's approved-device
+  /// list once and has been removed from it since, when this row arrived (or
+  /// when an edit from such a leaf last changed it). Recorded at entry: once
+  /// the removal commit lands the leaf is gone and the verdict cannot be
+  /// judged again. The chat marks the message "sent from a device <name>
+  /// removed". Null and false mean an approved sender.
+  final bool? senderRemoved;
   const LocalMessage(
       {required this.key,
       this.serverMessageId,
@@ -3700,7 +3726,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       this.formatJson,
       this.forwardHops,
       this.channelId,
-      this.senderHidden});
+      this.senderHidden,
+      this.senderRemoved});
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
@@ -3746,6 +3773,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
     }
     if (!nullToAbsent || senderHidden != null) {
       map['sender_hidden'] = Variable<bool>(senderHidden);
+    }
+    if (!nullToAbsent || senderRemoved != null) {
+      map['sender_removed'] = Variable<bool>(senderRemoved);
     }
     return map;
   }
@@ -3793,6 +3823,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       senderHidden: senderHidden == null && nullToAbsent
           ? const Value.absent()
           : Value(senderHidden),
+      senderRemoved: senderRemoved == null && nullToAbsent
+          ? const Value.absent()
+          : Value(senderRemoved),
     );
   }
 
@@ -3819,6 +3852,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       forwardHops: serializer.fromJson<int?>(json['forwardHops']),
       channelId: serializer.fromJson<String?>(json['channelId']),
       senderHidden: serializer.fromJson<bool?>(json['senderHidden']),
+      senderRemoved: serializer.fromJson<bool?>(json['senderRemoved']),
     );
   }
   @override
@@ -3844,6 +3878,7 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       'forwardHops': serializer.toJson<int?>(forwardHops),
       'channelId': serializer.toJson<String?>(channelId),
       'senderHidden': serializer.toJson<bool?>(senderHidden),
+      'senderRemoved': serializer.toJson<bool?>(senderRemoved),
     };
   }
 
@@ -3866,7 +3901,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           Value<String?> formatJson = const Value.absent(),
           Value<int?> forwardHops = const Value.absent(),
           Value<String?> channelId = const Value.absent(),
-          Value<bool?> senderHidden = const Value.absent()}) =>
+          Value<bool?> senderHidden = const Value.absent(),
+          Value<bool?> senderRemoved = const Value.absent()}) =>
       LocalMessage(
         key: key ?? this.key,
         serverMessageId: serverMessageId.present
@@ -3890,6 +3926,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
         channelId: channelId.present ? channelId.value : this.channelId,
         senderHidden:
             senderHidden.present ? senderHidden.value : this.senderHidden,
+        senderRemoved:
+            senderRemoved.present ? senderRemoved.value : this.senderRemoved,
       );
   LocalMessage copyWithCompanion(LocalMessagesCompanion data) {
     return LocalMessage(
@@ -3924,6 +3962,9 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       senderHidden: data.senderHidden.present
           ? data.senderHidden.value
           : this.senderHidden,
+      senderRemoved: data.senderRemoved.present
+          ? data.senderRemoved.value
+          : this.senderRemoved,
     );
   }
 
@@ -3948,7 +3989,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           ..write('formatJson: $formatJson, ')
           ..write('forwardHops: $forwardHops, ')
           ..write('channelId: $channelId, ')
-          ..write('senderHidden: $senderHidden')
+          ..write('senderHidden: $senderHidden, ')
+          ..write('senderRemoved: $senderRemoved')
           ..write(')'))
         .toString();
   }
@@ -3973,7 +4015,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
       formatJson,
       forwardHops,
       channelId,
-      senderHidden);
+      senderHidden,
+      senderRemoved);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -3996,7 +4039,8 @@ class LocalMessage extends DataClass implements Insertable<LocalMessage> {
           other.formatJson == this.formatJson &&
           other.forwardHops == this.forwardHops &&
           other.channelId == this.channelId &&
-          other.senderHidden == this.senderHidden);
+          other.senderHidden == this.senderHidden &&
+          other.senderRemoved == this.senderRemoved);
 }
 
 class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
@@ -4019,6 +4063,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
   final Value<int?> forwardHops;
   final Value<String?> channelId;
   final Value<bool?> senderHidden;
+  final Value<bool?> senderRemoved;
   final Value<int> rowid;
   const LocalMessagesCompanion({
     this.key = const Value.absent(),
@@ -4040,6 +4085,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.forwardHops = const Value.absent(),
     this.channelId = const Value.absent(),
     this.senderHidden = const Value.absent(),
+    this.senderRemoved = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   LocalMessagesCompanion.insert({
@@ -4062,6 +4108,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     this.forwardHops = const Value.absent(),
     this.channelId = const Value.absent(),
     this.senderHidden = const Value.absent(),
+    this.senderRemoved = const Value.absent(),
     this.rowid = const Value.absent(),
   })  : key = Value(key),
         conversationId = Value(conversationId),
@@ -4090,6 +4137,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     Expression<int>? forwardHops,
     Expression<String>? channelId,
     Expression<bool>? senderHidden,
+    Expression<bool>? senderRemoved,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -4112,6 +4160,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       if (forwardHops != null) 'forward_hops': forwardHops,
       if (channelId != null) 'channel_id': channelId,
       if (senderHidden != null) 'sender_hidden': senderHidden,
+      if (senderRemoved != null) 'sender_removed': senderRemoved,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -4136,6 +4185,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       Value<int?>? forwardHops,
       Value<String?>? channelId,
       Value<bool?>? senderHidden,
+      Value<bool?>? senderRemoved,
       Value<int>? rowid}) {
     return LocalMessagesCompanion(
       key: key ?? this.key,
@@ -4157,6 +4207,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
       forwardHops: forwardHops ?? this.forwardHops,
       channelId: channelId ?? this.channelId,
       senderHidden: senderHidden ?? this.senderHidden,
+      senderRemoved: senderRemoved ?? this.senderRemoved,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -4221,6 +4272,9 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
     if (senderHidden.present) {
       map['sender_hidden'] = Variable<bool>(senderHidden.value);
     }
+    if (senderRemoved.present) {
+      map['sender_removed'] = Variable<bool>(senderRemoved.value);
+    }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
     }
@@ -4249,6 +4303,7 @@ class LocalMessagesCompanion extends UpdateCompanion<LocalMessage> {
           ..write('forwardHops: $forwardHops, ')
           ..write('channelId: $channelId, ')
           ..write('senderHidden: $senderHidden, ')
+          ..write('senderRemoved: $senderRemoved, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -8337,6 +8392,7 @@ typedef $$LocalMessagesTableCreateCompanionBuilder = LocalMessagesCompanion
   Value<int?> forwardHops,
   Value<String?> channelId,
   Value<bool?> senderHidden,
+  Value<bool?> senderRemoved,
   Value<int> rowid,
 });
 typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
@@ -8360,6 +8416,7 @@ typedef $$LocalMessagesTableUpdateCompanionBuilder = LocalMessagesCompanion
   Value<int?> forwardHops,
   Value<String?> channelId,
   Value<bool?> senderHidden,
+  Value<bool?> senderRemoved,
   Value<int> rowid,
 });
 
@@ -8432,6 +8489,9 @@ class $$LocalMessagesTableFilterComposer
 
   ColumnFilters<bool> get senderHidden => $composableBuilder(
       column: $table.senderHidden, builder: (column) => ColumnFilters(column));
+
+  ColumnFilters<bool> get senderRemoved => $composableBuilder(
+      column: $table.senderRemoved, builder: (column) => ColumnFilters(column));
 }
 
 class $$LocalMessagesTableOrderingComposer
@@ -8504,6 +8564,10 @@ class $$LocalMessagesTableOrderingComposer
   ColumnOrderings<bool> get senderHidden => $composableBuilder(
       column: $table.senderHidden,
       builder: (column) => ColumnOrderings(column));
+
+  ColumnOrderings<bool> get senderRemoved => $composableBuilder(
+      column: $table.senderRemoved,
+      builder: (column) => ColumnOrderings(column));
 }
 
 class $$LocalMessagesTableAnnotationComposer
@@ -8571,6 +8635,9 @@ class $$LocalMessagesTableAnnotationComposer
 
   GeneratedColumn<bool> get senderHidden => $composableBuilder(
       column: $table.senderHidden, builder: (column) => column);
+
+  GeneratedColumn<bool> get senderRemoved => $composableBuilder(
+      column: $table.senderRemoved, builder: (column) => column);
 }
 
 class $$LocalMessagesTableTableManager extends RootTableManager<
@@ -8620,6 +8687,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> forwardHops = const Value.absent(),
             Value<String?> channelId = const Value.absent(),
             Value<bool?> senderHidden = const Value.absent(),
+            Value<bool?> senderRemoved = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion(
@@ -8642,6 +8710,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             forwardHops: forwardHops,
             channelId: channelId,
             senderHidden: senderHidden,
+            senderRemoved: senderRemoved,
             rowid: rowid,
           ),
           createCompanionCallback: ({
@@ -8664,6 +8733,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             Value<int?> forwardHops = const Value.absent(),
             Value<String?> channelId = const Value.absent(),
             Value<bool?> senderHidden = const Value.absent(),
+            Value<bool?> senderRemoved = const Value.absent(),
             Value<int> rowid = const Value.absent(),
           }) =>
               LocalMessagesCompanion.insert(
@@ -8686,6 +8756,7 @@ class $$LocalMessagesTableTableManager extends RootTableManager<
             forwardHops: forwardHops,
             channelId: channelId,
             senderHidden: senderHidden,
+            senderRemoved: senderRemoved,
             rowid: rowid,
           ),
           withReferenceMapper: (p0) => p0

@@ -21,7 +21,8 @@ pub const ROLE_EXTENSION_TYPE: u16 = 0xF0C4;
 /// The record codec's own ceiling (`docs/crypto.md`, format v2: 256 KiB).
 pub const MAX_ROLE_RECORD_BYTES: usize = 256 * 1024;
 /// Format byte of [`CommitReview::encode`] and [`encode_role_state`].
-const REVIEW_FORMAT: u8 = 1;
+/// Format 2 (ABI 24) appends the leaves a leave statement proves gone.
+const REVIEW_FORMAT: u8 = 2;
 const STATE_FORMAT: u8 = 1;
 
 pub const REVIEW_REMOVED: u8 = 1;
@@ -37,9 +38,20 @@ fn role_type() -> ExtensionType {
 
 /// The capabilities every Veritra leaf advertises: OpenMLS's defaults plus
 /// the role extension. Key packages and a creator's leaf use it, so any
-/// ABI 20 device can join a record group.
+/// ABI 20 device can join a record group. Since ABI 23 (L2-1) it also lists
+/// the pad extension, which RFC 9420 requires of any extension a key
+/// package carries; nothing requires it of other leaves or of the group.
 pub(super) fn leaf_capabilities() -> Capabilities {
-    Capabilities::new(None, None, Some(&[role_type()]), None, None)
+    Capabilities::new(
+        None,
+        None,
+        Some(&[
+            role_type(),
+            ExtensionType::Unknown(crate::l2::PAD_EXTENSION_TYPE),
+        ]),
+        None,
+        None,
+    )
 }
 
 /// A record is 1 to [`MAX_ROLE_RECORD_BYTES`] bytes; nothing else is
@@ -211,10 +223,24 @@ pub struct CommitReview {
     pub roster_after: Vec<Vec<u8>>,
     pub record_before: Option<Vec<u8>>,
     pub record_after: Option<Vec<u8>>,
+    /// ABI 24: the removed leaves whose own leave statement in the commit's
+    /// authenticated data verified against the tree before the commit
+    /// (`leave_proof`). Empty when there is none or it is malformed.
+    pub proven: Vec<LeafPair>,
 }
 
 impl CommitReview {
-    fn of(group: &MlsGroup, staged: &StagedCommit, committer: LeafPair) -> Result<Self, MlsError> {
+    fn of(
+        group: &MlsGroup,
+        staged: &StagedCommit,
+        committer: LeafPair,
+        aad: &[u8],
+    ) -> Result<Self, MlsError> {
+        let removed: Vec<_> = staged
+            .remove_proposals()
+            .map(|proposal| proposal.remove_proposal().removed())
+            .collect();
+        let proven = super::leave_proof::proven_leaves(group, &removed, aad);
         let added = staged
             .add_proposals()
             .map(|proposal| {
@@ -253,11 +279,12 @@ impl CommitReview {
             roster_after: roster_after(group, staged)?,
             record_before,
             record_after,
+            proven,
         })
     }
 
     /// ```text
-    /// u8  format = 1
+    /// u8  format = 2
     /// u8  flags      1 removed, 2 added, 4 removed self, 8 record proposal,
     ///                16 record before present, 32 record after present
     /// u64 new_epoch
@@ -267,6 +294,7 @@ impl CommitReview {
     /// u16 n_after    { lp16(account) }*   sorted by bytes, distinct
     /// u32 len || record_before            len 0 when absent
     /// u32 len || record_after             len 0 when absent
+    /// u16 n_proven   { lp16(account) lp16(device) [32] key }*   (format 2)
     /// ```
     pub fn encode(&self) -> Result<Vec<u8>, MlsError> {
         let mut out = vec![REVIEW_FORMAT, self.flags];
@@ -280,6 +308,10 @@ impl CommitReview {
         put_accounts(&mut out, &self.roster_after)?;
         put_record(&mut out, self.record_before.as_deref())?;
         put_record(&mut out, self.record_after.as_deref())?;
+        put_count(&mut out, self.proven.len())?;
+        for pair in &self.proven {
+            put_pair(&mut out, pair)?;
+        }
         Ok(out)
     }
 }
@@ -456,6 +488,8 @@ impl MlsDevice {
             let Sender::Member(committer) = *processed.sender() else {
                 return Err(MlsError::UnexpectedMessage);
             };
+            // Read before the content is taken: leave statements (ABI 24).
+            let aad = processed.aad().to_vec();
             let ProcessedMessageContent::StagedCommitMessage(staged) = processed.into_content()
             else {
                 return Err(MlsError::UnexpectedMessage);
@@ -465,7 +499,7 @@ impl MlsDevice {
                 .member_at(committer)
                 .ok_or(MlsError::InvalidIdentity)?;
             let committer = LeafPair::from_credential(&member.credential, &member.signature_key)?;
-            let review = CommitReview::of(group, &staged, committer.clone())?;
+            let review = CommitReview::of(group, &staged, committer.clone(), &aad)?;
             Ok((review, *staged, committer))
         })?;
         self.held.put(

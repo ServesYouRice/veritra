@@ -113,6 +113,19 @@ class _DelayedCacheStore extends MemoryLocalStore {
   }
 }
 
+/// A store whose key-event reads for one subject kind fail while [failKind]
+/// is set: a broken read in one rotation mark.
+class _FailingKeyReadStore extends MemoryLocalStore {
+  String? failKind;
+
+  @override
+  Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
+      CommunityInfoEventKind kind, String subjectKind, String subjectId) async {
+    if (failKind == subjectKind) throw StateError('store read failed');
+    return super.loadCommunityInfoEvents(kind, subjectKind, subjectId);
+  }
+}
+
 /// One device: its store and service. [members] says which conversations it
 /// is in; a send reaches every other device in that conversation.
 class _Device {
@@ -207,7 +220,8 @@ void main() {
       bool noRecord = false,
       String? deviceId,
       LocalStore? store,
-      Duration Function()? answerDelay}) {
+      Duration Function()? answerDelay,
+      bool roster = false}) {
     final d = _Device(name, store ?? MemoryLocalStore(), members);
     d.service = CommunityInfoService(
       store: d.store,
@@ -220,6 +234,15 @@ void main() {
           random: Random(name.hashCode + net.devices.length)),
       policyFor: (_) => GovernanceInfoEditPolicy(verified ?? roles),
       verifiedRolesOf: noRecord ? null : (_) => verified ?? roles,
+      // With [roster], the group's members are the accounts of the devices
+      // in it, as each device's MLS tree would say.
+      membersOf: roster
+          ? (conversation) => {
+                for (final other in net.devices)
+                  if (other.members.contains(conversation))
+                    other.service.accountId,
+              }
+          : null,
       accountId: 'acct_$name',
       deviceId: deviceId ?? 'dev_$name',
       answerDelay: answerDelay ?? () => Duration.zero,
@@ -1498,6 +1521,143 @@ void main() {
     expect(await admin.service.dueRotations(), isEmpty);
   }, skip: skip);
 
+  test('a failing mark backs off without stopping the marks after it',
+      () async {
+    final store = _FailingKeyReadStore();
+    final admin =
+        device('admin', {_shared, _privateConv}, admin: true, store: store);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    await admin.service
+        .markRotationDue(admin.service.homeOf(community)!, _community);
+    await admin.service.markRotationDue(
+        const InfoKeyHome(
+            keySubjectKind: infoKindChannel,
+            keySubjectId: 'chan_00000000000000000000000000000003',
+            conversationId: _privateConv),
+        _community);
+    // The community mark comes first and its key read throws.
+    store.failKind = infoKindCommunity;
+    expect(await admin.service.runRotations((_, __) => []), 1);
+    expect(await admin.service.dueRotations(), {'community|$_community'});
+    // The failure backs off: a retry at once does nothing even when the
+    // read works again.
+    store.failKind = null;
+    expect(await admin.service.runRotations((_, __) => [community]), 0);
+    now = now.add(const Duration(minutes: 2));
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    expect(await admin.service.dueRotations(), isEmpty);
+  }, skip: skip);
+
+  test('a non-admin whose completion read fails keeps its mark and backs off',
+      () async {
+    final admin = device('admin', {_shared}, admin: true);
+    final store = _FailingKeyReadStore();
+    final member = device('member', {_shared}, store: store);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    await member.service.markRotationDue(home, _community);
+    await admin.service.markRotationDue(home, _community);
+    expect(await admin.service.runRotations((_, __) => [community]), 1);
+    store.failKind = infoKindCommunity;
+    // The throw stays inside the pass.
+    expect(await member.service.runRotations((_, __) => [community]), 0);
+    store.failKind = null;
+    expect(await member.service.runRotations((_, __) => [community]), 0);
+    expect(await member.service.dueRotations(), {'community|$_community'});
+    now = now.add(const Duration(minutes: 2));
+    expect(await member.service.runRotations((_, __) => [community]), 1);
+    expect(await member.service.dueRotations(), isEmpty);
+  }, skip: skip);
+
+  test('answerers follow the verified record, not the server role', () async {
+    final verified = GovernanceState(
+      rev: 2,
+      owner: 'acct_admin',
+      ownerRev: 2,
+      admins: const {'acct_boss': 2},
+      moderators: const {'acct_mod'},
+      joined: const {
+        'acct_admin': 0,
+        'acct_member': 1,
+        'acct_mod': 2,
+        'acct_boss': 3,
+      },
+    );
+    final admin = device('admin', {_shared}, admin: true, verified: verified);
+    // The server calls the moderator an admin and the admin a member.
+    final mod = device('mod', {_shared}, admin: true, verified: verified);
+    final boss = device('boss', {_shared}, admin: false, verified: verified);
+    // The member joins after the key went round.
+    final member = device('member', {}, verified: verified);
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    final home = admin.service.homeOf(community)!;
+    expect(await mod.service.refresh(community), isA<InfoNeedsKey>());
+    expect(await boss.service.refresh(community), isA<InfoNeedsKey>());
+    expect(await admin.service.answerRequests(home, _community), 1);
+    expect(await mod.service.refresh(community), isA<InfoAccepted>());
+    expect(await boss.service.refresh(community), isA<InfoAccepted>());
+    // Both now hold the key; the member joins and asks.
+    member.members.add(_shared);
+    expect(await member.service.requestKey(home), isTrue);
+    expect(await mod.service.answerRequests(home, _community), 0);
+    expect(mod.sent.where((s) => s.$2 == AppPayloadType.infoKey), isEmpty);
+    expect(await boss.service.answerRequests(home, _community), 1);
+    expect(
+        boss.sent.where((s) => s.$2 == AppPayloadType.infoKey), hasLength(1));
+  }, skip: skip);
+
+  test(
+      'a private channel mark with no verified owner, admin or moderator in '
+      'its group is reported', () async {
+    final verified = GovernanceState(
+      rev: 2,
+      owner: 'acct_admin',
+      ownerRev: 2,
+      admins: const {'acct_boss': 2},
+      moderators: const {'acct_mod'},
+      joined: const {'acct_admin': 0, 'acct_mod': 1, 'acct_boss': 2},
+    );
+    final member =
+        device('member', {_shared, _privateConv}, verified: verified);
+    const home = InfoKeyHome(
+        keySubjectKind: infoKindChannel,
+        keySubjectId: 'chan_00000000000000000000000000000003',
+        conversationId: _privateConv);
+    await member.service.markRotationDue(home, _community);
+    await member.service
+        .markRotationDue(member.service.homeOf(community)!, _community);
+    // Only members are left in the private group: nobody can renew it.
+    expect(
+        await member.service
+            .rotationsWithoutRotator((_) => {'acct_member', 'acct_other'}),
+        {_privateConv});
+    // A moderator in the group can (no owner or admin is a member), and so
+    // can an admin or the owner.
+    expect(
+        await member.service
+            .rotationsWithoutRotator((_) => {'acct_mod', 'acct_member'}),
+        isEmpty);
+    expect(
+        await member.service
+            .rotationsWithoutRotator((_) => {'acct_member', 'acct_boss'}),
+        isEmpty);
+    expect(await member.service.rotationsWithoutRotator((_) => {'acct_admin'}),
+        isEmpty);
+    // An unknown roster says nothing.
+    expect(await member.service.rotationsWithoutRotator((_) => null), isEmpty);
+  }, skip: skip);
+
+  test('without a verified record no mark is reported as stuck', () async {
+    final member = device('member', {_shared, _privateConv}, noRecord: true);
+    await member.service.markRotationDue(
+        const InfoKeyHome(
+            keySubjectKind: infoKindChannel,
+            keySubjectId: 'chan_00000000000000000000000000000003',
+            conversationId: _privateConv),
+        _community);
+    expect(await member.service.rotationsWithoutRotator((_) => {}), isEmpty);
+  }, skip: skip);
+
   test('an own record whose announcement could not go out is announced later',
       () async {
     final admin = device('admin', {_shared}, admin: true);
@@ -1757,7 +1917,8 @@ void main() {
     final private = InfoSubject(infoKindChannel, _private, _community);
     final devices = <String, _Device>{
       for (final name in ['admin', 'second', 'mod'])
-        name: device(name, {_privateConv}, admin: true, verified: staff),
+        name: device(name, {_privateConv},
+            admin: true, verified: staff, roster: true),
     };
     final owner = devices['admin']!;
     await owner.service.publish(
@@ -1815,6 +1976,287 @@ void main() {
               .every((e) => e.$1 == _privateConv),
           isTrue);
     }
+  }, skip: skip);
+
+  // Owner decision 2026-11-11: with no owner or admin among a private
+  // channel's members, its verified moderator members rotate.
+  final modStaff = GovernanceState(
+    rev: 3,
+    owner: 'acct_admin',
+    ownerRev: 3,
+    admins: const {'acct_second': 2},
+    moderators: const {'acct_mod', 'acct_mod2'},
+    joined: const {
+      'acct_admin': 0,
+      'acct_second': 1,
+      'acct_mod': 1,
+      'acct_mod2': 1,
+      'acct_member': 1,
+      'acct_late': 2,
+    },
+  );
+
+  CommunityInfoRecord secret(String name, int r) => CommunityInfoRecord(
+      kind: infoKindChannel,
+      subjectId: _private,
+      revision: r,
+      name: name,
+      privatePlace: const InfoPrivatePlace(position: 0));
+
+  test(
+      'with no owner or admin in a private channel, one moderator member '
+      'rotates, the other adopts, and an admin who joins later replaces its '
+      'key', () async {
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final devices = <String, _Device>{
+      for (final name in ['admin', 'mod', 'mod2', 'member'])
+        name: device(name, {_privateConv},
+            admin: name == 'admin', verified: modStaff, roster: true),
+    };
+    final owner = devices['admin']!;
+    await owner.service
+        .publish(private, (r) => secret('Secret', r), mint: true);
+    final home = owner.service.homeOf(private)!;
+    final key = (await owner.service.currentKey(home, _community))!;
+    await net.deliver(
+        owner,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    // The owner leaves the channel; the others merge that removal.
+    owner.members.remove(_privateConv);
+    final mod = devices['mod']!;
+    final mod2 = devices['mod2']!;
+    final member = devices['member']!;
+    for (final d in [mod, mod2, member]) {
+      await d.service.refresh(private);
+      expect(d.service.shown(infoKindChannel, _private)?.name, 'Secret');
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    // The order runs over the moderators who are members.
+    int rank(_Device d) => remoteRotationRank(
+        rotators: const {'acct_mod', 'acct_mod2'},
+        accountId: d.service.accountId,
+        home: home,
+        epoch: 2);
+    final mods = [mod, mod2]..sort((a, b) => rank(a).compareTo(rank(b)));
+    expect(await mods[1].service.nextDeferredRotation(), isNotNull);
+    final before = {
+      for (final d in [mod, mod2, member]) d: keysSent(d)
+    };
+    final old = server.records[private.key]!.keyId;
+    now = now.add(remoteRotationBase + remoteRotationJitter);
+    expect(await member.service.runRotations((_, __) => [private]), 0);
+    expect(await mods[1].service.runRotations((_, __) => [private]), 0);
+    expect(await mods[0].service.runRotations((_, __) => [private]), 1);
+    final rotated = server.records[private.key]!.keyId;
+    expect(rotated, isNot(old));
+    final puts = server.puts;
+    // The other moderator and the member complete on that delivery.
+    expect(await mods[1].service.runRotations((_, __) => [private]), 1);
+    expect(await member.service.runRotations((_, __) => [private]), 1);
+    expect(server.puts, puts);
+    expect(keysSent(mods[0]), before[mods[0]]! + 1);
+    expect(keysSent(mods[1]), before[mods[1]]);
+    expect(keysSent(member), before[member]);
+    for (final d in [mod, mod2, member]) {
+      expect(await d.service.dueRotations(), isEmpty);
+      expect((await d.service.currentKey(home, _community))?.keyId, rotated);
+    }
+    await member.service.refresh(private);
+    expect(
+        (await member.store
+                .loadAcceptedCommunityInfo(infoKindChannel, _private))
+            ?.keyId,
+        rotated);
+    // An admin joins and is handed the moderator's key, so it can read
+    // what is sealed under it. Owner decision B (2026-11-11): it then mints
+    // its own key instead of editing under the moderator's.
+    final second =
+        device('second', {}, admin: true, verified: modStaff, roster: true);
+    second.members.add(_privateConv);
+    expect(await mods[0].service.deliverAfterAdd(home, _community, [private]),
+        isTrue);
+    expect(await second.service.refresh(private), isA<InfoAccepted>());
+    expect((await second.service.currentKey(home, _community))?.keyId, rotated);
+    // A moderator never replaces a key; the admin marks once.
+    expect(
+        await mods[0].service.replaceModeratorKey(home, _community), isFalse);
+    expect(await member.service.replaceModeratorKey(home, _community), isFalse);
+    expect(await second.service.replaceModeratorKey(home, _community), isTrue);
+    expect(await second.service.replaceModeratorKey(home, _community), isFalse);
+    expect(await second.service.dueRotations(), {'channel|$_private'});
+    // While the mark is due it does not edit under the moderator's key.
+    await expectLater(
+        second.service.publish(private, (r) => secret('Early', r)),
+        throwsA(isA<InfoRotationPending>()));
+    // It waits its turn, as after a removal it did not make.
+    final sentBefore = keysSent(second);
+    expect(await second.service.nextDeferredRotation(), isNotNull);
+    expect(await second.service.runRotations((_, __) => [private]), 0);
+    expect(keysSent(second), sentBefore);
+    pastTurn();
+    expect(await second.service.runRotations((_, __) => [private]), 1);
+    final minted = server.records[private.key]!.keyId;
+    expect(minted, isNot(rotated));
+    expect(keysSent(second), sentBefore + 1);
+    expect(
+        second.sent
+            .where((e) => e.$2 == AppPayloadType.infoKey)
+            .every((e) => e.$1 == _privateConv),
+        isTrue,
+        reason: 'the key goes only into the private channel\'s group');
+    expect(await second.service.dueRotations(), isEmpty);
+    for (final d in [mod, mod2, member, second]) {
+      expect((await d.service.currentKey(home, _community))?.keyId, minted);
+      expect(await d.service.refresh(private), isNot(isA<InfoNeedsKey>()));
+    }
+    // Its own key current, it marks nothing more.
+    expect(await second.service.replaceModeratorKey(home, _community), isFalse);
+    // With an admin in the group, the admin answers a joiner with its key,
+    // the moderators no longer do.
+    final late = device('late', {}, verified: modStaff, roster: true);
+    late.members.add(_privateConv);
+    expect(await late.service.requestKey(home), isTrue);
+    expect(await mods[0].service.answerRequests(home, _community), 0);
+    expect(await mods[1].service.answerRequests(home, _community), 0);
+    expect(await second.service.answerRequests(home, _community), 1);
+    expect((await late.service.currentKey(home, _community))?.keyId, minted);
+    expect(await late.service.refresh(private), isA<InfoAccepted>());
+    await second.service.publish(private, (r) => secret('Renamed', r));
+    expect(server.records[private.key]!.keyId, minted);
+  }, skip: skip);
+
+  test(
+      'with an admin in a private channel, a moderator key after a removal '
+      'neither stands in for its rotation nor ends it', () async {
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final devices = <String, _Device>{
+      for (final name in ['second', 'mod', 'member'])
+        name: device(name, {_privateConv},
+            admin: name != 'member', verified: modStaff, roster: true),
+    };
+    final admin = devices['second']!;
+    await admin.service
+        .publish(private, (r) => secret('Secret', r), mint: true);
+    final home = admin.service.homeOf(private)!;
+    final key = (await admin.service.currentKey(home, _community))!;
+    await net.deliver(
+        admin,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    final mod = devices['mod']!;
+    final member = devices['member']!;
+    for (final d in devices.values) {
+      await d.service.refresh(private);
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    // The moderator's own removal: it still does not rotate.
+    await mod.service.markRotationDue(home, _community);
+    pastTurn();
+    expect(await mod.service.runRotations((_, __) => [private]), 0);
+    expect(keysSent(mod), 0);
+    expect(await mod.service.nextDeferredRotation(), isNull);
+    // A key the moderator sends anyway ends nobody's obligation.
+    await net.deliver(
+        mod,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel',
+            subjectId: _private,
+            key: mod.service.codec.newKey()));
+    expect(await member.service.runRotations((_, __) => [private]), 0);
+    expect(await member.service.dueRotations(), {private.key});
+    // The admin rotates its own key, not the moderator's.
+    expect(await admin.service.runRotations((_, __) => [private]), 1);
+    final rotated = server.records[private.key]!.keyId;
+    expect(rotated, isNot(key.keyId));
+    expect((await admin.service.currentKey(home, _community))?.senderAccountId,
+        'acct_second');
+    expect(await member.service.runRotations((_, __) => [private]), 1);
+    expect((await member.service.currentKey(home, _community))?.keyId, rotated);
+  }, skip: skip);
+
+  test(
+      'a moderator re-sending a key retired by a removal never makes it '
+      'current again', () async {
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final devices = <String, _Device>{
+      for (final name in ['second', 'mod', 'member'])
+        name: device(name, {_privateConv},
+            admin: name == 'second', verified: modStaff, roster: true),
+    };
+    final admin = devices['second']!;
+    await admin.service
+        .publish(private, (r) => secret('Secret', r), mint: true);
+    final home = admin.service.homeOf(private)!;
+    final key = (await admin.service.currentKey(home, _community))!;
+    await net.deliver(
+        admin,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    final mod = devices['mod']!;
+    for (final d in devices.values) {
+      await d.service.refresh(private);
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    // The moderator sends the old key again, in an epoch after the removal.
+    await net.deliverAs(mod, 'dev_mod', _privateConv, AppPayloadType.infoKey,
+        infoKeyBody(subjectKind: 'channel', subjectId: _private, key: key.key!),
+        epoch: 3);
+    for (final d in devices.values) {
+      expect((await d.service.currentKey(home, _community))?.keyId,
+          isNot(key.keyId));
+    }
+  }, skip: skip);
+
+  test(
+      'a moderator re-sending a key from an admin demoted since never makes '
+      'it current again after a removal', () async {
+    // The minting admin is no longer an admin in the member's record, so
+    // its row is not a trusted copy; it still dates the key.
+    final demoted = GovernanceState(
+      rev: 4,
+      owner: 'acct_admin',
+      ownerRev: 4,
+      moderators: const {'acct_mod', 'acct_mod2'},
+      joined: modStaff.joined,
+    );
+    final private = InfoSubject(infoKindChannel, _private, _community);
+    final admin = device('second', {_privateConv},
+        admin: true, verified: modStaff, roster: true);
+    final mod = device('mod', {_privateConv}, verified: modStaff, roster: true);
+    final member =
+        device('member', {_privateConv}, verified: demoted, roster: true);
+    await admin.service
+        .publish(private, (r) => secret('Secret', r), mint: true);
+    final home = admin.service.homeOf(private)!;
+    final key = (await admin.service.currentKey(home, _community))!;
+    await net.deliver(
+        admin,
+        _privateConv,
+        AppPayloadType.infoKey,
+        infoKeyBody(
+            subjectKind: 'channel', subjectId: _private, key: key.key!));
+    for (final d in [admin, mod, member]) {
+      await d.service.refresh(private);
+      await removedAt(d.store, _privateConv, 2);
+      await d.service.observeRemoval(home, _community);
+    }
+    await net.deliverAs(mod, 'dev_mod', _privateConv, AppPayloadType.infoKey,
+        infoKeyBody(subjectKind: 'channel', subjectId: _private, key: key.key!),
+        epoch: 3);
+    expect((await member.service.currentKey(home, _community))?.keyId,
+        isNot(key.keyId));
   }, skip: skip);
 
   test('with the first admin offline, the next one rotates after its turn',

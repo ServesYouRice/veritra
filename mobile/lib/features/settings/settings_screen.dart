@@ -706,6 +706,7 @@ class SettingsScreen extends StatelessWidget {
                 autofocus: true,
                 autocorrect: false,
                 enableSuggestions: false,
+                enableIMEPersonalizedLearning: false,
                 decoration: InputDecoration(
                   labelText: dialogContext.l10n.recoveryKeyField,
                 ),

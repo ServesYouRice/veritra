@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/calls/room/room_engine.dart';
 import 'package:private_messenger/calls/room/room_ports.dart';
@@ -264,8 +266,79 @@ void main() {
     expect(b2.crypto.dropped, isTrue);
     expect(server.joins, greaterThan(joinsBefore), reason: 'b rejoined');
     expect(b2.keys.clears, greaterThanOrEqualTo(1));
+    expect(b2.engine.phase, RoomPhase.joining);
+
+    // The forgery was served to b only; the others got an honest commit for
+    // that epoch, and a still holds b's old leaf. The rejoin must end
+    // active: a removes the old leaf and adds the new one in one commit.
+    server.log[server.log.length - 1] = RoomCommitRecord(
+        epoch: 2,
+        committerDeviceId: 'dev_a',
+        commit: FakeCrypto.commitOf(2, [], []));
+    expect(a.engine.roster.map((m) => m.id), ['acct_a/dev_a', 'acct_b/dev_b'],
+        reason: 'the old leaf is still there');
+    await admit(a, b2);
+    expect(b2.engine.phase, RoomPhase.active);
+    expect(server.epoch, 3);
+    expect(a.engine.roster.map((m) => m.id), ['acct_a/dev_a', 'acct_b/dev_b'],
+        reason: 'b is in the group once');
+    expect(b2.engine.roster.map((m) => m.id), ['acct_a/dev_a', 'acct_b/dev_b']);
+    final rejoin = s(server.log.last.commit).split(';');
+    expect(rejoin[2], contains('acct_b|dev_b'), reason: 'the new leaf');
+    expect(rejoin[3], contains('acct_b|dev_b'), reason: 'the old leaf');
+    expect(s(a.keys.keys['acct_b/dev_b:0@3']!),
+        s(b2.keys.keys['acct_b/dev_b:0@3']!));
     a.engine.dispose();
     b2.engine.dispose();
+  });
+
+  test('a device that leaves and comes back is added again, once', () async {
+    final a = await start('a');
+    final first = await start('b');
+    await admit(a, first);
+    // b's app goes away without a leave the others saw; a new engine on the
+    // same device joins again under a new seat.
+    await first.engine.leave();
+    first.engine.dispose();
+    final again = await start('b');
+    await admit(a, again);
+    expect(again.engine.phase, RoomPhase.active);
+    expect(a.engine.roster.map((m) => m.id), ['acct_a/dev_a', 'acct_b/dev_b']);
+    expect(again.engine.epoch, a.engine.epoch);
+    a.engine.dispose();
+    again.engine.dispose();
+  });
+
+  test('a sealed signal opens only for the member it names, in its epoch',
+      () async {
+    final a = await start('a');
+    final b2 = await start('b');
+    await admit(a, b2);
+    final sealed = await b2.engine.sealSignal(b('hello'));
+    expect(sealed, isNotNull);
+    expect(s(sealed!).contains('acct_b'), isTrue,
+        reason: 'the fake ciphertext names its sender; the header does not');
+    final header = sealed.sublist(0, RoomEngine.signalMagic.length + 10);
+    expect(s(header).contains('acct_'), isFalse,
+        reason: 'the envelope header carries no account or device id');
+    final opened = await a.engine.openSignal(sealed);
+    expect(opened!.sender.id, 'acct_b/dev_b');
+    expect(s(opened.plaintext), 'hello');
+    // Claiming another roster place fails the MLS sender check.
+    final moved = Uint8List.fromList(sealed);
+    moved[RoomEngine.signalMagic.length + 9] = 0;
+    expect(await a.engine.openSignal(moved), isNull);
+    // Its own signal, a stale epoch and garbage do not open.
+    expect(await b2.engine.openSignal(sealed), isNull);
+    final c = await start('c');
+    await admit(a, c);
+    b2.engine.refresh();
+    await pump();
+    expect(await a.engine.openSignal(sealed), isNull, reason: 'old epoch');
+    expect(await a.engine.openSignal(b('VB6S junk')), isNull);
+    for (final d in [a, b2, c]) {
+      d.engine.dispose();
+    }
   });
 
   test('a removal in the parent group is a Remove in the call', () async {
@@ -285,6 +358,108 @@ void main() {
     expect(b2.keys.keys, isEmpty);
     a.engine.dispose();
     b2.engine.dispose();
+  });
+
+  // Review MEDIUM (round 7): the parent's MLS tree alone is not the roster.
+  test(
+      'no call starts or is joined while the parent holds a leaf the L1 '
+      'judgment does not approve, or while that judgment is unknown', () async {
+    parent.unapproved.add(member('x'));
+    final a = Device('a', server, clock, parent);
+    await a.engine.join('conv_1');
+    await pump();
+    expect(a.engine.phase, RoomPhase.failed);
+    expect(a.engine.failure, RoomFailure.parentNotApproved);
+    expect(server.joins, 0, reason: 'the server is never asked');
+    expect(a.keys.keys, isEmpty);
+    a.engine.dispose();
+
+    parent.unapproved.clear();
+    parent.known = false;
+    final again = Device('a', server, clock, parent);
+    await again.engine.join('conv_1');
+    await pump();
+    expect(again.engine.failure, RoomFailure.parentNotApproved);
+    expect(server.joins, 0);
+    again.engine.dispose();
+
+    parent.known = true;
+    final clean = await start('a');
+    expect(clean.engine.phase, RoomPhase.active);
+    clean.engine.dispose();
+  });
+
+  test(
+      'while the parent judgment is not loaded nobody is removed, and a '
+      'commit waits instead of failing the call', () async {
+    final a = await start('a');
+    final bView = FakeParent(parent.list);
+    final b2 = await start('b', parentView: bView);
+    await admit(a, b2);
+    // b's view of the parent is not loaded: an empty roster would remove a.
+    bView.known = false;
+    b2.engine.refresh();
+    await pump();
+    await clock.advance(const Duration(seconds: 3));
+    expect(server.epoch, 1, reason: 'no removal from an unknown roster');
+    expect(b2.engine.roster, hasLength(2));
+    // a commits a join meanwhile (its own view is loaded): b waits for the
+    // judgment instead of refusing the Add and rejoining.
+    final c = await start('c', parentView: FakeParent(parent.list));
+    await admit(a, c);
+    expect(server.epoch, 2);
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.phase, RoomPhase.active);
+    expect(b2.engine.epoch, 1);
+    expect(b2.crypto.drops, 0);
+    bView.known = true;
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.epoch, 2);
+    for (final d in [a, b2, c]) {
+      d.engine.dispose();
+    }
+  });
+
+  // Review LOW (round 7): a member that lost approval gets no media under
+  // a key this device switched to after that.
+  test(
+      'the send key stays while a call member is not an approved parent '
+      'leaf, and moves once it is removed', () async {
+    final a = await start('a');
+    final bView = FakeParent(parent.list);
+    final b2 = await start('b', parentView: bView);
+    await admit(a, b2);
+    final c = await start('c', parentView: FakeParent(parent.list));
+    await admit(a, c);
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.epoch, 2);
+    expect(b2.keys.sendIndex, 2);
+    // In b's judgment c lost approval; a's has not caught up and a's
+    // hourly self-update moves the epoch first.
+    bView.list.removeWhere((m) => m.id == c.self.id);
+    final joinedAt = clock.current;
+    await clock.advance(
+        RoomEngine.selfUpdateEvery - const Duration(milliseconds: 100));
+    expect(clock.current.isBefore(joinedAt.add(RoomEngine.selfUpdateEvery)),
+        isTrue);
+    expect(server.epoch, 3, reason: "a's self-update");
+    b2.engine.refresh();
+    await pump();
+    expect(b2.engine.epoch, 3);
+    expect(b2.keys.keys['acct_b/dev_b:0@3'], isNotNull,
+        reason: 'receive keys install as before');
+    expect(b2.keys.sendIndex, 2, reason: 'c could read b under epoch 3');
+    // b removes c itself (rank 1, after 2 s); then it switches.
+    await clock.advance(const Duration(seconds: 3));
+    expect(server.epoch, 4);
+    expect(b2.engine.roster.map((m) => m.id), isNot(contains(c.self.id)));
+    expect(b2.keys.sendIndex, 4);
+    for (final d in [a, b2, c]) {
+      d.engine.dispose();
+    }
   });
 
   test(

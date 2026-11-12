@@ -452,13 +452,35 @@ extension MembershipActions on AppState {
   }
 
   /// Mutes a member for [seconds] (0 lifts it).
+  ///
+  /// C5: the community's verified record carries the timeout too, so every
+  /// member's app hides the member's posts as the server refuses them
+  /// (docs/crypto.md, "C5 timeouts in the record"). A timeout is set on the
+  /// server first and then recorded with the server's own times; a lift
+  /// leaves the record first and only then the server. Either way a failure
+  /// leaves apps no stricter than the server.
   Future<bool> timeoutCommunityMember(
     String communityId,
     String accountId,
     int seconds,
   ) async {
+    final shared = communities
+        .where((c) => c.id == communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (seconds == 0 && shared != null) {
+      final view = await governanceViewFor(shared);
+      if (view != null && view.record.timeouts.containsKey(accountId)) {
+        final lifted = await _roleCommand(
+          shared,
+          (commands, _, __) => commands.liftTimeout(accountId),
+        );
+        if (!lifted) return false;
+      }
+    }
+    DateTime? until;
     final done = await _membershipCall<bool>((current, client) async {
-      await client.setMemberTimeout(
+      until = await client.setMemberTimeout(
         current.token,
         communityId,
         accountId,
@@ -466,6 +488,21 @@ extension MembershipActions on AppState {
       );
       return true;
     });
+    final end = until;
+    if (done == true && seconds > 0 && end != null && shared != null) {
+      final view = await governanceViewFor(shared);
+      if (view != null) {
+        final untilMs = end.millisecondsSinceEpoch;
+        await _roleCommand(
+          shared,
+          (commands, _, __) => commands.setTimeout(
+            accountId,
+            fromMs: untilMs - seconds * 1000,
+            untilMs: untilMs,
+          ),
+        );
+      }
+    }
     return done ?? false;
   }
 
@@ -513,14 +550,26 @@ extension MembershipActions on AppState {
   /// Leaves a community and every channel in it, and drops their local
   /// state the way leaving a group does. The last owner cannot leave.
   Future<bool> leaveCommunity(String communityId) async {
-    // C4: the shared group's record decides first (outside the op: it
-    // sends): the owner transfers before leaving, a governing member sends
-    // its leave proof.
-    final owner = session;
     final shared = communities
         .where((community) => community.id == communityId)
         .firstOrNull
         ?.sharedConversationId;
+    if (shared == null) return _leaveCommunity(communityId, null);
+    _leavingRecordGroups.add(shared);
+    try {
+      return await _leaveCommunity(communityId, shared);
+    } finally {
+      _leavingRecordGroups.remove(shared);
+      // A leave that did not go through voids its signed statement.
+      _voidCancelledLeavesSoon();
+    }
+  }
+
+  Future<bool> _leaveCommunity(String communityId, String? shared) async {
+    // C4: the shared group's record decides first (outside the op: it
+    // sends): the owner transfers before leaving, a governing member sends
+    // its leave proof.
+    final owner = session;
     if (owner != null && shared != null) {
       try {
         await _beforeLeavingRecordGroup(owner, shared);
@@ -543,6 +592,7 @@ extension MembershipActions on AppState {
           channel.eventId,
         );
       }
+      if (shared != null) await _leaveWentThrough(shared);
       communities = communities
           .where((community) => community.id != communityId)
           .toList(growable: false);

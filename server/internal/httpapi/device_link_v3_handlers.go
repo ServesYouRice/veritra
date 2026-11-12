@@ -163,10 +163,7 @@ func (a *API) approveDeviceLinkV3(w http.ResponseWriter, r *http.Request, princi
 		payload := map[string]interface{}{"device": device, "device_link_id": link.ID}
 		a.publishCommittedEvent(r.Context(), []string{principal.AccountID}, realtime.Event{Version: "v1", Type: "device.updated", ID: eventID, Payload: payload, CreatedAt: time.Now().UTC()})
 		a.publishDeviceListEvent(r, principal.AccountID, listResult, devicelist.ChangeAdd)
-		for _, notice := range notices {
-			a.publishCommittedEvent(r.Context(), []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.MemberLinkEventType, ID: notice.EventID,
-				Payload: map[string]string{"account_id": notice.LinkedAccountID, "device_id": notice.DeviceID}, CreatedAt: time.Now().UTC()})
-		}
+		a.publishMemberLinkNotices(r.Context(), notices)
 		a.recordAuditEvent(r.Context(), &principal.AccountID, "device_link.approved", map[string]string{"link_id": link.ID, "device_id": device.ID})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"device_link": link, "device": device})

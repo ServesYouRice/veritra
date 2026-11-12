@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -43,8 +44,10 @@ func checkDeviceListField(w http.ResponseWriter, statement []byte) bool {
 }
 
 // publishDeviceListEvent tells the account's own devices that a version landed,
-// so they refresh and re-check their groups. Peers get no event: they refresh
-// before every decision, which avoids fan-out across large communities.
+// so they refresh and re-check their groups. Peers get no device-list event:
+// they refresh before every decision, which avoids fan-out across large
+// communities. A version that adds a device (link approval, recovery) also
+// tells peers' group coordinators, through publishMemberLinkNotices.
 func (a *API) publishDeviceListEvent(r *http.Request, accountID string, result *storage.DeviceListResult, change devicelist.Change) {
 	if result == nil {
 		return
@@ -54,6 +57,18 @@ func (a *API) publishDeviceListEvent(r *http.Request, accountID string, result *
 		Payload: map[string]uint64{"version": result.Version}, CreatedAt: time.Now().UTC(),
 	})
 	a.recordAuditEvent(r.Context(), &accountID, "account.device_list_updated", map[string]interface{}{"version": result.Version, "change": int(change)})
+}
+
+// publishMemberLinkNotices publishes live the D96 coordinator notices a
+// committed link approval or recovery version wrote, each to its coordinator
+// account only. The payload is the new device and its account, nothing else.
+// Like every live event it reaches only open sockets; an app that is closed
+// finds the durable event at its next catch-up. No push wake is sent.
+func (a *API) publishMemberLinkNotices(ctx context.Context, notices []storage.MemberLinkNotice) {
+	for _, notice := range notices {
+		a.publishCommittedEvent(ctx, []string{notice.AccountID}, realtime.Event{Version: "v1", Type: storage.MemberLinkEventType, ID: notice.EventID,
+			Payload: map[string]string{"account_id": notice.LinkedAccountID, "device_id": notice.DeviceID}, CreatedAt: time.Now().UTC()})
+	}
 }
 
 type deviceListStatementPayload struct {
@@ -194,11 +209,14 @@ func (a *API) publishDeviceList(w http.ResponseWriter, r *http.Request, principa
 		writeError(w, http.StatusForbidden, "recent_auth_required")
 		return
 	}
-	result, err := a.Store.PublishDeviceList(r.Context(), principal.AccountID, principal.DeviceID, req.DeviceList)
+	result, notices, err := a.Store.PublishDeviceList(r.Context(), principal.AccountID, principal.DeviceID, req.DeviceList)
 	if err != nil {
 		handleStorageError(w, err)
 		return
 	}
 	a.publishDeviceListEvent(r, principal.AccountID, &result, parsed.Body.Change)
+	// Change 4: the recovered device is now on the head, so peers' group
+	// coordinators can add it (D96, as for a link approval).
+	a.publishMemberLinkNotices(r.Context(), notices)
 	writeJSON(w, http.StatusOK, map[string]uint64{"version": result.Version})
 }

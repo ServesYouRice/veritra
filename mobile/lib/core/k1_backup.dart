@@ -108,6 +108,7 @@ class K1BackupState {
     this.confirmedCount = 0,
     this.confirmMisses = 0,
     this.secondCopyPath,
+    this.secondCopyLabel,
     this.secondCopyAt,
     this.secondCopyFailed = false,
   });
@@ -142,10 +143,13 @@ class K1BackupState {
   int confirmedCount;
   int confirmMisses;
 
-  /// The second copy folder the user picked (desktop), when it was last
-  /// written, and whether the last write failed (a warning of its own; it
-  /// never fails the backup).
+  /// The second copy folder the user picked (a desktop path or an Android
+  /// document tree), when it was last written (on iOS: saved by hand), and
+  /// whether the last write failed (a warning of its own; it never fails the
+  /// backup). [secondCopyLabel] is the folder's name for Settings: a tree
+  /// URI is never shown.
   String? secondCopyPath;
+  String? secondCopyLabel;
   DateTime? secondCopyAt;
   bool secondCopyFailed;
 
@@ -257,6 +261,7 @@ class K1BackupState {
         'confirmed_count': confirmedCount,
         'confirm_misses': confirmMisses,
         if (secondCopyPath != null) 'second_copy_path': secondCopyPath,
+        if (secondCopyLabel != null) 'second_copy_label': secondCopyLabel,
         if (secondCopyAt != null)
           'second_copy_at': secondCopyAt!.millisecondsSinceEpoch,
         if (secondCopyFailed) 'second_copy_failed': true,
@@ -307,6 +312,9 @@ class K1BackupState {
                 : 0,
         secondCopyPath: json['second_copy_path'] is String
             ? json['second_copy_path'] as String
+            : null,
+        secondCopyLabel: json['second_copy_label'] is String
+            ? json['second_copy_label'] as String
             : null,
         secondCopyAt: _time(json['second_copy_at']),
         secondCopyFailed: json['second_copy_failed'] == true,

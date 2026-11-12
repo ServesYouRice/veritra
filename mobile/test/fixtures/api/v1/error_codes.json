@@ -111,6 +111,7 @@
     "key_package_quota_exceeded": "rateLimited",
     "key_package_unavailable": "notFound",
     "last_owner_required": "conflict",
+    "leave_notice_limited": "rateLimited",
     "login_backoff": "rateLimited",
     "message_expired": "notFound",
     "message_id_required": "invalidRequest",

@@ -58,6 +58,11 @@ func (a *API) joinRoom(w http.ResponseWriter, r *http.Request, principal domain.
 	if a.roomsUnavailable(w) {
 		return
 	}
+	// A seat is a device: a session without one cannot hold a call group.
+	if principal.DeviceID == "" {
+		writeError(w, http.StatusForbidden, "device_required")
+		return
+	}
 	var req struct {
 		ConversationID string `json:"conversation_id"`
 	}

@@ -381,6 +381,45 @@ String communityInfoRemovalSetting(String conversationId) =>
 String governanceLeaveSetting(String conversationId, String accountId) =>
     'c4.leave.$conversationId.${Uri.encodeComponent(accountId)}';
 
+/// C4 leave proof in the commit (ABI 24): [accountId]'s signed leave
+/// statement in the record group [conversationId] (`member_leave_signed`),
+/// base64, from an approved leaf. A committer that removes the account puts
+/// it in the commit's authenticated data, so a member that joined after the
+/// leave can verify it. Written and cleared with [governanceLeaveSetting].
+String governanceLeaveSignedSetting(String conversationId, String accountId) =>
+    'c4.leave_signed.$conversationId.${Uri.encodeComponent(accountId)}';
+
+/// C4 leave proof in the commit: set by this device before it sends its own
+/// signed leave statement in [conversationId]. If the leave does not go
+/// through, the statement must be voided by a self-update (it verifies until
+/// this leaf changes); the setting is cleared when a self-update of this
+/// device merges.
+String governanceLeaveSignedOutSetting(String conversationId) =>
+    'c4.leave_signed_out.$conversationId';
+
+/// C4 server succession: the owner a won election (or claim) made in the
+/// record group [conversationId], kept until this device has asked the
+/// server to move its owner row too (docs/designs/C4-custom-roles.md,
+/// "Server succession"). The value is [governanceSuccessionValue]; empty
+/// when there is nothing to ask.
+String governanceSuccessionSetting(String conversationId) =>
+    'c4.succession.$conversationId';
+
+/// `<rev>:<owner>`: the record revision that made [owner] owner, so an ask
+/// saved before this device merged its own deciding commit is not taken for
+/// a stale one.
+String governanceSuccessionValue(int rev, String owner) => '$rev:$owner';
+
+/// The parts of a [governanceSuccessionValue], or null when malformed.
+({int rev, String owner})? parseGovernanceSuccessionValue(String? value) {
+  if (value == null) return null;
+  final split = value.indexOf(':');
+  if (split <= 0 || split == value.length - 1) return null;
+  final rev = int.tryParse(value.substring(0, split));
+  if (rev == null || rev < 0) return null;
+  return (rev: rev, owner: value.substring(split + 1));
+}
+
 class MlsStateTransition {
   const MlsStateTransition({
     required this.messageId,
@@ -2609,6 +2648,8 @@ class _MemoryMessageHistory {
             body: Value(effect.body),
             editedAt: Value(effect.at),
             formatJson: Value(effect.formatJson),
+            senderRemoved:
+                effect.senderRemoved ? const Value(true) : const Value.absent(),
           );
           markLiveHistoryEffect(namespace, effect, effect.targetKey);
         case DeleteMessageEffect():

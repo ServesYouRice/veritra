@@ -40,6 +40,7 @@ extension CommunityInfoActions on AppState {
     _infoServiceSession = current;
     // Another session: nothing learned for the last one carries over.
     _infoAdminOf.clear();
+    _infoRenewalStuck = const <String>{};
     _infoPublishing.clear();
     final generation = _sessionGeneration;
     bool active() => !_disposed && _syncOwnerActive(current, generation);
@@ -59,8 +60,11 @@ extension CommunityInfoActions on AppState {
       policyFor: (communityId) =>
           GovernanceInfoEditPolicy(verifiedCommunityRoles(communityId)),
       // Who rotates after a removal: the verified record's owner and
-      // admins, never a moderator, whatever the server says.
+      // admins, whatever the server says; a verified moderator only in a
+      // private channel whose MLS group has no owner or admin in it.
       verifiedRolesOf: verifiedCommunityRoles,
+      membersOf:
+          service is MlsRosterSource ? service.groupMemberAccounts : null,
       accountId: accountId,
       deviceId: deviceId,
       onChanged: () {
@@ -119,6 +123,13 @@ extension CommunityInfoActions on AppState {
                 : null))
         ?.id;
   }
+
+  /// Whether [conversationId] is a private channel whose key must be renewed
+  /// after a removal but has no owner or admin among its members to do it
+  /// (moderators never renew it, D115). The channel shows a notice; edits
+  /// stay refused until an admin joins and renews the key.
+  bool channelKeyRenewalStuck(String conversationId) =>
+      _infoRenewalStuck.contains(conversationId);
 
   /// The name to show for a community: the accepted encrypted record's, or
   /// null (the screen shows a placeholder). The server keeps no name (C3
@@ -625,6 +636,16 @@ extension CommunityInfoActions on AppState {
       } while (_infoRefreshAgain && _sameSession(current));
       if (_sameSession(current)) {
         _scheduleInfoRotation(await service.nextDeferredRotation(), current);
+        final Object crypto = cryptoService;
+        final stuck = crypto is MlsRosterSource
+            ? await service.rotationsWithoutRotator(crypto.groupMemberAccounts)
+            : const <String>{};
+        if (_sameSession(current) &&
+            (stuck.length != _infoRenewalStuck.length ||
+                !stuck.containsAll(_infoRenewalStuck))) {
+          _infoRenewalStuck = stuck;
+          notifyListeners();
+        }
       }
     } catch (err) {
       developer.log('c3_refresh_failed ${err.runtimeType}',
@@ -730,6 +751,9 @@ extension CommunityInfoActions on AppState {
     };
     for (final home in homes) {
       await service.observeRemoval(home, community.id);
+      // An owner or admin member replaces a moderator's key (owner
+      // decision B); the rotation pass after this loop mints it.
+      await service.replaceModeratorKey(home, community.id);
       await service.answerRequests(home, community.id);
     }
   }

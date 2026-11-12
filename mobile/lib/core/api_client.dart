@@ -1436,6 +1436,34 @@ class ApiClient {
     );
   }
 
+  /// C4 server succession: asks the server to make [candidateAccountId] the
+  /// owner of a group ([communityId] null) or of a community, after this
+  /// app's verified role record shows a won election. The server moves its
+  /// row only by its own rule (the owner quiet for 37 days and a majority of
+  /// admins asking); apps never read that row for roles. Returns the
+  /// server's `status`: `moved` or `recorded`.
+  Future<String> requestOwnerSuccession(
+    String token, {
+    String? conversationId,
+    String? communityId,
+    required String candidateAccountId,
+  }) async {
+    if ((conversationId == null) == (communityId == null)) {
+      throw ArgumentError('exactly one of conversationId and communityId');
+    }
+    final path = communityId != null
+        ? _moderationPath(communityId, 'owner-succession')
+        : '/api/v1/conversations/${Uri.encodeComponent(conversationId!)}/owner-succession';
+    final json = await _jsonRequest(
+      'POST',
+      path,
+      token: token,
+      body: <String, Object?>{'candidate_account_id': candidateAccountId},
+    );
+    final status = json['status'];
+    return status is String ? status : '';
+  }
+
   /// Leaves a community when [accountId] is `me`, or removes a member. The
   /// server drops access to every channel at once; MLS removal follows
   /// through each channel's reconcile and is not implied by the response.
@@ -1512,14 +1540,16 @@ class ApiClient {
     return _rows(json, 'bans', CommunityBan.fromJson);
   }
 
-  /// Mutes a member for [seconds]; 0 lifts the timeout.
-  Future<void> setMemberTimeout(
+  /// Mutes a member for [seconds]; 0 lifts the timeout. Returns the
+  /// server's `timeout_until` (null when lifted or not reported), which C5
+  /// copies into the verified record.
+  Future<DateTime?> setMemberTimeout(
     String token,
     String communityId,
     String accountId,
     int seconds,
   ) async {
-    await _jsonRequest(
+    final json = await _jsonRequest(
       'PUT',
       _moderationPath(
         communityId,
@@ -1528,6 +1558,8 @@ class ApiClient {
       token: token,
       body: <String, Object?>{'seconds': seconds},
     );
+    final until = json['timeout_until'];
+    return until is String ? DateTime.tryParse(until)?.toUtc() : null;
   }
 
   /// Sets a channel's gap between a member's posts; 0 turns it off.

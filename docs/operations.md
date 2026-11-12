@@ -836,21 +836,68 @@ firmware stay trusted.
 
 ### Confidential VM (optional)
 
-Not tested on a real host yet; it needs a provider that sells AMD SEV-SNP or
-Intel TDX VMs, which the OVH VPS does not (owner default: keep OVH for
-production, pick a provider later). The shape of the setup:
+**Not run on real hardware yet.** It needs a provider that sells AMD SEV-SNP
+VMs (the OVH VPS does not; owner default: keep OVH for production, pick a
+provider later). Intel TDX works with the server hook, but
+`scripts/verify-attestation.sh` refuses TDX reports for now (exit 3). What is
+tested here is the verifier, against synthetic evidence
+(`scripts/verify-attestation_test.py`: good report, changed measurement,
+relayed report, changed report, debug policy, other root, other chip, TDX,
+recorded response). The first real run, and its evidence, are the owner's.
 
-1. Boot a published unified kernel image whose measured initrd holds the
-   reproducible server binary (L2-4), so the measurement covers the server. A
-   container pulled after boot is not measured.
-2. Put the data volume on an encrypted disk whose key is released only to the
-   measured VM.
-3. Terminate TLS inside the VM and set `PRIVATE_MESSENGER_ATTESTATION_TLS_CERT`
-   to that certificate.
-4. A verifier fetches a report with a fresh nonce, checks the vendor signature
-   chain, recomputes the user data from the key of the certificate it connected
-   to, and compares the launch measurement with the one recomputed from the
-   published image. `scripts/verify-attestation.sh` is not written yet.
+Recipe (SEV-SNP):
+
+1. **Image.** Boot a published unified kernel image whose measured initrd
+   holds the reproducible server binary (L2-4), so the launch measurement
+   covers the server. A container pulled after boot is not measured. Publish
+   the expected measurement with the release; recompute it from the image
+   with a launch-digest calculator for the provider's firmware and vCPU
+   type (for example `sev-snp-measure`, a third-party tool: owner first
+   before any script here depends on it).
+2. **Disk.** Put the data volume on an encrypted disk whose key is released
+   only to the measured VM.
+3. **TLS.** Terminate TLS inside the VM, with no TLS-terminating proxy in
+   front, and set `PRIVATE_MESSENGER_ATTESTATION=configfs-tsm` and
+   `PRIVATE_MESSENGER_ATTESTATION_TLS_CERT` to that certificate. The server
+   reads the certificate's key once at start: renew with the same key (for
+   example `certbot --reuse-key`) or restart the server after a renewal,
+   or every check fails the TLS binding.
+4. **AMD certificates.** Fetch the ASK and ARK for the CPU product
+   (`https://kdsintf.amd.com/vcek/v1/<Milan|Genoa>/cert_chain`) and the VCEK
+   for the chip and reported TCB (`https://kdsintf.amd.com/vcek/v1/<product>/<chip id>`
+   with the TCB parameters). Take the ARK's SHA-256 (DER) from AMD's own
+   published value, not from the same download, and record it once with the
+   evidence below. The script never fetches from AMD itself.
+5. **Check.**
+
+   ```
+   scripts/verify-attestation.sh --release vX.Y.Z --measurement <96 hex> \
+     --ark ark.pem --ark-sha256 <64 hex> --ask ask.pem --vcek vcek.der \
+     https://chat.example.com
+   ```
+
+   It connects once to read the TLS key, fetches a report for a fresh nonce
+   over a second connection pinned to that key, and checks: the report kind
+   and size, ECDSA P-384, that the guest policy does not allow debugging,
+   the ARK fingerprint and the ARK, ASK, VCEK chain, the VCEK's chip id
+   against the report, the report signature, the user data
+   (`SHA-512("veritra-attest-v1" || nonce || SHA-256(TLS public key))`) and
+   the measurement. It prints `matches release vX.Y.Z` (exit 0) or
+   `does not match: <reason>` (exit 1); 2 is a usage or local error. It
+   prints the reported TCB but does not enforce a minimum firmware version:
+   compare it with AMD's security bulletins. `claimed_build` in the response
+   is not checked: it is the server's own claim. A recorded response can be
+   checked again later with `--response FILE --nonce HEX --tls-cert CERT`.
+6. **Evidence (owner, real host).** Record under `testing/evidence/` the
+   response, the nonce, the TLS certificate, the AMD certificates, the
+   expected measurement and how it was computed, and the script output. Also
+   record two failures: a deliberately changed image gives `does not match`,
+   and the same report served through a relay with another TLS key fails the
+   TLS binding.
+
+A match says the hardware measured that image and the report came from the
+machine holding that TLS key. It is not operator-proof: see the paragraph
+above.
 
 ## Pre-launch checklist
 
@@ -1270,7 +1317,7 @@ write transaction, so concurrent requests cannot both take the last slot.
 | `CONVERSATION_MEMBERS` | 250 (was 100; step 1 of C8) | 2-1,000 | members of a group, a community and each of its channels | 409 `conversation_member_limit_reached` |
 | `CONVERSATIONS_PER_ACCOUNT` | 1,000 | 10-10,000 | conversations an account belongs to | 409 `conversation_limit_reached` to that account; adding an account that is full answers 403 `forbidden`, as a block does |
 | `KEY_PACKAGE_CLAIMS_PER_TARGET` | 25 (half the 50 single-use key packages a device may hold) | 1-50 | key packages one account claims from one device of another account in 24 hours; claiming from its own devices is not limited | 429 `key_package_claim_limit` with `Retry-After`; adding devices to an existing group skips a device over its limit, as it skips one with no package left |
-| `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and waits for the `Retry-After` (at least an hour) |
+| `MLS_SELF_UPDATE_MINUTES` | 60 | 1-10,080 | update-only MLS commits (a device's periodic key refresh, adding and removing no one) per device and conversation; each moves the group to a new epoch | 429 `mls_self_update_limit` with `Retry-After`; the app drops that update and waits for the `Retry-After` (at least an hour). One update after a C4 leave notice the same device sent in the last hour passes once (it voids a cancelled leave, `docs/crypto.md`) |
 | `DELIVERIES_PER_MINUTE` | 1,000 | 60-1,000,000, and at least 2 × (1 + members) | per account, each fan-out write counts 1 plus every account it is published to | 429 `write_rate_limited` with `Retry-After` |
 | `WRITE_MIB_PER_HOUR` | 64 | 16-65,536 | request bodies of those writes | 429 `write_rate_limited` |
 | `ATTACHMENT_MIB` | 48 | 1-48 | the largest file one attachment may hold (plaintext with its padding; the upload route allows the chunk framing on top) | 413 `upload_too_large` |

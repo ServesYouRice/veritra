@@ -167,11 +167,18 @@ Duration remoteRotationDelay({
 }
 
 /// The accounts that may rotate under a verified role record: its owner
-/// (while in the roster) and its admins. Moderators never rotate.
+/// (while in the roster) and its admins. Moderators rotate only in a
+/// private channel with none of these among its members.
 Set<String> verifiedRotators(GovernanceState roles) => <String>{
       if (roles.owner case final owner?)
         if (roles.joined.isEmpty || roles.joined.containsKey(owner)) owner,
       ...roles.admins.keys,
+    };
+
+/// The verified moderators of [roles] (owner and admins excluded).
+Set<String> verifiedModerators(GovernanceState roles) => <String>{
+      for (final account in roles.moderators)
+        if (roles.rankOf(account) == BuiltInRole.moderator.rank) account,
     };
 
 /// One info subject: its kind, id, and the community it belongs to.
@@ -203,6 +210,7 @@ class CommunityInfoService {
     this.onChanged,
     this.epochOf,
     this.verifiedRolesOf,
+    this.membersOf,
     DateTime Function()? clock,
     Duration Function()? answerDelay,
     String settingPrefix = 'c3',
@@ -231,6 +239,11 @@ class CommunityInfoService {
   /// says; without one, the server's word ([InfoTopology.serverSaysAdmin])
   /// stands in, as before C4.
   final GovernanceState? Function(String communityId)? verifiedRolesOf;
+
+  /// The accounts in a conversation's MLS group, from the group's own tree
+  /// (never the server's list), or null when unknown. It decides the
+  /// no-admin case of a private channel ([_noAdminModerators]).
+  final Set<String>? Function(String conversationId)? membersOf;
 
   /// When this service started: a deferred rotation's wait counts from here
   /// at the earliest, so a restarted device catches up on what other admins
@@ -298,7 +311,8 @@ class CommunityInfoService {
   /// The key to seal with (docs/crypto.md, "C3 key freshness").
   ///
   /// Only keys in the owning group from this account, or from an owner or
-  /// admin under the verified role state, count ("trusted"). A key's
+  /// admin under the verified role state, count ("trusted"); in a private
+  /// channel, with no such key fresh, a verified moderator's key does. A key's
   /// freshness is the LOWEST authenticated MLS epoch any trusted copy of it
   /// was sent in: a delayed original lowers it, and a later re-delivery (an
   /// admin answering with a key from before a rotation) never raises it.
@@ -313,14 +327,74 @@ class CommunityInfoService {
   /// arrives after its replacement would win.
   Future<CommunityInfoEvent?> currentKey(
       InfoKeyHome home, String communityId) async {
-    final policy = policyFor(communityId);
     final keys = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    final policy = policyFor(communityId);
+    bool admin(String account) =>
+        account == accountId || policy.mayEdit(account, infoKindCommunity);
+    final best = await _freshest(home, keys, admin);
+    if (best != null) return best;
+    // No fresh key from this account or an owner or admin. In a private
+    // channel a verified moderator's key stands in: one rotates when no
+    // owner or admin is a member (owner decision 2026-11-11). Its key stays
+    // usable after an owner or admin joins, until one of them rotates;
+    // otherwise the joined admin and every member would hold no key at all.
+    // Only a key sent in the group itself counts, so its sender was a
+    // member at that epoch, and freshness still retires it at a removal.
+    final roles = home.keySubjectKind == infoKindChannel
+        ? verifiedRolesOf?.call(communityId)
+        : null;
+    if (roles == null) return null;
+    final moderators = verifiedModerators(roles);
+    if (moderators.isEmpty) return null;
+    // Freshness counts the owner's and admins' rows too: a moderator
+    // re-sending a key retired by a removal must not make it fresh again.
+    // And here a row from any sender dates the key: an admin who minted it
+    // before the removal and was demoted since is no longer trusted, but
+    // its row still shows the removed member may hold the key.
+    return _freshest(home, keys, (a) => admin(a) || moderators.contains(a),
+        retireByAnyRow: true);
+  }
+
+  /// Who else's delivery of [home]'s current key covers a due rotation
+  /// (D115 dedup): an owner or admin under the verified record, or, in a
+  /// private channel with no owner or admin among its members, a verified
+  /// moderator who is a member ([_noAdminModerators]). This account is not
+  /// included for its own sake: it counts only with that role.
+  bool Function(String account) _deliverers(
+      InfoKeyHome home, String communityId) {
+    final policy = policyFor(communityId);
+    final stand = _noAdminModerators(home, communityId) ?? const <String>{};
+    return (account) =>
+        policy.mayEdit(account, infoKindCommunity) || stand.contains(account);
+  }
+
+  /// In a private channel's group where the verified record names no owner
+  /// or admin among the members, the verified moderators who are members;
+  /// otherwise null (owners and admins rotate, D115). Null as well without a
+  /// verified record or a known roster.
+  Set<String>? _noAdminModerators(InfoKeyHome home, String communityId) {
+    if (home.keySubjectKind != infoKindChannel) return null;
+    final roles = verifiedRolesOf?.call(communityId);
+    final members = membersOf?.call(home.conversationId);
+    if (roles == null || members == null) return null;
+    if (verifiedRotators(roles).any(members.contains)) return null;
+    final moderators =
+        verifiedModerators(roles).where(members.contains).toSet();
+    return moderators.isEmpty ? null : moderators;
+  }
+
+  /// With [retireByAnyRow] a key is also retired when any row of it in
+  /// [home]'s group, from any sender, trusted or not, is older than the last
+  /// removal (the moderator-only second choice; never the primary path,
+  /// where an untrusted member could retire the admins' key that way).
+  Future<CommunityInfoEvent?> _freshest(InfoKeyHome home,
+      List<CommunityInfoEvent> keys, bool Function(String) author,
+      {bool retireByAnyRow = false}) async {
     bool trusted(CommunityInfoEvent k) =>
         k.conversationId == home.conversationId &&
         k.keyId != null &&
-        (k.senderAccountId == accountId ||
-            policy.mayEdit(k.senderAccountId, infoKindCommunity));
+        author(k.senderAccountId);
     // Rows from before schema 35 carry no epoch: they rank below every key
     // with one, and below any removal.
     const unknown = -1;
@@ -334,6 +408,14 @@ class CommunityInfoService {
       if (epoch < (freshness[id] ?? epoch + 1)) freshness[id] = epoch;
     }
     final removal = await _removalEpoch(home);
+    final retired = <String>{
+      if (retireByAnyRow && removal > 0)
+        for (final k in keys)
+          if (k.conversationId == home.conversationId &&
+              k.keyId != null &&
+              (k.epoch ?? unknown) < removal)
+            k.keyId!,
+    };
     CommunityInfoEvent? best;
     var bestEpoch = unknown - 1;
     var bestSeq = -1;
@@ -341,6 +423,7 @@ class CommunityInfoService {
       if (k.key == null || !trusted(k)) continue;
       final epoch = freshness[k.keyId]!;
       if (removal > 0 && epoch < removal) continue;
+      if (retired.contains(k.keyId)) continue;
       final first = firstSeen[k.keyId]!;
       if (epoch > bestEpoch || (epoch == bestEpoch && first > bestSeq)) {
         best = k;
@@ -801,7 +884,11 @@ class CommunityInfoService {
   }
 
   Future<int> _answerRequests(InfoKeyHome home, String communityId) async {
-    if (topology.serverSaysAdmin(communityId) != true ||
+    // Who answers follows who rotates: the verified C4 record's owner and
+    // admins when one is held (a moderator only in a private channel with
+    // no owner or admin among its members, whatever the server says), else
+    // the server's word, as before C4.
+    if (!_mayRotate(communityId, home) ||
         topology.sendHeld(home.conversationId)) {
       return 0;
     }
@@ -836,15 +923,14 @@ class CommunityInfoService {
     if (key == null) return 0;
     // Only a trusted delivery of the current key answers a request. An
     // unrelated member key must not suppress delivery to a joiner.
-    final policy = policyFor(communityId);
+    final deliverer = _deliverers(home, communityId);
     final keys = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
     final lastKeySeq = keys
         .where((k) =>
             k.conversationId == home.conversationId &&
             k.keyId == key.keyId &&
-            (k.senderAccountId == accountId ||
-                policy.mayEdit(k.senderAccountId, infoKindCommunity)))
+            (k.senderAccountId == accountId || deliverer(k.senderAccountId)))
         .fold<int>(0, (m, k) => max(m, k.seq ?? 0));
     final open = requests.where((r) => (r.seq ?? 0) > lastKeySeq).toList();
     final sent = open.isEmpty ||
@@ -918,6 +1004,57 @@ class CommunityInfoService {
         await _saveDue(due);
         _backoff.remove('${home.keySubjectKind}|${home.keySubjectId}');
       });
+
+  /// Owner decision B (2026-11-11): an owner or admin who is a member of a
+  /// private channel's group, and finds only a moderator's key current there
+  /// (the second choice in [currentKey]), mints its own. This marks [home]'s
+  /// key due and returns true; the pass then runs as for a removal this
+  /// device did not make: it waits its turn ([remoteRotationDelay], over the
+  /// verified owners and admins), so of several owner and admin devices that
+  /// joined, one mints and the others adopt its key ([_rotatedElsewhere],
+  /// where a moderator's key never counts while an owner or admin is a
+  /// member). While the mark is due this device neither edits nor answers
+  /// requests under the moderator's key ([_checkWritable]).
+  ///
+  /// Nothing is marked for the community key, without a verified record or
+  /// a known roster, for a device not holding the moderator's key (it could
+  /// not seal the records again), while an owner's or admin's key (this
+  /// account's included) is current, or while a mark for [home] is already
+  /// due (that pass mints, as the moderator's key does not end it).
+  Future<bool> replaceModeratorKey(InfoKeyHome home, String communityId) async {
+    if (home.keySubjectKind != infoKindChannel) return false;
+    final roles = verifiedRolesOf?.call(communityId);
+    final members = membersOf?.call(home.conversationId);
+    if (roles == null ||
+        members == null ||
+        !members.contains(accountId) ||
+        roles.rankOf(accountId) < BuiltInRole.admin.rank) {
+      return false;
+    }
+    final keys = await store.loadCommunityInfoEvents(
+        CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
+    final policy = policyFor(communityId);
+    bool admin(String account) =>
+        account == accountId || policy.mayEdit(account, infoKindCommunity);
+    if (await _freshest(home, keys, admin) != null) return false;
+    if (await currentKey(home, communityId) == null) return false;
+    return _locked(() async {
+      final due = await _dueRotations();
+      final id = '${home.keySubjectKind}|${home.keySubjectId}';
+      if (due.containsKey(id)) return false;
+      final now = _clock();
+      due[id] = <String, Object?>{
+        'c': communityId,
+        'e': await _removalEpoch(home),
+        't': '${now.microsecondsSinceEpoch}.${_marks++}',
+        'd': true,
+        'o': now.microsecondsSinceEpoch,
+      };
+      await _saveDue(due);
+      _backoff.remove(id);
+      return true;
+    });
+  }
 
   int _marks = 0;
   Future<void> _lock = Future<void>.value();
@@ -1000,6 +1137,35 @@ class CommunityInfoService {
               subjectsUnder) =>
       _serializeWrites(() => _runRotations(subjectsUnder));
 
+  /// The private channels' conversations whose due rotation no device can
+  /// run: under the verified role record, none of the owner, admins and
+  /// moderators is a member of the channel's MLS group ([membersOf], from
+  /// the group's own tree). The obligation waits until one joins; the app
+  /// tells the channel so. Marks without a verified record, an unplaced
+  /// channel or an unknown roster are left out (nothing is known to be
+  /// stuck).
+  Future<Set<String>> rotationsWithoutRotator(
+      Set<String>? Function(String conversationId) membersOf) async {
+    final due = await _locked(_dueRotations);
+    final stuck = <String>{};
+    for (final entry in due.entries) {
+      final parts = entry.key.split('|');
+      if (parts.length != 2 || parts[0] != infoKindChannel) continue;
+      final roles = verifiedRolesOf?.call(entry.value['c'] as String);
+      if (roles == null) continue;
+      final conversation = topology.privateConversationOf(parts[1]);
+      if (conversation == null) continue;
+      final members = membersOf(conversation);
+      if (members == null) continue;
+      if (verifiedRotators(roles).any(members.contains) ||
+          verifiedModerators(roles).any(members.contains)) {
+        continue;
+      }
+      stuck.add(conversation);
+    }
+    return stuck;
+  }
+
   /// Where a due mark's key lives now, or null while topology cannot place
   /// it.
   InfoKeyHome? _homeOfMark(String id, String communityId) {
@@ -1019,11 +1185,16 @@ class CommunityInfoService {
             conversationId: conversation);
   }
 
-  /// Whether this account may rotate keys in [communityId]: owner or admin
-  /// in the verified record when one is held, else by the server's word.
-  bool _mayRotate(String communityId) {
+  /// Whether this account may rotate [home]'s key in [communityId]: owner
+  /// or admin in the verified record when one is held, or a verified
+  /// moderator member of a private channel with no owner or admin among its
+  /// members ([_noAdminModerators]); else by the server's word.
+  bool _mayRotate(String communityId, InfoKeyHome home) {
     final roles = verifiedRolesOf?.call(communityId);
-    if (roles != null) return roles.rankOf(accountId) >= BuiltInRole.admin.rank;
+    if (roles != null) {
+      return roles.rankOf(accountId) >= BuiltInRole.admin.rank ||
+          (_noAdminModerators(home, communityId)?.contains(accountId) ?? false);
+    }
     return topology.serverSaysAdmin(communityId) == true;
   }
 
@@ -1037,10 +1208,13 @@ class CommunityInfoService {
     final from = observed.isAfter(_startedAt) ? observed : _startedAt;
     final epoch = mark['e'] as int? ?? 0;
     final roles = verifiedRolesOf?.call(communityId);
+    // In a private channel with no owner or admin member, the order runs
+    // over the verified moderators who are members.
     final rank = roles == null
         ? 0
         : remoteRotationRank(
-            rotators: verifiedRotators(roles),
+            rotators: _noAdminModerators(home, communityId) ??
+                verifiedRotators(roles),
             accountId: accountId,
             home: home,
             epoch: epoch);
@@ -1051,23 +1225,26 @@ class CommunityInfoService {
   /// The current key when another device already rotated it for the last
   /// removal: [currentKey] (so fresher than that removal) and delivered in
   /// the owning group by a device other than this one, from an owner or
-  /// admin under the verified record. Null otherwise.
+  /// admin under the verified record, or from a moderator member of a
+  /// private channel with no owner or admin member ([_deliverers]). Null
+  /// otherwise.
   ///
   /// This device's own copies never count: a key it made and stored but
-  /// crashed before sending must not stand in for a delivery. A moderator's
-  /// key never counts, not even one from this account's other device.
+  /// crashed before sending must not stand in for a delivery. Outside that
+  /// no-admin case a moderator's key never counts, not even one from this
+  /// account's other device.
   Future<CommunityInfoEvent?> _rotatedElsewhere(
       InfoKeyHome home, String communityId) async {
     final current = await currentKey(home, communityId);
     if (current == null) return null;
-    final policy = policyFor(communityId);
+    final deliverer = _deliverers(home, communityId);
     final keys = await store.loadCommunityInfoEvents(
         CommunityInfoEventKind.key, home.keySubjectKind, home.keySubjectId);
     final delivered = keys.any((k) =>
         k.keyId == current.keyId &&
         k.conversationId == home.conversationId &&
         k.senderDeviceId != deviceId &&
-        policy.mayEdit(k.senderAccountId, infoKindCommunity));
+        deliverer(k.senderAccountId));
     return delivered ? current : null;
   }
 
@@ -1080,9 +1257,8 @@ class CommunityInfoService {
     DateTime? next;
     for (final entry in due.entries) {
       final communityId = entry.value['c'] as String;
-      if (!_mayRotate(communityId)) continue;
       final home = _homeOfMark(entry.key, communityId);
-      if (home == null) continue;
+      if (home == null || !_mayRotate(communityId, home)) continue;
       final turn = _turnOf(entry.value, home, communityId);
       if (turn == null || !turn.isAfter(now)) continue;
       if (next == null || turn.isBefore(next)) next = turn;
@@ -1117,31 +1293,34 @@ class CommunityInfoService {
       }
       final home = _homeOfMark(id, communityId);
       if (home == null || topology.sendHeld(home.conversationId)) continue;
-      // A pass that already made its key finishes with it; otherwise another
-      // owner or admin device's delivered rotation may already cover this.
-      final adopted = mark['k'] is String
-          ? null
-          : await _rotatedElsewhere(home, communityId);
-      if (!_mayRotate(communityId)) {
-        // An unknown role or a non-admin never makes a key. It completes
-        // once an owner or admin has rotated (its edits then use that key);
-        // until then it keeps the mark, also for a later promotion.
-        if (adopted == null) continue;
-        try {
-          await _complete(home, id, token, mark);
-          done++;
-        } on InfoRotationPending {
-          // A newer removal arrived meanwhile: its own mark decides.
-        }
-        continue;
-      }
-      final turn = _turnOf(mark, home, communityId);
-      final early = turn != null && _clock().isBefore(turn);
-      // Not this device's turn yet, and nobody else has rotated: wait.
-      if (early && adopted == null) continue;
       final wait = _backoff[id];
-      if (wait != null && _clock().isBefore(wait.next)) continue;
       try {
+        // A pass that already made its key finishes with it; otherwise
+        // another owner or admin device's delivered rotation may already
+        // cover this.
+        final adopted = mark['k'] is String
+            ? null
+            : await _rotatedElsewhere(home, communityId);
+        if (!_mayRotate(communityId, home)) {
+          // An unknown role or a member without the right never makes a
+          // key. It completes once an eligible device has rotated (its edits then use that
+          // key); until then it keeps the mark, also for a later promotion.
+          // Waiting is not a failure: no backoff.
+          if (adopted == null) continue;
+          if (wait != null && _clock().isBefore(wait.next)) continue;
+          try {
+            await _complete(home, id, token, mark);
+            done++;
+          } on InfoRotationPending {
+            // A newer removal arrived meanwhile: its own mark decides.
+          }
+          continue;
+        }
+        final turn = _turnOf(mark, home, communityId);
+        final early = turn != null && _clock().isBefore(turn);
+        // Not this device's turn yet, and nobody else has rotated: wait.
+        if (early && adopted == null) continue;
+        if (wait != null && _clock().isBefore(wait.next)) continue;
         // Remember what the records say before the key changes.
         final records = <InfoSubject, CommunityInfoRecord>{};
         for (final subject in subjectsUnder(home, communityId)) {

@@ -43,6 +43,7 @@ class IncomingCommitReview {
     required this.rosterAfter,
     required this.recordBefore,
     required this.recordAfter,
+    this.provenLeaves = const <LeafPair>[],
   });
 
   /// At least one Remove proposal.
@@ -77,6 +78,11 @@ class IncomingCommitReview {
   /// the commit carries no proposal).
   final Uint8List? recordBefore;
   final Uint8List? recordAfter;
+
+  /// ABI 24: the removed leaves whose own leave statement in the commit's
+  /// authenticated data verified against the tree before the commit (C4
+  /// leave proof in the commit). Empty when the commit carries none.
+  final List<LeafPair> provenLeaves;
 
   /// The committer's account as text, or null when it is not UTF-8.
   String? get committerAccount => _textOrNull(committer.accountId);
@@ -164,7 +170,8 @@ class _RoleReader {
 
 IncomingCommitReview _readReview(List<int> bytes) {
   final reader = _RoleReader(bytes);
-  if (reader.byte() != 1) {
+  // Format 2 (ABI 24) appends the proven leaves.
+  if (reader.byte() != 2) {
     throw const NativeCryptoException(NativeCryptoError.invalidOutput);
   }
   final flags = reader.byte();
@@ -181,7 +188,14 @@ IncomingCommitReview _readReview(List<int> bytes) {
   final after = reader.accounts();
   final recordBefore = reader.record(flags & 16 != 0);
   final recordAfter = reader.record(flags & 32 != 0);
-  if (!reader.finished || (flags & 2 != 0) != addedLeaves.isNotEmpty) {
+  final provenCount = reader.u16();
+  final provenLeaves = <LeafPair>[
+    for (var i = 0; i < provenCount; i++) reader.pair(),
+  ];
+  if (!reader.finished ||
+      (flags & 2 != 0) != addedLeaves.isNotEmpty ||
+      (provenLeaves.isNotEmpty && flags & 1 == 0) ||
+      provenCount > leaveStatementsMax) {
     throw const NativeCryptoException(NativeCryptoError.invalidOutput);
   }
   return IncomingCommitReview(
@@ -196,7 +210,48 @@ IncomingCommitReview _readReview(List<int> bytes) {
     rosterAfter: after,
     recordBefore: recordBefore,
     recordAfter: recordAfter,
+    provenLeaves: provenLeaves,
   );
+}
+
+// C4 leave proof in the commit (ABI 24; docs/crypto.md). A statement is
+// `u32 leaf_index || u16 64 || Ed25519 signature` (70 bytes), signed in Rust
+// with the leaver's leaf key over the group id, its leaf index and its leaf
+// encryption key; the commit's authenticated data is `"VCL1" || u8 count
+// (1..16) || statements` with distinct leaves. Dart never verifies one: it
+// only frames what it stores and hands it to Rust.
+
+/// Length of one leave statement.
+const int leaveStatementBytes = 70;
+
+/// Most statements one commit carries.
+const int leaveStatementsMax = 16;
+
+/// Whether [bytes] is framed as one leave statement.
+bool isLeaveStatement(List<int> bytes) =>
+    bytes.length == leaveStatementBytes && bytes[4] == 0 && bytes[5] == 64;
+
+/// The leaf index a framed statement names.
+int leaveStatementLeaf(List<int> bytes) =>
+    (bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3];
+
+/// The `VCL1` list of [statements]: each framed, 1 to 16, distinct leaves.
+Uint8List encodeLeaveProofs(List<List<int>> statements) {
+  final leaves = <int>{};
+  if (statements.isEmpty || statements.length > leaveStatementsMax) {
+    throw ArgumentError('1 to $leaveStatementsMax statements');
+  }
+  final out = BytesBuilder(copy: false)
+    ..add(const <int>[0x56, 0x43, 0x4c, 0x31])
+    ..addByte(statements.length);
+  for (final statement in statements) {
+    if (!isLeaveStatement(statement) ||
+        !leaves.add(leaveStatementLeaf(statement))) {
+      throw ArgumentError('not a statement, or a repeated leaf');
+    }
+    out.add(statement);
+  }
+  return out.toBytes();
 }
 
 GroupRoleState _readRoleState(List<int> bytes) {
@@ -289,6 +344,94 @@ extension _RoleStateDevice on NativeCryptoDevice {
         calloc.free(epoch);
       }
     });
+  }
+
+  /// [_stageCommitWithRolesImpl] with [record] optional (null: no record
+  /// proposal) and [leaveStatements] in the commit's authenticated data (C4
+  /// leave proof in the commit, ABI 24). Rust drops a statement whose leaf
+  /// the commit keeps or that no longer verifies, and with none left the
+  /// commit carries no AAD; a malformed list is invalidArgument with nothing
+  /// staged.
+  ({List<int> commit, List<int> welcome, int epoch}) _stageCommitProvenImpl(
+    String groupId, {
+    List<int>? record,
+    required List<Uint8List> leaveStatements,
+    List<
+            ({
+              List<int> keyPackage,
+              List<int> accountId,
+              List<int> deviceId,
+              List<int> signingKey
+            })>
+        adds = const [],
+    List<({List<int> accountId, List<int> deviceId})> removes = const [],
+  }) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    if (record != null) _bindings._bounded(record, roleRecordMaxBytes);
+    final proofs = encodeLeaveProofs(leaveStatements);
+    final changes = encodeKeyedMembershipChanges(
+        adds: adds, removes: removes, allowEmpty: record != null);
+    return _bindings._withByteLists(
+        [groupId.codeUnits, changes, proofs],
+        (slices) => _bindings._withOptionalSlice(record, (recordSlice) {
+              final commit = calloc<_PmOwnedBuffer>();
+              final welcome = calloc<_PmOwnedBuffer>();
+              final epoch = calloc<Uint64>();
+              try {
+                _bindings._check(_bindings._groupStageProven(
+                    _liveHandle,
+                    slices[0],
+                    slices[1],
+                    recordSlice,
+                    slices[2],
+                    commit,
+                    welcome,
+                    epoch));
+                final commitBytes = _bindings._take(commit.ref);
+                commit.ref
+                  ..data = nullptr
+                  ..len = 0;
+                final List<int> welcomeBytes;
+                if (welcome.ref.data == nullptr) {
+                  welcomeBytes = const <int>[];
+                } else {
+                  welcomeBytes = _bindings._take(welcome.ref);
+                  welcome.ref
+                    ..data = nullptr
+                    ..len = 0;
+                }
+                if (adds.isEmpty != welcomeBytes.isEmpty) {
+                  throw const NativeCryptoException(
+                      NativeCryptoError.invalidOutput);
+                }
+                return (
+                  commit: commitBytes,
+                  welcome: welcomeBytes,
+                  epoch: epoch.value
+                );
+              } finally {
+                if (commit.ref.data != nullptr) _bindings._free(commit.ref);
+                if (welcome.ref.data != nullptr) _bindings._free(welcome.ref);
+                calloc.free(commit);
+                calloc.free(welcome);
+                calloc.free(epoch);
+              }
+            }));
+  }
+
+  /// This device's leave statement for [groupId] (ABI 24): valid until its
+  /// leaf changes (a self-update or a re-add voids it).
+  Uint8List _signLeaveImpl(String groupId) {
+    _bindings._bounded(groupId.codeUnits, 128);
+    final bytes = _bindings._withSlice(
+        Uint8List.fromList(groupId.codeUnits),
+        (group) => _bindings._output(
+            (out) => _bindings._c4SignLeave(_liveHandle, group, out),
+            maximum: leaveStatementBytes));
+    if (!isLeaveStatement(bytes)) {
+      throw const NativeCryptoException(NativeCryptoError.invalidOutput);
+    }
+    return Uint8List.fromList(bytes);
   }
 
   /// Phase one of receiving a commit (ABI 20, C4 item 4): Rust stages

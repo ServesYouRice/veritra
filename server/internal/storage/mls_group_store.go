@@ -83,9 +83,10 @@ type MLSCommitBundleInput struct {
 	// RoleChange is the sender's declaration that a commit adding and
 	// removing no one carries a C4 role-record change, not a self-update.
 	// Like Added and Removed it is unverifiable here; receivers judge the
-	// record. It only exempts the commit from the self-update interval and
-	// from waiting behind a pending removal (an unproven removal may stay
-	// pending for good, docs/crypto.md "C4 app wiring").
+	// record. It exempts the commit from the self-update interval and from
+	// waiting behind a pending removal (an unproven removal may stay pending
+	// for good, docs/crypto.md "C4 app wiring"); such a role-only commit is
+	// limited to one per MLSRoleChangeInterval per device instead.
 	RoleChange bool
 }
 
@@ -151,6 +152,7 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 	// A Welcome needs an Added device and a revocation a Removed one (both
 	// checked below), so an update-only commit carries neither.
 	updateOnly := hasCommit && len(input.Added) == 0 && len(input.Removed) == 0 && !input.RoleChange
+	roleOnly := hasCommit && len(input.Added) == 0 && len(input.Removed) == 0 && input.RoleChange
 	if input.ConversationID == "" || input.SenderAccountID == "" || input.SenderDeviceID == "" ||
 		input.Epoch < 0 || input.IdempotencyKey == "" || len(input.IdempotencyKey) > 96 ||
 		len(input.Commit) > maxMLSHandshake || len(input.Welcome) > maxMLSHandshake ||
@@ -271,6 +273,11 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 			return MLSCommitBundleResult{}, err
 		}
 	}
+	if roleOnly {
+		if err := s.checkMLSRoleChange(ctx, tx, input.ConversationID, input.SenderDeviceID, now); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
+	}
 
 	for _, added := range input.Added {
 		var eligible bool
@@ -353,8 +360,19 @@ func (s *Store) CreateMLSCommitBundle(ctx context.Context, input MLSCommitBundle
 		formatTime(now), input.ConversationID); err != nil {
 		return MLSCommitBundleResult{}, err
 	}
+	// C4 server succession: a commit is activity, as in D81.
+	if err := touchMembershipActivityTx(ctx, tx, input.ConversationID, input.SenderAccountID, now); err != nil {
+		return MLSCommitBundleResult{}, err
+	}
 	if updateOnly {
 		if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_devices SET last_self_update_at = ?
+			WHERE conversation_id = ? AND device_id = ?`,
+			formatTime(now), input.ConversationID, input.SenderDeviceID); err != nil {
+			return MLSCommitBundleResult{}, err
+		}
+	}
+	if roleOnly {
+		if _, err := tx.ExecContext(ctx, `UPDATE conversation_mls_devices SET last_role_change_at = ?
 			WHERE conversation_id = ? AND device_id = ?`,
 			formatTime(now), input.ConversationID, input.SenderDeviceID); err != nil {
 			return MLSCommitBundleResult{}, err
@@ -446,6 +464,76 @@ func (s *Store) checkMLSSelfUpdate(ctx context.Context, tx *sql.Tx, conversation
 		return nil
 	}
 	next := parseTime(last.String).Add(time.Duration(s.limits.MLSSelfUpdateMinutes) * time.Minute)
+	if now.Before(next) {
+		voids, err := leaveVoidExempt(ctx, tx, conversationID, deviceID, last.String, now)
+		if err != nil {
+			return err
+		}
+		if voids {
+			return nil
+		}
+		return s.refuse(admission.SelfUpdates, mlsSelfUpdateLimitError{retryAfter: next.Sub(now)})
+	}
+	return nil
+}
+
+// LeaveVoidWindow is how long after a C4 leave notice its device's next
+// update-only commit in that conversation passes the self-update interval
+// (owner decision A, 2026-11-11, docs/crypto.md "C4 leave proof in the
+// commit"). A device whose leave did not go through voids the statement it
+// signed with a self-update; the interval must not keep that statement
+// usable for up to an hour (or the operator's longer setting).
+const LeaveVoidWindow = time.Hour
+
+// leaveVoidExempt reports whether an update-only commit from deviceID is the
+// void of a cancelled leave: the same device sent a leave notice (the
+// c4_leave mark) in this conversation within LeaveVoidWindow, after its last
+// self-update. The sender is still an active member (the caller checked the
+// roster and that no removal is pending), so the leave did not go through.
+// The exempt commit moves last_self_update_at past the notice, so each
+// notice buys at most one; notices are bounded by LeaveNoticesPerInterval.
+// The server cannot tell a void from any other self-update, so this is a
+// budget, not a proof: at most that many extra epochs an hour per device.
+func leaveVoidExempt(ctx context.Context, tx *sql.Tx, conversationID, deviceID, lastSelfUpdate string, now time.Time) (bool, error) {
+	since := formatTime(now.Add(-LeaveVoidWindow))
+	if lastSelfUpdate > since {
+		since = lastSelfUpdate
+	}
+	var exempt bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM message_envelopes
+		WHERE conversation_id = ? AND sender_device_id = ?
+		  AND json_extract(crypto_metadata_json, '$.c4_leave') = 1
+		  AND created_at > ? AND created_at <= ?)`,
+		conversationID, deviceID, since, formatTime(now)).Scan(&exempt); err != nil {
+		return false, err
+	}
+	return exempt, nil
+}
+
+// MLSRoleChangeInterval is the shortest time between two role-only commits
+// (declared role_change, adding and removing no one) from one device in one
+// conversation. The flag is unverifiable, so it must not be a way around the
+// self-update interval: a member can churn at most one epoch a minute with
+// it. A real role change (a grant, a vote, a claim, a cancel) is one commit
+// a person makes; the app retries a refused one after Retry-After.
+const MLSRoleChangeInterval = time.Minute
+
+// checkMLSRoleChange admits one role-only commit per MLSRoleChangeInterval.
+// It does not wait behind a pending removal (an unproven removal may stay
+// pending for good, docs/crypto.md "C4 app wiring").
+func (s *Store) checkMLSRoleChange(ctx context.Context, tx *sql.Tx, conversationID, deviceID string, now time.Time) error {
+	var last sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT last_role_change_at FROM conversation_mls_devices
+		WHERE conversation_id = ? AND device_id = ?`, conversationID, deviceID).Scan(&last); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if !last.Valid {
+		return nil
+	}
+	next := parseTime(last.String).Add(MLSRoleChangeInterval)
 	if now.Before(next) {
 		return s.refuse(admission.SelfUpdates, mlsSelfUpdateLimitError{retryAfter: next.Sub(now)})
 	}

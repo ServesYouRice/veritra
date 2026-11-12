@@ -10,6 +10,7 @@ import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/franking.dart';
 import 'package:private_messenger/crypto/native_crypto_bindings.dart';
 import 'package:private_messenger/crypto/native_crypto_service.dart';
+import 'package:private_messenger/crypto/report_key_announcement.dart';
 import 'package:private_messenger/crypto/report_key_pins.dart';
 import 'package:private_messenger/storage/local_store.dart';
 
@@ -28,6 +29,10 @@ const _action = 'action1';
 const _envelope = 'msg_envelope_1';
 const _reporterAccount = 'acct_reporter';
 const _ownerAccount = 'acct_owner';
+const _community = 'comm_1';
+const _sharedGroup = 'conv_shared';
+const _moderator = 'acct_mod';
+const _moderator2 = 'acct_mod2';
 
 class _Store extends MemoryLocalStore {
   final Map<String, FrankReveal> reveals = <String, FrankReveal>{};
@@ -69,6 +74,32 @@ class _Server extends ApiClient {
   }
 
   @override
+  Future<int> putModeratorReportKey(
+      String token, String communityId, List<int> publicKey) async {
+    final inbox = communityModeratorInboxId(communityId, token);
+    final old = keys[inbox];
+    final same = old != null && _eq(old.publicKey, publicKey);
+    final rev = old == null ? 1 : (same ? old.keyRev : old.keyRev + 1);
+    keys[inbox] =
+        ReportInboxRecipient(inboxId: inbox, publicKey: publicKey, keyRev: rev);
+    return rev;
+  }
+
+  @override
+  Future<ReportInboxRecipient?> getOwnModeratorReportKey(
+          String token, String communityId) async =>
+      keys[communityModeratorInboxId(communityId, token)];
+
+  @override
+  Future<List<ReportCopyRow>> listModeratorReports(
+          String token, String communityId,
+          {String? afterId, int limit = 50}) async =>
+      [
+        for (final c in copies)
+          if (c.inboxId == communityModeratorInboxId(communityId, token)) c
+      ];
+
+  @override
   Future<void> createReport(
     String token, {
     required String conversationId,
@@ -76,7 +107,13 @@ class _Server extends ApiClient {
     required List<Map<String, Object?>> copies,
   }) async {
     final wanted = keys.values.toList();
-    if (copies.length != wanted.length) {
+    // The server's rule: the instance owners exactly; for a community a
+    // non-empty, duplicate-free subset of the listed keys.
+    final community = kind == 'community';
+    final inboxes = {for (final raw in copies) raw['inbox_id']};
+    if (community
+        ? copies.isEmpty || inboxes.length != copies.length
+        : copies.length != wanted.length) {
       throw ApiException(409, '{"error":"report_inbox_changed"}');
     }
     for (final raw in copies) {
@@ -89,7 +126,7 @@ class _Server extends ApiClient {
       this.copies.add(ReportCopyRow(
             id: 'row_${nextId++}',
             reportId: reportId,
-            inboxKind: 'instance_owner',
+            inboxKind: kind,
             inboxId: owner.inboxId,
             keyRev: owner.keyRev,
             recipientPublicKey: owner.publicKey,
@@ -140,6 +177,9 @@ void main() {
   late Uint8List payload;
   late Uint8List commit;
 
+  ReportModerators? moderators;
+  var seedChanges = 0;
+
   ReportsService serviceFor(String account) => ReportsService(
         api: server,
         // The fake server reads the caller's account id from the token.
@@ -148,9 +188,67 @@ void main() {
         crypto: crypto,
         store: store,
         seeds: seeds,
+        moderatorsOf: (conversationId) => moderators,
+        onSeedChanged: () => seedChanges++,
       );
 
+  /// Each moderator's own seed store, as each would hold on its own device.
+  final moderatorSeeds = <String, MemoryReportSeedStore>{};
+
+  ReportsService moderatorInbox(String account) => ReportsService(
+        api: server,
+        token: account,
+        accountId: account,
+        crypto: crypto,
+        store: store,
+        seeds: moderatorSeeds.putIfAbsent(account, MemoryReportSeedStore.new),
+        onSeedChanged: () => seedChanges++,
+      ).forCommunity(_community);
+
+  /// [account]'s app publishes its moderator inbox key in the community.
+  Future<List<int>> moderatorPublishes(String account) async {
+    final (key, _) = await moderatorInbox(account).createKey();
+    return key;
+  }
+
+  /// What the reporter's device commits when [account]'s `report_key`
+  /// arrives in the shared group from an approved leaf.
+  Future<void> announces(String account, List<int> key) async {
+    final settings = reportKeySettingsFor(
+      DecryptedAppPayload(
+          type: AppPayloadType.reportKey,
+          actionId: 'a',
+          body: {'key': base64Encode(key)}),
+      conversationId: _sharedGroup,
+      senderAccountId: account,
+      isRecordGroup: true,
+      verdict: LeafVerdict.approved,
+      selfAccountId: _reporterAccount,
+      syncEventId: 1,
+    );
+    expect(settings, hasLength(1));
+    for (final entry in settings.entries) {
+      await store.saveSetting(entry.key, entry.value!);
+    }
+  }
+
+  ReportModerators verified(Set<String> accounts) =>
+      ReportModerators(_community, accounts, recordGroupId: _sharedGroup);
+
+  void keepReveal(String action, String envelopeId) {
+    store.reveals['$_sender:$action'] = FrankReveal(
+      messageKey: '$_sender:$action',
+      conversationId: _conversation,
+      envelopeId: envelopeId,
+      frankKey: frankKey,
+      payload: payload,
+    );
+  }
+
   setUp(() async {
+    moderators = null;
+    seedChanges = 0;
+    moderatorSeeds.clear();
     // The tests that need the native seal fail on `crypto` when the library
     // is required and missing; the model and store tests run without it.
     if (nativeCryptoLibraryPath == null) return;
@@ -440,6 +538,109 @@ void main() {
         throwsA(isA<ReportFailureException>()
             .having((e) => e.kind, 'kind', ReportFailure.noRecipients)));
     expect(server.copies, isEmpty);
+  }, skip: nativeSkip);
+
+  test(
+      'community reports seal only to verified moderators at keys they '
+      'announced over MLS, with no pin', () async {
+    server.kind = 'community';
+    final modKey = await moderatorPublishes(_moderator);
+    await moderatorPublishes(_moderator2);
+    expect(seedChanges, 2, reason: 'publishing asks the app to announce');
+    // A plain member's key the server lists gets no copy either way.
+    final memberKey = await moderatorPublishes('acct_member');
+    moderators = verified({_moderator, _moderator2, _reporterAccount});
+    final reporter = serviceFor(_reporterAccount);
+
+    // Nothing announced yet: nothing can be sealed. (Preparing and filing
+    // send nothing to the group; the app's background pass asks for keys.)
+    await expectLater(
+        reporter.prepare(_conversation),
+        throwsA(isA<ReportFailureException>().having(
+            (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
+    await expectLater(
+        reporter.file(
+            conversationId: _conversation, messageKey: '$_sender:$_action'),
+        throwsA(isA<ReportFailureException>().having(
+            (e) => e.kind, 'kind', ReportFailure.moderatorKeysPending)));
+    expect(server.copies, isEmpty);
+
+    // The first moderator announced its key. For the second, the device
+    // holds an announcement of a key the server does not list (the server
+    // swapped it): no copy. The member's announcement makes it no moderator.
+    await announces(_moderator, modKey);
+    await announces(_moderator2, memberKey);
+    await announces('acct_member', memberKey);
+    final plan = await reporter.prepare(_conversation);
+    expect(plan.canSend, isTrue, reason: 'no tap for moderator keys');
+    expect(plan.check.recipients.map((r) => r.status),
+        [ReportKeyStatus.authenticated]);
+    expect(plan.check.recipients.single.recipient.inboxId,
+        communityModeratorInboxId(_community, _moderator));
+    expect(plan.check.missing, isEmpty);
+    expect(plan.unconfirmed, [_moderator2]);
+    await reporter.pinKeys(plan);
+    expect(await store.loadReportKeyPins(_origin), isEmpty,
+        reason: 'moderator keys are never pinned');
+    await reporter.file(
+        conversationId: _conversation, messageKey: '$_sender:$_action');
+    expect(server.copies.map((c) => c.inboxId),
+        [communityModeratorInboxId(_community, _moderator)]);
+
+    // The moderator opens it with its own seed.
+    final inbox = moderatorInbox(_moderator);
+    final opened = await inbox.open((await inbox.list()).single);
+    expect(opened.text, 'the reported words');
+  }, skip: nativeSkip);
+
+  test(
+      'a moderator the verified record removes gets no new reports, even '
+      'while its announcement is kept and the server still lists its key',
+      () async {
+    server.kind = 'community';
+    await announces(_moderator, await moderatorPublishes(_moderator));
+    await announces(_moderator2, await moderatorPublishes(_moderator2));
+    moderators = verified({_moderator, _moderator2});
+    final reporter = serviceFor(_reporterAccount);
+    keepReveal('second', 'msg_envelope_2');
+    keepReveal('third', 'msg_envelope_3');
+    final mod1 = communityModeratorInboxId(_community, _moderator);
+    final mod2 = communityModeratorInboxId(_community, _moderator2);
+    Set<String> inboxesOf(String reportId) => {
+          for (final c in server.copies)
+            if (c.reportId == reportId) c.inboxId
+        };
+
+    await reporter.file(
+        conversationId: _conversation, messageKey: '$_sender:$_action');
+    final first = server.copies.first.reportId;
+    expect(inboxesOf(first), {mod1, mod2});
+
+    // The record demotes the second moderator. Its announcement is still
+    // stored and the server still lists its key, but the next report is
+    // sealed to the first moderator only. The copy it already received
+    // stays readable by it (accepted: it was a moderator when sealed).
+    moderators = verified({_moderator});
+    await reporter.file(
+        conversationId: _conversation, messageKey: '$_sender:second');
+    final second = server.copies.last.reportId;
+    expect(second, isNot(first));
+    expect(inboxesOf(second), {mod1});
+    final demoted = moderatorInbox(_moderator2);
+    expect((await demoted.list()).map((c) => c.reportId), [first]);
+
+    // With no moderator left in the record, nothing is sealed at all.
+    moderators = verified(const <String>{});
+    await expectLater(
+        reporter.prepare(_conversation),
+        throwsA(isA<ReportFailureException>()
+            .having((e) => e.kind, 'kind', ReportFailure.noRecipients)));
+
+    // Promoted again, same key: copies resume without a tap.
+    moderators = verified({_moderator, _moderator2});
+    await reporter.file(
+        conversationId: _conversation, messageKey: '$_sender:third');
+    expect(inboxesOf(server.copies.last.reportId), {mod1, mod2});
   }, skip: nativeSkip);
 
   test('verification shows nothing about the sender unless it matches',

@@ -99,11 +99,16 @@ class GovernanceCommands {
     required this.state,
     required this.actor,
     required Set<String> members,
+    this.epoch,
   }) : members = Set.unmodifiable(members);
 
   final GovernanceState state;
   final String actor;
   final Set<String> members;
+
+  /// The epoch the staged commit will produce (the group's epoch + 1, from
+  /// MLS). Needed only by [setTimeout].
+  final int? epoch;
 
   Never _refuse(String reason) => throw GovernanceCommandException(reason);
 
@@ -115,6 +120,7 @@ class GovernanceCommands {
       actor,
       before: members,
       after: members,
+      epoch: epoch,
     );
     if (!check.ok) _refuse(check.reject!.name);
     // The deterministic rules judge authority; the codec also bounds ids,
@@ -203,6 +209,34 @@ class GovernanceCommands {
       moderators: {...state.moderators}..remove(winner),
       electors: {...state.electors}..remove(winner),
       clearElection: true,
+    );
+  }
+
+  /// C5: records [account]'s timeout as the server set it: [fromMs] to
+  /// [untilMs], the server's clock (`timeout_until` minus the length, and
+  /// `timeout_until`). Replaces an earlier one.
+  GovernanceState setTimeout(
+    String account, {
+    required int fromMs,
+    required int untilMs,
+  }) {
+    final at = epoch;
+    if (at == null) _refuse('no_epoch');
+    if (!members.contains(account)) _refuse('not_member');
+    if (!state.mayActOn(actor, account)) _refuse('hierarchy');
+    final timeout = MemberTimeout(epoch: at, fromMs: fromMs, untilMs: untilMs);
+    if (!timeout.wellFormed) _refuse('bad_timeout');
+    return _finish(
+      _base().copyWith(timeouts: {...state.timeouts, account: timeout}),
+    );
+  }
+
+  /// C5: lifts [account]'s timeout.
+  GovernanceState liftTimeout(String account) {
+    if (!state.timeouts.containsKey(account)) _refuse('no_change');
+    if (!state.mayActOn(actor, account)) _refuse('hierarchy');
+    return _finish(
+      _base().copyWith(timeouts: {...state.timeouts}..remove(account)),
     );
   }
 

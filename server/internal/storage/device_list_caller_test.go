@@ -75,7 +75,7 @@ func TestDevicelessCallerIsRefusedOnAnAccountWithAHead(t *testing.T) {
 	})
 
 	t.Run("publish", func(t *testing.T) {
-		if _, err := store.PublishDeviceList(ctx, owner.Account.ID, "", someStatement); !errors.Is(err, ErrForbidden) {
+		if _, _, err := store.PublishDeviceList(ctx, owner.Account.ID, "", someStatement); !errors.Is(err, ErrForbidden) {
 			t.Fatalf("publish with no caller device: %v, want ErrForbidden", err)
 		}
 	})

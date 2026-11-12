@@ -14,6 +14,15 @@ bool mayMatchAccount(String query) {
   return _username.hasMatch(trimmed) || _accountId.hasMatch(trimmed);
 }
 
+/// What a submitted search sends for an account lookup: the trimmed query
+/// with one leading `@` dropped (people write `@alice`), or null when that
+/// could be neither a username nor an account ID, so nothing is sent.
+String? accountLookupQuery(String query) {
+  var trimmed = query.trim();
+  if (trimmed.startsWith('@')) trimmed = trimmed.substring(1);
+  return mayMatchAccount(trimmed) ? trimmed : null;
+}
+
 final RegExp _username = RegExp(r'^[A-Za-z0-9_-]{3,32}$');
 final RegExp _accountId = RegExp(r'^acct_[0-9a-f]{32}$');
 

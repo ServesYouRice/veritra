@@ -544,6 +544,24 @@ func TestCommunityReportsRouteToModerators(t *testing.T) {
 	if status, reports, _ := listReportsAs(t, handler, ownerToken, "inbox=instance_owner"); status != http.StatusOK || len(reports) != 0 {
 		t.Fatalf("instance inbox status=%d reports=%d", status, len(reports))
 	}
+
+	// C6 open item 8: a moderator who leaves stops receiving new copies at
+	// once. Their key is no longer listed, a copy sealed to it is refused,
+	// and the server stops listing the copies they already received. What
+	// their device already fetched and opened stays with them (accepted).
+	if status, response := doJSON(t, handler, http.MethodDelete, "/api/v1/communities/"+community.ID+"/members/me", modToken, nil); status != http.StatusOK && status != http.StatusNoContent {
+		t.Fatalf("moderator leave status=%d body=%s", status, response)
+	}
+	status, response = doJSON(t, handler, http.MethodGet, "/api/v1/reports/inbox?conversation_id="+conversationID, reporterToken, nil)
+	if status != http.StatusOK || strings.Contains(string(response), modInbox) || !strings.Contains(string(response), ownerInbox) {
+		t.Fatalf("inbox after leave status=%d body=%s", status, response)
+	}
+	if status, body := fileReport(t, handler, reporterToken, conversationID, "rpt-0000000000000002", modCopy); status != http.StatusConflict || !strings.Contains(body, "report_inbox_changed") {
+		t.Fatalf("report to a departed moderator status=%d body=%s", status, body)
+	}
+	if status, reports, _ := listReportsAs(t, handler, modToken, query); status == http.StatusOK && len(reports) != 0 {
+		t.Fatalf("departed moderator listed %d copies", len(reports))
+	}
 	_ = dbPath
 }
 

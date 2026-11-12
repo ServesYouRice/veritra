@@ -663,8 +663,10 @@ func (a *App) deliverPushWake(ctx context.Context, metric *pushDeliveryMetrics, 
 	if sendTimeout <= 0 {
 		sendTimeout = pushWakeSendTimeout
 	}
-	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+	// Read before the deadline is armed, so a send that runs into it never
+	// measures shorter than the timeout.
 	sendStarted := time.Now()
+	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	err := a.Push.SendEncryptedEventAvailable(sendCtx, push.Notification{
 		NotificationMode: job.NotificationMode,
 		Provider:         job.Provider,

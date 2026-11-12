@@ -30,7 +30,13 @@ class GovernanceCodecException implements Exception {
 
 const int _flagAdminsOnlyPosting = 1;
 const int _flagElection = 2;
-const int _knownFlags = _flagAdminsOnlyPosting | _flagElection;
+
+/// C5: the record carries timeouts (docs/crypto.md, "C5 timeouts in the
+/// record"). A record without any is byte for byte what it was before, so
+/// existing groups and vectors are unchanged; a build older than this
+/// refuses a record with timeouts (unknown flag bit), and its sync stops.
+const int _flagTimeouts = 4;
+const int _knownFlags = _flagAdminsOnlyPosting | _flagElection | _flagTimeouts;
 const int _adminFlagElector = 1;
 
 /// Encodes [state] canonically. Throws [GovernanceCodecException] when the
@@ -43,7 +49,8 @@ Uint8List encodeGovernance(GovernanceState state) {
   w.u64(state.ownerRev);
   final election = state.election;
   w.u8((state.adminsOnlyPosting ? _flagAdminsOnlyPosting : 0) |
-      (election != null ? _flagElection : 0));
+      (election != null ? _flagElection : 0) |
+      (state.timeouts.isNotEmpty ? _flagTimeouts : 0));
   w.id(state.owner ?? '', allowEmpty: true);
   final admins = _sorted(state.admins.keys);
   w.u16(admins.length);
@@ -80,6 +87,17 @@ Uint8List encodeGovernance(GovernanceState state) {
     for (final v in voters) {
       w.id(v);
       w.id(election.votes[v]!);
+    }
+  }
+  if (state.timeouts.isNotEmpty) {
+    final timedOut = _sorted(state.timeouts.keys);
+    w.u16(timedOut.length);
+    for (final a in timedOut) {
+      final t = state.timeouts[a]!;
+      w.id(a);
+      w.u64(t.epoch);
+      w.u64(t.fromMs);
+      w.u64(t.untilMs);
     }
   }
   final out = w.bytes();
@@ -150,6 +168,22 @@ GovernanceState decodeGovernance(Uint8List bytes) {
     }
     election = Election(opened: opened, electorate: electorate, votes: votes);
   }
+  final timeouts = <String, MemberTimeout>{};
+  if (flags & _flagTimeouts != 0) {
+    previous = null;
+    final count = r.u16();
+    // The flag means at least one: an empty list has one encoding, no flag.
+    if (count == 0) throw const GovernanceCodecException('empty timeouts');
+    for (var i = 0; i < count; i++) {
+      final account = r.id();
+      previous = _ascending(previous, account);
+      timeouts[account] = MemberTimeout(
+        epoch: r.u64(),
+        fromMs: r.u64(),
+        untilMs: r.u64(),
+      );
+    }
+  }
   r.end();
   final state = GovernanceState(
     rev: rev,
@@ -162,6 +196,7 @@ GovernanceState decodeGovernance(Uint8List bytes) {
     electors: electors,
     election: election,
     joined: joined,
+    timeouts: timeouts,
   );
   _checkShape(state);
   return state;
@@ -201,6 +236,10 @@ void _checkShape(GovernanceState s) {
       if (!e.electorate.contains(v)) bad('vote from outside the electorate');
     }
   }
+  if (s.timeouts.length > 0xffff) bad('too many timeouts');
+  for (final t in s.timeouts.values) {
+    if (!t.wellFormed) bad('timeout out of range');
+  }
   for (final id in [
     if (owner != null) owner,
     ...s.admins.keys,
@@ -211,6 +250,7 @@ void _checkShape(GovernanceState s) {
     if (e != null) ...e.electorate,
     if (e != null) ...e.votes.keys,
     if (e != null) ...e.votes.values,
+    ...s.timeouts.keys,
   ]) {
     _checkId(id);
   }

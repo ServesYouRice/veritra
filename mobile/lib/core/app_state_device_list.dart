@@ -51,6 +51,28 @@ extension AppStateDeviceList on AppState {
         _ => null,
       };
 
+  /// L2-5 (D94): sends the own-device alerts the last judgments found due,
+  /// one hidden `device_list_alert` per conversation and own list head,
+  /// identified (it is about this account). Looked at on every sync pass; a
+  /// failed send is tried again on the next pass.
+  Future<void> _sendOwnDeviceAlerts(Session owner, int generation) async {
+    final crypto = cryptoService;
+    if (crypto is! OwnDeviceAlertCryptoService) return;
+    final alerts = crypto as OwnDeviceAlertCryptoService;
+    for (final due in await alerts.ownDeviceAlertsDue()) {
+      if (!_syncOwnerActive(owner, generation)) return;
+      if (!conversations.any((item) => item.id == due.conversationId)) {
+        continue;
+      }
+      final sent = await _sendPayload(
+          due.conversationId, AppPayloadType.deviceListAlert, due.body);
+      if (sent) {
+        await alerts.markOwnDeviceAlertSent(
+            due.conversationId, due.body['head_version'] as int);
+      }
+    }
+  }
+
   /// A change-1 genesis that lists only this (pending) device, signed by it,
   /// for setup and registration. Null with an engine without L1: the account
   /// then starts with no list, and peers add none of its devices until one
@@ -406,11 +428,37 @@ extension AppStateDeviceList on AppState {
           head.standing(idBytes(current.deviceId ?? ''), own) ==
               PinStanding.approved) {
         await localStore.saveSetting(_recoveryStatementSetting, '');
+      } else if (head != null &&
+          status.state == DeviceListState.ok &&
+          !_chainsOnHead(statement, head)) {
+        // The head moved past it and does not name this device: the stored
+        // version can never be taken (review fix). It is dropped, so the
+        // recovery key is asked for again and a fresh version is signed on
+        // the current head.
+        await localStore.saveSetting(_recoveryStatementSetting, '');
+        unawaited(_refreshOwnListState().catchError((Object _) {}));
       }
       return;
     }
     await localStore.saveSetting(_recoveryStatementSetting, '');
     await pins.pinOwnStep(account, statement);
+  }
+
+  /// Whether [statement]'s `prev_hash` is [head]'s list hash, read from the
+  /// VDL1 body (`"VDL1" | 1 | lp(account) | u64 version | prev_hash`). An
+  /// unreadable statement does not chain.
+  static bool _chainsOnHead(Uint8List statement, DeviceListPin head) {
+    if (statement.length < 7) return false;
+    final accountLength = (statement[5] << 8) | statement[6];
+    final start = 7 + accountLength + 8;
+    if (statement.length < start + 32) return false;
+    final prev = statement.sublist(start, start + 32);
+    if (head.listHash.length != 32) return false;
+    var same = 0;
+    for (var i = 0; i < 32; i++) {
+      same |= prev[i] ^ head.listHash[i];
+    }
+    return same == 0;
   }
 
   Future<Uint8List?> _storedRecoveryStatement(

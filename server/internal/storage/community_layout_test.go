@@ -511,7 +511,9 @@ func TestActiveLayoutRefusesARepeatedChannelKey(t *testing.T) {
 		"open then announcement": repeated(f.open.ID, f.announcement.ID),
 		"same channel twice":     repeated(f.open.ID, f.open.ID),
 		"repeated generation":    json.RawMessage(`{"channel_id":"` + f.open.ID + `",` + gen + `,` + gen + `}`),
-		"repeated other key":     json.RawMessage(`{"mls_epoch":1,"mls_epoch":2,"channel_id":"` + f.open.ID + `",` + gen + `}`),
+		// A repeated mls_epoch is refused earlier, by the epoch rule (review
+		// L2, TestC7EpochMetadataIsANonNegativeInteger); any other key here.
+		"repeated other key": json.RawMessage(`{"protocol_version":1,"protocol_version":2,"channel_id":"` + f.open.ID + `",` + gen + `}`),
 	} {
 		if _, err := f.post(ctx, f.shared, f.member, "dup-"+name, metadata); !errors.Is(err, ErrInvalidChannelRoute) {
 			t.Errorf("%s: err = %v, want %v", name, err, ErrInvalidChannelRoute)

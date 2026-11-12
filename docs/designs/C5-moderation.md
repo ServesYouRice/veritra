@@ -4,8 +4,9 @@
 (2026-11-08: member menu with remove, ban, timeout; a Moderation screen with
 paused invitations, slow mode per channel, bans and the activity log; reads
 `GET .../moderation-state`); 2026-11-11: delete-others built in apps
-(groups and communities, checked against C4's verified record, below); app
-checks of bans and timeouts still not built.** Built: bans (`member_bans`; kick then record in
+(groups and communities, checked against C4's verified record, below); 2026-11-11: timeouts are in C4's verified record and receiving
+apps hide a timed-out member's posts (`docs/crypto.md`, "C5 timeouts in the
+record"); app checks of bans still not built.** Built: bans (`member_bans`; kick then record in
 one transaction; refuses add, channel add, join request), kick, timeout
 (`memberships.timeout_until`, send refused `timed_out`), slow mode
 (`channels.slow_mode_seconds`, send refused 429 `slow_mode` with
@@ -62,7 +63,7 @@ server's refusal, as the owner accepted for slow mode.
 |---|---|---|
 | Kick | Remove membership, queue MLS removal (exists) | Commit removing the member's devices; receivers check `mayActOn(committer, target)` |
 | Ban | Row in `member_bans(community_id, account_id, banned_by, created_at)`; refuses add, join, invite redemption and key-package claims for that account | Later: ban list in the C4 record, a banned account's Add rejected. Until then, the server's refusal |
-| Timeout | `timeout_until` on the membership; send refused until then (`TimedOut`) | Later: drop posts from a timed-out sender (needs the timeout in the C4 record). Until then, the server's refusal |
+| Timeout | `timeout_until` on the membership; send refused until then (`TimedOut`) | Built 2026-11-11: the timeout is in the C4 record (flag bit 2) and receivers hide a post judged inside it (`shouldDropTimedOutPost`) |
 | Slow mode | `slow_mode_seconds` per channel; refuse a post within the gap of the sender's last one in `(conversation_id, channel_id)`; moderators exempt | Same check on receipt, with a small clock tolerance |
 | Delete others' messages | Redact the envelope like `deleteMessageEnvelope`, when the actor outranks the sender | Moderator sends a `moderation_delete` application message naming the target message; receivers verify the actor's authority (`mayActOn` on the C4 role state) before hiding it |
 | Audit log | Table `moderation_events(id, community_id, actor, target, action, created_at)`: ids and action kind only | Optional reason, encrypted as an application message to moderators |

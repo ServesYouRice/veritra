@@ -182,11 +182,29 @@ abstract interface class DeviceListCryptoService implements DeviceListVerifier {
 }
 
 /// Discovers additions independently of the server's device enumeration.
+/// L2-5 (D94): the own-device alert. A device that finds a leaf of its own
+/// account its list does not approve tells the group, with the list head it
+/// holds (`device_list_alert`, `docs/crypto.md` §4).
+abstract interface class OwnDeviceAlertCryptoService {
+  /// The alerts owed: one per conversation and own list head not yet sent.
+  Future<List<({String conversationId, Map<String, Object?> body})>>
+      ownDeviceAlertsDue();
+
+  /// Records that [conversationId] was alerted at own head [headVersion].
+  Future<void> markOwnDeviceAlertSent(String conversationId, int headVersion);
+}
+
 abstract interface class ApprovedDeviceDiscoveryCryptoService {
   /// Lists currently approved devices of member [accountIds] absent from the
   /// actual MLS tree. Null [conversationId] means a new group with only self.
+  ///
+  /// Every account that already has a leaf in the tree is examined too, so
+  /// a server that leaves an account out of the member list cannot hide its
+  /// new approved device; [excluding] names accounts whose removal is
+  /// pending, which never gain a device.
   Future<List<MlsDeviceRef>> missingApprovedDevices(
-      String? conversationId, Iterable<String> accountIds);
+      String? conversationId, Iterable<String> accountIds,
+      {Set<String> excluding = const <String>{}});
 }
 
 /// A membership change named only devices that are not on their accounts'
@@ -502,6 +520,13 @@ abstract interface class CommunityInfoCryptoService {
   CommunityInfoCodec get communityInfoCodec;
 }
 
+/// The accounts in a conversation's MLS group, read from the group's own
+/// tree (never the server's member list). Null when the group is unknown.
+/// C3 uses it to tell when no owner or admin is in a private channel.
+abstract interface class MlsRosterSource {
+  Set<String>? groupMemberAccounts(String conversationId);
+}
+
 /// W11: the service that owns the native library also hands out the profile
 /// record codec, which seals records with the library's chunk AEAD. A build
 /// without it has no profiles.
@@ -676,6 +701,20 @@ class GovernanceRefusedException implements Exception {
   String toString() => 'GovernanceRefusedException($reason)';
 }
 
+/// A remote commit the C4 rules cannot accept *yet*: the evidence it needs
+/// may still arrive (a removal proof, or an approved-device list that
+/// approves the committer's leaf). Never a permanent refusal: the
+/// conversation pauses on it as `SyncFailureKind.governanceHeld`, is shown
+/// as waiting, and sync applies the commit again by itself with backoff
+/// (docs/crypto.md, "C4 app wiring", held commits). The device never merges
+/// it unverified, and never skips it.
+class GovernanceHeldException implements Exception {
+  const GovernanceHeldException(this.reason);
+  final String reason;
+  @override
+  String toString() => 'GovernanceHeldException($reason)';
+}
+
 /// This device cannot prove the departure of a governing account its
 /// change would remove; the removal stays pending for a device that can.
 class GovernanceRemovalUnprovenException implements Exception {
@@ -683,6 +722,16 @@ class GovernanceRemovalUnprovenException implements Exception {
   final String conversationId;
   @override
   String toString() => 'GovernanceRemovalUnprovenException';
+}
+
+/// C6: the accounts that hold a leaf in a conversation's MLS group, read from
+/// this device's own group state. A private channel's reports go only to the
+/// moderators in this roster (docs/designs/C6-reports-franking.md, "Private
+/// channels").
+abstract interface class MlsRosterCryptoService {
+  /// [conversationId]'s MLS account roster, or null when this device holds
+  /// no group for it or a member id is not text.
+  Set<String>? mlsAccountsOf(String conversationId);
 }
 
 /// C4 role commands: role-only commits built by [GovernanceCommands] from the

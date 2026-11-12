@@ -2,11 +2,13 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"private-messenger/server/internal/admission"
+	"private-messenger/server/internal/domain"
 )
 
 // selfUpdate submits an update-only commit bundle: a commit that adds and
@@ -165,5 +167,97 @@ func TestMLSUpdateOnlyCommitWaitsForPendingRemovals(t *testing.T) {
 	}
 	if result, err := selfUpdate(ctx, f.store, f.conversation.ID, bob, 4, "bob-4"); err != nil || result.Epoch != 5 {
 		t.Fatalf("update after the removal=%#v err=%v", result, err)
+	}
+}
+
+// Owner decision A (2026-11-11): a device whose leave did not go through
+// voids the statement it signed with a self-update at once. Its leave
+// notice lets one update-only commit pass the interval: only that device's,
+// only once per notice, only within LeaveVoidWindow.
+func TestMLSSelfUpdateVoidingACancelledLeavePassesTheInterval(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	defer store.Close()
+	owner := createTestOwner(t, ctx, store)
+	invite, err := store.CreateInvite(ctx, owner.Account.ID, 1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := registerTestMember(t, ctx, store, invite.Code, "bob")
+	group, err := store.CreateConversation(ctx, CreateConversationInput{
+		Kind: "group", CreatedBy: owner.Account.ID, MemberAccountIDs: []string{bob.Account.ID},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.CreateMLSCommitBundle(ctx, MLSCommitBundleInput{
+		ConversationID: group.ID, SenderAccountID: owner.Account.ID, SenderDeviceID: owner.Device.ID,
+		Epoch: 0, IdempotencyKey: "genesis", Commit: []byte("commit-0"), Welcome: []byte("welcome-0"),
+		Added: []MLSDeviceRef{{AccountID: bob.Account.ID, DeviceID: bob.Device.ID}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	epoch := int64(1)
+	update := func(who AccountDevice, key string) error {
+		result, err := selfUpdate(ctx, store, group.ID, who, epoch, key)
+		if err == nil {
+			epoch = result.Epoch
+		}
+		return err
+	}
+	notice := func(who AccountDevice, key string) {
+		t.Helper()
+		if _, _, err := store.SaveMessageEnvelope(ctx, domain.MessageEnvelope{
+			ConversationID: group.ID, SenderAccountID: who.Account.ID, SenderDeviceID: who.Device.ID,
+			IdempotencyKey: key, Ciphertext: []byte("x"), CryptoProtocol: "mls-openmls-todo",
+			CryptoMetadata: json.RawMessage(`{"protocol_version":1,"c4_leave":true}`),
+		}); err != nil {
+			t.Fatalf("notice %s: %v", key, err)
+		}
+	}
+	backdate := func(query string, at time.Time, args ...interface{}) {
+		t.Helper()
+		if _, err := store.db.ExecContext(ctx, query, append([]interface{}{formatTime(at)}, args...)...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Periodic updates spend both devices' intervals.
+	if err := update(bob, "bob-periodic"); err != nil {
+		t.Fatal(err)
+	}
+	if err := update(owner, "owner-periodic"); err != nil {
+		t.Fatal(err)
+	}
+	if err := update(bob, "bob-too-soon"); !errors.Is(err, ErrMLSSelfUpdateLimit) {
+		t.Fatalf("update inside the interval: %v", err)
+	}
+	// Bob sends his two leave notices; the leave does not go through (he
+	// stays a member). His void passes the interval, once.
+	notice(bob, "leave")
+	notice(bob, "leave-signed")
+	if err := update(owner, "owner-on-bobs-notice"); !errors.Is(err, ErrMLSSelfUpdateLimit) {
+		t.Fatalf("another device's notice exempted the owner: %v", err)
+	}
+	if err := update(bob, "void"); err != nil {
+		t.Fatalf("void of the cancelled leave refused: %v", err)
+	}
+	if err := update(bob, "void-again"); !errors.Is(err, ErrMLSSelfUpdateLimit) {
+		t.Fatalf("a second update on the same notices: %v", err)
+	}
+	// A notice older than the window does not exempt, even when it is newer
+	// than the last self-update (a longer interval set by the operator).
+	store.limits.MLSSelfUpdateMinutes = 3 * 60
+	notice(bob, "leave-old")
+	backdate(`UPDATE message_envelopes SET created_at = ? WHERE sender_device_id = ?`,
+		time.Now().Add(-LeaveVoidWindow-time.Minute), bob.Device.ID)
+	backdate(`UPDATE conversation_mls_devices SET last_self_update_at = ? WHERE conversation_id = ? AND device_id = ?`,
+		time.Now().Add(-LeaveVoidWindow-2*time.Minute), group.ID, bob.Device.ID)
+	if err := update(bob, "stale-notice"); !errors.Is(err, ErrMLSSelfUpdateLimit) {
+		t.Fatalf("a notice older than the window exempted: %v", err)
+	}
+	// The next cancelled leave voids again.
+	notice(bob, "leave-2")
+	if err := update(bob, "void-2"); err != nil {
+		t.Fatalf("void of the second cancelled leave: %v", err)
 	}
 }

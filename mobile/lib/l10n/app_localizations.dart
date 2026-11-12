@@ -1419,6 +1419,12 @@ abstract class AppLocalizations {
   /// **'Clear search'**
   String get searchClear;
 
+  /// No description provided for @searchLookUpAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Look up this username'**
+  String get searchLookUpAccount;
+
   /// No description provided for @searchIntroTitle.
   ///
   /// In en, this message translates to:
@@ -1428,7 +1434,7 @@ abstract class AppLocalizations {
   /// No description provided for @searchIntroMessage.
   ///
   /// In en, this message translates to:
-  /// **'Communities and channels are found by name on this device. People are found on the server by exact username only. Message contents are end-to-end encrypted and never searchable on the server.'**
+  /// **'Communities and channels are found on this device as you type. Press Enter to look up an exact username on the server. Message contents are end-to-end encrypted and never searchable on the server.'**
   String get searchIntroMessage;
 
   /// No description provided for @searchNoResultsTitle.
@@ -3237,6 +3243,24 @@ abstract class AppLocalizations {
   /// **'A message from a device that isn\'t approved was hidden.'**
   String get chatMessageUnapprovedDevice;
 
+  /// No description provided for @chatKeyRenewalNoAdmin.
+  ///
+  /// In en, this message translates to:
+  /// **'No admin or moderator in this channel can renew its key; ask one to join.'**
+  String get chatKeyRenewalNoAdmin;
+
+  /// No description provided for @chatSentFromRemovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent from a device {name} removed'**
+  String chatSentFromRemovedDevice(String name);
+
+  /// No description provided for @chatSentFromOwnRemovedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Sent from a device you removed'**
+  String get chatSentFromOwnRemovedDevice;
+
   /// No description provided for @chatDevicesNotJoined.
   ///
   /// In en, this message translates to:
@@ -3350,6 +3374,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Messages in this conversation are paused: an encryption update could not be applied. Nothing was skipped, and other conversations keep working.'**
   String get chatSyncPausedNotice;
+
+  /// No description provided for @chatSyncHeldNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages in this conversation are waiting: a membership or role change needs a confirmation this device does not have yet. It is checked again automatically. Nothing was skipped, and other conversations keep working.'**
+  String get chatSyncHeldNotice;
 
   /// No description provided for @chatRemovalHoldNotice.
   ///
@@ -5937,6 +5967,24 @@ abstract class AppLocalizations {
   /// **'This community has no verified roles, so the app can\'t tell who its moderators are.'**
   String get c6ReportCommunityUnavailable;
 
+  /// C6 reports: no moderator key is authenticated over MLS yet.
+  ///
+  /// In en, this message translates to:
+  /// **'No moderator\'s key has reached this device yet. Keys arrive through the community. Try again later.'**
+  String get c6ReportModeratorKeysPending;
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderators who get a copy: {count}'**
+  String c6ReportModeratorCount(int count);
+
+  /// C6 reports.
+  ///
+  /// In en, this message translates to:
+  /// **'Moderators whose key has not reached this device yet, and who get no copy: {count}'**
+  String c6ReportModeratorsUnconfirmed(int count);
+
   /// C6 reports.
   ///
   /// In en, this message translates to:
@@ -6459,11 +6507,53 @@ abstract class AppLocalizations {
   /// **'Stop the second copy'**
   String get k1SecondCopyOff;
 
-  /// No description provided for @k1SecondCopyPhone.
+  /// No description provided for @k1SecondCopyUnavailable.
   ///
   /// In en, this message translates to:
-  /// **'A second copy in a folder is available on desktop. Phones keep the backup on the server only.'**
-  String get k1SecondCopyPhone;
+  /// **'This device cannot keep a second copy. The backup stays on the server.'**
+  String get k1SecondCopyUnavailable;
+
+  /// No description provided for @k1SecondCopyChosenFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Second copy: the folder you chose'**
+  String get k1SecondCopyChosenFolder;
+
+  /// No description provided for @k1SecondCopyPickFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'That folder cannot be used. Pick another one.'**
+  String get k1SecondCopyPickFailed;
+
+  /// No description provided for @k1SecondCopySave.
+  ///
+  /// In en, this message translates to:
+  /// **'Save a copy of the backup'**
+  String get k1SecondCopySave;
+
+  /// No description provided for @k1SecondCopySaveDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Saves this phone\'s latest backup where you choose. Only your recovery key opens it. Save again now and then: this copy does not update itself.'**
+  String get k1SecondCopySaveDetail;
+
+  /// No description provided for @k1SecondCopySavedAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy saved {date}'**
+  String k1SecondCopySavedAt(String date);
+
+  /// No description provided for @k1SecondCopyNoneYet.
+  ///
+  /// In en, this message translates to:
+  /// **'There is no backup from this phone yet. Back up now, then save a copy.'**
+  String get k1SecondCopyNoneYet;
+
+  /// No description provided for @k1SecondCopySaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The copy could not be saved. Try again.'**
+  String get k1SecondCopySaveFailed;
 
   /// No description provided for @recoveryFollowUpRestoreDetail.
   ///

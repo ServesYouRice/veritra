@@ -36,6 +36,11 @@ enum ReportKeyStatus {
 
   /// A different key than the pinned one: refuse until the person pins it.
   changed,
+
+  /// A community moderator's key that the moderator's own MLS leaf
+  /// announced in the community's shared group (`report_key`). Trusted
+  /// without a pin; moderator keys are never pinned.
+  authenticated,
 }
 
 class ReportKeyAssessment {
@@ -60,10 +65,13 @@ class ReportKeyCheck {
   /// copy looks the same, so a screen shows this.
   final List<ReportKeyPin> missing;
 
-  /// Whether every listed key matches its pin (and there is at least one).
+  /// Whether every listed key is trusted, by its pin or (a moderator's) by
+  /// its MLS announcement, and there is at least one.
   bool get allPinned =>
       recipients.isNotEmpty &&
-      recipients.every((r) => r.status == ReportKeyStatus.pinned);
+      recipients.every((r) =>
+          r.status == ReportKeyStatus.pinned ||
+          r.status == ReportKeyStatus.authenticated);
 }
 
 /// Thrown when a report would be sealed to a key that is not pinned.
@@ -113,10 +121,11 @@ class ReportKeyPins {
 
   /// Compares [recipients] (as the server lists them) with the pins.
   ///
-  /// [scope] limits which pins may be reported as missing: the owner inbox
-  /// and each community's moderators are pinned in the same table (a
-  /// moderator by [communityModeratorInboxId]), and a pin of one inbox is
-  /// never missing from another. Null: every pin without a `:` (the owners).
+  /// [scope] limits which pins may be reported as missing. Null: every pin
+  /// without a `:` (the owners). Moderator keys are no longer pinned (they
+  /// are trusted over MLS, `report_key_announcement.dart`); a moderator pin
+  /// left from the first community design (keyed `<community>:<account>`)
+  /// is never in the default scope, so it is never reported missing.
   Future<ReportKeyCheck> check(List<ReportRecipientKey> recipients,
       {bool Function(String inboxId)? scope}) async {
     final inScope = scope ?? (String id) => !id.contains(':');
