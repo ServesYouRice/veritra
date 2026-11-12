@@ -4449,7 +4449,7 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String l2SealedProvableOwners(int count) {
-    return 'Порука коју пошаљете без имена може, ако буде пријављена, да се докаже само власницима чије сте кључеве за пријаве закачили: $count. Само они могу да провере доказ; он никог другог не убеђује.';
+    return 'Порука коју пошаљете без имена може, ако буде пријављена, да се докаже само власницима чије је кључеве за пријаве ова апликација закачила: $count. Само они могу да провере доказ; он никог другог не убеђује.';
   }
 
   @override
@@ -8974,7 +8974,7 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String l2SealedProvableOwners(int count) {
-    return 'Poruka koju pošaljete bez imena može, ako bude prijavljena, da se dokaže samo vlasnicima čije ste ključeve za prijave zakačili: $count. Samo oni mogu da provere dokaz; on nikog drugog ne ubeđuje.';
+    return 'Poruka koju pošaljete bez imena može, ako bude prijavljena, da se dokaže samo vlasnicima čije je ključeve za prijave ova aplikacija zakačila: $count. Samo oni mogu da provere dokaz; on nikog drugog ne ubeđuje.';
   }
 
   @override

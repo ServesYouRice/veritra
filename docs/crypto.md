@@ -689,12 +689,61 @@ is refused is skipped, never fatal.
   list must name exactly this device's franking key (a listed device with
   no key publishes change 7 first). The owner keys are the instance
   owners' report keys this app **pinned** (D95 pins, owner scope, sorted by
-  account, at most 16); nothing is fetched for them. Without that context
-  no token is handed out and the message goes identified. Native refuses a
+  account, at most 16): the tags read the pins, never a listing, and
+  nothing is fetched for a send. Without that context no token is handed
+  out and the message goes identified. Native refuses a
   listed key other than the device's own (`pm_crypto_l2_frank_designate`).
   With no pinned owner key the message goes sealed in the plain form, which
   no one can attribute; the sealed key screen says so ("provable to no
   one", or how many owners).
+- **Owner keys on first use (owner decision 2026-11-12).** The same token
+  pass reads `GET /reports/inbox` for one `dm` or `group` conversation
+  outside a community (`OwnerKeyWatch`, `owner_key_watch.dart`). The first
+  time this device sees any owner key for the origin, with no owner pin
+  and no earlier first pin (setting `l2.owner_keys_first_pin:<origin>`,
+  also set by a pin a person made while reporting), it pins every listed
+  key without a code comparison. After that nothing is pinned
+  automatically: a pinned owner listed with another key (`changed`), an
+  owner with no pin (`added`) and a pinned owner no longer listed
+  (`missing`) are recorded (`l2.owner_keys_seen:<origin>`) and shown on
+  the sealed key screen, and Settings warns, for the person to accept
+  (pin the listed key, or drop the gone owner's pin) or reject (the pin
+  stays; the warning returns only when the server lists something else).
+  Until they accept, the tags go only to the keys pinned before, a gone
+  owner included. Accept re-reads the listing and refuses if it moved
+  since the screen showed it. Only `report_inbox_unavailable` reads as "no
+  owner has a key"; any other error records nothing. Tests:
+  `mobile/test/l2_owner_key_tofu_test.dart` (AppState, native engine),
+  `l2_sealed_key_screen_test.dart`.
+- **What the server can do before the first pin (accepted with
+  first-use pinning).** It chooses when the first sight happens (it can
+  answer `report_inbox_unavailable` until it is ready; meanwhile sealed
+  messages go in the plain form, provable to no one) and what that
+  listing holds, per account and per device (each device pins on its own;
+  a second device of the same account can be shown other keys, and
+  nothing compares them). So it can:
+  - **list owner keys it holds**, alone or beside the real ones. They are
+    pinned like real ones: every report this device files from then on
+    is also sealed to them (`requirePinned` passes, so the report screen
+    asks for no comparison), and the server reads those reports: the
+    revealed text, the reporter, the envelope id and, through the tag it
+    can check, which account sent a reported sealed message. It learns no
+    tag outside a report: `d` travels only inside the MLS ciphertext and
+    the report copies, so a key it holds does not let it attribute
+    unreported sealed messages;
+  - **withhold real owners.** They are not pinned, a sealed message is not
+    provable to them (`notDesignated`), and when the server lists them
+    later they wait for the person as `added` (reports are refused until
+    then);
+  - **list more than 16 owners** whose ids sort first, so the real owners
+    fall outside the at most 16 tagged keys (reports are still sealed to
+    every pinned owner).
+  None of this is detected. After the first pin it can only raise a
+  warning; what remains is a person accepting a key without comparing it
+  with the owner's code. Before this decision a key was pinned only after
+  a person compared codes while reporting (D95, "Pinned owner keys"); a
+  device that had pinned that way keeps those pins and never pins on
+  first use.
 - **Wire.** Only in a payload sent sealed, `frank` may gain `d`:
   `,"frank":{"k":"<44>","d":"<64·n, standard base64 of n entries>"}}`. The
   plain form is the identified form. `P` and `c` are unchanged. The tags
@@ -760,10 +809,13 @@ the MLS state from before the message does not linger in old log frames
 (verification (d); `secure_delete` already clears freed pages of the
 database file). A modified app can keep them; that cannot be prevented.
 
-- **What the verifier tells the server.** An owner's check fetches the
-  claimed sender's account device list only when `d` names that owner; the
-  server learns, at review time and only from the reviewer, which account a
-  reported sealed message is attributed to. A cached list avoids the fetch.
+- **What the verifier tells the server (accepted, owner decision
+  2026-11-12).** An owner's check fetches the claimed sender's account
+  device list only when `d` names that owner; the server learns, at review
+  time and only from the reviewer, which account a reported sealed message
+  is attributed to (the copy's id and the request's timing link the two).
+  A cached list avoids the fetch. Accepted as a residual: an owner who
+  reviews a sealed report tells the server which account it names.
 
 #### What still leaks (plainly)
 
@@ -1143,7 +1195,11 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   sealed message's C6 commitment to the sender device's dedicated X25519
   franking key (listed in L1 format 2) for each instance owner the sender
   pinned, so reports still attribute it to those owners and to nobody else
-  (owner decision 2026-11-12, replacing a transferable signature). New
+  (owner decision 2026-11-12, replacing a transferable signature). The
+  owners' report keys are pinned on first use (owner decision 2026-11-12;
+  before, only after a code comparison while reporting), and later
+  changes wait for the person; an owner's review of a sealed report
+  telling the server the attributed account is accepted. New
   direct dependency `x25519-dalek =3.0.0`. ABI 25 is left to
   another package. Server side behind `PRIVATE_MESSENGER_SEALED_SENDER`
   (off). The app step (local schema 43: `local_sealed_tokens`,
@@ -3968,10 +4024,16 @@ the reporter's own; the recipient does, against the revealed body.
 **Pinned owner keys** (`report_key_pins.dart`). The server lists each owner's
 report key; the app seals only to keys that equal their pin
 (`ReportKeyPins.requirePinned`). A pin is made by an explicit
-`ReportKeyPins.pin` after the person saw `reportKeyFingerprint(key)`; a key
-the server changes is `changed` and refused until pinned again, a key for an
-owner never pinned is `unpinned` and refused (a server cannot add its own
-owner), and a pinned owner the server omits is reported as `missing`.
+`ReportKeyPins.pin` after the person saw `reportKeyFingerprint(key)`, or,
+since L2-3 (owner decision 2026-11-12), on first use: the first time a
+device sees any owner key and has none pinned, it pins every listed one
+without a comparison (`owner_key_watch.dart`; what a server can do before
+that: "Franking a sealed message", "What the server can do before the
+first pin"). After the first pin, a key the server changes is `changed`
+and refused until pinned again, a key for an owner never pinned is
+`unpinned` and refused (a server cannot add its own owner after the
+first pin), and a pinned owner the server omits is reported as
+`missing`.
 
 **Unfranked switch** (`FrankingPolicy`, `app_payload.dart`, passed to
 `NativeCryptoService`). `acceptUnfranked` is true today. With false, a

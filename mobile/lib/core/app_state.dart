@@ -9869,6 +9869,10 @@ class AppState extends ChangeNotifier
         loadFrankContext: () => _sealedFrankContext(client.baseUrl));
     sealedSender = sealed;
     crypto.sealedTokenSource = sealed;
+    // Settings warns about owner key differences recorded on earlier runs
+    // before this run's first token pass.
+    unawaited(loadOwnerKeyReview()
+        .catchError((Object _) => const <OwnerKeyReviewItem>[]));
   }
 
   /// L2-3: the sealed sender key pinned for this server, for Settings.

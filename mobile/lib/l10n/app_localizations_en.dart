@@ -4432,7 +4432,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String l2SealedProvableOwners(int count) {
-    return 'A message you send without your name can be proven, if reported, only to the owners whose report keys you pinned: $count. Only they can check the proof; it convinces no one else.';
+    return 'A message you send without your name can be proven, if reported, only to the owners whose report keys this app pinned: $count. Only they can check the proof; it convinces no one else.';
   }
 
   @override

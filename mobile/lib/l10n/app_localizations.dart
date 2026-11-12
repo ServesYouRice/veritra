@@ -7314,7 +7314,7 @@ abstract class AppLocalizations {
   /// L2-3 sealed sender.
   ///
   /// In en, this message translates to:
-  /// **'A message you send without your name can be proven, if reported, only to the owners whose report keys you pinned: {count}. Only they can check the proof; it convinces no one else.'**
+  /// **'A message you send without your name can be proven, if reported, only to the owners whose report keys this app pinned: {count}. Only they can check the proof; it convinces no one else.'**
   String l2SealedProvableOwners(int count);
 
   /// L2-3 sealed sender.

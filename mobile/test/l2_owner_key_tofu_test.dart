@@ -104,8 +104,8 @@ void main() {
         Conversation(id: 'conv_comm', kind: 'group', communityId: 'c1'),
         Conversation(id: 'conv_dm', kind: 'dm'),
       ];
-    state.sealedSender = SealedSender(
-        origin: _origin, localStore: store, crypto: crypto);
+    state.sealedSender =
+        SealedSender(origin: _origin, localStore: store, crypto: crypto);
     return (state: state, api: api, store: store);
   }
 
@@ -124,6 +124,11 @@ void main() {
         {'acct_a': keys[0], 'acct_b': keys[1]});
     expect(state.ownerKeyReview, isEmpty);
     expect(await state.sealedProvableOwnerCount(), 2);
+
+    // A failed read is not "no owners": nothing is recorded as gone.
+    api.failing = true;
+    expect(await tags(state), [keys[0], keys[1]]);
+    expect(state.ownerKeyReview, isEmpty);
   }, skip: skip);
 
   test('no owner key yet pins nothing, and the first listing later does',

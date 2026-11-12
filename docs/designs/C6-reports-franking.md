@@ -233,7 +233,11 @@ How steps 2 and 3 meet each condition. A wiring review checks the same list.
   aad from the row. Residual: the report public key itself comes from the
   server, so a server that substitutes it can read reports. D95: the app pins
   each owner's key and refuses a changed or unpinned one; the report screens
-  show the fingerprint when asking for a pin.
+  show the fingerprint when asking for a pin. Since L2-3 (owner decision
+  2026-11-12) the first owner keys a device sees are pinned on first use,
+  without a comparison, so a server that substitutes them before that
+  first sight reads that device's reports (`docs/crypto.md`, "What the
+  server can do before the first pin").
 - **G5, unfranked payloads.** Decided: accepted as unreportable. A franked
   payload whose commitment is missing or wrong is `invalid`. Rollout: every
   current sender is the new app, older apps and the C7 hidden types send no
@@ -285,7 +289,9 @@ wiring above, and what each part rests on:
   origin and owner. A report is sealed only to keys equal to their pin; a
   changed or never-pinned key is refused until a person pins it after seeing
   its fingerprint; a pinned owner the server omits is surfaced. Closes G4's
-  residual (a server substituting the key) for the apps that pinned.
+  residual (a server substituting the key) for the apps that pinned. Since
+  L2-3 the first sight pins on its own (trust on first use), so G4's
+  residual stays open until a device's first pin.
 - **Retention.** Dismissed (deleting your copy) or 90 days after filing, by
   the retention sweeper; caps as built (20 reports a day per reporter, 2000
   copies per inbox). This answers open item 2 for reports; an envelope row
@@ -482,15 +488,21 @@ Residuals:
 ## Sealed messages (L2-3, 2026-11-12)
 
 A sealed message (L2-3, D122) has no sender in the server's row, so G1's
-"honest server row" cannot attribute it. Instead the sender signs the
-commitment with its device's MLS signing key, inside the ciphertext
-(`frank.s`), receivers refuse a sealed franked payload whose signature does
-not verify under the sender's leaf, and the report reveal carries the
-signature and the key. The verifier checks the key against the claimed
-account's L1 device list (signed by that account, not the server). Rules
-and costs (a transferable proof; the reviewer's device-list fetch names the
-claimed account to the server): [`docs/crypto.md`, "Franking a sealed
-message"](../crypto.md#franking-a-sealed-message-c6-still-works).
+"honest server row" cannot attribute it. Instead (owner decision
+2026-11-12, "a leak proves nothing to anyone else") the sender adds, inside
+the ciphertext, one designated-verifier tag (`frank.d`) per instance owner
+whose report key its app pinned, keyed by X25519 between its device's
+dedicated franking key (listed in its L1 device list, format 2) and that
+owner's report key. Only that owner can check its tag, and it could have
+made the tag itself, so a tag convinces nobody else. The report reveal
+carries `d` and the claimed sender account; the owner checks its tag
+against the franking key the claimed account's own list names. The owners'
+keys are pinned on first use and later changes wait for the person.
+Accepted residuals: what the server can do before a device's first pin;
+an owner's review tells the server which account a sealed report names
+(the list fetch); and the MLS signature, which a modified app can keep
+as a transferable proof. Rules: [`docs/crypto.md`, "Franking a sealed
+message"](../crypto.md#franking-a-sealed-message-c6-still-works-owner-only-proofs).
 
 ## Departed moderators (accepted)
 

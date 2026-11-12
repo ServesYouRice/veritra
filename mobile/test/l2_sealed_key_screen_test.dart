@@ -8,7 +8,13 @@ import 'package:private_messenger/core/app_state.dart';
 import 'package:private_messenger/core/models.dart';
 import 'package:private_messenger/core/sealed_sender.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
+import 'package:private_messenger/core/report_models.dart';
+import 'package:private_messenger/crypto/franking.dart'
+    show reportInboxInstanceOwner;
+import 'package:private_messenger/crypto/owner_key_watch.dart';
 import 'package:private_messenger/crypto/report_key_pins.dart';
+import 'package:private_messenger/features/settings/settings_screen.dart';
+import 'package:private_messenger/l10n/l10n.dart';
 import 'package:private_messenger/features/settings/sealed_key_screen.dart';
 import 'package:private_messenger/storage/local_store.dart';
 import 'package:private_messenger/sync/sync_service.dart';
@@ -114,6 +120,84 @@ void main() {
             .data,
         contains(': 2.'));
     expect(await state.sealedProvableOwnerCount(), 2);
+  });
+
+  // Owner decision 2026-11-12: a key that changed, an owner added and an
+  // owner gone since the first pin are shown here to accept or reject, and
+  // Settings warns while any is waiting.
+  testWidgets('owner key differences wait for the person', (tester) async {
+    final key = SealedKeyPin(
+        origin: origin, keyId: 'a' * 32, publicKey: pinned, pinnedAt: 1);
+    final state = await stateWith(key);
+    final watch = OwnerKeyWatch(state.localStore, origin);
+    ReportInboxRecipient owner(String id, int fill) => ReportInboxRecipient(
+        inboxId: id, publicKey: List<int>.filled(32, fill), keyRev: 1);
+    // First sight pins acct_o1 and acct_o2.
+    expect(
+        await watch.observe(ReportInbox(
+            kind: reportInboxInstanceOwner,
+            recipients: [owner('acct_o1', 0x41), owner('acct_o2', 0x42)])),
+        isTrue);
+    // Then o1's key changes, o2 is gone and o3 is new.
+    expect(
+        await watch.observe(ReportInbox(
+            kind: reportInboxInstanceOwner,
+            recipients: [owner('acct_o1', 0x51), owner('acct_o3', 0x43)])),
+        isFalse);
+    await state.loadOwnerKeyReview();
+
+    tester.view.physicalSize = const Size(900, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: SettingsScreen(state: state)),
+    ));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(find.byKey(const ValueKey('owner-key-review-tile')), findsOneWidget);
+
+    await tester.pumpWidget(MaterialApp(
+        key: const ValueKey('screen'), home: SealedKeyScreen(state: state)));
+    await tester.pumpAndSettle();
+    for (final id in ['acct_o1', 'acct_o2', 'acct_o3']) {
+      expect(find.byKey(ValueKey('owner-key-review-$id')), findsOneWidget);
+    }
+    expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x41))),
+        findsOneWidget);
+    expect(find.text(reportKeyFingerprint(List<int>.filled(32, 0x51))),
+        findsOneWidget);
+    expect(find.textContaining(': 2.'), findsOneWidget);
+
+    // Reject the changed key: the pin stays.
+    await tester.tap(find.byKey(const ValueKey('owner-key-reject-acct_o1')));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('owner-key-review-acct_o1')), findsNothing);
+    // Accept the new owner, after the warning.
+    await tester.tap(find.byKey(const ValueKey('owner-key-accept-acct_o3')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('owner-key-accept-confirm')));
+    await tester.pumpAndSettle();
+    expect(
+        find.byKey(const ValueKey('owner-key-review-acct_o3')), findsNothing);
+    // Accept that o2 is gone.
+    await tester.tap(find.byKey(const ValueKey('owner-key-accept-acct_o2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('owner-key-accept-confirm')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('owner-key-review')), findsNothing);
+
+    final pins = {
+      for (final pin in await state.localStore.loadReportKeyPins(origin))
+        pin.ownerAccountId: pin.publicKey
+    };
+    expect(pins, {
+      'acct_o1': List<int>.filled(32, 0x41),
+      'acct_o3': List<int>.filled(32, 0x43),
+    });
+    expect(state.ownerKeyReview, isEmpty);
   });
 
   testWidgets('no pin yet says so', (tester) async {

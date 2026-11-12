@@ -1548,7 +1548,7 @@
   "@c6VerdictProofFailedDetail": {"description": "L2-3 sealed sender."},
   "l2SealedProvableNone": "No owner's report key is pinned on this device yet. A message you send without your name can then be proven to no one if it is reported. The app pins the owners' keys the first time the server lists them.",
   "@l2SealedProvableNone": {"description": "L2-3 sealed sender."},
-  "l2SealedProvableOwners": "A message you send without your name can be proven, if reported, only to the owners whose report keys you pinned: {count}. Only they can check the proof; it convinces no one else.",
+  "l2SealedProvableOwners": "A message you send without your name can be proven, if reported, only to the owners whose report keys this app pinned: {count}. Only they can check the proof; it convinces no one else.",
   "@l2SealedProvableOwners": {"description": "L2-3 sealed sender.", "placeholders": {"count": {"type": "int"}}},
   "l2SealedKeyTitle": "Sealed sender key",
   "@l2SealedKeyTitle": {"description": "L2-3 sealed sender."},
