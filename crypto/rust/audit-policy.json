@@ -38,7 +38,7 @@
         ],
         "built": true
       },
-      "rationale": "Built but never run on Veritra keys: the timing issues sit in the NIST-curve arithmetic, and Veritra pins MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 (audit-rust.sh fails if the pin changes). The fix needs crypto-bigint 0.7.6+, i.e. elliptic-curve 0.14, which no released OpenMLS stack accepts yet. Approved by the owner on 2026-10-24."
+      "rationale": "Built but never run on Veritra keys: the timing issues sit in the NIST-curve arithmetic, and Veritra pins MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519 (audit-rust.sh fails if the pin changes). voprf 0.5.0 (L2-3 sealed sender) is a second user of elliptic-curve 0.13.8: its ristretto255 path uses only the ExpandMsgXmd hash helper, not crypto-bigint's arithmetic. The fix needs crypto-bigint 0.7.6+, i.e. elliptic-curve 0.14, which no released OpenMLS stack accepts yet; move to voprf 0.6 once it is stable. Approved by the owner on 2026-10-24 and re-confirmed on 2026-11-12."
     }
   ]
 }
