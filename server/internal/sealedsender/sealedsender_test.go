@@ -19,7 +19,6 @@ type vector struct {
 	InfoCase   struct {
 		ConversationID string `json:"conversation_id"`
 		Epoch          uint32 `json:"epoch"`
-		Generation     uint64 `json:"generation"`
 		Info           string `json:"info"`
 	} `json:"info_case"`
 	Exchange struct {
@@ -89,7 +88,7 @@ func TestVectorKeyInfoAndKeyID(t *testing.T) {
 	if key.ID() != v.KeyID || KeyID(unhex(t, v.PublicKey)) != v.KeyID {
 		t.Fatalf("key id %s, want %s", key.ID(), v.KeyID)
 	}
-	info, err := Info(v.InfoCase.ConversationID, v.InfoCase.Epoch, v.InfoCase.Generation)
+	info, err := Info(v.InfoCase.ConversationID, v.InfoCase.Epoch)
 	if err != nil || hex.EncodeToString(info) != v.InfoCase.Info {
 		t.Fatalf("info %x (%v), want %s", info, err, v.InfoCase.Info)
 	}
@@ -105,7 +104,7 @@ func TestVectorExchange(t *testing.T) {
 		t.Fatal(err)
 	}
 	ic := v.InfoCase
-	response, err := key.Evaluate(ic.ConversationID, ic.Epoch, ic.Generation, unhex(t, v.Exchange.Request))
+	response, err := key.Evaluate(ic.ConversationID, ic.Epoch, unhex(t, v.Exchange.Request))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,14 +120,13 @@ func TestVectorExchange(t *testing.T) {
 	for i := range v.Exchange.Count {
 		tok := tokens[i*(NonceSize+OutputSize) : (i+1)*(NonceSize+OutputSize)]
 		nonce, output := tok[:NonceSize], tok[NonceSize:]
-		if !key.Verify(ic.ConversationID, ic.Epoch, ic.Generation, nonce, output) {
+		if !key.Verify(ic.ConversationID, ic.Epoch, nonce, output) {
 			t.Fatalf("token %d does not verify", i)
 		}
 		for name, ok := range map[string]bool{
-			"other conversation": key.Verify(ic.ConversationID+"x", ic.Epoch, ic.Generation, nonce, output),
-			"next epoch":         key.Verify(ic.ConversationID, ic.Epoch+1, ic.Generation, nonce, output),
-			"next generation":    key.Verify(ic.ConversationID, ic.Epoch, ic.Generation+1, nonce, output),
-			"short output":       key.Verify(ic.ConversationID, ic.Epoch, ic.Generation, nonce, output[:63]),
+			"other conversation": key.Verify(ic.ConversationID+"x", ic.Epoch, nonce, output),
+			"next epoch":         key.Verify(ic.ConversationID, ic.Epoch+1, nonce, output),
+			"short output":       key.Verify(ic.ConversationID, ic.Epoch, nonce, output[:63]),
 		} {
 			if ok {
 				t.Fatalf("token %d verified under %s", i, name)
@@ -138,7 +136,7 @@ func TestVectorExchange(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if other.Verify(ic.ConversationID, ic.Epoch, ic.Generation, nonce, output) {
+		if other.Verify(ic.ConversationID, ic.Epoch, nonce, output) {
 			t.Fatalf("token %d verified under another key", i)
 		}
 	}
@@ -177,17 +175,17 @@ func TestEvaluateRefusesBadRequests(t *testing.T) {
 		"not point": bytes.Repeat([]byte{0xff}, ElementSize),
 		"too many":  bytes.Repeat(valid, MaxBatch+1),
 	} {
-		if _, err := key.Evaluate("conv", 1, 0, blinded); err == nil {
+		if _, err := key.Evaluate("conv", 1, blinded); err == nil {
 			t.Fatalf("%s: evaluated", name)
 		}
 	}
-	if _, err := key.Evaluate("", 1, 0, valid); err == nil {
+	if _, err := key.Evaluate("", 1, valid); err == nil {
 		t.Fatal("empty conversation evaluated")
 	}
-	if _, err := key.Evaluate(string(bytes.Repeat([]byte{'a'}, MaxIDSize+1)), 1, 0, valid); err == nil {
+	if _, err := key.Evaluate(string(bytes.Repeat([]byte{'a'}, MaxIDSize+1)), 1, valid); err == nil {
 		t.Fatal("long conversation evaluated")
 	}
-	if _, err := key.Evaluate("conv", 1, 0, bytes.Repeat(valid, MaxBatch)); err != nil {
+	if _, err := key.Evaluate("conv", 1, bytes.Repeat(valid, MaxBatch)); err != nil {
 		t.Fatalf("full batch refused: %v", err)
 	}
 }

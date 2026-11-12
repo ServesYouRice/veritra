@@ -170,8 +170,6 @@ void main() {
           sealedPostOutcome(ApiException(status, '{"error":"$code"}'));
       expect(of(409, 'sealed_token_spent'), SealedPostOutcome.replaceToken);
       expect(of(409, 'sealed_token_expired'), SealedPostOutcome.replaceToken);
-      expect(
-          of(409, 'sealed_generation_changed'), SealedPostOutcome.replaceToken);
       expect(of(403, 'sealed_token_invalid'), SealedPostOutcome.replaceToken);
       expect(of(409, 'sealed_not_eligible'), SealedPostOutcome.terminal);
       expect(of(409, 'idempotency_conflict'), SealedPostOutcome.terminal);
@@ -297,7 +295,7 @@ void main() {
       expect(sealed.activeIn(_conversation), isFalse);
       expect(
           await store.countSealedTokens(_conversation,
-              keyId: _keyId, generation: 0, epoch: api.epoch),
+              keyId: _keyId, epoch: api.epoch),
           0);
     });
 
@@ -325,7 +323,6 @@ SealedToken _token(int seed, {int? epoch}) => SealedToken(
       conversationId: _conversation,
       keyId: _keyId,
       epoch: epoch ?? sealedUtcDay(_now),
-      generation: 0,
       nonce: List<int>.generate(32, (i) => (seed * 31 + i) & 0xff),
       output: List<int>.generate(64, (i) => (seed + i) & 0xff),
     );
@@ -376,7 +373,6 @@ class _FakeCrypto implements SealedSendingCryptoService {
     required List<int> publicKey,
     required String conversationId,
     required int epoch,
-    required int generation,
     required int count,
   }) =>
       (state: Uint8List.fromList(<int>[count]), request: Uint8List(count * 32));
@@ -390,7 +386,6 @@ class _FakeCrypto implements SealedSendingCryptoService {
     required String conversationId,
     required String keyId,
     required int epoch,
-    required int generation,
   }) =>
       <SealedToken>[
         for (var i = 0; i < state.first; i++)
@@ -398,7 +393,6 @@ class _FakeCrypto implements SealedSendingCryptoService {
             conversationId: conversationId,
             keyId: keyId,
             epoch: epoch,
-            generation: generation,
             nonce: List<int>.generate(32, (j) => (++_serial * 7 + j) & 0xff)
               ..[0] = _serial & 0xff
               ..[1] = (_serial >> 8) & 0xff,
@@ -428,8 +422,6 @@ class _SealedApi extends ApiClient {
     asked.add(conversationId);
     return SealedConversationState(
       key: SealedServerKey(keyId: keyId, publicKey: publicKey),
-      generation: 0,
-      epoch: epoch,
       eligible: eligible,
       remaining: remaining,
     );
@@ -440,7 +432,6 @@ class _SealedApi extends ApiClient {
     String token,
     String conversationId, {
     required int epoch,
-    required int generation,
     required List<int> blinded,
   }) async {
     final count = blinded.length ~/ 32;

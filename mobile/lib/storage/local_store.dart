@@ -731,13 +731,13 @@ abstract class LocalStore {
 
   /// Takes one token out of the store (the older day first), or null.
   Future<SealedToken?> takeSealedToken(String conversationId,
-      {required String keyId, required int generation, required int epoch});
+      {required String keyId, required int epoch});
   Future<int> countSealedTokens(String conversationId,
-      {required String keyId, required int generation, required int epoch});
+      {required String keyId, required int epoch});
 
   /// See [SealedSenderSql.dropSealedTokens].
   Future<void> dropSealedTokens(
-      {int? minEpoch, String? keyId, String? conversationId, int? generation});
+      {int? minEpoch, String? keyId, String? conversationId});
   Future<SealedKeyPin?> loadSealedKeyPin(String origin);
   Future<void> saveSealedKeyPin(SealedKeyPin pin);
 
@@ -1669,14 +1669,11 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<SealedToken?> takeSealedToken(String conversationId,
-      {required String keyId,
-      required int generation,
-      required int epoch}) async {
+      {required String keyId, required int epoch}) async {
     SealedToken? best;
     for (final token in _sealedTokens) {
       if (token.conversationId != conversationId ||
           token.keyId != keyId ||
-          token.generation != generation ||
           (token.epoch != epoch && token.epoch != epoch - 1)) {
         continue;
       }
@@ -1688,29 +1685,21 @@ class MemoryLocalStore implements LocalStore {
 
   @override
   Future<int> countSealedTokens(String conversationId,
-          {required String keyId,
-          required int generation,
-          required int epoch}) async =>
+          {required String keyId, required int epoch}) async =>
       _sealedTokens
           .where((t) =>
               t.conversationId == conversationId &&
               t.keyId == keyId &&
-              t.generation == generation &&
               t.epoch == epoch)
           .length;
 
   @override
   Future<void> dropSealedTokens(
-      {int? minEpoch,
-      String? keyId,
-      String? conversationId,
-      int? generation}) async {
+      {int? minEpoch, String? keyId, String? conversationId}) async {
     _sealedTokens.removeWhere((t) =>
         (minEpoch != null && t.epoch < minEpoch) ||
         (keyId != null && t.keyId != keyId) ||
-        (conversationId != null &&
-            t.conversationId == conversationId &&
-            (generation == null || t.generation != generation)));
+        (conversationId != null && t.conversationId == conversationId));
   }
 
   @override
@@ -3570,31 +3559,21 @@ class SecureLocalStore implements LocalStore {
 
   @override
   Future<SealedToken?> takeSealedToken(String conversationId,
-          {required String keyId,
-          required int generation,
-          required int epoch}) async =>
-      (await _database()).takeSealedToken(conversationId,
-          keyId: keyId, generation: generation, epoch: epoch);
+          {required String keyId, required int epoch}) async =>
+      (await _database())
+          .takeSealedToken(conversationId, keyId: keyId, epoch: epoch);
 
   @override
   Future<int> countSealedTokens(String conversationId,
-          {required String keyId,
-          required int generation,
-          required int epoch}) async =>
-      (await _database()).countSealedTokens(conversationId,
-          keyId: keyId, generation: generation, epoch: epoch);
+          {required String keyId, required int epoch}) async =>
+      (await _database())
+          .countSealedTokens(conversationId, keyId: keyId, epoch: epoch);
 
   @override
   Future<void> dropSealedTokens(
-          {int? minEpoch,
-          String? keyId,
-          String? conversationId,
-          int? generation}) async =>
+          {int? minEpoch, String? keyId, String? conversationId}) async =>
       (await _database()).dropSealedTokens(
-          minEpoch: minEpoch,
-          keyId: keyId,
-          conversationId: conversationId,
-          generation: generation);
+          minEpoch: minEpoch, keyId: keyId, conversationId: conversationId);
 
   @override
   Future<SealedKeyPin?> loadSealedKeyPin(String origin) async =>

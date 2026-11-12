@@ -153,14 +153,12 @@ class NativeCryptoService
     required List<int> publicKey,
     required String conversationId,
     required int epoch,
-    required int generation,
     required int count,
   }) =>
       bindings.l2TokenRequest(
           publicKey: publicKey,
           conversationId: conversationId,
           epoch: epoch,
-          generation: generation,
           count: count);
 
   @override
@@ -170,7 +168,6 @@ class NativeCryptoService
     required String conversationId,
     required String keyId,
     required int epoch,
-    required int generation,
   }) {
     final out = bindings.l2TokenFinalize(state: state, response: response);
     try {
@@ -181,7 +178,6 @@ class NativeCryptoService
             conversationId: conversationId,
             keyId: keyId,
             epoch: epoch,
-            generation: generation,
             nonce: Uint8List.sublistView(
                 out, offset, offset + SealedToken.nonceBytes),
             output: Uint8List.sublistView(

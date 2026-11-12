@@ -1,6 +1,8 @@
 -- L2-3 sealed sender (D122; docs/crypto.md, "Sealed sender with VOPRF
--- tokens"): the instance's POPRF key, each conversation's token generation,
--- per-account issuance counts and spent token nonces. Nothing here names who
+-- tokens"): the instance's POPRF key, per-account issuance counts and spent
+-- token nonces. No per-conversation counter: a token binds only its
+-- conversation and UTC day, so the server has no per-account value to bind
+-- into one (review M1). Nothing here names who
 -- spent a token: issuance is per account, spending is anonymous.
 --
 -- One key per instance, made on first use. The private scalar is server key
@@ -13,43 +15,6 @@ CREATE TABLE IF NOT EXISTS sealed_sender_keys (
   public_key BLOB NOT NULL CHECK (length(public_key) = 32),
   created_at TEXT NOT NULL
 );
-
--- The generation tokens are bound to. Raised by the triggers below whenever
--- a member leaves (or is removed, banned or deleted) and whenever a member's
--- device is revoked, so leftover tokens of a removed member or a revoked
--- device stop working at once. No row means generation 0. No foreign key:
--- the membership trigger can fire while a conversation's delete cascades,
--- and a counter left behind for a deleted id names nothing.
-CREATE TABLE IF NOT EXISTS sealed_conversation_state (
-  conversation_id TEXT PRIMARY KEY,
-  generation INTEGER NOT NULL CHECK (generation >= 0)
-) WITHOUT ROWID;
-
-CREATE TRIGGER IF NOT EXISTS sealed_generation_on_membership_delete
-AFTER DELETE ON memberships
-WHEN OLD.conversation_id IS NOT NULL
-BEGIN
-  INSERT INTO sealed_conversation_state(conversation_id, generation)
-  SELECT OLD.conversation_id, 1
-  WHERE EXISTS (SELECT 1 FROM conversations WHERE id = OLD.conversation_id)
-  ON CONFLICT(conversation_id) DO UPDATE SET generation = generation + 1;
-END;
-
-CREATE TRIGGER IF NOT EXISTS sealed_generation_on_device_revoke
-AFTER UPDATE OF revoked_at ON devices
-WHEN OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL
-BEGIN
-  INSERT INTO sealed_conversation_state(conversation_id, generation)
-  SELECT m.conversation_id, 1 FROM memberships m
-  WHERE m.account_id = NEW.account_id AND m.conversation_id IS NOT NULL
-  ON CONFLICT(conversation_id) DO UPDATE SET generation = generation + 1;
-END;
-
-CREATE TRIGGER IF NOT EXISTS sealed_state_on_conversation_delete
-AFTER DELETE ON conversations
-BEGIN
-  DELETE FROM sealed_conversation_state WHERE conversation_id = OLD.id;
-END;
 
 -- Tokens issued per account, conversation and UTC day (the epoch), for the
 -- daily cap. Deleted once the epoch can no longer be redeemed.

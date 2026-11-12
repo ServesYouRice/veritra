@@ -1758,7 +1758,7 @@ fn sealed_error(error: crate::l2_sealed::SealedError) -> i32 {
 
 /// ABI 26 (L2-3, D122): makes `count` (1 to 32) fresh token nonces and
 /// blinds them for the server's POPRF `public_key` under
-/// `info(conversation_id, epoch, generation)`. `out_request` gets
+/// `info(conversation_id, epoch)`. `out_request` gets
 /// `count × 32` blinded elements to send; `out_state` the secret client
 /// state (`VLT1`, see `docs/crypto.md`) that only
 /// [`pm_crypto_l2_token_finalize`] reads. The caller wipes the state.
@@ -1770,7 +1770,6 @@ pub unsafe extern "C" fn pm_crypto_l2_token_request(
     public_key: PmByteSlice,
     conversation_id: PmByteSlice,
     epoch: u32,
-    generation: u64,
     count: u32,
     out_state: *mut PmOwnedBuffer,
     out_request: *mut PmOwnedBuffer,
@@ -1786,7 +1785,6 @@ pub unsafe extern "C" fn pm_crypto_l2_token_request(
             public_key,
             conversation_id,
             epoch,
-            generation,
             count,
             &mut rand_core::OsRng,
         )

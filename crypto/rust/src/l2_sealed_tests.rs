@@ -60,27 +60,25 @@ fn evaluate(server: &PoprfServer<Ristretto255>, request: &[u8], info: &[u8]) -> 
 
 #[test]
 fn info_layout_is_fixed() {
-    let info = info(b"conv_x", 0x0102_0304, 0x0a0b_0c0d_0e0f_1011).unwrap();
+    let info = info(b"conv_x", 0x0102_0304).unwrap();
     let mut expected = b"veritra-l2-sealed-v1".to_vec();
     expected.extend_from_slice(&[0, 6]);
     expected.extend_from_slice(b"conv_x");
     expected.extend_from_slice(&[1, 2, 3, 4]);
-    expected.extend_from_slice(&[0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10, 0x11]);
+    // Nothing follows the epoch: no per-account or per-member-list number
+    // (review M1).
     assert_eq!(info, expected);
-    assert_eq!(super::info(b"", 1, 1), Err(SealedError::InvalidInput));
-    assert_eq!(
-        super::info(&[b'a'; 129], 1, 1),
-        Err(SealedError::InvalidInput)
-    );
+    assert_eq!(super::info(b"", 1), Err(SealedError::InvalidInput));
+    assert_eq!(super::info(&[b'a'; 129], 1), Err(SealedError::InvalidInput));
 }
 
 #[test]
 fn tokens_round_trip_and_match_the_server_evaluation() {
     let server = server(&[7u8; 32]);
     let pk = public_key(&server);
-    let request = token_request(&pk, b"conv_rt", 20_000, 2, 5, &mut OsRng).unwrap();
+    let request = token_request(&pk, b"conv_rt", 20_000, 5, &mut OsRng).unwrap();
     assert_eq!(request.request.len(), 5 * ELEMENT_BYTES);
-    let info = info(b"conv_rt", 20_000, 2).unwrap();
+    let info = info(b"conv_rt", 20_000).unwrap();
     let response = evaluate(&server, &request.request, &info);
     let tokens = token_finalize(&request.state, &response).unwrap();
     assert_eq!(tokens.len(), 5 * TOKEN_BYTES);
@@ -91,11 +89,10 @@ fn tokens_round_trip_and_match_the_server_evaluation() {
         // Redemption: the server recomputes the output from the nonce alone.
         let expected = server.evaluate(nonce, Some(&info)).unwrap();
         assert_eq!(output, expected.as_slice());
-        // Another conversation, epoch or generation gives another output.
+        // Another conversation or epoch gives another output.
         for other in [
-            super::info(b"conv_other", 20_000, 2).unwrap(),
-            super::info(b"conv_rt", 20_001, 2).unwrap(),
-            super::info(b"conv_rt", 20_000, 3).unwrap(),
+            super::info(b"conv_other", 20_000).unwrap(),
+            super::info(b"conv_rt", 20_001).unwrap(),
         ] {
             assert_ne!(server.evaluate(nonce, Some(&other)).unwrap(), expected);
         }
@@ -107,16 +104,16 @@ fn a_wrong_key_info_or_proof_is_refused() {
     let server = server(&[7u8; 32]);
     let other = server_seeded(&[8u8; 32]);
     let pk = public_key(&server);
-    let request = token_request(&pk, b"conv_bad", 1, 0, 2, &mut OsRng).unwrap();
-    let info = info(b"conv_bad", 1, 0).unwrap();
+    let request = token_request(&pk, b"conv_bad", 1, 2, &mut OsRng).unwrap();
+    let info = info(b"conv_bad", 1).unwrap();
     // Evaluated under another key (a per-user key the client did not pin).
     let response = evaluate(&other, &request.request, &info);
     assert_eq!(
         token_finalize(&request.state, &response),
         Err(SealedError::Verification)
     );
-    // Evaluated under other info (another generation).
-    let wrong_info = super::info(b"conv_bad", 1, 1).unwrap();
+    // Evaluated under other info (another epoch).
+    let wrong_info = super::info(b"conv_bad", 2).unwrap();
     let response = evaluate(&server, &request.request, &wrong_info);
     assert_eq!(
         token_finalize(&request.state, &response),
@@ -160,12 +157,12 @@ fn server_seeded(seed: &[u8]) -> PoprfServer<Ristretto255> {
 #[test]
 fn requests_refuse_bad_arguments() {
     let pk = public_key(&server(&[7u8; 32]));
-    assert!(token_request(&pk, b"c", 1, 1, 0, &mut OsRng).is_err());
-    assert!(token_request(&pk, b"c", 1, 1, MAX_BATCH + 1, &mut OsRng).is_err());
-    assert!(token_request(&pk, b"c", 1, 1, MAX_BATCH, &mut OsRng).is_ok());
-    assert!(token_request(&pk[..31], b"c", 1, 1, 1, &mut OsRng).is_err());
+    assert!(token_request(&pk, b"c", 1, 0, &mut OsRng).is_err());
+    assert!(token_request(&pk, b"c", 1, MAX_BATCH + 1, &mut OsRng).is_err());
+    assert!(token_request(&pk, b"c", 1, MAX_BATCH, &mut OsRng).is_ok());
+    assert!(token_request(&pk[..31], b"c", 1, 1, &mut OsRng).is_err());
     // The identity is not a public key.
-    assert!(token_request(&[0u8; 32], b"c", 1, 1, 1, &mut OsRng).is_err());
+    assert!(token_request(&[0u8; 32], b"c", 1, 1, &mut OsRng).is_err());
     assert!(key_id(&[0u8; 32]).is_err());
 }
 
@@ -232,7 +229,6 @@ fn shared_vector_exchange_and_key_id() {
     let info = info(
         case["conversation_id"].as_str().unwrap().as_bytes(),
         case["epoch"].as_u64().unwrap() as u32,
-        case["generation"].as_u64().unwrap(),
     )
     .unwrap();
     assert_eq!(hex(&info), case["info"].as_str().unwrap());
@@ -398,17 +394,9 @@ fn generate_vector() {
     let key_info = "veritra-l2-vector";
     let server = PoprfServer::<Ristretto255>::new_from_seed(&seed, key_info.as_bytes()).unwrap();
     let pk = public_key(&server);
-    let (conversation, epoch, generation) = ("conv_l2_vector", 20_404u32, 3u64);
-    let info = info(conversation.as_bytes(), epoch, generation).unwrap();
-    let request = token_request(
-        &pk,
-        conversation.as_bytes(),
-        epoch,
-        generation,
-        2,
-        &mut OsRng,
-    )
-    .unwrap();
+    let (conversation, epoch) = ("conv_l2_vector", 20_404u32);
+    let info = info(conversation.as_bytes(), epoch).unwrap();
+    let request = token_request(&pk, conversation.as_bytes(), epoch, 2, &mut OsRng).unwrap();
     let response = evaluate(&server, &request.request, &info);
     let tokens = token_finalize(&request.state, &response).unwrap();
     let commit = unhex("e84e3e81d8ac625060a472b2c311b19fc56e8472c80ffa0b304e63930158980a");
@@ -451,7 +439,6 @@ fn generate_vector() {
         "info_case": {
             "conversation_id": conversation,
             "epoch": epoch,
-            "generation": generation,
             "info": hex(&info),
         },
         "exchange": {

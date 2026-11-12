@@ -27,7 +27,10 @@ import 'models.dart';
 /// (`sealed=1`) is ever served one.
 const String sealedMessageEventType = 'message.sealed.created';
 
-/// The UTC day number the server calls a token's epoch.
+/// The UTC day number the server calls a token's epoch. The app takes it
+/// from its own clock, never from the server (review M1): a day the server
+/// named per account could split accounts into groups by the epoch their
+/// tokens carry in the clear at redemption.
 int sealedUtcDay(DateTime now) =>
     now.toUtc().millisecondsSinceEpoch ~/ Duration.millisecondsPerDay;
 
@@ -36,8 +39,8 @@ const int sealedTokenBatch = 32;
 
 /// How a refused sealed post is handled.
 enum SealedPostOutcome {
-  /// The token cannot be redeemed (expired, spent, its generation or key
-  /// gone): retry the same message sealed with another token.
+  /// The token cannot be redeemed (expired, spent, its key gone): retry the
+  /// same message sealed with another token.
   replaceToken,
 
   /// The server will not take the message sealed and stored nothing (the
@@ -52,7 +55,6 @@ enum SealedPostOutcome {
 SealedPostOutcome sealedPostOutcome(Object error) {
   if (error is! ApiException) return SealedPostOutcome.retry;
   switch (error.serverCode) {
-    case 'sealed_generation_changed':
     case 'sealed_token_expired':
     case 'sealed_token_spent':
     // A key the server no longer holds (rotated) or an output it does not
@@ -199,15 +201,14 @@ class SealedSender implements SealedTokenSource {
   final Map<String, _ConversationTokens> _conversations =
       <String, _ConversationTokens>{};
 
-  /// The server's day minus this device's, from the last answer (clamped).
-  int _dayOffset = 0;
   DateTime? _lastRefresh;
   Future<void>? _running;
 
   /// The least time between two fetch passes.
   static const refreshInterval = Duration(minutes: 10);
 
-  int get _today => sealedUtcDay(_clock()) + _dayOffset;
+  /// This device's UTC day. Never adjusted by anything the server says.
+  int get _today => sealedUtcDay(_clock());
 
   /// Whether messages in [conversationId] currently go sealed (when a token
   /// is held). Server typing and read receipts stay off there: they name
@@ -227,7 +228,7 @@ class SealedSender implements SealedTokenSource {
       return null;
     }
     return localStore.takeSealedToken(conversationId,
-        keyId: pin.keyId, generation: known.state.generation, epoch: _today);
+        keyId: pin.keyId, epoch: _today);
   }
 
   @override
@@ -235,16 +236,10 @@ class SealedSender implements SealedTokenSource {
     await localStore.saveSealedTokens(<SealedToken>[token]);
   }
 
-  /// A post was refused for its token: [conversationId]'s state is stale.
-  /// A generation change drops every token of the conversation.
+  /// A post was refused for its token: an invalid one (a key the server no
+  /// longer holds) asks for a fresh pass.
   Future<void> tokenRefused(String conversationId, ApiException error) async {
-    if (error.serverCode == 'sealed_generation_changed') {
-      _conversations.remove(conversationId);
-      await localStore.dropSealedTokens(conversationId: conversationId);
-      _lastRefresh = null;
-    } else if (error.serverCode == 'sealed_token_invalid') {
-      _lastRefresh = null;
-    }
+    if (error.serverCode == 'sealed_token_invalid') _lastRefresh = null;
   }
 
   /// The server refused [conversationId] for sealed posts: send identified
@@ -300,7 +295,9 @@ class SealedSender implements SealedTokenSource {
     final served = await client.sealedKey();
     final pin = await _pinned(served);
     if (pin == null) return;
-    final today = sealedUtcDay(_clock());
+    final today = _today;
+    // Tokens of a day that can no longer be redeemed.
+    await localStore.dropSealedTokens(minEpoch: today - 1);
     for (final conversation in conversations) {
       if (!enabled) return;
       if (!(conversation.kind == 'dm' || conversation.kind == 'group') ||
@@ -321,19 +318,18 @@ class SealedSender implements SealedTokenSource {
         await _pinned(state.key);
         return;
       }
-      _dayOffset = (state.epoch - today).clamp(-1, 1).toInt();
       _conversations[id] = _ConversationTokens(state);
       if (!state.eligible) {
         await localStore.dropSealedTokens(conversationId: id);
         continue;
       }
-      await localStore.dropSealedTokens(
-          conversationId: id, generation: state.generation);
       var remaining = state.remaining;
-      for (final epoch in <int>[state.epoch, state.epoch + 1]) {
+      // Today and tomorrow by this device's clock, the same two days for
+      // every member whose clock is right: the server chooses none of it.
+      for (final epoch in <int>[today, today + 1]) {
         if (remaining <= 0) break;
         final held = await localStore.countSealedTokens(id,
-            keyId: pin.keyId, generation: state.generation, epoch: epoch);
+            keyId: pin.keyId, epoch: epoch);
         if (held > 0) continue;
         final count =
             remaining < sealedTokenBatch ? remaining : sealedTokenBatch;
@@ -386,26 +382,21 @@ class SealedSender implements SealedTokenSource {
         publicKey: pin.publicKey,
         conversationId: conversationId,
         epoch: epoch,
-        generation: state.generation,
         count: count);
     try {
       final answer = await client.sealedTokens(sessionToken, conversationId,
-          epoch: epoch, generation: state.generation, blinded: blinded.request);
+          epoch: epoch, blinded: blinded.request);
       if (answer.keyId != pin.keyId) return 0;
       final tokens = crypto.sealedTokenFinalize(
           state: blinded.state,
           response: answer.response,
           conversationId: conversationId,
           keyId: pin.keyId,
-          epoch: epoch,
-          generation: state.generation);
+          epoch: epoch);
       await localStore.saveSealedTokens(tokens);
       return tokens.length;
     } on ApiException catch (error) {
-      if (error.serverCode == 'sealed_generation_changed') {
-        _conversations.remove(conversationId);
-        await localStore.dropSealedTokens(conversationId: conversationId);
-      } else if (error.serverCode == 'sealed_not_eligible') {
+      if (error.serverCode == 'sealed_not_eligible') {
         await notEligible(conversationId);
       }
       return 0;

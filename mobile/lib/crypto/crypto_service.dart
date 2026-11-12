@@ -511,7 +511,6 @@ abstract interface class SealedSendingCryptoService {
     required List<int> publicKey,
     required String conversationId,
     required int epoch,
-    required int generation,
     required int count,
   });
 
@@ -524,7 +523,6 @@ abstract interface class SealedSendingCryptoService {
     required String conversationId,
     required String keyId,
     required int epoch,
-    required int generation,
   });
 }
 

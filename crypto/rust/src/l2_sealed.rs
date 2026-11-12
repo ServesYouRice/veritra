@@ -48,18 +48,18 @@ pub enum SealedError {
     Verification,
 }
 
-/// `info = label || u16 len(conversation) || conversation || u32 epoch ||
-/// u64 generation`, big-endian.
-pub fn info(conversation_id: &[u8], epoch: u32, generation: u64) -> Result<Vec<u8>, SealedError> {
+/// `info = label || u16 len(conversation) || conversation || u32 epoch`,
+/// big-endian. Nothing per account or per member list goes in (review M1:
+/// a server-chosen number here could tag each account's tokens).
+pub fn info(conversation_id: &[u8], epoch: u32) -> Result<Vec<u8>, SealedError> {
     if conversation_id.is_empty() || conversation_id.len() > MAX_ID_BYTES {
         return Err(SealedError::InvalidInput);
     }
-    let mut out = Vec::with_capacity(INFO_LABEL.len() + 2 + conversation_id.len() + 12);
+    let mut out = Vec::with_capacity(INFO_LABEL.len() + 2 + conversation_id.len() + 4);
     out.extend_from_slice(INFO_LABEL);
     out.extend_from_slice(&(conversation_id.len() as u16).to_be_bytes());
     out.extend_from_slice(conversation_id);
     out.extend_from_slice(&epoch.to_be_bytes());
-    out.extend_from_slice(&generation.to_be_bytes());
     Ok(out)
 }
 
@@ -89,12 +89,11 @@ pub struct TokenRequest {
 }
 
 /// Makes `count` fresh nonces and blinds them for the server's key under
-/// `info(conversation_id, epoch, generation)`.
+/// `info(conversation_id, epoch)`.
 pub fn token_request<R: rand_core::RngCore + rand_core::CryptoRng>(
     public_key: &[u8],
     conversation_id: &[u8],
     epoch: u32,
-    generation: u64,
     count: usize,
     rng: &mut R,
 ) -> Result<TokenRequest, SealedError> {
@@ -102,7 +101,7 @@ pub fn token_request<R: rand_core::RngCore + rand_core::CryptoRng>(
         return Err(SealedError::InvalidInput);
     }
     parse_public_key(public_key)?;
-    let info = info(conversation_id, epoch, generation)?;
+    let info = info(conversation_id, epoch)?;
     let mut state = Vec::with_capacity(
         4 + 1 + PUBLIC_KEY_BYTES + 2 + info.len() + count * (NONCE_BYTES + CLIENT_STATE_BYTES),
     );

@@ -113,12 +113,11 @@ extension SealedSenderSql on EncryptedLocalDatabase {
         'conversation_id TEXT NOT NULL CHECK(length(conversation_id) BETWEEN 1 AND 128),'
         'key_id TEXT NOT NULL CHECK(length(key_id)=32),'
         'epoch INTEGER NOT NULL CHECK(epoch>=0),'
-        'generation INTEGER NOT NULL CHECK(generation>=0),'
         'output BLOB NOT NULL CHECK(length(output)=${SealedToken.outputBytes}),'
         'stored_at INTEGER NOT NULL)');
     await customStatement(
         'CREATE INDEX IF NOT EXISTS local_sealed_tokens_conversation ON '
-        'local_sealed_tokens (conversation_id, epoch, generation)');
+        'local_sealed_tokens (conversation_id, epoch)');
     await customStatement('CREATE TABLE IF NOT EXISTS local_sealed_key_pins ('
         'origin TEXT PRIMARY KEY NOT NULL,'
         'key_id TEXT NOT NULL CHECK(length(key_id)=32),'
@@ -238,14 +237,13 @@ extension SealedSenderSql on EncryptedLocalDatabase {
           if (held.read<int>('n') >= maxSealedTokensPerConversation) continue;
           await customStatement(
               'INSERT OR IGNORE INTO local_sealed_tokens '
-              '(nonce, conversation_id, key_id, epoch, generation, output, stored_at) '
-              'VALUES (?, ?, ?, ?, ?, ?, ?)',
+              '(nonce, conversation_id, key_id, epoch, output, stored_at) '
+              'VALUES (?, ?, ?, ?, ?, ?)',
               <Object?>[
                 Uint8List.fromList(token.nonce),
                 token.conversationId,
                 token.keyId,
                 token.epoch,
-                token.generation,
                 Uint8List.fromList(token.output),
                 now,
               ]);
@@ -254,22 +252,19 @@ extension SealedSenderSql on EncryptedLocalDatabase {
         return written;
       });
 
-  /// Takes one token for [conversationId] out of the table: under [keyId]
-  /// and [generation], for [epoch] or the day before it (the older first,
-  /// so it is used before it dies). Null when none is held.
+  /// Takes one token for [conversationId] out of the table: under [keyId],
+  /// for [epoch] or the day before it (the older first, so it is used
+  /// before it dies). Null when none is held.
   Future<SealedToken?> takeSealedToken(String conversationId,
-          {required String keyId,
-          required int generation,
-          required int epoch}) =>
+          {required String keyId, required int epoch}) =>
       transaction(() async {
         final row = await customSelect(
-            'SELECT nonce, conversation_id, key_id, epoch, generation, output '
+            'SELECT nonce, conversation_id, key_id, epoch, output '
             'FROM local_sealed_tokens WHERE conversation_id = ? AND key_id = ? '
-            'AND generation = ? AND epoch IN (?, ?) ORDER BY epoch ASC LIMIT 1',
+            'AND epoch IN (?, ?) ORDER BY epoch ASC LIMIT 1',
             variables: [
               Variable.withString(conversationId),
               Variable.withString(keyId),
-              Variable.withInt(generation),
               Variable.withInt(epoch - 1),
               Variable.withInt(epoch),
             ]).getSingleOrNull();
@@ -281,38 +276,30 @@ extension SealedSenderSql on EncryptedLocalDatabase {
           conversationId: row.read<String>('conversation_id'),
           keyId: row.read<String>('key_id'),
           epoch: row.read<int>('epoch'),
-          generation: row.read<int>('generation'),
           nonce: nonce,
           output: row.read<Uint8List>('output'),
         );
       });
 
-  /// Unspent tokens held for one conversation, key, generation and epoch.
+  /// Unspent tokens held for one conversation, key and epoch.
   Future<int> countSealedTokens(String conversationId,
-      {required String keyId,
-      required int generation,
-      required int epoch}) async {
+      {required String keyId, required int epoch}) async {
     final row = await customSelect(
         'SELECT COUNT(*) AS n FROM local_sealed_tokens WHERE conversation_id = ? '
-        'AND key_id = ? AND generation = ? AND epoch = ?',
+        'AND key_id = ? AND epoch = ?',
         variables: [
           Variable.withString(conversationId),
           Variable.withString(keyId),
-          Variable.withInt(generation),
           Variable.withInt(epoch),
         ]).getSingle();
     return row.read<int>('n');
   }
 
   /// Drops tokens that can no longer be redeemed: of a day before
-  /// [minEpoch], under a key other than [keyId] (null: every key), or, for
-  /// [conversationId], of a generation other than [generation] (or all of
-  /// that conversation's when [generation] is null).
+  /// [minEpoch], under a key other than [keyId] (null: every key), and
+  /// every token of [conversationId].
   Future<void> dropSealedTokens(
-      {int? minEpoch,
-      String? keyId,
-      String? conversationId,
-      int? generation}) async {
+      {int? minEpoch, String? keyId, String? conversationId}) async {
     if (minEpoch != null) {
       await customStatement('DELETE FROM local_sealed_tokens WHERE epoch < ?',
           <Object?>[minEpoch]);
@@ -322,15 +309,9 @@ extension SealedSenderSql on EncryptedLocalDatabase {
           <Object?>[keyId]);
     }
     if (conversationId != null) {
-      if (generation == null) {
-        await customStatement(
-            'DELETE FROM local_sealed_tokens WHERE conversation_id = ?',
-            <Object?>[conversationId]);
-      } else {
-        await customStatement(
-            'DELETE FROM local_sealed_tokens WHERE conversation_id = ? AND generation <> ?',
-            <Object?>[conversationId, generation]);
-      }
+      await customStatement(
+          'DELETE FROM local_sealed_tokens WHERE conversation_id = ?',
+          <Object?>[conversationId]);
     }
   }
 

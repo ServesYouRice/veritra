@@ -385,16 +385,16 @@ int32_t pm_crypto_l2_padded_size(uint64_t length, uint64_t *out_padded);
  * ristretto255-SHA512 (docs/crypto.md, "Sealed sender with VOPRF tokens";
  * vector testing/vectors/l2-sealed-v1.json). token_request blinds `count`
  * (1-32) fresh 32-byte nonces for the server key under info =
- * "veritra-l2-sealed-v1" || u16 len || conversation || u32 epoch ||
- * u64 generation; out_request is count x 32 blinded elements and out_state
+ * "veritra-l2-sealed-v1" || u16 len || conversation || u32 epoch;
+ * out_request is count x 32 blinded elements and out_state
  * the secret client state (VLT1) the caller wipes after finalize.
  * token_finalize takes count x 32 evaluated elements || 64-byte proof,
  * checks the proof against the state's key (PM_CRYPTO_ERROR if it fails)
  * and writes count x (32-byte nonce || 64-byte output). */
 int32_t pm_crypto_l2_token_request(PmByteSlice public_key,
                                    PmByteSlice conversation_id,
-                                   uint32_t epoch, uint64_t generation,
-                                   uint32_t count, PmOwnedBuffer *out_state,
+                                   uint32_t epoch, uint32_t count,
+                                   PmOwnedBuffer *out_state,
                                    PmOwnedBuffer *out_request);
 int32_t pm_crypto_l2_token_finalize(PmByteSlice state, PmByteSlice response,
                                     PmOwnedBuffer *out_tokens);

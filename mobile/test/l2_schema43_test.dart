@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:drift/drift.dart' hide isNull;
 import 'package:drift/native.dart';
@@ -39,12 +38,10 @@ void main() {
           .map((row) => row.read<String>('name'))
           .toSet();
 
-  SealedToken token(int seed, {int epoch = 20404, int generation = 0}) =>
-      SealedToken(
+  SealedToken token(int seed, {int epoch = 20404}) => SealedToken(
         conversationId: 'conv_1',
         keyId: 'a' * 32,
         epoch: epoch,
-        generation: generation,
         nonce: List<int>.generate(32, (i) => (seed * 13 + i) & 0xff),
         output: List<int>.filled(64, seed),
       );
@@ -67,29 +64,28 @@ void main() {
           token(2, epoch: 20403),
           token(1, epoch: 20404), // same nonce: ignored
           token(3, epoch: 20405), // tomorrow
-          token(4, generation: 1),
+          token(4, epoch: 20402), // past its day
         ]),
         5);
     expect(
-        await db.countSealedTokens('conv_1',
-            keyId: 'a' * 32, generation: 0, epoch: 20404),
-        1);
-    final first = await db.takeSealedToken('conv_1',
-        keyId: 'a' * 32, generation: 0, epoch: 20404);
+        await db.countSealedTokens('conv_1', keyId: 'a' * 32, epoch: 20404), 1);
+    final first =
+        await db.takeSealedToken('conv_1', keyId: 'a' * 32, epoch: 20404);
     expect(first!.epoch, 20403);
-    final second = await db.takeSealedToken('conv_1',
-        keyId: 'a' * 32, generation: 0, epoch: 20404);
+    final second =
+        await db.takeSealedToken('conv_1', keyId: 'a' * 32, epoch: 20404);
     expect(second!.epoch, 20404);
-    // Tomorrow's is not spent today; the other generation never is.
-    expect(
-        await db.takeSealedToken('conv_1',
-            keyId: 'a' * 32, generation: 0, epoch: 20404),
+    // Tomorrow's is not spent today; one past its day never is.
+    expect(await db.takeSealedToken('conv_1', keyId: 'a' * 32, epoch: 20404),
         isNull);
-    await db.dropSealedTokens(conversationId: 'conv_1', generation: 0);
+    await db.dropSealedTokens(minEpoch: 20403);
     expect(
-        await db.countSealedTokens('conv_1',
-            keyId: 'a' * 32, generation: 1, epoch: 20404),
-        0);
+        await db.countSealedTokens('conv_1', keyId: 'a' * 32, epoch: 20402), 0);
+    expect(
+        await db.countSealedTokens('conv_1', keyId: 'a' * 32, epoch: 20405), 1);
+    await db.dropSealedTokens(conversationId: 'conv_1');
+    expect(
+        await db.countSealedTokens('conv_1', keyId: 'a' * 32, epoch: 20405), 0);
     await db.writeSealedTokens(<SealedToken>[
       for (var i = 0; i < maxSealedTokensPerConversation + 5; i++)
         token(100 + i),

@@ -99,7 +99,6 @@ class _NoCrypto implements SealedSendingCryptoService {
           {required List<int> publicKey,
           required String conversationId,
           required int epoch,
-          required int generation,
           required int count}) =>
       throw UnimplementedError();
   @override
@@ -108,8 +107,7 @@ class _NoCrypto implements SealedSendingCryptoService {
           required List<int> response,
           required String conversationId,
           required String keyId,
-          required int epoch,
-          required int generation}) =>
+          required int epoch}) =>
       throw UnimplementedError();
 }
 

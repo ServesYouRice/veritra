@@ -57,14 +57,12 @@ void main() {
         publicKey: key,
         conversationId: info['conversation_id'] as String,
         epoch: info['epoch'] as int,
-        generation: info['generation'] as int,
         count: 3,
       );
       final second = bindings.l2TokenRequest(
         publicKey: key,
         conversationId: info['conversation_id'] as String,
         epoch: info['epoch'] as int,
-        generation: info['generation'] as int,
         count: 3,
       );
       expect(first.request.length, 3 * 32);
@@ -80,7 +78,6 @@ void main() {
           publicKey: Uint8List(32),
           conversationId: 'c',
           epoch: 1,
-          generation: 0,
           count: 1,
         ),
         throwsA(isA<NativeCryptoException>()),
@@ -90,7 +87,6 @@ void main() {
           publicKey: key,
           conversationId: 'c',
           epoch: 1,
-          generation: 0,
           count: 33,
         ),
         throwsArgumentError,

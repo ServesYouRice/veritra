@@ -851,7 +851,6 @@ void main() {
     expect(key.sameAs(pin.keyId, pin.publicKey), isTrue);
     final first = (await tokens.takeFor(dm.id))!;
     expect(first.keyId, key.keyId);
-    expect(first.generation, state.generation);
 
     // The metadata a sealed post may carry (the app's own, with no
     // channel or leave mark). Idempotency keys need 22 or more characters.

@@ -2828,19 +2828,13 @@ class ApiClient {
     final json = await _jsonRequest('GET', '/api/v1/sealed/conversations/$id',
         token: token);
     return _decode(() {
-      final generation = json['generation'] as int;
-      final epoch = json['epoch'] as int;
       final remaining = json['remaining'] as int;
-      if (generation < 0 || epoch < 0 || remaining < 0) {
-        throw const FormatException();
-      }
+      if (remaining < 0) throw const FormatException();
       return SealedConversationState(
         key: SealedServerKey(
           keyId: json['key_id'] as String,
           publicKey: base64Decode(json['public_key'] as String),
         ),
-        generation: generation,
-        epoch: epoch,
         eligible: json['eligible'] as bool,
         remaining: remaining,
       );
@@ -2854,7 +2848,6 @@ class ApiClient {
     String token,
     String conversationId, {
     required int epoch,
-    required int generation,
     required List<int> blinded,
   }) async {
     final id = Uri.encodeComponent(conversationId);
@@ -2864,7 +2857,6 @@ class ApiClient {
       token: token,
       body: <String, Object?>{
         'epoch': epoch,
-        'generation': generation,
         'blinded': base64Encode(blinded),
       },
     );

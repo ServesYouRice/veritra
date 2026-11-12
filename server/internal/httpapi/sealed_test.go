@@ -24,20 +24,21 @@ import (
 // the app uses the Rust core, and both match testing/vectors/l2-sealed-v1.json.
 
 type sealedTestToken struct {
-	Epoch      uint32
-	Generation uint64
-	KeyID      string
-	Nonce      []byte
-	Output     []byte
+	Epoch  uint32
+	KeyID  string
+	Nonce  []byte
+	Output []byte
 }
 
+// sealedConversationInfo is the issuance route's answer. Epoch is not in
+// it: the app takes the day from its own clock (review M1), as sealedInfo
+// does here.
 type sealedConversationInfo struct {
-	KeyID      string `json:"key_id"`
-	PublicKey  []byte `json:"public_key"`
-	Generation uint64 `json:"generation"`
-	Epoch      uint32 `json:"epoch"`
-	Eligible   bool   `json:"eligible"`
-	Remaining  int    `json:"remaining"`
+	KeyID     string `json:"key_id"`
+	PublicKey []byte `json:"public_key"`
+	Eligible  bool   `json:"eligible"`
+	Remaining int    `json:"remaining"`
+	Epoch     uint32 `json:"-"`
 }
 
 func sealedInfo(t *testing.T, handler http.Handler, token, conversationID string) (int, sealedConversationInfo) {
@@ -45,16 +46,30 @@ func sealedInfo(t *testing.T, handler http.Handler, token, conversationID string
 	status, body := doJSON(t, handler, http.MethodGet, "/api/v1/sealed/conversations/"+conversationID, token, nil)
 	var info sealedConversationInfo
 	if status == http.StatusOK {
+		// Exactly these members: nothing per account the server could tag
+		// tokens with (review M1).
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(body, &fields); err != nil {
+			t.Fatal(err)
+		}
+		for name := range fields {
+			switch name {
+			case "key_id", "public_key", "eligible", "remaining":
+			default:
+				t.Fatalf("issuance info has member %q: %s", name, body)
+			}
+		}
 		if err := json.Unmarshal(body, &info); err != nil {
 			t.Fatal(err)
 		}
 	}
+	info.Epoch = sealedsender.Epoch(time.Now().UTC())
 	return status, info
 }
 
 // requestSealedTokens blinds n nonces, asks the server to evaluate them and
 // finalizes (checking the batch proof) as the app would.
-func requestSealedTokens(t *testing.T, handler http.Handler, token, conversationID string, epoch uint32, generation uint64, n int) ([]sealedTestToken, int, string) {
+func requestSealedTokens(t *testing.T, handler http.Handler, token, conversationID string, epoch uint32, n int) ([]sealedTestToken, int, string) {
 	t.Helper()
 	status, body := doJSON(t, handler, http.MethodGet, "/api/v1/sealed/key", "", nil)
 	if status != http.StatusOK {
@@ -93,9 +108,8 @@ func requestSealedTokens(t *testing.T, handler http.Handler, token, conversation
 		blinded = append(blinded, enc...)
 	}
 	status, body = doJSON(t, handler, http.MethodPost, "/api/v1/sealed/conversations/"+conversationID+"/tokens", token, map[string]interface{}{
-		"epoch":      epoch,
-		"generation": generation,
-		"blinded":    base64.StdEncoding.EncodeToString(blinded),
+		"epoch":   epoch,
+		"blinded": base64.StdEncoding.EncodeToString(blinded),
 	})
 	if status != http.StatusOK {
 		return nil, status, string(body)
@@ -119,7 +133,7 @@ func requestSealedTokens(t *testing.T, handler http.Handler, token, conversation
 	if err := evaluation.Proof.UnmarshalBinary(group.Ristretto255, response.Proof); err != nil {
 		t.Fatal(err)
 	}
-	info, err := sealedsender.Info(conversationID, epoch, generation)
+	info, err := sealedsender.Info(conversationID, epoch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +143,7 @@ func requestSealedTokens(t *testing.T, handler http.Handler, token, conversation
 	}
 	tokens := make([]sealedTestToken, n)
 	for i := range tokens {
-		tokens[i] = sealedTestToken{Epoch: epoch, Generation: generation, KeyID: key.KeyID, Nonce: nonces[i], Output: outputs[i]}
+		tokens[i] = sealedTestToken{Epoch: epoch, KeyID: key.KeyID, Nonce: nonces[i], Output: outputs[i]}
 	}
 	return tokens, status, string(body)
 }
@@ -138,11 +152,10 @@ func sealedPostBody(conversationID string, token sealedTestToken, key string, ci
 	body := map[string]interface{}{
 		"conversation_id": conversationID,
 		"token": map[string]interface{}{
-			"key_id":     token.KeyID,
-			"epoch":      token.Epoch,
-			"generation": token.Generation,
-			"nonce":      base64.StdEncoding.EncodeToString(token.Nonce),
-			"output":     base64.StdEncoding.EncodeToString(token.Output),
+			"key_id": token.KeyID,
+			"epoch":  token.Epoch,
+			"nonce":  base64.StdEncoding.EncodeToString(token.Nonce),
+			"output": base64.StdEncoding.EncodeToString(token.Output),
 		},
 		"idempotency_key": key,
 		"ciphertext":      base64.StdEncoding.EncodeToString(ciphertext),
@@ -221,13 +234,13 @@ func TestSealedPostStoresNoSenderAndSpendsItsToken(t *testing.T) {
 	sealedReaders(t, handler, ownerToken, memberToken)
 
 	status, info := sealedInfo(t, handler, memberToken, conversationID)
-	if status != http.StatusOK || !info.Eligible || info.Remaining != 200 || info.Epoch != sealedsender.Epoch(time.Now().UTC()) {
+	if status != http.StatusOK || !info.Eligible || info.Remaining != 200 {
 		t.Fatalf("info status=%d %+v", status, info)
 	}
 	if status, _ := sealedInfo(t, handler, outsiderToken, conversationID); status != http.StatusNotFound {
 		t.Fatalf("outsider info status=%d", status)
 	}
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 3)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 3)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}
@@ -235,7 +248,7 @@ func TestSealedPostStoresNoSenderAndSpendsItsToken(t *testing.T) {
 		t.Fatalf("remaining after issue %d", after.Remaining)
 	}
 	// An outsider gets none.
-	if _, status, _ := requestSealedTokens(t, handler, outsiderToken, conversationID, info.Epoch, info.Generation, 1); status != http.StatusNotFound {
+	if _, status, _ := requestSealedTokens(t, handler, outsiderToken, conversationID, info.Epoch, 1); status != http.StatusNotFound {
 		t.Fatalf("outsider tokens status=%d", status)
 	}
 
@@ -328,7 +341,7 @@ func TestSealedPostRefusesSessionsAndBadTokens(t *testing.T) {
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	sealedReaders(t, handler, ownerToken, memberToken)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 2)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}
@@ -412,12 +425,12 @@ func TestSealedTokensAreBoundToTheirEpoch(t *testing.T) {
 
 	// Issued only for today and tomorrow.
 	for _, epoch := range []uint32{info.Epoch - 1, info.Epoch + 2} {
-		if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, epoch, info.Generation, 1); status != http.StatusBadRequest || !strings.Contains(body, "invalid_sealed_epoch") {
+		if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, epoch, 1); status != http.StatusBadRequest || !strings.Contains(body, "invalid_sealed_epoch") {
 			t.Fatalf("epoch %d status=%d body=%s", epoch, status, body)
 		}
 	}
 	// A token for tomorrow does not work today.
-	tomorrow, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch+1, info.Generation, 1)
+	tomorrow, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch+1, 1)
 	if status != http.StatusOK {
 		t.Fatalf("tomorrow status=%d body=%s", status, body)
 	}
@@ -433,7 +446,11 @@ func TestSealedTokensAreBoundToTheirEpoch(t *testing.T) {
 	}
 }
 
-func TestSealedTokensDieWhenAMemberLeaves(t *testing.T) {
+// Review M1: no per-conversation counter is bound into a token (the
+// server could set one per account and tag its tokens). A member's leftover
+// tokens outlive a removal until their day ends; receivers refuse the
+// removed sender's posts (SenderRemoved), docs/crypto.md "What still leaks".
+func TestSealedTokensBindOnlyConversationAndDay(t *testing.T) {
 	handler, ownerToken, dbPath, _ := sealedHandler(t, nil)
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedstay")
 	leaverToken, leaverID := registerMemberWithID(t, handler, ownerToken, "sealedleave")
@@ -441,49 +458,38 @@ func TestSealedTokensDieWhenAMemberLeaves(t *testing.T) {
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	addMember(t, handler, ownerToken, conversationID, leaverID)
 	sealedReaders(t, handler, ownerToken, memberToken, leaverToken)
-	_, info := sealedInfo(t, handler, memberToken, conversationID)
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2)
+	_, info := sealedInfo(t, handler, leaverToken, conversationID)
+	tokens, status, body := requestSealedTokens(t, handler, leaverToken, conversationID, info.Epoch, 2)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}
 	if status, body := doJSON(t, handler, http.MethodDelete, "/api/v1/conversations/"+conversationID+"/members/"+leaverID, ownerToken, nil); status >= 300 {
 		t.Fatalf("remove status=%d body=%s", status, body)
 	}
-	status, response := postSealed(t, handler, sealedPostBody(conversationID, tokens[0], sealedKey1, []byte("x"), nil))
-	if status != http.StatusConflict || !strings.Contains(string(response), "sealed_generation_changed") {
-		t.Fatalf("stale generation status=%d body=%s", status, response)
+	// Removed: no new tokens and no issuance info.
+	if _, status, _ := requestSealedTokens(t, handler, leaverToken, conversationID, info.Epoch, 1); status != http.StatusNotFound {
+		t.Fatalf("removed member issuance status=%d", status)
 	}
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 1); status != http.StatusConflict || !strings.Contains(body, "sealed_generation_changed") {
-		t.Fatalf("stale issuance status=%d body=%s", status, body)
+	// Its leftover token still redeems for its day.
+	if status, response := postSealed(t, handler, sealedPostBody(conversationID, tokens[0], sealedKey1, []byte("x"), nil)); status != http.StatusCreated {
+		t.Fatalf("leftover post status=%d body=%s", status, response)
 	}
+	// The member who stayed, and a revoked device, change nothing either.
 	_, after := sealedInfo(t, handler, memberToken, conversationID)
-	if after.Generation != info.Generation+1 {
-		t.Fatalf("generation %d after a removal, was %d", after.Generation, info.Generation)
-	}
-	fresh, status, body := requestSealedTokens(t, handler, memberToken, conversationID, after.Epoch, after.Generation, 1)
+	fresh, status, body := requestSealedTokens(t, handler, memberToken, conversationID, after.Epoch, 1)
 	if status != http.StatusOK {
 		t.Fatalf("fresh tokens status=%d body=%s", status, body)
 	}
-	if status, response := postSealed(t, handler, sealedPostBody(conversationID, fresh[0], sealedKey1, []byte("x"), nil)); status != http.StatusCreated {
+	db := openSQLite(t, dbPath)
+	if _, err := db.Exec(`UPDATE devices SET revoked_at = ? WHERE account_id = ?`, time.Now().UTC().Format(time.RFC3339Nano), leaverID); err != nil {
+		t.Fatal(err)
+	}
+	if status, response := postSealed(t, handler, sealedPostBody(conversationID, fresh[0], "sealed-key-000000000000003", []byte("y"), nil)); status != http.StatusCreated {
 		t.Fatalf("fresh post status=%d body=%s", status, response)
 	}
-
-	// A revoked device of a member also raises it.
-	db := openSQLite(t, dbPath)
-	if _, err := db.Exec(`UPDATE devices SET revoked_at = ? WHERE account_id = ?`, time.Now().UTC().Format(time.RFC3339Nano), memberID); err != nil {
-		t.Fatal(err)
-	}
-	var generation uint64
-	if err := db.QueryRow(`SELECT generation FROM sealed_conversation_state WHERE conversation_id = ?`, conversationID).Scan(&generation); err != nil || generation != after.Generation+1 {
-		t.Fatalf("generation after revoke %d err=%v", generation, err)
-	}
-	// A deleted conversation leaves no counter behind.
-	if _, err := db.Exec(`DELETE FROM conversations WHERE id = ?`, conversationID); err != nil {
-		t.Fatal(err)
-	}
-	var left int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sealed_conversation_state WHERE conversation_id = ?`, conversationID).Scan(&left); err != nil || left != 0 {
-		t.Fatalf("state rows after delete %d err=%v", left, err)
+	var tables int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 'sealed_conversation_state' OR name LIKE 'sealed_generation_%'`).Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("generation objects %d err=%v", tables, err)
 	}
 }
 
@@ -497,17 +503,17 @@ func TestSealedTokensAreCappedAndOnlyForEligibleConversations(t *testing.T) {
 	if info.Remaining != 3 {
 		t.Fatalf("remaining %d", info.Remaining)
 	}
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2); status != http.StatusOK {
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 2); status != http.StatusOK {
 		t.Fatalf("first batch status=%d body=%s", status, body)
 	}
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2); status != http.StatusTooManyRequests || !strings.Contains(body, "sealed_token_limit") {
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 2); status != http.StatusTooManyRequests || !strings.Contains(body, "sealed_token_limit") {
 		t.Fatalf("over cap status=%d body=%s", status, body)
 	}
 	// The cap is per epoch: tomorrow has its own.
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch+1, info.Generation, 3); status != http.StatusOK {
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch+1, 3); status != http.StatusOK {
 		t.Fatalf("tomorrow batch status=%d body=%s", status, body)
 	}
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 33); status != http.StatusBadRequest {
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 33); status != http.StatusBadRequest {
 		t.Fatalf("oversized batch status=%d body=%s", status, body)
 	}
 
@@ -516,7 +522,7 @@ func TestSealedTokensAreCappedAndOnlyForEligibleConversations(t *testing.T) {
 	other := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, other, memberID)
 	_, otherInfo := sealedInfo(t, handler, memberToken, other)
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, other, otherInfo.Epoch, otherInfo.Generation, 1)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, other, otherInfo.Epoch, 1)
 	if status != http.StatusOK {
 		t.Fatalf("other tokens status=%d body=%s", status, body)
 	}
@@ -533,7 +539,7 @@ func TestSealedTokensAreCappedAndOnlyForEligibleConversations(t *testing.T) {
 		if status != http.StatusOK || state.Eligible {
 			t.Fatalf("%s: info status=%d %+v", name, status, state)
 		}
-		if _, status, body := requestSealedTokens(t, handler, memberToken, other, otherInfo.Epoch, otherInfo.Generation, 1); status != http.StatusConflict || !strings.Contains(body, "sealed_not_eligible") {
+		if _, status, body := requestSealedTokens(t, handler, memberToken, other, otherInfo.Epoch, 1); status != http.StatusConflict || !strings.Contains(body, "sealed_not_eligible") {
 			t.Fatalf("%s: issuance status=%d body=%s", name, status, body)
 		}
 		if status, response := postSealed(t, handler, sealedPostBody(other, tokens[0], sealedKey1, []byte("x"), nil)); status != http.StatusConflict || !strings.Contains(string(response), "sealed_not_eligible") {
@@ -559,7 +565,7 @@ func TestReportEnvelopeOfASealedMessage(t *testing.T) {
 	addMember(t, handler, ownerToken, conversationID, reporterID)
 
 	_, info := sealedInfo(t, handler, senderToken, conversationID)
-	tokens, status, body := requestSealedTokens(t, handler, senderToken, conversationID, info.Epoch, info.Generation, 1)
+	tokens, status, body := requestSealedTokens(t, handler, senderToken, conversationID, info.Epoch, 1)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}
@@ -614,7 +620,7 @@ func TestSealedEnvelopesExpireAndArePruned(t *testing.T) {
 	conversationID := createConversation(t, handler, ownerToken)
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 1)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 1)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}
@@ -692,7 +698,7 @@ func TestSealedAndIdentifiedKeysDoNotCross(t *testing.T) {
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	sealedReaders(t, handler, ownerToken, memberToken)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 2)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}

@@ -53,7 +53,7 @@ func TestOlderAppsAreNeverSentSealedEvents(t *testing.T) {
 	addMember(t, handler, ownerToken, conversationID, memberID)
 	sealedReaders(t, handler, ownerToken, memberToken)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 3)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 3)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}
@@ -104,7 +104,7 @@ func TestSealedTokensWaitForEveryMemberDevice(t *testing.T) {
 	if status != http.StatusOK || info.Eligible {
 		t.Fatalf("info with an older member device status=%d %+v", status, info)
 	}
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 1); status != http.StatusConflict || !strings.Contains(body, "sealed_not_eligible") {
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 1); status != http.StatusConflict || !strings.Contains(body, "sealed_not_eligible") {
 		t.Fatalf("issuance with an older member device status=%d body=%s", status, body)
 	}
 
@@ -113,7 +113,7 @@ func TestSealedTokensWaitForEveryMemberDevice(t *testing.T) {
 	if _, info = sealedInfo(t, handler, memberToken, conversationID); !info.Eligible {
 		t.Fatalf("info after every device opted in %+v", info)
 	}
-	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 1); status != http.StatusOK {
+	if _, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 1); status != http.StatusOK {
 		t.Fatalf("issuance after every device opted in status=%d body=%s", status, body)
 	}
 }
@@ -137,7 +137,7 @@ func TestSealedReadersAreNotRecordedWhileTheSwitchIsOff(t *testing.T) {
 	}
 }
 
-func TestSealedRetryOfAStoredPostOutlivesEligibilityAndGeneration(t *testing.T) {
+func TestSealedRetryOfAStoredPostOutlivesEligibility(t *testing.T) {
 	handler, ownerToken, dbPath, _ := sealedHandler(t, nil)
 	memberToken, memberID := registerMemberWithID(t, handler, ownerToken, "sealedretry")
 	leaverToken, leaverID := registerMemberWithID(t, handler, ownerToken, "sealedretryleave")
@@ -146,7 +146,7 @@ func TestSealedRetryOfAStoredPostOutlivesEligibilityAndGeneration(t *testing.T) 
 	addMember(t, handler, ownerToken, conversationID, leaverID)
 	sealedReaders(t, handler, ownerToken, memberToken, leaverToken)
 	_, info := sealedInfo(t, handler, memberToken, conversationID)
-	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, info.Generation, 2)
+	tokens, status, body := requestSealedTokens(t, handler, memberToken, conversationID, info.Epoch, 2)
 	if status != http.StatusOK {
 		t.Fatalf("tokens status=%d body=%s", status, body)
 	}
@@ -163,7 +163,7 @@ func TestSealedRetryOfAStoredPostOutlivesEligibilityAndGeneration(t *testing.T) 
 	}
 	db := openSQLite(t, dbPath)
 
-	// A member leaves (the generation moves on), then posting turns
+	// A member leaves, then posting turns
 	// admins-only: the answer was lost, and the app retries the same post.
 	if _, err := db.Exec(`DELETE FROM memberships WHERE conversation_id = ? AND account_id = ?`, conversationID, leaverID); err != nil {
 		t.Fatal(err)

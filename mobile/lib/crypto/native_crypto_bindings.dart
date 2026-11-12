@@ -372,9 +372,9 @@ typedef _FourSlicesOutputDart = int Function(_PmByteSlice, _PmByteSlice,
 
 /// ABI 26 (L2-3): `pm_crypto_l2_token_request`.
 typedef _L2TokenRequestNative = Int32 Function(_PmByteSlice, _PmByteSlice,
-    Uint32, Uint64, Uint32, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+    Uint32, Uint32, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
 typedef _L2TokenRequestDart = int Function(_PmByteSlice, _PmByteSlice, int, int,
-    int, Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
+    Pointer<_PmOwnedBuffer>, Pointer<_PmOwnedBuffer>);
 
 /// ABI 26 (L2-3): `pm_crypto_l2_frank_verify`.
 typedef _L2FrankVerifyNative = Int32 Function(_PmByteSlice, _PmByteSlice,
@@ -1156,15 +1156,13 @@ class NativeCryptoBindings {
   }
 
   /// L2-3 (ABI 26, D122): blinds [count] (1 to 32) fresh token nonces for
-  /// the server's POPRF [publicKey] under the conversation, UTC-day [epoch]
-  /// and [generation] (`docs/crypto.md`, "Sealed sender with VOPRF
-  /// tokens"). `request` is `count × 32` blinded elements for the server;
+  /// the server's POPRF [publicKey] under the conversation and UTC-day
+  /// [epoch] (`docs/crypto.md`, "Sealed sender with VOPRF tokens"). `request` is `count × 32` blinded elements for the server;
   /// `state` holds the blinds: pass it to [l2TokenFinalize] and wipe it.
   ({Uint8List state, Uint8List request}) l2TokenRequest({
     required List<int> publicKey,
     required String conversationId,
     required int epoch,
-    required int generation,
     required int count,
   }) {
     _bounded(publicKey, l2PublicKeyBytes, exact: true);
@@ -1173,13 +1171,13 @@ class NativeCryptoBindings {
     if (count < 1 || count > l2MaxBatch) {
       throw ArgumentError.value(count, 'count');
     }
-    if (epoch < 0 || epoch > 0xffffffff || generation < 0) {
-      throw ArgumentError('Invalid token epoch or generation');
+    if (epoch < 0 || epoch > 0xffffffff) {
+      throw ArgumentError('Invalid token epoch');
     }
     final out = _withByteLists(
         <List<int>>[publicKey, conversation],
         (slices) => _twoOutputs((state, request) => _l2TokenRequest(
-            slices[0], slices[1], epoch, generation, count, state, request)));
+            slices[0], slices[1], epoch, count, state, request)));
     if (out.second.length != count * 32) {
       throw const NativeCryptoException(NativeCryptoError.invalidOutput);
     }

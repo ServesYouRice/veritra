@@ -170,7 +170,6 @@
     "room_full": "conflict",
     "rooms_unavailable": "unavailable",
     "sealed_evaluate_failed": "server",
-    "sealed_generation_changed": "conflict",
     "sealed_not_eligible": "conflict",
     "sealed_request_authenticated": "invalidRequest",
     "sealed_token_expired": "conflict",

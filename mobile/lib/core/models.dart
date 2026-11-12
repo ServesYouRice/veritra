@@ -1131,13 +1131,13 @@ class MemberReceipt {
 }
 
 /// One unspent sealed sender token (ABI 26): `output` is the POPRF output
-/// for `nonce` under the conversation, UTC-day [epoch] and [generation].
+/// for `nonce` under the conversation and UTC-day [epoch], nothing else
+/// (review M1: no per-account number the server could tag tokens with).
 class SealedToken {
   SealedToken({
     required this.conversationId,
     required this.keyId,
     required this.epoch,
-    required this.generation,
     required List<int> nonce,
     required List<int> output,
   })  : nonce = List<int>.unmodifiable(nonce),
@@ -1149,7 +1149,6 @@ class SealedToken {
   final String conversationId;
   final String keyId;
   final int epoch;
-  final int generation;
   final List<int> nonce;
   final List<int> output;
 
@@ -1158,7 +1157,6 @@ class SealedToken {
       conversationId.length <= 128 &&
       keyId.length == 32 &&
       epoch >= 0 &&
-      generation >= 0 &&
       nonce.length == nonceBytes &&
       output.length == outputBytes;
 
@@ -1166,7 +1164,6 @@ class SealedToken {
   Map<String, Object?> toWireJson() => <String, Object?>{
         'key_id': keyId,
         'epoch': epoch,
-        'generation': generation,
         'nonce': base64Encode(nonce),
         'output': base64Encode(output),
       };
@@ -1185,7 +1182,6 @@ class SealedToken {
         conversationId: json['conversation_id'] as String,
         keyId: json['key_id'] as String,
         epoch: json['epoch'] as int,
-        generation: json['generation'] as int,
         nonce: base64Decode(json['nonce'] as String),
         output: base64Decode(json['output'] as String),
       );
@@ -1232,17 +1228,14 @@ class SealedServerKey {
 class SealedConversationState {
   const SealedConversationState({
     required this.key,
-    required this.generation,
-    required this.epoch,
     required this.eligible,
     required this.remaining,
   });
 
   final SealedServerKey key;
-  final int generation;
 
-  /// The server's UTC day.
-  final int epoch;
+  // No server day and no counter (review M1): the app takes the day from
+  // its own clock, so the server has no per-account value to steer tokens.
   final bool eligible;
 
   /// Tokens this account may still be issued today in the conversation.

@@ -415,7 +415,6 @@ SealedToken _token() => SealedToken(
       conversationId: 'conv_1',
       keyId: 'k' * 32,
       epoch: 20000,
-      generation: 0,
       nonce: List<int>.generate(32, (i) => i + _serverIds++ % 7),
       output: List<int>.filled(64, 9),
     );

@@ -78,7 +78,6 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'invalid_sealed_token': ApiErrorKind.invalidRequest,
   'sealed_request_authenticated': ApiErrorKind.invalidRequest,
   'sealed_evaluate_failed': ApiErrorKind.server,
-  'sealed_generation_changed': ApiErrorKind.conflict,
   'sealed_not_eligible': ApiErrorKind.conflict,
   'sealed_token_expired': ApiErrorKind.conflict,
   'sealed_token_spent': ApiErrorKind.conflict,

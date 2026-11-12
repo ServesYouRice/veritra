@@ -63,18 +63,18 @@ var (
 var suite = oprf.SuiteRistretto255
 
 // Info returns the POPRF public input of a token:
-// "veritra-l2-sealed-v1" || u16 len(conv) || conv || u32 epoch || u64
-// generation, big-endian.
-func Info(conversationID string, epoch uint32, generation uint64) ([]byte, error) {
+// "veritra-l2-sealed-v1" || u16 len(conv) || conv || u32 epoch, big-endian.
+// Nothing per account or per member list goes in: a number the server
+// chose per account would let it tag each account's tokens (review M1).
+func Info(conversationID string, epoch uint32) ([]byte, error) {
 	if len(conversationID) == 0 || len(conversationID) > MaxIDSize {
 		return nil, ErrInvalidInput
 	}
-	out := make([]byte, 0, len(infoLabel)+2+len(conversationID)+12)
+	out := make([]byte, 0, len(infoLabel)+2+len(conversationID)+4)
 	out = append(out, infoLabel...)
 	out = binary.BigEndian.AppendUint16(out, uint16(len(conversationID)))
 	out = append(out, conversationID...)
 	out = binary.BigEndian.AppendUint32(out, epoch)
-	out = binary.BigEndian.AppendUint64(out, generation)
 	return out, nil
 }
 
@@ -157,14 +157,14 @@ func (k *Key) PublicKey() []byte { return append([]byte(nil), k.publicKey...) }
 func (k *Key) ID() string { return k.id }
 
 // Evaluate evaluates count = len(blinded)/32 blinded elements (1 to
-// MaxBatch) under info(conversation, epoch, generation) and returns the
+// MaxBatch) under info(conversation, epoch) and returns the
 // evaluated elements followed by the 64-byte batch proof, the response the
 // Rust client finalizes.
-func (k *Key) Evaluate(conversationID string, epoch uint32, generation uint64, blinded []byte) ([]byte, error) {
+func (k *Key) Evaluate(conversationID string, epoch uint32, blinded []byte) ([]byte, error) {
 	if len(blinded) == 0 || len(blinded)%ElementSize != 0 || len(blinded)/ElementSize > MaxBatch {
 		return nil, ErrInvalidInput
 	}
-	info, err := Info(conversationID, epoch, generation)
+	info, err := Info(conversationID, epoch)
 	if err != nil {
 		return nil, err
 	}
@@ -197,12 +197,12 @@ func (k *Key) Evaluate(conversationID string, epoch uint32, generation uint64, b
 }
 
 // Output recomputes the POPRF output of nonce under info(conversation,
-// epoch, generation).
-func (k *Key) Output(conversationID string, epoch uint32, generation uint64, nonce []byte) ([]byte, error) {
+// epoch).
+func (k *Key) Output(conversationID string, epoch uint32, nonce []byte) ([]byte, error) {
 	if len(nonce) != NonceSize {
 		return nil, ErrInvalidInput
 	}
-	info, err := Info(conversationID, epoch, generation)
+	info, err := Info(conversationID, epoch)
 	if err != nil {
 		return nil, err
 	}
@@ -210,12 +210,12 @@ func (k *Key) Output(conversationID string, epoch uint32, generation uint64, non
 }
 
 // Verify reports, in constant time over the output, whether output is the
-// POPRF output of nonce under info(conversation, epoch, generation).
-func (k *Key) Verify(conversationID string, epoch uint32, generation uint64, nonce, output []byte) bool {
+// POPRF output of nonce under info(conversation, epoch).
+func (k *Key) Verify(conversationID string, epoch uint32, nonce, output []byte) bool {
 	if len(output) != OutputSize {
 		return false
 	}
-	want, err := k.Output(conversationID, epoch, generation, nonce)
+	want, err := k.Output(conversationID, epoch, nonce)
 	if err != nil {
 		return false
 	}

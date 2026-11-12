@@ -24,9 +24,8 @@ type SealedMessageEnvelope struct {
 
 // SealedToken is a token presented with a sealed post.
 type SealedToken struct {
-	KeyID      string
-	Epoch      uint32
-	Generation uint64
-	Nonce      []byte
-	Output     []byte
+	KeyID  string
+	Epoch  uint32
+	Nonce  []byte
+	Output []byte
 }

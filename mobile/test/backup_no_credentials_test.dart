@@ -39,7 +39,6 @@ SealedToken _sealedToken(List<int> nonce, List<int> output) => SealedToken(
       conversationId: 'conv_1',
       keyId: 'f' * 32,
       epoch: 20400,
-      generation: 0,
       nonce: nonce,
       output: output,
     );
@@ -161,8 +160,7 @@ void main() {
       sealedToken: _sealedToken(_queuedNonce, _queuedOutput),
     ));
     expect(
-        await store.countSealedTokens('conv_1',
-            keyId: 'f' * 32, generation: 0, epoch: 20400),
+        await store.countSealedTokens('conv_1', keyId: 'f' * 32, epoch: 20400),
         1);
     return store.exportHistorySnapshot();
   }

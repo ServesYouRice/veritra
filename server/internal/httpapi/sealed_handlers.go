@@ -77,21 +77,20 @@ func (a *API) sealedConversation(w http.ResponseWriter, r *http.Request, princip
 	if remaining < 0 {
 		remaining = 0
 	}
+	// No epoch and no counter: the app takes the day from its own clock,
+	// so the server has no per-account value to bind into a token (review
+	// M1). remaining is for the server's today.
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"key_id":     key.ID(),
 		"public_key": key.PublicKey(),
-		// A JSON number: generations stay far below 2^53.
-		"generation": state.Generation,
-		"epoch":      epoch,
 		"eligible":   state.Eligible,
 		"remaining":  remaining,
 	})
 }
 
 type sealedTokenRequest struct {
-	Epoch      uint32 `json:"epoch"`
-	Generation uint64 `json:"generation"`
-	Blinded    []byte `json:"blinded"`
+	Epoch   uint32 `json:"epoch"`
+	Blinded []byte `json:"blinded"`
 }
 
 // sealedTokens evaluates a batch of blinded nonces for a member device,
@@ -124,11 +123,11 @@ func (a *API) sealedTokens(w http.ResponseWriter, r *http.Request, principal dom
 		return
 	}
 	conversationID := r.PathValue("id")
-	if err := a.Store.ReserveSealedTokens(r.Context(), conversationID, principal.AccountID, req.Epoch, req.Generation, count, a.sealedTokenLimit()); err != nil {
+	if err := a.Store.ReserveSealedTokens(r.Context(), conversationID, principal.AccountID, req.Epoch, count, a.sealedTokenLimit()); err != nil {
 		writeSealedError(w, err)
 		return
 	}
-	response, err := key.Evaluate(conversationID, req.Epoch, req.Generation, req.Blinded)
+	response, err := key.Evaluate(conversationID, req.Epoch, req.Blinded)
 	if err != nil {
 		if errors.Is(err, sealedsender.ErrInvalidInput) {
 			writeError(w, http.StatusBadRequest, "invalid_sealed_request")
@@ -147,11 +146,10 @@ func (a *API) sealedTokens(w http.ResponseWriter, r *http.Request, principal dom
 }
 
 type sealedTokenBody struct {
-	KeyID      string `json:"key_id"`
-	Epoch      uint32 `json:"epoch"`
-	Generation uint64 `json:"generation"`
-	Nonce      []byte `json:"nonce"`
-	Output     []byte `json:"output"`
+	KeyID  string `json:"key_id"`
+	Epoch  uint32 `json:"epoch"`
+	Nonce  []byte `json:"nonce"`
+	Output []byte `json:"output"`
 }
 
 type sealedMessageRequest struct {
@@ -234,9 +232,9 @@ func (a *API) sealedMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The token proves, before any lookup, that its holder was issued it
-	// for this conversation and generation: an unknown conversation and a
-	// forged token answer alike.
-	if !key.Verify(req.ConversationID, req.Token.Epoch, req.Token.Generation, req.Token.Nonce, req.Token.Output) {
+	// for this conversation and day: an unknown conversation and a forged
+	// token answer alike.
+	if !key.Verify(req.ConversationID, req.Token.Epoch, req.Token.Nonce, req.Token.Output) {
 		writeError(w, http.StatusForbidden, "sealed_token_invalid")
 		return
 	}
@@ -249,11 +247,10 @@ func (a *API) sealedMessage(w http.ResponseWriter, r *http.Request) {
 		FrankCommit:    req.FrankCommit,
 		ExpiresAt:      req.ExpiresAt,
 	}, domain.SealedToken{
-		KeyID:      req.Token.KeyID,
-		Epoch:      req.Token.Epoch,
-		Generation: req.Token.Generation,
-		Nonce:      req.Token.Nonce,
-		Output:     req.Token.Output,
+		KeyID:  req.Token.KeyID,
+		Epoch:  req.Token.Epoch,
+		Nonce:  req.Token.Nonce,
+		Output: req.Token.Output,
 	})
 	if err != nil {
 		writeSealedError(w, err)
@@ -302,8 +299,6 @@ func writeSealedError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, storage.ErrSealedNotEligible):
 		writeError(w, http.StatusConflict, "sealed_not_eligible")
-	case errors.Is(err, storage.ErrSealedGenerationChanged):
-		writeError(w, http.StatusConflict, "sealed_generation_changed")
 	case errors.Is(err, storage.ErrSealedTokenLimit):
 		writeError(w, http.StatusTooManyRequests, "sealed_token_limit")
 	case errors.Is(err, storage.ErrSealedTokenSpent):
