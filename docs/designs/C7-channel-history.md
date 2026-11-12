@@ -1098,12 +1098,40 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
 **Not built (left for the next slices):** the newcomer's import (backward
 walk through stored `history_sync` slots, the per-channel and group-level
 fetch, window and signature checks, former members, two-pass import),
-the prefetch depth (owner question 1), the app wiring (a create record
-from `createChannel`, a work pass
-calling `c7DueWork` and `c7Send` after sync, the setting toggle and its
-system line), C3 conversion (`move`, its wrap, the server route and
+the prefetch depth (owner question 1), C3 conversion (`move`, its wrap, the server route and
 migrations 0088-0089), and targeted-action sealing under generation
 keys.
+
+### Build status (2026-11-12): step 4 continued, after the owner's answers
+
+Owner answers (2026-11-12): Q1 a fixed first page per channel (1,000 posts
+or 8 MiB), then deeper paging on demand (accepted: it shows the server the
+channel is `full`); Q2 pre-join attachments are never offered; Q3
+`history_sync` goes to the newly added devices only (targeted delivery,
+behind the server's C7 flag); a proposal that does not come back times out
+and may be proposed again. Built on `feat/c7-full`, one commit per step:
+
+- **Deviation 8 settled** (see the list above): Rust and Dart take the
+  same ids; no wire change.
+- **Proposal timeout** (deviation 7 above).
+- **App wiring.** A channel creation sends its `create` record in both
+  modes, apart from the C3 sends; the create dialog offers the setting
+  for open channels (a private channel's new group is at epoch 0, where a
+  generation seals nothing, so it is switched on later from the channel's
+  info). The channel info dialog offers owners and admins the switch with
+  the confirm text above, and shows pending, `timeout`, `lost` and a
+  paused (`keyless` or `unsure`) state. After each foreground sync pass
+  the work pass sends the due `history_sync` duties and newcomer requests,
+  proposes stale own records again with the channel's layout generation,
+  and arms a timer for the next duty (`c7NextDueAt`); nothing is sent from
+  a background wake. The system line of decision 1 is the record message
+  itself: each channel keeps (local only) the keys of the record messages
+  that changed its setting, and the timeline draws those as a centred line
+  instead of hiding them. A `create` in the default mode, or a switch to
+  the mode a channel already has, draws none. A moderator's channel
+  creation sends a `create` that every device refuses (`_c7MayRecord`
+  needs admin, C4's channel-creation right is not yet aligned): the
+  channel stays `members_from_join`, which fails closed.
 
 ## Open questions for the owner
 

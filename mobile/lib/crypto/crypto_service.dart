@@ -605,6 +605,7 @@ final class C7ChannelView {
     required this.status,
     required this.pending,
     this.ownNotice,
+    this.recorded = true,
   });
 
   /// The setting this device holds (the head's mode).
@@ -616,8 +617,14 @@ final class C7ChannelView {
   /// This device's own proposal has not come back yet.
   final bool pending;
 
-  /// `lost` (another admin's record took the seq) or `stale`, or null.
+  /// `lost` (another admin's record took the seq), `stale` or `timeout`,
+  /// or null.
   final String? ownNotice;
+
+  /// The channel has a record (its `create` came through): a change is a
+  /// switch. False for a channel made before C7, whose first record is a
+  /// `create`.
+  final bool recorded;
 }
 
 /// C7 full mode as the app drives it (docs/designs/C7-channel-history.md):
@@ -654,6 +661,15 @@ abstract interface class C7HistoryService {
   /// group marked `unsure` in the same transaction (decision 5: a message
   /// passed over as expired is one this device could not fully apply).
   Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone);
+
+  /// The record messages in [conversationId] that changed a channel's
+  /// setting, by local message key, with the setting each opened (`true`
+  /// for `full`): the timeline draws them as system lines (decision 1).
+  Future<Map<String, bool>> c7HistoryLines(String conversationId);
+
+  /// When the next `history_sync` duty or newcomer request in
+  /// [conversationIds] falls due, or null when none is waiting.
+  Future<DateTime?> c7NextDueAt(Iterable<String> conversationIds);
 }
 
 /// Off by default. AppState enables this only for the current verified

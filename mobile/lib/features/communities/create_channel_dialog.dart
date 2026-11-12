@@ -24,6 +24,11 @@ class _CreateChannelDialogState extends State<CreateChannelDialog> {
   List<ConversationMember>? _members;
   Channel? _created;
   bool _private = false;
+
+  /// C7: the creator picks the history setting (decision 1). Offered for
+  /// open channels: a private channel's new group is at epoch 0, where a
+  /// generation seals nothing, so it is switched on later from its info.
+  bool _fullHistory = false;
   bool _loading = true;
   bool _saving = false;
   bool _failed = false;
@@ -59,7 +64,8 @@ class _CreateChannelDialogState extends State<CreateChannelDialog> {
       }
       _created ??= await widget.state.createChannel(
           widget.community.id, _name.text.trim(),
-          kind: _private ? 'private' : 'open');
+          kind: _private ? 'private' : 'open',
+          fullHistory: _fullHistory && !_private);
       final channel = _created;
       if (channel == null || !identical(widget.state.session, _owner)) {
         if (mounted) setState(() => _failed = true);
@@ -141,6 +147,15 @@ class _CreateChannelDialogState extends State<CreateChannelDialog> {
                 Text(_private
                     ? l10n.channelPrivateDisclosure
                     : l10n.channelOpenDisclosure),
+                if (widget.state.channelHistoryAvailable && !_private)
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(l10n.channelHistoryFullLabel),
+                    value: _fullHistory,
+                    onChanged: fixed
+                        ? null
+                        : (value) => setState(() => _fullHistory = value),
+                  ),
                 if (_loading)
                   const Center(child: CircularProgressIndicator())
                 else if (_members == null) ...[

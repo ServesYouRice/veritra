@@ -1367,9 +1367,17 @@ class _MessageList extends StatelessWidget {
     final ownDeviceId = state.session?.deviceId;
     // Edit, delete and reaction envelopes change other bubbles instead of
     // drawing their own.
+    // C7: a record message that changed the history setting stays, drawn
+    // as a system line (decision 1); every other hidden envelope goes.
+    bool? historyLine(ReceivedMessageEnvelope message) =>
+        state.channelHistoryLine(
+            conversationId,
+            ConversationHistory.keyOf(
+                message.senderDeviceId, message.idempotencyKey));
     final messages = this
         .messages
-        .where((message) => !history.hides(message))
+        .where((message) =>
+            !history.hides(message) || historyLine(message) != null)
         .toList(growable: false);
     final hasMore = state.hasMoreHistory(conversationId);
     final loadingOlder = state.isLoadingOlder(conversationId);
@@ -1429,6 +1437,13 @@ class _MessageList extends StatelessWidget {
         }
         final messageIndex = index - pending.length;
         final message = messages[messageIndex];
+        final line = historyLine(message);
+        if (line != null) {
+          return _HistoryLine(
+              text: line
+                  ? context.l10n.channelHistoryLineFull
+                  : context.l10n.channelHistoryLineFromJoin);
+        }
         final local = history.forEnvelope(message);
         // A decrypted record names its authenticated sender; the envelope's
         // sender is only what the server says.
@@ -2813,4 +2828,28 @@ String _attachmentSummary(
   return entries.length == 1
       ? l10n.chatAttachmentOne(first)
       : l10n.chatAttachmentMany(first, entries.length - 1);
+}
+
+/// C7: the line a channel shows where its history setting changed
+/// (decision 1). Local only, never sent.
+class _HistoryLine extends StatelessWidget {
+  const _HistoryLine({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+      ),
+    );
+  }
 }

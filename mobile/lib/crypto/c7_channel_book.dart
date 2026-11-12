@@ -222,6 +222,9 @@ const Duration c7ProposalTimeout = Duration(minutes: 5);
 /// Timed-out proposals kept for a late echo.
 const int c7LateProposalLimit = 4;
 
+/// Record messages kept as system lines (decision 1), newest last.
+const int c7HistoryLineLimit = 64;
+
 /// One channel's C7 state in one group.
 final class C7ChannelBook {
   C7ChannelBook({
@@ -233,12 +236,14 @@ final class C7ChannelBook {
     List<int> pastGens = const <int>[],
     this.pending,
     List<C7Pending> late = const <C7Pending>[],
+    List<(String, bool)> lines = const <(String, bool)>[],
     this.ownNotice,
     this.lastOwn = C7OwnOutcome.none,
   })  : records = Map<int, Uint8List>.unmodifiable(records),
         gens = List<C7Gen>.unmodifiable(gens),
         pastGens = List<int>.unmodifiable(pastGens),
-        late = List<C7Pending>.unmodifiable(late);
+        late = List<C7Pending>.unmodifiable(late),
+        lines = List<(String, bool)>.unmodifiable(lines);
 
   /// A channel this device holds no record for: `members_from_join`, no head.
   C7ChannelBook.genesis(this.channelId, this.groupId)
@@ -248,6 +253,7 @@ final class C7ChannelBook {
         pastGens = const <int>[],
         pending = null,
         late = const <C7Pending>[],
+        lines = const <(String, bool)>[],
         ownNotice = null,
         lastOwn = C7OwnOutcome.none;
 
@@ -267,6 +273,11 @@ final class C7ChannelBook {
   /// This device's own proposals that timed out (newest last): their echo
   /// may still come, and is applied when it does.
   final List<C7Pending> late;
+
+  /// The record messages that changed the setting, as local message keys
+  /// with the setting they opened (`true` for `full`): the timeline shows
+  /// each as a system line (decision 1). Local only, never sent.
+  final List<(String, bool)> lines;
 
   /// What became of this device's last own proposal: `lost` (another
   /// record took its seq), `stale` (sequenced after a membership commit; the
@@ -334,6 +345,26 @@ final class C7ChannelBook {
     );
   }
 
+  /// This state after [next] replaced it for the record message [key]: a
+  /// system line is kept when the head moved and the setting changed.
+  C7ChannelBook lineAfter(C7ChannelBook next, String key) {
+    if (c7SameNullableBytes(next.headBytes, headBytes) || next.mode == mode) {
+      return next;
+    }
+    final kept = <(String, bool)>[
+      ...next.lines.where((line) => line.$1 != key),
+      (key, next.mode == c7ModeFull),
+    ];
+    return next.copyWith(
+      lines: kept.length <= c7HistoryLineLimit
+          ? kept
+          : kept.sublist(kept.length - c7HistoryLineLimit),
+      pending: next.pending,
+      ownNotice: next.ownNotice,
+      lastOwn: next.lastOwn,
+    );
+  }
+
   /// [late] without the proposal sent as [actionId].
   C7ChannelBook withoutLate(String actionId) => copyWith(late: <C7Pending>[
         for (final entry in late)
@@ -348,6 +379,7 @@ final class C7ChannelBook {
     C7Pending? pending,
     bool clearPending = false,
     List<C7Pending>? late,
+    List<(String, bool)>? lines,
     String? ownNotice,
     bool clearNotice = false,
     C7OwnOutcome lastOwn = C7OwnOutcome.none,
@@ -361,6 +393,7 @@ final class C7ChannelBook {
         pastGens: pastGens ?? this.pastGens,
         pending: clearPending ? null : (pending ?? this.pending),
         late: late ?? this.late,
+        lines: lines ?? this.lines,
         ownNotice: clearNotice ? null : (ownNotice ?? this.ownNotice),
         lastOwn: lastOwn,
       );
@@ -441,6 +474,7 @@ final class C7ChannelBook {
           pastGens: pastGens,
           pending: pendingNext,
           late: late,
+          lines: lines,
           ownNotice: notice,
           lastOwn: own,
         ),
@@ -500,6 +534,7 @@ final class C7ChannelBook {
         pastGens: _retired(),
         pending: pendingNext,
         late: late,
+        lines: lines,
         ownNotice: notice,
         lastOwn: own,
       ),
@@ -619,6 +654,10 @@ final class C7ChannelBook {
         if (pending != null) 'pending': pending!.toJson(),
         if (late.isNotEmpty)
           'late': <Object?>[for (final entry in late) entry.toJson()],
+        if (lines.isNotEmpty)
+          'lines': <Object?>[
+            for (final (key, full) in lines) <Object?>[key, full]
+          ],
         if (ownNotice != null) 'notice': ownNotice,
       };
 
@@ -672,6 +711,10 @@ final class C7ChannelBook {
           for (final entry in (map['late'] as List?) ?? const <Object?>[])
             C7Pending.fromJson(entry),
         ],
+        lines: <(String, bool)>[
+          for (final entry in (map['lines'] as List?) ?? const <Object?>[])
+            ((entry as List)[0] as String, entry[1] as bool),
+        ],
         ownNotice: map['notice'] as String?,
       );
     } on Object {
@@ -723,4 +766,14 @@ final class C7SlotSnapshot {
       entry: _b64(list[2]),
     );
   }
+}
+
+/// Whether [a] and [b] are both null or hold the same bytes.
+bool c7SameNullableBytes(List<int>? a, List<int>? b) {
+  if (a == null || b == null) return a == null && b == null;
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }

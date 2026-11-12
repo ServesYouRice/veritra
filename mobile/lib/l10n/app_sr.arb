@@ -1260,5 +1260,17 @@
   "rolesVoteFor": "Гласај за: {name}",
   "rolesCloseElection": "Заврши избор",
   "rolesOwnerCancelNote": "Ти си власник: твоја апликација сама завршава овај избор.",
-  "rolesOnlyAdminsPost": "Само администратори објављују"
+  "rolesOnlyAdminsPost": "Само администратори објављују",
+  "channelHistoryTitle": "Историја за нове чланове",
+  "channelHistoryFullLabel": "Људи који се придруже касније могу да читају раније објаве",
+  "channelHistoryOnConfirm": "Нове објаве ће моћи да читају и људи који се придруже касније.",
+  "channelHistoryOffConfirm": "Људи који се придруже касније неће видети раније објаве. Чланови који их већ имају задржавају их.",
+  "channelHistoryLineFull": "Нове објаве могу да читају и људи који се придруже касније",
+  "channelHistoryLineFromJoin": "Нове објаве могу да читају само људи који су чланови када су послате",
+  "channelHistoryPending": "Чека се да промена прође",
+  "channelHistoryTimeout": "Промена није прошла. Покушај поново.",
+  "channelHistoryLost": "Други администратор је истовремено променио ово подешавање. Провери га и покушај поново.",
+  "channelHistoryPaused": "Историја за нове чланове је паузирана до следеће промене чланства.",
+  "channelHistoryEarlier": "Учитај раније објаве",
+  "channelHistoryAttachmentHidden": "Прилог од пре него што си се придружио"
 }

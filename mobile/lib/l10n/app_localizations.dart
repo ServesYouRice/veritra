@@ -7268,6 +7268,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only admins post'**
   String get rolesOnlyAdminsPost;
+
+  /// No description provided for @channelHistoryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'History for new members'**
+  String get channelHistoryTitle;
+
+  /// No description provided for @channelHistoryFullLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'People who join later can read earlier posts'**
+  String get channelHistoryFullLabel;
+
+  /// No description provided for @channelHistoryOnConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read by people who join later.'**
+  String get channelHistoryOnConfirm;
+
+  /// No description provided for @channelHistoryOffConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'People who join later won\'t see earlier posts. Members who already have them keep them.'**
+  String get channelHistoryOffConfirm;
+
+  /// No description provided for @channelHistoryLineFull.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read by people who join later'**
+  String get channelHistoryLineFull;
+
+  /// No description provided for @channelHistoryLineFromJoin.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read only by people who are members when they are sent'**
+  String get channelHistoryLineFromJoin;
+
+  /// No description provided for @channelHistoryPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the change to go through'**
+  String get channelHistoryPending;
+
+  /// No description provided for @channelHistoryTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'The change did not go through. Try again.'**
+  String get channelHistoryTimeout;
+
+  /// No description provided for @channelHistoryLost.
+  ///
+  /// In en, this message translates to:
+  /// **'Another admin changed this setting at the same time. Check it and try again.'**
+  String get channelHistoryLost;
+
+  /// No description provided for @channelHistoryPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'History for new members is paused until the next membership change.'**
+  String get channelHistoryPaused;
+
+  /// No description provided for @channelHistoryEarlier.
+  ///
+  /// In en, this message translates to:
+  /// **'Load earlier posts'**
+  String get channelHistoryEarlier;
+
+  /// No description provided for @channelHistoryAttachmentHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachment from before you joined'**
+  String get channelHistoryAttachmentHidden;
 }
 
 class _AppLocalizationsDelegate

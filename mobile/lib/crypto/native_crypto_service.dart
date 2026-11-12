@@ -144,6 +144,7 @@ class NativeCryptoService
       status: book.status.name,
       pending: book.pending != null && book.ownNotice != 'stale',
       ownNotice: book.ownNotice,
+      recorded: book.headBytes != null || book.chain.highestSeq >= 0,
     );
   }
 
@@ -159,6 +160,38 @@ class NativeCryptoService
         C7DueRepropose() => throw ArgumentError.value(
             due, 'due', 'the app proposes a stale record again'),
       });
+
+  @override
+  Future<Map<String, bool>> c7HistoryLines(String conversationId) async {
+    if (!_c7Active(conversationId)) return const <String, bool>{};
+    final group = await _c7LoadGroup(conversationId);
+    return <String, bool>{
+      for (final channel in group.channels)
+        for (final (key, full)
+            in (await _c7LoadBook(conversationId, channel)).lines)
+          key: full,
+    };
+  }
+
+  @override
+  Future<DateTime?> c7NextDueAt(Iterable<String> conversationIds) async {
+    int? next;
+    void consider(int at) => next = next == null ? at : min(next!, at);
+    for (final conversationId in conversationIds) {
+      if (!_c7Active(conversationId)) continue;
+      final group = await _c7LoadGroup(conversationId);
+      for (final duty in group.duties.values) {
+        if (!duty.settled) consider(duty.dueAtMs);
+      }
+      final request = group.requestDueAtMs;
+      if (request != null && !group.joinSynced && group.joinEpoch != null) {
+        consider(request);
+      }
+    }
+    return next == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(next!, isUtc: true);
+  }
 
   @override
   Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone) =>
@@ -5705,8 +5738,10 @@ extension _C7Engine on NativeCryptoService {
     final step = book.applyRecord(record, record.encode(),
         source: C7Source.proposalLive, key: compact.key);
     if (step.row == C7Row.invalid) return _c7None;
-    return _c7Put(conversationId, group,
-        <C7ChannelBook>[_c7CatchUp(step.book, group, community)]);
+    return _c7Put(conversationId, group, <C7ChannelBook>[
+      book.lineAfter(_c7CatchUp(step.book, group, community),
+          messageKey(envelope.senderDeviceId, envelope.idempotencyKey)),
+    ]);
   }
 
   /// This device's own record came back in sync order ([actionId]): it is
@@ -5734,9 +5769,11 @@ extension _C7Engine on NativeCryptoService {
         final step = rest.applyRecord(record, late.record,
             source: C7Source.proposalLive, key: late.key);
         return _c7Put(conversationId, group, <C7ChannelBook>[
-          community == null
-              ? step.book
-              : _c7CatchUp(step.book, group, community),
+          rest.lineAfter(
+              community == null
+                  ? step.book
+                  : _c7CatchUp(step.book, group, community),
+              messageKey(_deviceId!, actionId)),
         ]);
       }
       final pending = book.pending;
@@ -5755,7 +5792,11 @@ extension _C7Engine on NativeCryptoService {
       final step = book.applyRecord(record, pending.record,
           source: C7Source.proposalLive, key: pending.key, ownProposal: true);
       return _c7Put(conversationId, group, <C7ChannelBook>[
-        community == null ? step.book : _c7CatchUp(step.book, group, community),
+        book.lineAfter(
+            community == null
+                ? step.book
+                : _c7CatchUp(step.book, group, community),
+            messageKey(_deviceId!, actionId)),
       ]);
     }
     return _c7None;

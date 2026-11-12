@@ -4421,6 +4421,50 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Само администратори објављују';
+
+  @override
+  String get channelHistoryTitle => 'Историја за нове чланове';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'Људи који се придруже касније могу да читају раније објаве';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'Нове објаве ће моћи да читају и људи који се придруже касније.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'Људи који се придруже касније неће видети раније објаве. Чланови који их већ имају задржавају их.';
+
+  @override
+  String get channelHistoryLineFull =>
+      'Нове објаве могу да читају и људи који се придруже касније';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'Нове објаве могу да читају само људи који су чланови када су послате';
+
+  @override
+  String get channelHistoryPending => 'Чека се да промена прође';
+
+  @override
+  String get channelHistoryTimeout => 'Промена није прошла. Покушај поново.';
+
+  @override
+  String get channelHistoryLost =>
+      'Други администратор је истовремено променио ово подешавање. Провери га и покушај поново.';
+
+  @override
+  String get channelHistoryPaused =>
+      'Историја за нове чланове је паузирана до следеће промене чланства.';
+
+  @override
+  String get channelHistoryEarlier => 'Учитај раније објаве';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Прилог од пре него што си се придружио';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8845,4 +8889,48 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';
+
+  @override
+  String get channelHistoryTitle => 'Istorija za nove članove';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'Ljudi koji se pridruže kasnije mogu da čitaju ranije objave';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'Nove objave će moći da čitaju i ljudi koji se pridruže kasnije.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'Ljudi koji se pridruže kasnije neće videti ranije objave. Članovi koji ih već imaju zadržavaju ih.';
+
+  @override
+  String get channelHistoryLineFull =>
+      'Nove objave mogu da čitaju i ljudi koji se pridruže kasnije';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'Nove objave mogu da čitaju samo ljudi koji su članovi kada su poslate';
+
+  @override
+  String get channelHistoryPending => 'Čeka se da promena prođe';
+
+  @override
+  String get channelHistoryTimeout => 'Promena nije prošla. Pokušaj ponovo.';
+
+  @override
+  String get channelHistoryLost =>
+      'Drugi administrator je istovremeno promenio ovo podešavanje. Proveri ga i pokušaj ponovo.';
+
+  @override
+  String get channelHistoryPaused =>
+      'Istorija za nove članove je pauzirana do sledeće promene članstva.';
+
+  @override
+  String get channelHistoryEarlier => 'Učitaj ranije objave';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Prilog od pre nego što si se pridružio';
 }

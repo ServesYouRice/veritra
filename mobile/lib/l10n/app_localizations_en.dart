@@ -4404,4 +4404,49 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Only admins post';
+
+  @override
+  String get channelHistoryTitle => 'History for new members';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'People who join later can read earlier posts';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'New posts can be read by people who join later.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'People who join later won\'t see earlier posts. Members who already have them keep them.';
+
+  @override
+  String get channelHistoryLineFull =>
+      'New posts can be read by people who join later';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'New posts can be read only by people who are members when they are sent';
+
+  @override
+  String get channelHistoryPending => 'Waiting for the change to go through';
+
+  @override
+  String get channelHistoryTimeout =>
+      'The change did not go through. Try again.';
+
+  @override
+  String get channelHistoryLost =>
+      'Another admin changed this setting at the same time. Check it and try again.';
+
+  @override
+  String get channelHistoryPaused =>
+      'History for new members is paused until the next membership change.';
+
+  @override
+  String get channelHistoryEarlier => 'Load earlier posts';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Attachment from before you joined';
 }

@@ -522,6 +522,55 @@ void main() {
   }, skip: skip);
 
   test(
+      'a record that changes the setting is a system line on every device; '
+      'a create in the default mode is none', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    await group(alice, [bob]);
+    final create = await propose(alice, [bob], full: true, create: true);
+    final createKey = '${alice.deviceId}:${create.idempotencyKey}';
+    for (final device in [alice, bob]) {
+      expect(await device.service.c7HistoryLines(_conversation),
+          <String, bool>{createKey: true});
+    }
+    final off = await propose(alice, [bob], full: false);
+    final offKey = '${alice.deviceId}:${off.idempotencyKey}';
+    for (final device in [alice, bob]) {
+      expect(await device.service.c7HistoryLines(_conversation),
+          <String, bool>{createKey: true, offKey: false});
+    }
+    // Off again changes nothing but the chain: no line.
+    await propose(alice, [bob], full: false);
+    expect(await bob.service.c7HistoryLines(_conversation), hasLength(2));
+  }, skip: skip);
+
+  test(
+      "a member's duty reports when it falls due, and nothing once the "
+      'committer\'s history_sync settles it', () async {
+    final alice = await client('alice');
+    final bob = await client('bob');
+    final dave = await client('dave');
+    await group(alice, [bob]);
+    expect(await bob.service.c7NextDueAt([_conversation]), isNull);
+    await alice.service
+        .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
+    await _accept(alice, [dave], [bob]);
+    final due = (await bob.service.c7NextDueAt([_conversation]))!;
+    final wait = due.difference(DateTime.now().toUtc());
+    expect(wait, greaterThan(c7FallbackBase - const Duration(seconds: 2)));
+    expect(wait, lessThanOrEqualTo(c7FallbackCap));
+    // Dave asks after a minute if nothing comes.
+    expect(await dave.service.c7NextDueAt([_conversation]), isNotNull);
+    final sync = (await alice.service
+        .c7Send((await alice.service.c7DueWork([_conversation])).single))!;
+    await alice.store.removePendingEnvelope(sync.idempotencyKey);
+    await bob.receive(alice, sync);
+    await dave.receive(alice, sync);
+    expect(await bob.service.c7NextDueAt([_conversation]), isNull);
+    expect(await dave.service.c7NextDueAt([_conversation]), isNull);
+  }, skip: skip);
+
+  test(
       'in a shared group, records name their channel, one history_sync '
       'covers every channel, and a newcomer adopts each', () async {
     final alice = await client('alice');

@@ -1070,6 +1070,14 @@ class AppState extends ChangeNotifier
   Completer<void>? _mlsOutboxPassDone;
   Timer? _mlsOutboxRetryTimer;
   Timer? _catchUpRetryTimer;
+
+  /// C7: wakes the work pass when the next `history_sync` duty or request
+  /// falls due (foreground only).
+  Timer? _c7Timer;
+
+  /// C7: per conversation, the record messages drawn as system lines
+  /// (local message key to `true` for `full`), from [C7HistoryService].
+  Map<String, Map<String, bool>> _c7Lines = <String, Map<String, bool>>{};
   Timer? _expiryTimer;
   bool _purgingExpired = false;
   Duration _expiryBackoff = Duration.zero;
@@ -2825,7 +2833,7 @@ class AppState extends ChangeNotifier
 
   /// Creates a channel and its backing conversation in one server transaction.
   Future<Channel?> createChannel(String communityId, String name,
-      {String? kind}) async {
+      {String? kind, bool fullHistory = false}) async {
     ({Channel channel, bool shared})? made;
     Channel? created;
     await _run(() async {
@@ -2884,6 +2892,11 @@ class AppState extends ChangeNotifier
     // C3: the encrypted channel record, and for an open channel the
     // community record that lists it. Outside `_run` (see createCommunity).
     final routed = made;
+    // C7: every channel creation sends a create record, in both modes
+    // (decision 3); apart from the C3 sends, so one failing never skips it.
+    if (error == null && routed != null) {
+      unawaited(_c7CreateRecord(routed.channel, full: fullHistory));
+    }
     if (error == null && routed != null) {
       unawaited(() async {
         await publishChannelInfo(routed.channel, name: name, mint: true);
@@ -4377,6 +4390,164 @@ class AppState extends ChangeNotifier
 
   /// Decrypts one attachment into [destinationPath], a location the user
   /// chose.
+  /// C7 full mode, when the crypto service has it and the server's
+  /// `c7_history` is on; null otherwise.
+  C7HistoryService? get _c7 {
+    final crypto = cryptoService;
+    if (crypto is! C7HistoryService || crypto is! C7HistoryConsumer) {
+      return null;
+    }
+    return (crypto as C7HistoryConsumer).c7SealedBodies
+        ? crypto as C7HistoryService
+        : null;
+  }
+
+  /// Whether this build and server can keep history for new members.
+  bool get channelHistoryAvailable => _c7 != null;
+
+  /// The community conversations C7 works in: shared groups and private
+  /// channels' groups.
+  List<String> _c7ConversationIds() => <String>{
+        for (final conversation in conversations)
+          if (conversation.isCommunityShared) conversation.id,
+        for (final channels in channelsByCommunity.values)
+          for (final channel in channels)
+            if (channel.kind == 'private' && channel.isRouted)
+              channel.conversationId!,
+      }.toList(growable: false);
+
+  /// The layout generation a record for [channelId] names: only a channel
+  /// of a shared group names one.
+  int? _c7LayoutGeneration(String conversationId, String channelId) {
+    final shared = conversations
+            .where((c) => c.id == conversationId)
+            .firstOrNull
+            ?.isCommunityShared ??
+        false;
+    if (!shared) return null;
+    for (final channels in channelsByCommunity.values) {
+      for (final channel in channels) {
+        if (channel.id == channelId) return channel.layoutGeneration;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _c7CreateRecord(Channel channel, {required bool full}) async {
+    final c7 = _c7;
+    final conversationId = channel.conversationId;
+    if (c7 == null || conversationId == null) return;
+    try {
+      await c7.c7ProposeRecord(conversationId, channel.id,
+          full: full,
+          create: true,
+          layoutGeneration: _c7LayoutGeneration(conversationId, channel.id));
+      unawaited(_flushOutbox());
+    } catch (err) {
+      developer.log('c7_create_record_failed ${err.runtimeType}',
+          name: 'private_messenger.c7');
+    }
+  }
+
+  /// C7: what the work pass owes after sync (decision 5): `history_sync`
+  /// duties, a newcomer's request, and own records that came back stale
+  /// (proposed again with the channel's layout generation). Arms a timer
+  /// for the next duty and refreshes the system lines.
+  Future<void> _c7WorkPass(Session current, int ownerGeneration) async {
+    final c7 = _c7;
+    if (c7 == null) return;
+    final ids = _c7ConversationIds();
+    if (ids.isEmpty) return;
+    var queued = false;
+    for (final due in await c7.c7DueWork(ids)) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      try {
+        if (due is C7DueRepropose) {
+          await c7.c7ProposeRecord(due.conversationId, due.channelId,
+              full: due.full,
+              layoutGeneration:
+                  _c7LayoutGeneration(due.conversationId, due.channelId));
+          queued = true;
+        } else {
+          queued = await c7.c7Send(due) != null || queued;
+        }
+      } on StateError {
+        // No longer allowed (a role changed) or no longer owed: the next
+        // pass reads the new state.
+      }
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    final lines = <String, Map<String, bool>>{
+      for (final id in ids) id: await c7.c7HistoryLines(id),
+    };
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _c7Lines = lines;
+    if (queued) unawaited(_flushOutbox());
+    _armC7Timer(await c7.c7NextDueAt(ids));
+    notifyListeners();
+  }
+
+  /// Runs the C7 work pass now, as a finished sync pass does.
+  @visibleForTesting
+  Future<void> c7WorkPassForTesting() async {
+    final current = session;
+    if (current != null) await _c7WorkPass(current, _sessionGeneration);
+  }
+
+  /// Whether the C7 work pass has armed its timer.
+  @visibleForTesting
+  bool get c7TimerArmed => _c7Timer != null;
+
+  void _armC7Timer(DateTime? at) {
+    _c7Timer?.cancel();
+    _c7Timer = null;
+    if (at == null || _disposed) return;
+    final wait = at.difference(DateTime.now().toUtc());
+    _c7Timer = Timer(
+        (wait.isNegative ? Duration.zero : wait) + const Duration(seconds: 1),
+        () {
+      _c7Timer = null;
+      unawaited(_catchUpSyncEvents());
+    });
+  }
+
+  /// The system line for a record message (decision 1): `true` when it
+  /// opened `full`, `false` when it turned history off, null for any other
+  /// message.
+  bool? channelHistoryLine(String conversationId, String messageKey) =>
+      _c7Lines[conversationId]?[messageKey];
+
+  /// The history setting this device holds for [channel], or null when C7
+  /// is off or the channel is not routed.
+  Future<C7ChannelView?> channelHistory(Channel channel) async {
+    final c7 = _c7;
+    final conversationId = channel.conversationId;
+    if (c7 == null || conversationId == null) return null;
+    return c7.c7ChannelView(conversationId, channel.id);
+  }
+
+  /// Proposes [full] for [channel] (owners and admins, D80). It applies
+  /// when it comes back in sync order; until then [channelHistory] reports
+  /// it pending.
+  Future<bool> setChannelHistory(Channel channel, {required bool full}) async {
+    final c7 = _c7;
+    final conversationId = channel.conversationId;
+    if (c7 == null || conversationId == null) return false;
+    var sent = false;
+    await _run(() async {
+      final view = await c7.c7ChannelView(conversationId, channel.id);
+      if (view == null) return;
+      await c7.c7ProposeRecord(conversationId, channel.id,
+          full: full,
+          create: !view.recorded,
+          layoutGeneration: _c7LayoutGeneration(conversationId, channel.id));
+      sent = true;
+    });
+    if (sent) unawaited(_flushOutbox());
+    notifyListeners();
+    return sent;
+  }
+
   Future<void> saveAttachment(
     AttachmentEntry entry,
     String destinationPath, {
@@ -6492,6 +6663,19 @@ class AppState extends ChangeNotifier
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // C7: history_sync duties, a newcomer's request and stale own
+        // records are sent from the foreground only (outbound writes).
+        if (wake == null) {
+          try {
+            await _c7WorkPass(current, ownerGeneration);
+          } catch (err) {
+            // Retried on the next pass; it never blocks sync.
+            if (err is ApiException && err.statusCode == 401) rethrow;
+            developer.log('c7_work_pass_failed ${err.runtimeType}',
+                name: 'private_messenger.c7');
+          }
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         // Caught up: expired key packages may go (D70 S4).
         await _maybePruneKeyPackages();
         if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -7841,6 +8025,9 @@ class AppState extends ChangeNotifier
     _expiryTimer?.cancel();
     _expiryTimer = null;
     _cancelCatchUpRetry();
+    _c7Timer?.cancel();
+    _c7Timer = null;
+    _c7Lines = <String, Map<String, bool>>{};
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
     _l1Joins.clear();
@@ -9862,6 +10049,8 @@ class AppState extends ChangeNotifier
     _muteTimer = null;
     _cancelDraftTimers();
     _cancelCatchUpRetry();
+    _c7Timer?.cancel();
+    _c7Timer = null;
     unawaited(_syncSubscription?.cancel());
     unawaited(sync?.dispose());
     unawaited(_pushSubscription?.cancel());

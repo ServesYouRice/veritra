@@ -1533,5 +1533,17 @@
   "@rolesVoteFor": {"placeholders": {"name": {"type": "String"}}},
   "rolesCloseElection": "End the election",
   "rolesOwnerCancelNote": "You are the owner: your app ends this election by itself.",
-  "rolesOnlyAdminsPost": "Only admins post"
+  "rolesOnlyAdminsPost": "Only admins post",
+  "channelHistoryTitle": "History for new members",
+  "channelHistoryFullLabel": "People who join later can read earlier posts",
+  "channelHistoryOnConfirm": "New posts can be read by people who join later.",
+  "channelHistoryOffConfirm": "People who join later won't see earlier posts. Members who already have them keep them.",
+  "channelHistoryLineFull": "New posts can be read by people who join later",
+  "channelHistoryLineFromJoin": "New posts can be read only by people who are members when they are sent",
+  "channelHistoryPending": "Waiting for the change to go through",
+  "channelHistoryTimeout": "The change did not go through. Try again.",
+  "channelHistoryLost": "Another admin changed this setting at the same time. Check it and try again.",
+  "channelHistoryPaused": "History for new members is paused until the next membership change.",
+  "channelHistoryEarlier": "Load earlier posts",
+  "channelHistoryAttachmentHidden": "Attachment from before you joined"
 }

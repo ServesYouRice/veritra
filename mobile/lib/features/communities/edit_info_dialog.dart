@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/app_state.dart';
 import '../../core/models.dart';
+import '../../crypto/crypto_service.dart' show C7ChannelView;
 import '../../crypto/community_info_codec.dart';
 import '../../crypto/profile_record_codec.dart';
 import '../../l10n/l10n.dart';
@@ -109,6 +110,12 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
                       onChanged: (_) => setState(() {}),
                       decoration: InputDecoration(labelText: l10n.channelTopic),
                     ),
+                  if (widget.channel != null &&
+                      widget.channel!.isRouted &&
+                      widget.state.channelHistoryAvailable &&
+                      widget.state.canCreateChannel(widget.community.id))
+                    ChannelHistorySetting(
+                        state: widget.state, channel: widget.channel!),
                   if (_failed) Text(l10n.communityInfoEditFailed),
                 ]),
               ),
@@ -133,5 +140,85 @@ class _EditInfoDialogState extends State<EditInfoDialog> {
     _name.dispose();
     _topic.dispose();
     super.dispose();
+  }
+}
+
+/// C7: a channel's history setting for owners and admins (decision 1, D80).
+/// A change is a record that applies when it comes back in sync order; until
+/// then the switch shows it pending.
+class ChannelHistorySetting extends StatefulWidget {
+  const ChannelHistorySetting(
+      {required this.state, required this.channel, super.key});
+
+  final AppState state;
+  final Channel channel;
+
+  @override
+  State<ChannelHistorySetting> createState() => _ChannelHistorySettingState();
+}
+
+class _ChannelHistorySettingState extends State<ChannelHistorySetting> {
+  late Future<C7ChannelView?> _view =
+      widget.state.channelHistory(widget.channel);
+  bool _sending = false;
+
+  void _reload() =>
+      setState(() => _view = widget.state.channelHistory(widget.channel));
+
+  Future<void> _change(bool full) async {
+    final l10n = context.l10n;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(l10n.channelHistoryTitle),
+        content: Text(full
+            ? l10n.channelHistoryOnConfirm
+            : l10n.channelHistoryOffConfirm),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(l10n.commonCancel),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.commonContinue),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => _sending = true);
+    await widget.state.setChannelHistory(widget.channel, full: full);
+    if (!mounted) return;
+    setState(() => _sending = false);
+    _reload();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = context.l10n;
+    return FutureBuilder<C7ChannelView?>(
+      future: _view,
+      builder: (context, snapshot) {
+        final view = snapshot.data;
+        if (view == null) return const SizedBox.shrink();
+        final note = view.pending
+            ? l10n.channelHistoryPending
+            : switch (view.ownNotice) {
+                'timeout' => l10n.channelHistoryTimeout,
+                'lost' => l10n.channelHistoryLost,
+                _ => view.full && view.status != 'ok'
+                    ? l10n.channelHistoryPaused
+                    : null,
+              };
+        return SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(l10n.channelHistoryFullLabel),
+          subtitle: note == null ? null : Text(note),
+          value: view.full,
+          onChanged: _sending || view.pending ? null : _change,
+        );
+      },
+    );
   }
 }
