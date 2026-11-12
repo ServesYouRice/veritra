@@ -183,6 +183,8 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   // C7 targeted history_sync delivery (owner answer Q3).
   'invalid_history_sync_target': ApiErrorKind.invalidRequest,
   'history_sync_delivered': ApiErrorKind.conflict,
+  'history_sync_request_too_soon': ApiErrorKind.conflict,
+  'mls_epoch_out_of_range': ApiErrorKind.invalidRequest,
   'invalid_for_epoch': ApiErrorKind.invalidRequest,
 
   // C6 franking and abuse reports.

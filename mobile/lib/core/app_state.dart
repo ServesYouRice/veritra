@@ -8536,10 +8536,13 @@ class AppState extends ChangeNotifier
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (err is ApiException &&
             err.statusCode == 409 &&
-            err.serverCode == 'history_sync_delivered') {
+            (err.serverCode == 'history_sync_delivered' ||
+                err.serverCode == 'history_sync_request_too_soon')) {
           // C7 (owner answer Q3): another member's history_sync reached
           // the newcomers first. Its duty settled when it was queued, so
           // the envelope is simply dropped, never left as a failed send.
+          // A newcomer's request the server spaces out (it keeps asking,
+          // with backoff) is dropped too: the next one is already armed.
           await _removeFromOutbox(envelope);
           continue;
         }

@@ -111,6 +111,11 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	if s.c7History && len(envelope.SealedBody) > 0 {
+		if err := checkDeclaredEpochTx(ctx, tx, envelope.ConversationID, envelope.SenderDeviceID, envelope.CryptoMetadata); err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+	}
 	// C7 (owner answer Q3): a group-level envelope says whether it is a
 	// history_sync or its request, and for which epoch; a history_sync goes
 	// only to the devices that joined at that epoch (c7_sync_target.go).

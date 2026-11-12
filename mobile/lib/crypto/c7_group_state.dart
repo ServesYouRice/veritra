@@ -20,6 +20,18 @@ import 'native_crypto_bindings.dart' show C7CommitOutcome;
 /// a later one; a gap at worst).
 const int c7SnapshotLimit = 4;
 
+/// The wait before a newcomer's next `history_sync_request` once it has
+/// sent [sent] of them: 60 s (the first, after the Welcome), then 60 s,
+/// 2 min, 4 min and so on, doubling up to 1 h. The server enforces the
+/// same spacing per device and epoch (c7_sync_target.go), so a newcomer
+/// that keeps asking cannot flood the group-level stream.
+Duration c7RequestDelayAfter(int sent) {
+  if (sent <= 1) return const Duration(seconds: 60);
+  final shift = sent - 1 > 6 ? 6 : sent - 1;
+  final wait = Duration(seconds: 60 * (1 << shift));
+  return wait > const Duration(hours: 1) ? const Duration(hours: 1) : wait;
+}
+
 /// One membership commit's `history_sync` as this device sees it.
 final class C7SyncDuty {
   const C7SyncDuty({required this.dueAtMs, this.settled = false});
@@ -52,6 +64,7 @@ final class C7GroupState {
     Map<int, C7SyncDuty> duties = const <int, C7SyncDuty>{},
     this.joinEpoch,
     this.requestDueAtMs,
+    this.requestsSent = 0,
     this.joinSynced = false,
     this.imported = false,
   })  : channels = Set<String>.unmodifiable(channels),
@@ -84,10 +97,19 @@ final class C7GroupState {
   /// A newcomer's join epoch (the Welcome's); null for a creator.
   final int? joinEpoch;
 
-  /// When a newcomer asks for the `history_sync` of its join, if none came.
+  /// When a newcomer next asks for the `history_sync` of its join. It keeps
+  /// asking, with backoff ([c7RequestDelayAfter]), until [joinSynced]
+  /// (owner answer 2026-11-12, "Newcomer keeps asking").
   final int? requestDueAtMs;
 
-  /// A valid `history_sync` for [joinEpoch] has been applied.
+  /// How many `history_sync_request`s this newcomer has sent for its join.
+  final int requestsSent;
+
+  /// A usable `history_sync` for [joinEpoch] has been applied: from an
+  /// approved leaf, and leaving every channel this device knows either with
+  /// a verified head whose key works (`ok`) or with no record at all. One
+  /// that leaves a channel `keyless`, or reports it with a slot that does
+  /// not check, does not count.
   final bool joinSynced;
 
   /// The newcomer's history import has run.
@@ -102,6 +124,7 @@ final class C7GroupState {
     Map<int, C7SyncDuty>? duties,
     int? requestDueAtMs,
     bool clearRequest = false,
+    int? requestsSent,
     bool? joinSynced,
     bool? imported,
   }) =>
@@ -115,6 +138,7 @@ final class C7GroupState {
         joinEpoch: joinEpoch,
         requestDueAtMs:
             clearRequest ? null : (requestDueAtMs ?? this.requestDueAtMs),
+        requestsSent: requestsSent ?? this.requestsSent,
         joinSynced: joinSynced ?? this.joinSynced,
         imported: imported ?? this.imported,
       );
@@ -142,6 +166,7 @@ final class C7GroupState {
           },
         if (joinEpoch != null) 'join': joinEpoch,
         if (requestDueAtMs != null) 'request_due': requestDueAtMs,
+        if (requestsSent > 0) 'requests': requestsSent,
         if (joinSynced) 'join_synced': true,
         if (imported) 'imported': true,
       };
@@ -190,6 +215,7 @@ final class C7GroupState {
         },
         joinEpoch: map['join'] as int?,
         requestDueAtMs: map['request_due'] as int?,
+        requestsSent: (map['requests'] as int?) ?? 0,
         joinSynced: map['join_synced'] == true,
         imported: map['imported'] == true,
       );
@@ -216,6 +242,7 @@ final class C7GroupState {
       duties: duties,
       joinEpoch: joinEpoch,
       requestDueAtMs: requestDueAtMs,
+      requestsSent: requestsSent,
       joinSynced: joinSynced,
       imported: imported,
     );

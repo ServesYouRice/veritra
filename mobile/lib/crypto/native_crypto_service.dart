@@ -5949,6 +5949,15 @@ extension _C7Engine on NativeCryptoService {
     var matches = mine != null;
     final listed = <String>{for (final slot in slots) slot.channelId};
     final changed = <C7ChannelBook>[];
+    // Owner answer 2026-11-12, "Newcomer keeps asking": a newcomer counts a
+    // `history_sync` for its join only when it is usable, so a junk or
+    // keyless one cannot stop it asking. Channels it leaves unsettled stay
+    // without a head (a later one may fill them); none of its slots is
+    // adopted as `keyless`.
+    final newcomer = group.joinEpoch != null &&
+        !group.joinSynced &&
+        forEpoch >= group.joinEpoch!;
+    final settled = <String>{};
     for (final slot in slots) {
       final own = mine?[slot.channelId];
       if (own != null &&
@@ -5957,7 +5966,13 @@ extension _C7Engine on NativeCryptoService {
               !c7SameBytes(own.plain, slot.plain))) {
         matches = false;
       }
-      if (!known.contains(slot.channelId) || slot.headIsZero) continue;
+      if (!known.contains(slot.channelId)) continue;
+      if (slot.headIsZero) {
+        // No record for the channel: nothing to adopt, nothing missing
+        // (withholding a key this way is a trust limit, not a starvation).
+        settled.add(slot.channelId);
+        continue;
+      }
       final C7Record record;
       final C7GenerationEntry? entry;
       try {
@@ -5994,6 +6009,14 @@ extension _C7Engine on NativeCryptoService {
       if (step.row == C7Row.noop && entry != null) {
         next = next.confirmedBySlot(forEpoch, slot.key, entry);
       }
+      if (newcomer && !book.hasHead && next.status != C7Status.ok) {
+        // A head whose key does not work: not adopted, so a usable
+        // `history_sync` asked for later still finds the channel empty.
+        continue;
+      }
+      if (next.hasHead && next.status == C7Status.ok) {
+        settled.add(slot.channelId);
+      }
       changed.add(next);
     }
     // Every channel this device hands a key over for must be in the slots.
@@ -6009,8 +6032,22 @@ extension _C7Engine on NativeCryptoService {
       group = group.withDuty(
           forEpoch, C7SyncDuty(dueAtMs: duty.dueAtMs, settled: true));
     }
-    if (group.joinEpoch != null && forEpoch >= group.joinEpoch!) {
-      group = group.copyWith(joinSynced: true, clearRequest: true);
+    if (newcomer) {
+      // Usable: every channel this device knows is settled, by this
+      // message or by a verified head it already holds with a working key.
+      for (final channel in known) {
+        if (settled.contains(channel)) continue;
+        final held = changed.where((b) => b.channelId == channel).firstOrNull ??
+            await _c7LoadBook(conversationId, channel);
+        if (held.hasHead && held.status == C7Status.ok) settled.add(channel);
+      }
+      if (settled.containsAll(known)) {
+        group = group.copyWith(joinSynced: true, clearRequest: true);
+      } else if (group.requestDueAtMs == null) {
+        group = group.copyWith(
+            requestDueAtMs: _c7NowMs() +
+                c7RequestDelayAfter(group.requestsSent).inMilliseconds);
+      }
     }
     return _c7Put(conversationId, group, changed);
   }
@@ -6367,7 +6404,8 @@ extension _C7Engine on NativeCryptoService {
     );
   }
 
-  /// A newcomer's one request for the `history_sync` of its join.
+  /// A newcomer's request for the `history_sync` of its join, repeated with
+  /// backoff until a usable one arrives.
   Future<MessageEnvelope?> _c7SendRequest(String conversationId) async {
     if (!_c7Active(conversationId)) return null;
     final group = await _c7LoadGroup(conversationId);
@@ -6388,8 +6426,15 @@ extension _C7Engine on NativeCryptoService {
         ),
         trailer: Uint8List(0),
       ),
-      settingsFor: (_, __) => _c7Put(conversationId,
-          group.copyWith(clearRequest: true), const <C7ChannelBook>[]),
+      // Asked again, with backoff, until a usable history_sync arrives.
+      settingsFor: (_, __) => _c7Put(
+          conversationId,
+          group.copyWith(
+            requestsSent: group.requestsSent + 1,
+            requestDueAtMs: _c7NowMs() +
+                c7RequestDelayAfter(group.requestsSent + 1).inMilliseconds,
+          ),
+          const <C7ChannelBook>[]),
       target: <String, Object?>{c7SyncRequestForEpochKey: joinEpoch},
     );
   }

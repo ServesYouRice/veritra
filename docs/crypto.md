@@ -614,6 +614,23 @@ Stage 1. Every later change is listed here for the G25 reviewer.
   longer receive other members' slots (C7 design, "Targeted
   `history_sync` delivery", deviation 9). No ABI, payload, local schema
   or server migration change. Needs the independent review.
+- **C7 newcomer keeps asking (2026-11-12, owner answer; review H2, M3,
+  L1, L3; server migration 0088):** a newcomer marks its join synced only
+  when a `history_sync` from an approved leaf leaves every channel it knows
+  with a verified, working head or a zero slot; a head whose key does not
+  check is not adopted. Until then it re-sends its request, 60 s after the
+  Welcome, then doubling from 60 s to 1 h; the server spaces one device's
+  requests for one epoch the same way (409
+  `history_sync_request_too_soon`). The server takes a tagged
+  `history_sync` only with a declared `mls_epoch` at or above its
+  `c7_sync_for_epoch`, and only for an epoch that an add or a removal
+  produced (`c7_membership_epochs`, written with the commit bundle) or
+  that is some device's `joined_epoch`. Any C7 sealed body's declared
+  `mls_epoch` must lie between its sender device's `joined_epoch` and the
+  group epoch (400 `mls_epoch_out_of_range`). The server learns nothing
+  new: it already stores every commit's added and removed devices. No
+  ABI, payload or local schema change. C7 design, "Newcomer keeps
+  asking". Needs the independent review.
 - **C7 targeted actions follow their target (2026-11-12, local schema
   41):** `local_messages.c7_gen` (nullable text) records the generation a
   post's body was sealed under, as the lowercase hex of the generation's

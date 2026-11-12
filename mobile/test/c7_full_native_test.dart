@@ -389,8 +389,9 @@ void main() {
   }, skip: skip);
 
   test(
-      'a newcomer added by an unsure committer is keyless and seals under '
-      'random keys', () async {
+      'a newcomer added by an unsure committer adopts no keyless head and '
+      'keeps asking with backoff; an honest member answers and it is ok '
+      '(owner answer "Newcomer keeps asking")', () async {
     final alice = await client('alice');
     final bob = await client('bob');
     final dave = await client('dave');
@@ -402,18 +403,57 @@ void main() {
     await bob.service
         .stageMembershipChange(_conversation, adds: [await dave.keyPackage()]);
     await _accept(bob, [dave], [alice]);
+    final joinEpoch = await bob.epoch();
     final due = await bob.service.c7DueWork([_conversation]);
     final sync = (await bob.service.c7Send(due.single))!;
     await bob.store.removePendingEnvelope(sync.idempotencyKey);
     await dave.receive(bob, sync);
-    final view = (await dave.view())!;
-    expect(view.full, isTrue);
-    expect(view.status, 'keyless');
-    final post = await dave.send('keyless');
+    // Its slot gives no working key: not adopted, and the join is not
+    // synced, so no import starts and the request stays armed.
+    expect((await dave.book()).hasHead, isFalse);
+    expect((await dave.group()).joinSynced, isFalse);
+    expect(await dave.service.c7ImportDue([_conversation]), isEmpty);
+    final post = await dave.send('no key yet');
     expect(await alice.sealedUnderChannelKey(post), isFalse);
     // Alice's duty is not settled by slots without her key.
     await alice.receive(bob, sync);
-    expect((await alice.group()).duties[await alice.epoch()]!.settled, isFalse);
+    expect((await alice.group()).duties[joinEpoch]!.settled, isFalse);
+    // Dave asks after a minute, and again after each wait, doubling.
+    expect(await dave.service.c7DueWork([_conversation]), isEmpty);
+    _skew = c7RequestDelay + const Duration(seconds: 1);
+    final ask = (await dave.service.c7DueWork([_conversation]))
+        .whereType<C7DueRequest>()
+        .single;
+    final request = (await dave.service.c7Send(ask))!;
+    await dave.store.removePendingEnvelope(request.idempotencyKey);
+    expect((await dave.group()).requestsSent, 1);
+    expect(await dave.service.c7DueWork([_conversation]), isEmpty);
+    _skew += c7RequestDelayAfter(1) + const Duration(seconds: 1);
+    final again = (await dave.service.c7DueWork([_conversation]))
+        .whereType<C7DueRequest>()
+        .single;
+    final second = (await dave.service.c7Send(again))!;
+    await dave.store.removePendingEnvelope(second.idempotencyKey);
+    expect((await dave.group()).requestsSent, 2);
+    // Alice, who holds the key, answers the request after her delay.
+    await alice.receive(dave, request);
+    _skew += c7FallbackCap + const Duration(seconds: 1);
+    final answer = (await alice.service.c7DueWork([_conversation]))
+        .whereType<C7DueSync>()
+        .single;
+    expect(answer.forEpoch, joinEpoch);
+    final honest = (await alice.service.c7Send(answer))!;
+    await alice.store.removePendingEnvelope(honest.idempotencyKey);
+    await dave.receive(alice, honest);
+    final view = (await dave.view())!;
+    expect(view.full, isTrue);
+    expect(view.status, 'ok');
+    final group_ = await dave.group();
+    expect(group_.joinSynced, isTrue);
+    expect(group_.requestDueAtMs, isNull);
+    expect(await dave.service.c7ImportDue([_conversation]), [_conversation]);
+    expect(await alice.sealedUnderChannelKey(await dave.send('now with a key')),
+        isTrue);
   }, skip: skip);
 
   test(

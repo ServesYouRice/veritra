@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // C7 targeted history_sync delivery (owner answer Q3, 2026-11-12;
@@ -49,6 +50,31 @@ var ErrInvalidHistorySyncTarget = errors.New("invalid history sync target")
 // ErrHistorySyncDelivered answers a history_sync for an epoch that already
 // has one and no request since.
 var ErrHistorySyncDelivered = errors.New("history sync delivered")
+
+// ErrHistorySyncRequestTooSoon answers a history_sync_request that follows
+// the same device's previous request for the same epoch sooner than the
+// newcomer's backoff allows (c7RequestSpacing).
+var ErrHistorySyncRequestTooSoon = errors.New("history sync request too soon")
+
+// c7RequestSpacing is the least time between a device's requests for one
+// epoch once it has sent `sent` of them: the app's backoff (60 s, then
+// doubling to 1 h, mobile c7RequestDelayAfter) less a tenth for clock and
+// timer slack. A newcomer that keeps asking (owner answer 2026-11-12) so
+// sends at most about 24 requests a day per group.
+func c7RequestSpacing(sent int64) time.Duration {
+	wait := time.Minute
+	if sent > 1 {
+		shift := sent - 1
+		if shift > 6 {
+			shift = 6
+		}
+		wait = time.Minute * time.Duration(int64(1)<<shift)
+	}
+	if wait > time.Hour {
+		wait = time.Hour
+	}
+	return wait * 9 / 10
+}
 
 type c7SyncKind int
 
@@ -144,7 +170,39 @@ func (s *Store) checkC7SyncTag(ctx context.Context, tx *sql.Tx, conversationID, 
 		if !joined.Valid || joined.Int64 != tag.epoch {
 			return c7SyncTag{}, ErrInvalidHistorySyncTarget
 		}
+		// The newcomer keeps asking until it holds keys that work, so each
+		// device's requests for one epoch are spaced by its backoff.
+		var sent int64
+		var last sql.NullString
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), MAX(me.created_at)
+			FROM envelope_bodies b JOIN message_envelopes me ON me.id = b.message_id
+			WHERE b.conversation_id = ?1 AND b.channel_id IS NULL AND me.sender_device_id = ?2
+			  AND json_extract(me.crypto_metadata_json, '$.`+EnvelopeC7SyncRequestKey+`') = ?3`,
+			conversationID, senderDeviceID, tag.epoch).Scan(&sent, &last); err != nil {
+			return c7SyncTag{}, err
+		}
+		if sent > 0 && last.Valid && time.Since(parseTime(last.String)) < c7RequestSpacing(sent) {
+			return c7SyncTag{}, ErrHistorySyncRequestTooSoon
+		}
 		return tag, nil
+	}
+	// A history_sync names the epoch of a commit that added or removed a
+	// device (review M3), and is sent in that epoch or later (review H2: one
+	// declared below its target's joined_epoch would be withheld from the
+	// very newcomer it answers by the I51 join filter, yet count as
+	// delivered).
+	declared := metadataEpoch(metadata)
+	if declared == nil || *declared < tag.epoch {
+		return c7SyncTag{}, ErrInvalidHistorySyncTarget
+	}
+	var membership bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM c7_membership_epochs WHERE conversation_id = ?1 AND epoch = ?2)
+		OR EXISTS(SELECT 1 FROM conversation_mls_devices WHERE conversation_id = ?1 AND joined_epoch = ?2)`,
+		conversationID, tag.epoch).Scan(&membership); err != nil {
+		return c7SyncTag{}, err
+	}
+	if !membership {
+		return c7SyncTag{}, ErrInvalidHistorySyncTarget
 	}
 	// No commit has produced a later epoch yet: a history_sync claiming one
 	// would make the committer's real one look delivered when it comes.

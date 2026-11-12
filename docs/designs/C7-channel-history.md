@@ -1097,8 +1097,11 @@ history snapshot, so no generation key reaches a K1 backup or a K2 bundle
 9. A `history_sync` reaches only the devices its commit added (owner
    answer Q3, 2026-11-12), so members no longer clear `unsure` or fill a
    missing key from one, and the review's finding 4 (members check each
-   other's slots) applies to newcomers only. See "Targeted `history_sync`
-   delivery" in the next build status.
+   other's slots) no longer applies: no device checks another's slots. A
+   newcomer holds no key to check a slot against; it only verifies each
+   head it is handed and keeps asking until one `history_sync` leaves every
+   channel it knows usable (owner answer "Newcomer keeps asking"). See
+   "Targeted `history_sync` delivery" in the next build status.
 10. A replaced device's posts from before its replacement are not
    imported (decision 8 says they are verified with the server's list and
    marked). The importer takes a device's key from the current tree
@@ -1209,8 +1212,10 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   upload of about `P(N) + 124 + 700 × N` bytes per removal commit, and its
   storage until retention) is accepted.** No server or app change follows
   from it. Finding 4
-  of the review (members check each other's slots) no longer applies:
-  only newcomers check slots. Two members whose fallbacks race can both
+  of the review (members check each other's slots) no longer applies, and
+  no device checks another's slots: a newcomer has no key to check one
+  against, so it verifies each head it is handed and keeps asking (below).
+  Two members whose fallbacks race can both
   pass the check; the server's dedup then refuses the later one, and
   both being stored at once (two transactions that read before either
   wrote) would only send the newcomers a duplicate. A request reopens the
@@ -1224,6 +1229,47 @@ and may be proposed again. Built on `feat/c7-full`, one commit per step:
   A `history_sync` for an epoch above the group's recorded epoch is
   refused too (400): a junk one tagged with a future epoch would make the
   committer's real one look delivered when that commit comes.
+  **Newcomer keeps asking (owner answer 2026-11-12; review H2, M3, L1,
+  L3).** The first junk `history_sync` for E used to settle a newcomer for
+  good: it set `joinSynced`, adopted its slots as `keyless`, and the
+  server's dedup then refused the honest committer's. Now:
+  - A newcomer sets `joinSynced` only on a usable `history_sync`: from an
+    approved leaf, and leaving every channel it knows either with a
+    verified head whose key works (`ok`) or with a zero slot (no record).
+    A head whose key does not check is not adopted, so the channel stays
+    empty for a later one. Until then it re-sends
+    `history_sync_request`, 60 s after the Welcome, then 60 s, 2 min,
+    4 min, doubling up to 1 h (`c7RequestDelayAfter`,
+    `C7GroupState.requestsSent`); each request reopens E on the server, so
+    the honest member's fallback is accepted. Native test: an unsure
+    committer's keyless sync leaves the newcomer asking, and an honest
+    member's answer makes it `ok`; server test
+    `TestC7NewcomerKeepsAskingPastAJunkHistorySync` (junk stored, honest
+    refused 409, the request reopens, honest accepted and synced to the
+    newcomer).
+  - The server spaces one device's requests for one epoch the same way
+    (nine tenths of the client's wait, for clock skew), 409
+    `history_sync_request_too_soon`, which the app drops from the outbox
+    like `history_sync_delivered`: its next request is already armed.
+  - A tagged `history_sync` must declare an `mls_epoch` at or above its
+    `c7_sync_for_epoch` (one sent earlier would be withheld from the very
+    newcomer by the I51 filter yet count as delivered), and E must be an
+    epoch a commit with an add or a removal produced: migration 0088 adds
+    `c7_membership_epochs`, written by the commit bundle route
+    (`epoch + 1` when `added` or `removed` is non-empty) and backfilled
+    from every device's `joined_epoch`; a device's `joined_epoch` is
+    accepted too, for the group's first add. An update-only or role commit
+    produces no such epoch (400 `invalid_history_sync_target`).
+  - While C7 is on, any envelope with a sealed body whose sender has a
+    roster row and declares an `mls_epoch` must declare one between that
+    device's `joined_epoch` and the group's recorded epoch (400
+    `mls_epoch_out_of_range`), so a device cannot place a post or a sync
+    in an epoch it was never in.
+  Residuals: a member can still send a sync whose slots are all zero, and
+  the newcomer accepts it as "nothing to hand over" (a gap, never a leak;
+  withholding is already a trust limit). If no member holds a working key
+  for a channel, the newcomer asks hourly for as long as it is in the
+  group and never imports; each request is one channel-sized body.
 - **Newcomer import (decision 10, owner answers Q1 and Q2).** Once a
   newcomer has applied the `history_sync` of its join (`joinSynced`), the
   work pass after sync fetches, for every channel the server lists in the

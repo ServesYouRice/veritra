@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"testing"
+	"time"
 
 	"private-messenger/server/internal/domain"
 )
@@ -122,6 +124,7 @@ func TestC7HistorySyncKeyIsRefusedOutsideGroupLevelC7(t *testing.T) {
 	ctx := context.Background()
 	f := newC7Fixture(t, ctx)
 	f.inGroup(t, ctx, f.shared, f.owner, 0, 0)
+	f.atEpoch(t, ctx, f.shared, 1)
 	sync := c7Body(c7PrivateSyncBytes, 1)
 	withRoute := func(key string, value interface{}) json.RawMessage {
 		raw, _ := json.Marshal(map[string]interface{}{EnvelopeChannelKey: f.open.ID, EnvelopeLayoutGenerationKey: 1, "mls_epoch": 1, key: value})
@@ -155,8 +158,23 @@ func TestC7HistorySyncKeyIsRefusedOutsideGroupLevelC7(t *testing.T) {
 	if delivered, err := f.store.HistorySyncDelivered(ctx, f.owner.Account.ID, f.owner.Device.ID, f.shared, 4); err != nil || delivered {
 		t.Fatalf("future epoch after the refusal: delivered=%v err=%v", delivered, err)
 	}
+	// Review M3: only an epoch a commit adding or removing a device
+	// produced may be named; epoch 3 came from a self-update so far.
+	if _, _, err := f.postBody(ctx, f.shared, f.owner, "no-membership", raw(`{"mls_epoch":3,"c7_sync_for_epoch":3}`), sync); !errors.Is(err, ErrInvalidHistorySyncTarget) {
+		t.Fatalf("a history_sync for an epoch no membership commit produced: %v", err)
+	}
 	// The current epoch is accepted even when no device joined at it (a
-	// removal-only commit's history_sync, kept for later walks).
+	// removal-only commit's history_sync, kept for later walks; owner,
+	// 2026-11-12: keep sending and storing them).
+	f.membershipEpoch(t, ctx, f.shared, 3)
+	// Review H2: sent in an epoch before the one it names, the I51 join
+	// filter would withhold it from the very newcomer it answers.
+	if _, _, err := f.postBody(ctx, f.shared, f.owner, "early", raw(`{"mls_epoch":2,"c7_sync_for_epoch":3}`), sync); !errors.Is(err, ErrInvalidHistorySyncTarget) {
+		t.Fatalf("a history_sync declared below its epoch: %v", err)
+	}
+	if _, _, err := f.postBody(ctx, f.shared, f.owner, "no-epoch", raw(`{"c7_sync_for_epoch":3}`), sync); !errors.Is(err, ErrInvalidHistorySyncTarget) {
+		t.Fatalf("a history_sync with no declared epoch: %v", err)
+	}
 	if _, _, err := f.postBody(ctx, f.shared, f.owner, "removal-only", raw(`{"mls_epoch":3,"c7_sync_for_epoch":3}`), sync); err != nil {
 		t.Fatalf("a removal-only history_sync at the current epoch: %v", err)
 	}
@@ -196,4 +214,102 @@ func saveWithRecipients(ctx context.Context, f layoutFixture, conversationID str
 		CryptoMetadata: metadata, SealedBody: body,
 	})
 	return envelope, event, recipients, err
+}
+
+// Review H2 (owner answer "Newcomer keeps asking"): a junk history_sync
+// stored first marks the epoch delivered, so the honest committer's is
+// refused; the newcomer's request reopens the epoch and the honest one is
+// accepted and reaches it. Requests from one device for one epoch are
+// spaced by the newcomer's backoff (review L3).
+func TestC7NewcomerKeepsAskingPastAJunkHistorySync(t *testing.T) {
+	ctx := context.Background()
+	f := newC7Fixture(t, ctx)
+	const newcomer = "dev-member-tablet"
+	addTestDevice(t, ctx, f.store, f.member.Account.ID, newcomer)
+	f.inGroup(t, ctx, f.shared, f.owner, 0, 0)
+	f.inGroup(t, ctx, f.shared, f.member, 0, 1)
+	var joinedAfter int64
+	if err := f.store.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM sync_events`).Scan(&joinedAfter); err != nil {
+		t.Fatal(err)
+	}
+	tablet := AccountDevice{Account: f.member.Account, Device: domain.Device{ID: newcomer}}
+	f.inGroup(t, ctx, f.shared, tablet, joinedAfter, 2)
+	syncAt2 := f.syncMetadata(EnvelopeC7SyncKey, 2, 2)
+	// The member's phone sends junk first.
+	junk, _, err := f.postBody(ctx, f.shared, f.member, "junk", syncAt2, c7Body(c7PrivateSyncBytes, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.postBody(ctx, f.shared, f.owner, "honest-1", syncAt2, c7Body(c7PrivateSyncBytes, 2)); !errors.Is(err, ErrHistorySyncDelivered) {
+		t.Fatalf("honest history_sync before a request: %v", err)
+	}
+	request := f.syncMetadata(EnvelopeC7SyncRequestKey, 2, 2)
+	if _, _, err := f.postBody(ctx, f.shared, tablet, "ask-1", request, c7Body(c7PostBytes, 3)); err != nil {
+		t.Fatalf("first request: %v", err)
+	}
+	honest, honestEvent, err := f.postBody(ctx, f.shared, f.owner, "honest-2", syncAt2, c7Body(c7PrivateSyncBytes, 4))
+	if err != nil {
+		t.Fatalf("honest history_sync after the request: %v", err)
+	}
+	events, err := f.store.ListSyncEvents(ctx, f.member.Account.ID, newcomer, joinedAfter, 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, e := range events {
+		var payload struct {
+			MessageID string `json:"message_id"`
+		}
+		_ = json.Unmarshal(e.Payload, &payload)
+		got[payload.MessageID] = true
+	}
+	if !got[junk.ID] || !got[honest.ID] {
+		t.Fatalf("newcomer synced %v, want both the junk %s and the honest %s (event %d)", got, junk.ID, honest.ID, honestEvent)
+	}
+	// Asking again at once is refused; after the backoff it is accepted
+	// and reopens the epoch again.
+	if _, _, err := f.postBody(ctx, f.shared, tablet, "ask-2", request, c7Body(c7PostBytes, 5)); !errors.Is(err, ErrHistorySyncRequestTooSoon) {
+		t.Fatalf("a second request at once: %v", err)
+	}
+	backdate := func(by time.Duration) {
+		if _, err := f.store.db.ExecContext(ctx, `UPDATE message_envelopes SET created_at = ? WHERE sender_device_id = ? AND idempotency_key LIKE 'ask-%'`,
+			formatTime(time.Now().UTC().Add(-by)), newcomer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backdate(c7RequestSpacing(1) + time.Second)
+	if _, _, err := f.postBody(ctx, f.shared, tablet, "ask-2", request, c7Body(c7PostBytes, 5)); err != nil {
+		t.Fatalf("a second request after a minute: %v", err)
+	}
+	// With two sent, the third waits about two minutes, not one.
+	backdate(c7RequestSpacing(1) + time.Second)
+	if _, _, err := f.postBody(ctx, f.shared, tablet, "ask-3", request, c7Body(c7PostBytes, 6)); !errors.Is(err, ErrHistorySyncRequestTooSoon) {
+		t.Fatalf("a third request one minute later: %v", err)
+	}
+	backdate(c7RequestSpacing(2) + time.Second)
+	if _, _, err := f.postBody(ctx, f.shared, tablet, "ask-3", request, c7Body(c7PostBytes, 6)); err != nil {
+		t.Fatalf("a third request after two minutes: %v", err)
+	}
+	if delivered, err := f.store.HistorySyncDelivered(ctx, f.owner.Account.ID, f.owner.Device.ID, f.shared, 2); err != nil || delivered {
+		t.Fatalf("after the third request: delivered=%v err=%v", delivered, err)
+	}
+	if c7RequestSpacing(40) != time.Hour*9/10 {
+		t.Fatalf("spacing cap = %v", c7RequestSpacing(40))
+	}
+}
+
+// Review L1: a C7 envelope's declared mls_epoch lies between its sender
+// device's joined_epoch and the group's recorded epoch.
+func TestC7DeclaredEpochMustBeOneTheSenderIsIn(t *testing.T) {
+	ctx := context.Background()
+	f := newC7Fixture(t, ctx)
+	f.inGroup(t, ctx, f.shared, f.owner, 0, 0)
+	f.inGroup(t, ctx, f.shared, f.member, 0, 3)
+	f.atEpoch(t, ctx, f.shared, 5)
+	for epoch, want := range map[int64]error{2: ErrEpochOutOfRange, 3: nil, 5: nil, 6: ErrEpochOutOfRange} {
+		_, _, err := f.postBody(ctx, f.shared, f.member, "e"+strconv.FormatInt(epoch, 10), f.epochMetadata(f.open.ID, 1, epoch), c7Body(c7PostBytes, byte(epoch)))
+		if !errors.Is(err, want) && !(want == nil && err == nil) {
+			t.Errorf("epoch %d: err = %v, want %v", epoch, err, want)
+		}
+	}
 }

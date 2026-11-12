@@ -400,25 +400,30 @@ void main() {
   });
 
   test(
-      "a history_sync the server refuses as delivered leaves the outbox; "
-      'any other refusal stays as a failed send', () async {
+      "a history_sync the server refuses as delivered, and a newcomer's "
+      'request it spaces out, leave the outbox; any other refusal stays as a '
+      'failed send', () async {
     final api = _Api();
     final (state, crypto) = _appWith(api);
     crypto.outbox = state.localStore;
     crypto.due = <C7Due>[
       const C7DueSync('conv_shared', 4),
       const C7DueSync('conv_private', 2),
+      const C7DueRequest('conv_private', 3),
     ];
     api.refusals['action-1'] =
         ApiException(409, '{"error":"history_sync_delivered"}');
     api.refusals['action-2'] =
         ApiException(409, '{"error":"idempotency_conflict"}');
+    api.refusals['action-3'] =
+        ApiException(409, '{"error":"history_sync_request_too_soon"}');
     await state.c7WorkPassForTesting();
-    for (var i = 0; i < 100 && api.sentKeys.length < 2; i++) {
+    for (var i = 0; i < 100 && api.sentKeys.length < 3; i++) {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     await Future<void>.delayed(const Duration(milliseconds: 20));
-    expect(api.sentKeys, containsAll(<String>['action-1', 'action-2']));
+    expect(api.sentKeys,
+        containsAll(<String>['action-1', 'action-2', 'action-3']));
     final left = await state.localStore.pendingEnvelopeRecords();
     expect(left.map((r) => r.envelope.idempotencyKey), ['action-2']);
     expect(left.single.terminal, isTrue);

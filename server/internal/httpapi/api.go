@@ -583,6 +583,10 @@ func handleStorageError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_history_sync_target")
 	case errors.Is(err, storage.ErrHistorySyncDelivered):
 		writeError(w, http.StatusConflict, "history_sync_delivered")
+	case errors.Is(err, storage.ErrHistorySyncRequestTooSoon):
+		writeError(w, http.StatusConflict, "history_sync_request_too_soon")
+	case errors.Is(err, storage.ErrEpochOutOfRange):
+		writeError(w, http.StatusBadRequest, "mls_epoch_out_of_range")
 	case errors.Is(err, storage.ErrInvalidInput):
 		writeError(w, http.StatusBadRequest, "invalid_input")
 	case errors.Is(err, storage.ErrLastOwner):
