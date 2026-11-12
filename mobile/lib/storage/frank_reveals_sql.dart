@@ -29,8 +29,15 @@ class FrankReveal {
     required this.envelopeId,
     required List<int> frankKey,
     required List<int> payload,
+    List<int>? signature,
+    List<int>? signingKey,
+    this.senderAccountId,
   })  : frankKey = List<int>.unmodifiable(frankKey),
-        payload = List<int>.unmodifiable(payload);
+        payload = List<int>.unmodifiable(payload),
+        signature =
+            signature == null ? null : List<int>.unmodifiable(signature),
+        signingKey =
+            signingKey == null ? null : List<int>.unmodifiable(signingKey);
 
   /// The key of the message row (`<sender_device_id>:<action_id>`).
   final String messageKey;
@@ -44,6 +51,18 @@ class FrankReveal {
   /// covers them.
   final List<int> payload;
 
+  /// L2-3 (schema 43): only for a message that came sealed, the sender's
+  /// 64-byte franking signature `s`, the 32-byte signing key of the sender
+  /// leaf it verified under, and the sender account MLS authenticated. A
+  /// report of a sealed message carries them, since the server's row names
+  /// no sender. All three or none.
+  final List<int>? signature;
+  final List<int>? signingKey;
+  final String? senderAccountId;
+
+  /// Whether this reveal is of a sealed message.
+  bool get sealed => signature != null;
+
   /// Whether the table would accept this reveal. A reveal that is not is
   /// skipped, never thrown on: it rides in the transaction that consumes an
   /// MLS message, which must not roll back for a report that cannot be made.
@@ -56,7 +75,13 @@ class FrankReveal {
       envelopeId.length <= 128 &&
       frankKey.length == frankRevealKeyBytes &&
       payload.isNotEmpty &&
-      payload.length <= frankRevealMaxPayloadBytes;
+      payload.length <= frankRevealMaxPayloadBytes &&
+      (signature == null
+          ? signingKey == null && senderAccountId == null
+          : signature!.length == 64 &&
+              signingKey?.length == 32 &&
+              (senderAccountId?.isNotEmpty ?? false) &&
+              senderAccountId!.length <= 128);
 
   @override
   String toString() => 'FrankReveal($messageKey)';
@@ -133,8 +158,9 @@ extension FrankRevealSql on EncryptedLocalDatabase {
       if (!reveal.isStorable) continue;
       await customStatement(
           'INSERT OR IGNORE INTO local_frank_reveals '
-          '(message_key, conversation_id, envelope_id, frank_key, payload, stored_at) '
-          'SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS ('
+          '(message_key, conversation_id, envelope_id, frank_key, payload, stored_at, '
+          'signature, signing_key, sender_account_id) '
+          'SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE EXISTS ('
           'SELECT 1 FROM local_messages WHERE key = ? '
           'AND deleted_at IS NULL AND hidden_at IS NULL)',
           <Object?>[
@@ -144,6 +170,13 @@ extension FrankRevealSql on EncryptedLocalDatabase {
             Uint8List.fromList(reveal.frankKey),
             Uint8List.fromList(reveal.payload),
             now,
+            reveal.signature == null
+                ? null
+                : Uint8List.fromList(reveal.signature!),
+            reveal.signingKey == null
+                ? null
+                : Uint8List.fromList(reveal.signingKey!),
+            reveal.senderAccountId,
             reveal.messageKey,
           ]);
     }
@@ -152,7 +185,8 @@ extension FrankRevealSql on EncryptedLocalDatabase {
   /// The reveal kept for the message [messageKey], or null.
   Future<FrankReveal?> readFrankReveal(String messageKey) async {
     final row = await customSelect(
-        'SELECT message_key, conversation_id, envelope_id, frank_key, payload '
+        'SELECT message_key, conversation_id, envelope_id, frank_key, payload, '
+        'signature, signing_key, sender_account_id '
         'FROM local_frank_reveals WHERE message_key = ?',
         variables: [Variable.withString(messageKey)]).getSingleOrNull();
     if (row == null) return null;
@@ -162,6 +196,9 @@ extension FrankRevealSql on EncryptedLocalDatabase {
       envelopeId: row.read<String>('envelope_id'),
       frankKey: row.read<Uint8List>('frank_key'),
       payload: row.read<Uint8List>('payload'),
+      signature: row.readNullable<Uint8List>('signature'),
+      signingKey: row.readNullable<Uint8List>('signing_key'),
+      senderAccountId: row.readNullable<String>('sender_account_id'),
     );
   }
 

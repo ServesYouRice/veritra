@@ -73,6 +73,7 @@ class NativeCryptoService
         ConversationAuthorityConsumer,
         C7HistoryConsumer,
         DeviceListCryptoService,
+        SealedSendingCryptoService,
         ApprovedDeviceDiscoveryCryptoService,
         OwnDeviceAlertCryptoService,
         DeviceSigningKeyCryptoService,
@@ -116,6 +117,12 @@ class NativeCryptoService
   /// default; AppState follows the server's `c7_history`.
   @override
   bool c7SealedBodies = false;
+
+  /// L2-3: where a send takes a sealed sender token. Null (the default,
+  /// and while the server's `sealed_sender` is off) sends every message
+  /// identified.
+  @override
+  SealedTokenSource? sealedTokenSource;
 
   /// The C7 group state change a merged commit makes, for the same MLS
   /// transition. Empty while C7 is off or outside community conversations;
@@ -2881,6 +2888,28 @@ class NativeCryptoService
         final c7Private = c7SealedBodies && !sharedGroup
             ? _c7PrivateChannel(conversationId)
             : null;
+        // L2-3: sealed or identified is chosen here, once, and kept with the
+        // message (its outbox entry holds the token). Only an ordinary
+        // franked message, with no attachment, in a plain DM or group
+        // (the server's eligible kinds) goes sealed, and only with a token
+        // already held: a send never fetches one (docs/crypto.md, "When the
+        // app fetches").
+        final kind = _authority?.conversationKind(conversationId);
+        final sealable = sealedPayloadTypes.contains(type) &&
+            attachmentRefs.isEmpty &&
+            !sharedGroup &&
+            c7Private == null &&
+            (kind == 'dm' || kind == 'group');
+        final source = sealedTokenSource;
+        SealedToken? sealedToken;
+        if (sealable && source != null) {
+          sealedToken = await source.takeFor(conversationId);
+          if (sealedToken != null &&
+              (sealedToken.conversationId != conversationId ||
+                  !sealedToken.isWellFormed)) {
+            sealedToken = null;
+          }
+        }
         try {
           final idempotencyKey = _randomIdempotencyKey();
           final deviceId = _deviceId!;
@@ -2914,6 +2943,7 @@ class NativeCryptoService
             commit = null;
           } else {
             final frankKey = generateFrankKey();
+            Uint8List? sealedCommit;
             final framed = AppPayloadCodec().encodeFranked(
               type: type,
               conversationId: conversationId,
@@ -2924,15 +2954,33 @@ class NativeCryptoService
               hidden: type.sendsHidden,
               channelId: channelId,
               expiresAtMs: expiresAt?.toUtc().millisecondsSinceEpoch,
+              // L2-3: a sealed payload also carries this device's signature
+              // over the commitment (docs/crypto.md, "Franking a sealed
+              // message"), inside the ciphertext.
+              sealedSignature: sealedToken == null
+                  ? null
+                  : (canonical) {
+                      sealedCommit = bindings.frankCommit(
+                        key: frankKey,
+                        conversationId: conversationId,
+                        senderDeviceId: deviceId,
+                        actionId: idempotencyKey,
+                        payload: canonical,
+                      );
+                      return _requiredDevice().l2FrankSign(
+                          conversationId: conversationId,
+                          commit: sealedCommit!);
+                    },
             );
             payload = framed.padded;
-            commit = bindings.frankCommit(
-              key: frankKey,
-              conversationId: conversationId,
-              senderDeviceId: deviceId,
-              actionId: idempotencyKey,
-              payload: framed.canonical,
-            );
+            commit = sealedCommit ??
+                bindings.frankCommit(
+                  key: frankKey,
+                  conversationId: conversationId,
+                  senderDeviceId: deviceId,
+                  actionId: idempotencyKey,
+                  payload: framed.canonical,
+                );
             frankKey.fillRange(0, frankKey.length, 0);
           }
           final device = _requiredDevice();
@@ -2994,6 +3042,7 @@ class NativeCryptoService
             frankCommit: commit,
             sealedBody: sealedBody,
             attachmentRefs: attachmentRefs,
+            sealedToken: sealedToken,
           );
           await localStore.commitOutgoingApplicationTransition(
             OutgoingApplicationStateTransition(
@@ -3050,6 +3099,9 @@ class NativeCryptoService
           return envelope;
         } catch (_) {
           await _restorePrevious(previous);
+          // The token was never posted: it goes back for the next send.
+          final unused = sealedToken;
+          if (unused != null) await source?.putBack(unused);
           rethrow;
         }
       });
@@ -3098,12 +3150,19 @@ class NativeCryptoService
           checkCanCommit: checkCanCommit);
 
   Future<List<int>?> _processApplicationMessage(
-      ReceivedMessageEnvelope envelope, int syncEventId,
+      ReceivedMessageEnvelope incoming, int syncEventId,
       {void Function()? checkCanCommit}) {
-    final capture = _captureNoticeOwner(envelope);
+    // L2-3: a sealed envelope names no sender; whatever it says about one is
+    // dropped here, and the sender comes from MLS only (decryptSealed).
+    final sealed = incoming.sealed;
+    var envelope = sealed ? incoming.withSender('', '') : incoming;
+    final capture = sealed ? null : _captureNoticeOwner(envelope);
+    // A sealed post's notice owner is captured once MLS named its sender.
+    ({LocalNoticeOwner owner, int generation})? sealedCapture;
     void operationFence() {
       checkCanCommit?.call();
       if (capture != null) _checkNoticeOwner(capture);
+      if (sealedCapture != null) _checkNoticeOwner(sealedCapture!);
     }
 
     return _serial(() async {
@@ -3112,9 +3171,10 @@ class NativeCryptoService
         throw StateError('unsupported message crypto protocol');
       }
       // The server's envelope fields are checked before the ratchet can
-      // step: a malformed event stops sync with nothing consumed (P2).
+      // step: a malformed event stops sync with nothing consumed (P2). A
+      // sealed envelope's sender is checked once MLS has named it.
       AppPayloadCodec.validateContext(envelope.conversationId,
-          envelope.senderDeviceId, envelope.idempotencyKey);
+          sealed ? 'sealed' : envelope.senderDeviceId, envelope.idempotencyKey);
       if (envelope.id.isEmpty || envelope.id.length > 128) {
         throw const FormatException('invalid message envelope id');
       }
@@ -3125,6 +3185,18 @@ class NativeCryptoService
       if (syncEventId <= cursor &&
           !await _mayReplay(envelope.conversationId, syncEventId)) {
         throw StateError('unrecorded application message is behind the cursor');
+      }
+      // L2-3: this device's own sealed post comes back to it too, and MLS
+      // cannot decrypt a message for its own sender. It is recognised by
+      // the idempotency key of a message this device holds under its own
+      // device key (its row, or its outbox entry). A server that replays
+      // that key with other bytes only gets the event skipped, as it could
+      // by dropping it. One not recognised (its row purged) is decrypted
+      // like any other and becomes a D54 placeholder, never a stuck sync.
+      if (sealed &&
+          await _isOwnSealedPost(
+              envelope.conversationId, envelope.idempotencyKey)) {
+        envelope = envelope.withSender(_accountId!, _deviceId!);
       }
       if (envelope.senderDeviceId == _deviceId) {
         operationFence();
@@ -3148,20 +3220,56 @@ class NativeCryptoService
       try {
         operationFence();
         LeafVerdict? senderVerdict;
+        List<int>? sealedSigningKey;
         List<int> plaintext;
         // C7: whether the message came in two parts, and the channel its
         // clear metadata names (bound into the body's aad).
         var c7TwoPart = false;
         String? c7Channel;
         try {
-          final decrypted = await _decryptOrUndecryptable(
-              previous,
-              () => _requiredDevice().decrypt(
-                    envelope.conversationId,
-                    envelope.ciphertext,
-                    senderAccountId: envelope.senderAccountId,
-                    senderDeviceId: envelope.senderDeviceId,
-                  ));
+          final decrypted = await _decryptOrUndecryptable(previous, () {
+            if (!sealed) {
+              return _requiredDevice().decrypt(
+                envelope.conversationId,
+                envelope.ciphertext,
+                senderAccountId: envelope.senderAccountId,
+                senderDeviceId: envelope.senderDeviceId,
+              );
+            }
+            final device = _requiredDevice();
+            envelope = envelope.withSender('', '');
+            final opened =
+                device.decryptSealed(envelope.conversationId, envelope.ciphertext);
+            // MLS named the sender. It must be a well-formed id and never
+            // this device, whose own posts were recognised above; anything
+            // else is a placeholder like any message this device cannot
+            // read, with no sender.
+            try {
+              AppPayloadCodec.validateContext(envelope.conversationId,
+                  opened.deviceId, envelope.idempotencyKey);
+              if (opened.accountId.isEmpty ||
+                  opened.accountId.length > 128 ||
+                  opened.deviceId == _deviceId) {
+                throw const FormatException('sealed sender');
+              }
+            } on FormatException {
+              opened.plaintext.fillRange(0, opened.plaintext.length, 0);
+              throw const NativeCryptoException(
+                  NativeCryptoError.operationFailed);
+            }
+            envelope = envelope.withSender(opened.accountId, opened.deviceId);
+            // The sender leaf's signing key, read in the same turn as the
+            // decrypt (before anything can change the tree), for the
+            // franking signature. A leaf without one leaves it null and a
+            // franked payload is then invalid.
+            try {
+              sealedSigningKey = device.memberSignatureKey(
+                  envelope.conversationId, opened.accountId, opened.deviceId);
+            } on NativeCryptoException {
+              sealedSigningKey = null;
+            }
+            return opened.plaintext;
+          });
           if (decrypted == null) {
             // This device can never decrypt the message (D54): an epoch it
             // never held or whose secrets are gone, or damaged bytes. Sync
@@ -3189,6 +3297,11 @@ class NativeCryptoService
             return null;
           }
           plaintext = decrypted;
+          // L2-3: a sealed post's notice owner, now that MLS named the
+          // sender. The account's own other devices raise no notice.
+          if (sealed && envelope.senderAccountId != _accountId) {
+            sealedCapture = _captureNoticeOwner(envelope);
+          }
           // L1 (D94): a message from a leaf that is not approved never
           // speaks as its account. The ratchet has moved, so the state and
           // the cursor commit; the text is not kept.
@@ -3296,6 +3409,8 @@ class NativeCryptoService
           final checked = _checkFranking(
             envelope,
             plaintext,
+            sealed: sealed,
+            signingKey: sealedSigningKey,
             AppPayloadCodec().classify(
               plaintext,
               conversationId: envelope.conversationId,
@@ -3322,9 +3437,20 @@ class NativeCryptoService
                 UnsupportedAppPayload(:final hidden) => hidden,
                 InvalidAppPayload() => false,
               };
-          final outcome =
-              markedWrongly ? const InvalidAppPayload() : checked.outcome;
-          reveal = markedWrongly ? null : checked.reveal;
+          // L2-3: the sending app seals only the ordinary message types; a
+          // sealed hidden or control payload (an info key, a leave proof,
+          // an alert) is never one an honest app sent.
+          final sealedWrongly = sealed &&
+              switch (checked.outcome) {
+                DecodedAppPayload(:final payload) =>
+                  !sealedPayloadTypes.contains(payload.type),
+                UnsupportedAppPayload() => false,
+                InvalidAppPayload() => false,
+              };
+          final outcome = markedWrongly || sealedWrongly
+              ? const InvalidAppPayload()
+              : checked.outcome;
+          reveal = markedWrongly || sealedWrongly ? null : checked.reveal;
           switch (outcome) {
             case DecodedAppPayload(:final payload):
               // C7: in the C0 layout a group-level two-part message (no
@@ -3673,8 +3799,9 @@ class NativeCryptoService
           cursor: syncEventId,
           upsertedEnvelopes: <ReceivedMessageEnvelope>[envelope],
           messageEffects: effects,
-          noticeReferences: noticePayload && capture != null
-              ? _noticeReferences(capture.owner, envelope, syncEventId, effects)
+          noticeReferences: noticePayload && (capture ?? sealedCapture) != null
+              ? _noticeReferences((capture ?? sealedCapture)!.owner, envelope,
+                  syncEventId, effects)
               : const <LocalNoticeReference>[],
           // A reveal for a row this transition does not leave live (an edit,
           // an invalid placeholder) is dropped by the store, not an error.
@@ -3714,10 +3841,19 @@ class NativeCryptoService
   ///
   /// A native failure while recomputing throws; the caller's `catch` turns
   /// that into an `invalid` row, never a stuck sync.
+  ///
+  /// L2-3 (`docs/crypto.md`, "Franking a sealed message"): a franked payload
+  /// that came [sealed] must carry `s`, and `s` must verify under the sender
+  /// leaf's [signingKey] over the commitment; an identified one carrying `s`
+  /// is invalid. The reveal of a sealed message keeps `s`, the key and the
+  /// sender account, which a report needs since the server row names no
+  /// sender.
   ({AppPayloadOutcome outcome, FrankReveal? reveal}) _checkFranking(
       ReceivedMessageEnvelope envelope,
       List<int> plaintext,
-      AppPayloadOutcome outcome) {
+      AppPayloadOutcome outcome,
+      {bool sealed = false,
+      List<int>? signingKey}) {
     if (outcome is InvalidAppPayload) return (outcome: outcome, reveal: null);
     switch (AppPayloadCodec.frankOf(plaintext)) {
       case Unfranked():
@@ -3727,9 +3863,12 @@ class NativeCryptoService
         return (outcome: const InvalidAppPayload(), reveal: null);
       case MalformedFrank():
         return (outcome: const InvalidAppPayload(), reveal: null);
-      case Franked(:final canonical, :final key):
+      case Franked(:final canonical, :final key, :final signature):
         final commit = envelope.frankCommit;
         if (commit == null || commit.length != frankCommitBytes) {
+          return (outcome: const InvalidAppPayload(), reveal: null);
+        }
+        if (sealed != (signature != null)) {
           return (outcome: const InvalidAppPayload(), reveal: null);
         }
         final expected = bindings.frankCommit(
@@ -3740,6 +3879,19 @@ class NativeCryptoService
           payload: canonical,
         );
         if (!frankCommitEquals(expected, commit)) {
+          return (outcome: const InvalidAppPayload(), reveal: null);
+        }
+        if (signature != null &&
+            (signingKey == null ||
+                signingKey.length != 32 ||
+                !bindings.l2FrankVerify(
+                  signingKey: signingKey,
+                  conversationId: envelope.conversationId,
+                  accountId: envelope.senderAccountId,
+                  deviceId: envelope.senderDeviceId,
+                  commit: commit,
+                  signature: signature,
+                ))) {
           return (outcome: const InvalidAppPayload(), reveal: null);
         }
         // Kept so the message can be reported later (D95, schema 19): kf and
@@ -3753,9 +3905,32 @@ class NativeCryptoService
             envelopeId: envelope.id,
             frankKey: key,
             payload: canonical,
+            signature: signature,
+            signingKey: signature == null ? null : signingKey,
+            senderAccountId:
+                signature == null ? null : envelope.senderAccountId,
           ),
         );
     }
+  }
+
+  /// Whether this device holds a message under its own device key and
+  /// [idempotencyKey] in [conversationId]: its own row, or its queued
+  /// envelope (L2-3, recognising its own sealed post).
+  Future<bool> _isOwnSealedPost(
+      String conversationId, String idempotencyKey) async {
+    final deviceId = _deviceId;
+    if (deviceId == null) return false;
+    final key = messageKey(deviceId, idempotencyKey);
+    if (await localStore.hasLocalMessage(conversationId, key)) return true;
+    for (final queued in await localStore.pendingEnvelopes()) {
+      if (queued.idempotencyKey == idempotencyKey &&
+          queued.conversationId == conversationId &&
+          queued.sealed) {
+        return true;
+      }
+    }
+    return false;
   }
 
   ({LocalNoticeOwner owner, int generation})? _captureNoticeOwner(
@@ -4828,6 +5003,12 @@ class _K2BundleRejected implements Exception {
 /// governing member's own `member_leave`); the server's
 /// `storage.EnvelopeLeaveNoticeKey`. Its value is always `true`.
 const String leaveNoticeMetadataKey = 'c4_leave';
+
+/// L2-3: the payload types a send may seal: the ordinary franked message
+/// types. Hidden control payloads (info keys, leave proofs, report keys,
+/// alerts) and C7's hidden types always go identified, and a receiver
+/// refuses any of them that arrives sealed.
+const Set<AppPayloadType> sealedPayloadTypes = _messageTypes;
 
 const Set<AppPayloadType> _messageTypes = <AppPayloadType>{
   AppPayloadType.text,

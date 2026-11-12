@@ -469,6 +469,22 @@ class CryptoRecordLimitExceeded implements Exception {
   String toString() => 'encrypted state record is over its size limit';
 }
 
+/// L2-3: the sealed sender tokens a send may spend (AppState keeps them,
+/// fetched on the foreground sync pass).
+abstract interface class SealedTokenSource {
+  /// Takes a token for the next message in [conversationId], or null to send
+  /// it identified (sealed off, no token held, the issuer key changed).
+  Future<SealedToken?> takeFor(String conversationId);
+
+  /// Returns a token that was taken but never posted (the encrypt failed).
+  Future<void> putBack(SealedToken token);
+}
+
+/// A crypto service that can send sealed (L2-3).
+abstract interface class SealedSendingCryptoService {
+  set sealedTokenSource(SealedTokenSource? source);
+}
+
 /// Cached server roles today; C4 will replace this source with encrypted roles.
 abstract interface class ConversationAuthority {
   String? roleOf(String conversationId, String accountId);

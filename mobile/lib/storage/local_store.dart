@@ -34,6 +34,8 @@ export 'encrypted_database.dart'
         CommunityInfoEventKind,
         FrankReveal,
         ReportKeyPin,
+        SealedKeyPin,
+        maxSealedTokensPerConversation,
         ProfileKeyEffect;
 export 'profile_records.dart';
 export 'device_list_records.dart';
@@ -710,6 +712,31 @@ abstract class LocalStore {
   Future<void> saveReportKeyPin(ReportKeyPin pin);
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId);
 
+  /// L2-3 (schema 43): unspent sealed sender tokens. Bearer credentials,
+  /// kept only in the local store; see [SealedToken].
+  Future<int> saveSealedTokens(List<SealedToken> tokens);
+
+  /// Takes one token out of the store (the older day first), or null.
+  Future<SealedToken?> takeSealedToken(String conversationId,
+      {required String keyId, required int generation, required int epoch});
+  Future<int> countSealedTokens(String conversationId,
+      {required String keyId, required int generation, required int epoch});
+
+  /// See [SealedSenderSql.dropSealedTokens].
+  Future<void> dropSealedTokens(
+      {int? minEpoch, String? keyId, String? conversationId, int? generation});
+  Future<SealedKeyPin?> loadSealedKeyPin(String origin);
+  Future<void> saveSealedKeyPin(SealedKeyPin pin);
+
+  /// Replaces the queued envelope with the same idempotency key (a sealed
+  /// retry under a new token), keeping its attempts. Returns whether it was
+  /// still queued.
+  Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope);
+
+  /// Whether a message row with [key] exists in [conversationId] (L2-3,
+  /// recognising this device's own sealed post).
+  Future<bool> hasLocalMessage(String conversationId, String key);
+
   /// C6 (schema 27): whether [accountId] already reported [messageKey] on
   /// [origin] from this device, and the note that it did. Ids only.
   Future<bool> isMessageReported(
@@ -1224,6 +1251,7 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _sealedTokens.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
@@ -1586,6 +1614,120 @@ class MemoryLocalStore implements LocalStore {
       throw const FormatException('invalid report key pin');
     }
     _reportKeyPins['${pin.origin}\u0000${pin.ownerAccountId}'] = pin;
+  }
+
+  final List<SealedToken> _sealedTokens = <SealedToken>[];
+  final Map<String, SealedKeyPin> _sealedKeyPins = <String, SealedKeyPin>{};
+
+  @override
+  Future<int> saveSealedTokens(List<SealedToken> tokens) async {
+    var written = 0;
+    for (final token in tokens) {
+      if (!token.isWellFormed) continue;
+      if (_sealedTokens
+              .where((t) => t.conversationId == token.conversationId)
+              .length >=
+          maxSealedTokensPerConversation) {
+        continue;
+      }
+      if (_sealedTokens.any((t) => _sameNonce(t.nonce, token.nonce))) continue;
+      _sealedTokens.add(token);
+      written++;
+    }
+    return written;
+  }
+
+  static bool _sameNonce(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  Future<SealedToken?> takeSealedToken(String conversationId,
+      {required String keyId,
+      required int generation,
+      required int epoch}) async {
+    SealedToken? best;
+    for (final token in _sealedTokens) {
+      if (token.conversationId != conversationId ||
+          token.keyId != keyId ||
+          token.generation != generation ||
+          (token.epoch != epoch && token.epoch != epoch - 1)) {
+        continue;
+      }
+      if (best == null || token.epoch < best.epoch) best = token;
+    }
+    if (best != null) _sealedTokens.remove(best);
+    return best;
+  }
+
+  @override
+  Future<int> countSealedTokens(String conversationId,
+          {required String keyId,
+          required int generation,
+          required int epoch}) async =>
+      _sealedTokens
+          .where((t) =>
+              t.conversationId == conversationId &&
+              t.keyId == keyId &&
+              t.generation == generation &&
+              t.epoch == epoch)
+          .length;
+
+  @override
+  Future<void> dropSealedTokens(
+      {int? minEpoch,
+      String? keyId,
+      String? conversationId,
+      int? generation}) async {
+    _sealedTokens.removeWhere((t) =>
+        (minEpoch != null && t.epoch < minEpoch) ||
+        (keyId != null && t.keyId != keyId) ||
+        (conversationId != null &&
+            t.conversationId == conversationId &&
+            (generation == null || t.generation != generation)));
+  }
+
+  @override
+  Future<SealedKeyPin?> loadSealedKeyPin(String origin) async =>
+      _sealedKeyPins[origin];
+
+  @override
+  Future<void> saveSealedKeyPin(SealedKeyPin pin) async {
+    if (pin.origin.isEmpty ||
+        pin.keyId.length != 32 ||
+        pin.publicKey.length != 32 ||
+        (pin.seenKeyId == null) != (pin.seenPublicKey == null)) {
+      throw const FormatException('invalid sealed key pin');
+    }
+    _sealedKeyPins[pin.origin] = pin;
+  }
+
+  @override
+  Future<bool> hasLocalMessage(String conversationId, String key) async =>
+      _history.messages(conversationId).any((message) => message.key == key);
+
+  @override
+  Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope) async {
+    final index = _outbox
+        .indexWhere((item) => item.idempotencyKey == envelope.idempotencyKey);
+    if (index < 0) return false;
+    _outbox[index] = envelope;
+    final record = _outboxRecords[envelope.idempotencyKey];
+    if (record != null) {
+      _outboxRecords[envelope.idempotencyKey] = PendingEnvelopeRecord(
+        envelope: envelope,
+        attemptCount: record.attemptCount,
+        terminal: record.terminal,
+        draftText: record.draftText,
+        nextAttemptAt: record.nextAttemptAt,
+        failureClass: record.failureClass,
+      );
+    }
+    return true;
   }
 
   final Map<String, List<StoredProfileKey>> _profileKeys =
@@ -2382,6 +2524,7 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _sealedTokens.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
@@ -3327,6 +3470,55 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<FrankReveal?> loadFrankReveal(String messageKey) async =>
       (await _database()).readFrankReveal(messageKey);
+
+  @override
+  Future<int> saveSealedTokens(List<SealedToken> tokens) async =>
+      (await _database()).writeSealedTokens(tokens);
+
+  @override
+  Future<SealedToken?> takeSealedToken(String conversationId,
+          {required String keyId,
+          required int generation,
+          required int epoch}) async =>
+      (await _database()).takeSealedToken(conversationId,
+          keyId: keyId, generation: generation, epoch: epoch);
+
+  @override
+  Future<int> countSealedTokens(String conversationId,
+          {required String keyId,
+          required int generation,
+          required int epoch}) async =>
+      (await _database()).countSealedTokens(conversationId,
+          keyId: keyId, generation: generation, epoch: epoch);
+
+  @override
+  Future<void> dropSealedTokens(
+          {int? minEpoch,
+          String? keyId,
+          String? conversationId,
+          int? generation}) async =>
+      (await _database()).dropSealedTokens(
+          minEpoch: minEpoch,
+          keyId: keyId,
+          conversationId: conversationId,
+          generation: generation);
+
+  @override
+  Future<SealedKeyPin?> loadSealedKeyPin(String origin) async =>
+      (await _database()).readSealedKeyPin(origin);
+
+  @override
+  Future<void> saveSealedKeyPin(SealedKeyPin pin) async =>
+      (await _database()).writeSealedKeyPin(pin);
+
+  @override
+  Future<bool> hasLocalMessage(String conversationId, String key) async =>
+      (await _database()).hasMessageRow(conversationId, key);
+
+  @override
+  Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope) async =>
+      (await _database()).rewriteOutboxPayload(
+          envelope.idempotencyKey, jsonEncode(envelope.toJson()));
 
   @override
   Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(

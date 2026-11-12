@@ -10,7 +10,7 @@ import 'package:sqlite3/sqlite3.dart' show sqlite3, OpenMode;
 import 'message_search.dart';
 import 'history_snapshot.dart';
 import 'notice_outbox.dart';
-import '../core/models.dart' show Conversation, Session;
+import '../core/models.dart' show Conversation, SealedToken, Session;
 import '../core/server_origin.dart' show canonicalizeServerOrigin;
 import '../crypto/message_format.dart' show pinLimitPerChat;
 import '../sync/conversation_pause.dart';
@@ -37,6 +37,7 @@ part 'community_info_sql.dart';
 part 'invite_anchor_sql.dart';
 part 'profile_sql.dart';
 part 'governance_observation_sql.dart';
+part 'sealed_sender_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -658,7 +659,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 40;
+  static const currentSchemaVersion = 43;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -872,6 +873,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createPendingEnrollment();
             await _createK2Transfer();
             await _createFrankReveals();
+            await _createSealedSender();
             await _createConversationPauses();
             await _createDeviceLists();
             await _createFiledReports();
@@ -1048,6 +1050,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // C4 (schema 36, the next free number after C3's 35): local
             // receipt clocks only.
             if (from < 36) await _createGovernanceObservations();
+            // L2-3 (schema 43; 41-42 are reserved by C7 and may renumber at
+            // integration): sealed sender tokens, the server key pin and the
+            // franking signature beside a reveal. Idempotent and last, after
+            // the schema 19 step that creates local_frank_reveals.
+            if (from < 43) await _createSealedSender();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1107,6 +1114,7 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await delete(localPeerVerifications).go();
     await _clearHistoryNamespace();
     await _clearFrankReveals();
+    await _clearSealedTokens();
     await _clearDeviceLists();
     await _clearCommunityInfo();
     await _clearInviteAnchors();

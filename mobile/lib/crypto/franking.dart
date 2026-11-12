@@ -18,11 +18,22 @@ const int frankKeyBytes = 32;
 /// Commitment (`frank_commit`) length.
 const int frankCommitBytes = 32;
 
+/// L2-3: the franking signature `s` a sealed payload carries (64 bytes).
+const int frankSignatureBytes = 64;
+
 const String _frankKey = 'frank';
 final Uint8List _prefix = utf8.encode(',"frank":{"k":"');
 final Uint8List _tail = utf8.encode('"}}');
+// L2-3 sealed form: `,"frank":{"k":"<44>","s":"<88>"}}`.
+final Uint8List _signatureInfix = utf8.encode('","s":"');
 const int _keyBase64Length = 44;
+const int _signatureBase64Length = 88;
 final int _suffixLength = _prefix.length + _keyBase64Length + _tail.length;
+final int _sealedSuffixLength = _prefix.length +
+    _keyBase64Length +
+    _signatureInfix.length +
+    _signatureBase64Length +
+    _tail.length;
 
 /// A fresh franking key from the platform CSPRNG.
 Uint8List generateFrankKey({Random? random}) {
@@ -35,8 +46,14 @@ Uint8List generateFrankKey({Random? random}) {
 /// The wire JSON for [canonical] carrying [key]. Throws [FormatException]
 /// unless [canonical] is a non-empty JSON object without a top-level `frank`
 /// member and [key] is 32 bytes.
-Uint8List frankWireJson(Uint8List canonical, List<int> key) {
+///
+/// L2-3: a payload sent sealed also carries the sender's franking
+/// [signature] `s` (64 bytes), only ever in that form:
+/// `,"frank":{"k":"<44 chars>","s":"<88 chars>"}}`.
+Uint8List frankWireJson(Uint8List canonical, List<int> key,
+    {List<int>? signature}) {
   if (key.length != frankKeyBytes ||
+      (signature != null && signature.length != frankSignatureBytes) ||
       canonical.length < 2 ||
       canonical.last != 0x7d /* } */ ||
       (_objectWithoutFrank(canonical)?.isEmpty ?? true)) {
@@ -46,8 +63,13 @@ Uint8List frankWireJson(Uint8List canonical, List<int> key) {
   final out = BytesBuilder(copy: false)
     ..add(Uint8List.sublistView(canonical, 0, canonical.length - 1))
     ..add(_prefix)
-    ..add(encodedKey)
-    ..add(_tail);
+    ..add(encodedKey);
+  if (signature != null) {
+    out
+      ..add(_signatureInfix)
+      ..add(ascii.encode(base64.encode(signature)));
+  }
+  out.add(_tail);
   return out.takeBytes();
 }
 
@@ -61,12 +83,16 @@ final class Unfranked extends FrankOutcome {
   const Unfranked();
 }
 
-/// A well-formed `frank` member: [canonical] is `P`, [key] is `kf`.
+/// A well-formed `frank` member: [canonical] is `P`, [key] is `kf`, and
+/// [signature] the sealed form's `s` (L2-3), or null for the plain form.
+/// The receiver decides which form is allowed: `s` only on a message that
+/// came sealed, and always on a franked one that did.
 final class Franked extends FrankOutcome {
-  const Franked({required this.canonical, required this.key});
+  const Franked({required this.canonical, required this.key, this.signature});
 
   final Uint8List canonical;
   final Uint8List key;
+  final Uint8List? signature;
 }
 
 /// A `frank` member that is not in the one fixed form, or JSON that does not
@@ -83,11 +109,36 @@ FrankOutcome splitFrank(List<int> json) {
     final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: false));
     if (decoded is! Map) return const MalformedFrank();
     if (!decoded.containsKey(_frankKey)) return const Unfranked();
-    if (bytes.length <= _suffixLength + 1) return const MalformedFrank();
-    final start = bytes.length - _suffixLength;
+    // The sealed form (L2-3) first: its tail is also a valid plain tail
+    // position only if `P` itself ended in `","s":"…`, which P, an object
+    // without `frank` that must parse alone, cannot.
+    final sealedStart = bytes.length - _sealedSuffixLength;
+    final sealedKeyEnd = sealedStart + _prefix.length + _keyBase64Length;
+    Uint8List? signature;
+    var start = bytes.length - _suffixLength;
+    if (bytes.length > _sealedSuffixLength + 1 &&
+        _equalAt(bytes, sealedStart, _prefix) &&
+        _equalAt(bytes, sealedKeyEnd, _signatureInfix)) {
+      final signatureStart = sealedKeyEnd + _signatureInfix.length;
+      final signatureEnd = signatureStart + _signatureBase64Length;
+      if (!_equalAt(bytes, signatureEnd, _tail)) return const MalformedFrank();
+      final signatureText = ascii.decode(
+        Uint8List.sublistView(bytes, signatureStart, signatureEnd),
+        allowInvalid: false,
+      );
+      final decodedSignature = base64.decode(signatureText);
+      if (decodedSignature.length != frankSignatureBytes ||
+          base64.encode(decodedSignature) != signatureText) {
+        return const MalformedFrank();
+      }
+      signature = Uint8List.fromList(decodedSignature);
+      start = sealedStart;
+    }
+    if (start <= 1) return const MalformedFrank();
     final keyStart = start + _prefix.length;
     final keyEnd = keyStart + _keyBase64Length;
-    if (!_equalAt(bytes, start, _prefix) || !_equalAt(bytes, keyEnd, _tail)) {
+    if (!_equalAt(bytes, start, _prefix) ||
+        (signature == null && !_equalAt(bytes, keyEnd, _tail))) {
       return const MalformedFrank();
     }
     final keyText = ascii.decode(
@@ -106,7 +157,10 @@ FrankOutcome splitFrank(List<int> json) {
     // necessarily the last top-level member, and P's content is exactly the
     // wire content minus `frank`.
     if (_objectWithoutFrank(canonical) == null) return const MalformedFrank();
-    return Franked(canonical: canonical, key: Uint8List.fromList(key));
+    return Franked(
+        canonical: canonical,
+        key: Uint8List.fromList(key),
+        signature: signature);
   } catch (_) {
     return const MalformedFrank();
   }
