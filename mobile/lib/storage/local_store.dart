@@ -2174,10 +2174,10 @@ class MemoryLocalStore implements LocalStore {
           attemptCount: 0,
           terminal: false,
           draftText: existing!.draftText);
-      // The sealed copy was never stored: its digest and plaintext go.
-      final name = _ownPostKey(transition.envelope.conversationId, key);
-      _sealedOwnPosts.remove(name);
-      _sealedOwnPostTimes.remove(name);
+      // The plaintext goes. The digest stays: an earlier sealed attempt
+      // still in flight could land late, and its echo is then this
+      // device's own.
+      _clearSealedFallback(key);
     } else {
       _outbox.add(transition.envelope);
       _outboxRecords[key] = PendingEnvelopeRecord(

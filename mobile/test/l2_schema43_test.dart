@@ -207,10 +207,11 @@ void main() {
     expect(await db.readSealedOwnPostDigest('conv_1', 'key_1'), isNull);
   });
 
-  test('only a queued sealed entry is replaced, and its own post goes',
+  test('only a queued sealed entry is replaced, and its plaintext goes',
       () async {
     // Review M2: the identified re-encryption takes the sealed entry's
-    // place, resets its failure, and drops the digest and the plaintext.
+    // place, resets its failure, and drops the plaintext (the digest stays
+    // for a late echo of an earlier attempt).
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);
     var counter = 0;
@@ -257,7 +258,7 @@ void main() {
     expect(entry.attemptCount, 0);
     expect(entry.terminal, isFalse);
     expect(entry.failureClass, isNull);
-    expect(await db.readSealedOwnPostDigest('conv_1', 'key_1'), isNull);
+    expect(await db.readSealedOwnPostDigest('conv_1', 'key_1'), hasLength(32));
     expect(await db.readSealedOwnPostFallback('conv_1', 'key_1'), isNull);
   });
 

@@ -335,8 +335,14 @@ void main() {
     expect(queued.envelope.ciphertext, again.ciphertext);
     expect(queued.terminal, isFalse);
     expect(queued.attemptCount, 0);
+    // The digest stays, for a late echo of the sealed attempt; the
+    // plaintext is gone.
     expect(
         await bob.store.loadSealedOwnPostDigest('conv_1', sent.idempotencyKey),
+        hasLength(32));
+    expect(
+        await bob.store
+            .loadSealedOwnPostFallback('conv_1', sent.idempotencyKey),
         isNull);
     // One message only, still pending.
     expect(await bob.history(), hasLength(1));

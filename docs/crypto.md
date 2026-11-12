@@ -676,9 +676,12 @@ commitment to the sender's key, inside the ciphertext:
   The route also serves the sealed envelope's `idempotency_key`, and the
   verifier requires it to equal the report's action id (review low b): a
   member's copy of S's ciphertext and commitment under another key is not
-  attributed to S. The franking check sits in `_verifySealed`
-  (`reports_service.dart`) alone, so a designated-verifier scheme can
-  replace the `s` check there without touching the rest.
+  attributed to S. A designated-verifier scheme would replace `s` in four
+  places: where it is made (`_encryptPayload`'s `sealedSignature` callback,
+  `l2FrankSign`), where it is checked on receive (`_checkFranking`), where
+  a report is verified (`_verifySealed` in `reports_service.dart`), and the
+  ABI 26 entry points `pm_crypto_l2_frank_sign` and
+  `pm_crypto_l2_frank_verify`.
   A moderator who is a member checks against its own MLS copy as before.
 - **Cost: deniability.** C6 v1 said "no signature over the text". With `s`,
   a revealed `(P, kf, s)` is a proof anyone can check that S's device
@@ -866,7 +869,9 @@ sealed post client and its retry rules), `NativeCryptoService`
   `s`), puts it in the outbox entry's place with its failure cleared, and
   the app sends it. The plaintext for that is kept only in
   `local_sealed_own_posts` while the message is queued, never in the outbox
-  JSON or on the wire, and is dropped with the entry.
+  JSON or on the wire. It is dropped when the entry is replaced or goes;
+  the digest stays (30 days), so the echo of an earlier sealed attempt
+  that lands late is still recognised as this device's own.
 - **Receive.** The `message.sealed.created` case decrypts through
   `processSealedApplicationMessage` (`pm_crypto_group_decrypt_sealed`),
   which refuses identified envelopes, as the identified path refuses sealed
@@ -905,7 +910,14 @@ held: the message stays queued as a retryable failure until a token pass
 refills, the conversation is eligible again, or the person discards it.
 Failing or resending the waiting message on its own is not done: after a
 lost answer it may already be stored, and a resend would then show twice.
-Own-post digests stay 30 days after their entry is gone. The server's unread count
+Own-post digests stay 30 days after their entry is gone. If the server
+switch is turned off for good, queued sealed messages wait as
+`sealed_unavailable` until the person discards them. A queued sealed
+message with no fallback row (after a restore from backup, which does not
+carry `local_sealed_own_posts`) fails on `sealed_not_eligible` instead of
+going identified. The `sendIdentified` hook in `AppState._postSealed` is
+tested only through `postSealedMessage` and the re-encrypt, not end to
+end. The server's unread count
 ignores sealed posts. The signing key checked on receive is the sender
 leaf's current key, so a sender that rotated its leaf key between sending
 and the receiver's decrypt would read as `invalid`. The notice owner of a
@@ -933,8 +945,14 @@ sealed under the same idempotency key (a retry of a stored post answers 200
 without spending), fetching new tokens after a token refusal. The one
 exception is 409 `sealed_not_eligible`, which the server answers only after
 finding nothing of either kind stored under (conversation, key), in a
-write transaction on its single writer connection; a fresh identified
-encrypt under the same key is then the only copy. The decision to seal is
+transaction on its single writer connection; a fresh identified encrypt
+under the same key is then the only copy, unless an earlier sealed attempt
+the app gave up on (a timeout does not cancel it) reaches the server later,
+after the conversation became eligible again. Then the sealed copy is
+stored, the identified send is refused (`idempotency_conflict`, keys do
+not cross), and the sealed echo, still recognised by its digest, links the
+local row; the outbox entry shows as failed until the person discards it.
+One copy is stored either way. The decision to seal is
 made at encrypt time and stored with the outgoing message.
 
 ## Encrypted backup file (VBK2)
