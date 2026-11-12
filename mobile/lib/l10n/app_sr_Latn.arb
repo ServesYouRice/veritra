@@ -1293,5 +1293,17 @@
   "rolesVoteFor": "Glasaj za: {name}",
   "rolesCloseElection": "Završi izbor",
   "rolesOwnerCancelNote": "Ti si vlasnik: tvoja aplikacija sama završava ovaj izbor.",
-  "rolesOnlyAdminsPost": "Samo administratori objavljuju"
+  "rolesOnlyAdminsPost": "Samo administratori objavljuju",
+  "c6VerdictSenderUnverified": "Pošiljalac nije potvrđen",
+  "c6VerdictSenderUnverifiedDetail": "Poruka se poklapa, ali ključ pošiljaoca nije mogao da se proveri u njegovoj potpisanoj listi uređaja.",
+  "l2SealedKeyTitle": "Ključ skrivenog pošiljaoca",
+  "l2SealedKeyTile": "Poruke bez vašeg imena",
+  "l2SealedKeyIntro": "Ovaj server potpisuje tokene koji omogućavaju da vaše poruke stignu do njega bez vašeg imena. Aplikacija je zapamtila njegov ključ kada ga je prvi put videla.",
+  "l2SealedKeyOff": "Ovaj server ne nudi skrivenog pošiljaoca.",
+  "l2SealedKeyNone": "Još nema zapamćenog ključa. Biće zapamćen pri sledećoj sinhronizaciji.",
+  "l2SealedKeyPinned": "Zapamćeni ključ",
+  "l2SealedKeyChanged": "Server sada pokazuje drugi ključ. Dok ga ne prihvatite, vaše poruke se šalju sa vašim imenom, kao ranije.",
+  "l2SealedKeyNew": "Novi ključ",
+  "l2SealedKeyAccept": "Prihvati novi ključ",
+  "l2SealedKeyAcceptWarning": "Prihvatite samo ako vam je operater servera rekao da se ključ promenio. Ključ napravljen samo za vas omogućio bi serveru da vaše poruke razlikuje od tuđih."
 }

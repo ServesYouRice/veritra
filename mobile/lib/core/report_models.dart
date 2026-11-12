@@ -140,16 +140,25 @@ class ReportEnvelopeRecord {
     required this.senderDeviceId,
     required this.frankCommit,
     required this.createdAt,
+    this.sealed = false,
   });
 
   factory ReportEnvelopeRecord.fromJson(Map<String, Object?> json) {
     final created = json['created_at'];
     if (created is! String) throw const FormatException('invalid record');
+    // L2-3: a sealed envelope's record names no sender, and must not.
+    final sealed = json['sealed'] == true;
+    if (sealed &&
+        (json['sender_account_id'] != null ||
+            json['sender_device_id'] != null)) {
+      throw const FormatException('invalid record');
+    }
     return ReportEnvelopeRecord(
+      sealed: sealed,
       envelopeId: _id(json['envelope_id']),
       conversationId: _id(json['conversation_id']),
-      senderAccountId: _id(json['sender_account_id']),
-      senderDeviceId: _id(json['sender_device_id']),
+      senderAccountId: sealed ? '' : _id(json['sender_account_id']),
+      senderDeviceId: sealed ? '' : _id(json['sender_device_id']),
       frankCommit: json['frank_commit'] == null
           ? null
           : List<int>.unmodifiable(_bytes(json['frank_commit'], length: 32)),
@@ -159,8 +168,13 @@ class ReportEnvelopeRecord {
 
   final String envelopeId;
   final String conversationId;
+
+  /// Empty for a [sealed] record.
   final String senderAccountId;
   final String senderDeviceId;
+
+  /// L2-3: the server stored the message sealed, with no sender.
+  final bool sealed;
 
   /// Null for a message sent without franking.
   final List<int>? frankCommit;

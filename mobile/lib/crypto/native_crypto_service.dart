@@ -74,6 +74,7 @@ class NativeCryptoService
         C7HistoryConsumer,
         DeviceListCryptoService,
         SealedSendingCryptoService,
+        SealedReportCryptoService,
         ApprovedDeviceDiscoveryCryptoService,
         OwnDeviceAlertCryptoService,
         DeviceSigningKeyCryptoService,
@@ -123,6 +124,28 @@ class NativeCryptoService
   /// identified.
   @override
   SealedTokenSource? sealedTokenSource;
+
+  @override
+  Future<bool> frankSignatureValid({
+    required List<int> signingKey,
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+    required List<int> commit,
+    required List<int> signature,
+  }) async {
+    try {
+      return bindings.l2FrankVerify(
+          signingKey: signingKey,
+          conversationId: conversationId,
+          accountId: accountId,
+          deviceId: deviceId,
+          commit: commit,
+          signature: signature);
+    } on Object {
+      return false;
+    }
+  }
 
   @override
   ({Uint8List state, Uint8List request}) sealedTokenRequest({
@@ -3312,8 +3335,16 @@ class NativeCryptoService
             }
             final device = _requiredDevice();
             envelope = envelope.withSender('', '');
-            final opened =
-                device.decryptSealed(envelope.conversationId, envelope.ciphertext);
+            final ({List<int> plaintext, String accountId, String deviceId})
+                opened;
+            try {
+              opened = device.decryptSealed(
+                  envelope.conversationId, envelope.ciphertext);
+            } on FormatException {
+              // A sender id that is not UTF-8: unreadable like any other.
+              throw const NativeCryptoException(
+                  NativeCryptoError.operationFailed);
+            }
             // MLS named the sender. It must be a well-formed id and never
             // this device, whose own posts were recognised above; anything
             // else is a placeholder like any message this device cannot
@@ -3340,7 +3371,7 @@ class NativeCryptoService
             try {
               sealedSigningKey = device.memberSignatureKey(
                   envelope.conversationId, opened.accountId, opened.deviceId);
-            } on NativeCryptoException {
+            } on Object {
               sealedSigningKey = null;
             }
             return opened.plaintext;
@@ -3956,18 +3987,27 @@ class NativeCryptoService
         if (!frankCommitEquals(expected, commit)) {
           return (outcome: const InvalidAppPayload(), reveal: null);
         }
-        if (signature != null &&
-            (signingKey == null ||
-                signingKey.length != 32 ||
-                !bindings.l2FrankVerify(
-                  signingKey: signingKey,
-                  conversationId: envelope.conversationId,
-                  accountId: envelope.senderAccountId,
-                  deviceId: envelope.senderDeviceId,
-                  commit: commit,
-                  signature: signature,
-                ))) {
-          return (outcome: const InvalidAppPayload(), reveal: null);
+        if (signature != null) {
+          // A check that errors is a check that failed: the ratchet has
+          // moved, so this must commit as invalid, never stop sync.
+          var verified = false;
+          if (signingKey != null && signingKey.length == 32) {
+            try {
+              verified = bindings.l2FrankVerify(
+                signingKey: signingKey,
+                conversationId: envelope.conversationId,
+                accountId: envelope.senderAccountId,
+                deviceId: envelope.senderDeviceId,
+                commit: commit,
+                signature: signature,
+              );
+            } on Object {
+              verified = false;
+            }
+          }
+          if (!verified) {
+            return (outcome: const InvalidAppPayload(), reveal: null);
+          }
         }
         // Kept so the message can be reported later (D95, schema 19): kf and
         // the exact bytes P the commitment covers.

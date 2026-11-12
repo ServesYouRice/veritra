@@ -480,6 +480,18 @@ abstract interface class SealedTokenSource {
   Future<void> putBack(SealedToken token);
 }
 
+/// Checks a sealed message's franking signature for a report (L2-3).
+abstract interface class SealedReportCryptoService {
+  Future<bool> frankSignatureValid({
+    required List<int> signingKey,
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+    required List<int> commit,
+    required List<int> signature,
+  });
+}
+
 /// A crypto service that can send sealed (L2-3).
 abstract interface class SealedSendingCryptoService {
   set sealedTokenSource(SealedTokenSource? source);

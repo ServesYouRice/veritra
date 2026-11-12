@@ -4404,4 +4404,45 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Only admins post';
+
+  @override
+  String get c6VerdictSenderUnverified => 'Sender not confirmed';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'The message matches, but its sender\'s key could not be checked against their signed device list.';
+
+  @override
+  String get l2SealedKeyTitle => 'Sealed sender key';
+
+  @override
+  String get l2SealedKeyTile => 'Messages without your name';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.';
+
+  @override
+  String get l2SealedKeyOff => 'This server does not offer sealed sending.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'No key pinned yet. It is pinned on the next sync.';
+
+  @override
+  String get l2SealedKeyPinned => 'Pinned key';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.';
+
+  @override
+  String get l2SealedKeyNew => 'New key';
+
+  @override
+  String get l2SealedKeyAccept => 'Accept new key';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Accept only if the server\'s operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else\'s.';
 }

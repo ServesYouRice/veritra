@@ -7268,6 +7268,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only admins post'**
   String get rolesOnlyAdminsPost;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sender not confirmed'**
+  String get c6VerdictSenderUnverified;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The message matches, but its sender\'s key could not be checked against their signed device list.'**
+  String get c6VerdictSenderUnverifiedDetail;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sealed sender key'**
+  String get l2SealedKeyTitle;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages without your name'**
+  String get l2SealedKeyTile;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.'**
+  String get l2SealedKeyIntro;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not offer sealed sending.'**
+  String get l2SealedKeyOff;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'No key pinned yet. It is pinned on the next sync.'**
+  String get l2SealedKeyNone;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned key'**
+  String get l2SealedKeyPinned;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.'**
+  String get l2SealedKeyChanged;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'New key'**
+  String get l2SealedKeyNew;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept new key'**
+  String get l2SealedKeyAccept;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept only if the server\'s operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else\'s.'**
+  String get l2SealedKeyAcceptWarning;
 }
 
 class _AppLocalizationsDelegate

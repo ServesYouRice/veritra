@@ -509,6 +509,28 @@ class DeviceListPins {
     return pin.listedKey(device);
   }
 
+  /// L2-3: whether [accountId]'s signed list lists, or once listed,
+  /// [deviceId] with [signingKey] (a report about a sealed message may be
+  /// older than a removal). False when the list is unavailable or in
+  /// conflict: a report is never attributed on a list this app cannot
+  /// trust.
+  Future<bool> listsOrListed(
+      String accountId, String deviceId, List<int> signingKey) async {
+    final device = utf8.encode(deviceId);
+    bool known(DeviceListPin pin) {
+      final standing = pin.standing(device, signingKey);
+      return standing == PinStanding.approved ||
+          standing == PinStanding.removed;
+    }
+
+    final status = await _refreshFor(accountId, known);
+    final pin = status.pin;
+    if (status.state != DeviceListState.ok || pin == null || pin.conflict) {
+      return false;
+    }
+    return known(pin);
+  }
+
   /// Device inventory comes from the signed list, never a server device roster.
   Future<List<DeviceListPair>> approvedDevices(String accountId,
       {bool refreshFirst = true}) async {

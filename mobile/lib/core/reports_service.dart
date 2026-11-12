@@ -190,6 +190,12 @@ enum ReportVerdict {
 
   /// The message was sent without franking: it cannot be proven.
   unfranked,
+
+  /// L2-3: a sealed message whose commitment matches, but whose sender
+  /// could not be confirmed: the signature key could not be checked against
+  /// the claimed account's signed device list (unavailable, or this app
+  /// cannot check). Not proven; fails closed.
+  senderUnverified,
 }
 
 class ReportVerification {
@@ -210,6 +216,7 @@ class ReportsService {
     this.moderatorsOf,
     this.communityId,
     this.onSeedChanged,
+    this.senderKeyListed,
     Random? random,
   })  : pins = ReportKeyPins(store, api.baseUrl),
         _random = random ?? Random.secure();
@@ -218,6 +225,12 @@ class ReportsService {
   final String token;
   final String accountId;
   final ReportCryptoService crypto;
+
+  /// L2-3: whether [signingKey] is (or was) [deviceId]'s key in
+  /// [accountId]'s signed L1 device list. Null: a sealed report cannot be
+  /// attributed here, and checks [ReportVerdict.senderUnverified].
+  final Future<bool> Function(
+      String accountId, String deviceId, List<int> signingKey)? senderKeyListed;
   final LocalStore store;
   final ReportSeedStore seeds;
   final ReportKeyPins pins;
@@ -592,6 +605,7 @@ class ReportsService {
       }
       rethrow;
     }
+    if (record.sealed || body.sealed) return _verifySealed(report, record);
     // Context first: a record that does not describe this report proves
     // nothing, whatever else it says.
     if (record.envelopeId != body.envelopeId ||
@@ -620,6 +634,80 @@ class ReportsService {
       // The sender is shown only for a match.
       record: frankCommitEquals(computed, commit) ? record : null,
     );
+  }
+
+  /// L2-3: a report about a sealed message. The server row names no sender,
+  /// so the body does, and proves it: the commitment recomputes from the
+  /// revealed message for the claimed device and equals the stored one; the
+  /// sender's signature over it verifies under the claimed key; and that key
+  /// is the claimed device's in the claimed account's signed device list
+  /// (which the server cannot forge). Anything short of all three is not a
+  /// verified report.
+  Future<ReportVerification> _verifySealed(
+      OpenedReport report, ReportEnvelopeRecord record) async {
+    final body = report.body!;
+    final account = body.senderAccountId;
+    final signature = body.signature;
+    final signingKey = body.signingKey;
+    if (!record.sealed ||
+        !body.sealed ||
+        account == null ||
+        signature == null ||
+        signingKey == null ||
+        record.envelopeId != body.envelopeId ||
+        record.conversationId != body.conversationId ||
+        record.conversationId != report.row.conversationId ||
+        account == report.row.reporterAccountId ||
+        !_payloadContextMatches(body)) {
+      return const ReportVerification(ReportVerdict.mismatch);
+    }
+    final commit = record.frankCommit;
+    if (commit == null) {
+      return const ReportVerification(ReportVerdict.unfranked);
+    }
+    final computed = await crypto.frankCommit(
+      key: Uint8List.fromList(body.frankKey),
+      conversationId: body.conversationId,
+      senderDeviceId: body.senderDeviceId,
+      actionId: body.actionId,
+      payload: Uint8List.fromList(body.payload),
+    );
+    if (!frankCommitEquals(computed, commit)) {
+      return const ReportVerification(ReportVerdict.mismatch);
+    }
+    final signatures = crypto;
+    if (signatures is! SealedReportCryptoService ||
+        !await (signatures as SealedReportCryptoService).frankSignatureValid(
+          signingKey: signingKey,
+          conversationId: body.conversationId,
+          accountId: account,
+          deviceId: body.senderDeviceId,
+          commit: commit,
+          signature: signature,
+        )) {
+      return const ReportVerification(ReportVerdict.mismatch);
+    }
+    final listed = senderKeyListed;
+    bool known;
+    try {
+      known = listed != null &&
+          await listed(account, body.senderDeviceId, signingKey);
+    } on Object {
+      known = false;
+    }
+    if (!known) {
+      return const ReportVerification(ReportVerdict.senderUnverified);
+    }
+    return ReportVerification(ReportVerdict.verified,
+        record: ReportEnvelopeRecord(
+          envelopeId: record.envelopeId,
+          conversationId: record.conversationId,
+          senderAccountId: account,
+          senderDeviceId: body.senderDeviceId,
+          frankCommit: commit,
+          createdAt: record.createdAt,
+          sealed: true,
+        ));
   }
 
   /// Dismisses this owner's copy of a report.

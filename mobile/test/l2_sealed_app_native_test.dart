@@ -2,7 +2,12 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:private_messenger/core/api_client.dart';
 import 'package:private_messenger/core/models.dart';
+import 'package:private_messenger/core/report_models.dart';
+import 'package:private_messenger/core/report_seed_store.dart';
+import 'package:private_messenger/core/reports_service.dart';
+import 'package:private_messenger/crypto/report_body.dart';
 import 'package:private_messenger/crypto/app_payload.dart';
 import 'package:private_messenger/crypto/crypto_service.dart';
 import 'package:private_messenger/crypto/franking.dart';
@@ -229,6 +234,108 @@ void main() {
     expect(bob.tokens.taken, 1);
   }, skip: skip);
 
+  test('a sealed message is reported and verified by its signature and key',
+      () async {
+    final alice = await _Client.enroll(bindings, 'acct_alice', 'dev_alice');
+    final bob = await _Client.enroll(bindings, 'acct_bob', 'dev_bob');
+    await _startConversation(alice, bob);
+    bob.tokens.add(_token());
+    final sent = await bob
+        .send(AppPayloadType.text, <String, Object?>{'text': 'reportable'});
+    final envelope = alice.sealedFrom(sent);
+    await alice.service
+        .processSealedApplicationMessage(envelope, alice.nextEvent());
+    final row = (await alice.history()).single;
+    final reveal = (await alice.store.loadFrankReveal(row.key))!;
+
+    // The reporter's body is version 2 and survives the seal round trip.
+    final body = ReportBody.decode(ReportBody.fromReveal(reveal).encode());
+    expect(body.sealed, isTrue);
+    expect(body.senderAccountId, 'acct_bob');
+    expect(jsonDecode(utf8.decode(body.encode()))['v'], 2);
+
+    final bobKey = await bob.service.currentSigningKey();
+    final server = _ReportServer(ReportEnvelopeRecord.fromJson({
+      'envelope_id': envelope.id,
+      'conversation_id': 'conv_1',
+      'frank_commit': base64Encode(sent.frankCommit!),
+      'sealed': true,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    }));
+    Future<ReportVerification> verifyAs(
+        ReportBody reported,
+        Future<bool> Function(String, String, List<int>)? listed) async {
+      final owner = ReportsService(
+        api: server,
+        token: 'acct_owner',
+        accountId: 'acct_owner',
+        crypto: alice.service,
+        store: MemoryLocalStore(),
+        seeds: MemoryReportSeedStore(),
+        senderKeyListed: listed,
+      );
+      return owner.verify(OpenedReport(_row(), body: reported));
+    }
+
+    Future<bool> bobsList(String account, String device, List<int> key) async =>
+        account == 'acct_bob' &&
+        device == 'dev_bob' &&
+        _sameBytes(key, bobKey);
+
+    final verified = await verifyAs(body, bobsList);
+    expect(verified.verdict, ReportVerdict.verified);
+    expect(verified.record!.senderAccountId, 'acct_bob');
+    expect(verified.record!.senderDeviceId, 'dev_bob');
+
+    // No device-list check wired: never attributed (fails closed).
+    expect((await verifyAs(body, null)).verdict,
+        ReportVerdict.senderUnverified);
+    // The key is not on the claimed account's list.
+    expect((await verifyAs(body, (a, d, k) async => false)).verdict,
+        ReportVerdict.senderUnverified);
+
+    // Framing: the reporter names another account. The signature covers
+    // the account, so it no longer verifies.
+    final framed = ReportBody(
+      envelopeId: body.envelopeId,
+      conversationId: body.conversationId,
+      senderDeviceId: body.senderDeviceId,
+      actionId: body.actionId,
+      payload: body.payload,
+      frankKey: body.frankKey,
+      senderAccountId: 'acct_carol',
+      signature: body.signature,
+      signingKey: body.signingKey,
+    );
+    expect((await verifyAs(framed, (a, d, k) async => true)).verdict,
+        ReportVerdict.mismatch);
+    // Another key with the same signature fails too.
+    final otherKey = ReportBody(
+      envelopeId: body.envelopeId,
+      conversationId: body.conversationId,
+      senderDeviceId: body.senderDeviceId,
+      actionId: body.actionId,
+      payload: body.payload,
+      frankKey: body.frankKey,
+      senderAccountId: body.senderAccountId,
+      signature: body.signature,
+      signingKey: await alice.service.currentSigningKey(),
+    );
+    expect((await verifyAs(otherKey, (a, d, k) async => true)).verdict,
+        ReportVerdict.mismatch);
+    // A version-1 body about a sealed record cannot be attributed.
+    final plain = ReportBody(
+      envelopeId: body.envelopeId,
+      conversationId: body.conversationId,
+      senderDeviceId: body.senderDeviceId,
+      actionId: body.actionId,
+      payload: body.payload,
+      frankKey: body.frankKey,
+    );
+    expect((await verifyAs(plain, (a, d, k) async => true)).verdict,
+        ReportVerdict.mismatch);
+  }, skip: skip);
+
   test('the frank member reads in exactly one spelling of each form', () {
     final canonical = Uint8List.fromList(utf8.encode('{"t":"x"}'));
     final key = Uint8List.fromList(List<int>.generate(32, (i) => i));
@@ -399,4 +506,36 @@ class _Client {
 
   Future<List<int>?> receive(_Client from, MessageEnvelope sent) =>
       service.processApplicationMessage(envelopeFrom(from, sent), nextEvent());
+}
+
+bool _sameBytes(List<int> a, List<int> b) =>
+    a.length == b.length &&
+    Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
+
+ReportCopyRow _row() => ReportCopyRow(
+      id: 'row_1',
+      reportId: 'report_1',
+      inboxKind: 'instance_owner',
+      inboxId: 'acct_owner',
+      keyRev: 1,
+      recipientPublicKey: List<int>.filled(32, 1),
+      conversationId: 'conv_1',
+      reporterAccountId: 'acct_alice',
+      sealed: const <int>[1],
+      createdAt: DateTime.utc(2026, 11, 12),
+    );
+
+class _ReportServer extends ApiClient {
+  _ReportServer(this.record) : super(baseUrl: 'https://chat.example.org');
+
+  final ReportEnvelopeRecord record;
+
+  @override
+  Future<ReportEnvelopeRecord> getReportEnvelope(
+      String token, String reportRowId, String envelopeId) async {
+    if (envelopeId != record.envelopeId) {
+      throw ApiException(404, '{"error":"not_found"}');
+    }
+    return record;
+  }
 }

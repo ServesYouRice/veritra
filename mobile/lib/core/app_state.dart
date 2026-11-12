@@ -1658,7 +1658,13 @@ class AppState extends ChangeNotifier
   /// left the local cache. Server envelopes without a local record (sent
   /// before this device joined, say) still appear, as redacted bars.
   List<ReceivedMessageEnvelope> timelineFor(String conversationId) {
-    final all = _timelineForConversation(conversationId);
+    // L2-3: the server hides a blocked account's identified posts, but it
+    // cannot tell who sent a sealed one; the app hides those itself, by the
+    // sender MLS named.
+    final all = _timelineForConversation(conversationId)
+        .where((envelope) =>
+            !(envelope.sealed && isBlocked(envelope.senderAccountId)))
+        .toList(growable: false);
     final channel = _selectedChannels[conversationId];
     if (channel == null) return all;
     // A shared group holds every open channel; the chat shows one of them.
@@ -3762,9 +3768,7 @@ class AppState extends ChangeNotifier
       // it names the newest identified message: the server keeps no read
       // position on a sealed row.
       final sealedHere = sealedSender?.activeIn(conversationId) ?? false;
-      final target = sealedHere
-          ? messages.where((message) => !message.sealed).firstOrNull
-          : messages.first;
+      final target = messages.where((message) => !message.sealed).firstOrNull;
       if (target == null) return;
       if (receiptPreferences.shareReadReceipts && !sealedHere) {
         await client.markRead(current.token, conversationId, target.id);
@@ -9839,6 +9843,22 @@ class AppState extends ChangeNotifier
         origin: client.baseUrl, localStore: localStore, crypto: crypto);
     sealedSender = sealed;
     crypto.sealedTokenSource = sealed;
+  }
+
+  /// L2-3: the sealed sender key pinned for this server, for Settings.
+  Future<SealedKeyPin?> sealedKeyPin() async {
+    final sealed = sealedSender;
+    if (sealed == null) return null;
+    return localStore.loadSealedKeyPin(sealed.origin);
+  }
+
+  /// Accepts the changed sealed sender key (Settings), then fetches tokens
+  /// under it on the next foreground pass.
+  Future<void> acceptSealedKey() async {
+    final sealed = sealedSender;
+    if (sealed == null) return;
+    await sealed.acceptChangedKey();
+    notifyListeners();
   }
 
   SealedPostClient _sealedPostClient(String origin) {

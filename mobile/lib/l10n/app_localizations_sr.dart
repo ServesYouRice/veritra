@@ -4421,6 +4421,47 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Само администратори објављују';
+
+  @override
+  String get c6VerdictSenderUnverified => 'Пошиљалац није потврђен';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'Порука се поклапа, али кључ пошиљаоца није могао да се провери у његовој потписаној листи уређаја.';
+
+  @override
+  String get l2SealedKeyTitle => 'Кључ скривеног пошиљаоца';
+
+  @override
+  String get l2SealedKeyTile => 'Поруке без вашег имена';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'Овај сервер потписује токене који омогућавају да ваше поруке стигну до њега без вашег имена. Апликација је запамтила његов кључ када га је први пут видела.';
+
+  @override
+  String get l2SealedKeyOff => 'Овај сервер не нуди скривеног пошиљаоца.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'Још нема запамћеног кључа. Биће запамћен при следећој синхронизацији.';
+
+  @override
+  String get l2SealedKeyPinned => 'Запамћени кључ';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'Сервер сада показује други кључ. Док га не прихватите, ваше поруке се шаљу са вашим именом, као раније.';
+
+  @override
+  String get l2SealedKeyNew => 'Нови кључ';
+
+  @override
+  String get l2SealedKeyAccept => 'Прихвати нови кључ';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Прихватите само ако вам је оператер сервера рекао да се кључ променио. Кључ направљен само за вас омогућио би серверу да ваше поруке разликује од туђих.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -8845,4 +8886,45 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';
+
+  @override
+  String get c6VerdictSenderUnverified => 'Pošiljalac nije potvrđen';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'Poruka se poklapa, ali ključ pošiljaoca nije mogao da se proveri u njegovoj potpisanoj listi uređaja.';
+
+  @override
+  String get l2SealedKeyTitle => 'Ključ skrivenog pošiljaoca';
+
+  @override
+  String get l2SealedKeyTile => 'Poruke bez vašeg imena';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'Ovaj server potpisuje tokene koji omogućavaju da vaše poruke stignu do njega bez vašeg imena. Aplikacija je zapamtila njegov ključ kada ga je prvi put videla.';
+
+  @override
+  String get l2SealedKeyOff => 'Ovaj server ne nudi skrivenog pošiljaoca.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'Još nema zapamćenog ključa. Biće zapamćen pri sledećoj sinhronizaciji.';
+
+  @override
+  String get l2SealedKeyPinned => 'Zapamćeni ključ';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'Server sada pokazuje drugi ključ. Dok ga ne prihvatite, vaše poruke se šalju sa vašim imenom, kao ranije.';
+
+  @override
+  String get l2SealedKeyNew => 'Novi ključ';
+
+  @override
+  String get l2SealedKeyAccept => 'Prihvati novi ključ';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Prihvatite samo ako vam je operater servera rekao da se ključ promenio. Ključ napravljen samo za vas omogućio bi serveru da vaše poruke razlikuje od tuđih.';
 }

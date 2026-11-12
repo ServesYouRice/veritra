@@ -396,6 +396,11 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
           l10n.c6VerdictUnfrankedDetail,
           StatusTone.warning
         ),
+      ReportVerdict.senderUnverified => (
+          l10n.c6VerdictSenderUnverified,
+          l10n.c6VerdictSenderUnverifiedDetail,
+          StatusTone.warning
+        ),
     };
     final record = result.record;
     return <Widget>[
