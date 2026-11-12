@@ -1042,7 +1042,11 @@ sealed post client and its retry rules), `NativeCryptoService`
   Schema 43 adds `designation` (48 to 768 bytes, whole entries, or null for
   the plain form) and `sender_account_id` to `local_frank_reveals`, and
   `frank_key` to `local_device_list_keys`; the draft's `signature` and
-  `signing_key` columns are dropped where they exist.
+  `signing_key` columns are dropped where they exist. That drop also runs
+  on every open at schema 43 or later (review L2): a draft of the step
+  wrote version 43 on development devices, so the upgrade step never runs
+  there again. It is idempotent, and a drop that removed something is
+  followed by a log checkpoint (`l2_schema43_test.dart`).
 - **Reports.** Report body version 2 (`report_body.dart`, 9 fields) adds
   the sender's account id and `d` (empty for the plain form), and is used
   only for sealed envelopes; version 1 is unchanged for identified ones.

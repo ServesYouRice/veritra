@@ -188,6 +188,60 @@ void main() {
     expect(await revealColumns(db), contains('designation'));
   });
 
+  // Review L2: a draft of schema 43 ran on development devices and wrote
+  // version 43 with the signature columns, so the upgrade step never runs
+  // there again. The drop runs on open instead, and keeps the rows.
+  test('a database already at a draft 43 loses its signature columns on open',
+      () async {
+    final file = File('${directory.path}/draft43.db');
+    var db = EncryptedLocalDatabase(NativeDatabase(file));
+    await db.into(db.localMessages).insert(LocalMessagesCompanion.insert(
+          key: 'dev_b:act1',
+          conversationId: 'conv_1',
+          senderAccountId: 'acct_b',
+          senderDeviceId: 'dev_b',
+          kind: 'text',
+          createdAt: 1,
+          state: 'received',
+        ));
+    await db.customStatement(
+        'ALTER TABLE local_frank_reveals ADD COLUMN signature BLOB');
+    await db.customStatement(
+        'ALTER TABLE local_frank_reveals ADD COLUMN signing_key BLOB');
+    await db.customStatement(
+        'INSERT INTO local_frank_reveals (message_key, conversation_id, '
+        'envelope_id, frank_key, payload, stored_at, signature, signing_key) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        <Object?>[
+          'dev_b:act1',
+          'conv_1',
+          'msg_1',
+          Uint8List(32),
+          Uint8List.fromList(<int>[123, 125]),
+          1,
+          Uint8List.fromList(List<int>.filled(64, 9)),
+          Uint8List.fromList(List<int>.filled(32, 8)),
+        ]);
+    expect(await revealColumns(db),
+        containsAll(<String>['signature', 'signing_key']));
+    expect(
+        (await db.customSelect('PRAGMA user_version').getSingle())
+            .read<int>('user_version'),
+        43);
+    await db.close();
+
+    db = EncryptedLocalDatabase(NativeDatabase(file));
+    expect(await revealColumns(db),
+        isNot(anyOf(contains('signature'), contains('signing_key'))));
+    expect((await db.readFrankReveal('dev_b:act1'))!.envelopeId, 'msg_1');
+    await db.close();
+    // Idempotent: the next open finds nothing to drop.
+    db = EncryptedLocalDatabase(NativeDatabase(file));
+    addTearDown(db.close);
+    expect((await db.readFrankReveal('dev_b:act1'))!.envelopeId, 'msg_1');
+    expect(await revealColumns(db), contains('designation'));
+  });
+
   test('a designation is whole entries, 1 to 16, or none', () async {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);

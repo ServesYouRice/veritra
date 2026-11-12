@@ -1066,6 +1066,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
         beforeOpen: (details) async {
           await customStatement('PRAGMA foreign_keys = ON');
           await customStatement('PRAGMA secure_delete = ON');
+          // Review L2: a draft schema 43 kept columns the final step drops.
+          if (details.versionNow >= 43) await _repairSchema43();
         },
       );
 

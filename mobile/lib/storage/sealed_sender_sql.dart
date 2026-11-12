@@ -154,14 +154,7 @@ extension SealedSenderSql on EncryptedLocalDatabase {
             "SELECT name FROM pragma_table_info('local_frank_reveals')")
         .get();
     final names = columns.map((row) => row.read<String>('name')).toSet();
-    // A signature over the payload must never be kept (owner decision on
-    // deniability): drop the columns of the earlier draft of this step.
-    for (final dropped in const ['signature', 'signing_key']) {
-      if (names.contains(dropped)) {
-        await customStatement(
-            'ALTER TABLE local_frank_reveals DROP COLUMN $dropped');
-      }
-    }
+    await _dropDraftSignatureColumns();
     if (!names.contains('designation')) {
       await customStatement(
           'ALTER TABLE local_frank_reveals ADD COLUMN designation BLOB '
@@ -183,6 +176,38 @@ extension SealedSenderSql on EncryptedLocalDatabase {
           'ALTER TABLE local_device_list_keys ADD COLUMN frank_key BLOB '
           'CHECK(frank_key IS NULL OR length(frank_key) = 32)');
     }
+  }
+
+  /// A signature over the payload must never be kept (owner decision on
+  /// deniability): drops the columns an earlier draft of schema 43 added to
+  /// `local_frank_reveals`. Idempotent; returns whether it dropped any.
+  Future<bool> _dropDraftSignatureColumns() async {
+    final names = (await customSelect(
+                "SELECT name FROM pragma_table_info('local_frank_reveals')")
+            .get())
+        .map((row) => row.read<String>('name'))
+        .toSet();
+    var dropped = false;
+    for (final column in const ['signature', 'signing_key']) {
+      if (names.contains(column)) {
+        await customStatement(
+            'ALTER TABLE local_frank_reveals DROP COLUMN $column');
+        dropped = true;
+      }
+    }
+    return dropped;
+  }
+
+  /// Review L2: brings a database that is already at schema 43 to the
+  /// final shape of that step. A draft of it ran on development devices
+  /// and wrote version 43, so the `from < 43` step never runs there again.
+  /// Runs on every open at 43 or later; a no-op once the shape is right.
+  /// After a drop the log is checkpointed and truncated, so the dropped
+  /// values do not stay in old log frames (`secure_delete` clears the
+  /// freed pages of the file itself).
+  Future<void> _repairSchema43() async {
+    final dropped = await transaction(_dropDraftSignatureColumns);
+    if (dropped) await checkpointWalTruncate();
   }
 
   Future<void> _clearSealedTokens() async {
