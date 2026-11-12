@@ -401,6 +401,11 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
           l10n.c6VerdictSenderUnverifiedDetail,
           StatusTone.warning
         ),
+      ReportVerdict.verifiedServerTrusted => (
+          l10n.c6VerdictServerTrusted,
+          l10n.c6VerdictServerTrustedDetail,
+          StatusTone.warning
+        ),
       ReportVerdict.notDesignated => (
           l10n.c6VerdictNotDesignated,
           l10n.c6VerdictNotDesignatedDetail,

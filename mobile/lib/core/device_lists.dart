@@ -11,6 +11,7 @@ import '../crypto/native_crypto_bindings.dart'
         NativeCryptoError,
         NativeCryptoException;
 import '../storage/local_store.dart';
+import 'report_models.dart' show SenderFrankKey;
 
 // L1-3: the client side of the approved-device list (D94,
 // docs/designs/L1-approved-device-list.md, "Pins, rollback and forks").
@@ -522,19 +523,33 @@ class DeviceListPins {
 
   /// L2-3: the franking key [accountId]'s signed list gives [deviceId],
   /// listed now or removed since (a report about a sealed message may be
-  /// older than a removal). Null when the list names none for it, or is
-  /// unavailable or in conflict: a report is never attributed on a list this
-  /// app cannot trust. The list is fetched only when the pin does not
-  /// already name a key for the device.
-  Future<Uint8List?> frankKeyOf(String accountId, String deviceId) async {
+  /// older than a removal), and when this device first pinned that list.
+  /// Null when the list names none for it, or is unavailable or in
+  /// conflict: a report is never attributed on a list this app cannot
+  /// trust. The list is fetched only when the pin does not already name a
+  /// key for the device.
+  ///
+  /// Review M2: the first sight of an account's chain is trust on first
+  /// use, so a list this call pinned for the first time gets the time of
+  /// this call (a server could have made up the whole chain for it).
+  Future<SenderFrankKey?> frankKeyOf(String accountId, String deviceId) async {
     final device = utf8.encode(deviceId);
+    final before = await store.loadDeviceListPin(accountId);
     final status =
         await _refreshFor(accountId, (pin) => pin.frankKeyOf(device) != null);
     final pin = status.pin;
     if (status.state != DeviceListState.ok || pin == null || pin.conflict) {
       return null;
     }
-    return pin.frankKeyOf(device);
+    final key = pin.frankKeyOf(device);
+    if (key == null) return null;
+    final stored =
+        before == null ? null : await store.loadDeviceListPin(accountId);
+    final pinnedMs = stored?.pinnedAt ?? stored?.checkedAt;
+    return SenderFrankKey(key,
+        pinnedAt: pinnedMs == null
+            ? _clock()
+            : DateTime.fromMillisecondsSinceEpoch(pinnedMs, isUtc: true));
   }
 
   /// Device inventory comes from the signed list, never a server device roster.

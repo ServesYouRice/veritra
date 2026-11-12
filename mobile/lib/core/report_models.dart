@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 /// C6 report wire models (`docs/designs/C6-reports-franking.md`). The server
 /// carries sealed ciphertext only; nothing here holds a message, and no
@@ -187,4 +188,16 @@ class ReportEnvelopeRecord {
   /// Null for a message sent without franking.
   final List<int>? frankCommit;
   final DateTime createdAt;
+}
+
+/// L2-3 (review M2): a sender device's franking key from its account's
+/// signed list, and when this device first pinned that list.
+class SenderFrankKey {
+  SenderFrankKey(List<int> key, {required this.pinnedAt})
+      : key = Uint8List.fromList(key);
+
+  final Uint8List key;
+
+  /// When this device first pinned the sender's list (its own clock).
+  final DateTime pinnedAt;
 }

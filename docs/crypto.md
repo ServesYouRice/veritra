@@ -801,8 +801,33 @@ is refused is skipped, never fatal.
   and its own `kid` is in `d` (else **notDesignated**, with no list fetch);
   the claimed device's franking key from the claimed account's verified
   list (none: **senderUnverified**); then `pm_crypto_l2_frank_dv_verify`
-  (2: **notDesignated**, 0: **proofFailed**, 1: **verified**). Framing as
-  another account or device fails: the tag covers both and `Z` needs `f_S`.
+  (2: **notDesignated**, 0: **proofFailed**, 1: **verified** or
+  **verifiedServerTrusted**, below). Framing as another account or device
+  fails: the tag covers both and `Z` needs `f_S`.
+- **First sight of the sender's list (review M2, owner 2026-11-12).** The
+  server cannot forge a step of a list this device has pinned, but the
+  first sight of a list is trust on first use: then the server could have
+  made up the whole chain, with a franking key its accomplice holds. So a
+  passing proof reads **verified** only when this device first pinned the
+  sender account's list before the report arrived, taken as the earlier of
+  the report copy's server `created_at` and the start of this check
+  (`local_device_list_heads.pinned_at`, kept as the pin advances). A list
+  first pinned during the check, or after the server's time for the
+  report, reads **verifiedServerTrusted**: shown as a warning, "Matches, if
+  the server is honest", naming the sender with that caveat.
+  Residuals: the server sets `created_at`, so against a hostile server
+  the rule means "pinned before this check started" (a later time cannot
+  move the bound past the check's start; an earlier one only makes the
+  verdict weaker). A chain the server made up and showed this device at
+  an earlier first sight, before any report, still reads verified; that
+  is the trust-on-first-use limit L1 accepts for every list. `pinned_at`
+  is this device's clock and `created_at` the server's, so skew between
+  them moves only the boundary case. Pins from before the column take
+  their last check time, which is never earlier than their first pin, so
+  they err toward the weaker verdict. Tests: `l2_sealed_app_native_test.dart`
+  ("a sealed message is proven only to the owners it designates"),
+  `l1_device_list_pins_test.dart` ("a franking key lookup tells when the
+  list was first pinned"), `l2_schema43_test.dart`.
 - **Owner keys change: old proofs lapse.** No old report key is kept. A
   message designated to a key the owner no longer holds reads
   notDesignated for that owner; other owners still verify.
@@ -816,9 +841,13 @@ gap-CDH in X25519.
    `sk_V` that outputs a valid tag on a new `(conv, account, device, c)`
    either queried the oracle on `Z` (breaking gap-CDH, with the DH oracle
    answering consistency checks for other queries) or forged HMAC under an
-   unknown key. `F_S` comes from S's own signed list (the server cannot
-   forge it, L1), the key is fixed and unique per chain, and the tag binds
-   account and device, so M's own key cannot stand in for S's.
+   unknown key. `F_S` comes from S's own signed list: the server cannot
+   forge a step of a list this device had pinned (L1), but a list first
+   seen during or after the report is trust on first use and may be one
+   the server made up, which is why that case reads only
+   verifiedServerTrusted (review M2). The key is fixed and unique per
+   chain, and the tag binds account and device, so M's own key cannot
+   stand in for S's.
 2. *Non-transferability (P3).* `V` computes the same `K` from `sk_V` and
    `F_S`, so for every tuple the distribution of tags `V` can make equals
    the distribution S makes. A third party given `(P, kf, d)` and even `V`'s
@@ -1093,8 +1122,14 @@ sealed post client and its retry rules), `NativeCryptoService`
   The verifier (`reports_service.dart`, `_verifySealed`) runs the order in
   "Franking a sealed message"; the claimed device's franking key comes from
   the claimed account's verified list, approved or removed
-  (`DeviceListsService.frankKeyOf`). Verdicts `notDesignated` and
-  `proofFailed` are new; neither is ever shown as verified.
+  (`DeviceListsService.frankKeyOf`, which also returns when this device
+  first pinned that list). Verdicts `notDesignated`, `proofFailed` and
+  `verifiedServerTrusted` are new; the first two are never shown as
+  verified, and the third is shown as verified only with the warning that
+  it relies on the server (review M2). Schema 43 also adds
+  `local_device_list_heads.pinned_at` (the first pin's time, kept as the
+  pin advances); a draft 43 without it gains it on open, filled from
+  `checked_at`.
 - **Log residue.** A sync page that opened a sealed message ends with
   `PRAGMA wal_checkpoint(TRUNCATE)` (`checkpointSealedResidue`), best
   effort. Review L1: the need is written durably (setting

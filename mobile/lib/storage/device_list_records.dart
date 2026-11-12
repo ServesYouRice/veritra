@@ -65,6 +65,7 @@ class DeviceListPin {
     required this.checkedAt,
     required this.keys,
     List<int>? recoveryKey,
+    this.pinnedAt,
   })  : listHash = Uint8List.fromList(listHash),
         listId = Uint8List.fromList(listId),
         headStatement = Uint8List.fromList(headStatement),
@@ -80,7 +81,8 @@ class DeviceListPin {
           if (key.listed) key
       ];
 
-  DeviceListPin copyWith({bool? conflict, int? checkedAt}) => DeviceListPin(
+  DeviceListPin copyWith({bool? conflict, int? checkedAt, int? pinnedAt}) =>
+      DeviceListPin(
         accountId: accountId,
         version: version,
         listHash: listHash,
@@ -90,6 +92,7 @@ class DeviceListPin {
         checkedAt: checkedAt ?? this.checkedAt,
         keys: keys,
         recoveryKey: recoveryKey,
+        pinnedAt: pinnedAt ?? this.pinnedAt,
       );
 
   final String accountId;
@@ -101,6 +104,15 @@ class DeviceListPin {
   /// A sticky fork: a validly signed statement disagreed with the pin.
   final bool conflict;
   final int checkedAt;
+
+  /// Review M2: when this device first pinned the account's chain (its
+  /// clock, milliseconds since the epoch), kept as the pin advances. The
+  /// first sight is trust on first use: the server could have shown any
+  /// chain then. Null on a pin not yet stored: the store sets it to
+  /// [checkedAt] when it writes the first pin for the account. Pins from
+  /// before this field carry their last check, a later time, so they err
+  /// toward the weaker report verdict.
+  final int? pinnedAt;
   final List<DeviceListKeyRow> keys;
 
   /// What the pin says about `(deviceId, signingKey)`.

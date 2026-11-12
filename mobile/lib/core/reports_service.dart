@@ -193,6 +193,14 @@ enum ReportVerdict {
   /// The message was sent without franking: it cannot be proven.
   unfranked,
 
+  /// L2-3 (review M2): the proof for this owner verifies, as for
+  /// [verified], but the sender's franking key comes from a device list
+  /// this device first pinned only after the report arrived (or during this
+  /// check). The first sight of a list is trust on first use, so a server
+  /// that saw the report could have made up the whole chain and the proof
+  /// with it. Shown as weaker: it relies on the server.
+  verifiedServerTrusted,
+
   /// L2-3: a sealed message whose commitment matches and that names this
   /// owner's key, but whose sender's franking key could not be read from the
   /// claimed account's signed device list (unavailable, in conflict, or
@@ -231,8 +239,10 @@ class ReportsService {
     this.onSeedChanged,
     this.senderFrankKey,
     Random? random,
+    DateTime Function()? clock,
   })  : pins = ReportKeyPins(store, api.baseUrl),
-        _random = random ?? Random.secure();
+        _random = random ?? Random.secure(),
+        _clock = clock ?? (() => DateTime.now().toUtc());
 
   final ApiClient api;
   final String token;
@@ -240,11 +250,14 @@ class ReportsService {
   final ReportCryptoService crypto;
 
   /// L2-3: the franking key [accountId]'s signed L1 device list gives
-  /// [deviceId] (listed now or removed since), or null. Null callback: a
-  /// sealed report cannot be attributed here, and checks
-  /// [ReportVerdict.senderUnverified].
-  final Future<Uint8List?> Function(String accountId, String deviceId)?
+  /// [deviceId] (listed now or removed since), and when this device first
+  /// pinned that list, or null. Null callback: a sealed report cannot be
+  /// attributed here, and checks [ReportVerdict.senderUnverified].
+  final Future<SenderFrankKey?> Function(String accountId, String deviceId)?
       senderFrankKey;
+
+  /// This device's clock (tests).
+  final DateTime Function() _clock;
   final LocalStore store;
   final ReportSeedStore seeds;
   final ReportKeyPins pins;
@@ -276,6 +289,7 @@ class ReportsService {
         onSeedChanged: onSeedChanged,
         senderFrankKey: senderFrankKey,
         random: _random,
+        clock: _clock,
       );
 
   /// Who a report about [conversationId] is sealed to.
@@ -666,9 +680,17 @@ class ReportsService {
   /// designation names this owner's current report key (else nothing more
   /// is asked of anyone: [ReportVerdict.notDesignated]); the claimed
   /// device's franking key comes from the claimed account's signed device
-  /// list (which the server cannot forge); and the tag for this owner
-  /// verifies with this owner's report seed. The tag convinces only this
-  /// owner: anyone holding the seed could have made it.
+  /// list; and the tag for this owner verifies with this owner's report
+  /// seed. The tag convinces only this owner: anyone holding the seed could
+  /// have made it.
+  ///
+  /// Review M2: the server cannot forge a step of a list this device has
+  /// pinned, but the first sight of a list is trust on first use: the
+  /// server could have made up the whole chain then. So the result is
+  /// [ReportVerdict.verified] only when this device first pinned the
+  /// sender's list before the report arrived (the earlier of the copy's
+  /// server time and the start of this check), and
+  /// [ReportVerdict.verifiedServerTrusted] otherwise.
   Future<ReportVerification> _verifySealed(
       OpenedReport report, ReportEnvelopeRecord record) async {
     final body = report.body!;
@@ -703,16 +725,18 @@ class ReportsService {
     if (!frankCommitEquals(computed, commit)) {
       return const ReportVerification(ReportVerdict.mismatch);
     }
+    final startedAt = _clock();
     final seed = await seeds.load(api.baseUrl, accountId);
     if (seed == null) {
       return const ReportVerification(ReportVerdict.notDesignated);
     }
+    final ReportVerdict passed;
     try {
       final own = await crypto.reportPublicKey(seed);
       if (!designationNames(designation, frankDesignationKid(own))) {
         return const ReportVerification(ReportVerdict.notDesignated);
       }
-      Uint8List? senderKey;
+      SenderFrankKey? senderKey;
       try {
         senderKey = await senderFrankKey?.call(account, body.senderDeviceId);
       } on Object {
@@ -726,7 +750,7 @@ class ReportsService {
           ? await (checker as SealedReportCryptoService)
               .frankDesignationVerdict(
               seed: seed,
-              senderFrankKey: senderKey,
+              senderFrankKey: senderKey.key,
               conversationId: body.conversationId,
               accountId: account,
               deviceId: body.senderDeviceId,
@@ -740,10 +764,18 @@ class ReportsService {
       if (verdict != 1) {
         return const ReportVerification(ReportVerdict.proofFailed);
       }
+      // Review M2: the report arrived at the earlier of the server's time
+      // for this copy and the start of this check (a time the server named
+      // later than now cannot move it).
+      final created = report.row.createdAt.toUtc();
+      final arrived = created.isBefore(startedAt) ? created : startedAt;
+      passed = senderKey.pinnedAt.toUtc().isBefore(arrived)
+          ? ReportVerdict.verified
+          : ReportVerdict.verifiedServerTrusted;
     } finally {
       seed.fillRange(0, seed.length, 0);
     }
-    return ReportVerification(ReportVerdict.verified,
+    return ReportVerification(passed,
         record: ReportEnvelopeRecord(
           envelopeId: record.envelopeId,
           conversationId: record.conversationId,

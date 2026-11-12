@@ -1911,7 +1911,11 @@ class MemoryLocalStore implements LocalStore {
         (current.conflict || pin.version < current.version)) {
       return false;
     }
-    _deviceListPins[pin.accountId] = pin;
+    // Review M2: the first pin's time stays as the pin advances.
+    _deviceListPins[pin.accountId] = pin.copyWith(
+        pinnedAt: current == null
+            ? (pin.pinnedAt ?? pin.checkedAt)
+            : (current.pinnedAt ?? current.checkedAt));
     return true;
   }
 

@@ -27,7 +27,10 @@ part of 'encrypted_database.dart';
 //   checked. An earlier draft of this step stored a signature and a signing
 //   key: both columns are dropped where they exist.
 // - local_device_list_keys gains each pair's franking key (L1 format 2), so
-//   an owner checks a report against the key the sender's list names.
+//   an owner checks a report against the key the sender's list names, and
+//   local_device_list_heads gains `pinned_at`, when this device first pinned
+//   the chain (review M2: a list first pinned after the report arrived
+//   gives only the weaker verdict).
 
 /// The server's sealed sender key as this app pinned it for [origin], and a
 /// different key the server served since ([seenKeyId], [seenPublicKey]),
@@ -176,6 +179,26 @@ extension SealedSenderSql on EncryptedLocalDatabase {
           'ALTER TABLE local_device_list_keys ADD COLUMN frank_key BLOB '
           'CHECK(frank_key IS NULL OR length(frank_key) = 32)');
     }
+    await _addDeviceListPinnedAt();
+  }
+
+  /// Review M2: when this device first pinned each account's chain, so a
+  /// report verdict can tell a list pinned before the report arrived from
+  /// one the server could have shown first afterwards. Idempotent. Pins
+  /// from before take their last check, which is no earlier than their
+  /// first pin, so they err toward the weaker verdict.
+  Future<bool> _addDeviceListPinnedAt() async {
+    final heads = await customSelect(
+            "SELECT name FROM pragma_table_info('local_device_list_heads')")
+        .get();
+    if (heads.map((row) => row.read<String>('name')).contains('pinned_at')) {
+      return false;
+    }
+    await customStatement(
+        'ALTER TABLE local_device_list_heads ADD COLUMN pinned_at INTEGER');
+    await customStatement('UPDATE local_device_list_heads '
+        'SET pinned_at = checked_at WHERE pinned_at IS NULL');
+    return true;
   }
 
   /// A signature over the payload must never be kept (owner decision on
@@ -206,7 +229,10 @@ extension SealedSenderSql on EncryptedLocalDatabase {
   /// values do not stay in old log frames (`secure_delete` clears the
   /// freed pages of the file itself).
   Future<void> _repairSchema43() async {
-    final dropped = await transaction(_dropDraftSignatureColumns);
+    final dropped = await transaction(() async {
+      await _addDeviceListPinnedAt();
+      return _dropDraftSignatureColumns();
+    });
     if (dropped) await checkpointWalTruncate();
   }
 

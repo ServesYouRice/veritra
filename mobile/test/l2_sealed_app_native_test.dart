@@ -666,7 +666,7 @@ void main() {
     // An owner whose current report seed is [seed]; [frankKey] answers what
     // the claimed account's verified device list says.
     Future<ReportVerification> verifyAs(ReportBody reported, List<int>? seed,
-        {Future<Uint8List?> Function(String, String)? frankKey}) async {
+        {Future<SenderFrankKey?> Function(String, String)? frankKey}) async {
       final seeds = MemoryReportSeedStore();
       if (seed != null) {
         await seeds.save(
@@ -684,16 +684,19 @@ void main() {
       return owner.verify(OpenedReport(_row(), body: reported));
     }
 
+    // The owner pinned Bob's list well before the report arrived (the
+    // report row is from 2026-11-12).
+    final pinnedEarlier = DateTime.utc(2026, 1, 1);
     var lookups = 0;
-    Future<Uint8List?> bobsList(String account, String device) async {
+    Future<SenderFrankKey?> bobsList(String account, String device) async {
       lookups++;
       return account == 'acct_bob' && device == 'dev_bob'
-          ? Uint8List.fromList(bobFrankKey)
+          ? SenderFrankKey(bobFrankKey, pinnedAt: pinnedEarlier)
           : null;
     }
 
-    Future<Uint8List?> anyAccount(String account, String device) async =>
-        Uint8List.fromList(bobFrankKey);
+    Future<SenderFrankKey?> anyAccount(String account, String device) async =>
+        SenderFrankKey(bobFrankKey, pinnedAt: pinnedEarlier);
 
     // Both pinned owners verify it, each with its own seed.
     for (final seed in _ownerSeeds) {
@@ -702,6 +705,31 @@ void main() {
       expect(verified.record!.senderAccountId, 'acct_bob');
       expect(verified.record!.senderDeviceId, 'dev_bob');
     }
+
+    // Review M2: a list first pinned after the report arrived, or during
+    // this very check, could be one the server made up after seeing the
+    // report: the proof checks, but only as the weaker verdict.
+    for (final pinnedAt in <DateTime>[
+      _row().createdAt,
+      _row().createdAt.add(const Duration(hours: 1)),
+      DateTime.now().toUtc(),
+    ]) {
+      final weaker = await verifyAs(body, _ownerSeeds[0],
+          frankKey: (account, device) async =>
+              SenderFrankKey(bobFrankKey, pinnedAt: pinnedAt));
+      expect(weaker.verdict, ReportVerdict.verifiedServerTrusted,
+          reason: '$pinnedAt');
+      expect(weaker.record!.senderAccountId, 'acct_bob');
+    }
+    // A pin from before the report still verifies, and a wrong proof is
+    // still wrong whenever the list was pinned.
+    expect(
+        (await verifyAs(body, _ownerSeeds[0],
+                frankKey: (account, device) async => SenderFrankKey(bobFrankKey,
+                    pinnedAt:
+                        _row().createdAt.subtract(const Duration(seconds: 1)))))
+            .verdict,
+        ReportVerdict.verified);
 
     // Owner 2 rotates its report key: the old proof lapses, and no device
     // list is fetched for an owner the message does not name.
@@ -747,7 +775,14 @@ void main() {
     final aliceFrankKey = await alice.service.currentFrankKey();
     expect(
         (await verifyAs(body, _ownerSeeds[0],
-                frankKey: (a, d) async => aliceFrankKey))
+                frankKey: (a, d) async =>
+                    SenderFrankKey(aliceFrankKey, pinnedAt: pinnedEarlier)))
+            .verdict,
+        ReportVerdict.proofFailed);
+    expect(
+        (await verifyAs(body, _ownerSeeds[0],
+                frankKey: (a, d) async =>
+                    SenderFrankKey(aliceFrankKey, pinnedAt: DateTime.now())))
             .verdict,
         ReportVerdict.proofFailed);
 

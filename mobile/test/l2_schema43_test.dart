@@ -242,6 +242,68 @@ void main() {
     expect(await revealColumns(db), contains('designation'));
   });
 
+  // Review M2: when this device first pinned an account's list is kept as
+  // the pin advances, so a report verdict can tell whether the list was
+  // pinned before the report arrived.
+  DeviceListPin pinAt(int version, int checkedAt) => DeviceListPin(
+        accountId: 'acct_b',
+        version: version,
+        listHash: List<int>.filled(32, version),
+        listId: List<int>.filled(32, 1),
+        headStatement: <int>[version],
+        conflict: false,
+        checkedAt: checkedAt,
+        keys: <DeviceListKeyRow>[
+          DeviceListKeyRow(
+              deviceId: utf8.encode('dev_b'),
+              signingKey: List<int>.filled(32, 2),
+              addedVersion: 1,
+              removedVersion: 0,
+              frankKey: List<int>.filled(32, 3)),
+        ],
+      );
+
+  test('the first pin time stays as a device list pin advances', () async {
+    final db = EncryptedLocalDatabase(NativeDatabase.memory());
+    addTearDown(db.close);
+    expect(
+        await columnsOf(db, 'local_device_list_heads'), contains('pinned_at'));
+    expect(await db.writeDeviceListPin(pinAt(1, 1000), expectedVersion: null),
+        isTrue);
+    expect((await db.readDeviceListPin('acct_b'))!.pinnedAt, 1000);
+    expect(await db.writeDeviceListPin(pinAt(2, 5000), expectedVersion: 1),
+        isTrue);
+    await db.touchDeviceListPin('acct_b', 9000);
+    final pin = (await db.readDeviceListPin('acct_b'))!;
+    expect(pin.version, 2);
+    expect(pin.checkedAt, 9000);
+    expect(pin.pinnedAt, 1000);
+    // A pin object that claims another first time cannot move it either.
+    expect(
+        await db.writeDeviceListPin(pinAt(3, 9500).copyWith(pinnedAt: 1),
+            expectedVersion: 2),
+        isTrue);
+    expect((await db.readDeviceListPin('acct_b'))!.pinnedAt, 1000);
+  });
+
+  test('a draft 43 database gets the first pin time from the last check',
+      () async {
+    final file = File('${directory.path}/draft43pins.db');
+    var db = EncryptedLocalDatabase(NativeDatabase(file));
+    await db.writeDeviceListPin(pinAt(1, 4242), expectedVersion: null);
+    await db.customStatement(
+        'ALTER TABLE local_device_list_heads DROP COLUMN pinned_at');
+    expect(await columnsOf(db, 'local_device_list_heads'),
+        isNot(contains('pinned_at')));
+    await db.close();
+    db = EncryptedLocalDatabase(NativeDatabase(file));
+    addTearDown(db.close);
+    expect(
+        await columnsOf(db, 'local_device_list_heads'), contains('pinned_at'));
+    // The last check is no earlier than the first pin: the weaker side.
+    expect((await db.readDeviceListPin('acct_b'))!.pinnedAt, 4242);
+  });
+
   test('a designation is whole entries, 1 to 16, or none', () async {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);

@@ -681,6 +681,42 @@ void main() {
     });
   }, skip: skip);
 
+  // Review M2: a report verdict needs to know whether the sender's list was
+  // pinned before the report arrived. A list first pinned by the lookup
+  // itself gets the lookup's time; a pin made earlier keeps its first time
+  // as it advances.
+  test('a franking key lookup tells when the list was first pinned', () async {
+    final v2 = jsonDecode(File('../testing/vectors/l1-device-list-v2.json')
+        .readAsStringSync()) as Map<String, dynamic>;
+    final valid = ((v2['outputs'] as Map)['chains'] as List)
+        .cast<Map<String, dynamic>>()
+        .first;
+    final chain = [for (final item in (valid['statements'] as List)) hex(item)];
+    final accountId = (v2['inputs'] as Map)['account_id'] as String;
+    final fa = (valid['pairs'] as List)
+        .cast<Map<String, dynamic>>()
+        .singleWhere((pair) => pair['device_id'] == 'dev_fa');
+
+    server.chain = chain.sublist(0, 3);
+    final firstSight = now;
+    final first = await pins.frankKeyOf(accountId, 'dev_fa');
+    expect(first!.key, hex(fa['frank_key']));
+    expect(first.pinnedAt, firstSight);
+    expect((await store.loadDeviceListPin(accountId))!.pinnedAt,
+        firstSight.millisecondsSinceEpoch);
+
+    // The list moves on; the first pin time stays.
+    later();
+    server.chain = chain;
+    await pins.refresh(accountId, force: true);
+    expect((await store.loadDeviceListPin(accountId))!.version, chain.length);
+    later();
+    final again = await pins.frankKeyOf(accountId, 'dev_fa');
+    expect(again!.key, hex(fa['frank_key']));
+    expect(again.pinnedAt, firstSight);
+    expect(again.pinnedAt.isBefore(now), isTrue);
+  }, skip: skip);
+
   // L2-3: a franking key belongs to one device for the whole chain. Each
   // step of this vector chain passes the native step check alone; the last
   // gives a removed device's key to another. The pin refuses it whether it
