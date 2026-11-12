@@ -668,6 +668,26 @@ before anything can list it (`currentFrankKey`), so a reload never makes a
 second one. The test `the_franking_key_is_the_one_the_list_names` (Rust)
 and the native Dart tests show the listed key equals `F_S`.
 
+**Only while the switch is on (condition A, review 2026-11-12).** A key
+makes a list version L1 format 2, which main's server and apps refuse. So
+the app lists its own key in a version it signs alone (setup genesis 1,
+migration genesis 6, recovery version 4, from the held seed or the typed
+key) only while the server's setup status reports `sealed_sender` on; with
+it off, or when the status cannot be read, the version carries no key and
+is format 1, byte for byte the earlier format (`_ownFrankKeys`,
+`app_state_device_list.dart`). The key is added later by change 7 on the
+first sealed token pass, which runs only with the switch on. Tests:
+`mobile/test/l1_app_state_lists_test.dart` (each of the four sites, off and
+on, the genesis re-signed from its parsed body to the same bytes).
+
+**Downgrade (not gated).** The `VFK1` record section is written into every
+device record this build seals (`crypto/rust/src/mls/records.rs`, `device_plaintext`), switch
+or not: the franking secret must be sealed before any list could name it.
+A crypto core of ABI 25 or earlier refuses such a record (trailing bytes),
+so an app downgraded to such a core cannot open the device record and
+loses its MLS state: it must be linked again or recovered. Never ship an
+older core over a store this build wrote.
+
 ```text
 pk_V  = an owner's C6 report public key (X25519, from its report seed)
 Z     = X25519(f_S, pk_V) = X25519(sk_V, F_S); refused when all zero

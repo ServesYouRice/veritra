@@ -9926,6 +9926,14 @@ class AppState extends ChangeNotifier
   Future<SealedFrankContext?> debugSealedFrankContext() =>
       _sealedFrankContext(session?.baseUrl ?? '');
 
+  /// Signs and posts the K0-R recovery version from the held seed, as the
+  /// end of an account recovery does (tests only).
+  @visibleForTesting
+  Future<void> debugPostRecoveryDeviceList() async {
+    final current = session;
+    if (current != null) await _postRecoveryDeviceList(current);
+  }
+
   /// L2-3: how many proof recipients (owner report keys pinned for proofs,
   /// `OwnerProofPins`) this app has for this server, for Settings: a
   /// message sent sealed can be proven only to those owners (none: to no
