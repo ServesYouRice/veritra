@@ -610,11 +610,15 @@ func (s *Store) DeleteReport(ctx context.Context, accountID, reportID string) (R
 // that a report's recipient needs to verify the report: the sender, the
 // conversation, the time and the franking commitment (C6, G1).
 type ReportEnvelopeRecord struct {
-	EnvelopeID      string    `json:"envelope_id"`
-	ConversationID  string    `json:"conversation_id"`
-	SenderAccountID string    `json:"sender_account_id"`
-	SenderDeviceID  string    `json:"sender_device_id"`
+	EnvelopeID     string `json:"envelope_id"`
+	ConversationID string `json:"conversation_id"`
+	// The sender fields are empty for a sealed envelope (L2-3), whose
+	// sender the server never learned: the verifier attributes it with the
+	// franking signature in the report instead.
+	SenderAccountID string    `json:"sender_account_id,omitempty"`
+	SenderDeviceID  string    `json:"sender_device_id,omitempty"`
 	FrankCommit     []byte    `json:"frank_commit,omitempty"`
+	Sealed          bool      `json:"sealed,omitempty"`
 	CreatedAt       time.Time `json:"created_at"`
 }
 
@@ -647,6 +651,14 @@ func (s *Store) ReportEnvelopeRecord(ctx context.Context, accountID, reportRowID
 		SELECT id, conversation_id, sender_account_id, sender_device_id, frank_commit, created_at
 		FROM message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, envelopeID, report.ConversationID, nowString()).
 		Scan(&record.EnvelopeID, &record.ConversationID, &record.SenderAccountID, &record.SenderDeviceID, &record.FrankCommit, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		// L2-3: a sealed envelope, with no sender.
+		record = ReportEnvelopeRecord{Sealed: true}
+		err = s.db.QueryRowContext(ctx, `
+			SELECT id, conversation_id, frank_commit, created_at
+			FROM sealed_message_envelopes WHERE id = ? AND conversation_id = ? AND (expires_at IS NULL OR expires_at > ?)`, envelopeID, report.ConversationID, nowString()).
+			Scan(&record.EnvelopeID, &record.ConversationID, &record.FrankCommit, &created)
+	}
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ReportEnvelopeRecord{}, ErrNotFound

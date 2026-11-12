@@ -627,6 +627,19 @@ func (a *API) messageSubroute(w http.ResponseWriter, r *http.Request, principal 
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/messages/"), "/")
 	if len(parts) == 1 && parts[0] != "" && r.Method == http.MethodGet {
 		envelope, err := a.Store.MessageForAccount(r.Context(), parts[0], principal.AccountID)
+		if errors.Is(err, storage.ErrNotFound) {
+			// L2-3: a sealed envelope has its own table and no sender. It
+			// is served (and its expiry proven) whether or not the switch
+			// is on now, as long as one was stored.
+			sealed, sealedErr := a.Store.SealedMessageForAccount(r.Context(), parts[0], principal.AccountID)
+			if sealedErr == nil {
+				writeJSON(w, http.StatusOK, sealed)
+				return
+			}
+			if !errors.Is(sealedErr, storage.ErrNotFound) {
+				err = sealedErr
+			}
+		}
 		if err != nil {
 			handleStorageError(w, err)
 			return

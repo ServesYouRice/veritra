@@ -884,6 +884,12 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err != nil {
 		return 0, nil, err
 	}
+	// L2-3: expired sealed envelopes and dead token rows.
+	sealedRemoved, err := pruneSealedTx(ctx, tx, now.UTC())
+	if err != nil {
+		return 0, nil, err
+	}
+	removed += sealedRemoved
 	orphanCutoff := formatTime(now.UTC().Add(-OrphanedAttachmentGrace))
 	orphans, err := tx.QueryContext(ctx, `SELECT storage_key FROM attachment_envelopes WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachment_envelopes.id) ORDER BY created_at, id LIMIT 500`, orphanCutoff)
 	if err != nil {
@@ -1269,18 +1275,24 @@ func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
 // is SQLite's, in the stored fixed-width format, because the query takes no
 // time parameter.
 var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
-	        OR se.event_type LIKE 'call.%')
+	        OR se.event_type = '` + SealedMessageEventType + `' OR se.event_type LIKE 'call.%')
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
 	AND NOT ` + syncEventBlockedFor("?1") + `
 	AND ` + syncEventEnvelopeLive
 
 // syncEventEnvelopeLive is true unless se is a message event hidden for its
-// envelope: expired, gone, or (for all but the deleted marker) deleted.
-var syncEventEnvelopeLive = `(se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
+// envelope: expired, gone, or (for all but the deleted marker) deleted. A
+// sealed post (L2-3) is looked up in its own table.
+var syncEventEnvelopeLive = `((se.event_type NOT LIKE 'message.envelope.%' AND se.event_type <> '` + SealedMessageEventType + `') OR EXISTS (
 	  SELECT 1 FROM message_envelopes live
-	  WHERE live.id = json_extract(se.payload_json, '$.message_id')
+	  WHERE se.event_type LIKE 'message.envelope.%'
+	    AND live.id = json_extract(se.payload_json, '$.message_id')
 	    AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)
-	    AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')))`
+	    AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')) OR EXISTS (
+	  SELECT 1 FROM sealed_message_envelopes sealed
+	  WHERE se.event_type = '` + SealedMessageEventType + `'
+	    AND sealed.id = json_extract(se.payload_json, '$.message_id')
+	    AND (sealed.expires_at IS NULL OR sealed.expires_at > ` + sqlNowText + `)))`
 
 // sqlNowText is the current time in formatTime's layout, to the millisecond.
 const sqlNowText = `(strftime('%Y-%m-%dT%H:%M:%S', 'now') || substr(strftime('%f', 'now'), 3) || '000000Z')`

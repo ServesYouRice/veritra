@@ -881,7 +881,7 @@ func mlsJoinFilterEventFor(device string) string {
 		WHERE jd.conversation_id = se.conversation_id AND jd.device_id = ` + device + `
 		AND se.id > jd.joined_after_event_id
 		AND (jd.removed_after_event_id IS NULL OR se.id <= jd.removed_after_event_id)
-		AND (se.event_type NOT LIKE 'message.envelope.%'
+		AND ((se.event_type NOT LIKE 'message.envelope.%' AND se.event_type <> '` + SealedMessageEventType + `')
 			OR json_type(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') IS NOT 'integer'
 			OR json_extract(se.payload_json, '$.envelope.crypto_metadata.mls_epoch') >= jd.joined_epoch))
 )`

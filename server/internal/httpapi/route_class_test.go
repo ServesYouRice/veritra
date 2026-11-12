@@ -53,6 +53,10 @@ func TestClassifyRoute(t *testing.T) {
 		"/setup":                                         PublicRoute,
 		"/api/v1/setup/status":                           PublicRoute,
 		"/api/v1/health/":                                OrdinaryRoute,
+		"/api/v1/sealed/key":                             PublicRoute,
+		"/api/v1/sealed/messages":                        PublicRoute,
+		"/api/v1/sealed/conversations/conv_1":            OrdinaryRoute,
+		"/api/v1/sealed/conversations/conv_1/tokens":     OrdinaryRoute,
 	} {
 		// The decoded path, as the limiter and the handlers read it.
 		path := httptest.NewRequest("GET", target, nil).URL.Path

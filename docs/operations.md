@@ -802,6 +802,36 @@ network path or VPS provider may keep its own flow logs.
 at most once per device per day. Account recovery widens its activity window
 by one day to match, so an active device is never counted as idle.
 
+## Sealed sender (L2-3, off by default)
+
+`PRIVATE_MESSENGER_SEALED_SENDER=1` turns on sealed sender (D122;
+`docs/crypto.md`, "Sealed sender with VOPRF tokens"). Off, the four routes
+(`GET /api/v1/sealed/key`, `GET /api/v1/sealed/conversations/{id}`,
+`POST /api/v1/sealed/conversations/{id}/tokens`,
+`POST /api/v1/sealed/messages`) answer 404 and nothing changes. On, members
+of plain DMs and groups get anonymous tokens (RFC 9497 POPRF) and an app that
+supports it posts ordinary messages with a token instead of its session, so
+the server stores those envelopes with no sender (migration 0091).
+`PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY` (1 to 10000, default 200) caps the
+tokens one account gets per conversation and UTC day.
+
+- The POPRF private key is made on first use and kept in the database
+  (`sealed_sender_keys`, migration 0090). It is in every backup. Whoever holds
+  it can post junk into conversations whose ids they know; it reads nothing.
+  Changing it is not supported yet: apps pin the first key they see.
+- The sealed post route takes no session and is on the per-address public
+  budget; the token is its rate limit. A request with an `Authorization`
+  header or a cookie is refused.
+- The server still sees the client address and the time of every sealed
+  post, so a proxy that logs addresses (see L2-2) undoes much of it.
+- Sealed envelopes cannot be edited or deleted through the server, and
+  `GET /conversations/{id}/messages` does not list them: devices get them by
+  sync and `GET /messages/{id}`. They expire and are pruned like other
+  envelopes; spent token nonces and issuance counts are pruned once their day
+  can no longer be used.
+- Turning the switch off again stops new sealed posts; stored ones stay
+  readable until they expire.
+
 ## Verify a server build (L2-4)
 
 `scripts/verify-server-build.sh <tag>` checks out the tag, rebuilds the
