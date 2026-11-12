@@ -1160,6 +1160,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             "SELECT name FROM pragma_table_info('local_messages')")
         .get();
     if (columns.any((row) => row.read<String>('name') == 'c7_gen')) return;
+    // A failure here is an upgrade error, never a rejected key.
+    _upgradeStarted = true;
     await customStatement('ALTER TABLE local_messages ADD COLUMN c7_gen TEXT');
   }
 
@@ -1169,6 +1171,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             "SELECT name FROM pragma_table_info('local_messages')")
         .get();
     if (columns.any((row) => row.read<String>('name') == 'c7_former')) return;
+    // A failure here is an upgrade error, never a rejected key.
+    _upgradeStarted = true;
     await customStatement('ALTER TABLE local_messages ADD COLUMN c7_former '
         'INTEGER CHECK (c7_former IN (1, 2))');
   }

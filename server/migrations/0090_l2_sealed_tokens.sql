@@ -1,4 +1,4 @@
--- L2-3 sealed sender (D123; docs/crypto.md, "Sealed sender with VOPRF
+-- L2-3 sealed sender (D122; docs/crypto.md, "Sealed sender with VOPRF
 -- tokens"): the instance's POPRF key, per-account issuance counts and spent
 -- token nonces. No per-conversation counter: a token binds only its
 -- conversation and UTC day, so the server has no per-account value to bind
