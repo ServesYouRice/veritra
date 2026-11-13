@@ -570,17 +570,45 @@ and private-channel groups) is sent in two parts:
 
 11. **Moves** (C0/C3) are `move` records, proposed in the **new** group;
     a generation lives in one group, so a move of a `full` channel opens a
-    new generation there with the record's random key.
+    new generation there with the record's random key. Revised
+    2026-11-12 with the owner's answers (earlier posts carry into the new
+    channel in both directions; name and topic carry over).
     - The compact form adds `lp(close_group_id)` (the old group) and a
-      128-byte wrap field, always present: for a narrowing move (open to
-      private) of a `full` channel it wraps the old group's current
-      generation as `u64 E_prev | CHK_prev[32] | lp(prev_group_id) |
-      u64 E_prev_close` (at most 114 bytes, zero-padded), and the move message's body is
-      sealed under the new key, so a newcomer walking back opens it;
-      otherwise it is 128 random bytes. A widening move (private to open)
-      starts a new period with no wrap. Same size in every mode.
+      128-byte wrap field, always present. When the old and the new mode
+      are both `full` and the actor holds the old key, it wraps the old
+      group's current generation as `u64 E_prev | CHK_prev[32] |
+      lp(prev_group_id) | u64 E_prev_close` (at most 114 bytes,
+      zero-padded), in both directions; otherwise it is 128 random bytes.
+      The move message's body is sealed under the new key, so a newcomer
+      holding that key opens it. Same size in every mode.
     - `close_epoch` is the old group's epoch when the actor sent the move.
       Freshness of the new key is judged by the new group's floor.
+    - **Chain.** A move continues the channel's chain: `seq` is the
+      highest `seq` the actor saw in the old group plus one (1 when it saw
+      none), `prev` the old head's hash (zero when none). In the new group
+      the channel has no head, so row 1 adopts it, or a stale head from an
+      earlier stay in that group, below it, so row 5 does (live). A
+      newcomer cannot check `prev` across groups and does not need to:
+      row 1 never does.
+    - **Where a newcomer gets the wrap (option A).** A `history_sync` slot
+      carries the head record and an entry, and neither has room for the
+      wrap. So a newcomer reaches the old group only through the move
+      message, in the new channel's history stream: when its paging
+      reaches the move message, the wrap's generation becomes the start
+      of a walk in the old group's stored `history_sync` slots, and the
+      next pages come from the old conversation's streams (server route
+      below), inside `[E_prev, E_prev_close)` and the older windows the
+      walk finds there. In a busy channel the move message is past the
+      first page, so the old posts come with "Load earlier posts".
+    - **Old-group posts** are opened and verified with the old group's
+      ids (aad, signed fields) and epochs; the L2 join rule applies to the
+      new group only. A sender key comes from the new group's tree, else
+      from the server's list of the devices that posted in the old
+      conversation, with the former-member mark (named only when proven,
+      review M2).
+    - **Devices that hold the posts** move their local rows of the
+      channel from the old conversation to the new one when they apply
+      the move.
 
 ## Trace 1: removal, then an add
 
@@ -786,6 +814,17 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   who holds old keys, can insert backdated posts in a former member's
   name into a generation that member could read; they show "from a
   former member".
+- **The server plus any holder of `CHK_g` can forge marked posts as a
+  device not in the tree** (review M2). The former-member key comes from
+  the server, so the server can list a key of its own for any device id
+  outside the tree and, with a generation key from any member (or a
+  removed one), seal and sign a post under it that a newcomer imports as
+  a former member's. Such a post is always marked, and since 2026-11-12
+  ("Hide unproven names") it carries an account's name only when the
+  newcomer holds a signed device list of that account listing that
+  device with that key; otherwise it shows as "Former member" with no
+  name. The words can still be forged; whom they are pinned on cannot,
+  short of a compromised device list.
 - **A device that never sees a record stays out of step.** If the server
   withholds a whole envelope (a switch off, say) from one device, nothing
   triggers `unsure`: no message failed. That device keeps sealing under
@@ -803,6 +842,33 @@ would meet `HS25`'s slot as row 7 (review finding 5).
   sees no difference, and it can already delete bodies.
 - Until L1, a server that adds a hidden device can read new live posts and
   forge history from that device: the same limit as live groups today.
+- **Private to open conversion exposes earlier posts** (owner answer
+  2026-11-12). Every current and later member of the shared group gets
+  the private group's last generation through the move wrap and the walk
+  behind it, including members who were removed from the private channel
+  earlier but are still in the community: whatever the private channel
+  held is readable by everyone who can read the open channel. The app
+  asks first and says so in plain words (`confirmChannelConversion`,
+  `channelConvertOpenConfirm`; widget test
+  `mobile/test/c3_channel_conversion_dialog_test.dart`). The server learns
+  only what it already routes: which conversation the channel moved to.
+- **Open to private conversion** gives the private channel's members the
+  open channel's history. Shared members outside the new private channel
+  keep the old key and the posts they already hold, but cannot derive the
+  new random key, so they read nothing posted after the move.
+- **Posts in a `full` channel are not deniable** (owner answer 2026-11-12,
+  "Stronger warning"). Each post's body carries its sender's signature
+  (decision 8) so that newcomers can check it, and the body is sealed
+  under a long-lived generation key that every later member receives.
+  Anyone who holds the stored body and that key (the server's copy plus
+  the key from one member's device, a newcomer, a leaked backup) can show
+  a third party that the post was signed by its author's device. The app
+  says so: turning full history on, in channel settings or when creating
+  a channel, asks first with that warning
+  (`channel_history_warning.dart`, `channelHistoryProofConfirm`), and the
+  switch carries the line "Posts can be proven to be their author's"
+  (`channelHistoryProofLine`). Widget test:
+  `mobile/test/c7_history_proof_warning_test.dart`.
 
 ## What it does not give
 
@@ -982,6 +1048,577 @@ newcomer's import, backward walk and prefetch have nothing to carry. Also
 left: sending `history_sync` (all slots random until then) and its request
 with the jitter, the per-channel chain state and its storage.
 
+### Build status (2026-11-12): step 4, full mode in the client
+
+Built on `feat/c7-full`, client only, behind the same switch
+(`c7SealedBodies`, which follows the server's `c7_history`; off by
+default). No crypto ABI, local schema or server migration change: every C7
+state is a sealed setting written in the same local transaction as the MLS
+step that causes it (`setting:c7.group.<conversation>` and
+`setting:c7.chan.<conversation>|<channel>`, through `c7Settings` on the
+sync, merge, outgoing and import transitions). Settings never enter a
+history snapshot, so no generation key reaches a K1 backup or a K2 bundle
+(checked in `mobile/test/c7_full_native_test.dart`).
+
+- **State** (`mobile/lib/crypto/c7_channel_book.dart`,
+  `c7_group_state.dart` v2): per channel the chain of decision 4 (head,
+  kept records with their full forms, highest `seq`, status, miss epoch),
+  the current period's generations with their keys and closing epochs, the
+  retired generation epochs, and this device's pending own proposal; per
+  group the membership floor, the kept removal root, a slot snapshot and a
+  `history_sync` duty per membership commit (the newest four), and a
+  newcomer's join epoch and request time. Anything malformed reads as
+  `closed` (a channel) or empty (a group): nothing is sealed under a
+  history key and nothing is handed over.
+- **Records** (create, switch): proposed by an owner or admin, applied by
+  the sender only when its own message comes back in sync order (stale
+  when a membership commit was sequenced first: kept, reported, proposed
+  again by the app; lost when another record took the seq). A live record
+  is checked before the table: the sender's leaf is `approved` (D120), its
+  epoch is at or above the floor, the actor is owner or admin in the
+  verified role record (`VerifiedRoleSource`; a private channel's group is
+  judged by its shared group's), and the signature verifies against the
+  actor's key in the current tree. A record that opens `full` seals its own
+  message under its key, as the design says.
+- **Rekey at merge**: a removal derives every `full` channel's next
+  generation from the exporter root MLS returned, at all three merge
+  sites; a record applied after a later removal catches up from the kept
+  root. Every membership commit fixes the slot snapshot and the duty (the
+  committer at once, others after 20 s plus up to 2 s per member, at most
+  10 min, unless a `history_sync` carrying their own snapshot arrives).
+  Own removal and a Welcome delete the group's C7 state (Trace 4).
+- **Unsure**: an undecryptable message (D54, which includes one beyond
+  the past-epoch window), an unapproved sender, a missing or damaged body,
+  a ratchet-advanced message (`SENDER_REMOVED` included), an invalid
+  payload, a misrouted C7 type, and a message or call signal sync passes
+  over as expired (I33's tombstone, committed by
+  `C7HistoryService.c7CommitExpiredSkip` in the same transaction) mark
+  every `full` channel of the group with the group's current epoch. The `gen` trigger is below. `unsure` clears by a
+  record above the miss epoch or by a `history_sync` slot, for a later
+  membership epoch, with the device's own head and current key.
+- **`history_sync`**: built from the snapshot fixed at merge, naming the
+  channels with state plus the server's list (`C7ChannelListSource`) and a
+  private group's channel, body0 padded to exactly `P(N)`; opened by
+  members (check against the chain, a missing key taken, `unsure`
+  cleared, the duty settled when the slots carry this device's own
+  snapshot) and by newcomers (heads and generations adopted; a head whose
+  actor has left on the word of the MLS-authenticated sender, trust
+  limits). A newcomer that gets none asks once with
+  `history_sync_request` after 60 s; members holding that snapshot send
+  again after their delay.
+- **Sealing**: text, reply, attachment manifest and poll seal under the
+  current generation only while the channel is `full` and `ok` and the key
+  is held; everything else, every targeted action included, seals under a
+  random key.
+- **Vector**: `testing/vectors/c7-sync-v1.json`, one whole `history_sync`
+  as sent, made by an independent Python implementation
+  (`testing/vectors/c7-sync-v1.py`). Dart opens it as sync does and
+  verifies its signature; Go checks the sealed length against the
+  server's size rule; Rust checks the layout, the AEAD of body0 and of
+  every slot, and the signature over its production
+  `post_signed_fields` (deviation 8).
+
+**Deviations and interpretations (for the crypto review):**
+
+1. Freshness (epoch at or above the floor) is checked for proposals only;
+   a slot's head is older than its `for_epoch` by construction and is
+   bounded instead by `head.epoch <= for_epoch`.
+2. `for_epoch` counts only when it is a membership epoch this device
+   merged or joined at (its snapshot, its floor or its join epoch) and is
+   not above the epoch MLS authenticated for the message. Otherwise any
+   member could clear `unsure` or settle a duty with no commit.
+3. The `gen` trigger: a live member does not learn the signed `gen`
+   directly. A post is in step when its body key equals the post key of
+   the generation held at its epoch; otherwise its signature is checked
+   with `gen` 0 and with each retired generation below the period start
+   this device remembers; failing all, the channel turns `unsure`. A
+   sender in an older period whose `gen` this device never held is so
+   taken as out of step: a gap, never a leak.
+4. A generation opened at MLS epoch 0 (a group no one has joined yet)
+   seals nothing under its key: `gen` 0 means a random key.
+5. Targeted actions stayed under random keys until each local row
+   recorded the period it was sealed in. **Settled (2026-11-12, local
+   schema 41)**: see "Targeted actions" in the next build status.
+6. A newcomer adopts a slot only for a channel it already knows: the
+   server's list (`AppState` answers `C7ChannelListSource` with the
+   shared group's open and announcement channels) or its private group's
+   channel. A channel the server leaves out stays `members_from_join` for
+   that newcomer (fails closed); one it adds gets a zero slot.
+7. An own proposal that has not come back after 5 minutes
+   (`c7ProposalTimeout`, owner 2026-11-12: timeout and retry) is reported
+   `timeout` and the device may propose again. It is not forgotten: other
+   devices may still apply it, so it is kept (`late`) and applied here
+   when its echo arrives; a newer own proposal for the same seq is then
+   `lost`, as for anyone else's record. The expiry is lazy (the channel
+   view and the next proposal read it), so no write happens outside a
+   proposal or a sync step. **Review M1 (2026-11-12):** `late` used to keep
+   the last four, so a fifth timeout dropped the oldest, and if that one
+   came back every other device applied it and this one did not (a fork).
+   Now `late` is never trimmed. At each proposal, a late proposal still
+   in the outbox and never tried, or refused there for good, is cancelled
+   (removed from the outbox once the book no longer lists it) and leaves
+   `late`: it cannot reach the server. One that left the outbox stays,
+   and while `late` holds four (`c7LateProposalLimit`) a new proposal is
+   refused until echoes come back. A cancelled proposal's action id is
+   remembered (`C7GroupState.released`, the last 32); if it was already
+   being sent and comes back, the device fails closed: every `full`
+   channel of the group turns `unsure` (random keys, as for a message it
+   could not apply) until a rekey. Native tests: four sent timeouts block
+   a fifth and, flushed together, leave one head everywhere; six offline
+   timeouts leave only the newest in the outbox, and a cancelled one that
+   came back makes the group `unsure`. Residual: in that last case the
+   device's chain differs from the others' until a later record or rekey
+   reaches it; it seals nothing under a history key meanwhile.
+8. A group-level message signs channel `""` (two zero length bytes),
+   as its aad already binds it. Settled 2026-11-12 with the smallest
+   change: Rust's `post_signed_fields` now takes an empty channel id (as
+   its `body_aad` did), and Dart's `c7PostSignedFields` refuses what Rust
+   refuses (an empty community, action, group or sender id, any id over
+   64 bytes). No wire, ABI or vector change: `post_signed_fields` has no
+   C ABI caller, the bytes Dart sent were already the bytes the vector
+   pins, and the Rust vector test now uses the production function.
+9. A `history_sync` reaches only the devices its commit added (owner
+   answer Q3, 2026-11-12), so members no longer clear `unsure` or fill a
+   missing key from one, and the review's finding 4 (members check each
+   other's slots) no longer applies: no device checks another's slots. A
+   newcomer holds no key to check a slot against; it only verifies each
+   head it is handed and keeps asking until one `history_sync` leaves every
+   channel it knows usable (owner answer "Newcomer keeps asking"). See
+   "Targeted `history_sync` delivery" in the next build status.
+10. A replaced device's posts from before its replacement are not
+   imported (decision 8 says they are verified with the server's list and
+   marked). The importer takes a device's key from the current tree
+   whenever the device has a leaf there, and the former-member route lists
+   only devices outside the roster, so a device id that is back in the
+   tree with a new key has no key that verifies its earlier posts. A gap,
+   never a leak; a server-key fallback for devices in the tree was not
+   added, since it would let the server's list speak for a current member.
+   For the crypto review.
+
+**Not built (left for the next slices):** the newcomer's import (backward
+walk through stored `history_sync` slots, the per-channel and group-level
+fetch, window and signature checks, former members, two-pass import),
+the prefetch depth (owner question 1), C3 conversion (`move`, its wrap,
+the server route and migration 0089; built since, see "Build status").
+Targeted-action sealing was built after the
+owner's answers (next section).
+
+### Build status (2026-11-12): step 4 continued, after the owner's answers
+
+Owner answers (2026-11-12): Q1 a fixed first page per channel (1,000 posts
+or 8 MiB), then deeper paging on demand (accepted: it shows the server the
+channel is `full`); Q2 pre-join attachments are never offered; Q3
+`history_sync` goes to the newly added devices only (targeted delivery,
+behind the server's C7 flag); a proposal that does not come back times out
+and may be proposed again. Built on `feat/c7-full`, one commit per step:
+
+- **Deviation 8 settled** (see the list above): Rust and Dart take the
+  same ids; no wire change.
+- **Proposal timeout** (deviation 7 above).
+- **App wiring.** A channel creation sends its `create` record in both
+  modes, apart from the C3 sends; the create dialog offers the setting
+  for open channels (a private channel's new group is at epoch 0, where a
+  generation seals nothing, so it is switched on later from the channel's
+  info). The channel info dialog offers owners and admins the switch with
+  the confirm text above, and shows pending, `timeout`, `lost` and a
+  paused (`keyless` or `unsure`) state. After each foreground sync pass
+  the work pass sends the due `history_sync` duties and newcomer requests,
+  proposes stale own records again with the channel's layout generation,
+  and arms a timer for the next duty (`c7NextDueAt`); nothing is sent from
+  a background wake. The system line of decision 1 is the record message
+  itself: each channel keeps (local only) the keys of the record messages
+  that changed its setting, and the timeline draws those as a centred line
+  instead of hiding them. A `create` in the default mode, or a switch to
+  the mode a channel already has, draws none. A moderator's channel
+  creation sends a `create` that every device refuses (`_c7MayRecord`
+  needs admin, C4's channel-creation right is not yet aligned): the
+  channel stays `members_from_join`, which fails closed.
+- **Targeted actions follow their target (decision 7, local schema 41).**
+  `local_messages.c7_gen` records the generation a row's body was sealed
+  under as `hex(sha256("veritra-c7-chk-v1" | CHK_g))` (the commitment the
+  entries already carry, so it names nothing new), or null for a random
+  key. It names the period and the generation at once, so a channel
+  switched off and on again in the same epoch (two generations with the
+  same `E_g`, different keys) is told apart; an epoch alone would not be.
+  The sender records it on its own post; a live member when the body key
+  it opened is the current generation's (the `gen` check, which already
+  derives it); the import (next step) when it opens a body under a
+  generation. An edit, delete, reaction, pin, poll vote or poll close is
+  sealed under the current generation only while the channel is `full` and
+  `ok` and its target's row names a generation of the current period whose
+  key this device holds; any other target (sealed under a random key,
+  before this period, before schema 41, restored from a history snapshot,
+  or unknown) gets a random key, a gap, never a leak. The column is never
+  in a history snapshot (a restored device holds no generation keys of its
+  own until a `history_sync`, so its rows would only name keys it cannot
+  check). Upgrade step first in the transaction, idempotent, tested from
+  40, 36 and 12; both stores; the native test covers the same-epoch
+  off-and-on case.
+- **Targeted `history_sync` delivery (owner answer Q3), behind the
+  server's C7 flag.** Every group-level message now names its type and
+  epoch in clear metadata: a `history_sync` carries `c7_sync_for_epoch`
+  (the `for_epoch` of its body0), a request carries
+  `c7_sync_request_for_epoch` (its sender's own join epoch). While C7 is
+  on, the server refuses a group-level envelope without exactly one of
+  them, a key on the wrong body size (a sync needs a `history_sync` size,
+  a request a channel size), a key anywhere else (a channel post, a
+  conversation outside the layout, C7 off), a request whose epoch is not
+  the sender device's `joined_epoch`, a `history_sync` for an epoch above
+  the group's recorded epoch (one no commit has produced yet, which would
+  make the committer's real one look delivered), and a `history_sync` in a
+  group with no roster (400 `invalid_history_sync_target`). A `history_sync`
+  for epoch E goes, in sync, live and as a push wake, only to the group's
+  devices whose `joined_epoch` is E (the server wrote it with the commit:
+  the epoch MLS reports after it, and the Welcome's) and to its sender
+  device (the echo); the sender's other devices and every other member get
+  nothing. The live frame to those accounts is the bare `sync.available`
+  every message frame now is (below), so it names nothing. A second `history_sync` for E is refused (409
+  `history_sync_delivered`) until a request for E arrives after the last
+  one. Members, who never see it, ask first:
+  `GET /api/v1/conversations/{id}/history-sync?for_epoch=E` answers
+  `{"delivered": bool}` (member devices in the roster only; 404 while C7
+  is off), and a delivered answer settles the duty with nothing sent
+  (`c7SyncDelivered`); a 409 on the send drops the queued envelope (its
+  duty settled when it was queued). Storage and the history route are
+  unchanged, so a later newcomer's walk still reads every earlier
+  `history_sync`, and an existing member is never served one there (it
+  is after its join). No migration: the check reads the group-level
+  stream through the existing `envelope_bodies_fetch` index. The private
+  group's one-channel sizes and the shared group's sizes are handled
+  alike.
+  **What members lose (deviation 9):** a member no longer clears `unsure`
+  or fills a missing key from another member's `history_sync`, since it
+  never receives one; the only paths left to a member are its own
+  records and rekeys. A removal-only commit's `history_sync` reaches no
+  device but its sender's echo, and is still sent and stored, because a
+  later newcomer's backward walk may need the wrap it carries. **Owner
+  answer (2026-11-12): keep sending and storing them; the egress (one
+  upload of about `P(N) + 124 + 700 × N` bytes per removal commit, and its
+  storage until retention) is accepted.** No server or app change follows
+  from it. Finding 4
+  of the review (members check each other's slots) no longer applies, and
+  no device checks another's slots: a newcomer has no key to check one
+  against, so it verifies each head it is handed and keeps asking (below).
+  Two members whose fallbacks race can both
+  pass the check; the server's dedup then refuses the later one, and
+  both being stored at once (two transactions that read before either
+  wrote) would only send the newcomers a duplicate. A request reopens the
+  epoch for every member at once: the first fallback after it is
+  accepted and the rest are refused.
+  **Fixed 2026-11-12 (outside C7; was "found, not fixed"):** every
+  realtime frame for a message used to carry the whole envelope,
+  `sealed_body` included, to every connected device of every member
+  account, whatever the I51 join filter would serve that device in sync.
+  Now a new, edited or deleted message, a targeted `history_sync`
+  included, sends the bare `{"version":"v1","type":"sync.available",
+  "created_at":…}` to the same accounts: no event id, conversation id or
+  envelope, identical for every kind, so a later sealed-branch event type
+  (`message.sealed.created`) will not show on the socket either. The app
+  already caught up on every frame; the cost is that fetch. Test:
+  `server/internal/httpapi/realtime_message_frames_test.go`;
+  `veritra-load` learns deliveries from sync pages now.
+  A `history_sync` for an epoch above the group's recorded epoch is
+  refused too (400): a junk one tagged with a future epoch would make the
+  committer's real one look delivered when that commit comes.
+  **Newcomer keeps asking (owner answer 2026-11-12; review H2, M3, L1,
+  L3).** The first junk `history_sync` for E used to settle a newcomer for
+  good: it set `joinSynced`, adopted its slots as `keyless`, and the
+  server's dedup then refused the honest committer's. Now:
+  - A newcomer sets `joinSynced` only on a usable `history_sync`: from an
+    approved leaf, and leaving every channel it knows either with a
+    verified head whose key works (`ok`) or with a zero slot (no record).
+    A head whose key does not check is not adopted, so the channel stays
+    empty for a later one. Until then it re-sends
+    `history_sync_request`, 60 s after the Welcome, then 60 s, 2 min,
+    4 min, doubling up to 1 h (`c7RequestDelayAfter`,
+    `C7GroupState.requestsSent`); each request reopens E on the server, so
+    the honest member's fallback is accepted. Native test: an unsure
+    committer's keyless sync leaves the newcomer asking, and an honest
+    member's answer makes it `ok`; server test
+    `TestC7NewcomerKeepsAskingPastAJunkHistorySync` (junk stored, honest
+    refused 409, the request reopens, honest accepted and synced to the
+    newcomer).
+  - The server spaces one device's requests for one epoch the same way
+    (nine tenths of the client's wait, for clock skew), 409
+    `history_sync_request_too_soon`, which the app drops from the outbox
+    like `history_sync_delivered`: its next request is already armed.
+  - A tagged `history_sync` must declare an `mls_epoch` at or above its
+    `c7_sync_for_epoch` (one sent earlier would be withheld from the very
+    newcomer by the I51 filter yet count as delivered), and E must be an
+    epoch a commit with an add or a removal produced: migration 0088 adds
+    `c7_membership_epochs`, written by the commit bundle route
+    (`epoch + 1` when `added` or `removed` is non-empty) and backfilled
+    from every device's `joined_epoch`; a device's `joined_epoch` is
+    accepted too, for the group's first add. An update-only or role commit
+    produces no such epoch (400 `invalid_history_sync_target`).
+  - While C7 is on, any envelope with a sealed body whose sender has a
+    roster row and declares an `mls_epoch` must declare one between that
+    device's `joined_epoch` and the group's recorded epoch (400
+    `mls_epoch_out_of_range`), so a device cannot place a post or a sync
+    in an epoch it was never in.
+  The server refuses (400 `invalid_history_sync_target`) a tagged
+  `history_sync` whose sealed body0 or any 700-byte slot is all zero
+  bytes: each part is AEAD output, which an honest sender never makes all
+  zero (`c7SyncBodyShaped`; server test
+  `TestC7AllZeroHistorySyncRefused`). That stops junk sent without any
+  key before it can mark the epoch delivered.
+  Residuals: a member can still seal honest-looking slots over a zero
+  head and entry; the server sees only ciphertext and cannot tell them
+  apart, and the newcomer accepts them as "nothing to hand over" (a gap,
+  never a leak; withholding is already a trust limit). If no member holds a working key
+  for a channel, the newcomer asks hourly for as long as it is in the
+  group and never imports; each request is one channel-sized body.
+- **Newcomer import (decision 10, owner answers Q1 and Q2).** Once a
+  newcomer has applied the `history_sync` of its join (`joinSynced`), the
+  work pass after sync fetches, for every channel the server lists in the
+  group and for the group-level stream, the same first page: newest first,
+  100 bodies per request, until 1,000 bodies, 8 MiB or the end of the data
+  (never on what opens), plus the former-member keys in one call. The app
+  does not read a channel's mode before or during this fetch (app test:
+  two channels, the same requests). One crypto call then imports it in one
+  local transaction (`c7ImportHistory`, `mobile/lib/crypto/c7_import.dart`):
+  - **Backward walk.** From the oldest generation held, each stored
+    `history_sync` slot is tried with that generation's key; an entry whose
+    `E_cur` and key commitment name that generation, with a non-zero wrap
+    `E_prev < E_g`, adds the previous generation closing at `E_g`. Repeated
+    until nothing is added; never before the head record's epoch, and at
+    that epoch only with the record's own key commitment; only in the
+    conversation's own group. The adopted generations are kept in the
+    channel's book, so later pages use them. **Review M3 (2026-11-12):**
+    the walk took the first slot that matched, so a member could store a
+    junk wrap after the honest one (newer, so read first) and cut the
+    newcomer's history short. Every slot is read now. While the slots
+    that name a generation agree on its previous key, it joins the book as
+    before; where they disagree, each distinct previous key and the walk
+    back from it become candidates (at most 32, kept in the import state
+    for later pages), never the book, so a disputed key is never handed
+    on. A body is tried under every candidate whose window holds its epoch
+    and the AEAD decides. At the period's first generation no dispute is
+    possible: the head record's key commitment pins it. Test:
+    `mobile/test/c7_walk_candidates_test.dart`.
+  - **Windows and signatures.** A body opens only under the generation
+    whose window holds its route epoch (`E_g <= epoch < E_close`; no route
+    epoch, no import; **review L2:** no route epoch at or after the
+    newcomer's join epoch either, since history is what came before the
+    join), and its signature is checked once, with that
+    generation's `E_g`, this group and the route epoch. The signer is the
+    device's key in the current tree when it has a leaf there, even if the
+    server lists another key for it; otherwise the server's former-member
+    key, and the post is then marked as a former member's and never acts
+    with a role. A device with neither is dropped. **Owner answer
+    2026-11-12, "Hide unproven names" (review M2):** the account the
+    server names for a former device is shown ("From a former member",
+    with the name) only when this device's signed device list of that
+    account lists the device with the key that verified the post, now or
+    once (`LeafVerdict.approved` or `removed` from the pins, refreshed when
+    the stored pin does not already say so). Otherwise, and when the list
+    cannot be fetched or verified, the post shows as "Former member" with
+    no name. The mark is on the
+    row (**local schema 42**, `local_messages.c7_former`, 1 named and 2
+    unnamed, `C7FormerMark`; owner answer
+    2026-11-12, "keep labels in backups"), so it lives exactly as long as
+    the row, the re-add wipe leaves it, edits never clear it, and history
+    snapshots carry it (`c7Former: 1` or `2`, written only when set, so an
+    unmarked snapshot stays readable by an older importer): a restored or
+    linked device shows those posts marked. It is the only C7 state in a
+    snapshot; it names no key. The upgrade step is idempotent and gated on
+    the column check alone, as is schema 41's, so a store another package
+    numbered past them still gets both. The earlier sealed setting
+    `c7.former.<group>` and its 20,000-mark cap never left this branch and
+    are gone.
+    A replaced device's earlier posts are a gap (deviation 10).
+  - **Types.** The opened VAP1 goes through the live path's classify (the
+    conversation, sender, action and channel); only posts and the actions
+    that target them are taken. A record, a `history_sync` or any other
+    payload in a channel stream is never applied (records come only from
+    slot heads and live sync). C2's restricted-post drop applies as live.
+    Profile keys riding on a post are not taken from history.
+  - **Two passes.** The authors' own deletes are applied as a set first (a
+    deleted post is never inserted, nor any action on it), then the posts
+    oldest first, then the other actions in order (a moderator's delete
+    is one of them); an edit whose target is outside the page takes the
+    existing deferred-effect path. Rows are `received` (no notice, and
+    unread counts come from the server), keyed by message key with
+    insert-or-ignore, so a re-run after a crash or a later page adds no
+    duplicate. Each post's row records its generation (`c7_gen`, decision
+    7). The signed expiry applies; the route serves no server expiry.
+  - **Pre-join attachments (Q2).** Never offered: the manifest is replaced
+    before storage by a marker body that is not an attachment list, so no
+    blob id, name or size reaches the database, nothing can be downloaded,
+    and the timeline shows "Attachment from before you joined".
+  - **Paging on demand (Q1).** The import keeps, per channel, the oldest
+    history message fetched, or nothing once the route had no more. "Load
+    earlier posts" is offered at the end of a `full` channel's timeline
+    only and fetches the next page the same way (count, bytes, end), with
+    the former-member keys kept from the join. Accepted leak: it shows the
+    server the channel is `full`. The group-level stream is not paged
+    further, so generations older than the first group-level page are a
+    gap for deeper pages.
+  - **Residuals.** Imported posts are not franked (the history route serves
+    no `frank_commit`), so they cannot be reported. The newcomer import
+    runs once per join; a device that never receives the `history_sync` of
+    its join imports nothing (nothing would open). An import that fails
+    waits before it is fetched again (1 min, doubling to 1 h, per
+    conversation, in memory: an app restart tries once at once); "Load
+    earlier posts" is user-initiated and not gated.
+  - **Tests.** Native: a private group with two removals before the add
+    (the walk adopts the first generation), with a relabelled epoch, a
+    closing-epoch label, a record in the stream, a server key listed for a
+    tree device, a device with no key, an author's delete, an edit, the
+    attachment placeholder, re-runs and paging; a shared group where the
+    `full` channel's slot is the second in each `history_sync`. Encrypted
+    store: a delete and an edit imported a page before their targets.
+    App: the same requests for every channel, paging. The history and
+    former-member JSON is pinned on both sides (Go marshals its structs to
+    the text the Dart parser reads).
+- **C3 conversion (`move`, decision 11), built 2026-11-12 after the
+  owner's answers.** Wrap codec: the 128-byte wrap, `u64 E_prev |
+  CHK_prev[32] | lp(prev_group_id) | u64 E_prev_close` zero-padded, in
+  Rust (`c7::MoveWrap`, no ABI) and Dart (`C7MoveWrap.decodeFor`, which
+  takes a wrap only when it names the record's own `close_group_id` and
+  `close_epoch`), vector `testing/vectors/c7-move-v1.json` from an
+  independent Python generator, checked in Rust, Go and Dart. Server:
+  `POST /api/v1/channels/{id}/move`, table `c3_channel_moves` (migration
+  0089), the moved-history and moved-keys routes (see docs/crypto.md).
+  Ordering table: no change; a `move` continues the chain (row 1 in a new
+  group, row 5 over a stale head), as `isSwitchOrMove` already allowed.
+  App (`c7_move.dart`, setting `c7.moves`):
+  - The mover notes the move and owes its record (`C7DueMove`) only once
+    the new group's epoch is above 0, so the record's message seals under
+    the key it opens. After open-to-private that is after the first add;
+    a group of one has nobody to tell. A stale own move is proposed again
+    as a move, never as a switch.
+  - A live receiver applies the move like any record (sender, freshness,
+    authority, signature in the new group's tree) and, when it lands in
+    `full`, keeps the wrap and owes an import, unless it holds the old
+    group itself. Every device moves its own rows of the channel on the
+    server's `conversation.channel_moved` event, also before it is a
+    member of the new home, so an open channel's member added to the new
+    private channel later finds them there. `history_sync` slots now accept
+    a move head.
+  - A newcomer who joins the new group later takes the wrap from the move
+    message in its own import of the channel's stream (option A), only
+    when the record's signature checks with its actor's key in the
+    current tree and that actor may record now.
+  - The moved import (`c7ImportMoved`) uses the wrap the device stored,
+    walks back through the old group's stored slots (`c7WalkMoved`: one
+    unique previous per step; at a dispute the fair candidates below are
+    kept, never adopted), opens bodies only
+    with the old group's ids and route epochs inside
+    `E_prev <= epoch <= close_epoch`, verifies the signature under a key
+    from the new group's tree or the server's moved-keys list (then
+    marked like a former member's), and writes the rows into the new
+    conversation (no channel id when that is a private channel's own
+    conversation). Only posts and the actions that target them.
+  - The UI: "Make this channel private" / "Make this channel open" in the
+    channel's settings for owners and admins; private to open asks first
+    (`confirmChannelConversion`). Open to private lists the channel's
+    current readers (the shared conversation's roster, less the admin),
+    all ticked (owner answer 2026-11-12, "Admin picks during switch";
+    `pickChannelConversionMembers`); the admin can untick anyone, and
+    cannot accept until the list has loaded, so a failed load never reads
+    as "nobody". After the move, `convertChannel` adds each reader left
+    ticked through the add-member route, then asks reconcile to stage one
+    commit that adds all their devices; the `move` record goes out in
+    that commit's epoch, so they all take its wrap live and import the
+    earlier posts. Unticked readers and the admin are never added; an
+    unticked reader holds no leaf in the new group, so the record never
+    opens for it and no wrap is its. The server has no bulk add, so the
+    adds are one call each; the MLS side is the one commit. An add the
+    server refuses leaves the channel converted; the other ticked readers
+    are still added, and a snack bar names the refused ones so the admin
+    can add them by hand. The channel
+    record is published again in the new home: a private channel's under
+    a newly minted key, an open one's under the community key, and the
+    community record lists the open channels. The info service refuses to
+    move a record between key homes on the server's topology alone (a
+    relabel); the conversion passes `rehome` explicitly, and only it.
+
+  Moved slot heads (review question, 2026-11-12): `c7WalkMoved` checks a
+  slot's head for mode, group, channel and the generation entry, but not
+  the head's record signature, and that is deliberate. Unlike the
+  newcomer's walk, which bounds itself by the head it verified when it
+  adopted it, the moved walk has no verified head of the old group, so it
+  takes the slot's head as its floor. Only a holder of the old
+  generation key can write a slot that opens (the server cannot), and a
+  signature check would not stop such a member: it could place a
+  genuine, older signed head to reach an earlier `full` period. What it
+  gains is what it could give away anyway by handing over the keys it
+  holds (the trust limit "a member can leak what it can read"). Every
+  post taken still needs its author's valid signature over the old
+  group's ids and route epoch, and is a body the server stored in the
+  old stream before its cutoff. A period sealed in `members_from_join`
+  used random keys, so no wrap reaches it.
+  Review fixes (2026-11-12). Server and app wire changes are in
+  docs/crypto.md (C3 entry, "Review fixes"). Client C7 rules:
+  - **The move's wrap is taken when the move is noted.** It is the old
+    group's sealing generation at the old group's epoch then, not when
+    the record is sent. If a member of the old group is removed between
+    the server's move and the new group's first add, the old group
+    rekeys. The record would then wrap a generation no post of the
+    channel was sealed under, and the walk back from it lies past the
+    server's cutoff: a gap for every reader. The note carries
+    `wrapEpoch`, `wrapKey` and `wrapClose`, and the record uses them.
+  - **Owing a move.** Only a device that holds the old group owes the
+    record. A stale owed note for a group it does not hold is never due,
+    and proposing it clears it. Noting the same own move again (a
+    replayed conversion) never re-owes a record already sent. An own
+    note replaces only a note made from the server's event.
+  - **Moved imports.** One is due only while C7 is on in its new home,
+    the community is known, and the new home's book is still `full`. One
+    that returns early, for example because the channel left `full`, is
+    marked imported, so a pass does not fetch it again.
+  - **The newcomer import is per channel**, not gated on `joinSynced`.
+    Each channel is imported once it has a head with status `ok`, and
+    later pages need its own cursor.
+  - **Zero-head handovers (L-1).** A handover that settles a channel
+    with a zero head leaves the newcomer asking again once a day
+    (`reask`), until every channel it knows holds a working key. A live
+    record that brings one ends the re-ask without a request.
+  - **Fair candidates (L-2).** Both walks take candidates breadth first,
+    round-robin by the sending device, at most 4 per device per step and
+    64 in all (`c7FairCandidates`).
+  - **Evicting moves (L-7).** When `c7.moves` is full, settled moves are
+    dropped oldest first. An owed or not yet imported move never is.
+  - **Device-list judgments (L-10).** A former member's device list is
+    judged before the import's serialized section, so other crypto work
+    does not wait up to 10 s per fetch. Inside, only those judgments and
+    the stored pin are read.
+  - **Warning before opening (INFO).** The warning before a private
+    channel is made open says the earlier posts become visible to
+    everyone only with channel history on and the channel `full`, or its
+    setting unknown or changing. Otherwise it says they stay with the
+    people who already had them.
+
+  Residuals of the review fixes:
+  - Round-robin fairness holds against one junk sender, not against a
+    server colluding with several member devices. Such senders each add
+    4 per step, and the 64 cap can still be reached.
+  - Closed at the round 8 integration (server migration 0093): the move
+    POST carries the device's `request_id` (22-128 base64url characters,
+    kept with the pending conversion), and the server answers a repeat
+    as the same move only under the same id, never by account alone.
+    Before, a conversion finished from its own event re-POSTed; if the
+    first request never reached the server and another device of the
+    same account then made the same conversion, the replay answered that
+    device's move as this one's and both devices set up the new group.
+  - Open to private still stores `channels.kind = 'private'`, so the
+    posting mode survives only through a later move back.
+
+  Tests: `mobile/test/c3_channel_move_native_test.dart` (both directions
+  through real OpenMLS devices, the walk back across a removal in the old
+  group, the later newcomer, the window bound, a post of another
+  channel), `c3_channel_conversion_dialog_test.dart`,
+  `c7_app_wiring_test.dart` (the move event, the conversion, the owed
+  record and the moved fetch), `c3_community_info_service_test.dart` (the
+  explicit rehome), the server tests named in docs/crypto.md. Residuals: only the first page
+  of the old streams is imported (no "Load earlier posts" into the old
+  group); a channel moved back and forth between the same two
+  conversations is noted per direction, the mover's note replacing the
+  older one; open-to-private makes a conversation with the mover alone
+  and members are added afterwards (owner question below). ABI 25 stays
+  unused.
+
 ## Open questions for the owner
 
 Earlier questions: 1 (off/on) and 2 (server sees the flag) are answered in
@@ -997,11 +1634,17 @@ C are answered in round 3.
 2. **Pre-join attachments.** Downloading one shows the server the channel
    was `full`. Proposed: offer them on tap with that cost accepted.
    Alternatives: never offer them, or prefetch them all within the depth.
-3. **`history_sync` cost.** About `P(N) + 124 + 700 × N` bytes per
+3. **`history_sync` cost** (answered 2026-11-12: targeted delivery, Q3;
+   removal-only ones are still sent and stored, egress accepted). About `P(N) + 124 + 700 × N` bytes per
    membership commit: 25 KB at 30 channels, so about 25 MB of egress per
    membership commit at 1,000 devices (0.6 MB for the add commit itself;
    C0 batches joins). Accept, or add targeted delivery of add-time
    messages to the new devices only (a server feature, C8)?
+4. **Who is in a channel made private (C3 conversion).** Answered
+   2026-11-12, "Admin picks during switch": the conversion screen lists
+   the open channel's readers, all ticked, and everyone left ticked is
+   added as part of the conversion and receives the earlier posts (see
+   "C3 conversion" in the build status).
 
 ## Owner decisions (2026-11-01)
 

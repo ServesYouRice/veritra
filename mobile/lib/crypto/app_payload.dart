@@ -98,6 +98,11 @@ const Set<AppPayloadType> c7GroupLevelTypes = <AppPayloadType>{
   AppPayloadType.historySyncRequest,
 };
 
+const Set<String> _c7GroupLevelWireNames = <String>{
+  'history_sync',
+  'history_sync_request',
+};
+
 /// C3 types (docs/designs/C3-private-channels-and-info.md). They change state
 /// and never show a bubble.
 const Set<AppPayloadType> infoPayloadTypes = <AppPayloadType>{
@@ -337,6 +342,7 @@ class AppPayloadCodec {
     required Map<String, Object?> body,
     String? channelId,
     bool hidden = false,
+    int? paddedLength,
   }) {
     validateContext(conversationId, senderDeviceId, actionId);
     final version = type == AppPayloadType.pin ||
@@ -363,8 +369,10 @@ class AppPayloadCodec {
         ? 2
         : 1;
     _validateBody(type, body, version: version);
-    return _frame(_innerJson(version, type, conversationId, senderDeviceId,
-        actionId, body, channelId, hidden, null));
+    return _frame(
+        _innerJson(version, type, conversationId, senderDeviceId, actionId,
+            body, channelId, hidden, null),
+        paddedLength: paddedLength);
   }
 
   /// Encodes a franked payload (C6, `docs/crypto.md` "Franking v1"). Always
@@ -383,13 +391,21 @@ class AppPayloadCodec {
     String? channelId,
     bool hidden = false,
     int? expiresAtMs,
+    List<int>? Function(Uint8List canonical)? sealedDesignation,
   }) {
     validateContext(conversationId, senderDeviceId, actionId);
     _validateBody(type, body, version: 2);
     final canonical = _innerJson(2, type, conversationId, senderDeviceId,
         actionId, body, channelId, hidden, expiresAtMs);
+    // L2-3: a payload sent sealed may carry the sender's designation of the
+    // commitment to `P` to the pinned owner keys, which only the caller can
+    // make (it holds the device's franking key), so it is asked for once `P`
+    // exists. Null or empty is the plain form.
+    final designation = sealedDesignation?.call(canonical);
     return (
-      padded: _frame(frankWireJson(canonical, frankKey)),
+      padded: _frame(frankWireJson(canonical, frankKey,
+          designation:
+              designation == null || designation.isEmpty ? null : designation)),
       canonical: canonical
     );
   }
@@ -429,10 +445,20 @@ class AppPayloadCodec {
     return ((unpadded + _paddingBucket - 1) ~/ _paddingBucket) * _paddingBucket;
   }
 
-  Uint8List _frame(Uint8List encoded) {
-    final paddedLength = framedLength(encoded.length);
+  /// [paddedLength], when given, pads to exactly that many bytes instead of
+  /// the next bucket (C7's body0 is padded to `P(N)`, decision 5). It must be
+  /// a multiple of the bucket, within the cap, and at least the next bucket.
+  Uint8List _frame(Uint8List encoded, {int? paddedLength}) {
+    final bucket = framedLength(encoded.length);
+    if (paddedLength != null &&
+        (paddedLength < bucket ||
+            paddedLength > _maxPayloadBytes ||
+            paddedLength % _paddingBucket != 0)) {
+      throw const FormatException('invalid application payload padding');
+    }
+    final length = paddedLength ?? bucket;
     final unpadded = _headerLength + encoded.length;
-    final result = Uint8List(paddedLength);
+    final result = Uint8List(length);
     result.setRange(0, _magic.length, _magic);
     ByteData.sublistView(result).setUint32(4, encoded.length, Endian.big);
     result.setRange(_headerLength, unpadded, encoded);
@@ -574,9 +600,14 @@ class AppPayloadCodec {
           map['action_id'] != actionId ||
           map['type'] is! String ||
           map['body'] is! Map ||
-          // Channel context is mandatory only for a shared community group.
+          // Channel context is mandatory only for a shared community group,
+          // except a group-level C7 message (history_sync or its request),
+          // which names no channel anywhere (docs/designs/C7, server).
           (communityShared
-              ? channelId == null || map['channel_id'] != channelId
+              ? (channelId == null
+                  ? map.containsKey('channel_id') ||
+                      !_c7GroupLevelWireNames.contains(map['type'])
+                  : map['channel_id'] != channelId)
               : map.containsKey('channel_id'))) {
         return const InvalidAppPayload();
       }

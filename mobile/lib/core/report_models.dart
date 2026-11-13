@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 /// C6 report wire models (`docs/designs/C6-reports-franking.md`). The server
 /// carries sealed ciphertext only; nothing here holds a message, and no
@@ -140,29 +141,63 @@ class ReportEnvelopeRecord {
     required this.senderDeviceId,
     required this.frankCommit,
     required this.createdAt,
+    this.sealed = false,
+    this.idempotencyKey,
   });
 
   factory ReportEnvelopeRecord.fromJson(Map<String, Object?> json) {
     final created = json['created_at'];
     if (created is! String) throw const FormatException('invalid record');
+    // L2-3: a sealed envelope's record names no sender, and must not.
+    final sealed = json['sealed'] == true;
+    if (sealed &&
+        (json['sender_account_id'] != null ||
+            json['sender_device_id'] != null)) {
+      throw const FormatException('invalid record');
+    }
     return ReportEnvelopeRecord(
+      sealed: sealed,
       envelopeId: _id(json['envelope_id']),
       conversationId: _id(json['conversation_id']),
-      senderAccountId: _id(json['sender_account_id']),
-      senderDeviceId: _id(json['sender_device_id']),
+      senderAccountId: sealed ? '' : _id(json['sender_account_id']),
+      senderDeviceId: sealed ? '' : _id(json['sender_device_id']),
       frankCommit: json['frank_commit'] == null
           ? null
           : List<int>.unmodifiable(_bytes(json['frank_commit'], length: 32)),
       createdAt: DateTime.parse(created).toUtc(),
+      idempotencyKey: sealed ? _id(json['idempotency_key']) : null,
     );
   }
 
   final String envelopeId;
   final String conversationId;
+
+  /// Empty for a [sealed] record.
   final String senderAccountId;
   final String senderDeviceId;
+
+  /// L2-3: the server stored the message sealed, with no sender.
+  final bool sealed;
+
+  /// L2-3: the key the sealed envelope is stored under (required for a
+  /// [sealed] record, null otherwise). The verifier requires it to equal
+  /// the report's action id, so a member's copy of the ciphertext and
+  /// commitment under another key is not attributed to the sender.
+  final String? idempotencyKey;
 
   /// Null for a message sent without franking.
   final List<int>? frankCommit;
   final DateTime createdAt;
+}
+
+/// L2-3 (review M2): a sender device's franking key from its account's
+/// signed list, and when this device first pinned that list.
+class SenderFrankKey {
+  SenderFrankKey(List<int> key, {required this.pinnedAt})
+      : key = Uint8List.fromList(key);
+
+  final Uint8List key;
+
+  /// When this device first pinned the sender's list (its own clock).
+  final DateTime pinnedAt;
 }

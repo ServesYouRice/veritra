@@ -108,6 +108,7 @@ fn body(
         change,
         entries,
         recovery_key,
+        frank_keys: Vec::new(),
     }
 }
 

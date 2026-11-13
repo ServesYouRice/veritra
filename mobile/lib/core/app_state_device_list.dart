@@ -81,14 +81,40 @@ extension AppStateDeviceList on AppState {
     final crypto = _listCrypto;
     if (crypto == null) return null;
     final key = await crypto.currentSigningKey();
+    final device = idBytes(enrollment.deviceId);
     return crypto.signDeviceList(DeviceListBody(
       accountId: idBytes(enrollment.accountId),
       version: 1,
       prevHash: DeviceListBody.zeroHash,
       createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
       change: DeviceListChange.genesis,
-      entries: [DeviceListPair(idBytes(enrollment.deviceId), key)],
+      entries: [DeviceListPair(device, key)],
+      // L2-3: the device's franking key is listed from the start, but only
+      // while the server's sealed switch is on (condition A).
+      frankKeys: await _ownFrankKeys(crypto, api, device),
     ));
+  }
+
+  /// Condition A (`docs/crypto.md`, "Franking a sealed message"): this
+  /// device's own franking key, for a list version it signs now (genesis,
+  /// recovery, migration genesis), only while [client]'s server reports
+  /// `sealed_sender` on. A key makes the version L1 format 2, which servers
+  /// and apps without L2-3 refuse; with the switch off, or when the setup
+  /// status cannot be read, the version stays format 1, byte for byte the
+  /// earlier format, and the key is added later with change 7 by the first
+  /// sealed token pass ([_sealedFrankContext]).
+  Future<List<DeviceListFrankKey>> _ownFrankKeys(DeviceListCryptoService crypto,
+      ApiClient? client, Uint8List device) async {
+    if (client == null) return const <DeviceListFrankKey>[];
+    try {
+      final status = await client.setupStatus();
+      if (status['sealed_sender'] != true) {
+        return const <DeviceListFrankKey>[];
+      }
+    } catch (_) {
+      return const <DeviceListFrankKey>[];
+    }
+    return [DeviceListFrankKey(device, await crypto.currentFrankKey())];
   }
 
   String _anchorJournalKey(Session current) =>
@@ -140,12 +166,17 @@ extension AppStateDeviceList on AppState {
     return status.state == DeviceListState.ok ? status.pin : null;
   }
 
+  /// The version after [head]. Every franking key the head lists for a
+  /// device that stays is carried unchanged (L2-3: a listed key is fixed,
+  /// and Rust refuses a version that drops or changes one); [ownFrankKey]
+  /// adds this device's own, for change 7 and a recovery version.
   DeviceListBody _nextBody(
     DeviceListPin head,
     DeviceListChange change,
     List<DeviceListPair> entries, {
     Uint8List? recoveryKey,
     bool keepRecoveryKey = true,
+    DeviceListFrankKey? ownFrankKey,
   }) =>
       DeviceListBody(
         accountId: idBytes(head.accountId),
@@ -155,7 +186,142 @@ extension AppStateDeviceList on AppState {
         change: change,
         entries: entries,
         recoveryKey: keepRecoveryKey ? head.recoveryKey : recoveryKey,
+        frankKeys: [
+          for (final key in head.listed)
+            if (key.frankKey != null &&
+                entries
+                    .any((pair) => _sameIdBytes(pair.deviceId, key.deviceId)))
+              DeviceListFrankKey(key.deviceId, key.frankKey!),
+          if (ownFrankKey != null) ownFrankKey,
+        ],
       );
+
+  /// L2-3 (`docs/crypto.md`, "Franking a sealed message"): what a sealed
+  /// send designates with, read on the sealed token pass and never on a
+  /// send. Null (so every message goes identified, fail safe) unless this
+  /// device is on its own verified list with its signing key and the list
+  /// names exactly this device's franking key. A listed device whose list
+  /// names no franking key for it yet publishes change 7 first. The owner
+  /// keys are the proof recipients this app pinned ([_pinnedOwnerKeys]),
+  /// never a key fetched for the send.
+  Future<SealedFrankContext?> _sealedFrankContext(String origin) async {
+    // The owner listing is read here only to pin on first use and to show
+    // differences; a failure keeps the pins as they are.
+    try {
+      await _observeOwnerKeys(origin);
+    } catch (_) {
+      // Quiet: the pins, and so the tags, stay as they were.
+    }
+    final current = session;
+    final crypto = _listCrypto;
+    final pins = _deviceListPins;
+    final account = current?.accountId;
+    final device = current?.deviceId;
+    if (current == null ||
+        crypto == null ||
+        pins == null ||
+        account == null ||
+        device == null) {
+      return null;
+    }
+    final own = await crypto.currentFrankKey();
+    final ownSigning = await crypto.currentSigningKey();
+    var status = await pins.refresh(account);
+    var head = status.state == DeviceListState.ok ? status.pin : null;
+    if (head == null ||
+        head.conflict ||
+        head.standing(idBytes(device), ownSigning) != PinStanding.approved) {
+      return null;
+    }
+    if (head.listedFrankKey(idBytes(device)) == null) {
+      await _publishOwnFrankKey(current, own);
+      status = await pins.refresh(account);
+      head = status.state == DeviceListState.ok ? status.pin : null;
+      if (head == null || head.conflict) return null;
+    }
+    final listed = head.listedFrankKey(idBytes(device));
+    if (listed == null || !_sameIdBytes(listed, own)) return null;
+    return SealedFrankContext(
+        listedKey: listed, ownerKeys: await _pinnedOwnerKeys(origin));
+  }
+
+  /// L2-3 (owner decision 2026-11-12, auto-pin on first use): reads the
+  /// instance owners' report keys the server lists now, through a `dm` or
+  /// `group` conversation outside a community (members only), and hands
+  /// them to [OwnerKeyWatch]: pinned as proof recipients (never as report
+  /// pins) if this is the first sight, otherwise only recorded, so a change
+  /// waits for the person. Only
+  /// `report_inbox_unavailable` reads as "no owner has a key"; any other
+  /// error records nothing.
+  Future<void> _observeOwnerKeys(String origin) async {
+    final current = session;
+    final client = api;
+    if (current == null ||
+        client == null ||
+        canonicalizeServerOrigin(client.baseUrl) !=
+            canonicalizeServerOrigin(origin)) {
+      return;
+    }
+    final watch = OwnerKeyWatch(localStore, origin);
+    String? conversationId;
+    for (final conversation in conversations) {
+      if ((conversation.kind == 'dm' || conversation.kind == 'group') &&
+          conversation.communityId == null &&
+          conversation.channelId == null) {
+        conversationId = conversation.id;
+        break;
+      }
+    }
+    if (conversationId != null) {
+      ReportInbox? inbox;
+      try {
+        inbox = await client.getReportInbox(current.token, conversationId);
+      } on ApiException catch (error) {
+        if (error.serverCode == 'report_inbox_unavailable') {
+          inbox =
+              ReportInbox(kind: reportInboxInstanceOwner, recipients: const []);
+        }
+      }
+      if (inbox != null && _sameSession(current)) await watch.observe(inbox);
+    }
+    await _setOwnerKeyReview(watch);
+  }
+
+  /// The proof recipients for [origin] (`OwnerProofPins.effective`: the
+  /// owner keys pinned for proofs on first use or on the sealed key screen,
+  /// and otherwise the D95 report pins a person made), owner scope (no `:`
+  /// in the id), at most [SealedFrankContext.maxOwnerKeys], in account
+  /// order. Reports never read these; they read only the D95 pins.
+  Future<List<List<int>>> _pinnedOwnerKeys(String origin) async {
+    final owners = await OwnerProofPins(localStore, origin).effective();
+    return [
+      for (final pin in owners.take(SealedFrankContext.maxOwnerKeys))
+        pin.publicKey,
+    ];
+  }
+
+  /// Change 7: this device sets its own franking key on its list, once.
+  /// Errors are left to the caller's pass (it tries again on the next one).
+  Future<void> _publishOwnFrankKey(Session current, Uint8List frank) async {
+    final client = api;
+    final device = current.deviceId;
+    if (client == null || device == null) return;
+    await _signAndSend(
+      current,
+      (head) {
+        final id = idBytes(device);
+        if (head.listedKey(id) == null || head.listedFrankKey(id) != null) {
+          return null;
+        }
+        return _nextBody(head, DeviceListChange.frankKey, _listedPairs(head),
+            ownFrankKey: DeviceListFrankKey(id, frank));
+      },
+      (statement) async {
+        if (statement == null) return;
+        await client.publishDeviceList(current.token, statement);
+      },
+    );
+  }
 
   List<DeviceListPair> _listedPairs(DeviceListPin head) => [
         for (final key in head.listed)
@@ -368,7 +534,10 @@ extension AppStateDeviceList on AppState {
         statement = await crypto.signRecoveryDeviceList(
           prev: head.headStatement,
           body: _nextBody(head, DeviceListChange.recovery,
-              [DeviceListPair(idBytes(device), own)]),
+              [DeviceListPair(idBytes(device), own)],
+              ownFrankKey:
+                  (await _ownFrankKeys(crypto, client, idBytes(device)))
+                      .firstOrNull),
           history: [
             for (final key in head.keys)
               DeviceListPair(key.deviceId, key.signingKey),
@@ -612,12 +781,14 @@ extension AppStateDeviceList on AppState {
         if (head.standing(idBytes(device), own) == PinStanding.approved) {
           return; // Done already (another attempt landed).
         }
+        final frankKeys = await _ownFrankKeys(crypto, api, idBytes(device));
         final Uint8List statement;
         try {
           statement = await crypto.signRecoveryDeviceList(
             prev: head.headStatement,
             body: _nextBody(head, DeviceListChange.recovery,
-                [DeviceListPair(idBytes(device), own)]),
+                [DeviceListPair(idBytes(device), own)],
+                ownFrankKey: frankKeys.firstOrNull),
             history: [
               for (final key in head.keys)
                 DeviceListPair(key.deviceId, key.signingKey),
@@ -683,6 +854,10 @@ extension AppStateDeviceList on AppState {
         createdAtMs: DateTime.now().toUtc().millisecondsSinceEpoch,
         change: DeviceListChange.migrationGenesis,
         entries: entries,
+        // L2-3: only this device's own franking key, and only while the
+        // sealed switch is on (condition A); the others set theirs with
+        // change 7.
+        frankKeys: await _ownFrankKeys(crypto, client, idBytes(own)),
       ));
       try {
         await client.publishDeviceList(current.token, statement);

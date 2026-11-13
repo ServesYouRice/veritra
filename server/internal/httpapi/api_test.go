@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -882,6 +883,13 @@ func newTestAppWithOwner(t *testing.T) (*app.App, http.Handler, string, string) 
 // newTestAppWithOwnerConfig lets a test change the config before the app starts.
 func newTestAppWithOwnerConfig(t *testing.T, mutate func(*config.Config)) (*app.App, http.Handler, string, string) {
 	t.Helper()
+	return newTestAppWithOwnerConfigLog(t, mutate, nil)
+}
+
+// newTestAppWithOwnerConfigLog also sets the app's logger (nil is the
+// default).
+func newTestAppWithOwnerConfigLog(t *testing.T, mutate func(*config.Config), logger *slog.Logger) (*app.App, http.Handler, string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "private-messenger.db")
 	cfg := config.Config{
@@ -896,7 +904,7 @@ func newTestAppWithOwnerConfig(t *testing.T, mutate func(*config.Config)) (*app.
 		mutate(&cfg)
 	}
 	storagetest.SeedMigrated(t, dbPath)
-	application, err := app.New(context.Background(), cfg, nil)
+	application, err := app.New(context.Background(), cfg, logger)
 	if err != nil {
 		t.Fatalf("new app: %v", err)
 	}

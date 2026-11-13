@@ -875,6 +875,45 @@ void main() {
     }, skip: skip);
   }
 
+  test(
+      'a C3 conversion moves a private channel\'s record to the community '
+      'key explicitly; a relabel alone still cannot', () async {
+    final admin = device('admin', {_shared, _privateConv}, admin: true);
+    const subject = InfoSubject(
+        infoKindChannel,
+        'chan_00000000000000000000000000000003',
+        'comm_00000000000000000000000000000001');
+    await admin.service.publish(community, (r) => named('Club', r), mint: true);
+    CommunityInfoRecord record(int r) => CommunityInfoRecord(
+        kind: subject.kind,
+        subjectId: subject.id,
+        revision: r,
+        name: 'Was private',
+        topic: 'Kept topic');
+    await admin.service.publish(
+        subject,
+        (r) => CommunityInfoRecord(
+            kind: subject.kind,
+            subjectId: subject.id,
+            revision: r,
+            name: 'Was private',
+            topic: 'Kept topic',
+            privatePlace: const InfoPrivatePlace(position: 0)),
+        mint: true);
+    final privateKey = server.records[subject.key]!.keyId;
+    (admin.service.topology as _Topology).privateKnown = false;
+    await expectLater(
+        admin.service.publish(subject, record, expectedRevision: 1),
+        throwsA(isA<InfoKeyMissing>()));
+    await admin.service
+        .publish(subject, record, expectedRevision: 1, rehome: true);
+    final moved = server.records[subject.key]!;
+    expect(moved.version, 2);
+    expect(moved.keyId, isNot(privateKey));
+    expect(moved.keyId, server.records['community|$_community']!.keyId);
+    expect(admin.service.shown(subject.kind, subject.id)!.topic, 'Kept topic');
+  }, skip: skip);
+
   test('a stale If-Match is retried; a 404 never clears what is shown',
       () async {
     final admin = device('admin', {_shared}, admin: true);

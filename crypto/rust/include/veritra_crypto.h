@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 #define PM_CRYPTO_UNAVAILABLE (-1)
-#define PM_CRYPTO_ABI_VERSION (24u)
+#define PM_CRYPTO_ABI_VERSION (26u)
 #define PM_CRYPTO_OK (0)
 #define PM_CRYPTO_INVALID_ARGUMENT (-2)
 #define PM_CRYPTO_ERROR (-3)
@@ -381,6 +381,52 @@ int32_t pm_crypto_group_decrypt_sealed(PmCryptoHandle *handle,
  * (extension 0xF0A2, zero bytes); joins refuse a pad that is not zeros.
  * Vector: testing/vectors/l2-padding-v1.json. */
 int32_t pm_crypto_l2_padded_size(uint64_t length, uint64_t *out_padded);
+/* ABI 26 (L2-3, D123): sealed sender tokens, RFC 9497 POPRF over
+ * ristretto255-SHA512 (docs/crypto.md, "Sealed sender with VOPRF tokens";
+ * vector testing/vectors/l2-sealed-v1.json). token_request blinds `count`
+ * (1-32) fresh 32-byte nonces for the server key under info =
+ * "veritra-l2-sealed-v1" || u16 len || conversation || u32 epoch;
+ * out_request is count x 32 blinded elements and out_state
+ * the secret client state (VLT1) the caller wipes after finalize.
+ * token_finalize takes count x 32 evaluated elements || 64-byte proof,
+ * checks the proof against the state's key (PM_CRYPTO_ERROR if it fails)
+ * and writes count x (32-byte nonce || 64-byte output). */
+int32_t pm_crypto_l2_token_request(PmByteSlice public_key,
+                                   PmByteSlice conversation_id,
+                                   uint32_t epoch, uint32_t count,
+                                   PmOwnedBuffer *out_state,
+                                   PmOwnedBuffer *out_request);
+int32_t pm_crypto_l2_token_finalize(PmByteSlice state, PmByteSlice response,
+                                    PmOwnedBuffer *out_tokens);
+/* ABI 26 (L2-3): designated-verifier franking of a sealed message
+ * (docs/crypto.md, "Franking a sealed message"; vector
+ * testing/vectors/l2-frank-dv-v1.json). frank_public_key writes the
+ * device's 32-byte X25519 franking key, the key its L1 entry must list
+ * (change 7). frank_designate writes m x 48 bytes (kid || tag, sorted by
+ * kid) for the owner report keys in owner_keys (n x 32, 1 <= n <= 16) over
+ * the device's own identity and the 32-byte commit; owner keys that are
+ * non-canonical, low-order or give an all-zero secret are skipped, m = 0 is
+ * the empty buffer (the plain form), and a listed_key other than the
+ * device's own is PM_CRYPTO_ERROR. frank_dv_verify takes the owner's report
+ * seed (the pair is derived inside) and the claimed device's franking key
+ * from its account's L1 list and writes 1 valid, 0 mismatch, 2 not
+ * designated to this key. */
+int32_t pm_crypto_l2_frank_public_key(PmCryptoHandle *handle,
+                                      PmOwnedBuffer *out_key);
+int32_t pm_crypto_l2_frank_designate(PmCryptoHandle *handle,
+                                     PmByteSlice conversation_id,
+                                     PmByteSlice commit,
+                                     PmByteSlice listed_key,
+                                     PmByteSlice owner_keys,
+                                     PmOwnedBuffer *out_designation);
+int32_t pm_crypto_l2_frank_dv_verify(PmByteSlice seed,
+                                     PmByteSlice sender_frank_key,
+                                     PmByteSlice conversation_id,
+                                     PmByteSlice account_id,
+                                     PmByteSlice device_id,
+                                     PmByteSlice commit,
+                                     PmByteSlice designation,
+                                     uint8_t *out_result);
 /* ABI 13 (C7, docs/designs/C7-channel-history.md revision 7). Nothing is
  * wired into the app, and every piece needs the independent crypto review
  * before release, the exporter use in particular. Vector:

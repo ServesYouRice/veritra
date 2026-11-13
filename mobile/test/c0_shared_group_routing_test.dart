@@ -106,6 +106,14 @@ void main() {
     });
   });
 
+  test('C7 hands over the shared group\'s routed channels, never a private one',
+      () {
+    final state = _state(_Mls());
+    expect(state.c7Channels('shared'), ['chan_a', 'chan_b']);
+    expect(state.c7Channels('private_conv'), isEmpty);
+    expect(state.c7Channels('group'), isEmpty);
+  });
+
   group('sending into a shared group', () {
     test('nothing is sent until a channel is chosen', () async {
       final crypto = _Mls();

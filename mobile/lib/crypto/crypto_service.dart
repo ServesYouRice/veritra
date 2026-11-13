@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import '../core/models.dart';
@@ -6,12 +7,14 @@ import '../core/roles/governance_commands.dart'
     show GovernanceCommands, GovernanceObservations;
 import '../storage/encrypted_database.dart'
     show EnrollmentPromotionOutcome, HistoryTransferProgress;
-import '../storage/local_store.dart' show PendingMlsMessage, StoredCryptoState;
+import '../storage/local_store.dart'
+    show PendingMlsMessage, StoredCryptoState, SyncEventCommit;
 import '../core/device_lists.dart' show DeviceListPins, DeviceListVerifier;
 import 'mls_commit_bundle.dart';
 import 'native_crypto_bindings.dart'
     show BackupHeaderInfo, DeviceListBody, DeviceListPair, OpenedBackup;
 import 'app_payload.dart';
+import 'c7_move.dart' show C7Move;
 import 'community_info_codec.dart' show CommunityInfoCodec;
 import 'profile_record_codec.dart' show ProfileRecordCodec;
 
@@ -159,6 +162,10 @@ abstract interface class DeviceListCryptoService implements DeviceListVerifier {
 
   /// The current (possibly pending) device's MLS signing key.
   Future<Uint8List> currentSigningKey();
+
+  /// L2-3: the current (possibly pending) device's X25519 franking key, the
+  /// one its L1 entry lists (set by genesis, recovery or change 7). Public.
+  Future<Uint8List> currentFrankKey();
 
   /// Keeps the recovery list seed derived from [entropy] in the sealed
   /// pending enrollment (K0-R claim, D94 question 1).
@@ -469,6 +476,109 @@ class CryptoRecordLimitExceeded implements Exception {
   String toString() => 'encrypted state record is over its size limit';
 }
 
+/// L2-3: the sealed sender tokens a send may spend (AppState keeps them,
+/// fetched on the foreground sync pass).
+abstract interface class SealedTokenSource {
+  /// Takes a token for the next message in [conversationId], or null to send
+  /// it identified (sealed off, no token held, the issuer key changed).
+  Future<SealedToken?> takeFor(String conversationId);
+
+  /// Returns a token that was taken but never posted (the encrypt failed).
+  Future<void> putBack(SealedToken token);
+
+  /// What a sealed message is designated with, as the last token pass found
+  /// it. Read at encrypt time without any I/O; null sends identified (this
+  /// device's franking key is not, or not verifiably, on its own L1 list).
+  SealedFrankContext? get frankContext;
+}
+
+/// L2-3 (`docs/crypto.md`, "Franking a sealed message"): what a sealed send
+/// designates its commitment to, read on the token pass and kept until the
+/// next one, so a send makes no request and reads no pin.
+class SealedFrankContext {
+  SealedFrankContext(
+      {required List<int> listedKey, required List<List<int>> ownerKeys})
+      : listedKey = Uint8List.fromList(listedKey),
+        ownerKeys = List<Uint8List>.unmodifiable(
+            [for (final key in ownerKeys) Uint8List.fromList(key)]) {
+    if (this.listedKey.length != 32 ||
+        this.ownerKeys.length > maxOwnerKeys ||
+        this.ownerKeys.any((key) => key.length != 32)) {
+      throw ArgumentError('invalid sealed franking context');
+    }
+  }
+
+  /// This device's franking key exactly as its verified L1 entry lists it.
+  final Uint8List listedKey;
+
+  /// The instance owners' report keys this app pinned, at most
+  /// [maxOwnerKeys]. Empty: no owner can be designated, and a sealed message
+  /// goes in the plain form, provable to nobody.
+  final List<Uint8List> ownerKeys;
+
+  static const int maxOwnerKeys = 16;
+}
+
+/// Checks a sealed message's designation for a report (L2-3), with the
+/// owner's report seed. Returns 1 valid, 0 mismatch, 2 not designated to
+/// this owner's key.
+abstract interface class SealedReportCryptoService {
+  Future<int> frankDesignationVerdict({
+    required List<int> seed,
+    required List<int> senderFrankKey,
+    required String conversationId,
+    required String accountId,
+    required String deviceId,
+    required List<int> commit,
+    required List<int> designation,
+  });
+}
+
+/// A crypto service that can send sealed (L2-3).
+abstract interface class SealedSendingCryptoService {
+  set sealedTokenSource(SealedTokenSource? source);
+
+  /// L2-3 (review M2): encrypts the queued sealed message [sealed] again, as
+  /// a fresh identified message under the same idempotency key (a new MLS
+  /// ciphertext and franking key, no token, no sealed signature), and puts
+  /// it in that outbox entry's place. Only for the one answer that proves
+  /// the sealed route stored nothing under the key (`sealed_not_eligible`),
+  /// and only once the person chose "Send normally" (owner decision
+  /// 2026-11-12): never on that answer alone.
+  /// Null when the message cannot be sent identified (its plaintext is no
+  /// longer kept, or the entry is gone); the caller then fails it.
+  Future<MessageEnvelope?> reencryptSealedAsIdentified(MessageEnvelope sealed);
+
+  /// Applies a `message.sealed.created` envelope ([envelope] must be
+  /// sealed; its server sender fields are ignored). Returns the envelope
+  /// with the sender MLS authenticated, this device's own for its own post,
+  /// or with no sender when it became a placeholder.
+  Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {void Function()? checkCanCommit});
+
+  /// Blinds [count] fresh token nonces (1 to 32) for the server's
+  /// [publicKey]. `state` holds the blinds for [sealedTokenFinalize]; the
+  /// caller wipes it. `request` goes to the server.
+  ({Uint8List state, Uint8List request}) sealedTokenRequest({
+    required List<int> publicKey,
+    required String conversationId,
+    required int epoch,
+    required int count,
+  });
+
+  /// Checks the server's batch proof against the key in [state] and
+  /// returns the tokens. Throws when the proof does not verify; no token
+  /// is returned then.
+  List<SealedToken> sealedTokenFinalize({
+    required List<int> state,
+    required List<int> response,
+    required String conversationId,
+    required String keyId,
+    required int epoch,
+  });
+}
+
 /// Cached server roles today; C4 will replace this source with encrypted roles.
 abstract interface class ConversationAuthority {
   String? roleOf(String conversationId, String accountId);
@@ -558,6 +668,299 @@ abstract interface class ConversationCommunitySource {
 abstract interface class C7HistoryConsumer {
   bool get c7SealedBodies;
   set c7SealedBodies(bool enabled);
+}
+
+/// C7: the channels of a community conversation as the server lists them
+/// (open channels of a shared group; a private channel's own group has one).
+/// AppState answers it; a `history_sync` names these besides the channels
+/// this device keeps state for. Not MLS-ordered (decision 5, "Channels
+/// named, not assumed").
+abstract interface class C7ChannelListSource {
+  List<String> c7Channels(String conversationId);
+}
+
+/// One piece of C7 work due now ([C7HistoryService.c7DueWork]).
+sealed class C7Due {
+  const C7Due(this.conversationId);
+  final String conversationId;
+}
+
+/// Send the `history_sync` for the membership commit that produced
+/// [forEpoch] (the committer at once; others after a jittered delay).
+final class C7DueSync extends C7Due {
+  const C7DueSync(super.conversationId, this.forEpoch);
+  final int forEpoch;
+}
+
+/// A newcomer asks for the `history_sync` of its join.
+final class C7DueRequest extends C7Due {
+  const C7DueRequest(super.conversationId, this.forEpoch);
+  final int forEpoch;
+}
+
+/// This device's own record came back stale (sent before a membership
+/// commit, sequenced after it): propose it again at the current epoch.
+final class C7DueRepropose extends C7Due {
+  const C7DueRepropose(super.conversationId, this.channelId,
+      {required this.full});
+  final String channelId;
+  final bool full;
+}
+
+/// C3 conversion (decision 11): this device moved [channelId] here from
+/// [fromConversationId] and owes its `move` record, now that the new
+/// group's epoch is above 0. The app proposes it
+/// ([C7HistoryService.c7ProposeMove]) with the channel's layout generation.
+final class C7DueMove extends C7Due {
+  const C7DueMove(
+      super.conversationId, this.channelId, this.fromConversationId);
+  final String channelId;
+  final String fromConversationId;
+}
+
+/// One body the history route served (C7, decision 10): a body sync did
+/// not give this device, in its conversation's stream for [channelId] (null:
+/// the group-level stream, which holds `history_sync` messages and their
+/// requests). [epoch] is the route's `mls_epoch`, null when the body named
+/// none.
+final class C7HistoryRow {
+  const C7HistoryRow({
+    required this.messageId,
+    required this.senderDeviceId,
+    required this.actionId,
+    required this.channelId,
+    required this.createdAt,
+    required this.epoch,
+    required this.body,
+  });
+
+  /// A row of `GET /conversations/{id}/history`; throws [FormatException]
+  /// on a malformed one.
+  factory C7HistoryRow.fromJson(Map<String, Object?> json) {
+    final channel = json['channel_id'];
+    final epoch = json['epoch'];
+    final created = json['created_at'];
+    if (json['message_id'] is! String ||
+        json['sender_device_id'] is! String ||
+        json['action_id'] is! String ||
+        json['body'] is! String ||
+        created is! String ||
+        (channel != null && channel is! String) ||
+        (epoch != null && epoch is! int)) {
+      throw const FormatException('C7 history row');
+    }
+    return C7HistoryRow(
+      messageId: json['message_id']! as String,
+      senderDeviceId: json['sender_device_id']! as String,
+      actionId: json['action_id']! as String,
+      channelId: channel == '' ? null : channel as String?,
+      createdAt: DateTime.parse(created).toUtc(),
+      epoch: epoch as int?,
+      body: Uint8List.fromList(base64Decode(json['body']! as String)),
+    );
+  }
+
+  final String messageId;
+  final String senderDeviceId;
+  final String actionId;
+  final String? channelId;
+  final DateTime createdAt;
+  final int? epoch;
+  final Uint8List body;
+}
+
+/// One page of one stream as the app fetched it, newest first. [complete]:
+/// the route had nothing older (the fetch stopped at the end of the data,
+/// not at a count or byte limit).
+final class C7HistoryPage {
+  const C7HistoryPage(this.rows, {required this.complete});
+  final List<C7HistoryRow> rows;
+  final bool complete;
+}
+
+/// A device the server says posted in the conversation and is no longer in
+/// its group (`GET /conversations/{id}/former-member-keys`; owner decision
+/// B). Used only for posts, never for records or slots, and only for a
+/// device that holds no leaf in the current tree.
+final class C7FormerKey {
+  const C7FormerKey({
+    required this.deviceId,
+    required this.accountId,
+    required this.signingKey,
+  });
+
+  /// A row of the former-member key route, or null when it is malformed.
+  static C7FormerKey? tryParse(Map<String, Object?> json) {
+    final key = json['signing_key'];
+    if (json['device_id'] is! String ||
+        json['account_id'] is! String ||
+        key is! String) {
+      return null;
+    }
+    final Uint8List bytes;
+    try {
+      bytes = Uint8List.fromList(base64Decode(key));
+    } on FormatException {
+      return null;
+    }
+    if (bytes.length != 32) return null;
+    return C7FormerKey(
+      deviceId: json['device_id']! as String,
+      accountId: json['account_id']! as String,
+      signingKey: bytes,
+    );
+  }
+
+  final String deviceId;
+  final String accountId;
+  final Uint8List signingKey;
+}
+
+/// What the app shows about one channel's history setting.
+final class C7ChannelView {
+  const C7ChannelView({
+    required this.full,
+    required this.status,
+    required this.pending,
+    this.ownNotice,
+    this.recorded = true,
+  });
+
+  /// The setting this device holds (the head's mode).
+  final bool full;
+
+  /// `ok`, `keyless`, `unsure` or `closed`.
+  final String status;
+
+  /// This device's own proposal has not come back yet.
+  final bool pending;
+
+  /// `lost` (another admin's record took the seq), `stale` or `timeout`,
+  /// or null.
+  final String? ownNotice;
+
+  /// The channel has a record (its `create` came through): a change is a
+  /// switch. False for a channel made before C7, whose first record is a
+  /// `create`.
+  final bool recorded;
+}
+
+/// C7 full mode as the app drives it (docs/designs/C7-channel-history.md):
+/// records, the channel view, and the `history_sync` duties. Records,
+/// rekeys and handovers themselves happen inside sync.
+abstract interface class C7HistoryService {
+  /// Proposes a record for [channelId] in [conversationId]: a `create` when
+  /// [create], else a switch, to `full` when [full]. [layoutGeneration] is
+  /// given exactly for a channel of a shared group. The record applies only
+  /// when it comes back in sync order.
+  Future<MessageEnvelope> c7ProposeRecord(
+    String conversationId,
+    String channelId, {
+    required bool full,
+    bool create = false,
+    int? layoutGeneration,
+  });
+
+  /// The setting this device holds for a channel, or null when C7 is off.
+  Future<C7ChannelView?> c7ChannelView(String conversationId, String channelId);
+
+  /// What is due now in [conversationIds] (the community conversations the
+  /// app holds): `history_sync` duties, a newcomer's request, and own
+  /// records that came back stale (the app proposes those again, with the
+  /// channel's layout generation).
+  Future<List<C7Due>> c7DueWork(Iterable<String> conversationIds);
+
+  /// Sends a due `history_sync` or request; returns the envelope it queued,
+  /// or null when nothing was owed any more.
+  Future<MessageEnvelope?> c7Send(C7Due due);
+
+  /// The server says a `history_sync` for [forEpoch] was already delivered
+  /// to the devices its commit added (owner answer Q3: members never see
+  /// it): this device's duty for it is settled with nothing sent.
+  Future<void> c7SyncDelivered(String conversationId, int forEpoch);
+
+  /// Commits [tombstone], sync passing over a message of its conversation
+  /// that its expiry proves gone (I33), with every `full` channel of that
+  /// group marked `unsure` in the same transaction (decision 5: a message
+  /// passed over as expired is one this device could not fully apply).
+  Future<void> c7CommitExpiredSkip(SyncEventCommit tombstone);
+
+  /// The record messages in [conversationId] that changed a channel's
+  /// setting, by local message key, with the setting each opened (`true`
+  /// for `full`): the timeline draws them as system lines (decision 1).
+  Future<Map<String, bool>> c7HistoryLines(String conversationId);
+
+  /// When the next `history_sync` duty or newcomer request in
+  /// [conversationIds] falls due, or null when none is waiting.
+  Future<DateTime?> c7NextDueAt(Iterable<String> conversationIds);
+
+  /// The conversations in [conversationIds] whose newcomer import is due:
+  /// this device joined by a Welcome, applied the `history_sync` of its
+  /// join, and has not imported yet. Whatever the channels' modes (decision
+  /// 10): the app then fetches the same first page of every channel and of
+  /// the group-level stream, and the former-member keys.
+  Future<List<String>> c7ImportDue(Iterable<String> conversationIds);
+
+  /// Imports what the app fetched for [conversationId] (decision 10): walks
+  /// back through the stored `history_sync` slots in [groupLevel], opens
+  /// each channel's bodies under the generation whose window holds the
+  /// route epoch, checks the signature, and applies what is left in two
+  /// passes, in one local transaction with the generations it adopted and
+  /// the paging cursors. [first]: the import at join (marks it done; the
+  /// former-member keys are kept for paging); otherwise a page of earlier
+  /// posts for the channels named. Safe to run again. Returns the number of
+  /// posts imported.
+  Future<int> c7ImportHistory(
+    String conversationId, {
+    required C7HistoryPage groupLevel,
+    required Map<String, C7HistoryPage> channels,
+    List<C7FormerKey> formerKeys = const <C7FormerKey>[],
+    bool first = true,
+  });
+
+  /// The history message to page before for "Load earlier posts" in
+  /// [channelId] (owner answer Q1), or null: the channel is not `full` here,
+  /// the import has not run, or the route has nothing older.
+  Future<String?> c7EarlierCursor(String conversationId, String channelId);
+
+  /// C3 conversion (decision 11): the server moved [channelId] from
+  /// [fromConversationId] to [toConversationId]. [own]: this device made
+  /// the move and owes its `move` record ([C7DueMove]). Idempotent.
+  Future<void> c7NoteMove({
+    required String channelId,
+    required String fromConversationId,
+    required String toConversationId,
+    required bool own,
+  });
+
+  /// Proposes the `move` record [due] owes: it continues the channel's
+  /// chain from the old group and, when both modes are `full` and this
+  /// device holds the old key, wraps the old group's current generation.
+  /// Null when nothing is owed any more.
+  Future<MessageEnvelope?> c7ProposeMove(C7DueMove due,
+      {int? layoutGeneration});
+
+  /// The moves whose earlier posts this device has yet to import: a `move`
+  /// record with a fitting wrap reached it, live or in its own import, and
+  /// it does not hold the old group itself. The app fetches the old
+  /// conversation's channel stream and group-level stream up to the
+  /// server's cutoff and the old posters' keys, then calls
+  /// [c7ImportMoved].
+  Future<List<C7Move>> c7MovedImportsDue();
+
+  /// Imports the old group's posts of [move] into its new conversation:
+  /// the wrap's generation and the earlier ones the old group's stored
+  /// slots name ([groupLevel]), each body opened and its signature checked
+  /// with the old group's ids and route epoch, inside the wrap's window.
+  /// A sender key comes from the new group's tree, else from [keys] (the
+  /// server's list for the old conversation; such posts are marked like a
+  /// former member's). Marks the move imported. Returns the posts imported.
+  Future<int> c7ImportMoved(
+    C7Move move, {
+    required C7HistoryPage channel,
+    required C7HistoryPage groupLevel,
+    List<C7FormerKey> keys = const <C7FormerKey>[],
+  });
 }
 
 /// Off by default. AppState enables this only for the current verified

@@ -34,6 +34,10 @@ export 'encrypted_database.dart'
         CommunityInfoEventKind,
         FrankReveal,
         ReportKeyPin,
+        SealedKeyPin,
+        SealedOwnPost,
+        maxSealedTokensPerConversation,
+        sealedOwnPostRetention,
         ProfileKeyEffect;
 export 'profile_records.dart';
 export 'device_list_records.dart';
@@ -370,6 +374,19 @@ class EnrollmentPromotion {
 /// (`mobile/lib/crypto/c7_group_state.dart`).
 String c7GroupSetting(String conversationId) => 'c7.group.$conversationId';
 
+/// The sealed setting that holds one channel's C7 chain in one group
+/// (`mobile/lib/crypto/c7_channel_book.dart`).
+String c7ChannelSetting(String conversationId, String channelId) =>
+    'c7.chan.$conversationId|$channelId';
+
+/// The sealed setting that holds a newcomer's C7 import state in one group:
+/// paging cursors, the former-member keys and the posts verified with them
+/// (`mobile/lib/crypto/c7_import.dart`).
+String c7ImportSetting(String conversationId) => 'c7.import.$conversationId';
+
+/// Every C7 setting starts with this; the leak tests scan for it.
+const String c7SettingPrefix = 'c7.';
+
 String communityInfoRemovalSetting(String conversationId) =>
     'c3.removal_epoch.$conversationId';
 
@@ -557,6 +574,9 @@ class OutgoingApplicationStateTransition {
     this.governanceObservation,
     this.messageEffects = const <MessageEffect>[],
     this.communityInfo = const <CommunityInfoEvent>[],
+    this.c7Settings = const <String, String?>{},
+    this.sealedOwnPost,
+    this.replacesSealedEntry = false,
   });
 
   final int expectedCounter;
@@ -565,6 +585,20 @@ class OutgoingApplicationStateTransition {
   final MessageEnvelope envelope;
   final String? draftText;
   final GovernanceObservationChange? governanceObservation;
+
+  /// C7 state that sending this message changes (an own pending record, a
+  /// settled `history_sync` duty), in the same transaction as the outbox
+  /// entry.
+  final Map<String, String?> c7Settings;
+
+  /// L2-3: the digest (and identified fallback) of a message chosen to go
+  /// sealed, recorded with its outbox entry.
+  final SealedOwnPost? sealedOwnPost;
+
+  /// L2-3 (M2): [envelope] is the identified re-encryption of the queued
+  /// sealed message with the same idempotency key and takes that entry's
+  /// place (attempts reset). Its own copy is already stored.
+  final bool replacesSealedEntry;
 
   /// This device's own copy of what it sent, committed with [state] (D23).
   final List<MessageEffect> messageEffects;
@@ -602,6 +636,7 @@ class SyncEventCommit {
     this.ownMessageKey,
     this.allowOwnPinEffect = false,
     this.checkCanCommit,
+    this.c7Settings = const <String, String?>{},
   });
 
   final String eventKey;
@@ -617,6 +652,10 @@ class SyncEventCommit {
   /// Current cached authority rechecked at echo processing time (W7).
   final bool allowOwnPinEffect;
   final void Function()? checkCanCommit;
+
+  /// C7 state written with this event (this device's own record coming back
+  /// in sync order), in the same transaction as the cursor.
+  final Map<String, String?> c7Settings;
 }
 
 class LocalSyncLease {
@@ -710,6 +749,38 @@ abstract class LocalStore {
   Future<void> saveReportKeyPin(ReportKeyPin pin);
   Future<void> deleteReportKeyPin(String origin, String ownerAccountId);
 
+  /// L2-3 (schema 43): unspent sealed sender tokens. Bearer credentials,
+  /// kept only in the local store; see [SealedToken].
+  Future<int> saveSealedTokens(List<SealedToken> tokens);
+
+  /// Takes one token out of the store (the older day first), or null.
+  Future<SealedToken?> takeSealedToken(String conversationId,
+      {required String keyId, required int epoch});
+  Future<int> countSealedTokens(String conversationId,
+      {required String keyId, required int epoch});
+
+  /// See [SealedSenderSql.dropSealedTokens].
+  Future<void> dropSealedTokens(
+      {int? minEpoch, String? keyId, String? conversationId});
+  Future<SealedKeyPin?> loadSealedKeyPin(String origin);
+  Future<void> saveSealedKeyPin(SealedKeyPin pin);
+
+  /// Replaces the queued envelope with the same idempotency key (a sealed
+  /// retry under a new token), keeping its attempts. Returns whether it was
+  /// still queued.
+  Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope);
+
+  /// L2-3: the SHA-256 of the ciphertext this device encrypted to go sealed
+  /// under ([conversationId], [idempotencyKey]), or null. How the device
+  /// recognises the echo of its own sealed post.
+  Future<List<int>?> loadSealedOwnPostDigest(
+      String conversationId, String idempotencyKey);
+
+  /// L2-3 (M2): the payload kept to encrypt a queued sealed message again
+  /// identified, or null once it left the outbox.
+  Future<String?> loadSealedOwnPostFallback(
+      String conversationId, String idempotencyKey);
+
   /// C6 (schema 27): whether [accountId] already reported [messageKey] on
   /// [origin] from this device, and the note that it did. Ids only.
   Future<bool> isMessageReported(
@@ -801,6 +872,14 @@ abstract class LocalStore {
   Future<bool> clearConversationPause(String conversationId,
       {int? generation, void Function()? checkCanCommit});
 
+  /// L2-3: after a sync pass that opened a sealed message, moves the
+  /// write-ahead log into the database and truncates it, so the MLS state
+  /// from before the message (which could open its ciphertext again) does
+  /// not linger in old log frames (`secure_delete` clears freed pages of
+  /// the database file, not the log). Best effort: a busy database keeps
+  /// the log until the next pass. Returns whether the log was emptied.
+  Future<bool> checkpointSealedResidue();
+
   /// When this device last made an encrypted backup (card I45).
 
   /// Group invite commitments, excluded from backups and identity changes.
@@ -810,6 +889,23 @@ abstract class LocalStore {
   /// Small local settings (the encrypted `local_metadata` key-value table).
   Future<String?> loadSetting(String name);
   Future<void> saveSetting(String name, String value);
+
+  /// C7: a newcomer's imported history (decision 10) and the C7 state that
+  /// records the import, in one transaction. No MLS state or cursor moves.
+  Future<void> importC7History(List<MessageEffect> effects,
+      {Map<String, String?> c7Settings = const <String, String?>{}});
+
+  /// C3 conversion: this device's rows of a moved channel follow it from
+  /// [fromConversationId] (channel [fromChannelId], or null in a private
+  /// channel's own conversation) to [toConversationId] and [toChannelId], so
+  /// the earlier posts show in the new channel (owner answer 2026-11-12).
+  /// Idempotent; returns the rows moved.
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  });
   Future<void> acquireSyncLease(LocalSyncLease lease);
   Future<void> releaseSyncLease(LocalSyncLease lease);
   Future<bool> hasProcessedMlsMessage(String messageId);
@@ -969,6 +1065,9 @@ abstract class LocalStore {
 
   /// Decrypted history for one conversation, oldest first (D23).
   Future<List<LocalMessage>> loadMessages(String conversationId);
+
+  /// One decrypted row by its key, or null.
+  Future<LocalMessage?> loadMessage(String key);
   Future<List<LocalMessageReaction>> loadReactions(String conversationId);
   Future<List<LocalPin>> loadPins(String conversationId);
   Future<Set<String>> loadStarred();
@@ -1085,6 +1184,33 @@ class MemoryLocalStore implements LocalStore {
       _settings[name] = value;
 
   @override
+  Future<void> importC7History(List<MessageEffect> effects,
+      {Map<String, String?> c7Settings = const <String, String?>{}}) async {
+    _applyHistoryEffects(effects);
+    _applyC7Settings(c7Settings);
+  }
+
+  @override
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  }) async {
+    var moved = 0;
+    for (final row in _history._messages.values.toList()) {
+      if (row.conversationId != fromConversationId ||
+          row.channelId != fromChannelId) {
+        continue;
+      }
+      _history._messages[row.key] = row.copyWith(
+          conversationId: toConversationId, channelId: Value(toChannelId));
+      moved++;
+    }
+    return moved;
+  }
+
+  @override
   Future<void> saveSyncRecovery(SyncRecovery? recovery) async {
     _syncRecovery = recovery;
   }
@@ -1174,6 +1300,15 @@ class MemoryLocalStore implements LocalStore {
     _syncCursor = eventId;
   }
 
+  /// How often [checkpointSealedResidue] ran (tests).
+  int sealedResidueCheckpoints = 0;
+
+  @override
+  Future<bool> checkpointSealedResidue() async {
+    sealedResidueCheckpoints++;
+    return true;
+  }
+
   @override
   Future<bool> clearConversationPause(String conversationId,
       {int? generation, void Function()? checkCanCommit}) async {
@@ -1224,6 +1359,8 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _sealedTokens.clear();
+    _sealedOwnPosts.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
@@ -1358,6 +1495,7 @@ class MemoryLocalStore implements LocalStore {
   Future<void> removePendingEnvelope(String idempotencyKey) async {
     _outbox.removeWhere((item) => item.idempotencyKey == idempotencyKey);
     _outboxRecords.remove(idempotencyKey);
+    _clearSealedFallback(idempotencyKey);
   }
 
   @override
@@ -1588,6 +1726,134 @@ class MemoryLocalStore implements LocalStore {
     _reportKeyPins['${pin.origin}\u0000${pin.ownerAccountId}'] = pin;
   }
 
+  final List<SealedToken> _sealedTokens = <SealedToken>[];
+  final Map<String, SealedKeyPin> _sealedKeyPins = <String, SealedKeyPin>{};
+
+  @override
+  Future<int> saveSealedTokens(List<SealedToken> tokens) async {
+    var written = 0;
+    for (final token in tokens) {
+      if (!token.isWellFormed) continue;
+      if (_sealedTokens
+              .where((t) => t.conversationId == token.conversationId)
+              .length >=
+          maxSealedTokensPerConversation) {
+        continue;
+      }
+      if (_sealedTokens.any((t) => _sameNonce(t.nonce, token.nonce))) continue;
+      _sealedTokens.add(token);
+      written++;
+    }
+    return written;
+  }
+
+  static bool _sameNonce(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  Future<SealedToken?> takeSealedToken(String conversationId,
+      {required String keyId, required int epoch}) async {
+    SealedToken? best;
+    for (final token in _sealedTokens) {
+      if (token.conversationId != conversationId ||
+          token.keyId != keyId ||
+          (token.epoch != epoch && token.epoch != epoch - 1)) {
+        continue;
+      }
+      if (best == null || token.epoch < best.epoch) best = token;
+    }
+    if (best != null) _sealedTokens.remove(best);
+    return best;
+  }
+
+  @override
+  Future<int> countSealedTokens(String conversationId,
+          {required String keyId, required int epoch}) async =>
+      _sealedTokens
+          .where((t) =>
+              t.conversationId == conversationId &&
+              t.keyId == keyId &&
+              t.epoch == epoch)
+          .length;
+
+  @override
+  Future<void> dropSealedTokens(
+      {int? minEpoch, String? keyId, String? conversationId}) async {
+    _sealedTokens.removeWhere((t) =>
+        (minEpoch != null && t.epoch < minEpoch) ||
+        (keyId != null && t.keyId != keyId) ||
+        (conversationId != null && t.conversationId == conversationId));
+  }
+
+  @override
+  Future<SealedKeyPin?> loadSealedKeyPin(String origin) async =>
+      _sealedKeyPins[origin];
+
+  @override
+  Future<void> saveSealedKeyPin(SealedKeyPin pin) async {
+    if (pin.origin.isEmpty ||
+        pin.keyId.length != 32 ||
+        pin.publicKey.length != 32 ||
+        (pin.seenKeyId == null) != (pin.seenPublicKey == null)) {
+      throw const FormatException('invalid sealed key pin');
+    }
+    _sealedKeyPins[pin.origin] = pin;
+  }
+
+  final Map<String, SealedOwnPost> _sealedOwnPosts = <String, SealedOwnPost>{};
+
+  static String _ownPostKey(String conversationId, String idempotencyKey) =>
+      '$conversationId\u0000$idempotencyKey';
+
+  @override
+  Future<List<int>?> loadSealedOwnPostDigest(
+          String conversationId, String idempotencyKey) async =>
+      _sealedOwnPosts[_ownPostKey(conversationId, idempotencyKey)]
+          ?.ciphertextSha256;
+
+  @override
+  Future<String?> loadSealedOwnPostFallback(
+          String conversationId, String idempotencyKey) async =>
+      _sealedOwnPosts[_ownPostKey(conversationId, idempotencyKey)]
+          ?.fallbackJson;
+
+  void _clearSealedFallback(String idempotencyKey) {
+    for (final entry in _sealedOwnPosts.entries.toList()) {
+      if (entry.value.idempotencyKey == idempotencyKey &&
+          entry.value.fallbackJson != null) {
+        _sealedOwnPosts[entry.key] = SealedOwnPost(
+            conversationId: entry.value.conversationId,
+            idempotencyKey: idempotencyKey,
+            ciphertextSha256: entry.value.ciphertextSha256);
+      }
+    }
+  }
+
+  @override
+  Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope) async {
+    final index = _outbox
+        .indexWhere((item) => item.idempotencyKey == envelope.idempotencyKey);
+    if (index < 0) return false;
+    _outbox[index] = envelope;
+    final record = _outboxRecords[envelope.idempotencyKey];
+    if (record != null) {
+      _outboxRecords[envelope.idempotencyKey] = PendingEnvelopeRecord(
+        envelope: envelope,
+        attemptCount: record.attemptCount,
+        terminal: record.terminal,
+        draftText: record.draftText,
+        nextAttemptAt: record.nextAttemptAt,
+        failureClass: record.failureClass,
+      );
+    }
+    return true;
+  }
+
   final Map<String, List<StoredProfileKey>> _profileKeys =
       <String, List<StoredProfileKey>>{};
   final Map<String, StoredProfile> _profiles = <String, StoredProfile>{};
@@ -1716,7 +1982,11 @@ class MemoryLocalStore implements LocalStore {
         (current.conflict || pin.version < current.version)) {
       return false;
     }
-    _deviceListPins[pin.accountId] = pin;
+    // Review M2: the first pin's time stays as the pin advances.
+    _deviceListPins[pin.accountId] = pin.copyWith(
+        pinnedAt: current == null
+            ? (pin.pinnedAt ?? pin.checkedAt)
+            : (current.pinnedAt ?? current.checkedAt));
     return true;
   }
 
@@ -1828,6 +2098,7 @@ class MemoryLocalStore implements LocalStore {
     final nextHistory = _history.copy();
     final nextNamespace = _historyNamespace.copy();
     final envelope = commit.envelope;
+    String? settledOwnPost;
     if (envelope != null) {
       final messages =
           nextMessages[envelope.conversationId] ??= <ReceivedMessageEnvelope>[];
@@ -1861,11 +2132,17 @@ class MemoryLocalStore implements LocalStore {
             expiresAt: envelope.expiresAt?.toUtc().millisecondsSinceEpoch,
             conversationId: envelope.conversationId,
             channelId: channel as String?);
+        if (envelope.sealed) {
+          settledOwnPost =
+              _ownPostKey(envelope.conversationId, envelope.idempotencyKey);
+        }
       }
     }
     commit.checkCanCommit?.call();
     _history = nextHistory;
     _historyNamespace = nextNamespace;
+    _applyC7Settings(commit.c7Settings);
+    if (settledOwnPost != null) _sealedOwnPosts.remove(settledOwnPost);
     _processedMlsMessages.add(commit.eventKey);
     if (replay) {
       _pauses[commit.conversationId] =
@@ -1948,15 +2225,26 @@ class MemoryLocalStore implements LocalStore {
     if (_pauses.containsKey(transition.envelope.conversationId)) {
       throw ConversationSyncPausedException(transition.envelope.conversationId);
     }
-    final existing = _outboxRecords[transition.envelope.idempotencyKey];
-    if (existing != null) {
-      throw StateError('outbox idempotency key conflict');
-    }
-    if (_outbox.length >= maxPendingEnvelopes) {
-      throw const OutboxFullException();
+    final key = transition.envelope.idempotencyKey;
+    final existing = _outboxRecords[key];
+    if (transition.replacesSealedEntry) {
+      if (existing == null ||
+          !existing.envelope.sealed ||
+          existing.envelope.conversationId !=
+              transition.envelope.conversationId) {
+        throw StateError('no queued sealed entry to replace');
+      }
+    } else {
+      if (existing != null) {
+        throw StateError('outbox idempotency key conflict');
+      }
+      if (_outbox.length >= maxPendingEnvelopes) {
+        throw const OutboxFullException();
+      }
     }
     _applyHistoryEffects(transition.messageEffects);
     _applyGovernanceObservation(transition.governanceObservation);
+    _applyC7Settings(transition.c7Settings);
     final protectedKeyIds = {
       for (final record in _acceptedCommunityInfo.values) record.keyId
     };
@@ -1972,13 +2260,42 @@ class MemoryLocalStore implements LocalStore {
         draft.text.trim() == sentText.trim()) {
       _drafts.remove(transition.envelope.conversationId);
     }
-    _outbox.add(transition.envelope);
-    _outboxRecords[transition.envelope.idempotencyKey] = PendingEnvelopeRecord(
-        envelope: transition.envelope,
-        attemptCount: 0,
-        terminal: false,
-        draftText: transition.draftText);
+    if (transition.replacesSealedEntry) {
+      final index = _outbox.indexWhere((item) => item.idempotencyKey == key);
+      _outbox[index] = transition.envelope;
+      _outboxRecords[key] = PendingEnvelopeRecord(
+          envelope: transition.envelope,
+          attemptCount: 0,
+          terminal: false,
+          draftText: existing!.draftText);
+      // The plaintext goes. The digest stays: an earlier sealed attempt
+      // still in flight could land late, and its echo is then this
+      // device's own.
+      _clearSealedFallback(key);
+    } else {
+      _outbox.add(transition.envelope);
+      _outboxRecords[key] = PendingEnvelopeRecord(
+          envelope: transition.envelope,
+          attemptCount: 0,
+          terminal: false,
+          draftText: transition.draftText);
+    }
+    final ownPost = transition.sealedOwnPost;
+    if (ownPost != null) {
+      final cutoff = DateTime.now().toUtc().subtract(sealedOwnPostRetention);
+      _sealedOwnPostTimes.removeWhere((name, at) {
+        final stale = at.isBefore(cutoff) &&
+            !_outboxRecords.containsKey(_sealedOwnPosts[name]?.idempotencyKey);
+        if (stale) _sealedOwnPosts.remove(name);
+        return stale;
+      });
+      final name = _ownPostKey(ownPost.conversationId, ownPost.idempotencyKey);
+      _sealedOwnPosts[name] = ownPost;
+      _sealedOwnPostTimes[name] = DateTime.now().toUtc();
+    }
   }
+
+  final Map<String, DateTime> _sealedOwnPostTimes = <String, DateTime>{};
 
   @override
   Future<void> commitLocalMlsState({
@@ -2382,6 +2699,8 @@ class MemoryLocalStore implements LocalStore {
     _historyNamespace = HistoryNamespace();
     _conversationPrefs.clear();
     _frankReveals.clear();
+    _sealedTokens.clear();
+    _sealedOwnPosts.clear();
     _communityInfoEvents = const <CommunityInfoEvent>[];
     _inviteAnchors.clear();
     _acceptedCommunityInfo.clear();
@@ -2494,6 +2813,9 @@ class MemoryLocalStore implements LocalStore {
       _history.messages(conversationId);
 
   @override
+  Future<LocalMessage?> loadMessage(String key) async => _history.message(key);
+
+  @override
   Future<List<LocalPin>> loadPins(String conversationId) async {
     _history.pins.removeWhere(
         (_, p) => p.expiresAt <= DateTime.now().millisecondsSinceEpoch);
@@ -2572,6 +2894,8 @@ class _MemoryMessageHistory {
       <String, LocalMessageReaction>{};
 
   List<LocalMessage> allMessages() => _messages.values.toList(growable: false);
+
+  LocalMessage? message(String key) => _messages[key];
 
   List<LocalMessageReaction> allReactions() =>
       _reactions.values.toList(growable: false);
@@ -2811,6 +3135,9 @@ class _MemoryMessageHistory {
     if (target == null ||
         (conversationId != null && target.conversationId != conversationId) ||
         target.channelId != channelId) return;
+    // A row linked to another server id keeps it (L2-3 review H1).
+    final linked = target.serverMessageId;
+    if (linked != null && linked != serverMessageId) return;
     _messages[key] = target.copyWith(
       serverMessageId: Value(serverMessageId),
       state: LocalMessageState.sent,
@@ -3022,6 +3349,25 @@ class SecureLocalStore implements LocalStore {
       (await _database()).writeMetadata('setting:$name', value);
 
   @override
+  Future<void> importC7History(List<MessageEffect> effects,
+          {Map<String, String?> c7Settings =
+              const <String, String?>{}}) async =>
+      (await _database()).importC7History(effects, c7Settings: c7Settings);
+
+  @override
+  Future<int> moveChannelRows({
+    required String fromConversationId,
+    required String? fromChannelId,
+    required String toConversationId,
+    required String? toChannelId,
+  }) async =>
+      (await _database()).moveChannelRows(
+          fromConversationId: fromConversationId,
+          fromChannelId: fromChannelId,
+          toConversationId: toConversationId,
+          toChannelId: toChannelId);
+
+  @override
   Future<List<ConversationPause>> loadConversationPauses() async =>
       (await _database()).readConversationPauses();
 
@@ -3063,6 +3409,15 @@ class SecureLocalStore implements LocalStore {
         leaseKey: _syncLeaseKey,
         checkCanCommit: checkCanCommit,
       );
+
+  @override
+  Future<bool> checkpointSealedResidue() async {
+    try {
+      return await (await _database()).checkpointWalTruncate();
+    } on Object {
+      return false;
+    }
+  }
 
   @override
   Future<bool> clearConversationPause(String conversationId,
@@ -3329,6 +3684,53 @@ class SecureLocalStore implements LocalStore {
       (await _database()).readFrankReveal(messageKey);
 
   @override
+  Future<int> saveSealedTokens(List<SealedToken> tokens) async =>
+      (await _database()).writeSealedTokens(tokens);
+
+  @override
+  Future<SealedToken?> takeSealedToken(String conversationId,
+          {required String keyId, required int epoch}) async =>
+      (await _database())
+          .takeSealedToken(conversationId, keyId: keyId, epoch: epoch);
+
+  @override
+  Future<int> countSealedTokens(String conversationId,
+          {required String keyId, required int epoch}) async =>
+      (await _database())
+          .countSealedTokens(conversationId, keyId: keyId, epoch: epoch);
+
+  @override
+  Future<void> dropSealedTokens(
+          {int? minEpoch, String? keyId, String? conversationId}) async =>
+      (await _database()).dropSealedTokens(
+          minEpoch: minEpoch, keyId: keyId, conversationId: conversationId);
+
+  @override
+  Future<SealedKeyPin?> loadSealedKeyPin(String origin) async =>
+      (await _database()).readSealedKeyPin(origin);
+
+  @override
+  Future<void> saveSealedKeyPin(SealedKeyPin pin) async =>
+      (await _database()).writeSealedKeyPin(pin);
+
+  @override
+  Future<List<int>?> loadSealedOwnPostDigest(
+          String conversationId, String idempotencyKey) async =>
+      (await _database())
+          .readSealedOwnPostDigest(conversationId, idempotencyKey);
+
+  @override
+  Future<String?> loadSealedOwnPostFallback(
+          String conversationId, String idempotencyKey) async =>
+      (await _database())
+          .readSealedOwnPostFallback(conversationId, idempotencyKey);
+
+  @override
+  Future<bool> rewriteQueuedEnvelope(MessageEnvelope envelope) async =>
+      (await _database()).rewriteOutboxPayload(
+          envelope.idempotencyKey, jsonEncode(envelope.toJson()));
+
+  @override
   Future<List<CommunityInfoEvent>> loadCommunityInfoEvents(
           CommunityInfoEventKind kind,
           String subjectKind,
@@ -3484,6 +3886,7 @@ class SecureLocalStore implements LocalStore {
       allowOwnPinEffect: commit.allowOwnPinEffect,
       checkCanCommit: commit.checkCanCommit,
       leaseKey: _syncLeaseKey,
+      c7Settings: commit.c7Settings,
     );
   }
 
@@ -3589,7 +3992,10 @@ class SecureLocalStore implements LocalStore {
         messageEffects: transition.messageEffects,
         communityInfo: transition.communityInfo,
         recordChanges: _recordWrites(transition.state),
+        sealedOwnPost: transition.sealedOwnPost,
+        replacesSealedEntry: transition.replacesSealedEntry,
         leaseKey: _syncLeaseKey,
+        c7Settings: transition.c7Settings,
       );
     } on StateError catch (error) {
       if (error.message == 'outbox_full') {
@@ -3906,6 +4312,10 @@ class SecureLocalStore implements LocalStore {
   @override
   Future<List<LocalMessage>> loadMessages(String conversationId) async =>
       (await _database()).readMessages(conversationId);
+
+  @override
+  Future<LocalMessage?> loadMessage(String key) async =>
+      (await _database()).readMessage(key);
 
   @override
   Future<List<LocalPin>> loadPins(String conversationId) async =>

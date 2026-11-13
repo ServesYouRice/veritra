@@ -3975,6 +3975,30 @@ abstract class AppLocalizations {
   /// **'This encrypted message could not be sent. Copy it or discard it.'**
   String get outboxSendFailed;
 
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn’t send hidden: the server would not take this message without your name. Send it normally, and the server will see it is from you, or discard it.'**
+  String get outboxSealedRefused;
+
+  /// L2-3 sealed sender: the server would not take a message hidden. Sends it with your name visible to the server.
+  ///
+  /// In en, this message translates to:
+  /// **'Send normally'**
+  String get chatSendNormally;
+
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'This chat is updating its encryption. Try again in a moment.'**
+  String get outboxSealedResendHeld;
+
+  /// L2-3 sealed sender: the server would not take a message hidden.
+  ///
+  /// In en, this message translates to:
+  /// **'This message can no longer be sent normally. Copy it or discard it.'**
+  String get outboxSealedResendUnavailable;
+
   /// No description provided for @recoveryRestoreFailed.
   ///
   /// In en, this message translates to:
@@ -7268,6 +7292,354 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Only admins post'**
   String get rolesOnlyAdminsPost;
+
+  /// No description provided for @channelHistoryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'History for new members'**
+  String get channelHistoryTitle;
+
+  /// No description provided for @channelHistoryFullLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'People who join later can read earlier posts'**
+  String get channelHistoryFullLabel;
+
+  /// No description provided for @channelHistoryOnConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read by people who join later.'**
+  String get channelHistoryOnConfirm;
+
+  /// No description provided for @channelHistoryOffConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'People who join later won\'t see earlier posts. Members who already have them keep them.'**
+  String get channelHistoryOffConfirm;
+
+  /// No description provided for @channelHistoryProofConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.'**
+  String get channelHistoryProofConfirm;
+
+  /// No description provided for @channelHistoryProofLine.
+  ///
+  /// In en, this message translates to:
+  /// **'Posts can be proven to be their author\'s'**
+  String get channelHistoryProofLine;
+
+  /// No description provided for @channelHistoryProofAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Turn on'**
+  String get channelHistoryProofAccept;
+
+  /// No description provided for @channelHistoryLineFull.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read by people who join later'**
+  String get channelHistoryLineFull;
+
+  /// No description provided for @channelHistoryLineFromJoin.
+  ///
+  /// In en, this message translates to:
+  /// **'New posts can be read only by people who are members when they are sent'**
+  String get channelHistoryLineFromJoin;
+
+  /// No description provided for @channelHistoryPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for the change to go through'**
+  String get channelHistoryPending;
+
+  /// No description provided for @channelHistoryTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'The change did not go through. Try again.'**
+  String get channelHistoryTimeout;
+
+  /// No description provided for @channelHistoryLost.
+  ///
+  /// In en, this message translates to:
+  /// **'Another admin changed this setting at the same time. Check it and try again.'**
+  String get channelHistoryLost;
+
+  /// No description provided for @channelHistoryPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'History for new members is paused until the next membership change.'**
+  String get channelHistoryPaused;
+
+  /// No description provided for @channelHistoryEarlier.
+  ///
+  /// In en, this message translates to:
+  /// **'Load earlier posts'**
+  String get channelHistoryEarlier;
+
+  /// No description provided for @channelHistoryAttachmentHidden.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachment from before you joined'**
+  String get channelHistoryAttachmentHidden;
+
+  /// No description provided for @channelHistoryFormerMember.
+  ///
+  /// In en, this message translates to:
+  /// **'From a former member'**
+  String get channelHistoryFormerMember;
+
+  /// No description provided for @channelHistoryFormerMemberUnnamed.
+  ///
+  /// In en, this message translates to:
+  /// **'Former member'**
+  String get channelHistoryFormerMemberUnnamed;
+
+  /// No description provided for @channelConvertToPrivate.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel private'**
+  String get channelConvertToPrivate;
+
+  /// No description provided for @channelConvertToOpen.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel open'**
+  String get channelConvertToOpen;
+
+  /// No description provided for @channelConvertOpenTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel open?'**
+  String get channelConvertOpenTitle;
+
+  /// No description provided for @channelConvertOpenConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.'**
+  String get channelConvertOpenConfirm;
+
+  /// Making a private channel open, when its earlier posts do not open for the shared group: channel history is off, or the channel keeps posts from each member's join.
+  ///
+  /// In en, this message translates to:
+  /// **'Earlier posts in this channel stay with the people who already had them. Community members who were never in this private channel will see only posts made after it opens.'**
+  String get channelConvertOpenConfirmKept;
+
+  /// No description provided for @channelConvertOpenAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Make open'**
+  String get channelConvertOpenAccept;
+
+  /// No description provided for @channelConvertPrivateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Make this channel private?'**
+  String get channelConvertPrivateTitle;
+
+  /// No description provided for @channelConvertPrivatePick.
+  ///
+  /// In en, this message translates to:
+  /// **'Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.'**
+  String get channelConvertPrivatePick;
+
+  /// No description provided for @channelConvertPrivateNoReaders.
+  ///
+  /// In en, this message translates to:
+  /// **'No one else reads this channel yet.'**
+  String get channelConvertPrivateNoReaders;
+
+  /// No description provided for @channelConvertReadersFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load who reads this channel. Try again.'**
+  String get channelConvertReadersFailed;
+
+  /// No description provided for @channelConvertPrivateAccept.
+  ///
+  /// In en, this message translates to:
+  /// **'Make private'**
+  String get channelConvertPrivateAccept;
+
+  /// Shown after an open channel was made private when some ticked readers could not be added.
+  ///
+  /// In en, this message translates to:
+  /// **'The channel is private now, but these ticked readers could not be added: {names}. Add them from the channel\'s members.'**
+  String channelConvertNotAdded(String names);
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sender not confirmed'**
+  String get c6VerdictSenderUnverified;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The message matches, but its sender\'s key could not be checked against their signed device list.'**
+  String get c6VerdictSenderUnverifiedDetail;
+
+  /// L2-3 sealed sender: report verdict when the sender's device list was first seen too late to rule out the server.
+  ///
+  /// In en, this message translates to:
+  /// **'Matches, if the server is honest'**
+  String get c6VerdictServerTrusted;
+
+  /// L2-3 sealed sender: report verdict when the sender's device list was first seen too late to rule out the server.
+  ///
+  /// In en, this message translates to:
+  /// **'The proof checks, but this device first got the sender’s signed device list from the server only after this report arrived. A dishonest server could have made up that list and this proof. Treat the sender as unconfirmed unless you trust the server.'**
+  String get c6VerdictServerTrustedDetail;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Not provable to you'**
+  String get c6VerdictNotDesignated;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The message matches, but it was sent without your name and was not made provable to your current report key. Its sender\'s app had not pinned your key, or you replaced the key since. It cannot be proven here.'**
+  String get c6VerdictNotDesignatedDetail;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Proof does not check'**
+  String get c6VerdictProofFailed;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The message matches, but its proof for you does not check out for the sender it names. Do not rely on who sent it.'**
+  String get c6VerdictProofFailedDetail;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'No owner\'s report key is pinned on this device yet. A message you send without your name can then be proven to no one if it is reported. The app pins the owners\' keys the first time the server lists them.'**
+  String get l2SealedProvableNone;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'A message you send without your name can be proven, if reported, only to the owners whose report keys this app pinned: {count}. Only they can check the proof; it convinces no one else.'**
+  String l2SealedProvableOwners(int count);
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Sealed sender key'**
+  String get l2SealedKeyTitle;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages without your name'**
+  String get l2SealedKeyTile;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.'**
+  String get l2SealedKeyIntro;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'This server does not offer sealed sending.'**
+  String get l2SealedKeyOff;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'No key pinned yet. It is pinned on the next sync.'**
+  String get l2SealedKeyNone;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Pinned key'**
+  String get l2SealedKeyPinned;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.'**
+  String get l2SealedKeyChanged;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'New key'**
+  String get l2SealedKeyNew;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept new key'**
+  String get l2SealedKeyAccept;
+
+  /// L2-3 sealed sender.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept only if the server\'s operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else\'s.'**
+  String get l2SealedKeyAcceptWarning;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The owners\' report keys changed. Review them.'**
+  String get l2OwnerKeysReviewTile;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The server\'s list of the owners\' report keys differs from the keys this app pinned. Until you accept a change, a message you send without your name is provable only to the owners pinned before.'**
+  String get l2OwnerKeysReviewIntro;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} has a different report key.'**
+  String l2OwnerKeyChanged(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} is new.'**
+  String l2OwnerKeyAdded(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Owner {account} is no longer listed.'**
+  String l2OwnerKeyMissing(String account);
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept'**
+  String get l2OwnerKeyAccept;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Reject'**
+  String get l2OwnerKeyReject;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'Accept only if you know the owners or their keys changed. Whoever holds this key can check who sent a message without your name if they are shown it. Reports never go to a key accepted here; reporting asks you to compare codes.'**
+  String get l2OwnerKeyAcceptWarning;
+
+  /// L2-3 sealed sender owner keys.
+  ///
+  /// In en, this message translates to:
+  /// **'The list changed meanwhile. Look at it again.'**
+  String get l2OwnerKeyStale;
 }
 
 class _AppLocalizationsDelegate

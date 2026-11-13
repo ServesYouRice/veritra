@@ -51,6 +51,9 @@ var (
 		"/api/v1/health":       true,
 		"/setup":               true,
 		"/api/v1/setup/status": true,
+		// L2-3: neither looks a session up (a sealed post refuses one).
+		"/api/v1/sealed/key":      true,
+		"/api/v1/sealed/messages": true,
 	}
 )
 

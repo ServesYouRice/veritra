@@ -774,6 +774,14 @@ fn verify_refuses_unknown_domains_and_bad_lengths_and_rejects_tampering() {
 fn a_post_signature_binds_every_field() {
     let hash = [1u8; 32];
     let base = post_signed_fields(b"c", b"h", b"a", b"g", 5, b"d", 3, &hash).unwrap();
+    // Only the channel may be empty (a group-level message); every id is
+    // at most 64 bytes.
+    assert!(post_signed_fields(b"c", b"", b"a", b"g", 5, b"d", 0, &hash).is_ok());
+    assert!(post_signed_fields(b"", b"h", b"a", b"g", 5, b"d", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", b"h", b"", b"g", 5, b"d", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", b"h", b"a", b"", 5, b"d", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", b"h", b"a", b"g", 5, b"", 3, &hash).is_err());
+    assert!(post_signed_fields(b"c", &[b'h'; 65], b"a", b"g", 5, b"d", 3, &hash).is_err());
     for changed in [
         post_signed_fields(b"x", b"h", b"a", b"g", 5, b"d", 3, &hash),
         post_signed_fields(b"c", b"x", b"a", b"g", 5, b"d", 3, &hash),
@@ -902,4 +910,157 @@ fn sequence_cap_cases_follow_decision_4() {
         let valid = seq <= ceiling && (highest < 0 || seq <= highest + max_jump);
         assert_eq!(valid, case["valid"], "highest {highest} seq {seq}");
     }
+}
+
+// ---- an assembled history_sync -----------------------------------------------
+
+/// `testing/vectors/c7-sync-v1.json`: one whole `history_sync` as sent,
+/// made by `testing/vectors/c7-sync-v1.py` (an independent implementation).
+/// Rust opens body0 and every slot with its own calls and checks the
+/// layout; Go (`server/internal/c7vector`) and Dart
+/// (`mobile/test/c7_sync_vector_test.dart`) check the same file.
+const SYNC_VECTOR: &str = include_str!("../../../testing/vectors/c7-sync-v1.json");
+
+#[test]
+fn assembled_history_sync_opens_slot_by_slot() {
+    let vector: Value = serde_json::from_str(SYNC_VECTOR).unwrap();
+    let inputs = &vector["inputs"];
+    let outputs = &vector["outputs"];
+    let community = text(&inputs["community_id"]);
+    let conversation = text(&inputs["conversation_id"]);
+    let sender = text(&inputs["sender_device_id"]);
+    let action = text(&inputs["action_id"]);
+    let channels = inputs["channels"].as_array().unwrap();
+    let sealed = unhex(&outputs["sealed_body_hex"]);
+    let n = channels.len();
+    assert_eq!(sealed.len(), history_sync_body_len(n).unwrap());
+    assert_eq!(history_sync_channel_count(sealed.len()), Some(n));
+    assert_eq!(
+        hex(&Sha256::digest(&sealed)),
+        outputs["sealed_body_sha256_hex"]
+    );
+
+    // body0: sig | padded VAP1, under the reference's body key, with the
+    // group-level aad (channel "").
+    let aad = body_aad(conversation, b"", sender, action).unwrap();
+    assert_eq!(hex(&aad), outputs["body_aad_hex"]);
+    let split = body0_padded_len(n).unwrap() + SEAL_OVERHEAD + SIGNATURE_BYTES;
+    assert_eq!(
+        split as u64,
+        outputs["body0_sealed_length"].as_u64().unwrap()
+    );
+    let body0 = open(&unhex(&inputs["body_key_hex"]), &aad, &sealed[..split]).unwrap();
+    let (sig, vap1) = body0.as_slice().split_at(SIGNATURE_BYTES);
+    assert_eq!(hex(vap1), outputs["body0_padded_vap1_hex"]);
+    assert_eq!(vap1.len(), body0_padded_len(n).unwrap());
+    let vap1_hash: [u8; 32] = Sha256::digest(vap1).into();
+    // A group-level message signs an empty channel id.
+    let fields = post_signed_fields(
+        community,
+        b"",
+        action,
+        conversation,
+        inputs["message_epoch"].as_u64().unwrap(),
+        sender,
+        0,
+        &vap1_hash,
+    )
+    .unwrap();
+    assert_eq!(hex(&fields), outputs["post_signed_fields_hex"]);
+    let public = unhex(&outputs["signing_public_key_hex"]);
+    assert!(verify(SIGN_DOMAIN_POST, &public, &fields, sig).unwrap());
+
+    // The slots, in body0's order, each under HKDF(key_c, slot label, ...).
+    for (i, channel) in channels.iter().enumerate() {
+        let at = split + i * SLOT_BYTES;
+        let slot = &sealed[at..at + SLOT_BYTES];
+        let channel_id = text(&channel["channel_id"]);
+        let key_c = unhex(&channel["key_hex"]);
+        let plain = slot_open(&key_c, community, channel_id, sender, action, &aad, slot).unwrap();
+        assert_eq!(hex(plain.as_slice()), channel["slot_plain_hex"]);
+        // Every other slot's key is a mismatch at the commitment.
+        let other = &sealed[split + ((i + 1) % n) * SLOT_BYTES..][..SLOT_BYTES];
+        assert_eq!(
+            slot_open(&key_c, community, channel_id, sender, action, &aad, other).err(),
+            Some(C7Error::KeyMismatch)
+        );
+        let (head, entry) = plain.as_slice().split_at(RECORD_BYTES);
+        match GenerationEntry::decode(entry).unwrap() {
+            Some(entry) => {
+                // A handed-over key: the entry commits to key_c, its head
+                // record verifies, and the wrap names the earlier generation.
+                assert_eq!(entry.key_commit, chk_commit(&key_c).unwrap());
+                let record = HistoryRecord::decode(head).unwrap();
+                assert!(verify(
+                    SIGN_DOMAIN_HISTORY,
+                    &public,
+                    &record.signed_fields().unwrap(),
+                    &record.sig
+                )
+                .unwrap());
+                let (previous_epoch, previous_key) = entry.previous.unwrap();
+                assert!(previous_epoch >= record.epoch && previous_epoch < entry.epoch);
+                assert_eq!(record.chk_commit, chk_commit(&previous_key).unwrap());
+            }
+            None => assert!(head.iter().all(|byte| *byte == 0)),
+        }
+    }
+}
+
+/// `testing/vectors/c7-move-v1.json`: the move wrap and the compact move
+/// record that carries it, made by `testing/vectors/c7-move-v1.py`. Go
+/// (`server/internal/c7vector`) and Dart (`mobile/test/c7_move_wrap_test.dart`)
+/// check the same file.
+const MOVE_VECTOR: &str = include_str!("../../../testing/vectors/c7-move-v1.json");
+
+#[test]
+fn move_wrap_vector() {
+    let vector: Value = serde_json::from_str(MOVE_VECTOR).unwrap();
+    assert_eq!(MOVE_WRAP_USED_MAX, 114);
+    for case in vector["valid_wraps"].as_array().unwrap() {
+        let bytes = unhex(&case["wrap_hex"]);
+        let wrap = MoveWrap::decode(&bytes).unwrap();
+        assert_eq!(wrap.prev_epoch, case["prev_epoch"].as_u64().unwrap());
+        assert_eq!(hex(&wrap.prev_key), case["prev_key_hex"]);
+        assert_eq!(wrap.prev_group_id, text(&case["prev_group_id"]));
+        assert_eq!(
+            wrap.prev_close_epoch,
+            case["prev_close_epoch"].as_u64().unwrap()
+        );
+        assert_eq!(wrap.encode().unwrap().to_vec(), bytes);
+    }
+    for case in vector["invalid_wraps"].as_array().unwrap() {
+        assert!(
+            MoveWrap::decode(&unhex(&case["wrap_hex"])).is_err(),
+            "{}",
+            case["name"]
+        );
+    }
+    let record = &vector["record"];
+    let compact = unhex(&record["compact_hex"]);
+    assert_eq!(
+        compact.len() as u64,
+        record["compact_length"].as_u64().unwrap()
+    );
+    let decoded = CompactRecord::decode(&compact).unwrap();
+    assert_eq!(decoded.reason, REASON_MOVE);
+    assert_eq!(decoded.encode().unwrap(), compact);
+    let (group, wrap_bytes) = decoded.moved.as_ref().unwrap();
+    assert_eq!(group.as_slice(), text(&record["close_group_id"]));
+    let wrap = MoveWrap::decode(wrap_bytes).unwrap();
+    assert!(wrap.fits(group, decoded.close_epoch));
+    for case in vector["mismatched_wraps"].as_array().unwrap() {
+        let other = MoveWrap::decode(&unhex(&case["wrap_hex"])).unwrap();
+        assert!(!other.fits(group, decoded.close_epoch), "{}", case["name"]);
+    }
+    // Encoding refuses what decoding refuses.
+    let mut bad = wrap.clone();
+    bad.prev_key = [0; KEY_BYTES];
+    assert!(bad.encode().is_err());
+    let mut bad = wrap.clone();
+    bad.prev_epoch = bad.prev_close_epoch + 1;
+    assert!(bad.encode().is_err());
+    let mut bad = wrap;
+    bad.prev_group_id = vec![b'g'; MAX_ID_BYTES + 1];
+    assert!(bad.encode().is_err());
 }

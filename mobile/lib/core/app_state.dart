@@ -7,7 +7,12 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter/foundation.dart'
-    show defaultTargetPlatform, mapEquals, setEquals, visibleForTesting;
+    show
+        defaultTargetPlatform,
+        listEquals,
+        mapEquals,
+        setEquals,
+        visibleForTesting;
 import 'package:path_provider/path_provider.dart';
 
 import '../crypto/app_payload.dart';
@@ -21,6 +26,7 @@ import '../crypto/k2_transfer_crypto.dart';
 import '../crypto/native_crypto_bindings.dart'
     show
         DeviceListBody,
+        DeviceListFrankKey,
         DeviceListChange,
         DeviceListPair,
         K2LinkContext,
@@ -39,6 +45,9 @@ import '../crypto/k2_transcript.dart';
 import '../crypto/attachment_crypto.dart';
 import '../crypto/mls_commit_bundle.dart';
 import '../crypto/crypto_service.dart';
+import '../crypto/c7_move.dart' show C7Move;
+import '../crypto/c7_import.dart'
+    show c7FirstPageBytes, c7FirstPagePosts, c7HistoryRequestLimit;
 import 'mls_self_update_policy.dart';
 import '../push/push_service.dart';
 import '../push/background_wake_runner.dart';
@@ -54,6 +63,7 @@ import '../calls/call_controller.dart';
 import '../calls/call_service.dart' show isTerminalCallState;
 import '../calls/room/room_engine.dart' show RoomSession;
 import 'api_client.dart';
+import 'sealed_sender.dart';
 import 'roles/governance.dart';
 import 'roles/governance_commands.dart';
 import 'roles/posting_verdict.dart';
@@ -87,6 +97,10 @@ import '../crypto/profile_record_codec.dart'
 import 'passkeys.dart';
 import 'receipts_state.dart';
 import 'report_key_announcer.dart';
+import 'report_models.dart' show ReportInbox;
+import '../crypto/franking.dart' show reportInboxInstanceOwner;
+import '../crypto/owner_key_watch.dart';
+import '../crypto/owner_proof_pins.dart';
 import 'report_seed_store.dart';
 import 'reports_service.dart';
 import 'typing_state.dart';
@@ -282,11 +296,29 @@ int passFetchedFloor({
 }) =>
     fetchedGeneration == sessionGeneration ? fetchedThrough : 0;
 
+/// C3 conversion: the stored event, ids only, that tells the members of
+/// both conversations a channel moved (server `ChannelMovedEventType`).
+const String channelMovedEventType = 'conversation.channel_moved';
+
+/// One `conversation.channel_moved` event: ids and the new access mode.
+typedef _ChannelMove = ({
+  String channel,
+  String from,
+  String to,
+  String access,
+  String? movedBy,
+});
+
+extension on _ChannelMove {
+  bool get private => access == 'private';
+}
+
 class AppState extends ChangeNotifier
     implements
         ConversationAuthority,
         ConversationCommunitySource,
-        VerifiedRoleSource {
+        VerifiedRoleSource,
+        C7ChannelListSource {
   AppState({
     required this.apiClientFactory,
     required this.cryptoService,
@@ -410,6 +442,19 @@ class AppState extends ChangeNotifier
 
   Session? session;
   ApiClient? api;
+
+  /// L2-3: the sealed sender state for [api]'s origin, while the crypto
+  /// service can send and open sealed messages; and the client that posts
+  /// them, which never carries the session.
+  SealedSender? sealedSender;
+  SealedPostClient? _sealedPost;
+
+  /// L2-3: the owner report key differences waiting for the person (a key
+  /// changed, an owner added or gone), as last read from this device's
+  /// proof recipients and the server's latest listing. Until accepted,
+  /// sealed messages are tagged only to the proof recipients from before. Settings shows a warning
+  /// while it is not empty.
+  List<OwnerKeyReviewItem> ownerKeyReview = const <OwnerKeyReviewItem>[];
   SyncService? sync;
   StreamSubscription<Map<String, Object?>>? _syncSubscription;
   StreamSubscription<PushEvent>? _pushSubscription;
@@ -701,6 +746,21 @@ class AppState extends ChangeNotifier
   @override
   String? conversationChannel(String conversationId) =>
       conversations.where((c) => c.id == conversationId).firstOrNull?.channelId;
+
+  /// The community's open and announcement channels routed through
+  /// [conversationId] (C7: the channels a `history_sync` names and a
+  /// newcomer adopts). The server's list: a channel it leaves out is not
+  /// handed over (fails closed); one it adds gets a zero slot.
+  @override
+  List<String> c7Channels(String conversationId) => <String>[
+        for (final channels in channelsByCommunity.values)
+          for (final channel in channels)
+            if (channel.kind != 'private' &&
+                channel.isRouted &&
+                channel.conversationId == conversationId)
+              channel.id,
+      ];
+
   @override
   String? privateGroupChannel(String conversationId) {
     for (final channels in channelsByCommunity.values) {
@@ -1054,6 +1114,56 @@ class AppState extends ChangeNotifier
   Completer<void>? _mlsOutboxPassDone;
   Timer? _mlsOutboxRetryTimer;
   Timer? _catchUpRetryTimer;
+
+  /// C7: wakes the work pass when the next `history_sync` duty or request
+  /// falls due (foreground only).
+  Timer? _c7Timer;
+
+  /// C7: per conversation, the record messages drawn as system lines
+  /// (local message key to `true` for `full`), from [C7HistoryService].
+  Map<String, Map<String, bool>> _c7Lines = <String, Map<String, bool>>{};
+
+  /// C7: per conversation, the channels "Load earlier posts" applies to
+  /// (`full` here, with older posts on the server), with the history
+  /// message to page before.
+  Map<String, Map<String, String>> _c7Earlier = <String, Map<String, String>>{};
+
+  /// C7: a newcomer import that failed is not fetched again (up to
+  /// [c7FirstPageBytes] per channel) before its time: per conversation, the
+  /// failures in a row and when the next try may start. In memory only, so
+  /// an app restart tries once at once.
+  final Map<String, ({int failures, DateTime nextAt})> _c7ImportBackoff =
+      <String, ({int failures, DateTime nextAt})>{};
+
+  /// The first wait after a failed C7 import; it doubles up to
+  /// [c7ImportBackoffCap].
+  static const Duration c7ImportBackoffBase = Duration(minutes: 1);
+  static const Duration c7ImportBackoffCap = Duration(hours: 1);
+
+  /// The wait after the server refused an import's routes (403 or 404,
+  /// review L-5): access lost or nothing there, which a retry within the
+  /// hour would only ask again.
+  static const Duration c7ImportRefusedWait = Duration(days: 1);
+
+  /// Records the failure of the C7 import [id] after [wait].
+  void _c7ImportFailed(
+      String id, ({int failures, DateTime nextAt})? wait, Object err) {
+    final failures = (wait?.failures ?? 0) + 1;
+    final Duration delay;
+    if (err is ApiException &&
+        (err.statusCode == 403 || err.statusCode == 404)) {
+      delay = c7ImportRefusedWait;
+    } else {
+      // Retried once the wait is over: 1 min, doubling to 1 h.
+      final doubled = c7ImportBackoffBase * (1 << min(failures - 1, 6));
+      delay = doubled > c7ImportBackoffCap ? c7ImportBackoffCap : doubled;
+    }
+    _c7ImportBackoff[id] = (failures: failures, nextAt: c7Clock().add(delay));
+  }
+
+  /// The clock the C7 import backoff reads; tests move it.
+  @visibleForTesting
+  DateTime Function() c7Clock = () => DateTime.now().toUtc();
   Timer? _expiryTimer;
   bool _purgingExpired = false;
   Duration _expiryBackoff = Duration.zero;
@@ -1651,7 +1761,13 @@ class AppState extends ChangeNotifier
   /// left the local cache. Server envelopes without a local record (sent
   /// before this device joined, say) still appear, as redacted bars.
   List<ReceivedMessageEnvelope> timelineFor(String conversationId) {
-    final all = _timelineForConversation(conversationId);
+    // L2-3: the server hides a blocked account's identified posts, but it
+    // cannot tell who sent a sealed one; the app hides those itself, by the
+    // sender MLS named.
+    final all = _timelineForConversation(conversationId)
+        .where((envelope) =>
+            !(envelope.sealed && isBlocked(envelope.senderAccountId)))
+        .toList(growable: false);
     final channel = _selectedChannels[conversationId];
     if (channel == null) return all;
     // A shared group holds every open channel; the chat shows one of them.
@@ -1760,7 +1876,18 @@ class AppState extends ChangeNotifier
         records.map((record) => record.envelope).toList(growable: false);
   }
 
+  /// L2-3 (owner decision 2026-11-12, "Ask before re-sending"): whether
+  /// [idempotencyKey] is a message the server would not take hidden, which
+  /// waits for the person to send it normally or discard it.
+  bool outboxNeedsSealedChoice(String idempotencyKey) {
+    final record = _outboxRecords[idempotencyKey];
+    return record != null && sealedNeedsResendChoice(record);
+  }
+
   String outboxFailureMessage(String idempotencyKey) {
+    if (outboxNeedsSealedChoice(idempotencyKey)) {
+      return l10n.outboxSealedRefused;
+    }
     final failure = _outboxRecords[idempotencyKey]?.failureClass ?? '';
     if (failure.contains('storage_quota_exceeded') ||
         failure.contains(':507:')) {
@@ -2444,8 +2571,8 @@ class AppState extends ChangeNotifier
     if (!_refreshOwned(current, generation)) return;
     conversations = list;
     _conversationsFromServer = true;
-    if (cryptoService case final C7HistoryConsumer c7) {
-      unawaited(_followC7Switch(client, c7));
+    if (cryptoService is C7HistoryConsumer || sealedSender != null) {
+      unawaited(_followServerSwitches(client, current));
     }
     conversationPrefs = {for (final p in prefs) p.conversationId: p};
     mentionsInMutedChats = mentionsMuted != 'false';
@@ -2809,7 +2936,7 @@ class AppState extends ChangeNotifier
 
   /// Creates a channel and its backing conversation in one server transaction.
   Future<Channel?> createChannel(String communityId, String name,
-      {String? kind}) async {
+      {String? kind, bool fullHistory = false}) async {
     ({Channel channel, bool shared})? made;
     Channel? created;
     await _run(() async {
@@ -2868,6 +2995,11 @@ class AppState extends ChangeNotifier
     // C3: the encrypted channel record, and for an open channel the
     // community record that lists it. Outside `_run` (see createCommunity).
     final routed = made;
+    // C7: every channel creation sends a create record, in both modes
+    // (decision 3); apart from the C3 sends, so one failing never skips it.
+    if (error == null && routed != null) {
+      unawaited(_c7CreateRecord(routed.channel, full: fullHistory));
+    }
     if (error == null && routed != null) {
       unawaited(() async {
         await publishChannelInfo(routed.channel, name: name, mint: true);
@@ -3750,11 +3882,17 @@ class AppState extends ChangeNotifier
       await receiptPreferences.loaded;
       // The app may have gone to the background while the choice was read.
       if (!_isForeground) return;
-      if (receiptPreferences.shareReadReceipts) {
-        await client.markRead(current.token, conversationId, messages.first.id);
+      // L2-3: where messages go sealed the shared read cursor would move
+      // right around a sealed post, so the receipt stays private there, and
+      // it names the newest identified message: the server keeps no read
+      // position on a sealed row.
+      final sealedHere = sealedSender?.activeIn(conversationId) ?? false;
+      final target = messages.where((message) => !message.sealed).firstOrNull;
+      if (target == null) return;
+      if (receiptPreferences.shareReadReceipts && !sealedHere) {
+        await client.markRead(current.token, conversationId, target.id);
       } else {
-        await client.markReadPrivate(
-            current.token, conversationId, messages.first.id);
+        await client.markReadPrivate(current.token, conversationId, target.id);
       }
       // Clear the unread badge immediately rather than waiting for the next
       // conversation refresh; the receipt has landed server-side.
@@ -4361,6 +4499,392 @@ class AppState extends ChangeNotifier
 
   /// Decrypts one attachment into [destinationPath], a location the user
   /// chose.
+  /// C7 full mode, when the crypto service has it and the server's
+  /// `c7_history` is on; null otherwise.
+  C7HistoryService? get _c7 {
+    final crypto = cryptoService;
+    if (crypto is! C7HistoryService || crypto is! C7HistoryConsumer) {
+      return null;
+    }
+    return (crypto as C7HistoryConsumer).c7SealedBodies
+        ? crypto as C7HistoryService
+        : null;
+  }
+
+  /// Whether this build and server can keep history for new members.
+  bool get channelHistoryAvailable => _c7 != null;
+
+  /// The community conversations C7 works in: shared groups and private
+  /// channels' groups.
+  List<String> _c7ConversationIds() => <String>{
+        for (final conversation in conversations)
+          if (conversation.isCommunityShared) conversation.id,
+        for (final channels in channelsByCommunity.values)
+          for (final channel in channels)
+            if (channel.kind == 'private' && channel.isRouted)
+              channel.conversationId!,
+      }.toList(growable: false);
+
+  /// The layout generation a record for [channelId] names: only a channel
+  /// of a shared group names one.
+  int? _c7LayoutGeneration(String conversationId, String channelId) {
+    final shared = conversations
+            .where((c) => c.id == conversationId)
+            .firstOrNull
+            ?.isCommunityShared ??
+        false;
+    if (!shared) return null;
+    for (final channels in channelsByCommunity.values) {
+      for (final channel in channels) {
+        if (channel.id == channelId) return channel.layoutGeneration;
+      }
+    }
+    return null;
+  }
+
+  Future<void> _c7CreateRecord(Channel channel, {required bool full}) async {
+    final c7 = _c7;
+    final conversationId = channel.conversationId;
+    if (c7 == null || conversationId == null) return;
+    try {
+      await c7.c7ProposeRecord(conversationId, channel.id,
+          full: full,
+          create: true,
+          layoutGeneration: _c7LayoutGeneration(conversationId, channel.id));
+      unawaited(_flushOutbox());
+    } catch (err) {
+      developer.log('c7_create_record_failed ${err.runtimeType}',
+          name: 'private_messenger.c7');
+    }
+  }
+
+  /// C7: what the work pass owes after sync (decision 5): `history_sync`
+  /// duties, a newcomer's request, and own records that came back stale
+  /// (proposed again with the channel's layout generation). Arms a timer
+  /// for the next duty and refreshes the system lines.
+  Future<void> _c7WorkPass(Session current, int ownerGeneration) async {
+    final c7 = _c7;
+    if (c7 == null) return;
+    final ids = _c7ConversationIds();
+    if (ids.isEmpty) return;
+    var queued = false;
+    for (final due in await c7.c7DueWork(ids)) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      try {
+        if (due is C7DueRepropose) {
+          await c7.c7ProposeRecord(due.conversationId, due.channelId,
+              full: due.full,
+              layoutGeneration:
+                  _c7LayoutGeneration(due.conversationId, due.channelId));
+          queued = true;
+        } else if (due is C7DueMove) {
+          // C3 conversion: the `move` record this device owes.
+          queued = await c7.c7ProposeMove(due,
+                      layoutGeneration: _c7LayoutGeneration(
+                          due.conversationId, due.channelId)) !=
+                  null ||
+              queued;
+        } else {
+          if (due is C7DueSync &&
+              await _c7SyncDelivered(
+                  current, due.conversationId, due.forEpoch)) {
+            // Owner answer Q3: the newcomers already have it; members never
+            // receive a history_sync, so the server says so instead.
+            await c7.c7SyncDelivered(due.conversationId, due.forEpoch);
+            continue;
+          }
+          queued = await c7.c7Send(due) != null || queued;
+        }
+      } on StateError {
+        // No longer allowed (a role changed) or no longer owed: the next
+        // pass reads the new state.
+      }
+    }
+    // The newcomer import (decision 10): the same fetch whatever the
+    // channels' modes, once this device has its handover.
+    for (final id in await c7.c7ImportDue(ids)) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      final wait = _c7ImportBackoff[id];
+      if (wait != null && c7Clock().isBefore(wait.nextAt)) continue;
+      try {
+        await _c7ImportFirst(current, c7, id);
+        _c7ImportBackoff.remove(id);
+      } catch (err) {
+        if (err is ApiException && err.statusCode == 401) rethrow;
+        _c7ImportFailed(id, wait, err);
+        developer.log('c7_import_failed ${err.runtimeType}',
+            name: 'private_messenger.c7');
+      }
+    }
+    // C3 conversion: the earlier posts a move's wrap opens, fetched from
+    // the old conversation up to the server's cutoff.
+    for (final move in await c7.c7MovedImportsDue()) {
+      if (!_syncOwnerActive(current, ownerGeneration)) return;
+      final id = 'move:${move.channelId}:${move.fromConversationId}:'
+          '${move.toConversationId}';
+      final wait = _c7ImportBackoff[id];
+      if (wait != null && c7Clock().isBefore(wait.nextAt)) continue;
+      try {
+        await _c7ImportMovedPosts(current, c7, move);
+        _c7ImportBackoff.remove(id);
+      } catch (err) {
+        if (err is ApiException && err.statusCode == 401) rethrow;
+        _c7ImportFailed(id, wait, err);
+        developer.log('c7_moved_import_failed ${err.runtimeType}',
+            name: 'private_messenger.c7');
+      }
+    }
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    final lines = <String, Map<String, bool>>{
+      for (final id in ids) id: await c7.c7HistoryLines(id),
+    };
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    await _c7RefreshImport(c7, ids);
+    if (!_syncOwnerActive(current, ownerGeneration)) return;
+    _c7Lines = lines;
+    if (queued) unawaited(_flushOutbox());
+    var next = await c7.c7NextDueAt(ids);
+    for (final wait in _c7ImportBackoff.values) {
+      if (next == null || wait.nextAt.isBefore(next)) next = wait.nextAt;
+    }
+    _armC7Timer(next);
+    notifyListeners();
+  }
+
+  /// Whether the server already holds a `history_sync` for [forEpoch] that
+  /// no request reopened. Unknown (offline, an older server) counts as no:
+  /// the send that follows is refused if one arrived meanwhile.
+  Future<bool> _c7SyncDelivered(
+      Session current, String conversationId, int forEpoch) async {
+    final client = api;
+    if (client == null) return false;
+    try {
+      return await client.historySyncDelivered(
+          current.token, conversationId, forEpoch);
+    } on Object {
+      return false;
+    }
+  }
+
+  /// The channels of a community conversation C7 imports: a shared group's
+  /// open channels, or a private channel's own one.
+  List<String> _c7ImportChannels(String conversationId) => <String>{
+        ...c7Channels(conversationId),
+        if (privateGroupChannel(conversationId) case final String channel)
+          channel,
+      }.toList()
+        ..sort();
+
+  /// One stream of the history route, newest first (owner answer Q1): at
+  /// most [c7FirstPagePosts] bodies or [c7FirstPageBytes], in requests of
+  /// [c7HistoryRequestLimit]. Stops only on the count, the bytes or the end
+  /// of the data, never on what opens, so the requests are the same in
+  /// every mode. A malformed row is skipped.
+  Future<C7HistoryPage> _c7FetchPage(
+      Session current, String conversationId, String? channelId,
+      {String? before, C7Move? moved}) async {
+    final client = api;
+    if (client == null) throw StateError('no server');
+    final rows = <C7HistoryRow>[];
+    var bytes = 0;
+    var count = 0;
+    var cursor = before;
+    while (true) {
+      final want = min(c7HistoryRequestLimit, c7FirstPagePosts - count);
+      final batch = moved == null
+          ? await client.historyBodies(current.token, conversationId,
+              channelId: channelId, beforeId: cursor, limit: want)
+          : await client.movedHistoryBodies(
+              current.token, moved.channelId, moved.fromConversationId,
+              group: channelId == null, beforeId: cursor, limit: want);
+      for (final raw in batch) {
+        count++;
+        final id = raw['message_id'];
+        if (id is String) cursor = id;
+        try {
+          final row = C7HistoryRow.fromJson(raw);
+          rows.add(row);
+          bytes += row.body.length;
+        } on FormatException {
+          continue;
+        }
+      }
+      if (batch.length < want) return C7HistoryPage(rows, complete: true);
+      if (count >= c7FirstPagePosts || bytes >= c7FirstPageBytes) {
+        return C7HistoryPage(rows, complete: false);
+      }
+    }
+  }
+
+  /// The import at join: the first page of the group-level stream and of
+  /// every channel, and the former-member keys, in one import.
+  Future<void> _c7ImportFirst(
+      Session current, C7HistoryService c7, String conversationId) async {
+    final client = api;
+    if (client == null) return;
+    final groupLevel = await _c7FetchPage(current, conversationId, null);
+    final channels = <String, C7HistoryPage>{};
+    for (final channel in _c7ImportChannels(conversationId)) {
+      channels[channel] = await _c7FetchPage(current, conversationId, channel);
+    }
+    final former = <C7FormerKey>[
+      for (final raw
+          in await client.formerMemberKeys(current.token, conversationId))
+        if (C7FormerKey.tryParse(raw) case final key?) key,
+    ];
+    await c7.c7ImportHistory(conversationId,
+        groupLevel: groupLevel, channels: channels, formerKeys: former);
+    if (_history.containsKey(conversationId)) {
+      await refreshHistory(conversationId);
+    }
+  }
+
+  /// C3 conversion: the first page of the old conversation's channel stream
+  /// and group-level stream, and the keys of the devices that posted there,
+  /// in one import into the new conversation.
+  Future<void> _c7ImportMovedPosts(
+      Session current, C7HistoryService c7, C7Move move) async {
+    final client = api;
+    if (client == null) return;
+    final from = move.fromConversationId;
+    final groupLevel = await _c7FetchPage(current, from, null, moved: move);
+    final channel =
+        await _c7FetchPage(current, from, move.channelId, moved: move);
+    final keys = <C7FormerKey>[
+      for (final raw
+          in await client.movedMemberKeys(current.token, move.channelId, from))
+        if (C7FormerKey.tryParse(raw) case final key?) key,
+    ];
+    await c7.c7ImportMoved(move,
+        channel: channel, groupLevel: groupLevel, keys: keys);
+    if (_history.containsKey(move.toConversationId)) {
+      await refreshHistory(move.toConversationId);
+    }
+  }
+
+  /// Rereads the paging cursors for [ids]. Former-member marks are on the
+  /// rows themselves (local schema 42).
+  Future<void> _c7RefreshImport(
+      C7HistoryService c7, Iterable<String> ids) async {
+    final earlier = <String, Map<String, String>>{..._c7Earlier};
+    for (final id in ids) {
+      earlier[id] = <String, String>{
+        for (final channel in _c7ImportChannels(id))
+          if (await c7.c7EarlierCursor(id, channel) case final String cursor)
+            channel: cursor,
+      };
+    }
+    _c7Earlier = earlier;
+  }
+
+  /// The channel the chat shows for [conversationId]: the selected one of a
+  /// shared group, or a private channel's own.
+  String? _c7ShownChannel(String conversationId) =>
+      _selectedChannels[conversationId] ?? privateGroupChannel(conversationId);
+
+  /// Whether "Load earlier posts" applies to the channel shown in
+  /// [conversationId] (owner answer Q1: deeper paging on demand, `full`
+  /// channels only; it shows the server the channel is `full`).
+  bool channelHistoryEarlier(String conversationId) {
+    final channel = _c7ShownChannel(conversationId);
+    return channel != null && _c7Earlier[conversationId]?[channel] != null;
+  }
+
+  /// Fetches and imports the next page of earlier posts in the channel
+  /// shown in [conversationId], as the first page was fetched.
+  Future<void> loadEarlierChannelPosts(String conversationId) async {
+    final c7 = _c7;
+    final current = session;
+    final channel = _c7ShownChannel(conversationId);
+    final cursor =
+        channel == null ? null : _c7Earlier[conversationId]?[channel];
+    if (c7 == null ||
+        current == null ||
+        channel == null ||
+        cursor == null ||
+        _loadingOlder.contains(conversationId)) {
+      return;
+    }
+    _loadingOlder.add(conversationId);
+    notifyListeners();
+    try {
+      final page =
+          await _c7FetchPage(current, conversationId, channel, before: cursor);
+      await c7.c7ImportHistory(conversationId,
+          groupLevel: const C7HistoryPage(<C7HistoryRow>[], complete: true),
+          channels: <String, C7HistoryPage>{channel: page},
+          first: false);
+      await _c7RefreshImport(c7, <String>[conversationId]);
+      await refreshHistory(conversationId);
+    } catch (err) {
+      _messageLoadErrors[conversationId] = describeError(err, l10n);
+    } finally {
+      _loadingOlder.remove(conversationId);
+      notifyListeners();
+    }
+  }
+
+  /// Runs the C7 work pass now, as a finished sync pass does.
+  @visibleForTesting
+  Future<void> c7WorkPassForTesting() async {
+    final current = session;
+    if (current != null) await _c7WorkPass(current, _sessionGeneration);
+  }
+
+  /// Whether the C7 work pass has armed its timer.
+  @visibleForTesting
+  bool get c7TimerArmed => _c7Timer != null;
+
+  void _armC7Timer(DateTime? at) {
+    _c7Timer?.cancel();
+    _c7Timer = null;
+    if (at == null || _disposed) return;
+    final wait = at.difference(DateTime.now().toUtc());
+    _c7Timer = Timer(
+        (wait.isNegative ? Duration.zero : wait) + const Duration(seconds: 1),
+        () {
+      _c7Timer = null;
+      unawaited(_catchUpSyncEvents());
+    });
+  }
+
+  /// The system line for a record message (decision 1): `true` when it
+  /// opened `full`, `false` when it turned history off, null for any other
+  /// message.
+  bool? channelHistoryLine(String conversationId, String messageKey) =>
+      _c7Lines[conversationId]?[messageKey];
+
+  /// The history setting this device holds for [channel], or null when C7
+  /// is off or the channel is not routed.
+  Future<C7ChannelView?> channelHistory(Channel channel) async {
+    final c7 = _c7;
+    final conversationId = channel.conversationId;
+    if (c7 == null || conversationId == null) return null;
+    return c7.c7ChannelView(conversationId, channel.id);
+  }
+
+  /// Proposes [full] for [channel] (owners and admins, D80). It applies
+  /// when it comes back in sync order; until then [channelHistory] reports
+  /// it pending.
+  Future<bool> setChannelHistory(Channel channel, {required bool full}) async {
+    final c7 = _c7;
+    final conversationId = channel.conversationId;
+    if (c7 == null || conversationId == null) return false;
+    var sent = false;
+    await _run(() async {
+      final view = await c7.c7ChannelView(conversationId, channel.id);
+      if (view == null) return;
+      await c7.c7ProposeRecord(conversationId, channel.id,
+          full: full,
+          create: !view.recorded,
+          layoutGeneration: _c7LayoutGeneration(conversationId, channel.id));
+      sent = true;
+    });
+    if (sent) unawaited(_flushOutbox());
+    notifyListeners();
+    return sent;
+  }
+
   Future<void> saveAttachment(
     AttachmentEntry entry,
     String destinationPath, {
@@ -4373,10 +4897,23 @@ class AppState extends ChangeNotifier
   /// C7: sends go in two parts exactly while the server reports
   /// `c7_history` (PRIVATE_MESSENGER_C7_HISTORY). A failed read keeps the
   /// last answer; the server refuses a mismatched send either way.
-  Future<void> _followC7Switch(ApiClient client, C7HistoryConsumer c7) async {
+  ///
+  /// L2-3: sealed sending follows `sealed_sender`
+  /// (PRIVATE_MESSENGER_SEALED_SENDER) the same way; turning on starts a
+  /// token pass when the app is in the foreground.
+  Future<void> _followServerSwitches(ApiClient client, Session current) async {
     try {
       final status = await client.setupStatus();
-      c7.c7SealedBodies = status['c7_history'] == true;
+      if (cryptoService case final C7HistoryConsumer c7) {
+        c7.c7SealedBodies = status['c7_history'] == true;
+      }
+      final sealed = sealedSender;
+      if (sealed != null && sealed.origin == client.baseUrl) {
+        sealed.enabled = status['sealed_sender'] == true;
+        if (sealed.enabled && _isForeground && _sameSession(current)) {
+          unawaited(sealed.refresh(client, current.token, conversations));
+        }
+      }
     } catch (_) {
       // Keep the current setting until the next refresh.
     }
@@ -4872,6 +5409,63 @@ class AppState extends ChangeNotifier
     await _flushOutbox();
   }
 
+  /// L2-3 (owner decision 2026-11-12): "Send normally" on a message the
+  /// server would not take hidden ([outboxNeedsSealedChoice]). The one path
+  /// on which a message chosen to go sealed is sent identified, and only on
+  /// this tap: it is encrypted afresh, identified, under the same key, in
+  /// its outbox entry's place, and the outbox worker sends it once. Acts
+  /// only while the entry still waits for the choice, so a second tap does
+  /// nothing. Completes after that flush.
+  Future<void> sendSealedNormally(String idempotencyKey) async {
+    final owner = session;
+    if (owner == null) return;
+    final ownerGeneration = _sessionGeneration;
+    var flush = false;
+    await _runScoped(Ops.send, () async {
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // Read from the store, not the cached list, so a tap that raced a
+      // first one (or a discard) finds the entry already changed.
+      final record = (await localStore.pendingEnvelopeRecords())
+          .where((item) => item.envelope.idempotencyKey == idempotencyKey)
+          .firstOrNull;
+      if (record == null ||
+          !sealedNeedsResendChoice(record) ||
+          !_syncOwnerActive(owner, ownerGeneration)) {
+        return;
+      }
+      final conversationId = record.envelope.conversationId;
+      if (mlsConversationFailed(conversationId)) {
+        throw const ConversationPausedException();
+      }
+      if (conversationSyncPaused(conversationId)) {
+        throw ConversationSyncPausedException(conversationId);
+      }
+      // D68: a removal under way would let the removed member read it.
+      if (_mlsCrypto != null && await _heldForRemoval(conversationId)) {
+        throw UserFacingException(l10n.outboxSealedResendHeld);
+      }
+      final result = await reencryptSealedForResend(
+          crypto: cryptoService,
+          localStore: localStore,
+          sealed: record.envelope);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      switch (result) {
+        case SealedResend.held:
+          throw UserFacingException(l10n.outboxSealedResendHeld);
+        case SealedResend.unavailable:
+          throw UserFacingException(l10n.outboxSealedResendUnavailable);
+        case SealedResend.queued:
+          break;
+      }
+      _setOutboxRecords(await localStore.pendingEnvelopeRecords());
+      _outboxStates[idempotencyKey] = OutboxDeliveryState.sending;
+      notifyListeners();
+      _manualRetryKey = idempotencyKey;
+      flush = true;
+    });
+    if (flush) await _flushOutbox();
+  }
+
   Future<void> discardEnvelope(String idempotencyKey) async {
     final deviceId = session?.deviceId;
     if (deviceId != null)
@@ -5237,6 +5831,9 @@ class AppState extends ChangeNotifier
     final members =
         known > 0 ? known : receipts.receiptsFor(conversationId).length + 1;
     if (members < 2 || members > typingMaxMembers) return;
+    // L2-3: a server-seen typing event names the account seconds before
+    // its sealed post, so none is sent where messages go sealed.
+    if (sealedSender?.activeIn(conversationId) ?? false) return;
     if (!typing.takeSendSlot(conversationId)) return;
     unawaited(
       client
@@ -5851,6 +6448,7 @@ class AppState extends ChangeNotifier
       return failed;
     }
     final client = apiClientFactory(current.baseUrl);
+    client.readsSealedEvents = cryptoService is SealedSendingCryptoService;
     final unregister = wake.onCancel(client.close);
     _wakeRun = wake;
     _wakeApi = client;
@@ -6130,6 +6728,12 @@ class AppState extends ChangeNotifier
     }
     await _syncOwner?.request();
     _retryOwedKeyPackages();
+    // L2-3: tokens are fetched on the foreground pass, for every eligible
+    // conversation whether or not it will send, never right before a send.
+    final sealed = sealedSender, client = api, current = session;
+    if (sealed != null && client != null && current != null && _isForeground) {
+      unawaited(sealed.refresh(client, current.token, conversations));
+    }
     // C3: keys and announcements arrive over MLS; look again at most once
     // a minute.
     final last = _lastInfoRefresh;
@@ -6397,6 +7001,7 @@ class AppState extends ChangeNotifier
           rethrow;
         }
         await _publishReceived(received, current, ownerGeneration);
+        await _clearSealedResidue();
         await advanceToScan(events.last.id);
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         pageCursor = await localStore.loadSyncCursor();
@@ -6476,6 +7081,19 @@ class AppState extends ChangeNotifier
           if (err is ApiException && err.statusCode == 401) rethrow;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        // C7: history_sync duties, a newcomer's request and stale own
+        // records are sent from the foreground only (outbound writes).
+        if (wake == null) {
+          try {
+            await _c7WorkPass(current, ownerGeneration);
+          } catch (err) {
+            // Retried on the next pass; it never blocks sync.
+            if (err is ApiException && err.statusCode == 401) rethrow;
+            developer.log('c7_work_pass_failed ${err.runtimeType}',
+                name: 'private_messenger.c7');
+          }
+        }
+        if (!_syncOwnerActive(current, ownerGeneration)) return;
         // Caught up: expired key packages may go (D70 S4).
         await _maybePruneKeyPackages();
         if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -6540,6 +7158,10 @@ class AppState extends ChangeNotifier
       notifyListeners();
       _scheduleCatchUpRetry(
           retryAfter: err is ApiException ? err.retryAfter : null);
+    } finally {
+      // Review L1: a page that opened a sealed message and then threw or
+      // returned early skipped its own clear; the pass clears it here.
+      await _clearSealedResidue();
     }
   }
 
@@ -6962,6 +7584,56 @@ class AppState extends ChangeNotifier
       } catch (_) {
         // Shown by the next pass, like any committed envelope.
       }
+      await _clearSealedResidue();
+    }
+  }
+
+  /// Set when a sync pass opened a sealed message; [_clearSealedResidue]
+  /// then checkpoints the database log once for the page.
+  bool _sealedResiduePending = false;
+
+  /// Whether this AppState has read [sealedResidueSetting] yet.
+  bool _sealedResidueLoaded = false;
+
+  /// Review L1: the durable copy of [_sealedResiduePending], `1` from just
+  /// before a sealed open until a checkpoint succeeded. One left at `1` by
+  /// a killed app is cleared on the next start's first sync pass.
+  static const String sealedResidueSetting = 'l2.sealed_residue_pending';
+
+  /// Records, durably and before the open, that a sealed message is about
+  /// to be opened. Written once until the next successful checkpoint.
+  Future<void> _markSealedResidue() async {
+    if (_sealedResiduePending) return;
+    await localStore.saveSetting(sealedResidueSetting, '1');
+    _sealedResiduePending = true;
+  }
+
+  /// L2-3 (`docs/crypto.md`, "Franking a sealed message", residue): the
+  /// MLS state from before a sealed message could decrypt it again, and an
+  /// old copy of it can sit in write-ahead log frames after the new state
+  /// is committed. Once per sync page that opened a sealed message the log
+  /// is checkpointed and truncated, and once more when a sync pass ends
+  /// for any reason (a page that threw or returned early included). A flag
+  /// a killed app left is honoured on the next start. A checkpoint that
+  /// could not truncate (a reader held the log) stays due. Best effort,
+  /// never fails the pass.
+  Future<void> _clearSealedResidue() async {
+    try {
+      if (!_sealedResidueLoaded) {
+        _sealedResidueLoaded = true;
+        if (await localStore.loadSetting(sealedResidueSetting) == '1') {
+          _sealedResiduePending = true;
+        }
+      }
+      if (!_sealedResiduePending) return;
+      _sealedResiduePending = false;
+      if (await localStore.checkpointSealedResidue()) {
+        await localStore.saveSetting(sealedResidueSetting, '0');
+      } else {
+        _sealedResiduePending = true;
+      }
+    } catch (_) {
+      // Still due: the setting says so until a checkpoint succeeds.
     }
   }
 
@@ -7159,6 +7831,7 @@ class AppState extends ChangeNotifier
   bool _isCryptoSyncEvent(String type) =>
       type == 'mls.message.created' ||
       type.startsWith('message.envelope.') ||
+      type == sealedMessageEventType ||
       type == 'call.signaling' ||
       type == 'call.state';
 
@@ -7192,9 +7865,15 @@ class AppState extends ChangeNotifier
     var conversationList = false;
     var selectedMessages = false;
     final receipts = <String>{};
+    final moves = <_ChannelMove>[];
     for (final event in events) {
       final type = event.type;
       _profileSyncEvent(event);
+      if (type == channelMovedEventType) {
+        // C3 conversion: ids only. Handled after the conversation list is
+        // read again, so the new home is known.
+        if (_channelMoveOf(event.payload) case final move?) moves.add(move);
+      }
       if (_isMemberLinkedNotice(type)) {
         // A co-member linked a device and this device may coordinate the
         // group change: run the membership pass now instead of waiting for
@@ -7266,12 +7945,566 @@ class AppState extends ChangeNotifier
       // after the batch, so profile rotation need not wait for the daily check.
       await _profileLoadRosters();
     }
+    await _followChannelMoves(moves);
+    if (moves.isNotEmpty) unawaited(refreshCommunities());
     if (selectedMessages) {
       await refreshSelectedMessages(notify: false, persist: false);
     }
     for (final conversationId in receipts) {
       unawaited(refreshReceipts(conversationId));
     }
+  }
+
+  static _ChannelMove? _channelMoveOf(Object? payload) {
+    if (payload is! Map) return null;
+    final channel = payload['channel_id'];
+    final from = payload['from_conversation_id'];
+    final to = payload['to_conversation_id'];
+    final access = payload['access_mode'];
+    final movedBy = payload['moved_by'];
+    if (channel is! String ||
+        from is! String ||
+        to is! String ||
+        access is! String ||
+        from == to ||
+        channel.isEmpty ||
+        !const <String>{'private', 'open', 'announcement'}.contains(access)) {
+      return null;
+    }
+    return (
+      channel: channel,
+      from: from,
+      to: to,
+      access: access,
+      movedBy: movedBy is String ? movedBy : null,
+    );
+  }
+
+  /// Review M-A: the channel [move] names, as this device knows it, when
+  /// the move fits what this device knows; null when it does not, and the
+  /// event is ignored. The server is not trusted to say which rows move
+  /// where: a move is followed only for a known routed channel of a
+  /// community with a shared conversation, between that shared
+  /// conversation and the channel's own private one, in the direction its
+  /// kind allows. The channel's local conversation is [move]'s `from`, or
+  /// already its `to` (the channel list can be read again before a
+  /// catch-up reaches the event: both run at once when sync starts).
+  Channel? _channelMoveFits(_ChannelMove move) {
+    final channel = channelsByCommunity.values
+        .expand((list) => list)
+        .where((c) => c.id == move.channel)
+        .firstOrNull;
+    if (channel == null) return null;
+    final shared = communities
+        .where((c) => c.id == channel.communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    if (shared == null) return null;
+    final current = channel.conversationId;
+    final before = current == move.from;
+    if (!before && current != move.to) return null;
+    final private = move.private ? move.to : move.from;
+    if ((move.private ? move.from : move.to) != shared) return null;
+    return _mayBePrivateHomeOf(channel, private) ? channel : null;
+  }
+
+  /// Whether [conversationId] may be [channel]'s own private conversation:
+  /// no community's shared conversation, no other channel's, and, when
+  /// this device lists it, a channel conversation of the same community
+  /// that names no other channel. One it does not list is a new home this
+  /// device is not yet a member of.
+  bool _mayBePrivateHomeOf(Channel channel, String conversationId) {
+    if (communities.any((c) => c.sharedConversationId == conversationId)) {
+      return false;
+    }
+    for (final c in channelsByCommunity.values.expand((list) => list)) {
+      if (c.id != channel.id && c.conversationId == conversationId) {
+        return false;
+      }
+    }
+    final known =
+        conversations.where((c) => c.id == conversationId).firstOrNull;
+    return known == null ||
+        (known.kind == 'community_channel' &&
+            known.communityId == channel.communityId &&
+            (known.channelId == null || known.channelId == channel.id));
+  }
+
+  /// C3 conversion: [move] happened on the server. This device's rows of
+  /// the channel follow it (earlier posts carry over, owner answer
+  /// 2026-11-12), also before this device is a member of the new home: a
+  /// member of the open channel added to the private one later finds them
+  /// there, and C7 then counts it as holding them (it holds the old
+  /// group). C7 notes the move, so a `move` record's wrap can open the old
+  /// posts for a member who never held them.
+  Future<bool> _followChannelMove(_ChannelMove move) async {
+    final channel = _channelMoveFits(move);
+    if (channel == null) return false;
+    final before = channel.conversationId == move.from;
+    if (before) {
+      // The channel's new home, until the channel list is read again: a
+      // second move of the same channel in this run starts from it.
+      final next = Channel(
+        id: channel.id,
+        communityId: channel.communityId,
+        name: channel.name,
+        kind: move.private ? 'private' : move.access,
+        conversationId: move.to,
+        layoutGeneration: channel.layoutGeneration,
+      );
+      channelsByCommunity = <String, List<Channel>>{
+        ...channelsByCommunity,
+        channel.communityId: <Channel>[
+          for (final c
+              in channelsByCommunity[channel.communityId] ?? const <Channel>[])
+            c.id == channel.id ? next : c,
+        ],
+      };
+    }
+    // Rows move out of the channel's home as this device knows it, or out
+    // of a conversation it lists; not out of one it does not (a channel
+    // list read again names only where the channel is now).
+    if (before || conversations.any((c) => c.id == move.from)) {
+      await localStore.moveChannelRows(
+        fromConversationId: move.from,
+        fromChannelId: move.private ? move.channel : null,
+        toConversationId: move.to,
+        toChannelId: move.private ? null : move.channel,
+      );
+    }
+    _history.remove(move.from);
+    _history.remove(move.to);
+    await _c7?.c7NoteMove(
+        channelId: move.channel,
+        fromConversationId: move.from,
+        toConversationId: move.to,
+        own: false);
+    return true;
+  }
+
+  /// The ticked readers the last open-to-private conversion could not add
+  /// (the server refused them); empty when every add went through.
+  List<String> channelConversionNotAdded = const <String>[];
+
+  /// Whether a reconcile of [conversationId] is asked for at once.
+  @visibleForTesting
+  bool mlsReconcileNowForTesting(String conversationId) =>
+      _mlsReconcileNow.contains(conversationId);
+
+  /// The handling of one `conversation.channel_moved` event's [payload].
+  @visibleForTesting
+  Future<void> channelMovedForTesting(Object? payload) =>
+      channelMovesForTesting(<Object?>[payload]);
+
+  /// The handling of a run of `conversation.channel_moved` events.
+  @visibleForTesting
+  Future<void> channelMovesForTesting(List<Object?> payloads) =>
+      _followChannelMoves(<_ChannelMove>[
+        for (final payload in payloads)
+          if (_channelMoveOf(payload) case final move?) move,
+      ]);
+
+  /// Follows [moves] in order. A move this account made from this device
+  /// whose answer never came (review L-6) is finished after the run, as
+  /// the conversion would have: the request again (the server answers
+  /// a replay with the same move) and everything after it.
+  Future<void> _followChannelMoves(List<_ChannelMove> moves) async {
+    final last = <String, _ChannelMove>{};
+    for (final move in moves) {
+      if (await _followChannelMove(move)) last[move.channel] = move;
+    }
+    for (final MapEntry(key: channel, value: move) in last.entries) {
+      unawaited(_finishOwnConversion(channel, move));
+    }
+  }
+
+  /// The conversions this device asked for whose answer it has not seen,
+  /// by channel: what [convertChannel] needs to ask again. Persisted
+  /// before the request, so a restart still finishes one; a device of
+  /// the same account that did not ask holds none, and never sets up the
+  /// new group a second time or owes its record.
+  static const String _pendingConversionsSetting = 'c3.pending_conversions';
+
+  /// The channels a [convertChannel] is running for, and those of them an
+  /// own move event named meanwhile (finished after a lost answer).
+  final Set<String> _converting = <String>{};
+  final Set<String> _convertedMeanwhile = <String>{};
+
+  Future<Map<String, Object?>> _pendingConversions() async {
+    try {
+      final raw = await localStore.loadSetting(_pendingConversionsSetting);
+      if (raw == null) return <String, Object?>{};
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return Map<String, Object?>.from(decoded);
+    } catch (_) {}
+    return <String, Object?>{};
+  }
+
+  Future<void> _savePendingConversion(String channelId, Object? entry) async {
+    final all = await _pendingConversions();
+    if (entry == null) {
+      if (all.remove(channelId) == null) return;
+    } else {
+      all[channelId] = entry;
+    }
+    await localStore.saveSetting(_pendingConversionsSetting, jsonEncode(all));
+  }
+
+  /// The conversion of [channelId] pending here, when [move] is it.
+  Future<
+      ({
+        Channel channel,
+        bool toPrivate,
+        List<String> members,
+        String requestId
+      })?> _pendingConversionOf(String channelId, _ChannelMove move) async {
+    final entry = (await _pendingConversions())[channelId];
+    if (entry is! Map) return null;
+    final community = entry['community_id'];
+    final from = entry['from'];
+    final kind = entry['kind'];
+    final layout = entry['layout_generation'];
+    final toPrivate = entry['to_private'];
+    final members = entry['members'];
+    final requestId = entry['request_id'];
+    if (community is! String ||
+        from is! String ||
+        kind is! String ||
+        layout is! int ||
+        toPrivate is! bool ||
+        members is! List ||
+        requestId is! String ||
+        // A move that fits starts in the shared conversation exactly when
+        // it makes the channel private: the same start is the same move.
+        from != move.from) {
+      return null;
+    }
+    return (
+      channel: Channel(
+          id: channelId,
+          communityId: community,
+          name: '',
+          kind: kind,
+          conversationId: from,
+          layoutGeneration: layout),
+      toPrivate: toPrivate,
+      members: <String>[
+        for (final member in members)
+          if (member is String) member
+      ],
+      requestId: requestId,
+    );
+  }
+
+  /// The request id of the conversion of [channelId] from [from] in the
+  /// direction [toPrivate] pending here, or null. Asking again for the same
+  /// conversion (a re-tap after a lost answer) reuses it, so the server
+  /// answers the move it already made instead of refusing a second one.
+  Future<String?> _pendingConversionRequestId(
+      String channelId, String from, bool toPrivate) async {
+    final entry = (await _pendingConversions())[channelId];
+    if (entry is! Map) return null;
+    final requestId = entry['request_id'];
+    if (entry['from'] != from ||
+        entry['to_private'] != toPrivate ||
+        requestId is! String) {
+      return null;
+    }
+    return requestId;
+  }
+
+  /// After [move], the last of [channelId] followed in a run: finishes
+  /// the conversion pending here when [move] is it and this account made
+  /// it, and otherwise forgets one pending (the channel moved on: asked
+  /// again, the server would move it once more, or answer another
+  /// device's move of this account as this one's).
+  Future<void> _finishOwnConversion(String channelId, _ChannelMove move) async {
+    final account = session?.accountId;
+    final own = account != null && move.movedBy == account;
+    if (_converting.contains(channelId)) {
+      if (own) _convertedMeanwhile.add(channelId);
+      return;
+    }
+    final pending = await _pendingConversionOf(channelId, move);
+    if (_converting.contains(channelId)) return;
+    if (pending == null || !own) {
+      await _savePendingConversion(channelId, null);
+      return;
+    }
+    await convertChannel(pending.channel,
+        toPrivate: pending.toPrivate,
+        members: pending.members,
+        requestId: pending.requestId);
+  }
+
+  /// The readers of an open [channel] other than this account: the
+  /// server's roster of the shared conversation it posts to. The
+  /// conversion screen lists them, all ticked (owner answer 2026-11-12,
+  /// "Admin picks during switch").
+  Future<List<ConversationMember>> channelReaders(Channel channel) async {
+    final current = session;
+    final client = api;
+    final conversationId = channel.conversationId;
+    if (current == null || client == null || conversationId == null) {
+      return const <ConversationMember>[];
+    }
+    final members =
+        await client.conversationMembers(current.token, conversationId);
+    return <ConversationMember>[
+      for (final member in members)
+        if (member.accountId != current.accountId) member,
+    ];
+  }
+
+  /// Whether [channel] can be converted here: a routed channel of a
+  /// community with the shared layout, and an owner or admin (the server
+  /// checks every move).
+  ///
+  /// A private channel only by a member of it (review L-6): its earlier
+  /// posts open for the shared group through the `move` record, which
+  /// only a device in the private group can send.
+  bool mayConvertChannel(Channel channel) {
+    if (!channel.isRouted) return false;
+    if (channel.kind == 'private' && !_inConversation(channel.conversationId)) {
+      return false;
+    }
+    final community =
+        communities.where((c) => c.id == channel.communityId).firstOrNull;
+    return community?.sharedConversationId != null &&
+        canCreateChannel(channel.communityId);
+  }
+
+  bool _inConversation(String? conversationId) =>
+      conversationId != null &&
+      conversations.any((c) => c.id == conversationId);
+
+  /// C3 conversion: turns [channel] private ([toPrivate]) or a private one
+  /// open. Owners and admins only; the server re-routes it. Earlier posts
+  /// carry over (rows here; the `move` record's wrap for members who never
+  /// held them), and the name and topic are published again in the new
+  /// home: a private channel under a key of its own, an open one under the
+  /// community's. A private-to-open conversion is confirmed in the UI
+  /// first (`confirmChannelConversion`).
+  ///
+  /// Open to private: [members] are the readers the admin left ticked
+  /// (owner answer 2026-11-12, "Admin picks during switch"). Each is added
+  /// to the new private channel through the add-member route as part of
+  /// the conversion, once the channel has moved here, and their devices
+  /// join in the one commit reconcile stages for all of them; the `move`
+  /// record, with the earlier posts, goes out in that commit's epoch, so
+  /// they all receive it. No one else is added. An add the server refuses
+  /// leaves the channel converted: the other ticked readers are still
+  /// added, and the refused ones are listed in [channelConversionNotAdded]
+  /// (the conversion screen names them) with the error.
+  ///
+  /// [requestId] names this conversion to the server, which answers a
+  /// repeat as the same move only under the same id, so another device of
+  /// this account never adopts it (review L-6 residual). It is kept with
+  /// the pending conversion; when null, a pending conversion of the same
+  /// channel and direction lends its id, else a new one is made.
+  Future<bool> convertChannel(Channel channel,
+      {required bool toPrivate,
+      List<String> members = const <String>[],
+      String? requestId}) async {
+    final name = channelDisplayName(channel);
+    final topic = channelTopic(channel) ?? '';
+    final from = channel.conversationId;
+    final adds = <String>{
+      if (toPrivate)
+        for (final member in members)
+          if (member != session?.accountId) member,
+    };
+    Channel? moved;
+    Object? addFailure;
+    final notAdded = <String>[];
+    channelConversionNotAdded = const <String>[];
+    if (!_converting.add(channel.id)) return false;
+    // Review L-6: kept for an answer that may still come as an event; any
+    // other end of this conversion forgets it.
+    var keepPending = false;
+    String? sentRequest;
+    await _run(() async {
+      final current = session;
+      final client = api;
+      if (current == null || client == null) return;
+      if (from == null || (channel.kind == 'private') == toPrivate) {
+        throw StateError('this channel cannot be converted that way');
+      }
+      if (!toPrivate && !_inConversation(from)) {
+        throw StateError('only a member of a private channel opens it');
+      }
+      // Checked before the move, so a conversion never strands the
+      // channel with nobody added.
+      if (adds.isNotEmpty && !membershipChangesAvailable) {
+        throw StateError('adding members is not available in this build');
+      }
+      final request = requestId ??
+          await _pendingConversionRequestId(channel.id, from, toPrivate) ??
+          _randomHexId();
+      sentRequest = request;
+      await _savePendingConversion(channel.id, <String, Object?>{
+        'community_id': channel.communityId,
+        'from': from,
+        'kind': channel.kind,
+        'layout_generation': channel.layoutGeneration,
+        'to_private': toPrivate,
+        'members': adds.toList(),
+        'request_id': request,
+      });
+      final ({Map<String, Object?> move, Conversation conversation}) result;
+      try {
+        result = await client.moveChannel(
+            current.token, channel.id, toPrivate ? 'private' : 'open',
+            requestId: request);
+      } on ApiException catch (err) {
+        // A refusal is final; a server error may have moved it.
+        keepPending = err.statusCode >= 500;
+        rethrow;
+      } catch (_) {
+        // No answer: it may have moved.
+        keepPending = true;
+        rethrow;
+      }
+      final conversation = result.conversation;
+      // Review M-A: the answer is this move, into the home its direction
+      // allows, before anything here follows it.
+      final access =
+          _moveAnswerFits(channel, result.move, conversation, toPrivate);
+      if (access == null) {
+        throw StateError('the server answered with a different move');
+      }
+      if (!conversation.isCommunityShared) {
+        await _setUpConversationGroup(conversation.id, kind: conversation.kind);
+      }
+      final layout = result.move['layout_generation'];
+      final next = Channel(
+        id: channel.id,
+        communityId: channel.communityId,
+        name: channel.name,
+        kind: access,
+        conversationId: conversation.id,
+        layoutGeneration: layout is int ? layout : channel.layoutGeneration,
+      );
+      moved = next;
+      channelsByCommunity = <String, List<Channel>>{
+        ...channelsByCommunity,
+        channel.communityId: <Channel>[
+          for (final c
+              in channelsByCommunity[channel.communityId] ?? const <Channel>[])
+            c.id == channel.id ? next : c,
+        ],
+      };
+      if (!conversations.any((c) => c.id == conversation.id)) {
+        conversations = <Conversation>[conversation, ...conversations];
+      }
+      await localStore.moveChannelRows(
+        fromConversationId: from,
+        fromChannelId: toPrivate ? channel.id : null,
+        toConversationId: conversation.id,
+        toChannelId: toPrivate ? null : channel.id,
+      );
+      _history.remove(from);
+      _history.remove(conversation.id);
+      await _c7?.c7NoteMove(
+          channelId: channel.id,
+          fromConversationId: from,
+          toConversationId: conversation.id,
+          own: true);
+      for (final account in adds) {
+        try {
+          await client.addConversationMember(
+              current.token, conversation.id, account);
+        } on ApiException catch (err) {
+          // A lost session is _run's to handle.
+          if (err.statusCode == 401) rethrow;
+          addFailure ??= err;
+          notAdded.add(account);
+        } catch (err) {
+          addFailure ??= err;
+          notAdded.add(account);
+        }
+      }
+      if (adds.isNotEmpty) {
+        // Their devices join through reconcile (card I51): one staged
+        // commit adds everyone the server now lists.
+        _mlsReconcileRequested = true;
+        _mlsReconcileNow.add(conversation.id);
+        _mlsChangeRetries.remove(conversation.id);
+      }
+    });
+    _converting.remove(channel.id);
+    final meanwhile = _convertedMeanwhile.remove(channel.id);
+    final next = moved;
+    if (!keepPending || next != null) {
+      await _savePendingConversion(channel.id, null);
+    } else if (meanwhile) {
+      // Its own move event came while the answer was awaited.
+      unawaited(convertChannel(channel,
+          toPrivate: toPrivate, members: members, requestId: sentRequest));
+    }
+    if (error != null || next == null) return false;
+    final failure = addFailure;
+    if (failure != null) {
+      channelConversionNotAdded = List<String>.unmodifiable(notAdded);
+      error = describeError(failure, l10n);
+      notifyListeners();
+    }
+    unawaited(() async {
+      if (name != null) {
+        await publishChannelInfo(next,
+            name: name, topic: topic, mint: toPrivate, rehome: true);
+      }
+      await publishCommunityInfo(next.communityId);
+      await refreshCommunities();
+      // The move record, when owed now, goes out with the next sync pass's
+      // C7 work (never a second work pass beside it).
+      await _catchUpSyncEvents();
+    }());
+    return true;
+  }
+
+  /// Review M-A: the converted channel's kind when the server's answer to
+  /// moving [channel] ([toPrivate] or open) is that move: the same channel,
+  /// from its current home, into [conversation], which is the community's
+  /// shared conversation for an open channel and a channel conversation of
+  /// the same community for a private one. Null when it is not. An open
+  /// channel keeps the posting mode the server restored (review L-8): its
+  /// `to_access` is `open` or `announcement`.
+  String? _moveAnswerFits(Channel channel, Map<String, Object?> move,
+      Conversation conversation, bool toPrivate) {
+    final shared = communities
+        .where((c) => c.id == channel.communityId)
+        .firstOrNull
+        ?.sharedConversationId;
+    final from = channel.conversationId;
+    if (shared == null ||
+        from == null ||
+        move['channel_id'] != channel.id ||
+        move['from_conversation_id'] != from ||
+        move['to_conversation_id'] != conversation.id) {
+      return null;
+    }
+    final access = move['to_access'];
+    if (toPrivate) {
+      final fits = from == shared &&
+          conversation.kind == 'community_channel' &&
+          conversation.communityId == channel.communityId &&
+          (conversation.channelId == null ||
+              conversation.channelId == channel.id) &&
+          _mayBePrivateHomeOf(channel, conversation.id) &&
+          (access == null || access == 'private');
+      return fits ? 'private' : null;
+    }
+    if (from == shared ||
+        conversation.id != shared ||
+        !conversation.isCommunityShared) {
+      return null;
+    }
+    return switch (access) {
+      null || 'open' => 'open',
+      'announcement' => 'announcement',
+      _ => null,
+    };
   }
 
   String? _messageIdFromSyncEvent(SyncEvent event) {
@@ -7423,6 +8656,10 @@ class AppState extends ChangeNotifier
         if (inline == null && event.type != 'message.envelope.created') {
           throw failure(SyncFailureKind.applicationMissing);
         }
+        // L2-3: a sealed envelope comes only as `message.sealed.created`.
+        if (inline?.sealed ?? false) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
         final ReceivedMessageEnvelope resolved;
         if (inline != null) {
           resolved = inline;
@@ -7435,7 +8672,8 @@ class AppState extends ChangeNotifier
           }
           resolved = fetched;
         }
-        if (resolved.id != id ||
+        if (resolved.sealed ||
+            resolved.id != id ||
             (event.conversationId != null &&
                 resolved.conversationId != event.conversationId)) {
           throw failure(SyncFailureKind.applicationUndecryptable);
@@ -7474,6 +8712,64 @@ class AppState extends ChangeNotifier
           throw failure(SyncFailureKind.applicationUndecryptable);
         }
         return resolved;
+      case sealedMessageEventType:
+        // L2-3: a sealed post. The server names no sender; the crypto
+        // service takes it from MLS. The envelope always comes inline.
+        final id = _messageIdFromSyncEvent(event);
+        if (id == null) throw failure(SyncFailureKind.applicationMissing);
+        final ReceivedMessageEnvelope? inline;
+        try {
+          inline = _envelopeFromSyncEvent(event);
+        } catch (_) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        if (inline == null) throw failure(SyncFailureKind.applicationMissing);
+        final payload = event.payload;
+        if (!inline.sealed ||
+            payload is! Map ||
+            payload['sealed'] != true ||
+            inline.id != id ||
+            (event.conversationId != null &&
+                inline.conversationId != event.conversationId)) {
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        final sealedCrypto = mls is SealedSendingCryptoService
+            ? mls as SealedSendingCryptoService
+            : throw failure(SyncFailureKind.applicationUndecryptable);
+        await _ensureConversationAuthority(inline.conversationId,
+            client: client);
+        final ReceivedMessageEnvelope opened;
+        try {
+          // Review L1: durable before the open commits, so a kill before
+          // the checkpoint leaves it to the next start.
+          await _markSealedResidue();
+          opened = await sealedCrypto.processSealedApplicationMessage(
+              inline, event.id,
+              checkCanCommit: wake?.checkCanCommit);
+        } catch (err) {
+          if (_isTransientSyncError(err)) rethrow;
+          if (_isDurableStorageError(err)) {
+            throw failure(SyncFailureKind.localStorage, err);
+          }
+          if (_provenExpired(inline.expiresAt)) {
+            await _commitExpiredTombstone(event, id, wake);
+            return null;
+          }
+          if (err is CryptoRecordLimitExceeded) throw recordLimit(err);
+          throw failure(SyncFailureKind.applicationUndecryptable);
+        }
+        // L2-3: the pass ends by clearing the log of the state that could
+        // open this ciphertext again ([_markSealedResidue] above).
+        // This device's own post came back: it landed, whatever the
+        // outbox last heard (a lost answer), so it leaves the outbox.
+        if (opened.senderDeviceId == current.deviceId && wake == null) {
+          final queued = (await localStore.pendingEnvelopes()).where((item) =>
+              item.sealed &&
+              item.idempotencyKey == opened.idempotencyKey &&
+              item.conversationId == opened.conversationId);
+          if (queued.isNotEmpty) await _removeFromOutbox(queued.first);
+        }
+        return opened;
       case 'call.signaling':
       case 'call.state':
         final payload = event.payload;
@@ -7539,13 +8835,21 @@ class AppState extends ChangeNotifier
   Future<void> _commitExpiredTombstone(
       SyncEvent event, String targetId, WakeRunContext? wake) async {
     final cursor = await localStore.loadSyncCursor();
-    await localStore.commitSyncEvent(SyncEventCommit(
+    final tombstone = SyncEventCommit(
       eventKey: 'expired:${event.id}:$targetId',
       conversationId: event.conversationId ?? '',
       expectedCursor: cursor,
       cursor: event.id,
       checkCanCommit: wake?.checkCanCommit,
-    ));
+    );
+    // C7: a message passed over as expired turns the group's full channels
+    // unsure, in the same transaction (decision 5).
+    final crypto = cryptoService;
+    if (crypto is C7HistoryService) {
+      await (crypto as C7HistoryService).c7CommitExpiredSkip(tombstone);
+      return;
+    }
+    await localStore.commitSyncEvent(tombstone);
   }
 
   ReceivedMessageEnvelope? _envelopeFromSyncEvent(SyncEvent event) {
@@ -7817,6 +9121,11 @@ class AppState extends ChangeNotifier
     _expiryTimer?.cancel();
     _expiryTimer = null;
     _cancelCatchUpRetry();
+    _c7Timer?.cancel();
+    _c7Timer = null;
+    _c7Lines = <String, Map<String, bool>>{};
+    _c7Earlier = <String, Map<String, String>>{};
+    _c7ImportBackoff.clear();
     _failedMlsConversations.clear();
     _mlsPendingSeen.clear();
     _l1Joins.clear();
@@ -8109,12 +9418,28 @@ class AppState extends ChangeNotifier
       _outboxStates[envelope.idempotencyKey] = OutboxDeliveryState.sending;
       notifyListeners();
       try {
-        await client.sendEnvelope(current.token, envelope);
+        if (envelope.sealed) {
+          await _postSealed(current, client, envelope, ownerGeneration);
+        } else {
+          await client.sendEnvelope(current.token, envelope);
+        }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         await _removeFromOutbox(envelope);
         _selfUpdatePolicyFor(current)?.recordSent(envelope.conversationId);
       } catch (err) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
+        if (err is ApiException &&
+            err.statusCode == 409 &&
+            (err.serverCode == 'history_sync_delivered' ||
+                err.serverCode == 'history_sync_request_too_soon')) {
+          // C7 (owner answer Q3): another member's history_sync reached
+          // the newcomers first. Its duty settled when it was queued, so
+          // the envelope is simply dropped, never left as a failed send.
+          // A newcomer's request the server spaces out (it keeps asking,
+          // with backoff) is dropped too: the next one is already armed.
+          await _removeFromOutbox(envelope);
+          continue;
+        }
         await _recordOutboxFailure(envelope, err, record.attemptCount);
         if (err is ApiException && err.statusCode == 401) {
           await _clearLocalSession(
@@ -8128,6 +9453,31 @@ class AppState extends ChangeNotifier
     }
     notifyListeners();
   }
+
+  /// L2-3: posts a message chosen to go sealed, on the sealed client. It is
+  /// never sent identified here, whatever the answer. A refused token is
+  /// replaced and the same message (same idempotency key and bytes) posted
+  /// again; the server answers a post it already stored with 200 whatever
+  /// token comes with it. With no token to replace it, or while the sealed
+  /// routes are off, the message waits (retrying). A 409
+  /// `sealed_not_eligible` leaves it terminal in the outbox, marked
+  /// "couldn't send hidden": only the person's "Send normally"
+  /// ([sendSealedNormally]) encrypts it again identified (owner decision
+  /// 2026-11-12). Any other refusal fails the message.
+  Future<void> _postSealed(Session current, ApiClient client,
+          MessageEnvelope envelope, int ownerGeneration) =>
+      postSealedMessage(
+        poster: _sealedPostClient(current.baseUrl),
+        envelope: envelope,
+        tokens: sealedSender,
+        rewrite: localStore.rewriteQueuedEnvelope,
+        owned: () => _syncOwnerActive(current, ownerGeneration),
+      );
+
+  /// Builds the sealed post client (tests use a loopback server).
+  @visibleForTesting
+  SealedPostClient Function(String origin) sealedPostClientFactory =
+      (origin) => SealedPostClient(baseUrl: origin);
 
   Future<void> _recordOutboxFailure(
     MessageEnvelope envelope,
@@ -9671,6 +11021,136 @@ class AppState extends ChangeNotifier
     }
     api?.close();
     api = apiClientFactory(baseUrl);
+    _followSealedOrigin(api!);
+  }
+
+  /// L2-3: points the sealed sender at [client]'s origin. Sync reads ask for
+  /// sealed events only when this app can open them; until the server says
+  /// `sealed_sender`, every send goes identified.
+  void _followSealedOrigin(ApiClient client) {
+    final crypto = switch (cryptoService) {
+      final SealedSendingCryptoService sealing => sealing,
+      _ => null,
+    };
+    client.readsSealedEvents = crypto != null;
+    if (crypto == null) return;
+    _sealedPost?.close();
+    _sealedPost = null;
+    final sealed = SealedSender(
+        origin: client.baseUrl,
+        localStore: localStore,
+        crypto: crypto,
+        loadFrankContext: () => _sealedFrankContext(client.baseUrl));
+    sealedSender = sealed;
+    crypto.sealedTokenSource = sealed;
+    // Settings warns about owner key differences recorded on earlier runs
+    // before this run's first token pass.
+    unawaited(loadOwnerKeyReview()
+        .catchError((Object _) => const <OwnerKeyReviewItem>[]));
+  }
+
+  /// L2-3: the sealed sender key pinned for this server, for Settings.
+  Future<SealedKeyPin?> sealedKeyPin() async {
+    final sealed = sealedSender;
+    if (sealed == null) return null;
+    return localStore.loadSealedKeyPin(sealed.origin);
+  }
+
+  /// The franking context the sealed token pass loads (tests only).
+  @visibleForTesting
+  Future<SealedFrankContext?> debugSealedFrankContext() =>
+      _sealedFrankContext(session?.baseUrl ?? '');
+
+  /// Signs and posts the K0-R recovery version from the held seed, as the
+  /// end of an account recovery does (tests only).
+  @visibleForTesting
+  Future<void> debugPostRecoveryDeviceList() async {
+    final current = session;
+    if (current != null) await _postRecoveryDeviceList(current);
+  }
+
+  /// L2-3: how many proof recipients (owner report keys pinned for proofs,
+  /// `OwnerProofPins`) this app has for this server, for Settings: a
+  /// message sent sealed can be proven only to those owners (none: to no
+  /// one). Reads local pins only.
+  Future<int> sealedProvableOwnerCount() async {
+    final sealed = sealedSender;
+    if (sealed == null) return 0;
+    return (await _pinnedOwnerKeys(sealed.origin)).length;
+  }
+
+  /// L2-3: rereads [ownerKeyReview] from this device (no request).
+  Future<List<OwnerKeyReviewItem>> loadOwnerKeyReview() async {
+    final sealed = sealedSender;
+    if (sealed == null) return const <OwnerKeyReviewItem>[];
+    await _setOwnerKeyReview(OwnerKeyWatch(localStore, sealed.origin));
+    return ownerKeyReview;
+  }
+
+  /// L2-3: accepts one owner key difference (Settings), for proofs only:
+  /// makes the listed key a proof recipient, or drops an owner the server
+  /// no longer lists from them. The D95 report pins are untouched, so a
+  /// report still asks for a code comparison. False when the listing moved
+  /// since the screen read it. The next token pass tags with the new
+  /// proof recipients.
+  Future<bool> acceptOwnerKey(OwnerKeyReviewItem item) =>
+      _decideOwnerKey(item, accept: true);
+
+  /// L2-3: rejects one owner key difference: the proof recipients stay, and
+  /// so do the tags.
+  Future<bool> rejectOwnerKey(OwnerKeyReviewItem item) =>
+      _decideOwnerKey(item, accept: false);
+
+  Future<bool> _decideOwnerKey(OwnerKeyReviewItem item,
+      {required bool accept}) async {
+    final sealed = sealedSender;
+    if (sealed == null) return false;
+    final watch = OwnerKeyWatch(localStore, sealed.origin);
+    final done = accept ? await watch.accept(item) : await watch.reject(item);
+    if (done && accept) sealed.contextChanged();
+    await _setOwnerKeyReview(watch);
+    notifyListeners();
+    return done;
+  }
+
+  Future<void> _setOwnerKeyReview(OwnerKeyWatch watch) async {
+    final items = await watch.review();
+    final before = ownerKeyReview;
+    ownerKeyReview = List<OwnerKeyReviewItem>.unmodifiable(items);
+    if (!_sameOwnerKeyReview(before, items)) notifyListeners();
+  }
+
+  static bool _sameOwnerKeyReview(
+      List<OwnerKeyReviewItem> a, List<OwnerKeyReviewItem> b) {
+    if (a.length != b.length) return false;
+    for (var index = 0; index < a.length; index++) {
+      final x = a[index], y = b[index];
+      if (x.inboxId != y.inboxId ||
+          x.change != y.change ||
+          !listEquals(x.listed?.publicKey, y.listed?.publicKey) ||
+          !listEquals(x.pin?.publicKey, y.pin?.publicKey)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Accepts the changed sealed sender key (Settings), then fetches tokens
+  /// under it on the next foreground pass.
+  Future<void> acceptSealedKey() async {
+    final sealed = sealedSender;
+    if (sealed == null) return;
+    await sealed.acceptChangedKey();
+    notifyListeners();
+  }
+
+  SealedPostClient _sealedPostClient(String origin) {
+    final open = _sealedPost;
+    if (open != null && open.baseUrl == canonicalizeServerOrigin(origin)) {
+      return open;
+    }
+    open?.close();
+    return _sealedPost = sealedPostClientFactory(origin);
   }
 
   /// Operation-scoped variant of [_run]. Tracks busy/error under [op] and
@@ -9838,6 +11318,8 @@ class AppState extends ChangeNotifier
     _muteTimer = null;
     _cancelDraftTimers();
     _cancelCatchUpRetry();
+    _c7Timer?.cancel();
+    _c7Timer = null;
     unawaited(_syncSubscription?.cancel());
     unawaited(sync?.dispose());
     unawaited(_pushSubscription?.cancel());
@@ -9846,6 +11328,7 @@ class AppState extends ChangeNotifier
     unawaited(_switchResourceClose);
     unawaited(_callSignals.close());
     api?.close();
+    _sealedPost?.close();
     super.dispose();
   }
 }

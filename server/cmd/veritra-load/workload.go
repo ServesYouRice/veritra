@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,8 +24,9 @@ import (
 // POST /messages/envelopes (the app's send path); one message in
 // AttachmentEvery carries an attachment that every online recipient
 // downloads, and one attachment in LargeEvery is LargeAttachmentBytes;
-// every realtime event runs the app's catch-up (GET /sync/events until
-// empty, coalesced while one runs, as mobile/lib/core/app_state.dart does);
+// every realtime frame runs the app's catch-up (GET /sync/events until
+// empty, coalesced while one runs, as mobile/lib/core/app_state.dart does),
+// and a client learns of a message from the sync page that brings it;
 // a conversation-list read and a history page about every two minutes.
 // -companions adds a second, separately linked device for that share of
 // online accounts (its own session, address, socket, catch-up, reads and
@@ -74,7 +74,8 @@ const (
 	// is counted once as unfinished.
 	settleGrace = clientTimeout + 10*time.Second
 	// defaultDeliveryDeadline is how long after a send's start a recipient
-	// client may take to see its realtime event before the delivery counts
+	// client may take to learn of the message (the sync page its realtime
+	// frame leads to) before the delivery counts
 	// as missed (-delivery-deadline). It is well above the 2 s p99 target,
 	// so a slow delivery stays a latency sample, and below settleGrace, so
 	// a step's summary waits for every delivery to end.
@@ -125,9 +126,9 @@ type ackedMessage struct {
 	sender int
 }
 
-// download is one attachment a client fetches after its realtime event.
-// Its recorder handle was opened when the event arrived, so queueing time
-// counts and the window that saw the event waits for it.
+// download is one attachment a client fetches after sync brings its
+// message. Its recorder handle was opened when the sync page arrived, so
+// queueing time counts and the window that saw the message waits for it.
 type download struct {
 	dev *device
 	id  string
@@ -616,14 +617,14 @@ func (w *world) runDevice(ctx context.Context, dev *device, coldWake <-chan stru
 		client := clientSlot{dev: dev.index, slot: slot}
 		downloads := make(chan download, downloadQueue)
 		wg.Add(4)
+		go func() { defer wg.Done(); w.runSocket(ctx, clientDev, catchUp) }()
+		go func() { defer wg.Done(); w.runDownloads(ctx, downloads) }()
 		go func() {
 			defer wg.Done()
 			// Only the producer closes the queue, once it can send no more.
 			defer close(downloads)
-			w.runSocket(ctx, clientDev, client, catchUp, downloads)
+			w.runCatchUp(ctx, clientDev, client, catchUp, cold, downloads)
 		}()
-		go func() { defer wg.Done(); w.runDownloads(ctx, downloads) }()
-		go func() { defer wg.Done(); w.runCatchUp(ctx, clientDev, catchUp, cold) }()
 		go func() { defer wg.Done(); w.runReads(ctx, clientDev, seed) }()
 	}
 	w.runSender(ctx, dev, rng)
@@ -757,16 +758,12 @@ func (w *world) sendArrival(ctx context.Context, dev *device, conv conversation,
 	}
 }
 
-type realtimeEvent struct {
-	Type    string `json:"type"`
-	Payload struct {
-		SenderDeviceID string   `json:"sender_device_id"`
-		IdempotencyKey string   `json:"idempotency_key"`
-		AttachmentRefs []string `json:"attachment_refs"`
-	} `json:"payload"`
-}
-
-func (w *world) runSocket(ctx context.Context, dev *device, client clientSlot, catchUp chan<- struct{}, downloads chan<- download) {
+// runSocket keeps the device's realtime socket open and wakes the catch-up
+// on every frame. A message frame is a bare sync.available event that names
+// nothing, so, as in the app, a delivery is learned from the sync page the
+// frame leads to (runCatchUp): the realtime delivery figure includes that
+// one fetch.
+func (w *world) runSocket(ctx context.Context, dev *device, catchUp chan<- struct{}) {
 	backoff := time.Second
 	for ctx.Err() == nil {
 		var socket *syncSocket
@@ -793,15 +790,8 @@ func (w *world) runSocket(ctx context.Context, dev *device, client clientSlot, c
 			}
 		}()
 		for {
-			payload, err := socket.next()
-			if err != nil {
+			if _, err := socket.next(); err != nil {
 				break
-			}
-			now := time.Now()
-			var event realtimeEvent
-			if json.Unmarshal(payload, &event) == nil && event.Type == "message.envelope.created" && event.Payload.SenderDeviceID != dev.deviceID {
-				w.deliveries.observe(event.Payload.IdempotencyKey, client, now)
-				w.queueDownloads(downloads, dev, event.Payload.AttachmentRefs, now)
 			}
 			wake(catchUp)
 		}
@@ -824,16 +814,34 @@ func wake(ch chan<- struct{}) {
 }
 
 type syncPage struct {
-	Events []struct {
-		ID int64 `json:"id"`
-	} `json:"events"`
-	Latest int64 `json:"latest_event_id"`
+	Events []syncEvent `json:"events"`
+	Latest int64       `json:"latest_event_id"`
+}
+
+// syncEvent is one /sync/events entry; a message event carries its
+// envelope.
+type syncEvent struct {
+	ID      int64  `json:"id"`
+	Type    string `json:"type"`
+	Payload struct {
+		Envelope struct {
+			SenderDeviceID string   `json:"sender_device_id"`
+			IdempotencyKey string   `json:"idempotency_key"`
+			AttachmentRefs []string `json:"attachment_refs"`
+		} `json:"envelope"`
+	} `json:"payload"`
 }
 
 // runCatchUp pages /sync/events from the device's cursor until a page is
 // empty, once per wake-up; wake-ups during a catch-up coalesce into one.
-func (w *world) runCatchUp(ctx context.Context, dev *device, wake, cold <-chan struct{}) {
+// A new message from another device is a delivery to client, timed when
+// its page arrives, and its attachments are queued for download. A cold
+// sync re-reads events the client already has; they count for nothing,
+// as an app does not fetch them again.
+func (w *world) runCatchUp(ctx context.Context, dev *device, client clientSlot, wake, cold <-chan struct{}, downloads chan<- download) {
 	var cursor int64 = -1
+	// seen is the newest event already counted.
+	var seen int64
 	for {
 		op := opSync
 		select {
@@ -858,6 +866,7 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, wake, cold <-chan s
 				continue
 			}
 			cursor = page.Latest
+			seen = max(seen, cursor)
 		}
 		for ctx.Err() == nil {
 			var page syncPage
@@ -867,6 +876,18 @@ func (w *world) runCatchUp(ctx context.Context, dev *device, wake, cold <-chan s
 			})
 			if err != nil || len(page.Events) == 0 {
 				break
+			}
+			now := time.Now()
+			for _, event := range page.Events {
+				if event.ID <= seen {
+					continue
+				}
+				seen = event.ID
+				envelope := event.Payload.Envelope
+				if event.Type == "message.envelope.created" && envelope.SenderDeviceID != dev.deviceID {
+					w.deliveries.observe(envelope.IdempotencyKey, client, now)
+					w.queueDownloads(downloads, dev, envelope.AttachmentRefs, now)
+				}
 			}
 			cursor = page.Events[len(page.Events)-1].ID
 		}
@@ -900,7 +921,7 @@ func (w *world) runReads(ctx context.Context, dev *device, seed uint64) {
 	}
 }
 
-// queueDownloads queues every attachment of one realtime event for the
+// queueDownloads queues every attachment of one message event for the
 // client's downloader. Each download is registered when the event arrives;
 // when the client's queue is full it is recorded as dropped at once.
 func (w *world) queueDownloads(queue chan<- download, dev *device, ids []string, at time.Time) {

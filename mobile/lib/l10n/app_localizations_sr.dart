@@ -2449,6 +2449,21 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ова шифрована порука није могла да се пошаље. Копирајте је или је одбаците.';
 
   @override
+  String get outboxSealedRefused =>
+      'Није послато скривено: сервер није хтео да прими ову поруку без вашег имена. Пошаљите је нормално, и сервер ће видети да је од вас, или је одбаците.';
+
+  @override
+  String get chatSendNormally => 'Пошаљи нормално';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'Овај разговор ажурира шифровање. Покушајте поново за тренутак.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'Ова порука више не може да се пошаље нормално. Копирајте је или је одбаците.';
+
+  @override
   String get recoveryRestoreFailed =>
       'Овај уређај није могао да врати своју шифровану сесију. Покушајте поново или наставите на пријаву без брисања локалних података.';
 
@@ -4421,6 +4436,218 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Само администратори објављују';
+
+  @override
+  String get channelHistoryTitle => 'Историја за нове чланове';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'Људи који се придруже касније могу да читају раније објаве';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'Нове објаве ће моћи да читају и људи који се придруже касније.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'Људи који се придруже касније неће видети раније објаве. Чланови који их већ имају задржавају их.';
+
+  @override
+  String get channelHistoryProofConfirm =>
+      'Објаве у овом каналу се потписују да би људи који се придруже касније могли да провере ко их је написао. То значи да се може доказати ко је написао објаву: свако ко добије историју овог канала, на пример копију са сервера заједно са кључем са уређаја једног члана, може да покаже ко је написао сваку објаву. Аутори не могу да порекну своје објаве.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Може се доказати ко је написао сваку објаву';
+
+  @override
+  String get channelHistoryProofAccept => 'Укључи';
+
+  @override
+  String get channelHistoryLineFull =>
+      'Нове објаве могу да читају и људи који се придруже касније';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'Нове објаве могу да читају само људи који су чланови када су послате';
+
+  @override
+  String get channelHistoryPending => 'Чека се да промена прође';
+
+  @override
+  String get channelHistoryTimeout => 'Промена није прошла. Покушај поново.';
+
+  @override
+  String get channelHistoryLost =>
+      'Други администратор је истовремено променио ово подешавање. Провери га и покушај поново.';
+
+  @override
+  String get channelHistoryPaused =>
+      'Историја за нове чланове је паузирана до следеће промене чланства.';
+
+  @override
+  String get channelHistoryEarlier => 'Учитај раније објаве';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Прилог од пре него што си се придружио';
+
+  @override
+  String get channelHistoryFormerMember => 'Од бившег члана';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Бивши члан';
+
+  @override
+  String get channelConvertToPrivate => 'Учини овај канал приватним';
+
+  @override
+  String get channelConvertToOpen => 'Учини овај канал отвореним';
+
+  @override
+  String get channelConvertOpenTitle => 'Учинити овај канал отвореним?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Раније објаве у овом каналу постаће видљиве свима који могу да читају отворени канал, укључујући чланове заједнице који никада нису били у овом приватном каналу.';
+
+  @override
+  String get channelConvertOpenConfirmKept =>
+      'Раније објаве у овом каналу остају код оних који су их већ имали. Чланови заједнице који никада нису били у овом приватном каналу видеће само објаве настале након што канал постане отворен.';
+
+  @override
+  String get channelConvertOpenAccept => 'Учини отвореним';
+
+  @override
+  String get channelConvertPrivateTitle => 'Учинити овај канал приватним?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Сви означени биће додати у приватни канал и задржаће његове раније објаве. Свако коме уклоните ознаку губи приступ каналу и његовим ранијим објавама.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'Још нико други не чита овај канал.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Није могуће учитати ко чита овај канал. Покушајте поново.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Учини приватним';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'Канал је сада приватан, али ови означени читаоци нису могли да буду додати: $names. Додајте их из чланова канала.';
+  }
+
+  @override
+  String get c6VerdictSenderUnverified => 'Пошиљалац није потврђен';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'Порука се поклапа, али кључ пошиљаоца није могао да се провери у његовој потписаној листи уређаја.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Поклапа се, ако је сервер поштен';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'Доказ се слаже, али је овај уређај први пут добио потписану листу уређаја пошиљаоца од сервера тек пошто је ова пријава стигла. Непоштен сервер је могао да измисли ту листу и овај доказ. Сматрајте пошиљаоца непотврђеним осим ако верујете серверу.';
+
+  @override
+  String get c6VerdictNotDesignated => 'Није доказиво вама';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'Порука се поклапа, али је послата без имена и није учињена доказивом вашем тренутном кључу за пријаве. Апликација пошиљаоца није закачила ваш кључ, или сте од тада заменили кључ. Овде не може да се докаже.';
+
+  @override
+  String get c6VerdictProofFailed => 'Доказ се не слаже';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'Порука се поклапа, али њен доказ за вас се не слаже са пошиљаоцем којег наводи. Не ослањајте се на то ко ју је послао.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'На овом уређају још није закачен кључ за пријаве ниједног власника. Порука коју пошаљете без имена тада не може никоме да се докаже ако буде пријављена. Апликација закачи кључеве власника када их сервер први пут наведе.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'Порука коју пошаљете без имена може, ако буде пријављена, да се докаже само власницима чије је кључеве за пријаве ова апликација закачила: $count. Само они могу да провере доказ; он никог другог не убеђује.';
+  }
+
+  @override
+  String get l2SealedKeyTitle => 'Кључ скривеног пошиљаоца';
+
+  @override
+  String get l2SealedKeyTile => 'Поруке без вашег имена';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'Овај сервер потписује токене који омогућавају да ваше поруке стигну до њега без вашег имена. Апликација је запамтила његов кључ када га је први пут видела.';
+
+  @override
+  String get l2SealedKeyOff => 'Овај сервер не нуди скривеног пошиљаоца.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'Још нема запамћеног кључа. Биће запамћен при следећој синхронизацији.';
+
+  @override
+  String get l2SealedKeyPinned => 'Запамћени кључ';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'Сервер сада показује други кључ. Док га не прихватите, ваше поруке се шаљу са вашим именом, као раније.';
+
+  @override
+  String get l2SealedKeyNew => 'Нови кључ';
+
+  @override
+  String get l2SealedKeyAccept => 'Прихвати нови кључ';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Прихватите само ако вам је оператер сервера рекао да се кључ променио. Кључ направљен само за вас омогућио би серверу да ваше поруке разликује од туђих.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'Кључеви власника за пријаве су се променили. Прегледајте их.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'Списак кључева власника за пријаве на серверу разликује се од кључева које је ова апликација закачила. Док не прихватите промену, порука коју пошаљете без имена може да се докаже само раније закаченим власницима.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Власник $account има други кључ за пријаве.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Власник $account је нов.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Власник $account више није на списку.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Прихвати';
+
+  @override
+  String get l2OwnerKeyReject => 'Одбиј';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Прихватите само ако знате да су се власници или њихови кључеви променили. Ко има овај кључ може да провери ко је послао поруку без вашег имена ако му је покажу. Пријаве се никад не шаљу кључу прихваћеном овде; пријава тражи да упоредите кодове.';
+
+  @override
+  String get l2OwnerKeyStale =>
+      'Списак се у међувремену променио. Погледајте га поново.';
 }
 
 /// The translations for Serbian, using the Latin script (`sr_Latn`).
@@ -6871,6 +7098,21 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
       'Ova šifrovana poruka nije mogla da se pošalje. Kopirajte je ili je odbacite.';
 
   @override
+  String get outboxSealedRefused =>
+      'Nije poslato skriveno: server nije hteo da primi ovu poruku bez vašeg imena. Pošaljite je normalno, i server će videti da je od vas, ili je odbacite.';
+
+  @override
+  String get chatSendNormally => 'Pošalji normalno';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'Ovaj razgovor ažurira šifrovanje. Pokušajte ponovo za trenutak.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'Ova poruka više ne može da se pošalje normalno. Kopirajte je ili je odbacite.';
+
+  @override
   String get recoveryRestoreFailed =>
       'Ovaj uređaj nije mogao da vrati svoju šifrovanu sesiju. Pokušajte ponovo ili nastavite na prijavu bez brisanja lokalnih podataka.';
 
@@ -8845,4 +9087,216 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get rolesOnlyAdminsPost => 'Samo administratori objavljuju';
+
+  @override
+  String get channelHistoryTitle => 'Istorija za nove članove';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'Ljudi koji se pridruže kasnije mogu da čitaju ranije objave';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'Nove objave će moći da čitaju i ljudi koji se pridruže kasnije.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'Ljudi koji se pridruže kasnije neće videti ranije objave. Članovi koji ih već imaju zadržavaju ih.';
+
+  @override
+  String get channelHistoryProofConfirm =>
+      'Objave u ovom kanalu se potpisuju da bi ljudi koji se pridruže kasnije mogli da provere ko ih je napisao. To znači da se može dokazati ko je napisao objavu: svako ko dobije istoriju ovog kanala, na primer kopiju sa servera zajedno sa ključem sa uređaja jednog člana, može da pokaže ko je napisao svaku objavu. Autori ne mogu da poreknu svoje objave.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Može se dokazati ko je napisao svaku objavu';
+
+  @override
+  String get channelHistoryProofAccept => 'Uključi';
+
+  @override
+  String get channelHistoryLineFull =>
+      'Nove objave mogu da čitaju i ljudi koji se pridruže kasnije';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'Nove objave mogu da čitaju samo ljudi koji su članovi kada su poslate';
+
+  @override
+  String get channelHistoryPending => 'Čeka se da promena prođe';
+
+  @override
+  String get channelHistoryTimeout => 'Promena nije prošla. Pokušaj ponovo.';
+
+  @override
+  String get channelHistoryLost =>
+      'Drugi administrator je istovremeno promenio ovo podešavanje. Proveri ga i pokušaj ponovo.';
+
+  @override
+  String get channelHistoryPaused =>
+      'Istorija za nove članove je pauzirana do sledeće promene članstva.';
+
+  @override
+  String get channelHistoryEarlier => 'Učitaj ranije objave';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Prilog od pre nego što si se pridružio';
+
+  @override
+  String get channelHistoryFormerMember => 'Od bivšeg člana';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Bivši član';
+
+  @override
+  String get channelConvertToPrivate => 'Učini ovaj kanal privatnim';
+
+  @override
+  String get channelConvertToOpen => 'Učini ovaj kanal otvorenim';
+
+  @override
+  String get channelConvertOpenTitle => 'Učiniti ovaj kanal otvorenim?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Ranije objave u ovom kanalu postaće vidljive svima koji mogu da čitaju otvoreni kanal, uključujući članove zajednice koji nikada nisu bili u ovom privatnom kanalu.';
+
+  @override
+  String get channelConvertOpenConfirmKept =>
+      'Ranije objave u ovom kanalu ostaju kod onih koji su ih već imali. Članovi zajednice koji nikada nisu bili u ovom privatnom kanalu videće samo objave nastale nakon što kanal postane otvoren.';
+
+  @override
+  String get channelConvertOpenAccept => 'Učini otvorenim';
+
+  @override
+  String get channelConvertPrivateTitle => 'Učiniti ovaj kanal privatnim?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Svi označeni biće dodati u privatni kanal i zadržaće njegove ranije objave. Svako kome uklonite oznaku gubi pristup kanalu i njegovim ranijim objavama.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'Još niko drugi ne čita ovaj kanal.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Nije moguće učitati ko čita ovaj kanal. Pokušajte ponovo.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Učini privatnim';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'Kanal je sada privatan, ali ovi označeni čitaoci nisu mogli da budu dodati: $names. Dodajte ih iz članova kanala.';
+  }
+
+  @override
+  String get c6VerdictSenderUnverified => 'Pošiljalac nije potvrđen';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'Poruka se poklapa, ali ključ pošiljaoca nije mogao da se proveri u njegovoj potpisanoj listi uređaja.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Poklapa se, ako je server pošten';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'Dokaz se slaže, ali je ovaj uređaj prvi put dobio potpisanu listu uređaja pošiljaoca od servera tek pošto je ova prijava stigla. Nepošten server je mogao da izmisli tu listu i ovaj dokaz. Smatrajte pošiljaoca nepotvrđenim osim ako verujete serveru.';
+
+  @override
+  String get c6VerdictNotDesignated => 'Nije dokazivo vama';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'Poruka se poklapa, ali je poslata bez imena i nije učinjena dokazivom vašem trenutnom ključu za prijave. Aplikacija pošiljaoca nije zakačila vaš ključ, ili ste od tada zamenili ključ. Ovde ne može da se dokaže.';
+
+  @override
+  String get c6VerdictProofFailed => 'Dokaz se ne slaže';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'Poruka se poklapa, ali njen dokaz za vas se ne slaže sa pošiljaocem kojeg navodi. Ne oslanjajte se na to ko ju je poslao.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'Na ovom uređaju još nije zakačen ključ za prijave nijednog vlasnika. Poruka koju pošaljete bez imena tada ne može nikome da se dokaže ako bude prijavljena. Aplikacija zakači ključeve vlasnika kada ih server prvi put navede.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'Poruka koju pošaljete bez imena može, ako bude prijavljena, da se dokaže samo vlasnicima čije je ključeve za prijave ova aplikacija zakačila: $count. Samo oni mogu da provere dokaz; on nikog drugog ne ubeđuje.';
+  }
+
+  @override
+  String get l2SealedKeyTitle => 'Ključ skrivenog pošiljaoca';
+
+  @override
+  String get l2SealedKeyTile => 'Poruke bez vašeg imena';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'Ovaj server potpisuje tokene koji omogućavaju da vaše poruke stignu do njega bez vašeg imena. Aplikacija je zapamtila njegov ključ kada ga je prvi put videla.';
+
+  @override
+  String get l2SealedKeyOff => 'Ovaj server ne nudi skrivenog pošiljaoca.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'Još nema zapamćenog ključa. Biće zapamćen pri sledećoj sinhronizaciji.';
+
+  @override
+  String get l2SealedKeyPinned => 'Zapamćeni ključ';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'Server sada pokazuje drugi ključ. Dok ga ne prihvatite, vaše poruke se šalju sa vašim imenom, kao ranije.';
+
+  @override
+  String get l2SealedKeyNew => 'Novi ključ';
+
+  @override
+  String get l2SealedKeyAccept => 'Prihvati novi ključ';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Prihvatite samo ako vam je operater servera rekao da se ključ promenio. Ključ napravljen samo za vas omogućio bi serveru da vaše poruke razlikuje od tuđih.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'Ključevi vlasnika za prijave su se promenili. Pregledajte ih.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'Spisak ključeva vlasnika za prijave na serveru razlikuje se od ključeva koje je ova aplikacija zakačila. Dok ne prihvatite promenu, poruka koju pošaljete bez imena može da se dokaže samo ranije zakačenim vlasnicima.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Vlasnik $account ima drugi ključ za prijave.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Vlasnik $account je nov.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Vlasnik $account više nije na spisku.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Prihvati';
+
+  @override
+  String get l2OwnerKeyReject => 'Odbij';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Prihvatite samo ako znate da su se vlasnici ili njihovi ključevi promenili. Ko ima ovaj ključ može da proveri ko je poslao poruku bez vašeg imena ako mu je pokažu. Prijave se nikad ne šalju ključu prihvaćenom ovde; prijava traži da uporedite kodove.';
+
+  @override
+  String get l2OwnerKeyStale =>
+      'Spisak se u međuvremenu promenio. Pogledajte ga ponovo.';
 }

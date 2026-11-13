@@ -17,6 +17,28 @@ pub mod leave_proof;
 #[allow(dead_code)]
 pub(crate) mod link_v3;
 mod list;
+/// Test access to the sealed device record's sections (L2-3).
+#[cfg(test)]
+pub(crate) mod list_sections_for_tests {
+    pub(crate) fn encode_frank(secret: &[u8; 32]) -> Vec<u8> {
+        super::list::encode_frank_section(secret)
+            .as_slice()
+            .to_vec()
+    }
+    pub(crate) fn encode_held(seed: &[u8; 32]) -> Vec<u8> {
+        super::list::encode_held_section(&tls_codec::SecretVLBytes::new(seed.to_vec()))
+            .as_slice()
+            .to_vec()
+    }
+    /// Whether a held seed was found, and the franking public key.
+    pub(crate) fn decode(bytes: &[u8]) -> Result<(bool, Option<[u8; 32]>), super::MlsError> {
+        let (held, frank) = super::list::decode_device_sections(bytes)?;
+        Ok((
+            held.is_some(),
+            frank.map(|secret| crate::l2_frank::public_key(&secret)),
+        ))
+    }
+}
 mod records;
 mod state;
 mod storage;
@@ -109,6 +131,12 @@ pub struct MlsDevice {
     /// L1: the device-list recovery seed a waiting recovered phone holds
     /// (D94). Sealed in the device record; never leaves Rust.
     held_list_seed: Option<tls_codec::SecretVLBytes>,
+    /// L2-3 (ABI 26): the device's dedicated X25519 franking secret
+    /// (`crate::l2_frank`), made once with the device and sealed in its
+    /// device record. Its public half is listed in the account's signed L1
+    /// device list (change 7); it is never a leaf key, never rotated and
+    /// never published. Zeroized on drop; never leaves Rust.
+    frank_secret: x25519_dalek::StaticSecret,
     /// C4 (ABI 20): remote commits staged for Dart's review, by group. In
     /// memory only: never sealed, gone after a restore.
     held: c4::HeldCommits,
@@ -150,6 +178,8 @@ impl MlsDevice {
             credential: BasicCredential::new(identity).into(),
             signature_key: signer.public().into(),
         };
+        let frank_secret =
+            crate::l2_frank::generate_secret().map_err(|_| MlsError::KeyGeneration)?;
         Ok(Self {
             provider,
             signer,
@@ -159,6 +189,7 @@ impl MlsDevice {
             pending_transfers: Default::default(),
             sealed: Default::default(),
             held_list_seed: None,
+            frank_secret,
             held: Default::default(),
         })
     }
@@ -959,6 +990,48 @@ impl MlsDevice {
             return Err(MlsError::InvalidIdentity);
         }
         Ok(first)
+    }
+
+    /// L2-3 (ABI 26): this device's franking public key (X25519), the key
+    /// its L1 entry must list (change 7) for its sealed messages to be
+    /// provable to an owner.
+    pub fn l2_frank_public_key(&self) -> [u8; 32] {
+        crate::l2_frank::public_key(&self.frank_secret)
+    }
+
+    /// L2-3 (ABI 26): the designation `d` of a sealed message's franking
+    /// commitment to the owner report keys `owner_keys` (`n × 32`, 1 to 16),
+    /// over this device's own identity (`crate::l2_frank::designate`).
+    ///
+    /// `listed_key` is the franking key this device's own L1 entry lists, as
+    /// the caller read it. A key other than this device's own is refused
+    /// ([`MlsError::InvalidIdentity`]): a tag is only ever made under the
+    /// device's fixed, listed key, never under a key no verifier would find.
+    /// Invalid owner keys are skipped; an empty result is the plain form.
+    pub fn l2_frank_designate(
+        &self,
+        conversation_id: &[u8],
+        commit: &[u8],
+        listed_key: &[u8],
+        owner_keys: &[u8],
+    ) -> Result<Vec<u8>, MlsError> {
+        if listed_key != self.l2_frank_public_key().as_slice() {
+            return Err(MlsError::InvalidIdentity);
+        }
+        crate::l2_frank::designate(
+            &self.frank_secret,
+            owner_keys,
+            conversation_id,
+            &self.account_id,
+            &self.device_id,
+            commit,
+        )
+        .map_err(|_| MlsError::InvalidMessage)
+    }
+
+    /// The franking secret's bytes, for the sealed device record only.
+    pub(crate) fn frank_secret_bytes(&self) -> &[u8; 32] {
+        self.frank_secret.as_bytes()
     }
 
     /// C7 (ABI 13): signs `domain | message` with this device's credential

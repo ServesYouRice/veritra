@@ -53,6 +53,11 @@ bool _sameBytes(List<int> a, List<int> b) {
 Uint8List c7ChkCommitOf(List<int> key) =>
     sha256(<int>[...utf8.encode('veritra-c7-chk-v1'), ...key]);
 
+/// The name a local row keeps for the generation its body was sealed under
+/// (decision 7, schema 41): [c7ChkCommitOf] in lowercase hex. It names the
+/// period and the generation at once, and reveals nothing of the key.
+String c7GenTag(List<int> key) => hexOf(c7ChkCommitOf(key));
+
 class _Reader {
   _Reader(this._bytes);
   final Uint8List _bytes;
@@ -246,6 +251,39 @@ final class C7RecordContext {
 /// A record as it travels in its channel message (143 bytes; a move adds
 /// `lp(close_group_id)` and a 128-byte wrap).
 final class C7CompactRecord {
+  /// A record this device proposes. [key] is the new `CHK` when [mode] is
+  /// `full`, else 32 random bytes; a move also carries [closeGroupId] and the
+  /// 128-byte [wrap].
+  C7CompactRecord({
+    required this.seq,
+    required List<int> prev,
+    required this.mode,
+    required this.reason,
+    required this.closeEpoch,
+    required List<int> key,
+    required List<int> sig,
+    List<int>? closeGroupId,
+    List<int>? wrap,
+  })  : prev = Uint8List.fromList(prev),
+        key = Uint8List.fromList(key),
+        sig = Uint8List.fromList(sig),
+        closeGroupId =
+            closeGroupId == null ? null : Uint8List.fromList(closeGroupId),
+        wrap = wrap == null ? null : Uint8List.fromList(wrap) {
+    if (seq < 0 ||
+        seq >= c7SeqLimit ||
+        mode > c7ModeFull ||
+        reason > c7ReasonMove ||
+        this.prev.length != 32 ||
+        this.key.length != 32 ||
+        this.sig.length != 64 ||
+        (reason == c7ReasonMove) != (this.closeGroupId != null) ||
+        (reason == c7ReasonMove) != (this.wrap != null) ||
+        (this.wrap != null && this.wrap!.length != c7MoveWrapBytes)) {
+      throw const FormatException('invalid compact C7 record');
+    }
+  }
+
   C7CompactRecord._({
     required this.seq,
     required this.prev,
@@ -303,6 +341,26 @@ final class C7CompactRecord {
       closeGroupId: closeGroupId,
       wrap: wrap,
     );
+  }
+
+  /// `u8 version | u32 seq | prev | u8 mode | u8 reason | u64 close_epoch |
+  /// key | sig`, and for a move `lp(close_group_id) | wrap`.
+  Uint8List encode() {
+    final out = BytesBuilder(copy: false)..addByte(1);
+    _putU32(out, seq);
+    out
+      ..add(prev)
+      ..addByte(mode)
+      ..addByte(reason);
+    _putU64(out, closeEpoch);
+    out
+      ..add(key)
+      ..add(sig);
+    if (reason == c7ReasonMove) {
+      _putLp(out, closeGroupId!);
+      out.add(wrap!);
+    }
+    return out.takeBytes();
   }
 
   /// Rebuilds the full form; the signature is checked by the caller against
@@ -404,6 +462,22 @@ final class C7ChannelState {
     required this.status,
     required this.missEpoch,
   });
+
+  /// A stored state (`c7_channel_book.dart`); [kept] must hold [head].
+  factory C7ChannelState.restore({
+    required C7Entry? head,
+    required Map<int, C7Entry> kept,
+    required int highestSeq,
+    required C7Status status,
+    required int missEpoch,
+  }) =>
+      C7ChannelState._(
+        head: head,
+        kept: Map<int, C7Entry>.unmodifiable(kept),
+        highestSeq: highestSeq,
+        status: status,
+        missEpoch: missEpoch,
+      );
 
   /// The implicit genesis: no record held means `members_from_join` with no
   /// head, so nothing is sealed under a history key.
@@ -592,6 +666,19 @@ final class C7ChannelState {
   C7ChannelState keyArrived(int forEpoch) => status == C7Status.keyless
       ? _copy(status: forEpoch > missEpoch ? C7Status.ok : C7Status.unsure)
       : this;
+
+  /// A valid slot in a `history_sync` for [forEpoch] reported this device's
+  /// own head (row 2) and, for a `full` channel, its own current key: an
+  /// `unsure` channel is `ok` again when [forEpoch] is above its miss epoch
+  /// (decision 5, "Unsure"). Other statuses are unchanged.
+  C7ChannelState slotConfirmed(int forEpoch) =>
+      status == C7Status.unsure && forEpoch > missEpoch
+          ? _copy(status: C7Status.ok)
+          : this;
+
+  /// The channel drops its records (a re-add wipe is done by the caller by
+  /// deleting the whole state; this is for a move's old group).
+  C7ChannelState withStatus(C7Status next) => _copy(status: next);
 }
 
 int _min(int a, int b) => a < b ? a : b;
@@ -676,3 +763,96 @@ Uint8List c7HistoryChangeInnerJson({
       'hidden': true,
       'body': <String, Object?>{'r': base64Encode(compactRecord)},
     })));
+
+/// The wrap a narrowing move of a `full` channel carries in its 128-byte
+/// field (decision 11): the old group's current generation, `u64 E_prev |
+/// CHK_prev[32] | lp(prev_group_id) | u64 E_prev_close`, zero-padded. Every
+/// other move carries 128 random bytes, which [decodeFor] refuses: a move
+/// whose wrap is refused has no wrap, a gap and never a leak. Vector:
+/// testing/vectors/c7-move-v1.json. Nothing sends or reads a move yet.
+final class C7MoveWrap {
+  C7MoveWrap({
+    required this.prevEpoch,
+    required List<int> prevKey,
+    required List<int> prevGroupId,
+    required this.prevCloseEpoch,
+  })  : prevKey = Uint8List.fromList(prevKey),
+        prevGroupId = Uint8List.fromList(prevGroupId) {
+    _check();
+  }
+
+  /// Opening epoch of the old group's current generation.
+  final int prevEpoch;
+
+  /// Its `CHK`; never all zero.
+  final Uint8List prevKey;
+
+  /// The old group: the move record's `close_group_id`.
+  final Uint8List prevGroupId;
+
+  /// The old group's epoch at the move: the record's `close_epoch`.
+  final int prevCloseEpoch;
+
+  void _check() {
+    if (prevKey.length != 32 ||
+        prevKey.every((value) => value == 0) ||
+        prevGroupId.isEmpty ||
+        prevGroupId.length > 64 ||
+        prevEpoch < 0 ||
+        prevEpoch > prevCloseEpoch) {
+      throw const FormatException('invalid C7 move wrap');
+    }
+  }
+
+  /// Structure only (lengths, non-zero key, zero padding, a generation that
+  /// opened no later than the move); throws [FormatException].
+  static C7MoveWrap decode(List<int> bytes) {
+    if (bytes.length != c7MoveWrapBytes) {
+      throw const FormatException('invalid C7 move wrap');
+    }
+    final reader = _Reader(Uint8List.fromList(bytes));
+    final prevEpoch = reader.u64();
+    final prevKey = reader.take(32);
+    final prevGroupId = reader.lpId();
+    final prevCloseEpoch = reader.u64();
+    reader.zeroRest();
+    return C7MoveWrap(
+      prevEpoch: prevEpoch,
+      prevKey: prevKey,
+      prevGroupId: prevGroupId,
+      prevCloseEpoch: prevCloseEpoch,
+    );
+  }
+
+  /// The wrap of [record], a move, when it decodes and names the record's
+  /// own old group and close epoch; else null (no wrap).
+  static C7MoveWrap? decodeFor(C7CompactRecord record) {
+    final wrap = record.wrap;
+    final closeGroupId = record.closeGroupId;
+    if (record.reason != c7ReasonMove || wrap == null || closeGroupId == null) {
+      return null;
+    }
+    final C7MoveWrap decoded;
+    try {
+      decoded = decode(wrap);
+    } on FormatException {
+      return null;
+    }
+    if (!_sameBytes(decoded.prevGroupId, closeGroupId) ||
+        decoded.prevCloseEpoch != record.closeEpoch) {
+      return null;
+    }
+    return decoded;
+  }
+
+  /// [c7MoveWrapBytes] bytes, zero-padded.
+  Uint8List encode() {
+    final out = BytesBuilder(copy: false);
+    _putU64(out, prevEpoch);
+    out.add(prevKey);
+    _putLp(out, prevGroupId);
+    _putU64(out, prevCloseEpoch);
+    final used = out.takeBytes();
+    return Uint8List(c7MoveWrapBytes)..setRange(0, used.length, used);
+  }
+}

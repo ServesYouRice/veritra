@@ -10,6 +10,10 @@ BASE_URL="http://127.0.0.1:$PORT"
 # the main contract test already spends.
 LINK_PORT=${VERITRA_CONTRACT_LINK_PORT:-$((PORT + 1))}
 LINK_BASE_URL="http://127.0.0.1:$LINK_PORT"
+# The sealed sender contract (L2-3) needs the switch on, which the other
+# two servers keep off.
+SEALED_PORT=${VERITRA_CONTRACT_SEALED_PORT:-$((PORT + 2))}
+SEALED_BASE_URL="http://127.0.0.1:$SEALED_PORT"
 SERVER_PIDS=""
 
 cleanup() {
@@ -24,8 +28,10 @@ trap cleanup EXIT INT TERM
 (cd "$ROOT/server" && go build -trimpath -o "$TEMP_ROOT/veritra-server" ./cmd/messenger-server)
 (cd "$ROOT/crypto/rust" && cargo build --locked --release)
 
-# start_server NAME PORT: a fresh development server with its own data.
+# start_server NAME PORT [SEALED]: a fresh development server with its own
+# data; SEALED 1 turns on sealed sender.
 start_server() {
+  PRIVATE_MESSENGER_SEALED_SENDER=${3:-0} \
   PRIVATE_MESSENGER_ENV=development \
   PRIVATE_MESSENGER_SETUP_TOKEN=contract-setup-token \
   PRIVATE_MESSENGER_LOG_LEVEL=error \
@@ -56,13 +62,16 @@ wait_ready() {
 
 start_server main "$PORT"
 start_server link "$LINK_PORT"
+start_server sealed "$SEALED_PORT" 1
 wait_ready main "$BASE_URL"
 wait_ready link "$LINK_BASE_URL"
+wait_ready sealed "$SEALED_BASE_URL"
 
 # flutter test resolves the project from the current directory, not from the
 # path it is given, so it must run from the Flutter project root.
 cd "$ROOT/mobile"
 VERITRA_CONTRACT_BASE_URL="$BASE_URL" \
 VERITRA_CONTRACT_LINK_BASE_URL="$LINK_BASE_URL" \
+VERITRA_CONTRACT_SEALED_BASE_URL="$SEALED_BASE_URL" \
 VERITRA_CRYPTO_LIBRARY="$ROOT/crypto/rust/target/release/libprivate_messenger_crypto.so" \
   flutter test test/api_contract_test.dart

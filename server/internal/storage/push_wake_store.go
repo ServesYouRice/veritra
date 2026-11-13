@@ -87,6 +87,39 @@ func enqueuePushWakeJobs(ctx context.Context, tx *sql.Tx, eventID int64, convers
 	return err
 }
 
+// enqueueTargetedPushWakeJobs is enqueuePushWakeJobs for a targeted C7
+// history_sync: only the subscriptions of devices that joined at forEpoch
+// (or an account-wide subscription of such a device's account) are woken.
+func enqueueTargetedPushWakeJobs(ctx context.Context, tx *sql.Tx, eventID int64, conversationID, senderAccountID string, createdAt, expiresAt string, forEpoch int64) error {
+	_, err := tx.ExecContext(ctx, `
+		INSERT INTO push_wake_jobs(sync_event_id, conversation_id, sender_account_id, recipient_account_id, subscription_id, created_at, next_attempt_at, expires_at)
+		SELECT ?, ?, ?, ps.account_id, ps.id, ?, ?, ?
+		FROM push_subscriptions ps
+		JOIN memberships m ON m.account_id = ps.account_id
+		LEFT JOIN devices d ON d.id = ps.device_id AND d.account_id = ps.account_id
+		WHERE m.conversation_id = ?
+		  AND ps.account_id <> ?
+		  AND ps.provider IN ('webpush', 'fcm', 'apns', 'unifiedpush')
+		  AND ps.disabled_at IS NULL
+		  AND (ps.device_id IS NULL OR (d.id IS NOT NULL AND d.revoked_at IS NULL))
+		  AND EXISTS (SELECT 1 FROM conversation_mls_devices jd
+			WHERE jd.conversation_id = m.conversation_id AND jd.account_id = ps.account_id
+			  AND jd.joined_epoch = ? AND jd.removed_after_event_id IS NULL
+			  AND (ps.device_id IS NULL OR ps.device_id = jd.device_id))
+		  AND NOT EXISTS (
+			SELECT 1 FROM account_blocks b
+			WHERE b.blocker_account_id = ps.account_id AND b.blocked_account_id = ?
+		  )
+		  AND (ps.notification_mode='local_decrypt_v1' OR NOT EXISTS (
+			SELECT 1 FROM conversation_notification_preferences p
+			WHERE p.account_id = ps.account_id AND p.conversation_id = ? AND p.muted = 1 AND (p.muted_until IS NULL OR p.muted_until > CAST(strftime('%s', 'now') AS INTEGER))
+		  ))
+		ON CONFLICT(sync_event_id, recipient_account_id, subscription_id) DO NOTHING`,
+		eventID, conversationID, senderAccountID, createdAt, createdAt, expiresAt,
+		conversationID, senderAccountID, forEpoch, senderAccountID, conversationID)
+	return err
+}
+
 // ClaimPushWakeJobs leases a bounded batch for one provider. Expired leases
 // are reclaimable after a process crash; expired jobs are removed and counted
 // as abandoned for provider-level metrics.

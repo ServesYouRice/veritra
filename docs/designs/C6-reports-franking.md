@@ -26,10 +26,17 @@ learns text it was not given.
 
 ## Why MLS alone is not enough
 
-An MLS application message is signed by the sender, but the signature covers
-the group context, so a party outside the group cannot check it, and handing
-the signature over would make every message non-deniable. Franking adds a
-cheap commitment instead.
+An MLS application message is signed by the sender's leaf key over the
+message and the group context. That does not keep outsiders from checking
+it: a member who keeps the message, its signature and the group context
+(its own client sees all three) can hand them to anyone, who can then
+verify the signature against the sender's leaf key. So the MLS signature
+already makes a message provable by any member who chooses to keep it; it
+is not deniable against a member (owner decision 6, 2026-11-12: accepted
+and documented, `docs/crypto.md`, "Franking a sealed message"). It still
+cannot serve reports: handing it over makes the message provable to
+everyone, and the server cannot check it. Franking adds a cheap commitment
+instead, and for sealed messages owner-only tags.
 
 ## Mechanism (franking v1)
 
@@ -226,7 +233,13 @@ How steps 2 and 3 meet each condition. A wiring review checks the same list.
   aad from the row. Residual: the report public key itself comes from the
   server, so a server that substitutes it can read reports. D95: the app pins
   each owner's key and refuses a changed or unpinned one; the report screens
-  show the fingerprint when asking for a pin.
+  show the fingerprint when asking for a pin. L2-3 pins the first owner
+  keys a device sees on first use, without a comparison, but only as
+  recipients of sealed-message proofs, kept apart from these pins (owner
+  decision 2026-11-12, "Keep reports manual"): a server that substitutes
+  them before that first sight influences who can verify that device's
+  proofs, never who reads its reports (`docs/crypto.md`, "What the server
+  can do before the first pin").
 - **G5, unfranked payloads.** Decided: accepted as unreportable. A franked
   payload whose commitment is missing or wrong is `invalid`. Rollout: every
   current sender is the new app, older apps and the C7 hidden types send no
@@ -278,7 +291,10 @@ wiring above, and what each part rests on:
   origin and owner. A report is sealed only to keys equal to their pin; a
   changed or never-pinned key is refused until a person pins it after seeing
   its fingerprint; a pinned owner the server omits is surfaced. Closes G4's
-  residual (a server substituting the key) for the apps that pinned.
+  residual (a server substituting the key) for the apps that pinned. L2-3's
+  first-use pins (trust on first use) are proof recipients only, stored
+  apart (`owner_proof_pins.dart`), and never written here, so they leave
+  G4 as D95 closed it: a report still asks for the code comparison.
 - **Retention.** Dismissed (deleting your copy) or 90 days after filing, by
   the retention sweeper; caps as built (20 reports a day per reporter, 2000
   copies per inbox). This answers open item 2 for reports; an envelope row
@@ -471,6 +487,27 @@ Residuals:
   but they are sent on the background pass, not when someone reports.
 - The announcement is as trustworthy as the account's MLS leaf: a device
   the L1 list approves for that account speaks for it, as for its messages.
+
+## Sealed messages (L2-3, 2026-11-12)
+
+A sealed message (L2-3, D123) has no sender in the server's row, so G1's
+"honest server row" cannot attribute it. Instead (owner decision
+2026-11-12, "a leak proves nothing to anyone else") the sender adds, inside
+the ciphertext, one designated-verifier tag (`frank.d`) per instance owner
+whose report key its app pinned, keyed by X25519 between its device's
+dedicated franking key (listed in its L1 device list, format 2) and that
+owner's report key. Only that owner can check its tag, and it could have
+made the tag itself, so a tag convinces nobody else. The report reveal
+carries `d` and the claimed sender account; the owner checks its tag
+against the franking key the claimed account's own list names. The owners'
+keys are pinned on first use as proof recipients, apart from the D95
+report pins (reports stay manual), and later changes wait for the person.
+Accepted residuals: what the server can do before a device's first pin
+(it decides who can verify that device's proofs, not who reads reports);
+an owner's review tells the server which account a sealed report names
+(the list fetch); and the MLS signature, which a modified app can keep
+as a transferable proof. Rules: [`docs/crypto.md`, "Franking a sealed
+message"](../crypto.md#franking-a-sealed-message-c6-still-works-owner-only-proofs).
 
 ## Departed moderators (accepted)
 

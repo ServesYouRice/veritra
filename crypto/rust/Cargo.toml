@@ -20,6 +20,15 @@ openmls = { version = "=0.9.2", default-features = false }
 openmls_basic_credential = "=0.6.0"
 openmls_rust_crypto = "=0.6.0"
 openmls_traits = "=0.6.0"
+# L2-3 (D123): the token client (RFC 9497 POPRF) and its OS randomness.
+# rand_core 0.6 with getrandom is already in the graph through ed25519-dalek 2.
+rand_core = { version = "=0.6.4", default-features = false, features = ["getrandom"] }
 sha2 = "=0.11.1"
 serde_json = "=1.0.154"
 tls_codec = "=0.5.0"
+voprf = { version = "=0.5.0", default-features = false, features = ["ristretto255-ciphersuite"] }
+# L2-3 designated-verifier franking (owner-approved 2026-11-12): raw X25519
+# for the per-device franking key. Already compiled through x-wing, which
+# enables `zeroize`; `static_secrets` is an empty feature flag of the same
+# crate that exposes `StaticSecret` (no new code is pulled in).
+x25519-dalek = { version = "=3.0.0", default-features = false, features = ["static_secrets", "zeroize"] }

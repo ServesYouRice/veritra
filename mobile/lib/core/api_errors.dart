@@ -72,6 +72,17 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   'timed_out': ApiErrorKind.permission,
   'slow_mode': ApiErrorKind.rateLimited,
   'leave_notice_limited': ApiErrorKind.rateLimited,
+  // L2-3 sealed sender (D123; the app does not call these routes yet).
+  'invalid_sealed_epoch': ApiErrorKind.invalidRequest,
+  'invalid_sealed_request': ApiErrorKind.invalidRequest,
+  'invalid_sealed_token': ApiErrorKind.invalidRequest,
+  'sealed_request_authenticated': ApiErrorKind.invalidRequest,
+  'sealed_evaluate_failed': ApiErrorKind.server,
+  'sealed_not_eligible': ApiErrorKind.conflict,
+  'sealed_token_expired': ApiErrorKind.conflict,
+  'sealed_token_spent': ApiErrorKind.conflict,
+  'sealed_token_invalid': ApiErrorKind.permission,
+  'sealed_token_limit': ApiErrorKind.rateLimited,
   'invalid_seconds': ApiErrorKind.invalidRequest,
   // Not found or gone.
   'not_found': ApiErrorKind.notFound,
@@ -180,6 +191,12 @@ const Map<String, ApiErrorKind> apiErrorKinds = <String, ApiErrorKind>{
   // C7 sealed bodies (server step 3, behind PRIVATE_MESSENGER_C7_HISTORY).
   'invalid_sealed_body': ApiErrorKind.invalidRequest,
   'history_route_only': ApiErrorKind.conflict,
+  // C7 targeted history_sync delivery (owner answer Q3).
+  'invalid_history_sync_target': ApiErrorKind.invalidRequest,
+  'history_sync_delivered': ApiErrorKind.conflict,
+  'history_sync_request_too_soon': ApiErrorKind.conflict,
+  'mls_epoch_out_of_range': ApiErrorKind.invalidRequest,
+  'invalid_for_epoch': ApiErrorKind.invalidRequest,
 
   // C6 franking and abuse reports.
   'invalid_frank_commit': ApiErrorKind.invalidRequest,

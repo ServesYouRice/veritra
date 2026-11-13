@@ -93,6 +93,16 @@ class ApiClient {
 
   void close() => _httpClient.close(force: true);
 
+  /// L2-3: whether sync reads ask for sealed events (`sealed=1`). Only an
+  /// app that can open them sets it: the server keeps them out of every
+  /// other read, so an older app is never shown an event it would stop on
+  /// (`docs/crypto.md`, "Older apps").
+  bool readsSealedEvents = false;
+
+  Map<String, String> get _sealedQuery => readsSealedEvents
+      ? const <String, String>{'sealed': '1'}
+      : const <String, String>{};
+
   /// Runs [request] with [limit], halving it while the reply is over
   /// [_maxCiphertextResponseBytes]. A single item that is still too large
   /// rethrows.
@@ -1382,6 +1392,78 @@ class ApiClient {
     return _decode(() => ChannelCreation.fromJson(json));
   }
 
+  /// C3 channel conversion (owner or admin): moves [channelId] to
+  /// [accessMode] (`private`, or `open` / `announcement`). [requestId] is
+  /// this device's id for the conversion: the server answers a repeat as
+  /// the same move only with the same id. The answer is
+  /// `{move: {channel_id, from_conversation_id, to_conversation_id,
+  /// from_access, to_access, layout_generation}, conversation}`.
+  Future<({Map<String, Object?> move, Conversation conversation})> moveChannel(
+      String token, String channelId, String accessMode,
+      {required String requestId}) async {
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/channels/${Uri.encodeComponent(channelId)}/move',
+      token: token,
+      body: <String, Object?>{
+        'access_mode': accessMode,
+        'request_id': requestId,
+      },
+    );
+    return _decode(() => (
+          move: Map<String, Object?>.from(json['move'] as Map),
+          conversation: Conversation.fromJson(
+              Map<String, Object?>.from(json['conversation'] as Map)),
+        ));
+  }
+
+  /// C3 conversion, behind C7: [fromConversationId]'s bodies up to the
+  /// move that took [channelId] out of it, in its channel stream
+  /// ([group] false) or its group-level stream, newest first, before
+  /// [beforeId]; rows as [historyBodies]. Member devices of the channel's
+  /// current group only.
+  Future<List<Map<String, Object?>>> movedHistoryBodies(
+    String token,
+    String channelId,
+    String fromConversationId, {
+    required bool group,
+    String? beforeId,
+    int limit = 50,
+  }) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/channels/${Uri.encodeComponent(channelId)}/moves/'
+            '${Uri.encodeComponent(fromConversationId)}/history',
+        queryParameters: <String, String>{
+          'stream': group ? '' : channelId,
+          if (beforeId != null) 'before': beforeId,
+          'limit': '$limit',
+        },
+      ).toString(),
+      token: token,
+      maxResponseBytes: _maxCiphertextResponseBytes,
+    );
+    return _decode(() => (json['history'] as List)
+        .map((row) => Map<String, Object?>.from(row as Map))
+        .toList());
+  }
+
+  /// C3 conversion, behind C7: the signing keys of the devices that posted
+  /// in [fromConversationId], rows as [formerMemberKeys].
+  Future<List<Map<String, Object?>>> movedMemberKeys(
+      String token, String channelId, String fromConversationId) async {
+    final json = await _jsonRequest(
+      'GET',
+      '/api/v1/channels/${Uri.encodeComponent(channelId)}/moves/'
+          '${Uri.encodeComponent(fromConversationId)}/keys',
+      token: token,
+    );
+    return _decode(() => (json['devices'] as List)
+        .map((row) => Map<String, Object?>.from(row as Map))
+        .toList());
+  }
+
   Future<void> addConversationMember(
     String token,
     String conversationId,
@@ -1771,6 +1853,11 @@ class ApiClient {
   }
 
   Future<void> sendEnvelope(String token, MessageEnvelope envelope) async {
+    // L2-3: a message chosen to go sealed is only ever posted sealed
+    // (SealedPostClient); posting it here would tie it to this session.
+    if (envelope.sealed) {
+      throw StateError('a sealed envelope never goes on the session route');
+    }
     await _jsonRequest(
       'POST',
       '/api/v1/messages/envelopes',
@@ -1824,6 +1911,24 @@ class ApiClient {
     return _decode(() => (json['devices'] as List)
         .map((row) => Map<String, Object?>.from(row as Map))
         .toList());
+  }
+
+  /// C7 (owner answer Q3): whether a `history_sync` for [forEpoch] is already
+  /// delivered in [conversationId] and not reopened by a newcomer's request.
+  /// A member asks before its fallback send, since it never receives the
+  /// newcomers' `history_sync` itself. 404 while the server has C7 off.
+  Future<bool> historySyncDelivered(
+      String token, String conversationId, int forEpoch) async {
+    final json = await _jsonRequest(
+      'GET',
+      Uri(
+        path: '/api/v1/conversations/${Uri.encodeComponent(conversationId)}'
+            '/history-sync',
+        queryParameters: <String, String>{'for_epoch': '$forEpoch'},
+      ).toString(),
+      token: token,
+    );
+    return _decode(() => json['delivered'] as bool);
   }
 
   /// C7: marks a community post `history_hidden`, so the history route never
@@ -2664,6 +2769,7 @@ class ApiClient {
         queryParameters: <String, String>{
           'after': after.toString(),
           'limit': pageLimit.toString(),
+          ..._sealedQuery,
         },
       ).toString();
       return _jsonRequest('GET', path,
@@ -2691,6 +2797,7 @@ class ApiClient {
           'after': after.toString(),
           'limit': pageLimit.toString(),
           'scan': 'bounded',
+          ..._sealedQuery,
         },
       ).toString();
       return _jsonRequest('GET', path,
@@ -2742,7 +2849,8 @@ class ApiClient {
     final id = Uri.encodeComponent(conversationId);
     final json = await _shrinkingPage(limit, (pageLimit) {
       final path = '/api/v1/conversations/$id/sync-events'
-          '?after=$after&limit=$pageLimit&scan=bounded';
+          '?after=$after&limit=$pageLimit&scan=bounded'
+          '${readsSealedEvents ? '&sealed=1' : ''}';
       return _jsonRequest('GET', path,
           token: token, maxResponseBytes: _maxCiphertextResponseBytes);
     });
@@ -2789,6 +2897,71 @@ class ApiClient {
 
   /// A cursor above any event id the server can have issued (2^53 - 1).
   static const int _pastEveryEventId = 9007199254740991;
+
+  /// L2-3: the server's sealed sender key, `GET /api/v1/sealed/key` (no
+  /// session; 404 while the server's switch is off).
+  Future<SealedServerKey> sealedKey() async {
+    final json = await _jsonRequest('GET', '/api/v1/sealed/key');
+    return _decode(() {
+      if (json['suite'] != sealedSuite) throw const FormatException();
+      return SealedServerKey(
+        keyId: json['key_id'] as String,
+        publicKey: base64Decode(json['public_key'] as String),
+      );
+    });
+  }
+
+  /// L2-3: what this account needs to ask for tokens in [conversationId].
+  Future<SealedConversationState> sealedConversation(
+      String token, String conversationId) async {
+    final id = Uri.encodeComponent(conversationId);
+    final json = await _jsonRequest('GET', '/api/v1/sealed/conversations/$id',
+        token: token);
+    return _decode(() {
+      final remaining = json['remaining'] as int;
+      if (remaining < 0) throw const FormatException();
+      return SealedConversationState(
+        key: SealedServerKey(
+          keyId: json['key_id'] as String,
+          publicKey: base64Decode(json['public_key'] as String),
+        ),
+        eligible: json['eligible'] as bool,
+        remaining: remaining,
+      );
+    });
+  }
+
+  /// L2-3: the server's evaluation of [blinded] (`count × 32` bytes) and its
+  /// batch proof, as the one response the crypto core finalizes
+  /// (`evaluated || proof`), with the key id it was made under.
+  Future<({String keyId, Uint8List response})> sealedTokens(
+    String token,
+    String conversationId, {
+    required int epoch,
+    required List<int> blinded,
+  }) async {
+    final id = Uri.encodeComponent(conversationId);
+    final json = await _jsonRequest(
+      'POST',
+      '/api/v1/sealed/conversations/$id/tokens',
+      token: token,
+      body: <String, Object?>{
+        'epoch': epoch,
+        'blinded': base64Encode(blinded),
+      },
+    );
+    return _decode(() {
+      final evaluated = base64Decode(json['evaluated'] as String);
+      final proof = base64Decode(json['proof'] as String);
+      if (evaluated.length != blinded.length || proof.length != 64) {
+        throw const FormatException();
+      }
+      return (
+        keyId: json['key_id'] as String,
+        response: Uint8List.fromList(<int>[...evaluated, ...proof]),
+      );
+    });
+  }
 
   Future<void> sendReaction(
     String token,

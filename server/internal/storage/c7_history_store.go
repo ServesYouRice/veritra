@@ -143,6 +143,50 @@ func checkMetadataEpoch(metadata json.RawMessage) error {
 	return nil
 }
 
+// ErrEpochOutOfRange answers a C7 envelope whose mls_epoch is below its
+// sender device's joined_epoch or above the group's recorded epoch (review
+// L1). Honest devices send only in an epoch they are in, which the server
+// recorded itself; any other value would steer the I51 join filter and the
+// history fetch (a body withheld from members, or served as pre-join).
+var ErrEpochOutOfRange = errors.New("mls_epoch out of range")
+
+// checkDeclaredEpochTx applies that range to a C7 envelope (one with a
+// sealed body) in a conversation whose group the server tracks (a
+// conversation_mls_groups row; its creator's roster row is written in the
+// same transaction). Review L-9: a sender device with no live roster row
+// there (removed, or never added) is refused too, since it holds no epoch
+// of the group at all. A group the server does not track (created before
+// rosters) is left alone. An absent epoch stays allowed: such a body is
+// never served by the history fetch.
+func checkDeclaredEpochTx(ctx context.Context, tx *sql.Tx, conversationID, senderDeviceID string, metadata json.RawMessage) error {
+	declared := metadataEpoch(metadata)
+	if declared == nil {
+		return nil
+	}
+	var current int64
+	err := tx.QueryRowContext(ctx, `SELECT epoch FROM conversation_mls_groups WHERE conversation_id = ?`, conversationID).Scan(&current)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var joined int64
+	err = tx.QueryRowContext(ctx, `SELECT joined_epoch FROM conversation_mls_devices
+		WHERE conversation_id = ? AND device_id = ? AND removed_after_event_id IS NULL`,
+		conversationID, senderDeviceID).Scan(&joined)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrEpochOutOfRange
+	}
+	if err != nil {
+		return err
+	}
+	if *declared < joined || *declared > current {
+		return ErrEpochOutOfRange
+	}
+	return nil
+}
+
 // metadataEpoch is the integer mls_epoch an envelope names, as the I51 join
 // filter reads it, or nil.
 func metadataEpoch(metadata json.RawMessage) *int64 {

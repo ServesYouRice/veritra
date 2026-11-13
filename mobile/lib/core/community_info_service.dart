@@ -485,9 +485,13 @@ class CommunityInfoService {
     int attempts = 3,
     bool mint = false,
     int? expectedRevision,
+    bool rehome = false,
   }) =>
       _serializeWrites(() => _publish(subject, build,
-          attempts: attempts, mint: mint, expectedRevision: expectedRevision));
+          attempts: attempts,
+          mint: mint,
+          expectedRevision: expectedRevision,
+          rehome: rehome));
 
   String _rotatedSetting(InfoKeyHome home) =>
       '$_rotationSetting.completed.${home.keySubjectKind}.'
@@ -548,6 +552,7 @@ class CommunityInfoService {
     CommunityInfoEvent? withKey,
     Object? rotationToken,
     int? expectedRevision,
+    bool rehome = false,
   }) async {
     final home = homeOf(subject);
     if (home == null) throw StateError('C3 is not active here');
@@ -566,8 +571,12 @@ class CommunityInfoService {
         await store.loadAcceptedCommunityInfo(subject.kind, subject.id);
     // Topology comes from the server. It must not turn a cached private
     // record into community-readable content by relabelling its channel.
-    // Moving a record between key homes requires an explicit conversion.
-    if (accepted != null && !await _acceptedKeyInHome(accepted, home)) {
+    // Moving a record between key homes requires an explicit conversion:
+    // [rehome], which only a C3 channel conversion this account just made
+    // passes (the user chose it, and confirmed a private-to-open one).
+    if (!rehome &&
+        accepted != null &&
+        !await _acceptedKeyInHome(accepted, home)) {
       throw const InfoKeyMissing();
     }
     for (var attempt = 0;; attempt++) {

@@ -63,10 +63,15 @@ class TestDeviceLists extends DeviceListPins {
                   idBytes(entry.key.split('\u0000').last), entry.value),
       ];
 
+  /// Awaited by every judgment that may fetch (refreshFirst), standing in
+  /// for a slow device-list fetch; null is no wait.
+  Future<void> Function()? onFetch;
+
   @override
   Future<LeafVerdict> judge(
       List<int> accountId, List<int> deviceId, List<int> signingKey,
       {bool refreshFirst = true}) async {
+    if (refreshFirst) await onFetch?.call();
     final String account;
     final String device;
     try {

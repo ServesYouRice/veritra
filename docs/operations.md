@@ -802,6 +802,64 @@ network path or VPS provider may keep its own flow logs.
 at most once per device per day. Account recovery widens its activity window
 by one day to match, so an active device is never counted as idle.
 
+## Sealed sender (L2-3, off by default)
+
+`PRIVATE_MESSENGER_SEALED_SENDER=1` turns on sealed sender (D123;
+`docs/crypto.md`, "Sealed sender with VOPRF tokens"). Off, the four routes
+(`GET /api/v1/sealed/key`, `GET /api/v1/sealed/conversations/{id}`,
+`POST /api/v1/sealed/conversations/{id}/tokens`,
+`POST /api/v1/sealed/messages`) answer 404 and nothing changes. On, members
+of plain DMs and groups get anonymous tokens (RFC 9497 POPRF) and an app that
+supports it posts ordinary messages with a token instead of its session, so
+the server stores those envelopes with no sender (migration 0091).
+`PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY` (1 to 10000, default 200) caps the
+tokens one account gets per conversation and UTC day.
+
+- The POPRF private key is made on first use and kept in the database
+  (`sealed_sender_keys`, migration 0090). It is in every backup. Whoever holds
+  it can post junk into conversations whose ids they know; it reads nothing.
+  Changing it is not supported yet: apps pin the first key they see.
+- The sealed post route takes no session and is on the per-address public
+  budget (`PRIVATE_MESSENGER_RATE_LIMIT_ADDRESS_PER_MINUTE`, default 240,
+  shared by every request without a session from that address); the token
+  is its rate limit. Many people behind one NAT share that budget for their
+  sealed posts; a refused post retries (429), so it is late, not lost. A
+  request with an `Authorization` header or a cookie is refused.
+- The server still sees the client address and the time of every sealed
+  post, so a proxy that logs addresses (see L2-2) undoes much of it.
+- Sealed envelopes cannot be edited or deleted through the server, and
+  `GET /conversations/{id}/messages` does not list them: devices get them by
+  sync and `GET /messages/{id}`. They expire and are pruned like other
+  envelopes; spent token nonces and issuance counts are pruned once their day
+  can no longer be used.
+- Turning the switch off again stops new sealed posts; stored ones stay
+  readable until they expire.
+- Older apps are safe: sync sends `message.sealed.created` only to reads
+  that ask for it (`?sealed=1`), and tokens are issued for a conversation
+  only while every live device of every member has made such a read
+  (`sealed_capable_devices`). One member device on an older app keeps that
+  conversation identified; a device linked after tokens were issued misses
+  the sealed posts of those token days (today and tomorrow at most).
+- **Do not turn it on before the independent crypto review (G25) and an app
+  release that supports it.**
+
+**Development databases and libraries from before the review fixes.**
+Migrations 0090 and 0091 and crypto ABI 26 were changed in place on the
+unmerged L2-3 branch (reviews M1 and H1, and the DV franking entries), so
+nothing upgrades what an earlier build made:
+
+- A server database that ran a build of that branch up to e296528 has the
+  old 0090/0091 tables and keeps them, since a migration that ran is never
+  run again. Wipe it (`scripts/demo.sh --reset` for the demo, or delete the
+  dev `PRIVATE_MESSENGER_DB_PATH` file) before running a later build. No real
+  deployment ran these migrations; nothing to do there.
+- An app crypto library built before the DV franking entries still reports
+  ABI 26, so the app's version check passes and the missing
+  `pm_crypto_l2_frank_*` entries fail only at first use.
+  `scripts/verify-mobile-crypto.sh` checks every exported symbol and catches
+  it; rebuild the library (`scripts/build-desktop-crypto.sh`, or the mobile
+  build scripts) after pulling.
+
 ## Verify a server build (L2-4)
 
 `scripts/verify-server-build.sh <tag>` checks out the tag, rebuilds the
@@ -1233,7 +1291,9 @@ minutes; half the accounts have a second client; a fifth of the devices
 catch up once from the middle of history, as after a night offline.
 
 **Targets.** Interactive requests (send, sync page, conversation list,
-history): p95 ≤ 150 ms and p99 ≤ 500 ms; realtime delivery p99 ≤ 2 s; a
+history): p95 ≤ 150 ms and p99 ≤ 500 ms; realtime delivery p99 ≤ 2 s
+(since 2026-11-12 measured to the sync page the bare `sync.available`
+frame leads to, one fetch more than the T47 runs measured); a
 cold catch-up page p99 ≤ 1 s; errors < 0.1% and no 5xx; writer wait p99
 ≤ 100 ms; Go memory ≤ 50% of the container limit. A stalled push provider
 loses no wake job and its backlog drains within 5 minutes of recovery. A

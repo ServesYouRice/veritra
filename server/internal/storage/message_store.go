@@ -92,6 +92,17 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		}
 		return domain.MessageEnvelope{}, false, 0, err
 	}
+	// L2-3: an idempotency key that names a sealed post in this conversation
+	// is taken (the sealed route refuses the reverse). An app sends a sealed
+	// message identified only after the sealed route proved nothing was
+	// stored under its key; a delayed sealed attempt that landed since makes
+	// the identified copy a conflict here, never a second message.
+	var sealedTaken int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM sealed_message_envelopes WHERE conversation_id = ? AND idempotency_key = ?`, envelope.ConversationID, envelope.IdempotencyKey).Scan(&sealedTaken); err == nil {
+		return domain.MessageEnvelope{}, false, 0, ErrIdempotencyConflict
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
 	// C0: a post in a shared community conversation must name one of its open
 	// or announcement channels; elsewhere it must name none.
 	// C7 (while on) adds group-level envelopes with no channel keys, and the
@@ -109,6 +120,18 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	// C7: a sealed body is required in community conversations and refused
 	// elsewhere (and refused everywhere while C7 is off).
 	if err := s.checkSealedBody(ctx, tx, envelope, route.channelID); err != nil {
+		return domain.MessageEnvelope{}, false, 0, err
+	}
+	if s.c7History && len(envelope.SealedBody) > 0 {
+		if err := checkDeclaredEpochTx(ctx, tx, envelope.ConversationID, envelope.SenderDeviceID, envelope.CryptoMetadata); err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+	}
+	// C7 (owner answer Q3): a group-level envelope says whether it is a
+	// history_sync or its request, and for which epoch; a history_sync goes
+	// only to the devices that joined at that epoch (c7_sync_target.go).
+	syncTag, err := s.checkC7SyncTag(ctx, tx, envelope.ConversationID, envelope.SenderDeviceID, envelope.CryptoMetadata, envelope.SealedBody, layout && route.channelID == "")
+	if err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
 	// C4: a governing member's own leave proof passes the posting rules
@@ -224,7 +247,12 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 		if envelope.ExpiresAt != nil && envelope.ExpiresAt.Before(wakeExpiresAt) {
 			wakeExpiresAt = envelope.ExpiresAt.UTC()
 		}
-		if err := enqueuePushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt)); err != nil {
+		if syncTag.kind == c7SyncBody {
+			err = enqueueTargetedPushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt), syncTag.epoch)
+		} else {
+			err = enqueuePushWakeJobs(ctx, tx, eventID, envelope.ConversationID, envelope.SenderAccountID, formatTime(now), formatTime(wakeExpiresAt))
+		}
+		if err != nil {
 			return domain.MessageEnvelope{}, false, 0, err
 		}
 	}
@@ -233,7 +261,13 @@ func (s *Store) saveMessageEnvelope(ctx context.Context, envelope domain.Message
 	if err := insertSealedBody(ctx, tx, envelope, route.channelID, eventID); err != nil {
 		return domain.MessageEnvelope{}, false, 0, err
 	}
-	if recipients != nil && withSyncEvent {
+	if recipients != nil && withSyncEvent && syncTag.kind == c7SyncBody {
+		accounts, err := c7SyncRecipientAccounts(ctx, tx, envelope.ConversationID, envelope.SenderAccountID, syncTag.epoch)
+		if err != nil {
+			return domain.MessageEnvelope{}, false, 0, err
+		}
+		*recipients = append(*recipients, accounts...)
+	} else if recipients != nil && withSyncEvent {
 		// Accounts that blocked the sender never see the envelope, on any read
 		// path, so they are not sent it live either.
 		rows, err := tx.QueryContext(ctx, `
@@ -884,6 +918,12 @@ func (s *Store) PruneExpiredContent(ctx context.Context, now time.Time) (int64, 
 	if err != nil {
 		return 0, nil, err
 	}
+	// L2-3: expired sealed envelopes and dead token rows.
+	sealedRemoved, err := pruneSealedTx(ctx, tx, now.UTC())
+	if err != nil {
+		return 0, nil, err
+	}
+	removed += sealedRemoved
 	orphanCutoff := formatTime(now.UTC().Add(-OrphanedAttachmentGrace))
 	orphans, err := tx.QueryContext(ctx, `SELECT storage_key FROM attachment_envelopes WHERE created_at < ? AND NOT EXISTS (SELECT 1 FROM message_attachments ma WHERE ma.attachment_id = attachment_envelopes.id) ORDER BY created_at, id LIMIT 500`, orphanCutoff)
 	if err != nil {
@@ -1084,10 +1124,26 @@ func (s *Store) ListSyncEvents(ctx context.Context, accountID, deviceID string, 
 // join filter only grows, dead envelopes stay dead) or are block-hidden,
 // which D92 lets the cursor pass.
 func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
+	return s.ListSyncPageWith(ctx, accountID, deviceID, afterID, limit, SyncReadOptions{Bounded: bounded})
+}
+
+// SyncReadOptions are what a sync request opted in to. Bounded is the scan
+// budget (?scan=bounded, D92). Sealed (?sealed=1, L2-3) says the app reads
+// message.sealed.created; without it those events are hidden rows, so an
+// app from before sealed sender never meets an event type it would stop
+// sync at (an unknown message.* event fails closed in the app).
+type SyncReadOptions struct {
+	Bounded bool
+	Sealed  bool
+}
+
+// ListSyncPageWith is ListSyncPage with every opt-in.
+func (s *Store) ListSyncPageWith(ctx context.Context, accountID, deviceID string, afterID int64, limit int, opts SyncReadOptions) (SyncPage, error) {
+	bounded := opts.Bounded
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	page, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit, bounded)
+	page, err := s.listSyncEventsPage(ctx, accountID, deviceID, afterID, limit, opts)
 	if err != nil {
 		return SyncPage{}, err
 	}
@@ -1111,11 +1167,16 @@ func (s *Store) ListSyncPage(ctx context.Context, accountID, deviceID string, af
 	return page, nil
 }
 
-func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, bounded bool) (SyncPage, error) {
+func (s *Store) listSyncEventsPage(ctx context.Context, accountID, deviceID string, afterID int64, limit int, opts SyncReadOptions) (SyncPage, error) {
+	bounded := opts.Bounded
+	query := listSyncEventsQuery
+	if opts.Sealed {
+		query = listSyncEventsQuerySealed
+	}
 	// The query streams candidates in id order and has no LIMIT, since
 	// hidden ones do not count towards the page: the page ends here, after
 	// limit visible events, and closing rows stops the merge.
-	rows, err := s.db.QueryContext(ctx, listSyncEventsQuery, accountID, afterID, deviceID)
+	rows, err := s.db.QueryContext(ctx, query, accountID, afterID, deviceID)
 	if err != nil {
 		return SyncPage{}, err
 	}
@@ -1268,19 +1329,31 @@ func (c *syncCandidateScanner) Scan(dest ...interface{}) error {
 // whose ciphertext the delete redacted, are hidden the same way. The clock
 // is SQLite's, in the stored fixed-width format, because the query takes no
 // time parameter.
-var syncEventVisibleTo = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
-	        OR se.event_type LIKE 'call.%')
+//
+// A sealed post (L2-3) is visible only to a request that opted in to it
+// (SyncReadOptions.Sealed): syncEventVisibleTo hides it, and
+// syncEventVisibleToSealed is the same predicate without that rule.
+var syncEventVisibleTo = `se.event_type <> '` + SealedMessageEventType + `' AND ` + syncEventVisibleToSealed
+
+var syncEventVisibleToSealed = `(NOT (se.event_type = 'mls.message.created' OR se.event_type LIKE 'message.envelope.%'
+	        OR se.event_type = '` + SealedMessageEventType + `' OR se.event_type LIKE 'call.%')
 	   OR ` + mlsJoinFilterEventFor("?3") + `)
 	AND NOT ` + syncEventBlockedFor("?1") + `
 	AND ` + syncEventEnvelopeLive
 
 // syncEventEnvelopeLive is true unless se is a message event hidden for its
-// envelope: expired, gone, or (for all but the deleted marker) deleted.
-var syncEventEnvelopeLive = `(se.event_type NOT LIKE 'message.envelope.%' OR EXISTS (
+// envelope: expired, gone, or (for all but the deleted marker) deleted. A
+// sealed post (L2-3) is looked up in its own table.
+var syncEventEnvelopeLive = `((se.event_type NOT LIKE 'message.envelope.%' AND se.event_type <> '` + SealedMessageEventType + `') OR EXISTS (
 	  SELECT 1 FROM message_envelopes live
-	  WHERE live.id = json_extract(se.payload_json, '$.message_id')
+	  WHERE se.event_type LIKE 'message.envelope.%'
+	    AND live.id = json_extract(se.payload_json, '$.message_id')
 	    AND (live.expires_at IS NULL OR live.expires_at > ` + sqlNowText + `)
-	    AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')))`
+	    AND (live.deleted_at IS NULL OR se.event_type = 'message.envelope.deleted')) OR EXISTS (
+	  SELECT 1 FROM sealed_message_envelopes sealed
+	  WHERE se.event_type = '` + SealedMessageEventType + `'
+	    AND sealed.id = json_extract(se.payload_json, '$.message_id')
+	    AND (sealed.expires_at IS NULL OR sealed.expires_at > ` + sqlNowText + `)))`
 
 // sqlNowText is the current time in formatTime's layout, to the millisecond.
 const sqlNowText = `(strftime('%Y-%m-%dT%H:%M:%S', 'now') || substr(strftime('%f', 'now'), 3) || '000000Z')`
@@ -1312,7 +1385,8 @@ const sqlNowText = `(strftime('%Y-%m-%dT%H:%M:%S', 'now') || substr(strftime('%f
 //
 // first_events is MATERIALIZED so its subquery runs once per chain. The
 // unary + keeps account_id IS NULL off idx_sync_events_account.
-var listSyncEventsQuery = `
+func listSyncEventsQueryFor(visible string) string {
+	return `
 	WITH RECURSIVE
 	first_events(id, chain) AS MATERIALIZED (
 	  SELECT (SELECT se.id FROM sync_events se
@@ -1325,10 +1399,10 @@ var listSyncEventsQuery = `
 	          ORDER BY id ASC LIMIT 1), NULL
 	),
 	candidates(id, chain, visible) AS (
-	  SELECT se.id, f.chain, CASE WHEN f.chain IS NULL THEN 1 ELSE (` + syncEventVisibleTo + `) END
+	  SELECT se.id, f.chain, CASE WHEN f.chain IS NULL THEN 1 ELSE (` + visible + `) END
 	  FROM first_events f JOIN sync_events se ON se.id = f.id
 	  UNION ALL
-	  SELECT se.id, q.chain, CASE WHEN q.chain IS NULL THEN 1 ELSE (` + syncEventVisibleTo + `) END
+	  SELECT se.id, q.chain, CASE WHEN q.chain IS NULL THEN 1 ELSE (` + visible + `) END
 	  FROM candidates q
 	  JOIN sync_events se ON se.id = CASE WHEN q.chain IS NULL
 	    THEN (SELECT n.id FROM sync_events n
@@ -1342,6 +1416,14 @@ var listSyncEventsQuery = `
 	SELECT q.visible, se.id, se.event_type, se.account_id, se.conversation_id,
 	       CASE WHEN q.visible THEN se.payload_json ELSE '' END, se.created_at
 	FROM candidates q CROSS JOIN sync_events se ON se.id = q.id`
+}
+
+// listSyncEventsQuery hides sealed posts; listSyncEventsQuerySealed serves
+// them to a device that opted in (SyncReadOptions.Sealed).
+var (
+	listSyncEventsQuery       = listSyncEventsQueryFor(syncEventVisibleTo)
+	listSyncEventsQuerySealed = listSyncEventsQueryFor(syncEventVisibleToSealed)
+)
 
 // syncEventBlockedFor is true when the conversation event se is hidden from
 // blocker: it comes from an account that blocker blocked or, for a read

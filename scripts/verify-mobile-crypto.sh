@@ -28,7 +28,10 @@ verify_symbols() {
     pm_crypto_group_merge_incoming_commit pm_crypto_group_discard_incoming_commit \
     pm_crypto_group_role_state pm_crypto_group_b6_media_key \
     pm_crypto_group_decrypt_sealed pm_crypto_l2_padded_size \
-    pm_crypto_group_stage_commit_proven pm_crypto_c4_sign_leave; do
+    pm_crypto_group_stage_commit_proven pm_crypto_c4_sign_leave \
+    pm_crypto_l2_token_request pm_crypto_l2_token_finalize \
+    pm_crypto_l2_frank_public_key pm_crypto_l2_frank_designate \
+    pm_crypto_l2_frank_dv_verify; do
     case "$symbols" in
       *"$symbol"*) ;;
       *) echo "missing exported symbol: $symbol" >&2; return 1 ;;

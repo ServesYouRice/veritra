@@ -170,13 +170,13 @@ func (t *deliveryTracker) size() int {
 	return len(t.sends)
 }
 
-// expectedRecipients lists the clients that should see a realtime event for
-// sender's message in conv: every client of an online member, except those
-// on the sending device itself. The server publishes to every socket of
-// each member account and runSocket ignores only the sender device's own
-// events, so this matches what runSocket observes. A client whose socket
-// is down when the message is sent still counts: realtime delivery missed
-// it (the app recovers through catch-up, which is measured separately).
+// expectedRecipients lists the clients that should learn of sender's
+// message in conv: every client of an online member, except those on the
+// sending device itself. The server wakes every socket of each member
+// account and runCatchUp ignores only the sender device's own messages, so
+// this matches what runCatchUp observes. A client whose socket is down
+// when the message is sent still counts: it learns of the message from the
+// catch-up its reconnect runs, or the delivery is missed at the deadline.
 func (w *world) expectedRecipients(sender *device, conv conversation) []clientSlot {
 	var expected []clientSlot
 	for _, member := range conv.members {

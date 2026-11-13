@@ -18,11 +18,12 @@ import '../../core/message_history.dart';
 import '../../core/models.dart';
 import '../../crypto/app_payload.dart' show maxAppTextLength;
 import '../../crypto/poll.dart' show PollView, parsePollBody;
+import '../../crypto/c7_import.dart' show c7HiddenAttachmentBody;
 import '../../crypto/link_preview.dart';
 import '../../crypto/message_format.dart'
     show decodeDecoration, unapprovedSenderKeyPrefix;
 import '../../storage/encrypted_database.dart'
-    show LocalMessage, LocalMessageKind, LocalMessageState;
+    show C7FormerMark, LocalMessage, LocalMessageKind, LocalMessageState;
 import '../../l10n/l10n.dart';
 import '../../sync/sync_recovery.dart' show SyncRecoveryChoice;
 import '../../ui/format.dart';
@@ -1367,19 +1368,29 @@ class _MessageList extends StatelessWidget {
     final ownDeviceId = state.session?.deviceId;
     // Edit, delete and reaction envelopes change other bubbles instead of
     // drawing their own.
+    // C7: a record message that changed the history setting stays, drawn
+    // as a system line (decision 1); every other hidden envelope goes.
+    bool? historyLine(ReceivedMessageEnvelope message) =>
+        state.channelHistoryLine(
+            conversationId,
+            ConversationHistory.keyOf(
+                message.senderDeviceId, message.idempotencyKey));
     final messages = this
         .messages
-        .where((message) => !history.hides(message))
+        .where((message) =>
+            !history.hides(message) || historyLine(message) != null)
         .toList(growable: false);
     final hasMore = state.hasMoreHistory(conversationId);
     final loadingOlder = state.isLoadingOlder(conversationId);
+    // C7 (owner answer Q1): earlier posts of a `full` channel, on demand.
+    final earlier = !hasMore && state.channelHistoryEarlier(conversationId);
     // Messages arrive newest-first; the list is reversed so index 0 renders
     // at the bottom. Because older items are appended to the end of the
     // reversed list, prepending history does not move the visible messages,
     // which is what preserves the scroll position across a page load. A day
     // separator is emitted whenever the calendar day changes relative to the
     // next-older message.
-    final footerCount = hasMore || loadingOlder ? 1 : 0;
+    final footerCount = hasMore || loadingOlder || earlier ? 1 : 0;
     return ListView.builder(
       controller: controller,
       reverse: true,
@@ -1395,7 +1406,10 @@ class _MessageList extends StatelessWidget {
         if (index == pending.length + messages.length) {
           return _HistoryFooter(
             loading: loadingOlder,
-            onLoad: () => state.loadOlderMessages(conversationId),
+            label: hasMore ? null : context.l10n.channelHistoryEarlier,
+            onLoad: hasMore
+                ? () => state.loadOlderMessages(conversationId)
+                : () => state.loadEarlierChannelPosts(conversationId),
           );
         }
         if (index < pending.length) {
@@ -1425,10 +1439,22 @@ class _MessageList extends StatelessWidget {
                       ClipboardData(text: record!.draftText!),
                     ),
             onDiscard: terminal ? () => state.discardEnvelope(key) : null,
+            // L2-3: the server would not take it hidden; only this tap
+            // sends it identified (owner decision 2026-11-12).
+            onSendNormally: terminal && state.outboxNeedsSealedChoice(key)
+                ? () => state.sendSealedNormally(key)
+                : null,
           );
         }
         final messageIndex = index - pending.length;
         final message = messages[messageIndex];
+        final line = historyLine(message);
+        if (line != null) {
+          return _HistoryLine(
+              text: line
+                  ? context.l10n.channelHistoryLineFull
+                  : context.l10n.channelHistoryLineFromJoin);
+        }
         final local = history.forEnvelope(message);
         // A decrypted record names its authenticated sender; the envelope's
         // sender is only what the server says.
@@ -1462,6 +1488,7 @@ class _MessageList extends StatelessWidget {
                 local: local,
                 copiedHistory: local?.state == LocalMessageState.restored ||
                     (local != null && history.copiedKeys.contains(local.key)),
+                formerMember: local?.c7Former != null,
                 replyPreview: local?.replyTo == null
                     ? null
                     : quotedPreview(context.l10n, replyTarget),
@@ -1510,7 +1537,11 @@ class _MessageList extends StatelessWidget {
                         local.hiddenAt != null
                     ? null
                     : () => onMessageActions!(local, mine),
-                senderLabel: _senderLabel(senderAccountId),
+                // Review M2: a former member's name only when this device
+                // proved the device was that account's.
+                senderLabel: local?.c7Former == C7FormerMark.unnamed
+                    ? context.l10n.channelHistoryFormerMemberUnnamed
+                    : _senderLabel(senderAccountId),
                 onLoadVoiceNote: state.attachmentsAvailable
                     ? (entry) => decryptVoiceNote(state, entry,
                         conversationId: conversationId)
@@ -1586,10 +1617,14 @@ String quotedPreview(AppLocalizations l10n, LocalMessage? target) {
 /// flight, and an explicit button otherwise so history is reachable without
 /// relying on a scroll gesture.
 class _HistoryFooter extends StatelessWidget {
-  const _HistoryFooter({required this.loading, required this.onLoad});
+  const _HistoryFooter(
+      {required this.loading, required this.onLoad, this.label});
 
   final bool loading;
   final VoidCallback onLoad;
+
+  /// The button's text; null: "Load older".
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -1604,7 +1639,7 @@ class _HistoryFooter extends StatelessWidget {
             : TextButton.icon(
                 onPressed: onLoad,
                 icon: const Icon(Icons.history),
-                label: Text(context.l10n.chatLoadOlder),
+                label: Text(label ?? context.l10n.chatLoadOlder),
               ),
       ),
     );
@@ -1619,6 +1654,7 @@ class _PendingMessageBubble extends StatelessWidget {
     this.failureMessage,
     this.onCopy,
     this.onDiscard,
+    this.onSendNormally,
   });
 
   final OutboxDeliveryState state;
@@ -1627,6 +1663,10 @@ class _PendingMessageBubble extends StatelessWidget {
   final String? failureMessage;
   final VoidCallback? onCopy;
   final VoidCallback? onDiscard;
+
+  /// L2-3: re-sends a message the server would not take hidden, with the
+  /// sender visible to the server.
+  final VoidCallback? onSendNormally;
 
   @override
   Widget build(BuildContext context) {
@@ -1708,9 +1748,14 @@ class _PendingMessageBubble extends StatelessWidget {
                 ),
               ],
               if (!sending)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                Wrap(
+                  alignment: WrapAlignment.end,
                   children: <Widget>[
+                    if (onSendNormally != null)
+                      TextButton(
+                        onPressed: onSendNormally,
+                        child: Text(l10n.chatSendNormally),
+                      ),
                     if (onRetry != null)
                       TextButton(
                         onPressed: onRetry,
@@ -1810,6 +1855,7 @@ class _MessageBubble extends StatelessWidget {
     this.onMention,
     this.starred = false,
     this.copiedHistory = false,
+    this.formerMember = false,
     this.ownAccountId,
     this.pollMembers,
     this.onVote,
@@ -1839,6 +1885,10 @@ class _MessageBubble extends StatelessWidget {
   final void Function(String accountId)? onMention;
   final bool starred;
   final bool copiedHistory;
+
+  /// C7 (decision 8): an imported post whose signature was checked with the
+  /// server's key for a device no longer in the group.
+  final bool formerMember;
 
   final ReceivedMessageEnvelope message;
 
@@ -1906,13 +1956,14 @@ class _MessageBubble extends StatelessWidget {
   /// list when this arrived (recorded at entry, schema 40). The words are
   /// still shown, marked, so a device that is on its way out never speaks
   /// as the account unmarked.
-  String? _removedSenderLabel(
-          AppLocalizations l10n) =>
+  String? _removedSenderLabel(AppLocalizations l10n) =>
       local?.senderRemoved == true
           ? (mine
               ? l10n.chatSentFromOwnRemovedDevice
               : l10n.chatSentFromRemovedDevice(senderLabel))
-          : null;
+          : formerMember
+              ? l10n.channelHistoryFormerMember
+              : null;
 
   /// A peer message this device can never decrypt (D54). The crypto service
   /// stores it as an `invalid` row, which holds no content and offers no
@@ -1971,7 +2022,10 @@ class _MessageBubble extends StatelessWidget {
     if (entries.isEmpty) {
       return <Widget>[
         Text(
-          context.l10n.chatAttachmentUnopenable,
+          // C7 (owner answer Q2): a pre-join attachment is never offered.
+          local?.body == c7HiddenAttachmentBody
+              ? context.l10n.channelHistoryAttachmentHidden
+              : context.l10n.chatAttachmentUnopenable,
           style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -2813,4 +2867,28 @@ String _attachmentSummary(
   return entries.length == 1
       ? l10n.chatAttachmentOne(first)
       : l10n.chatAttachmentMany(first, entries.length - 1);
+}
+
+/// C7: the line a channel shows where its history setting changed
+/// (decision 1). Local only, never sent.
+class _HistoryLine extends StatelessWidget {
+  const _HistoryLine({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+      ),
+    );
+  }
 }

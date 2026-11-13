@@ -2432,6 +2432,21 @@ class AppLocalizationsEn extends AppLocalizations {
       'This encrypted message could not be sent. Copy it or discard it.';
 
   @override
+  String get outboxSealedRefused =>
+      'Couldn’t send hidden: the server would not take this message without your name. Send it normally, and the server will see it is from you, or discard it.';
+
+  @override
+  String get chatSendNormally => 'Send normally';
+
+  @override
+  String get outboxSealedResendHeld =>
+      'This chat is updating its encryption. Try again in a moment.';
+
+  @override
+  String get outboxSealedResendUnavailable =>
+      'This message can no longer be sent normally. Copy it or discard it.';
+
+  @override
   String get recoveryRestoreFailed =>
       'This device could not restore its encrypted session. Retry or continue to sign in without clearing local data.';
 
@@ -4404,4 +4419,216 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get rolesOnlyAdminsPost => 'Only admins post';
+
+  @override
+  String get channelHistoryTitle => 'History for new members';
+
+  @override
+  String get channelHistoryFullLabel =>
+      'People who join later can read earlier posts';
+
+  @override
+  String get channelHistoryOnConfirm =>
+      'New posts can be read by people who join later.';
+
+  @override
+  String get channelHistoryOffConfirm =>
+      'People who join later won\'t see earlier posts. Members who already have them keep them.';
+
+  @override
+  String get channelHistoryProofConfirm =>
+      'Posts in this channel are signed so that people who join later can check who wrote them. This means a post can be proven to be its author\'s: anyone who gets this channel\'s history, for example the server\'s stored copy together with a key from one member\'s device, can show who wrote each post. Authors cannot deny their posts.';
+
+  @override
+  String get channelHistoryProofLine =>
+      'Posts can be proven to be their author\'s';
+
+  @override
+  String get channelHistoryProofAccept => 'Turn on';
+
+  @override
+  String get channelHistoryLineFull =>
+      'New posts can be read by people who join later';
+
+  @override
+  String get channelHistoryLineFromJoin =>
+      'New posts can be read only by people who are members when they are sent';
+
+  @override
+  String get channelHistoryPending => 'Waiting for the change to go through';
+
+  @override
+  String get channelHistoryTimeout =>
+      'The change did not go through. Try again.';
+
+  @override
+  String get channelHistoryLost =>
+      'Another admin changed this setting at the same time. Check it and try again.';
+
+  @override
+  String get channelHistoryPaused =>
+      'History for new members is paused until the next membership change.';
+
+  @override
+  String get channelHistoryEarlier => 'Load earlier posts';
+
+  @override
+  String get channelHistoryAttachmentHidden =>
+      'Attachment from before you joined';
+
+  @override
+  String get channelHistoryFormerMember => 'From a former member';
+
+  @override
+  String get channelHistoryFormerMemberUnnamed => 'Former member';
+
+  @override
+  String get channelConvertToPrivate => 'Make this channel private';
+
+  @override
+  String get channelConvertToOpen => 'Make this channel open';
+
+  @override
+  String get channelConvertOpenTitle => 'Make this channel open?';
+
+  @override
+  String get channelConvertOpenConfirm =>
+      'Earlier posts in this channel will become visible to everyone who can read the open channel, including community members who were never in this private channel.';
+
+  @override
+  String get channelConvertOpenConfirmKept =>
+      'Earlier posts in this channel stay with the people who already had them. Community members who were never in this private channel will see only posts made after it opens.';
+
+  @override
+  String get channelConvertOpenAccept => 'Make open';
+
+  @override
+  String get channelConvertPrivateTitle => 'Make this channel private?';
+
+  @override
+  String get channelConvertPrivatePick =>
+      'Everyone ticked is added to the private channel and keeps its earlier posts. Anyone you untick loses access to the channel and its earlier posts.';
+
+  @override
+  String get channelConvertPrivateNoReaders =>
+      'No one else reads this channel yet.';
+
+  @override
+  String get channelConvertReadersFailed =>
+      'Could not load who reads this channel. Try again.';
+
+  @override
+  String get channelConvertPrivateAccept => 'Make private';
+
+  @override
+  String channelConvertNotAdded(String names) {
+    return 'The channel is private now, but these ticked readers could not be added: $names. Add them from the channel\'s members.';
+  }
+
+  @override
+  String get c6VerdictSenderUnverified => 'Sender not confirmed';
+
+  @override
+  String get c6VerdictSenderUnverifiedDetail =>
+      'The message matches, but its sender\'s key could not be checked against their signed device list.';
+
+  @override
+  String get c6VerdictServerTrusted => 'Matches, if the server is honest';
+
+  @override
+  String get c6VerdictServerTrustedDetail =>
+      'The proof checks, but this device first got the sender’s signed device list from the server only after this report arrived. A dishonest server could have made up that list and this proof. Treat the sender as unconfirmed unless you trust the server.';
+
+  @override
+  String get c6VerdictNotDesignated => 'Not provable to you';
+
+  @override
+  String get c6VerdictNotDesignatedDetail =>
+      'The message matches, but it was sent without your name and was not made provable to your current report key. Its sender\'s app had not pinned your key, or you replaced the key since. It cannot be proven here.';
+
+  @override
+  String get c6VerdictProofFailed => 'Proof does not check';
+
+  @override
+  String get c6VerdictProofFailedDetail =>
+      'The message matches, but its proof for you does not check out for the sender it names. Do not rely on who sent it.';
+
+  @override
+  String get l2SealedProvableNone =>
+      'No owner\'s report key is pinned on this device yet. A message you send without your name can then be proven to no one if it is reported. The app pins the owners\' keys the first time the server lists them.';
+
+  @override
+  String l2SealedProvableOwners(int count) {
+    return 'A message you send without your name can be proven, if reported, only to the owners whose report keys this app pinned: $count. Only they can check the proof; it convinces no one else.';
+  }
+
+  @override
+  String get l2SealedKeyTitle => 'Sealed sender key';
+
+  @override
+  String get l2SealedKeyTile => 'Messages without your name';
+
+  @override
+  String get l2SealedKeyIntro =>
+      'This server signs the tokens that let your messages reach it without naming you. The app pinned its key the first time it saw it.';
+
+  @override
+  String get l2SealedKeyOff => 'This server does not offer sealed sending.';
+
+  @override
+  String get l2SealedKeyNone =>
+      'No key pinned yet. It is pinned on the next sync.';
+
+  @override
+  String get l2SealedKeyPinned => 'Pinned key';
+
+  @override
+  String get l2SealedKeyChanged =>
+      'The server now shows a different key. Until you accept it, your messages are sent with your name, as before.';
+
+  @override
+  String get l2SealedKeyNew => 'New key';
+
+  @override
+  String get l2SealedKeyAccept => 'Accept new key';
+
+  @override
+  String get l2SealedKeyAcceptWarning =>
+      'Accept only if the server\'s operator told you the key changed. A key made only for you would let the server tell your messages apart from everyone else\'s.';
+
+  @override
+  String get l2OwnerKeysReviewTile =>
+      'The owners\' report keys changed. Review them.';
+
+  @override
+  String get l2OwnerKeysReviewIntro =>
+      'The server\'s list of the owners\' report keys differs from the keys this app pinned. Until you accept a change, a message you send without your name is provable only to the owners pinned before.';
+
+  @override
+  String l2OwnerKeyChanged(String account) {
+    return 'Owner $account has a different report key.';
+  }
+
+  @override
+  String l2OwnerKeyAdded(String account) {
+    return 'Owner $account is new.';
+  }
+
+  @override
+  String l2OwnerKeyMissing(String account) {
+    return 'Owner $account is no longer listed.';
+  }
+
+  @override
+  String get l2OwnerKeyAccept => 'Accept';
+
+  @override
+  String get l2OwnerKeyReject => 'Reject';
+
+  @override
+  String get l2OwnerKeyAcceptWarning =>
+      'Accept only if you know the owners or their keys changed. Whoever holds this key can check who sent a message without your name if they are shown it. Reports never go to a key accepted here; reporting asks you to compare codes.';
+
+  @override
+  String get l2OwnerKeyStale => 'The list changed meanwhile. Look at it again.';
 }

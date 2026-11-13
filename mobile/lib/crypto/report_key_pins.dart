@@ -9,6 +9,9 @@ import '../storage/local_store.dart';
 /// is pinned silently: a pin is made by [ReportKeyPins.pin], which a screen
 /// calls after showing the person the key's [reportKeyFingerprint]; a key the
 /// server later changes is refused until it is pinned again the same way.
+/// The owner keys L2-3 pins on first use for sealed-message proofs are kept
+/// apart (`owner_proof_pins.dart`, owner decision 2026-11-12, "Keep reports
+/// manual") and never reach a report.
 
 /// A report key as the server lists it for one instance owner.
 class ReportRecipientKey {

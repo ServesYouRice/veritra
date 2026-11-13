@@ -55,17 +55,56 @@ func c7ChannelBodySize(n int) bool {
 // c7SyncBodySize reports whether n is exactly P(N) + 124 + 700*N for some
 // 1 <= N <= 500, with P(N) = 256 * ceil((512 + 128*N) / 256).
 func c7SyncBodySize(n int) bool {
+	return c7SyncChannels(n) > 0
+}
+
+// c7SyncChannels is the N of a history_sync body of n bytes, or 0 when n is
+// no such size.
+func c7SyncChannels(n int) int {
 	for channels := 1; channels <= c7MaxSyncChannels; channels++ {
 		padded := 256 * ((512 + 128*channels + 255) / 256)
 		size := padded + c7BodyFraming + c7SyncSlotBytes*channels
 		if size == n {
-			return true
+			return channels
 		}
 		if size > n {
+			return 0
+		}
+	}
+	return 0
+}
+
+// c7SyncBodyShaped reports whether sealed has a history_sync size and none
+// of its parts, the sealed body0 and each 700-byte slot after it, is all
+// zero bytes. Every part is AEAD output (a nonce or tag in each), which an
+// honest sender never makes all zero; an all-zero part is junk sent to make
+// a newcomer's join look handed over. A slot sealed honestly over a zero
+// head and entry is ciphertext like any other: the server cannot tell it
+// apart, and the newcomer's own checks are what stop it (C7 design,
+// "Newcomer keeps asking").
+func c7SyncBodyShaped(sealed []byte) bool {
+	channels := c7SyncChannels(len(sealed))
+	if channels == 0 {
+		return false
+	}
+	start := len(sealed) - c7SyncSlotBytes*channels
+	if allZero(sealed[:start]) {
+		return false
+	}
+	for at := start; at < len(sealed); at += c7SyncSlotBytes {
+		if allZero(sealed[at : at+c7SyncSlotBytes]) {
 			return false
 		}
 	}
-	return false
+	return true
+}
+
+func allZero(b []byte) bool {
+	var acc byte
+	for _, v := range b {
+		acc |= v
+	}
+	return acc == 0
 }
 
 // c7SyncOnlyBodySize reports a history_sync size that is not also a channel

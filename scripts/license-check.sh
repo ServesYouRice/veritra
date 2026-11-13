@@ -18,6 +18,8 @@ check_notice "modernc.org/sqlite"
 check_notice "golang.org/x/crypto"
 check_notice "github.com/SherClockHolmes/webpush-go"
 check_notice "github.com/go-webauthn/webauthn"
+check_notice "github.com/cloudflare/circl"
+check_notice "github.com/bwesterb/go-ristretto"
 
 if grep -Eq '^openmls[[:space:]]*=' "$ROOT/crypto/rust/Cargo.toml"; then
   check_notice "aes-gcm"
@@ -29,6 +31,9 @@ if grep -Eq '^openmls[[:space:]]*=' "$ROOT/crypto/rust/Cargo.toml"; then
   check_notice "serde_json"
   check_notice "sha2"
   check_notice "tls_codec"
+  check_notice "voprf"
+  check_notice "rand_core"
+  check_notice "x25519-dalek"
 fi
 
 if grep -Eq '^[[:space:]]+flutter_secure_storage:' "$ROOT/mobile/pubspec.yaml"; then

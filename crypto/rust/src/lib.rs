@@ -16,6 +16,8 @@ pub mod c7;
 mod ffi;
 pub mod l1;
 pub mod l2;
+pub mod l2_frank;
+pub mod l2_sealed;
 // K2 primitives are internal until the complete reviewed transfer path is wired.
 #[allow(dead_code)]
 mod history;
@@ -26,7 +28,7 @@ pub mod report;
 pub use ffi::{PmCryptoHandle, PmOwnedBuffer};
 
 pub const PM_CRYPTO_UNAVAILABLE: i32 = -1;
-pub const PM_CRYPTO_ABI_VERSION: u32 = 24;
+pub const PM_CRYPTO_ABI_VERSION: u32 = 26;
 
 #[cfg(test)]
 mod test_memory;

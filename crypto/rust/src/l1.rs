@@ -13,12 +13,26 @@
 //!         | u64 created_at_ms | u8 change | u8 count (1..16)
 //!         | count x ( lp(device_id) | [32] signing_key )    sorted by id bytes
 //!         | u8 has_recovery | [32] recovery_key (only when has_recovery = 1)
+//!         [ | u8 n (1..count) | n x ( lp(device_id) | [32] frank_key ) ]
+//!                             format 2 only; sorted by id, ids listed
 //! statement = body | u8 signer_kind | lp(signer device_id, empty for kind 2)
 //!             | [64] signature
 //! signed message = "veritra-l1-device-list-sig-v1" | SHA-256(body)
 //!                  | u8 signer_kind | lp(signer device_id)
 //! list_hash(v)   = SHA-256("veritra-l1-device-list-hash-v1" | body)
 //! ```
+//!
+//! Format 2 (L2-3, ABI 26) adds the last section: each listed device's
+//! X25519 franking key (`crate::l2_frank`). A body with no franking key is
+//! written as format 1, byte for byte the earlier format, so every format-1
+//! statement and the format-1 vector stay valid; a format-2 body always
+//! names at least one key. A device's franking key is fixed: once a version
+//! lists it, no later version may change or drop it while the device stays
+//! listed. It is set by the device itself, in its genesis (1 or 6), in its
+//! recovery version (4) or in change 7, which sets only the signer's own key
+//! from none to some and changes nothing else. A device added by change 2
+//! starts with none. A device without a listed key cannot send sealed
+//! (`docs/crypto.md`, "Franking a sealed message").
 //!
 //! `created_at_ms` is the signer's clock: carried and shown, never trusted.
 //! Parsing is strict: one canonical spelling per statement. The signature
@@ -37,6 +51,8 @@ pub const LABEL_SIG: &[u8] = b"veritra-l1-device-list-sig-v1";
 pub const LABEL_HASH: &[u8] = b"veritra-l1-device-list-hash-v1";
 pub const MAGIC: &[u8; 4] = b"VDL1";
 pub const FORMAT: u8 = 1;
+/// The format of a body that lists at least one franking key.
+pub const FORMAT_FRANK: u8 = 2;
 /// Largest whole statement.
 pub const MAX_STATEMENT_BYTES: usize = 4096;
 pub const MAX_ENTRIES: usize = 16;
@@ -85,6 +101,8 @@ pub enum Change {
     Recovery = 4,
     RecoveryKey = 5,
     MigrationGenesis = 6,
+    /// L2-3: a listed device sets its own franking key, from none to some.
+    FrankKey = 7,
 }
 
 impl Change {
@@ -96,6 +114,7 @@ impl Change {
             4 => Self::Recovery,
             5 => Self::RecoveryKey,
             6 => Self::MigrationGenesis,
+            7 => Self::FrankKey,
             _ => return None,
         })
     }
@@ -134,6 +153,13 @@ impl Signer {
     }
 }
 
+/// A listed device's X25519 franking key (format 2).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FrankKey {
+    pub device_id: Vec<u8>,
+    pub key: [u8; KEY_BYTES],
+}
+
 /// The signed part of a statement, parsed.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Body {
@@ -144,6 +170,18 @@ pub struct Body {
     pub change: Change,
     pub entries: Vec<Pair>,
     pub recovery_key: Option<[u8; KEY_BYTES]>,
+    /// Sorted by id; every id is listed in `entries`. Empty in format 1.
+    pub frank_keys: Vec<FrankKey>,
+}
+
+impl Body {
+    /// The franking key this version lists for `device_id`.
+    pub fn frank_key(&self, device_id: &[u8]) -> Option<&[u8; KEY_BYTES]> {
+        self.frank_keys
+            .iter()
+            .find(|frank| frank.device_id == device_id)
+            .map(|frank| &frank.key)
+    }
 }
 
 /// A parsed statement. `raw` is exactly the bytes that were parsed.
@@ -183,7 +221,11 @@ fn put_lp(out: &mut Vec<u8>, value: &[u8]) -> Result<(), L1Error> {
 pub fn encode_body(body: &Body) -> Result<Vec<u8>, L1Error> {
     let mut out = Vec::with_capacity(512);
     out.extend_from_slice(MAGIC);
-    out.push(FORMAT);
+    out.push(if body.frank_keys.is_empty() {
+        FORMAT
+    } else {
+        FORMAT_FRANK
+    });
     put_lp(&mut out, &body.account_id)?;
     out.extend_from_slice(&body.version.to_be_bytes());
     out.extend_from_slice(&body.prev_hash);
@@ -199,6 +241,13 @@ pub fn encode_body(body: &Body) -> Result<Vec<u8>, L1Error> {
         Some(key) => {
             out.push(1);
             out.extend_from_slice(key);
+        }
+    }
+    if !body.frank_keys.is_empty() {
+        out.push(u8::try_from(body.frank_keys.len()).map_err(|_| L1Error::Malformed)?);
+        for frank in &body.frank_keys {
+            put_lp(&mut out, &frank.device_id)?;
+            out.extend_from_slice(&frank.key);
         }
     }
     // Whatever was built must read back as itself.
@@ -276,7 +325,11 @@ fn check_key(key: &[u8; KEY_BYTES]) -> Result<(), L1Error> {
 
 fn parse_body_prefix(bytes: &[u8]) -> Result<(Body, usize), L1Error> {
     let mut reader = Reader { bytes, offset: 0 };
-    if reader.take(4)? != MAGIC || reader.byte()? != FORMAT {
+    if reader.take(4)? != MAGIC {
+        return Err(L1Error::Malformed);
+    }
+    let format = reader.byte()?;
+    if format != FORMAT && format != FORMAT_FRANK {
         return Err(L1Error::Malformed);
     }
     let account_id = reader.lp(1, crate::MAX_ACCOUNT_ID_BYTES)?.to_vec();
@@ -320,6 +373,30 @@ fn parse_body_prefix(bytes: &[u8]) -> Result<(Body, usize), L1Error> {
         }
         _ => return Err(L1Error::Malformed),
     };
+    let mut frank_keys: Vec<FrankKey> = Vec::new();
+    if format == FORMAT_FRANK {
+        // At least one key (a body with none is format 1), at most one per
+        // listed device.
+        let n = usize::from(reader.byte()?);
+        if n == 0 || n > entries.len() {
+            return Err(L1Error::Malformed);
+        }
+        for _ in 0..n {
+            let device_id = reader.lp(1, crate::MAX_DEVICE_ID_BYTES)?.to_vec();
+            let key: [u8; KEY_BYTES] = reader.array()?;
+            // Canonical and not of low order, as the tag computation needs.
+            crate::l2_frank::check_public(&key).map_err(|_| L1Error::Malformed)?;
+            if frank_keys
+                .last()
+                .is_some_and(|last| last.device_id >= device_id)
+                || !entries.iter().any(|pair| pair.device_id == device_id)
+                || frank_keys.iter().any(|frank| frank.key == key)
+            {
+                return Err(L1Error::Malformed);
+            }
+            frank_keys.push(FrankKey { device_id, key });
+        }
+    }
     // Genesis and recovery bodies are versions of a chain: version 1 is a
     // genesis and only version 1 is.
     if change.is_genesis() != (version == 1) {
@@ -336,6 +413,7 @@ fn parse_body_prefix(bytes: &[u8]) -> Result<(Body, usize), L1Error> {
         change,
         entries,
         recovery_key,
+        frank_keys,
     };
     Ok((body, reader.offset))
 }
@@ -465,6 +543,19 @@ pub fn check_step(
     ever.extend(before.iter().cloned());
     let unchanged = after == before;
     let same_recovery = body.recovery_key == prev.body.recovery_key;
+    // A franking key is fixed: every device listed before and after keeps
+    // exactly the key (or the absence of one) it had. Change 7 is the one
+    // exception, for its signer only, and is checked in its arm.
+    let frank_kept_except = |except: Option<&[u8]>| {
+        after.iter().all(|pair| {
+            !before.iter().any(|old| old.device_id == pair.device_id)
+                || Some(pair.device_id.as_slice()) == except
+                || body.frank_key(&pair.device_id) == prev.body.frank_key(&pair.device_id)
+        })
+    };
+    if body.change != Change::FrankKey && !frank_kept_except(None) {
+        return Err(L1Error::Rule);
+    }
     let verifier = match (&body.change, &next.signer) {
         (Change::Add, Signer::Device(id)) => {
             let key = *key_of(before, id).ok_or(L1Error::Rule)?;
@@ -472,12 +563,14 @@ pub fn check_step(
             if key_of(after, id) != Some(&key) || !same_recovery {
                 return Err(L1Error::Rule);
             }
-            // Exactly one pair more, and it is new to the chain.
+            // Exactly one pair more, and it is new to the chain. It starts
+            // without a franking key: only the device itself sets one.
             let added: Vec<&Pair> = after.iter().filter(|pair| !before.contains(pair)).collect();
             if after.len() != before.len() + 1
                 || added.len() != 1
                 || !before.iter().all(|pair| after.contains(pair))
                 || seen_before(&ever, added[0])
+                || body.frank_key(&added[0].device_id).is_some()
             {
                 return Err(L1Error::Rule);
             }
@@ -510,6 +603,20 @@ pub fn check_step(
             }
             key
         }
+        (Change::FrankKey, Signer::Device(id)) => {
+            let key = *key_of(before, id).ok_or(L1Error::Rule)?;
+            // Only the signer's own franking key changes, from none to some;
+            // the entries, the recovery key and every other key stay.
+            if !unchanged
+                || !same_recovery
+                || prev.body.frank_key(id).is_some()
+                || body.frank_key(id).is_none()
+                || !frank_kept_except(Some(id))
+            {
+                return Err(L1Error::Rule);
+            }
+            key
+        }
         _ => return Err(L1Error::Rule),
     };
     verify_signature(&verifier, next)
@@ -531,16 +638,23 @@ fn check_genesis(prev: Option<&Statement>, next: &Statement) -> Result<(), L1Err
     if body.change == Change::Genesis && body.entries.len() != 1 {
         return Err(L1Error::Rule);
     }
+    // A genesis may carry the signer's own franking key and no other: the
+    // other devices of a migration genesis set theirs with change 7.
+    if body.frank_keys.iter().any(|frank| frank.device_id != *id) {
+        return Err(L1Error::Rule);
+    }
     verify_signature(&key, next)
 }
 
 /// A pair a chain listed, with the versions that added and removed it
-/// (`removed_version` is 0 while it is listed).
+/// (`removed_version` is 0 while it is listed) and the franking key the
+/// chain gave the device, if any (fixed once set).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ListedPair {
     pub pair: Pair,
     pub added_version: u64,
     pub removed_version: u64,
+    pub frank_key: Option<[u8; KEY_BYTES]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -553,7 +667,10 @@ pub struct ChainResult {
 
 /// Checks a whole chain from its genesis: every step, with the no-return and
 /// one-key-one-device rules over the history so far. Every statement must be
-/// of `expected_account` ([`L1Error::Chain`] otherwise).
+/// of `expected_account` ([`L1Error::Chain`] otherwise). A franking key is
+/// also one device's for the whole chain: a version that gives another
+/// device a key the chain ever listed is refused ([`L1Error::Rule`]), which
+/// [`check_step`] alone, with only signing-key history, cannot see.
 pub fn check_chain(
     expected_account: &[u8],
     statements: &[Statement],
@@ -574,7 +691,20 @@ pub fn check_chain(
                     pair: entry.clone(),
                     added_version: version,
                     removed_version: 0,
+                    frank_key: None,
                 });
+            }
+        }
+        for frank in &statement.body.frank_keys {
+            if pairs.iter().any(|listed| {
+                listed.frank_key == Some(frank.key) && listed.pair.device_id != frank.device_id
+            }) {
+                return Err(L1Error::Rule);
+            }
+            if let Some(listed) = pairs.iter_mut().find(|listed| {
+                listed.removed_version == 0 && listed.pair.device_id == frank.device_id
+            }) {
+                listed.frank_key = Some(frank.key);
             }
         }
         for listed in &mut pairs {
@@ -600,6 +730,7 @@ pub fn check_chain(
 ///   | [32] list_hash | [32] prev_hash | u64 created_at_ms | lp(account_id)
 ///   | u8 count | count x (lp(device_id) | [32] key) | u8 has_recovery
 ///   | [32] recovery_key (when has_recovery = 1)
+///   | u8 n | n x (lp(device_id) | [32] frank_key)       (n may be 0)
 /// ```
 pub fn encode_summary(statement: &Statement) -> Result<Vec<u8>, L1Error> {
     let body = &statement.body;
@@ -622,6 +753,11 @@ pub fn encode_summary(statement: &Statement) -> Result<Vec<u8>, L1Error> {
             out.extend_from_slice(key);
         }
     }
+    out.push(u8::try_from(body.frank_keys.len()).map_err(|_| L1Error::Malformed)?);
+    for frank in &body.frank_keys {
+        put_lp(&mut out, &frank.device_id)?;
+        out.extend_from_slice(&frank.key);
+    }
     Ok(out)
 }
 
@@ -630,7 +766,8 @@ pub fn encode_summary(statement: &Statement) -> Result<Vec<u8>, L1Error> {
 ///
 /// ```text
 /// summary(head) | [32] list_id | u16 n
-///   | n x (lp(device_id) | [32] key | u64 added_version | u64 removed_version)
+///   | n x (lp(device_id) | [32] key | u64 added_version | u64 removed_version
+///          | u8 has_frank_key | [32] frank_key (when has_frank_key = 1))
 /// ```
 pub fn encode_chain_result(result: &ChainResult) -> Result<Vec<u8>, L1Error> {
     let mut out = encode_summary(&result.head)?;
@@ -645,6 +782,13 @@ pub fn encode_chain_result(result: &ChainResult) -> Result<Vec<u8>, L1Error> {
         out.extend_from_slice(&listed.pair.signing_key);
         out.extend_from_slice(&listed.added_version.to_be_bytes());
         out.extend_from_slice(&listed.removed_version.to_be_bytes());
+        match &listed.frank_key {
+            None => out.push(0),
+            Some(key) => {
+                out.push(1);
+                out.extend_from_slice(key);
+            }
+        }
     }
     Ok(out)
 }
@@ -714,3 +858,7 @@ pub fn encode_leaf_pairs(leaves: &[(Vec<u8>, Vec<u8>, Vec<u8>)]) -> Result<Vec<u
 #[cfg(test)]
 #[path = "l1_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "l1_v2_tests.rs"]
+mod v2_tests;

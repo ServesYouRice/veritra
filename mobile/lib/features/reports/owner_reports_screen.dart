@@ -396,6 +396,26 @@ class _OwnerReportDetailScreenState extends State<OwnerReportDetailScreen> {
           l10n.c6VerdictUnfrankedDetail,
           StatusTone.warning
         ),
+      ReportVerdict.senderUnverified => (
+          l10n.c6VerdictSenderUnverified,
+          l10n.c6VerdictSenderUnverifiedDetail,
+          StatusTone.warning
+        ),
+      ReportVerdict.verifiedServerTrusted => (
+          l10n.c6VerdictServerTrusted,
+          l10n.c6VerdictServerTrustedDetail,
+          StatusTone.warning
+        ),
+      ReportVerdict.notDesignated => (
+          l10n.c6VerdictNotDesignated,
+          l10n.c6VerdictNotDesignatedDetail,
+          StatusTone.warning
+        ),
+      ReportVerdict.proofFailed => (
+          l10n.c6VerdictProofFailed,
+          l10n.c6VerdictProofFailedDetail,
+          StatusTone.error
+        ),
     };
     final record = result.record;
     return <Widget>[

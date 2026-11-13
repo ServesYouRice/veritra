@@ -44,6 +44,68 @@ void main() {
     harness.dispose();
   });
 
+  // L2-3, verification (d): a sync page that opened a sealed message ends
+  // with one log checkpoint; a page with none does not checkpoint.
+  test('a sync page that opened a sealed message checkpoints the log',
+      () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_plain')];
+    final store = MemoryLocalStore();
+    final harness = await _Harness.start(api, store: store, sealing: true);
+    await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+    expect(store.sealedResidueCheckpoints, 0);
+    api.events = <SyncEvent>[
+      ...api.events,
+      _sealedEvent(5, 'sealed_one'),
+      _sealedEvent(6, 'sealed_two'),
+    ];
+    harness.state.handleAppLifecycleState(AppLifecycleState.resumed);
+    await harness.waitFor(() async => await store.loadSyncCursor() == 6);
+    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+    expect(harness.crypto.applied,
+        <String>['msg_plain', 'sealed_one', 'sealed_two']);
+    harness.dispose();
+  });
+
+  // Review L1: a page that opened a sealed message and then failed still
+  // clears the log, and the need is durable from before the open.
+  test('a page that opened a sealed message and then threw still checkpoints',
+      () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[
+        _sealedEvent(5, 'sealed_one'),
+        _envelopeEvent(6, 'msg_bad'),
+      ];
+    final store = MemoryLocalStore();
+    final harness = await _Harness.start(api,
+        store: store,
+        sealing: true,
+        configure: (state) => (state.cryptoService as _FakeMlsCrypto)
+            .applyError = StateError('boom'));
+    await harness.waitFor(() => harness.crypto.applied.contains('msg_bad'));
+    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+    expect(await store.loadSyncCursor(), 5);
+    expect(
+        (harness.crypto as _FakeSealingCrypto).residueSettingAtOpen, <String?>[
+      '1',
+    ]);
+    expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
+    harness.dispose();
+  });
+
+  test('a residue flag a killed app left is cleared on the next start',
+      () async {
+    final api = _ScriptedApi()
+      ..events = <SyncEvent>[_envelopeEvent(4, 'msg_plain')];
+    final store = MemoryLocalStore();
+    await store.saveSetting(AppState.sealedResidueSetting, '1');
+    final harness = await _Harness.start(api, store: store, sealing: true);
+    await harness.waitFor(() async => await store.loadSyncCursor() == 4);
+    await harness.waitFor(() => store.sealedResidueCheckpoints == 1);
+    expect(await store.loadSetting(AppState.sealedResidueSetting), '0');
+    harness.dispose();
+  });
+
   test('a failed one-time clear of a pre-D54 stop is tried again', () async {
     final api = _ScriptedApi()
       ..events = <SyncEvent>[
@@ -201,6 +263,29 @@ SyncEvent _envelopeEvent(int id, String messageId,
       createdAt: DateTime.utc(2026, 9, 24),
     );
 
+SyncEvent _sealedEvent(int id, String messageId) => SyncEvent(
+      id: id,
+      type: 'message.sealed.created',
+      conversationId: 'conv_1',
+      payload: <String, Object?>{
+        'message_id': messageId,
+        'conversation_id': 'conv_1',
+        'sealed': true,
+        'envelope': <String, Object?>{
+          'id': messageId,
+          'conversation_id': 'conv_1',
+          'idempotency_key': 'idem_${messageId}_aaaaaaaaaaaaaaaa',
+          'ciphertext': 'AQ==',
+          'crypto_protocol': 'mls10-openmls-v1',
+          'crypto_metadata': <String, Object?>{},
+          'frank_commit': 'WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo=',
+          'sealed': true,
+          'created_at': DateTime.utc(2026, 9, 24, 0, 0, id).toIso8601String(),
+        },
+      },
+      createdAt: DateTime.utc(2026, 9, 24),
+    );
+
 class _Harness {
   _Harness(this.state, this.store, this.crypto);
 
@@ -209,10 +294,12 @@ class _Harness {
   final _FakeMlsCrypto crypto;
 
   static Future<_Harness> start(_ScriptedApi api,
-      {LocalStore? store, void Function(AppState state)? configure}) async {
+      {LocalStore? store,
+      void Function(AppState state)? configure,
+      bool sealing = false}) async {
     final local = store ?? MemoryLocalStore();
     await local.saveSession(_session);
-    final crypto = _FakeMlsCrypto(local);
+    final crypto = sealing ? _FakeSealingCrypto(local) : _FakeMlsCrypto(local);
     final state = AppState(
       apiClientFactory: (_) => api,
       cryptoService: crypto,
@@ -516,6 +603,44 @@ class _FakeMlsCrypto implements MlsConversationCryptoService {
   @override
   dynamic noSuchMethod(Invocation invocation) =>
       throw UnimplementedError('${invocation.memberName}');
+}
+
+/// Also opens sealed envelopes (L2-3), as a peer's post.
+class _FakeSealingCrypto extends _FakeMlsCrypto
+    implements SealedSendingCryptoService {
+  _FakeSealingCrypto(super.store);
+
+  @override
+  set sealedTokenSource(SealedTokenSource? source) {}
+
+  /// [AppState.sealedResidueSetting] as each open found it.
+  final List<String?> residueSettingAtOpen = <String?>[];
+
+  @override
+  Future<ReceivedMessageEnvelope> processSealedApplicationMessage(
+      ReceivedMessageEnvelope envelope, int syncEventId,
+      {void Function()? checkCanCommit}) async {
+    residueSettingAtOpen
+        .add(await store.loadSetting(AppState.sealedResidueSetting));
+    applied.add(envelope.id);
+    await store.commitSyncEvent(SyncEventCommit(
+      eventKey: 'application:$syncEventId:${envelope.id}',
+      conversationId: envelope.conversationId,
+      expectedCursor: await store.loadSyncCursor(),
+      cursor: syncEventId,
+    ));
+    return ReceivedMessageEnvelope(
+      id: envelope.id,
+      conversationId: envelope.conversationId,
+      senderAccountId: 'acct_peer',
+      senderDeviceId: 'dev_peer',
+      idempotencyKey: envelope.idempotencyKey,
+      ciphertext: envelope.ciphertext,
+      cryptoProtocol: envelope.cryptoProtocol,
+      createdAt: envelope.createdAt,
+      sealed: true,
+    );
+  }
 }
 
 class _QuietSync implements SyncService {

@@ -76,6 +76,10 @@ func TestMLSUpdateOnlyCommitIsOrderedLikeAnyCommitAndBudgeted(t *testing.T) {
 	if events := syncEventIDs(t, ctx, store, owner.Account.ID, owner.Device.ID); events[first.Commit.SyncEventID] != "mls.message.created" {
 		t.Fatalf("owner does not see the update commit: %v", events)
 	}
+	// An update-only commit's epoch added or removed no one (review M3).
+	if got := c7MembershipEpochs(t, ctx, store, conversation.ID); got != "1" {
+		t.Fatalf("membership epochs after an update = %q", got)
+	}
 
 	// A lost answer is retried with the same key: the stored commit comes
 	// back, inside the budget window and on a moved epoch.

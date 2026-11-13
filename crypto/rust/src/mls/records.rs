@@ -445,10 +445,10 @@ impl MlsDevice {
             self.signer.public(),
             &self.provider,
         )?;
-        // The L1 held seed follows the transfers; with none held the record
-        // is byte for byte what ABI 13 wrote, and with one an older library
-        // refuses it (its transfer decoder rejects trailing bytes).
-        let mut tail = SecretVLBytes::new(Vec::with_capacity(transfers.as_slice().len() + 40));
+        // The L1 held seed follows the transfers, then the L2-3 franking
+        // secret. An older library refuses either (its transfer decoder
+        // rejects trailing bytes).
+        let mut tail = SecretVLBytes::new(Vec::with_capacity(transfers.as_slice().len() + 80));
         transfers
             .as_slice()
             .iter()
@@ -459,6 +459,12 @@ impl MlsDevice {
                 .iter()
                 .for_each(|byte| tail.push(*byte));
         }
+        // L2-3 (ABI 26): the franking secret comes last, always. An older
+        // library refuses the record (trailing bytes): fail closed.
+        super::list::encode_frank_section(self.frank_secret_bytes())
+            .as_slice()
+            .iter()
+            .for_each(|byte| tail.push(*byte));
         let plaintext = encode_owner(KIND_DEVICE, &records, tail.as_slice());
         wipe_records(records);
         plaintext.ok_or(SealError::RecordLimit {
@@ -790,7 +796,14 @@ impl RestoreLoader {
         let (device_store, tail) = decode_owner(KIND_DEVICE, device_plaintext.as_slice())?;
         let transfers_len = transfer::extent(tail)?;
         let (transfers, held) = tail.split_at(transfers_len);
-        let held_list_seed = super::list::decode_held_section(held)?;
+        let (held_list_seed, frank_secret) = super::list::decode_device_sections(held)?;
+        // A record from before L2-3 holds no franking key: the device makes
+        // one now. The record then differs from the stored one and is sealed
+        // again at the next seal (its digest no longer matches).
+        let frank_secret = match frank_secret {
+            Some(secret) => secret,
+            None => crate::l2_frank::generate_secret().map_err(|_| MlsError::KeyGeneration)?,
+        };
         let storage = PartitionedStorage::from_owners(
             device_store,
             std::mem::take(&mut self.groups),
@@ -825,6 +838,7 @@ impl RestoreLoader {
                 device_id: std::mem::take(&mut self.device_id),
                 pending_transfers,
                 held_list_seed,
+                frank_secret,
                 held: Default::default(),
                 sealed: SealedState {
                     last_generation: self.generation,

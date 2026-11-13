@@ -80,7 +80,7 @@ func parseOptions(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&opts.Verify, "verify", true, "after the load, check that every acknowledged message is still stored")
 	fs.Float64Var(&opts.Companions, "companions", 0.5, "share of online accounts with a second, separately linked device (socket, catch-up, reads, downloads; no sends)")
 	fs.Float64Var(&opts.Cold, "cold", 0.2, "share of devices that catch up once from the middle of history during the window")
-	fs.DurationVar(&opts.DeliveryDeadline, "delivery-deadline", defaultDeliveryDeadline, "time after a send starts by which every online recipient client must see its realtime event; later it counts as a missed delivery")
+	fs.DurationVar(&opts.DeliveryDeadline, "delivery-deadline", defaultDeliveryDeadline, "time after a send starts by which every online recipient client must learn of the message (the sync page its realtime frame leads to); later it counts as a missed delivery")
 	accounts := fs.Int("accounts", 0, "override the profile's account count")
 	history := fs.Int("history", -1, "override the profile's seeded message count")
 	attachments := fs.Int("attachments", -1, "override the profile's seeded attachment count")

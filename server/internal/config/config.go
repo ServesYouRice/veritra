@@ -37,21 +37,29 @@ type Config struct {
 	// sealed bodies are required in community conversations and the legacy
 	// edit, delete and paging routes answer 409 there. Off by default until
 	// the app sends bodies (build step 4); PRIVATE_MESSENGER_C7_HISTORY=1.
-	C7History        bool
-	ManagementAddr   string
-	TrustedProxies   []*net.IPNet
-	VAPIDSubscriber  string
-	VAPIDPublicKey   string
-	VAPIDPrivateKey  string
-	FCMProjectID     string
-	FCMClientEmail   string
-	FCMPrivateKey    string
-	APNsTeamID       string
-	APNsKeyID        string
-	APNsBundleID     string
-	APNsPrivateKey   string
-	TURNURLs         []string
-	TURNSharedSecret string
+	C7History bool
+	// SealedSender turns on L2-3 sealed sender (D123; docs/crypto.md,
+	// "Sealed sender with VOPRF tokens"): the token issuance and sealed post
+	// routes. Off by default; PRIVATE_MESSENGER_SEALED_SENDER=1.
+	SealedSender bool
+	// SealedTokensPerDay caps the tokens one account gets per conversation
+	// and UTC day (PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY, 1 to 10000,
+	// default 200).
+	SealedTokensPerDay int
+	ManagementAddr     string
+	TrustedProxies     []*net.IPNet
+	VAPIDSubscriber    string
+	VAPIDPublicKey     string
+	VAPIDPrivateKey    string
+	FCMProjectID       string
+	FCMClientEmail     string
+	FCMPrivateKey      string
+	APNsTeamID         string
+	APNsKeyID          string
+	APNsBundleID       string
+	APNsPrivateKey     string
+	TURNURLs           []string
+	TURNSharedSecret   string
 	// B6 (group calls): the SFU. All three set, or none (rooms unavailable).
 	SFUURL        string
 	SFUAPIKey     string
@@ -135,6 +143,10 @@ func Load() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	sealedTokensPerDay, err := parseSealedTokensPerDay(os.Getenv("PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY"))
+	if err != nil {
+		return Config{}, err
+	}
 	limits, err := loadLimits()
 	if err != nil {
 		return Config{}, err
@@ -152,36 +164,38 @@ func Load() (Config, error) {
 		secrets[key] = value
 	}
 	cfg := Config{
-		Addr:             getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
-		DataDir:          getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
-		InstanceName:     getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
-		SetupToken:       secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
-		EnableMetrics:    getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
-		ScopedSync:       !envOff("PRIVATE_MESSENGER_SCOPED_SYNC"),
-		CommunityLayout:  !envOff("PRIVATE_MESSENGER_COMMUNITY_LAYOUT"),
-		C7History:        getenv("PRIVATE_MESSENGER_C7_HISTORY", "") == "1",
-		ManagementAddr:   getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
-		TrustedProxies:   trustedProxies,
-		VAPIDSubscriber:  strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
-		VAPIDPublicKey:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PUBLIC_KEY")),
-		VAPIDPrivateKey:  secrets["PRIVATE_MESSENGER_VAPID_PRIVATE_KEY"],
-		FCMProjectID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PROJECT_ID")),
-		FCMClientEmail:   strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_CLIENT_EMAIL")),
-		FCMPrivateKey:    secrets["PRIVATE_MESSENGER_FCM_PRIVATE_KEY"],
-		APNsTeamID:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_TEAM_ID")),
-		APNsKeyID:        strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_KEY_ID")),
-		APNsBundleID:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_BUNDLE_ID")),
-		APNsPrivateKey:   secrets["PRIVATE_MESSENGER_APNS_PRIVATE_KEY"],
-		TURNURLs:         splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
-		TURNSharedSecret: secrets["PRIVATE_MESSENGER_TURN_SHARED_SECRET"],
-		SFUURL:           strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_URL")),
-		SFUAPIKey:        strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_API_KEY")),
-		SFUAPISecret:     secrets["PRIVATE_MESSENGER_SFU_API_SECRET"],
-		Environment:      loadEnvironment(),
-		LogLevel:         strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
-		LogFormat:        strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
-		PasswordCost:     passwordCost,
-		SyncRetention:    30 * 24 * time.Hour,
+		Addr:               getenv("PRIVATE_MESSENGER_ADDR", ":8080"),
+		DataDir:            getenv("PRIVATE_MESSENGER_DATA_DIR", "./data"),
+		InstanceName:       getenv("PRIVATE_MESSENGER_INSTANCE_NAME", "Veritra"),
+		SetupToken:         secrets["PRIVATE_MESSENGER_SETUP_TOKEN"],
+		EnableMetrics:      getenv("PRIVATE_MESSENGER_ENABLE_METRICS", "") == "1",
+		ScopedSync:         !envOff("PRIVATE_MESSENGER_SCOPED_SYNC"),
+		CommunityLayout:    !envOff("PRIVATE_MESSENGER_COMMUNITY_LAYOUT"),
+		C7History:          getenv("PRIVATE_MESSENGER_C7_HISTORY", "") == "1",
+		SealedSender:       getenv("PRIVATE_MESSENGER_SEALED_SENDER", "") == "1",
+		SealedTokensPerDay: sealedTokensPerDay,
+		ManagementAddr:     getenv("PRIVATE_MESSENGER_MANAGEMENT_ADDR", "127.0.0.1:9090"),
+		TrustedProxies:     trustedProxies,
+		VAPIDSubscriber:    strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_SUBSCRIBER")),
+		VAPIDPublicKey:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_VAPID_PUBLIC_KEY")),
+		VAPIDPrivateKey:    secrets["PRIVATE_MESSENGER_VAPID_PRIVATE_KEY"],
+		FCMProjectID:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_PROJECT_ID")),
+		FCMClientEmail:     strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_FCM_CLIENT_EMAIL")),
+		FCMPrivateKey:      secrets["PRIVATE_MESSENGER_FCM_PRIVATE_KEY"],
+		APNsTeamID:         strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_TEAM_ID")),
+		APNsKeyID:          strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_KEY_ID")),
+		APNsBundleID:       strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_APNS_BUNDLE_ID")),
+		APNsPrivateKey:     secrets["PRIVATE_MESSENGER_APNS_PRIVATE_KEY"],
+		TURNURLs:           splitNonEmpty(os.Getenv("PRIVATE_MESSENGER_TURN_URLS")),
+		TURNSharedSecret:   secrets["PRIVATE_MESSENGER_TURN_SHARED_SECRET"],
+		SFUURL:             strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_URL")),
+		SFUAPIKey:          strings.TrimSpace(os.Getenv("PRIVATE_MESSENGER_SFU_API_KEY")),
+		SFUAPISecret:       secrets["PRIVATE_MESSENGER_SFU_API_SECRET"],
+		Environment:        loadEnvironment(),
+		LogLevel:           strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_LEVEL", "info"))),
+		LogFormat:          strings.ToLower(strings.TrimSpace(getenv("PRIVATE_MESSENGER_LOG_FORMAT", "text"))),
+		PasswordCost:       passwordCost,
+		SyncRetention:      30 * 24 * time.Hour,
 
 		SessionIdleLifetime:     DefaultSessionIdleLifetime,
 		SessionAbsoluteLifetime: DefaultSessionAbsoluteLifetime,
@@ -275,6 +289,21 @@ func parsePasswordCost(raw string) (int, error) {
 		return 0, fmt.Errorf("PRIVATE_MESSENGER_BCRYPT_COST must be between %d and %d", MinPasswordCost, MaxPasswordCost)
 	}
 	return cost, nil
+}
+
+// DefaultSealedTokensPerDay is the default L2-3 daily token cap.
+const DefaultSealedTokensPerDay = 200
+
+func parseSealedTokensPerDay(raw string) (int, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultSealedTokensPerDay, nil
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 || n > 10000 {
+		return 0, fmt.Errorf("PRIVATE_MESSENGER_SEALED_TOKENS_PER_DAY must be between 1 and 10000")
+	}
+	return n, nil
 }
 
 // daysEnv stores a whole number of days from key (1..max) into dest and

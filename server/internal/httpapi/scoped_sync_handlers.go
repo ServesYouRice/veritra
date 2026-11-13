@@ -39,7 +39,7 @@ func (a *API) conversationSyncEvents(w http.ResponseWriter, r *http.Request, pri
 	after, limit := syncPageParams(r)
 	bounded := r.URL.Query().Get("scan") == "bounded"
 	conversationID := r.PathValue("id")
-	page, err := a.Store.ListConversationSyncPage(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit, bounded)
+	page, err := a.Store.ListConversationSyncPageWith(r.Context(), principal.AccountID, principal.DeviceID, conversationID, after, limit, storage.SyncReadOptions{Bounded: bounded, Sealed: a.noteSealedReader(r, principal)})
 	a.writeScopedSync(w, r, principal, syncScopeConversation, conversationID, page, bounded, err)
 }
 
