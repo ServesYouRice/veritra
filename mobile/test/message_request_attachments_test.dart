@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:private_messenger/core/api_client.dart';
@@ -147,6 +148,14 @@ class _FakeAttachmentCrypto implements AttachmentCryptoService {
     AttachmentCancellationToken? cancellation,
   }) =>
       File(destinationPath).writeAsString('hello');
+
+  @override
+  Future<Uint8List> decryptBytes({
+    required String ciphertextPath,
+    required Map<String, Object?> manifest,
+    AttachmentCancellationToken? cancellation,
+  }) async =>
+      Uint8List.fromList(<int>[104, 101, 108, 108, 111]);
 
   @override
   dynamic noSuchMethod(Invocation invocation) =>

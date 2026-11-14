@@ -100,8 +100,37 @@ Future<void> purgeOpenedAttachments({bool thisSlotOnly = false}) async {
   }
 }
 
-/// How long a decrypted copy stays in the cache once another app has it.
+/// How long a decrypted copy stays in the cache once another app has it,
+/// when nothing tells us the viewer closed (iOS keeps the app in front).
 const Duration _openedFileLifetime = Duration(minutes: 10);
+
+/// Deletes every opened-file copy, in every slot, that is older than
+/// [minAge]: the hourly backstop for copies whose viewer never reported
+/// closing (D134). Called by the attachment sweep. A copy's age is its
+/// folder's, which is set when the copy is made.
+Future<void> purgeStaleOpenedCopies(Duration minAge, {DateTime? now}) async {
+  final cutoff = (now ?? DateTime.now()).subtract(minAge);
+  try {
+    final root = await _openedFilesRoot();
+    if (!await root.exists()) return;
+    await for (final slot in root.list(followLinks: false)) {
+      if (slot is! Directory) continue;
+      await for (final copy in slot.list(followLinks: false)) {
+        if (copy is! Directory) continue;
+        try {
+          if ((await copy.stat()).modified.isAfter(cutoff)) continue;
+          await copy.delete(recursive: true);
+        } on FileSystemException {
+          // One copy that cannot go must not keep the others.
+        }
+      }
+    }
+  } on FileSystemException {
+    // The next sweep tries again.
+  } on MissingPluginException {
+    // No path provider (a test host).
+  }
+}
 
 /// Where the decrypted copy named [fileName] goes: a new, unguessable folder
 /// under [root], so no two opens ever share a path and one copy's expiry can
@@ -117,6 +146,55 @@ Future<File> newOpenedCopy(Directory root, String fileName) async {
   return File('${folder.path}${Platform.pathSeparator}$fileName');
 }
 
+/// Deletes the folder of [copy] (made by [newOpenedCopy]) once the viewer
+/// app that was opened on it is closed: when this app comes back to the
+/// front after having been in the background. The [lifetime] timer is the
+/// fallback for a viewer that never takes this app out of the front.
+///
+/// Returns a function that stops watching, for a copy deleted another way.
+void Function() deleteCopyWhenViewerCloses(
+  File copy, {
+  Duration lifetime = _openedFileLifetime,
+}) {
+  final watcher = _ViewerCloseWatcher(copy);
+  WidgetsBinding.instance.addObserver(watcher);
+  watcher.timer = expireOpenedCopy(copy, lifetime: lifetime);
+  return watcher.stop;
+}
+
+class _ViewerCloseWatcher with WidgetsBindingObserver {
+  _ViewerCloseWatcher(this.copy);
+
+  final File copy;
+  Timer? timer;
+  bool _wentAway = false;
+
+  void stop() {
+    WidgetsBinding.instance.removeObserver(this);
+    timer?.cancel();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _wentAway = true;
+    } else if (state == AppLifecycleState.resumed && _wentAway) {
+      stop();
+      unawaited(deleteOpenedCopy(copy));
+    }
+  }
+}
+
+/// Deletes the folder of [copy], best effort.
+Future<void> deleteOpenedCopy(File copy) async {
+  try {
+    await copy.parent.delete(recursive: true);
+  } on FileSystemException {
+    // Purged at the next start, or by the hourly sweep, instead.
+  }
+}
+
 /// Deletes the folder of [copy] (made by [newOpenedCopy]) after [lifetime].
 Timer expireOpenedCopy(File copy, {Duration lifetime = _openedFileLifetime}) {
   return Timer(lifetime, () async {
@@ -128,9 +206,11 @@ Timer expireOpenedCopy(File copy, {Duration lifetime = _openedFileLifetime}) {
   });
 }
 
-/// Decrypts [entry] to a temporary file in the app cache and opens it with
-/// the system's handler for its type. The copy is deleted after
-/// [_openedFileLifetime], at the next open and at the next start.
+/// Decrypts [entry] straight to a temporary file in the app cache and opens
+/// it with the system's handler for its type: `OpenFilex` takes only a path,
+/// so another app always needs a file (D134). The copy is deleted when the
+/// viewer closes, after [_openedFileLifetime], at the next open, at the next
+/// start and by the hourly sweep. Nothing here logs a name or a path.
 Future<void> openAttachmentExternally(
   BuildContext context,
   AppState state,
@@ -144,34 +224,32 @@ Future<void> openAttachmentExternally(
     await purgeOpenedAttachments();
     final directory = await openedFilesDirectory();
     created = await newOpenedCopy(directory, entry.fileName);
-    await state.saveAttachment(
+    await state.decryptAttachmentToFile(
       entry,
       created.path,
       conversationId: conversationId,
     );
   } catch (_) {
-    if (created != null) {
-      try {
-        await created.parent.delete(recursive: true);
-      } on FileSystemException {
-        // Purged at the next start instead.
-      }
-    }
+    if (created != null) await deleteOpenedCopy(created);
     messenger.showSnackBar(
       SnackBar(content: Text(l10n.attachmentDownloadFailed)),
     );
     return;
   }
   final file = created;
-  expireOpenedCopy(file);
+  final stopWatching = deleteCopyWhenViewerCloses(file);
   final OpenResult result;
   try {
     result = await OpenFilex.open(file.path);
   } catch (_) {
+    stopWatching();
+    await deleteOpenedCopy(file);
     messenger.showSnackBar(SnackBar(content: Text(l10n.attachmentOpenFailed)));
     return;
   }
   if (result.type != ResultType.done) {
+    stopWatching();
+    await deleteOpenedCopy(file);
     messenger.showSnackBar(SnackBar(content: Text(l10n.attachmentOpenFailed)));
   }
 }
@@ -304,11 +382,20 @@ const int maxViewerDecodeSide = 4096;
 
 /// The pixel size an image declares in its header, read without decoding it,
 /// or null when [bytes] are not an image the engine can open.
-Future<({int width, int height})?> readImageSize(Uint8List bytes) async {
+Future<({int width, int height})?> readImageSize(Uint8List bytes) =>
+    _declaredSize(() => ui.ImmutableBuffer.fromUint8List(bytes));
+
+/// [readImageSize] for an image in a file, which the engine reads itself.
+Future<({int width, int height})?> readImageFileSize(String path) =>
+    _declaredSize(() => ui.ImmutableBuffer.fromFilePath(path));
+
+Future<({int width, int height})?> _declaredSize(
+  Future<ui.ImmutableBuffer> Function() open,
+) async {
   ui.ImmutableBuffer? buffer;
   ui.ImageDescriptor? descriptor;
   try {
-    buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+    buffer = await open();
     descriptor = await ui.ImageDescriptor.encoded(buffer);
     return (width: descriptor.width, height: descriptor.height);
   } catch (_) {
@@ -332,9 +419,13 @@ Future<({int width, int height})?> readImageSize(Uint8List bytes) async {
 }
 
 class _LoadedImage {
-  const _LoadedImage(this.bytes, this.size);
+  const _LoadedImage(this.size, {this.bytes, this.copy});
 
-  final Uint8List bytes;
+  /// The decrypted image, for one that opens from memory.
+  final Uint8List? bytes;
+
+  /// The temp copy of an image too big for memory (D134).
+  final File? copy;
   final ({int width, int height})? size;
 
   /// Whether it is safe to hand to the decoder.
@@ -343,19 +434,65 @@ class _LoadedImage {
       size!.width > 0 &&
       size!.height > 0 &&
       size!.width * size!.height <= maxViewerPixels;
+
+  /// Wipes the bytes and deletes the copy.
+  Future<void> discard() async {
+    bytes?.fillRange(0, bytes!.length, 0);
+    final file = copy;
+    if (file != null) await deleteOpenedCopy(file);
+  }
 }
 
 class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
   late Future<_LoadedImage> _image = _load();
+  _LoadedImage? _shown;
+  bool _closed = false;
+
+  @override
+  void dispose() {
+    _closed = true;
+    final shown = _shown;
+    _shown = null;
+    if (shown != null) unawaited(shown.discard());
+    super.dispose();
+  }
 
   /// Downloads and decrypts the image, then reads its declared size before
-  /// anything decodes it.
+  /// anything decodes it. A small image stays in memory and no file is
+  /// written; a big one goes to a temp copy that [dispose] deletes (D134).
   Future<_LoadedImage> _load() async {
-    final bytes = await widget.state.loadAttachment(
-      widget.entry,
-      conversationId: widget.conversationId,
-    );
-    return _LoadedImage(bytes, await readImageSize(bytes));
+    final previous = _shown;
+    _shown = null;
+    if (previous != null) await previous.discard();
+    final _LoadedImage loaded;
+    if (widget.entry.opensFromMemory) {
+      final bytes = await widget.state.loadAttachment(
+        widget.entry,
+        conversationId: widget.conversationId,
+      );
+      loaded = _LoadedImage(await readImageSize(bytes), bytes: bytes);
+    } else {
+      final root = await openedFilesDirectory();
+      final copy = await newOpenedCopy(root, widget.entry.fileName);
+      try {
+        await widget.state.decryptAttachmentToFile(
+          widget.entry,
+          copy.path,
+          conversationId: widget.conversationId,
+        );
+        loaded = _LoadedImage(await readImageFileSize(copy.path), copy: copy);
+      } catch (_) {
+        await deleteOpenedCopy(copy);
+        rethrow;
+      }
+    }
+    if (_closed) {
+      // The screen was closed while this was loading: nobody will show it.
+      await loaded.discard();
+      throw StateError('viewer closed');
+    }
+    _shown = loaded;
+    return loaded;
   }
 
   @override
@@ -410,14 +547,23 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
           );
           return InteractiveViewer(
             child: Center(
-              child: Image.memory(
-                loaded.bytes,
-                cacheWidth: decode.width,
-                cacheHeight: decode.height,
-                semanticLabel: widget.entry.fileName,
-                errorBuilder: (context, _, __) =>
-                    Text(context.l10n.attachmentImageUnshowable),
-              ),
+              child: loaded.bytes != null
+                  ? Image.memory(
+                      loaded.bytes!,
+                      cacheWidth: decode.width,
+                      cacheHeight: decode.height,
+                      semanticLabel: widget.entry.fileName,
+                      errorBuilder: (context, _, __) =>
+                          Text(context.l10n.attachmentImageUnshowable),
+                    )
+                  : Image.file(
+                      loaded.copy!,
+                      cacheWidth: decode.width,
+                      cacheHeight: decode.height,
+                      semanticLabel: widget.entry.fileName,
+                      errorBuilder: (context, _, __) =>
+                          Text(context.l10n.attachmentImageUnshowable),
+                    ),
             ),
           );
         },

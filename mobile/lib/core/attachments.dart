@@ -24,6 +24,31 @@ const Set<String> playableAudioTypes = <String>{
   'audio/x-wav',
 };
 
+/// The largest attachment, in plaintext bytes, that opens from memory. At or
+/// below it the image viewer (`Image.memory`) and the voice player
+/// (`BytesSource`) take the decrypted bytes and no file is written; above it
+/// the attachment is decrypted to a short-lived temp copy that is deleted
+/// when its viewer closes, and the hourly sweep removes any that remain
+/// (D134).
+///
+/// Neither viewer has a size limit of its own, so the limit is the peak
+/// memory of one open: the bytes, plus a native copy (the image engine's
+/// buffer, or the platform-channel and Java copies of `BytesSource`), plus
+/// for an image its decoded frame (at most 4096 x 4096 x 4, about 64 MB, see
+/// `maxViewerDecodeSide`). At 8 MiB that is about 3 x 8 = 24 MB of bytes on
+/// top of the frame, safe on a 2 GB phone; at the 48 MiB attachment limit
+/// ([maxPlaintextAttachmentBytes]) it would be about 144 MB. 8 MiB holds
+/// every AAC voice note (64 kbit/s is 8 kB/s, so the 10-minute cap is
+/// 4.8 MB) and a typical 12 MP photo (3 to 6 MB). It does not hold the WAV
+/// fallback past about 95 s (44.1 kHz mono 16-bit is 88 kB/s), a 48 MP
+/// photo, or any file for another app: `OpenFilex.open` takes only a path,
+/// so external openers always get a temp copy whatever the size.
+///
+/// Bytes playback exists only on Android and Windows (`audioplayers` has
+/// none on iOS, macOS or Linux); elsewhere a voice note plays from a temp
+/// copy whatever its size.
+const int attachmentMemoryLimit = 8 * 1024 * 1024;
+
 /// Metadata the server accepts with an uploaded attachment blob. It names
 /// the scheme only; keys, names and sizes travel inside the MLS message.
 const Map<String, Object?> attachmentUploadMetadata = <String, Object?>{
@@ -55,6 +80,10 @@ class AttachmentEntry {
 
   /// The decryption manifest (key, nonce prefix, chunking, context).
   final Map<String, Object?> manifest;
+
+  /// Whether an image viewer or the voice player takes this attachment from
+  /// memory, so it never touches disk (D134). See [attachmentMemoryLimit].
+  bool get opensFromMemory => plaintextSize <= attachmentMemoryLimit;
 
   bool get isImage => previewableImageTypes.contains(mediaType);
 
@@ -214,7 +243,12 @@ class AttachmentOrphanSweeper {
     this._directory, {
     this.interval = attachmentOrphanSweepInterval,
     this.minAge = attachmentOrphanMinAge,
+    this.alsoSweep,
   });
+
+  /// More cleanup to run on every sweep, given [minAge]: the opened-file
+  /// copies of the viewers live outside this directory (D134).
+  final Future<void> Function(Duration minAge)? alsoSweep;
 
   final Future<Directory?> Function() _directory;
   final Duration interval;
@@ -238,6 +272,11 @@ class AttachmentOrphanSweeper {
       if (directory != null && !_stopped) {
         await cleanupAttachmentOrphans(directory, minAge: minAge);
       }
+    } catch (_) {
+      // Best effort; the next tick tries again.
+    }
+    try {
+      await alsoSweep?.call(minAge);
     } catch (_) {
       // Best effort; the next tick tries again.
     } finally {

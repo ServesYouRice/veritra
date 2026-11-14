@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io' show File;
 import 'dart:math' as math;
 
 import 'package:file_selector/file_selector.dart' show XFile;
@@ -1638,8 +1637,8 @@ class _MessageList extends StatelessWidget {
                     ? context.l10n.channelHistoryFormerMemberUnnamed
                     : _senderLabel(senderAccountId),
                 onLoadVoiceNote: state.attachmentsAvailable
-                    ? (entry) => decryptVoiceNote(state, entry,
-                        conversationId: conversationId)
+                    ? (entry, inMemory) => decryptVoiceNote(state, entry,
+                        conversationId: conversationId, inMemory: inMemory)
                     : null,
                 onOpenAttachment: state.attachmentsAvailable
                     ? (entry) => openAttachment(
@@ -2086,8 +2085,10 @@ class _MessageBubble extends StatelessWidget {
   /// Opens one attachment of an attachment message.
   final void Function(AttachmentEntry entry)? onOpenAttachment;
 
-  /// Decrypts a voice note to a temporary file for inline playback.
-  final Future<File> Function(AttachmentEntry entry)? onLoadVoiceNote;
+  /// Decrypts a voice note for inline playback, in memory when the player
+  /// can take bytes and the note is small, else to a temporary file.
+  final Future<DecryptedVoice> Function(AttachmentEntry entry, bool inMemory)?
+      onLoadVoiceNote;
   final void Function(String accountId)? onMention;
   final bool starred;
   final bool copiedHistory;
@@ -2250,7 +2251,7 @@ class _MessageBubble extends StatelessWidget {
           VoiceNoteTile(
             key: ValueKey<String>('voice-${entry.id}'),
             entry: entry,
-            load: () => onLoadVoiceNote!(entry),
+            load: (inMemory) => onLoadVoiceNote!(entry, inMemory),
           )
         else
           AttachmentTile(

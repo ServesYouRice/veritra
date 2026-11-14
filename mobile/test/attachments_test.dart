@@ -161,7 +161,7 @@ void main() {
   });
 
   test(
-    'loading stages the decrypted file, reads it back and removes it',
+    'loading decrypts in memory: no plaintext file exists at any point',
     () async {
       final api = _AttachmentApi();
       final crypto = _FakeAttachmentCrypto(tempDir);
@@ -174,6 +174,10 @@ void main() {
 
       expect(bytes, <int>[104, 101, 108, 108, 111]);
       expect(crypto.decryptedCiphertext, api.download);
+      expect(crypto.decryptFileCalls, 0);
+      // While it decrypted, the working directory held the ciphertext only.
+      expect(crypto.filesDuringDecrypt, hasLength(1));
+      expect(crypto.filesDuringDecrypt.single, endsWith('.ciphertext'));
       expect(
         tempDir.listSync().where((item) => item.path.contains('.veritra-')),
         isEmpty,
@@ -181,6 +185,30 @@ void main() {
       state.dispose();
     },
   );
+
+  test('a big file decrypts straight into the copy it is given', () async {
+    final api = _AttachmentApi();
+    final crypto = _FakeAttachmentCrypto(tempDir);
+    final state = _state(api, _FakeMls(), crypto);
+    final entry = AttachmentEntry.tryParse(
+      _entry(cipher: api.download.length, plain: 5),
+    )!;
+    final destination = '${tempDir.path}/copy.bin';
+
+    await state.decryptAttachmentToFile(
+      entry,
+      destination,
+      conversationId: 'conv_1',
+    );
+
+    expect(File(destination).readAsStringSync(), 'hello');
+    expect(crypto.decryptFileCalls, 1);
+    expect(
+      tempDir.listSync().where((item) => item.path.contains('.veritra-')),
+      isEmpty,
+    );
+    state.dispose();
+  });
 
   test('a download of the wrong size is refused before decryption', () async {
     final api = _AttachmentApi();
@@ -202,31 +230,24 @@ void main() {
     state.dispose();
   });
 
-  test(
-    'a decryption that fails after writing part of the file leaves none',
-    () async {
-      final api = _AttachmentApi();
-      final crypto = _FakeAttachmentCrypto(tempDir)
-        ..failAfterPartialWrite = true;
-      final state = _state(api, _FakeMls(), crypto);
-      final entry = AttachmentEntry.tryParse(
-        _entry(cipher: api.download.length, plain: 5),
-      )!;
+  test('a decryption that fails leaves no working file behind', () async {
+    final api = _AttachmentApi();
+    final crypto = _FakeAttachmentCrypto(tempDir)..failAfterPartialWrite = true;
+    final state = _state(api, _FakeMls(), crypto);
+    final entry = AttachmentEntry.tryParse(
+      _entry(cipher: api.download.length, plain: 5),
+    )!;
 
-      await expectLater(
-        state.loadAttachment(entry, conversationId: 'conv_1'),
-        throwsFormatException,
-      );
-      // The fake really wrote plaintext before throwing.
-      expect(crypto.partialDestinationPath, isNotNull);
-      expect(File(crypto.partialDestinationPath!).existsSync(), isFalse);
-      expect(
-        tempDir.listSync().where((item) => item.path.contains('.veritra-')),
-        isEmpty,
-      );
-      state.dispose();
-    },
-  );
+    await expectLater(
+      state.loadAttachment(entry, conversationId: 'conv_1'),
+      throwsFormatException,
+    );
+    expect(
+      tempDir.listSync().where((item) => item.path.contains('.veritra-')),
+      isEmpty,
+    );
+    state.dispose();
+  });
 
   test(
     'the start-up sweep removes stale staged plaintext and nothing else',
@@ -359,7 +380,8 @@ class _FakeAttachmentCrypto implements AttachmentCryptoService {
   String? lastCiphertextPath;
   List<int>? decryptedCiphertext;
   bool failAfterPartialWrite = false;
-  String? partialDestinationPath;
+  int decryptFileCalls = 0;
+  List<String> filesDuringDecrypt = <String>[];
 
   @override
   Future<PreparedEncryptedAttachment> encryptFile({
@@ -399,13 +421,26 @@ class _FakeAttachmentCrypto implements AttachmentCryptoService {
     required Map<String, Object?> manifest,
     AttachmentCancellationToken? cancellation,
   }) async {
+    decryptFileCalls++;
     decryptedCiphertext = await File(ciphertextPath).readAsBytes();
+    await File(destinationPath).writeAsString('hello');
+  }
+
+  @override
+  Future<Uint8List> decryptBytes({
+    required String ciphertextPath,
+    required Map<String, Object?> manifest,
+    AttachmentCancellationToken? cancellation,
+  }) async {
+    decryptedCiphertext = await File(ciphertextPath).readAsBytes();
+    filesDuringDecrypt = <String>[
+      for (final item in dir.listSync())
+        if (item.path.contains('.veritra-')) item.path,
+    ];
     if (failAfterPartialWrite) {
-      await File(destinationPath).writeAsString('hel');
-      partialDestinationPath = destinationPath;
       throw const FormatException('attachment authentication failed');
     }
-    await File(destinationPath).writeAsString('hello');
+    return Uint8List.fromList(utf8.encode('hello'));
   }
 
   @override

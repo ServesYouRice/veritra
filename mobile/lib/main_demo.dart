@@ -16,7 +16,7 @@ import 'desktop/desktop_services.dart';
 import 'crypto/native_crypto_bindings.dart';
 import 'crypto/native_crypto_service.dart';
 import 'features/chat/attachment_views.dart'
-    show purgeOpenedAttachments, useOpenedFilesScope;
+    show purgeOpenedAttachments, purgeStaleOpenedCopies, useOpenedFilesScope;
 import 'features/chat/composer_attachments.dart'
     show purgePastedImages, usePastedImageProfile;
 import 'main.dart' show VeritraApp, StartupFailureApp;
@@ -229,7 +229,8 @@ Future<void> main(List<String> args) async {
                 () => installWorker(runtime.state, slot);
           }
           // At start and then hourly: a crash while running leaves files too.
-          runtime.state.startAttachmentOrphanSweep();
+          runtime.state
+              .startAttachmentOrphanSweep(alsoSweep: purgeStaleOpenedCopies);
           return runtime;
         },
         primaryNamespace: namespace,
