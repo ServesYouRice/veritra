@@ -31,6 +31,7 @@ import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/account_recovery_banner.dart';
+import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/empty_state.dart';
 import '../../ui/widgets/gated_explanation.dart';
 import '../../ui/widgets/listenable_selector.dart';
@@ -430,24 +431,23 @@ class _ChatScreenState extends State<ChatScreen> {
                               builder: (context, _) => Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: <Widget>[
-                                  IconButton(
+                                  BarAction(
                                       key: const Key('chat-call-voice'),
-                                      tooltip: context.l10n.callStartVoice,
+                                      label: context.l10n.callStartVoice,
                                       onPressed: calls.busy
                                           ? null
                                           : () => unawaited(
                                               calls.start(conversation.id)),
-                                      icon: const Icon(Icons.call_outlined)),
-                                  IconButton(
+                                      icon: Icons.call_outlined),
+                                  BarAction(
                                       key: const Key('chat-call-video'),
-                                      tooltip: context.l10n.callStartVideo,
+                                      label: context.l10n.callStartVideo,
                                       onPressed: calls.busy
                                           ? null
                                           : () => unawaited(calls.start(
                                               conversation.id,
                                               withVideo: true)),
-                                      icon:
-                                          const Icon(Icons.videocam_outlined)),
+                                      icon: Icons.videocam_outlined),
                                 ],
                               ),
                             ),

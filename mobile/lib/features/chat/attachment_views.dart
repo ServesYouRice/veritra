@@ -14,6 +14,7 @@ import '../../core/app_state.dart';
 import '../../core/attachments.dart';
 import '../../ui/format.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../l10n/l10n.dart';
 
@@ -371,9 +372,9 @@ class _AttachmentImageScreenState extends State<AttachmentImageScreen> {
         title: widget.entry.fileName,
         actions: <Widget>[
           if (_canChooseSaveLocation)
-            IconButton(
-              tooltip: context.l10n.attachmentSave,
-              icon: const Icon(Icons.download_outlined),
+            BarAction(
+              label: context.l10n.attachmentSave,
+              icon: Icons.download_outlined,
               onPressed: () => saveAttachmentAs(
                 context,
                 widget.state,

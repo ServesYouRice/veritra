@@ -14,6 +14,7 @@ import '../../ui/photo_avatar.dart';
 import '../../ui/reauthenticate.dart';
 import '../../ui/tokens.dart';
 import '../../ui/widgets/empty_state.dart';
+import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/listenable_selector.dart';
 import '../../ui/widgets/status_pill.dart';
@@ -96,33 +97,45 @@ class ChatListScreen extends StatelessWidget {
         // is worth here.
         toolbarHeight: 64,
         titleSpacing: BoneSpacing.gutter,
+        // One line that ellipsizes, so the title never runs over the words
+        // in the bar (U11).
         title: Text(
           archived ? context.l10n.w8ArchivedChats : context.l10n.navChats,
           style: theme.textTheme.displaySmall,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         actions: <Widget>[
           // New chat lives in the bar (U28) so nothing floats over a row. It
           // is the one filled control here: Bone rations its accent to the
-          // primary action, active nav, unread count and focus ring.
+          // primary action, active nav, unread count and focus ring. The
+          // embedded list sits in a 360 dp pane, so it keeps icons only.
           if (!archived)
-            IconButton.filled(
-                tooltip: context.l10n.chatListNewChat,
+            BarAction(
+                label: context.l10n.chatListNewChat,
+                filled: true,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
                 onPressed: () => _startChat(context),
-                icon: const Icon(Icons.add_comment_outlined)),
+                icon: Icons.add_comment_outlined),
           if (!archived)
-            IconButton(
-                tooltip: context.l10n.w8ArchivedChats,
+            BarAction(
+                label: context.l10n.w8ArchivedChats,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
                 onPressed: () => Navigator.of(context).push(
                     sharedAxisRoute<void>((_) => ChatListScreen(
                         state: state, embedded: embedded, archived: true))),
-                icon: const Icon(Icons.archive_outlined)),
+                icon: Icons.archive_outlined),
           if (!archived && state.historyOnlyConversations.isNotEmpty)
-            IconButton(
-                tooltip: context.l10n.k2HistoryOnlyTitle,
+            BarAction(
+                label: context.l10n.k2HistoryOnlyTitle,
+                wordsFromWidth:
+                    embedded ? double.infinity : BarAction.minWordsWidth,
                 onPressed: () => Navigator.of(context).push(
                     sharedAxisRoute<void>(
                         (_) => CopiedHistoryListScreen(state: state))),
-                icon: const Icon(Icons.history)),
+                icon: Icons.history),
           RefreshAction(onRefresh: state.refreshConversations),
           if (!archived)
             IconButton(

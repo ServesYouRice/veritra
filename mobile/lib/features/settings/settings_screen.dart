@@ -19,6 +19,7 @@ import '../../ui/confirm.dart';
 import '../../ui/format.dart';
 import '../../ui/motion.dart';
 import '../../ui/tokens.dart';
+import '../../ui/widgets/bar_action.dart';
 import '../../ui/widgets/large_title_bar.dart';
 import '../../ui/widgets/section_header.dart';
 import '../../ui/widgets/status_pill.dart';
@@ -61,10 +62,10 @@ class SettingsScreen extends StatelessWidget {
           appBar: LargeTitleBar(
             title: l10n.settingsTitle,
             actions: <Widget>[
-              IconButton(
-                tooltip: l10n.commonRefresh,
+              BarAction(
+                label: l10n.commonRefresh,
                 onPressed: state.busy ? null : state.refreshDevices,
-                icon: const Icon(Icons.refresh),
+                icon: Icons.refresh,
               ),
             ],
           ),
