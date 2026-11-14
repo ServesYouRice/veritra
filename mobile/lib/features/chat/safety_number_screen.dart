@@ -289,19 +289,10 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
                     children: <Widget>[
                       Semantics(
                         label: l10n.safetyDigitsSemantics(
-                          _digitGroups(safety.digits).join(', '),
+                          safetyDigitGroups(safety.digits).join(', '),
                         ),
                         excludeSemantics: true,
-                        child: SelectableText(
-                          _digitLines(safety.digits),
-                          textAlign: TextAlign.center,
-                          style: BoneType.mono.copyWith(
-                            fontSize: 22,
-                            height: 1.5,
-                            letterSpacing: 1,
-                            color: theme.colorScheme.onSurface,
-                          ),
-                        ),
+                        child: SafetyDigitsGrid(digits: safety.digits),
                       ),
                       const SizedBox(height: BoneSpacing.lg),
                       Semantics(
@@ -381,19 +372,65 @@ class _SafetyNumberScreenState extends State<SafetyNumberScreen> {
 }
 
 /// The digits in groups of five, the size people read aloud and compare.
-List<String> _digitGroups(String digits) => <String>[
+List<String> safetyDigitGroups(String digits) => <String>[
       for (var start = 0; start < digits.length; start += 5)
         digits.substring(
             start, start + 5 < digits.length ? start + 5 : digits.length),
     ];
 
-/// Four groups per line, so sixty digits fit a phone in three lines.
-String _digitLines(String digits) {
-  final groups = _digitGroups(digits);
-  return <String>[
-    for (var start = 0; start < groups.length; start += 4)
-      groups
-          .sublist(start, start + 4 < groups.length ? start + 4 : groups.length)
-          .join(' '),
-  ].join('\n');
+/// The groups as a fixed grid, four a row: sixty digits are always three rows
+/// of four, whatever the width or text size, so both people read the same
+/// group in the same place. A group that does not fit its cell shrinks
+/// rather than wrapping.
+class SafetyDigitsGrid extends StatelessWidget {
+  const SafetyDigitsGrid({required this.digits, super.key});
+
+  final String digits;
+
+  static const int columns = 4;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final groups = safetyDigitGroups(digits);
+    final style = BoneType.mono.copyWith(
+      fontSize: 22,
+      height: 1.5,
+      letterSpacing: 1,
+      color: theme.colorScheme.onSurface,
+    );
+    return Column(
+      key: const ValueKey<String>('safety-number-grid'),
+      children: <Widget>[
+        for (var row = 0; row * columns < groups.length; row++)
+          Row(
+            children: <Widget>[
+              for (var column = 0; column < columns; column++)
+                Expanded(
+                  child: row * columns + column < groups.length
+                      ? Padding(
+                          // Groups never touch, even when they shrink.
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: BoneSpacing.xs),
+                          child: Center(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                groups[row * columns + column],
+                                key: ValueKey<String>(
+                                    'safety-group-${row * columns + column}'),
+                                maxLines: 1,
+                                softWrap: false,
+                                style: style,
+                              ),
+                            ),
+                          ),
+                        )
+                      : const SizedBox.shrink(),
+                ),
+            ],
+          ),
+      ],
+    );
+  }
 }

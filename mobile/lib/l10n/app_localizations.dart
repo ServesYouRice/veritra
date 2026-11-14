@@ -63,7 +63,7 @@ import 'app_localizations_sr.dart';
 /// property.
 abstract class AppLocalizations {
   AppLocalizations(String locale)
-      : localeName = intl.Intl.canonicalizedLocale(locale.toString());
+    : localeName = intl.Intl.canonicalizedLocale(locale.toString());
 
   final String localeName;
 
@@ -86,17 +86,17 @@ abstract class AppLocalizations {
   /// of delegates is preferred or required.
   static const List<LocalizationsDelegate<dynamic>> localizationsDelegates =
       <LocalizationsDelegate<dynamic>>[
-    delegate,
-    GlobalMaterialLocalizations.delegate,
-    GlobalCupertinoLocalizations.delegate,
-    GlobalWidgetsLocalizations.delegate,
-  ];
+        delegate,
+        GlobalMaterialLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+      ];
 
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -1260,7 +1260,7 @@ abstract class AppLocalizations {
   /// No description provided for @qrPermissionDenied.
   ///
   /// In en, this message translates to:
-  /// **'Camera permission is required to scan. Enable it in system settings, or type the link code manually.'**
+  /// **'Veritra needs the camera to scan. Allow it in Settings, or type the code instead.'**
   String get qrPermissionDenied;
 
   /// No description provided for @qrUnsupported.
@@ -1280,6 +1280,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Enter code manually'**
   String get qrEnterManually;
+
+  /// No description provided for @qrOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open settings'**
+  String get qrOpenSettings;
+
+  /// No description provided for @qrOpenSettingsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings could not be opened. Allow the camera for Veritra in your device\'s settings.'**
+  String get qrOpenSettingsFailed;
 
   /// No description provided for @newConversationTitle.
   ///
@@ -7681,8 +7693,9 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-      'an issue with the localizations generation tool. Please file an issue '
-      'on GitHub with a reproducible sample app and the gen-l10n configuration '
-      'that was used.');
+    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+    'an issue with the localizations generation tool. Please file an issue '
+    'on GitHub with a reproducible sample app and the gen-l10n configuration '
+    'that was used.',
+  );
 }

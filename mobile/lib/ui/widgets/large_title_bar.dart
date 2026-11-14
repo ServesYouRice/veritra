@@ -37,7 +37,13 @@ class LargeTitleBar extends StatelessWidget implements PreferredSizeWidget {
       titleSpacing: BoneSpacing.gutter,
       leading: leading,
       automaticallyImplyLeading: automaticallyImplyLeading,
-      title: Text(title, style: theme.textTheme.displaySmall),
+      // A title too long for the bar (a long name, Serbian, a phone held
+      // upright) shrinks to fit rather than losing its end.
+      title: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: AlignmentDirectional.centerStart,
+        child: Text(title, style: theme.textTheme.displaySmall),
+      ),
       actions: <Widget>[
         ...?actions,
         const SizedBox(width: BoneSpacing.sm),

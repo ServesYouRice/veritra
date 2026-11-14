@@ -273,10 +273,12 @@
   "qrToggleTorch": "Toggle torch",
   "qrSwitchCamera": "Switch camera",
   "qrPointCamera": "Point the camera at the QR code on your existing device (Settings → Link a new device).",
-  "qrPermissionDenied": "Camera permission is required to scan. Enable it in system settings, or type the link code manually.",
+  "qrPermissionDenied": "Veritra needs the camera to scan. Allow it in Settings, or type the code instead.",
   "qrUnsupported": "This device can’t scan QR codes. Type the link code manually.",
   "qrCameraFailed": "The camera could not be started. Type the link code manually.",
   "qrEnterManually": "Enter code manually",
+  "qrOpenSettings": "Open settings",
+  "qrOpenSettingsFailed": "Settings could not be opened. Allow the camera for Veritra in your device's settings.",
 
   "newConversationTitle": "New conversation",
   "newConversationDirect": "Direct message",

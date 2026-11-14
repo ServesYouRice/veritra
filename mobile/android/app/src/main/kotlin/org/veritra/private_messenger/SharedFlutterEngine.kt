@@ -1,7 +1,10 @@
 package org.veritra.private_messenger
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Looper
+import android.provider.Settings
 import io.flutter.FlutterInjector
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.dart.DartExecutor
@@ -69,6 +72,21 @@ object SharedFlutterEngine {
                 return@setMethodCallHandler
             }
             act.handleScreenGuardMethod(call, result)
+        }
+        // U8: the QR scanner's "Open settings" when the camera was refused.
+        MethodChannel(messenger, "org.veritra.private_messenger/app_settings").setMethodCallHandler { call, result ->
+            if (call.method != "open") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", app.packageName, null))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            result.success(try {
+                (activity.get() ?: app).startActivity(intent)
+                true
+            } catch (ignored: Exception) {
+                false
+            })
         }
         WakeWorkerCoordinator.installChannel(app, messenger, background)
         K1SecondCopy.install(app, messenger) { activity.get() }

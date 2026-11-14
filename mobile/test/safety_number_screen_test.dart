@@ -31,7 +31,7 @@ void main() {
       home: SafetyNumberScreen(state: state, conversation: dm),
     ));
     await tester.pumpAndSettle();
-    expect(find.text(_shown), findsOneWidget);
+    expect(_shownNumber(tester), _shown);
     expect(find.text('NOT VERIFIED'), findsOneWidget);
     expect(
         find.textContaining('Compare this number with @sam'), findsOneWidget);
@@ -105,7 +105,7 @@ void main() {
       ),
     ));
     await tester.pumpAndSettle();
-    expect(find.text(_shown), findsOneWidget);
+    expect(_shownNumber(tester), _shown);
     expect(find.textContaining('Every member of this group'), findsOneWidget);
     expect(find.text('Mark as verified'), findsNothing);
     expect(find.text('NOT VERIFIED'), findsNothing);
@@ -125,7 +125,7 @@ void main() {
     mls.fail = false;
     await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
-    expect(find.text(_shown), findsOneWidget);
+    expect(_shownNumber(tester), _shown);
   });
 
   group('leaving the screen', () {
@@ -271,7 +271,7 @@ void main() {
         home: SafetyNumberScreen(state: _state(store, mls), conversation: dm),
       ));
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsOneWidget);
+      expect(_shownNumber(tester), _shown);
 
       await tester.tap(find.text('Mark as verified'));
       await tester.pumpAndSettle();
@@ -339,15 +339,15 @@ void main() {
         home: SafetyNumberScreen(state: state, conversation: dm),
       ));
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsOneWidget);
+      expect(_shownNumber(tester), _shown);
       expect(find.text('VERIFIED'), findsOneWidget);
 
       // A device is replaced: new number, so the stored verification is stale.
       mls.change();
       state.poke();
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsNothing);
-      expect(find.text(_shownLater), findsOneWidget);
+      expect(_shownNumber(tester), isNot(_shown));
+      expect(_shownNumber(tester), _shownLater);
       expect(find.text('CHANGED'), findsOneWidget);
       expect(find.text('Mark as verified'), findsOneWidget);
     });
@@ -360,7 +360,7 @@ void main() {
         home: SafetyNumberScreen(state: state, conversation: dm),
       ));
       await tester.pumpAndSettle();
-      expect(find.text(_shown), findsOneWidget);
+      expect(_shownNumber(tester), _shown);
 
       // A reload starts and waits; it has already read the number as it is.
       mls.gate = Completer<void>();
@@ -377,13 +377,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('They match'));
       await tester.pumpAndSettle();
-      expect(find.text(_shownLater), findsOneWidget);
+      expect(_shownNumber(tester), _shownLater);
 
       // The older answer, from before the change, arrives last.
       older.complete();
       await tester.pumpAndSettle();
-      expect(find.text(_shownLater), findsOneWidget);
-      expect(find.text(_shown), findsNothing);
+      expect(_shownNumber(tester), _shownLater);
+      expect(_shownNumber(tester), isNot(_shown));
     });
 
     testWidgets('notifications do not pile up loads', (tester) async {
@@ -540,6 +540,21 @@ class _QuietSync implements SyncService {
 
   @override
   Future<void> dispose() => _controller.close();
+}
+
+/// The number as the grid shows it: groups by row, rows by line.
+String _shownNumber(WidgetTester tester) {
+  final rows = <String>[];
+  for (var row = 0; row < 3; row++) {
+    rows.add(<String>[
+      for (var column = 0; column < 4; column++)
+        tester
+            .widget<Text>(find
+                .byKey(ValueKey<String>('safety-group-${row * 4 + column}')))
+            .data!,
+    ].join(' '));
+  }
+  return rows.join('\n');
 }
 
 /// How the fake's sixty digits appear: twelve groups of five, four a line.
