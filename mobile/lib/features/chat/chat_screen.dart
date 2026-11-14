@@ -1210,7 +1210,9 @@ class _ChatScreenState extends State<ChatScreen> {
     final messenger = ScaffoldMessenger.of(context);
     final hidden = await state.deleteMessageForMe(message);
     if (!hidden) return;
-    messenger.hideCurrentSnackBar();
+    // Clear the queue too, so a snackbar waiting behind the current one
+    // cannot take the place of the Undo window.
+    messenger.clearSnackBars();
     final controller = messenger.showSnackBar(SnackBar(
       key: const Key('delete-for-me-undo'),
       content: Text(l10n.w8DeletedForMe),

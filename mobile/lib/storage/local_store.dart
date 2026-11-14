@@ -2903,6 +2903,7 @@ class MemoryLocalStore implements LocalStore {
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (row == null ||
         row.hiddenAt == null ||
+        row.deletedAt != null ||
         (row.expiresAt != null && row.expiresAt! <= nowMs)) {
       if (row == null || row.hiddenAt != null) _frankReveals.remove(key);
       return false;

@@ -237,8 +237,7 @@ void main() {
         expect(await store.unhideMessage('dev_peer:b'), isTrue);
       });
 
-      test('a message deleted for everyone comes back as its tombstone',
-          () async {
+      test('a message deleted for everyone is refused by Undo', () async {
         final store = make();
         await withExtras(store);
         await commit(store, <MessageEffect>[
@@ -249,12 +248,27 @@ void main() {
               conversationId: 'conv_1'),
         ]);
         expect(await store.hideMessage('conv_1', 'dev_peer:b'), isTrue);
-        expect(await store.unhideMessage('dev_peer:b'), isTrue);
-        final back = await row(store, 'b');
-        expect(back.hiddenAt, isNull);
-        expect(back.deletedAt, isNotNull);
-        expect(back.body, isNull);
+        expect(await store.unhideMessage('dev_peer:b'), isFalse);
+        final gone = await row(store, 'b');
+        expect(gone.hiddenAt, isNotNull);
+        expect(gone.deletedAt, isNotNull);
+        expect(gone.body, isNull);
         expect(await found(store, 'secret'), isEmpty);
+      });
+
+      test('a frank reveal read during the Undo window is refused', () async {
+        final store = make();
+        await withExtras(store);
+        expect(await store.loadFrankReveal('dev_peer:b'), isNotNull);
+        expect(await store.hideMessage('conv_1', 'dev_peer:b'), isTrue);
+        // The window is open: nothing a report could read.
+        expect(await store.loadFrankReveal('dev_peer:b'), isNull);
+        // Undo brings the reveal back; a final hide drops it for good.
+        expect(await store.unhideMessage('dev_peer:b'), isTrue);
+        expect(await store.loadFrankReveal('dev_peer:b'), isNotNull);
+        expect(await store.hideMessage('conv_1', 'dev_peer:b'), isTrue);
+        await store.finishHiddenMessages(only: <String>{'dev_peer:b'});
+        expect(await store.loadFrankReveal('dev_peer:b'), isNull);
       });
 
       test('a delete for everyone during the window wins over Undo', () async {

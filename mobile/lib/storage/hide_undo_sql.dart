@@ -108,10 +108,10 @@ extension HideUndoSql on EncryptedLocalDatabase {
       });
 
   /// Undoes the hide of [key]: the row, its reactions, pins and star come
-  /// back as they were (a message already deleted for everyone comes back
-  /// as that tombstone). Returns false, and makes the hide final, when there
-  /// is nothing to restore: the hide was already final, or the message has
-  /// expired since. A change during the window already made it final
+  /// back as they were. Returns false, and makes the hide final, when there
+  /// is nothing to restore: the hide was already final, the message has
+  /// expired since, or it is deleted for everyone (a tombstone has no text
+  /// to bring back). A change during the window already made it final
   /// ([_finishHideNamedBy]).
   Future<bool> unhideMessage(String key, int nowMs) => transaction(() async {
         final kept = await customSelect(
@@ -124,6 +124,7 @@ extension HideUndoSql on EncryptedLocalDatabase {
             .getSingleOrNull();
         if (row == null ||
             row.hiddenAt == null ||
+            row.deletedAt != null ||
             (row.expiresAt != null && row.expiresAt! <= nowMs)) {
           await _finishHidesInTransaction([key]);
           return false;

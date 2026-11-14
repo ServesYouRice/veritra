@@ -9152,10 +9152,11 @@ class AppState extends ChangeNotifier
   }
 
   /// Drops everything one session kept in memory: lists, flags, caches,
-  /// request decisions, retry state and timers. It makes no store call and
-  /// leaves [session], [api], [lifecycle] and [recoveryMessage] to the
-  /// caller. Shared by sign-out and the damaged-storage stop, so nothing of
-  /// one account carries over to the next (C-d0ba626ecdd7). The MLS
+  /// request decisions, retry state and timers. It leaves [session], [api],
+  /// [lifecycle] and [recoveryMessage] to the caller. Its one store call
+  /// finishes the open "Delete for me" Undo windows (U16), best effort.
+  /// Shared by sign-out and the damaged-storage stop, so nothing of one
+  /// account carries over to the next (C-d0ba626ecdd7). The MLS
   /// "accepted, unfinished" marks are not dropped here: they follow the
   /// stored MLS outbox, not the session.
   void _resetSessionMemory() {
