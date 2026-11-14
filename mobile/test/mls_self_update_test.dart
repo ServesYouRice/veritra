@@ -172,6 +172,43 @@ void main() {
     );
   }
 
+  test('D134: a discarded stuck update backs off and reconciles nothing',
+      () async {
+    // A local failure makes the update terminal and pauses the chat.
+    final store = await _storeWith(_countDue('conv_a'));
+    final api = _Api()..failures.add(ArgumentError('bad bundle'));
+    final crypto = _Crypto(store);
+    final state = await _start(api, store, crypto);
+    await _waitFor(() => state.mlsConversationFailed('conv_a'));
+    expect(state.pausedMlsUpdate('conv_a'),
+        (idempotencyKey: 'update_1', discardable: true));
+    expect(await _saved(store), isNot(contains('not_before')));
+    await _settle();
+    final pendingReads = api.pendingReads;
+    final revocationReads = api.revocationReads;
+
+    expect(await state.discardMlsUpdate('conv_a', 'update_1'),
+        MlsUpdateDiscard.discarded);
+    expect(crypto.abandoned, ['conv_a']);
+    expect(await store.pendingMlsMessages(), isEmpty);
+    expect(state.mlsConversationFailed('conv_a'), isFalse);
+    // The self-update's own back-off, as after a refusal.
+    await _waitFor(() async => (await _saved(store)).contains('not_before'));
+    final wait = _at(_record(await _saved(store), 'conv_a')['not_before'])
+        .difference(DateTime.now().toUtc());
+    expect(
+        wait,
+        greaterThan(
+            MlsSelfUpdatePolicy.refusedBackoff - const Duration(minutes: 1)));
+    expect(wait, lessThanOrEqualTo(MlsSelfUpdatePolicy.refusedBackoff * 1.5));
+    // An update changes no membership: no catch-up or reconcile follows.
+    await _settle();
+    expect(api.pendingReads, pendingReads);
+    expect(api.revocationReads, revocationReads);
+    expect(crypto.staged, ['conv_a']);
+    state.dispose();
+  });
+
   test('a retry refused before the duplicate check keeps the update', () async {
     // The first POST may have been accepted with its answer lost; the write
     // budget's 429 comes before the server's duplicate check, so it says

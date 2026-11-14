@@ -2435,7 +2435,22 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get chatPausedNotice =>
-      'Слање је овде паузирано: сервер је одбио ажурирање шифровања за овај разговор. Остали разговори и даље раде.';
+      'Слање је овде паузирано: ажурирање шифровања за овај разговор није могло да се пошаље. Покушајте поново или га одбаците. Остали разговори и даље раде.';
+
+  @override
+  String get chatPausedDiscard => 'Одбаци ажурирање';
+
+  @override
+  String get chatPausedNoticeRetryOnly =>
+      'Слање је овде паузирано: ажурирање шифровања за овај разговор није могло да се пошаље. Покушајте поново. Остали разговори и даље раде.';
+
+  @override
+  String get chatPausedDiscardRefused =>
+      'Ово ажурирање шифровања не може да се одбаци. Покушајте поново или напустите разговор.';
+
+  @override
+  String get chatPausedRoleChangeNotMade =>
+      'Ажурирање је одбачено, па промена улоге није извршена. Поновите је ако је и даље желите.';
 
   @override
   String get chatSyncPausedNotice =>
@@ -7837,7 +7852,22 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatPausedNotice =>
-      'Slanje je ovde pauzirano: server je odbio ažuriranje šifrovanja za ovaj razgovor. Ostali razgovori i dalje rade.';
+      'Slanje je ovde pauzirano: ažuriranje šifrovanja za ovaj razgovor nije moglo da se pošalje. Pokušajte ponovo ili ga odbacite. Ostali razgovori i dalje rade.';
+
+  @override
+  String get chatPausedDiscard => 'Odbaci ažuriranje';
+
+  @override
+  String get chatPausedNoticeRetryOnly =>
+      'Slanje je ovde pauzirano: ažuriranje šifrovanja za ovaj razgovor nije moglo da se pošalje. Pokušajte ponovo. Ostali razgovori i dalje rade.';
+
+  @override
+  String get chatPausedDiscardRefused =>
+      'Ovo ažuriranje šifrovanja ne može da se odbaci. Pokušajte ponovo ili napustite razgovor.';
+
+  @override
+  String get chatPausedRoleChangeNotMade =>
+      'Ažuriranje je odbačeno, pa promena uloge nije izvršena. Ponovite je ako je i dalje želite.';
 
   @override
   String get chatSyncPausedNotice =>

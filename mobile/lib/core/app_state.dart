@@ -243,6 +243,10 @@ enum PushState {
 
 class Ops {
   static const send = 'send';
+
+  /// D134: Retry or Discard of a paused conversation's stuck encryption
+  /// update. Apart from [send], so the composer stays as it is.
+  static const mlsUpdate = 'mls_update';
   static const attachment = 'attachment';
   static const pushTest = 'push_test';
   static const members = 'members';
@@ -280,6 +284,22 @@ class Ops {
 }
 
 enum RequestBucket { chat, request, hidden }
+
+/// D134: the control message that pauses a conversation, as the last MLS
+/// outbox pass found it: its key, and whether the person may discard it.
+typedef PausedMlsUpdate = ({String idempotencyKey, bool discardable});
+
+/// D134: what [AppState.discardMlsUpdate] did.
+enum MlsUpdateDiscard {
+  /// Nothing: the update was no longer the one shown, or it was refused.
+  notDone,
+
+  /// The update was dropped.
+  discarded,
+
+  /// The update was dropped, and with it a role change, which is not made.
+  roleChangeNotMade,
+}
 
 /// Why the stored message-request state is not in use: the read failed
 /// (tried again later) or the value could not be decoded.
@@ -1288,7 +1308,11 @@ class AppState extends ChangeNotifier
   }
 
   int _catchUpRetryAttempt = 0;
-  final Set<String> _failedMlsConversations = <String>{};
+
+  /// Conversations paused by a control message that failed for good (I34),
+  /// each with that message's key and whether it may be discarded (D134).
+  final Map<String, PausedMlsUpdate> _failedMlsConversations =
+      <String, PausedMlsUpdate>{};
   final Map<String, DateTime> _mlsPendingSeen = <String, DateTime>{};
 
   /// L1 complete-adds audit and incomplete-join clocks (app_state_l1_joins).
@@ -10400,7 +10424,7 @@ class AppState extends ChangeNotifier
           .putIfAbsent(message.conversationId, () => <PendingMlsMessage>[])
           .add(message);
     }
-    final failed = <String>{};
+    final failed = <String, PausedMlsUpdate>{};
     final now = DateTime.now().toUtc();
     for (final entry in byConversation.entries) {
       // A conversation paused by its own sync failure keeps its queued
@@ -10410,7 +10434,8 @@ class AppState extends ChangeNotifier
       for (final message in entry.value) {
         if (!_syncOwnerActive(current, ownerGeneration)) return;
         if (message.terminal) {
-          failed.add(entry.key);
+          failed[entry.key] = await _pausedMlsUpdate(message);
+          if (!_syncOwnerActive(current, ownerGeneration)) return;
           break;
         }
         if (message.nextAttemptAt?.isAfter(now) ?? false) break;
@@ -10487,7 +10512,10 @@ class AppState extends ChangeNotifier
             break;
           }
           final terminal = await _recordMlsOutboxFailure(message, err);
-          if (terminal) failed.add(entry.key);
+          if (terminal) {
+            failed[entry.key] = await _pausedMlsUpdate(message);
+            if (!_syncOwnerActive(current, ownerGeneration)) return;
+          }
           break;
         }
         if (!_syncOwnerActive(current, ownerGeneration)) return;
@@ -10538,7 +10566,7 @@ class AppState extends ChangeNotifier
         }
       }
     }
-    if (!_sameSetOf(failed, _failedMlsConversations)) {
+    if (!mapEquals(failed, _failedMlsConversations)) {
       _failedMlsConversations
         ..clear()
         ..addAll(failed);
@@ -11053,8 +11081,8 @@ class AppState extends ChangeNotifier
   /// rejections are terminal, and so are local errors that cannot pass by
   /// themselves: an item that does not decode, a bad argument, a durable
   /// storage error (TASK-052). They pause the conversation, with the item
-  /// kept; nothing resumes it yet but the device's own recovery (bug-hunt
-  /// Q-006 is open). Connection problems, busy servers, a malformed
+  /// kept, until the person retries or discards it (D134, bug-hunt
+  /// Q-006). Connection problems, busy servers, a malformed
   /// response, transient storage errors and unknown errors retry with
   /// bounded exponential backoff.
   Future<bool> _recordMlsOutboxFailure(
@@ -11205,13 +11233,216 @@ class AppState extends ChangeNotifier
     );
   }
 
-  /// Conversations whose MLS control message the server rejected (I34).
-  /// They stay paused, with the message kept, until the device recovers.
+  /// Conversations whose MLS control message failed for good (I34): the
+  /// server refused it, or this device could not send it. They stay paused,
+  /// with the message kept so nothing overtakes it, until the person picks
+  /// [retryMlsUpdate] or [discardMlsUpdate] (D134), or leaves the chat.
   bool mlsConversationFailed(String conversationId) =>
-      _failedMlsConversations.contains(conversationId);
+      _failedMlsConversations.containsKey(conversationId);
 
-  static bool _sameSetOf(Set<String> left, Set<String> right) =>
-      left.length == right.length && left.containsAll(right);
+  /// D134: the control message that pauses [conversationId], as the last
+  /// outbox pass found it; null when the conversation is not paused by one.
+  /// The chat offers Discard only when it is discardable, and hands its key
+  /// to [discardMlsUpdate].
+  PausedMlsUpdate? pausedMlsUpdate(String conversationId) =>
+      _failedMlsConversations[conversationId];
+
+  /// Marks [conversationIds] as paused by a failed control message, for
+  /// widget tests.
+  @visibleForTesting
+  void debugMlsConversationFailed(Set<String> conversationIds,
+      {bool discardable = true}) {
+    _failedMlsConversations
+      ..clear()
+      ..addAll(<String, PausedMlsUpdate>{
+        for (final id in conversationIds)
+          id: (idempotencyKey: 'paused_$id', discardable: discardable),
+      });
+    notifyListeners();
+  }
+
+  /// D134 (bug-hunt c6ed/Q-006): sends the control message that pauses
+  /// [conversationId] again, under its own idempotency key, so a server that
+  /// already took it answers with the original result. The terminal mark is
+  /// cleared inside the session queue, so a [discardMlsUpdate] queued behind
+  /// this finds the message in flight and leaves it alone. Completes after
+  /// the outbox pass that carries it; failing again pauses again. Runs as
+  /// [Ops.mlsUpdate], apart from the composer's [Ops.send].
+  Future<void> retryMlsUpdate(String conversationId) async {
+    final owner = session;
+    if (owner == null || _mlsCrypto == null) return;
+    final ownerGeneration = _sessionGeneration;
+    var settle = false;
+    await _runScoped(Ops.mlsUpdate, () async {
+      final head = await _pausedMlsHead(conversationId, owner, ownerGeneration);
+      if (head == null) return;
+      await localStore.retryPendingMlsMessage(head.idempotencyKey);
+      settle = true;
+    });
+    if (settle && _syncOwnerActive(owner, ownerGeneration)) {
+      await _settleMlsOutbox();
+    }
+  }
+
+  /// D134: drops the commit bundle [idempotencyKey] that pauses
+  /// [conversationId], the way a server refusal does (card I51). It acts
+  /// only while that bundle is still the conversation's terminal head, so
+  /// a double tap, or a tap on a notice drawn before an earlier discard,
+  /// never drops a later update the person has not seen.
+  ///
+  /// Safe for ordering: a terminal item was never accepted (the server
+  /// refused it, or it failed here before or at the request), its commit
+  /// was staged and never merged, and no later commit can be staged on top
+  /// of it, so this device stays at the group's epoch and every message
+  /// queued behind it stays valid. What it carried fares as after a
+  /// refusal: a membership change the server still lists is made again by
+  /// reconcile after its backoff, with sends held while it removes someone
+  /// (D68); a revocation is made again by its coordinator while the server
+  /// lists it pending; a self-update waits out its backoff; a role change
+  /// is not made, and the result says so, for the person to make it again.
+  ///
+  /// A group's first bundle (epoch 0) is refused: the server would never
+  /// learn of the group, reconcile could never add anyone to it, and a DM
+  /// would have no way back. Retry, or leaving the chat (D70), stays.
+  ///
+  /// Only a message still terminal inside the session queue is dropped,
+  /// never one a retry is sending. Completes after the outbox pass that
+  /// follows, which releases held messages. Runs as [Ops.mlsUpdate]; a
+  /// refusal is that op's error.
+  Future<MlsUpdateDiscard> discardMlsUpdate(
+      String conversationId, String idempotencyKey) async {
+    final owner = session;
+    final mls = _mlsCrypto;
+    if (owner == null || mls == null) return MlsUpdateDiscard.notDone;
+    final ownerGeneration = _sessionGeneration;
+    var outcome = MlsUpdateDiscard.notDone;
+    await _runScoped(Ops.mlsUpdate, () async {
+      final head = await _pausedMlsHead(conversationId, owner, ownerGeneration);
+      if (head == null || head.idempotencyKey != idempotencyKey) return;
+      // Only commit bundles are queued; their commit merges on acceptance.
+      // Any other kind cannot be shown to be unmerged here, so it stays,
+      // and leaving the chat (D70) is the way out. A group's first bundle
+      // stays too (above).
+      if (!await _mlsUpdateDiscardable(head)) {
+        throw UserFacingException(l10n.chatPausedDiscardRefused);
+      }
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      final bundle = _decodedBundleOrNull(head);
+      if (bundle == null) {
+        // D68, failing closed: a bundle that no longer decodes may have
+        // removed someone. Hold sends until reconcile has looked again; a
+        // hold the server does not list is released after the next
+        // complete fetch.
+        await _loadRemovalHolds();
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        ({int epoch, bool pending})? local;
+        try {
+          local = await mls.groupEpoch(conversationId);
+        } catch (_) {
+          local = null;
+        }
+        if (!_syncOwnerActive(owner, ownerGeneration)) return;
+        _removalHolds.putIfAbsent(
+            conversationId, () => _RemovalHold(epoch: local?.epoch ?? 0))
+          ..seq = ++_removalHoldSeq
+          // A read before this discard proves nothing about it.
+          ..unlistedAt = null;
+        await _saveRemovalHolds();
+        _removalHoldsUpdated();
+      } else if (bundle.removed.isNotEmpty &&
+          bundle.revocationDeviceId == null) {
+        // D68: the removal stays open once its commit is dropped. Record
+        // the hold from the queued bundle first, so no send slips out
+        // before reconcile makes the removal again.
+        await _heldForRemoval(conversationId);
+      }
+      await mls.abandonCommitBundle(head);
+      if (!_syncOwnerActive(owner, ownerGeneration)) return;
+      // The same follow-up as a refusal: a self-update waits out its
+      // backoff; a membership change backs off and is reconciled again.
+      if (bundle != null && bundle.isUpdateOnly) {
+        _selfUpdatePolicyFor(owner)?.recordBackoff(
+            conversationId, DateTime.now(), MlsSelfUpdatePolicy.refusedBackoff);
+        await _saveSelfUpdates();
+      } else {
+        _mlsBundleRefused(head);
+        _mlsReconcileRequested = true;
+        unawaited(_catchUpSyncEvents());
+      }
+      outcome = bundle != null && bundle.roleChange
+          ? MlsUpdateDiscard.roleChangeNotMade
+          : MlsUpdateDiscard.discarded;
+    });
+    if (outcome != MlsUpdateDiscard.notDone &&
+        _syncOwnerActive(owner, ownerGeneration)) {
+      await _settleMlsOutbox();
+    }
+    return outcome;
+  }
+
+  /// D134: [head], terminal, as the chat shows it: its key, and whether
+  /// [discardMlsUpdate] may drop it. Never throws, so one unreadable group
+  /// does not stop an outbox pass.
+  Future<PausedMlsUpdate> _pausedMlsUpdate(PendingMlsMessage head) async {
+    bool discardable;
+    try {
+      discardable = await _mlsUpdateDiscardable(head);
+    } catch (_) {
+      discardable = false;
+    }
+    return (idempotencyKey: head.idempotencyKey, discardable: discardable);
+  }
+
+  /// D134: whether the terminal [head] may be discarded: a commit bundle
+  /// not yet accepted, past the group's first (epoch 0) bundle. A bundle
+  /// that no longer decodes was staged at the group's current epoch (its
+  /// commit was never merged), so that epoch stands in for its own; with
+  /// no group here, or one that cannot be read, it stays. The outbox pass
+  /// and [discardMlsUpdate] both decide by this.
+  Future<bool> _mlsUpdateDiscardable(PendingMlsMessage head) async {
+    if (head.kind != MlsCommitBundle.kind ||
+        _mlsAcceptedUnfinished.contains(head.idempotencyKey)) {
+      return false;
+    }
+    final bundle = _decodedBundleOrNull(head);
+    if (bundle != null) return bundle.epoch > 0;
+    final mls = _mlsCrypto;
+    if (mls == null) return false;
+    final ({int epoch, bool pending})? local;
+    try {
+      local = await mls.groupEpoch(head.conversationId);
+    } catch (_) {
+      return false;
+    }
+    return local != null && local.epoch > 0;
+  }
+
+  /// The commit bundle [message] carries; null when it does not decode.
+  static MlsCommitBundle? _decodedBundleOrNull(PendingMlsMessage message) {
+    try {
+      return MlsCommitBundle.decode(message.payload);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The first queued control message of [conversationId] if it is the
+  /// terminal one that pauses it; null otherwise, or once [owner]'s session
+  /// ended. Read from the store inside the session queue.
+  Future<PendingMlsMessage?> _pausedMlsHead(
+      String conversationId, Session owner, int ownerGeneration) async {
+    if (!_syncOwnerActive(owner, ownerGeneration)) return null;
+    final head = (await localStore.pendingMlsMessages())
+        .where((message) => message.conversationId == conversationId)
+        .firstOrNull;
+    if (head == null ||
+        !head.terminal ||
+        _mlsAcceptedUnfinished.contains(head.idempotencyKey) ||
+        !_syncOwnerActive(owner, ownerGeneration)) {
+      return null;
+    }
+    return head;
+  }
 
   /// Creates the MLS group for a new conversation and sends each member's
   /// Welcome, so the composer works as soon as the conversation opens.
@@ -11783,7 +12014,7 @@ class AppState extends ChangeNotifier
         // C4: an update now would void the leave statement just sent.
         if (_leavingRecordGroups.contains(conversationId)) continue;
         if (_revocationPendingGroups.contains(conversationId) ||
-            _failedMlsConversations.contains(conversationId) ||
+            _failedMlsConversations.containsKey(conversationId) ||
             await _hasPendingMlsWork(conversationId)) {
           continue;
         }

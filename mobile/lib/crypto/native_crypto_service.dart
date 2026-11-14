@@ -2058,14 +2058,31 @@ class NativeCryptoService
 
   @override
   Future<void> abandonCommitBundle(PendingMlsMessage item) => _serial(() async {
-        final bundle = MlsCommitBundle.decode(item.payload);
+        // D134: the person may discard a bundle that no longer decodes. Its
+        // epoch is then unknown, so a pending commit is cleared only while
+        // this is the conversation's one queued bundle: a group holds at
+        // most one staged commit, and staging queues its bundle atomically.
+        MlsCommitBundle? bundle;
+        try {
+          bundle = MlsCommitBundle.decode(item.payload);
+        } catch (_) {
+          // Not a bundle at all, or one with a malformed field.
+          bundle = null;
+        }
         await _requireNotPaused(item.conversationId);
         // Already settled: a commit staged since belongs to a newer entry,
         // so clearing the pending commit here would drop that one instead.
         if (!await _isQueuedBundle(item)) return;
+        final soleBundle = bundle == null &&
+            (await localStore.pendingMlsMessages())
+                    .where((queued) =>
+                        queued.kind == MlsCommitBundle.kind &&
+                        queued.conversationId == item.conversationId)
+                    .length ==
+                1;
         final previous = await _requiredState();
         try {
-          if (bundle.hasCommit) {
+          if (bundle == null || bundle.hasCommit) {
             final device = _requiredDevice();
             ({int epoch, bool pending})? status;
             try {
@@ -2083,7 +2100,7 @@ class NativeCryptoService
             // staged after that is newer: keep it.
             if (status != null &&
                 status.pending &&
-                status.epoch == bundle.epoch) {
+                (bundle == null ? soleBundle : status.epoch == bundle.epoch)) {
               device.clearPendingCommit(item.conversationId);
             }
           }

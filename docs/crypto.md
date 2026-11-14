@@ -1304,6 +1304,42 @@ frame i = u32 len || seal(K, N, i, "veritra-backup-v2" || T || header || last,
 The crypto surface (ABI v5, payload semantics, local schema v7) froze after
 Stage 1. Every later change is listed here for the G25 reviewer.
 
+- **D134 stuck MLS update: Retry or Discard (2026-11-14, follows I34 and
+  I51, bug-hunt c6ed/Q-006; no ABI, wire, server, migration or local
+  schema change):** a control message that failed for good (I34: a
+  refusal outside the I51 refused-bundle path, or a local error) used to
+  pause its conversation with nothing to clear it. The paused chat now
+  offers Retry and, where allowed, Discard.
+  - **Retry** clears the terminal mark and sends the item again under its
+    own idempotency key, so a server that already took it answers with the
+    original result. Failing again pauses again.
+  - **Discard is a person-dropped terminal commit.** It takes the I51
+    refusal path: `abandonCommitBundle` drops the staged, never-merged
+    commit and its outbox entry in one step, then the same follow-up as a
+    refusal (a self-update's back-off with no reconcile; otherwise the
+    change's back-off and a reconcile). It acts only on the bundle the
+    person saw: the chat hands over the head's idempotency key from the
+    last outbox pass, and the session queue drops it only while it is
+    still that conversation's terminal head, so a double tap never drops a
+    later update. A role change carried by the bundle is not made, and the
+    chat says so.
+  - **Epoch-0 rule.** A group's first bundle (epoch 0) is never
+    discardable: the server would never learn of the group, reconcile
+    could never add anyone to it, and a DM would have no way back. The
+    chat offers Retry alone; leaving the chat (D70) stays the way out. A bundle that no longer
+    decodes uses the group's local epoch in place of its own (its commit
+    was never merged, so they are equal); with no readable group it is
+    not discardable. Only commit bundles can be discarded at all.
+  - **Decode-tolerant abandon.** `abandonCommitBundle` accepts a bundle
+    whose payload no longer decodes. Its epoch is unknown, so it clears a
+    pending commit only while it is the conversation's one queued bundle;
+    otherwise the pending commit stays and only the entry goes.
+  - **D68, failing closed.** Discarding a bundle that removes a member
+    sets the removal hold first, from the bundle. A bundle that no longer
+    decodes may have removed someone, so it sets an unlisted hold at the
+    local epoch before the abandon; reconcile releases it after a complete
+    fetch if the server lists no removal.
+
 - **C6 report body v3: reasons (2026-11-14, U33, owner-approved; no ABI,
   aad, server, migration or local schema change):** the body sealed in
   every report copy (`ReportBody`, `report_body.dart`) gains a required
