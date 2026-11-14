@@ -96,7 +96,7 @@ abstract class AppLocalizations {
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
     Locale('sr'),
-    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn'),
+    Locale.fromSubtags(languageCode: 'sr', scriptCode: 'Latn')
   ];
 
   /// Dismisses a dialog without doing anything.
@@ -570,13 +570,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPushProvider.
   ///
   /// In en, this message translates to:
-  /// **'Push provider'**
+  /// **'Delivery service'**
   String get settingsPushProvider;
 
   /// No description provided for @settingsPushProviderDetail.
   ///
   /// In en, this message translates to:
-  /// **'Choose an Android UnifiedPush provider'**
+  /// **'Choose an Android UnifiedPush delivery service'**
   String get settingsPushProviderDetail;
 
   /// No description provided for @settingsTestPush.
@@ -684,7 +684,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsRevokeDeviceTitle.
   ///
   /// In en, this message translates to:
-  /// **'Revoke device?'**
+  /// **'Sign out device?'**
   String get settingsRevokeDeviceTitle;
 
   /// No description provided for @settingsRevokeDeviceMessage.
@@ -834,7 +834,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsPushServerDisabledTitle.
   ///
   /// In en, this message translates to:
-  /// **'This server has no push provider'**
+  /// **'This server has no notification delivery service'**
   String get settingsPushServerDisabledTitle;
 
   /// No description provided for @settingsPushServerDisabledDetail.
@@ -942,7 +942,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDeviceRevoked.
   ///
   /// In en, this message translates to:
-  /// **'Revoked'**
+  /// **'Signed out'**
   String get settingsDeviceRevoked;
 
   /// No description provided for @settingsDeviceCurrent.
@@ -984,7 +984,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectFreshInstanceTitle.
   ///
   /// In en, this message translates to:
-  /// **'Fresh instance detected'**
+  /// **'This server is new'**
   String get connectFreshInstanceTitle;
 
   /// No description provided for @connectFreshInstanceMessage.
@@ -1002,7 +1002,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectInstanceUrl.
   ///
   /// In en, this message translates to:
-  /// **'Instance URL'**
+  /// **'Server address'**
   String get connectInstanceUrl;
 
   /// No description provided for @connectCheckApproval.
@@ -1080,7 +1080,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectInviteCodeHint.
   ///
   /// In en, this message translates to:
-  /// **'From an admin on this instance'**
+  /// **'From an admin of this server'**
   String get connectInviteCodeHint;
 
   /// No description provided for @connectInviteLink.
@@ -1164,7 +1164,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectUsernameHint.
   ///
   /// In en, this message translates to:
-  /// **'Your name on this instance'**
+  /// **'Your name on this server'**
   String get connectUsernameHint;
 
   /// No description provided for @connectUsernameInvalid.
@@ -1212,7 +1212,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectSetupToken.
   ///
   /// In en, this message translates to:
-  /// **'Setup token'**
+  /// **'Setup code'**
   String get connectSetupToken;
 
   /// No description provided for @connectSetupTokenHint.
@@ -1224,7 +1224,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectUrlRequired.
   ///
   /// In en, this message translates to:
-  /// **'Enter the instance URL.'**
+  /// **'Enter the server address.'**
   String get connectUrlRequired;
 
   /// No description provided for @connectUrlInvalid.
@@ -1236,13 +1236,13 @@ abstract class AppLocalizations {
   /// No description provided for @connectUrlOriginOnly.
   ///
   /// In en, this message translates to:
-  /// **'Enter only the server origin, e.g. https://chat.example.org'**
+  /// **'Enter only the server address, with no path, e.g. https://chat.example.org'**
   String get connectUrlOriginOnly;
 
   /// No description provided for @connectUrlHttpsRequired.
   ///
   /// In en, this message translates to:
-  /// **'Veritra requires HTTPS. Use an https:// server origin.'**
+  /// **'Veritra requires HTTPS. Use an https:// server address.'**
   String get connectUrlHttpsRequired;
 
   /// No description provided for @connectUrlLoopbackOnly.
@@ -1284,7 +1284,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectModeOwnerDetail.
   ///
   /// In en, this message translates to:
-  /// **'First run only: create the owner account on a fresh self-hosted instance.'**
+  /// **'First run only: create the owner account on a new self-hosted server.'**
   String get connectModeOwnerDetail;
 
   /// No description provided for @connectModeSignInDetail.
@@ -1314,7 +1314,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectOriginFilled.
   ///
   /// In en, this message translates to:
-  /// **'Server origin filled. Verify it before continuing.'**
+  /// **'Server address filled. Check it before continuing.'**
   String get connectOriginFilled;
 
   /// No description provided for @connectConfirmServerTitle.
@@ -1326,13 +1326,13 @@ abstract class AppLocalizations {
   /// No description provided for @connectConfirmServerMessage.
   ///
   /// In en, this message translates to:
-  /// **'This QR code suggests {origin}. The app will still probe the server before using it. Continue with this HTTPS origin?'**
+  /// **'This QR code suggests {origin}. The app will still check the server before using it. Continue with this HTTPS address?'**
   String connectConfirmServerMessage(String origin);
 
   /// No description provided for @connectUseOrigin.
   ///
   /// In en, this message translates to:
-  /// **'Use origin'**
+  /// **'Connect'**
   String get connectUseOrigin;
 
   /// No description provided for @connectSubmitOwner.
@@ -1356,7 +1356,7 @@ abstract class AppLocalizations {
   /// No description provided for @connectSubmitLink.
   ///
   /// In en, this message translates to:
-  /// **'Claim link'**
+  /// **'Add this phone'**
   String get connectSubmitLink;
 
   /// No description provided for @connectTagline.
@@ -1896,7 +1896,7 @@ abstract class AppLocalizations {
   /// No description provided for @profileThisInstance.
   ///
   /// In en, this message translates to:
-  /// **'this instance'**
+  /// **'this server'**
   String get profileThisInstance;
 
   /// No description provided for @profileTitle.
@@ -2052,7 +2052,7 @@ abstract class AppLocalizations {
   /// No description provided for @profileInstanceRole.
   ///
   /// In en, this message translates to:
-  /// **'Instance role'**
+  /// **'Server role'**
   String get profileInstanceRole;
 
   /// No description provided for @profileSectionEncryption.
@@ -4338,7 +4338,7 @@ abstract class AppLocalizations {
   /// No description provided for @apiErrorSetupToken.
   ///
   /// In en, this message translates to:
-  /// **'The setup token is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).'**
+  /// **'The setup code is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).'**
   String get apiErrorSetupToken;
 
   /// No description provided for @apiErrorDraining.
@@ -4518,7 +4518,7 @@ abstract class AppLocalizations {
   /// No description provided for @errorUnreachable.
   ///
   /// In en, this message translates to:
-  /// **'Could not reach the server. Check the instance URL and your connection.'**
+  /// **'Could not reach the server. Check the server address and your connection.'**
   String get errorUnreachable;
 
   /// No description provided for @probeChecking.
@@ -4542,7 +4542,7 @@ abstract class AppLocalizations {
   /// No description provided for @probeInvalidOrigin.
   ///
   /// In en, this message translates to:
-  /// **'Enter an HTTPS server origin, for example https://chat.example.org.'**
+  /// **'Enter an HTTPS server address, for example https://chat.example.org.'**
   String get probeInvalidOrigin;
 
   /// No description provided for @probeInsecure.
@@ -4674,7 +4674,7 @@ abstract class AppLocalizations {
   /// No description provided for @errorPasswordLoginNeedsLink.
   ///
   /// In en, this message translates to:
-  /// **'Password login requires this device to be linked first.'**
+  /// **'New phone? Add it using a device you already use.'**
   String get errorPasswordLoginNeedsLink;
 
   /// No description provided for @attachmentSendFailedState.
@@ -4698,13 +4698,13 @@ abstract class AppLocalizations {
   /// No description provided for @pushTestGone.
   ///
   /// In en, this message translates to:
-  /// **'The push provider no longer accepts this device. Registering again.'**
+  /// **'The delivery service no longer accepts this device. Registering again.'**
   String get pushTestGone;
 
   /// No description provided for @pushTestRejected.
   ///
   /// In en, this message translates to:
-  /// **'The push provider did not accept the test. Try again later.'**
+  /// **'The delivery service did not accept the test. Try again later.'**
   String get pushTestRejected;
 
   /// No description provided for @pushTestRateLimited.
@@ -4728,7 +4728,7 @@ abstract class AppLocalizations {
   /// No description provided for @errorServerNotAllowed.
   ///
   /// In en, this message translates to:
-  /// **'This build does not allow the server address {url}. Use an https:// server origin.'**
+  /// **'This build does not allow the server address {url}. Use an https:// server address.'**
   String errorServerNotAllowed(String url);
 
   /// No description provided for @muteEightHours.
@@ -5244,7 +5244,7 @@ abstract class AppLocalizations {
   /// No description provided for @w8Star.
   ///
   /// In en, this message translates to:
-  /// **'Star on this device'**
+  /// **'Star'**
   String get w8Star;
 
   /// No description provided for @w8Unstar.
@@ -5256,13 +5256,13 @@ abstract class AppLocalizations {
   /// No description provided for @w8DeleteForMe.
   ///
   /// In en, this message translates to:
-  /// **'Delete for me on this device'**
+  /// **'Delete for me'**
   String get w8DeleteForMe;
 
   /// No description provided for @w8Archive.
   ///
   /// In en, this message translates to:
-  /// **'Archive on this device'**
+  /// **'Archive'**
   String get w8Archive;
 
   /// No description provided for @w8Unarchive.
@@ -5274,7 +5274,7 @@ abstract class AppLocalizations {
   /// No description provided for @w8PinChat.
   ///
   /// In en, this message translates to:
-  /// **'Pin chat on this device'**
+  /// **'Pin chat'**
   String get w8PinChat;
 
   /// No description provided for @w8UnpinChat.
@@ -5358,8 +5358,20 @@ abstract class AppLocalizations {
   /// No description provided for @w8StarredMessages.
   ///
   /// In en, this message translates to:
-  /// **'Starred messages on this device'**
+  /// **'Starred messages'**
   String get w8StarredMessages;
+
+  /// No description provided for @w8MessageActionsLocalNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Star and Delete for me apply to this device only.'**
+  String get w8MessageActionsLocalNote;
+
+  /// No description provided for @w8ChatActionsLocalNote.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive and Pin chat apply to this device only.'**
+  String get w8ChatActionsLocalNote;
 
   /// No description provided for @k2CopiedHistory.
   ///
@@ -8785,9 +8797,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   }
 
   throw FlutterError(
-    'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
-    'an issue with the localizations generation tool. Please file an issue '
-    'on GitHub with a reproducible sample app and the gen-l10n configuration '
-    'that was used.',
-  );
+      'AppLocalizations.delegate failed to load unsupported locale "$locale". This is likely '
+      'an issue with the localizations generation tool. Please file an issue '
+      'on GitHub with a reproducible sample app and the gen-l10n configuration '
+      'that was used.');
 }

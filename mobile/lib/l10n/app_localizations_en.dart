@@ -271,11 +271,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsTurnOn => 'Turn on';
 
   @override
-  String get settingsPushProvider => 'Push provider';
+  String get settingsPushProvider => 'Delivery service';
 
   @override
   String get settingsPushProviderDetail =>
-      'Choose an Android UnifiedPush provider';
+      'Choose an Android UnifiedPush delivery service';
 
   @override
   String get settingsTestPush => 'Send a test notification';
@@ -336,7 +336,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsSignedIn => 'Signed in';
 
   @override
-  String get settingsRevokeDeviceTitle => 'Revoke device?';
+  String get settingsRevokeDeviceTitle => 'Sign out device?';
 
   @override
   String settingsRevokeDeviceMessage(String deviceName) {
@@ -423,7 +423,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsPushServerDisabledTitle =>
-      'This server has no push provider';
+      'This server has no notification delivery service';
 
   @override
   String get settingsPushServerDisabledDetail =>
@@ -490,7 +490,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsDeviceRevoked => 'Revoked';
+  String get settingsDeviceRevoked => 'Signed out';
 
   @override
   String get settingsDeviceCurrent => 'This device';
@@ -514,7 +514,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get connectFreshInstanceTitle => 'Fresh instance detected';
+  String get connectFreshInstanceTitle => 'This server is new';
 
   @override
   String get connectFreshInstanceMessage =>
@@ -524,7 +524,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectFreshInstanceAction => 'Set up this server';
 
   @override
-  String get connectInstanceUrl => 'Instance URL';
+  String get connectInstanceUrl => 'Server address';
 
   @override
   String get connectCheckApproval => 'Check now';
@@ -565,7 +565,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectInviteCodeRequired => 'Enter the invite code you received.';
 
   @override
-  String get connectInviteCodeHint => 'From an admin on this instance';
+  String get connectInviteCodeHint => 'From an admin of this server';
 
   @override
   String get connectInviteLink => 'Invite link';
@@ -612,7 +612,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectUsernameRequired => 'Enter a username.';
 
   @override
-  String get connectUsernameHint => 'Your name on this instance';
+  String get connectUsernameHint => 'Your name on this server';
 
   @override
   String get connectUsernameInvalid => 'Use 3 to 32 letters, digits, _ or -.';
@@ -636,13 +636,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectConfirmPasswordHint => 'Repeat your password';
 
   @override
-  String get connectSetupToken => 'Setup token';
+  String get connectSetupToken => 'Setup code';
 
   @override
   String get connectSetupTokenHint => 'Required unless connecting on loopback';
 
   @override
-  String get connectUrlRequired => 'Enter the instance URL.';
+  String get connectUrlRequired => 'Enter the server address.';
 
   @override
   String get connectUrlInvalid =>
@@ -650,11 +650,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectUrlOriginOnly =>
-      'Enter only the server origin, e.g. https://chat.example.org';
+      'Enter only the server address, with no path, e.g. https://chat.example.org';
 
   @override
   String get connectUrlHttpsRequired =>
-      'Veritra requires HTTPS. Use an https:// server origin.';
+      'Veritra requires HTTPS. Use an https:// server address.';
 
   @override
   String get connectUrlLoopbackOnly =>
@@ -677,7 +677,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectModeOwnerDetail =>
-      'First run only: create the owner account on a fresh self-hosted instance.';
+      'First run only: create the owner account on a new self-hosted server.';
 
   @override
   String get connectModeSignInDetail =>
@@ -696,18 +696,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get connectOriginFilled =>
-      'Server origin filled. Verify it before continuing.';
+      'Server address filled. Check it before continuing.';
 
   @override
   String get connectConfirmServerTitle => 'Confirm server';
 
   @override
   String connectConfirmServerMessage(String origin) {
-    return 'This QR code suggests $origin. The app will still probe the server before using it. Continue with this HTTPS origin?';
+    return 'This QR code suggests $origin. The app will still check the server before using it. Continue with this HTTPS address?';
   }
 
   @override
-  String get connectUseOrigin => 'Use origin';
+  String get connectUseOrigin => 'Connect';
 
   @override
   String get connectSubmitOwner => 'Create owner';
@@ -719,7 +719,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get connectSubmitJoin => 'Join with invite';
 
   @override
-  String get connectSubmitLink => 'Claim link';
+  String get connectSubmitLink => 'Add this phone';
 
   @override
   String get connectTagline => 'Self-hosted, end-to-end encrypted messaging';
@@ -992,9 +992,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesPill(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1005,9 +1004,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsesSemantics(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1018,9 +1016,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsedOf(int uses, int maxUses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
     final intl.NumberFormat maxUsesNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
@@ -1031,9 +1028,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String inviteUsedUnlimited(int uses) {
-    final intl.NumberFormat usesNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat usesNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String usesString = usesNumberFormat.format(uses);
 
     return '$usesString used';
@@ -1073,7 +1069,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'On the new phone, open Veritra, tap “I have an invite” and scan this code.';
 
   @override
-  String get profileThisInstance => 'this instance';
+  String get profileThisInstance => 'this server';
 
   @override
   String get profileTitle => 'Profile';
@@ -1159,7 +1155,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get profileCurrentDevice => 'Current device';
 
   @override
-  String get profileInstanceRole => 'Instance role';
+  String get profileInstanceRole => 'Server role';
 
   @override
   String get profileSectionEncryption => 'Encryption';
@@ -1388,13 +1384,16 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String deviceLinkState(String state) {
-    String _temp0 = intl.Intl.selectLogic(state, {
-      'pending': 'pending',
-      'claimed': 'claimed',
-      'approved': 'approved',
-      'expired': 'expired',
-      'other': '$state',
-    });
+    String _temp0 = intl.Intl.selectLogic(
+      state,
+      {
+        'pending': 'pending',
+        'claimed': 'claimed',
+        'approved': 'approved',
+        'expired': 'expired',
+        'other': '$state',
+      },
+    );
     return '$_temp0';
   }
 
@@ -1646,9 +1645,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeBytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString B';
@@ -1656,9 +1654,8 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String fileSizeKilobytes(int size) {
-    final intl.NumberFormat sizeNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat sizeNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString KB';
@@ -1668,9 +1665,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String fileSizeMegabytes(double size) {
     final intl.NumberFormat sizeNumberFormat =
         intl.NumberFormat.decimalPatternDigits(
-      locale: localeName,
-      decimalDigits: 1,
-    );
+            locale: localeName, decimalDigits: 1);
     final String sizeString = sizeNumberFormat.format(size);
 
     return '$sizeString MB';
@@ -2404,9 +2399,8 @@ class AppLocalizationsEn extends AppLocalizations {
     final intl.NumberFormat lengthNumberFormat =
         intl.NumberFormat.decimalPattern(localeName);
     final String lengthString = lengthNumberFormat.format(length);
-    final intl.NumberFormat maxNumberFormat = intl.NumberFormat.decimalPattern(
-      localeName,
-    );
+    final intl.NumberFormat maxNumberFormat =
+        intl.NumberFormat.decimalPattern(localeName);
     final String maxString = maxNumberFormat.format(max);
 
     return '$lengthString / $maxString';
@@ -2652,7 +2646,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get apiErrorSetupToken =>
-      'The setup token is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).';
+      'The setup code is missing or wrong. Use the one the server printed when it started (the demo keeps it in data/demo/setup-token).';
 
   @override
   String get apiErrorDraining => 'The server is restarting. Try again shortly.';
@@ -2766,7 +2760,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get errorUnreachable =>
-      'Could not reach the server. Check the instance URL and your connection.';
+      'Could not reach the server. Check the server address and your connection.';
 
   @override
   String get probeChecking => 'Checking the server…';
@@ -2781,7 +2775,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get probeInvalidOrigin =>
-      'Enter an HTTPS server origin, for example https://chat.example.org.';
+      'Enter an HTTPS server address, for example https://chat.example.org.';
 
   @override
   String get probeInsecure =>
@@ -2868,7 +2862,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get errorPasswordLoginNeedsLink =>
-      'Password login requires this device to be linked first.';
+      'New phone? Add it using a device you already use.';
 
   @override
   String get attachmentSendFailedState => 'The attachment could not be sent.';
@@ -2882,11 +2876,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get pushTestGone =>
-      'The push provider no longer accepts this device. Registering again.';
+      'The delivery service no longer accepts this device. Registering again.';
 
   @override
   String get pushTestRejected =>
-      'The push provider did not accept the test. Try again later.';
+      'The delivery service did not accept the test. Try again later.';
 
   @override
   String get pushTestRateLimited =>
@@ -2901,7 +2895,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String errorServerNotAllowed(String url) {
-    return 'This build does not allow the server address $url. Use an https:// server origin.';
+    return 'This build does not allow the server address $url. Use an https:// server address.';
   }
 
   @override
@@ -3239,22 +3233,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get w8ForwardedMany => 'Forwarded many times';
 
   @override
-  String get w8Star => 'Star on this device';
+  String get w8Star => 'Star';
 
   @override
   String get w8Unstar => 'Remove star';
 
   @override
-  String get w8DeleteForMe => 'Delete for me on this device';
+  String get w8DeleteForMe => 'Delete for me';
 
   @override
-  String get w8Archive => 'Archive on this device';
+  String get w8Archive => 'Archive';
 
   @override
   String get w8Unarchive => 'Unarchive';
 
   @override
-  String get w8PinChat => 'Pin chat on this device';
+  String get w8PinChat => 'Pin chat';
 
   @override
   String get w8UnpinChat => 'Unpin chat';
@@ -3298,7 +3292,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get w8HiddenSpoiler => 'Message containing a hidden spoiler';
 
   @override
-  String get w8StarredMessages => 'Starred messages on this device';
+  String get w8StarredMessages => 'Starred messages';
+
+  @override
+  String get w8MessageActionsLocalNote =>
+      'Star and Delete for me apply to this device only.';
+
+  @override
+  String get w8ChatActionsLocalNote =>
+      'Archive and Pin chat apply to this device only.';
 
   @override
   String get k2CopiedHistory => 'Copied history · device snapshot';

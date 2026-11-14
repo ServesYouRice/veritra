@@ -60,6 +60,13 @@ void main() {
     await tester.tap(find.byType(FormattedMessage),
         buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
+    // U19: "on this device" is said once under the list, not on each action.
+    expect(find.text('Star'), findsOneWidget);
+    expect(find.text('Delete for me'), findsOneWidget);
+    expect(
+        find.text('Star and Delete for me apply to this device only.',
+            skipOffstage: false),
+        findsOneWidget);
     await tester.ensureVisible(find.text(englishL10n.w8Star));
     await tester.tap(find.text(englishL10n.w8Star));
     await tester.pumpAndSettle();
