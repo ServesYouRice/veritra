@@ -537,7 +537,15 @@ class _ConversationDetailsScreenState extends State<ConversationDetailsScreen> {
                       children: <Widget>[
                         const Icon(Icons.lock_outline, size: 18),
                         const SizedBox(width: BoneSpacing.sm),
-                        Expanded(child: Text(l10n.detailsRetentionLocked)),
+                        Expanded(
+                          child: Text(
+                            // The server lets the owner of a chat of two, who
+                            // started it, change the timer; no role is named.
+                            conversation.isDm
+                                ? l10n.detailsRetentionLockedDm
+                                : l10n.detailsRetentionLocked,
+                          ),
+                        ),
                       ],
                     ),
                   ),

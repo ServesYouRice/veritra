@@ -316,6 +316,16 @@ void main() {
       expect(find.text('7 days'), findsOneWidget);
     });
 
+    testWidgets('locked in a chat of two, the reason names no role',
+        (tester) async {
+      final state = _state(_Api(), <Conversation>[_dm(role: 'member')]);
+      await _open(tester, state);
+      await tester.tap(find.byKey(const Key('details-retention')));
+      await tester.pumpAndSettle();
+      expect(find.text(englishL10n.detailsRetentionLockedDm), findsOneWidget);
+      expect(find.text(englishL10n.detailsRetentionLocked), findsNothing);
+    });
+
     testWidgets('locked, the sheet says why and offers nothing to change',
         (tester) async {
       // A plain member cannot change the timer.

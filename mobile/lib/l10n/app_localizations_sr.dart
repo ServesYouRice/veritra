@@ -1771,6 +1771,10 @@ class AppLocalizationsSr extends AppLocalizations {
       'Ово могу да мењају само власник, администратор или модератор овог ћаскања.';
 
   @override
+  String get detailsRetentionLockedDm =>
+      'Ово може да мења само особа која је започела ово ћаскање.';
+
+  @override
   String get detailsRetentionOff => 'Искључено';
 
   @override
@@ -6473,6 +6477,10 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   @override
   String get detailsRetentionLocked =>
       'Ovo mogu da menjaju samo vlasnik, administrator ili moderator ovog ćaskanja.';
+
+  @override
+  String get detailsRetentionLockedDm =>
+      'Ovo može da menja samo osoba koja je započela ovo ćaskanje.';
 
   @override
   String get detailsRetentionOff => 'Isključeno';

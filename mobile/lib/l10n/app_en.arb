@@ -615,6 +615,7 @@
   "detailsSectionDisappearing": "Disappearing messages",
   "detailsDisappearingNote": "When set, messages sent from then on are deleted from the server after this time window. Existing messages keep the timer they were sent with.",
   "detailsRetentionLocked": "Only an owner, admin or moderator of this chat can change this.",
+  "detailsRetentionLockedDm": "Only the person who started this chat can change this.",
   "detailsRetentionOff": "Off",
   "detailsRemoveTitle": "Remove {label}?",
   "@detailsRemoveTitle": {"placeholders": {"label": {"type": "String"}}},

@@ -474,6 +474,7 @@
   "detailsSectionDisappearing": "Nestajuće poruke",
   "detailsDisappearingNote": "Kada je ovo podešeno, poruke poslate od tada brišu se sa servera nakon ovog vremenskog perioda. Postojeće poruke zadržavaju tajmer sa kojim su poslate.",
   "detailsRetentionLocked": "Ovo mogu da menjaju samo vlasnik, administrator ili moderator ovog ćaskanja.",
+  "detailsRetentionLockedDm": "Ovo može da menja samo osoba koja je započela ovo ćaskanje.",
   "detailsRetentionOff": "Isključeno",
   "detailsRemoveTitle": "Ukloniti {label}?",
   "detailsRemoveMessage": "Taj nalog prestaje da prima nove poruke u ovom razgovoru. Poruke koje je već primio ostaju na njegovom uređaju, a šifrovana dostava se menja tek kada se ažuriranje grupe potvrdi.",

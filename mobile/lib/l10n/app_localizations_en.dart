@@ -1757,6 +1757,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'Only an owner, admin or moderator of this chat can change this.';
 
   @override
+  String get detailsRetentionLockedDm =>
+      'Only the person who started this chat can change this.';
+
+  @override
   String get detailsRetentionOff => 'Off';
 
   @override

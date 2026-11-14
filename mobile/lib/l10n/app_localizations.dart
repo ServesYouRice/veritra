@@ -2937,6 +2937,12 @@ abstract class AppLocalizations {
   /// **'Only an owner, admin or moderator of this chat can change this.'**
   String get detailsRetentionLocked;
 
+  /// No description provided for @detailsRetentionLockedDm.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the person who started this chat can change this.'**
+  String get detailsRetentionLockedDm;
+
   /// No description provided for @detailsRetentionOff.
   ///
   /// In en, this message translates to:
