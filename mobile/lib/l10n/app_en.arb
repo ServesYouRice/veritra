@@ -1179,6 +1179,8 @@
   "@roomPeople": {"placeholders": {"count": {"type": "int"}}},
   "moderationTitle": "Moderation",
   "moderationDetail": "Bans, timeouts, slow mode, paused invitations and the activity log",
+  "moderationLoadFailed": "Could not load",
+  "@moderationLoadFailed": {"description": "Moderation screen: shown with Retry when the bans, slow mode, invitation state or activity log could not be read. Nothing is guessed in its place."},
   "memberModerateTooltip": "Moderate {username}",
   "@memberModerateTooltip": {"placeholders": {"username": {"type": "String"}}},
   "memberBanAction": "Ban…",

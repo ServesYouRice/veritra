@@ -223,6 +223,54 @@ void main() {
   });
 
   group('moderation (C5)', () {
+    // U5: a failed read never shows as an empty or default state.
+    testWidgets(
+        'when moderation fails to load it says so with Retry and guesses nothing',
+        (tester) async {
+      final api = _Api()..failModeration = true;
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      // Before the read finishes: a spinner, none of the defaults.
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Nobody is banned.'), findsNothing);
+      expect(find.text('Off'), findsNothing);
+      expect(find.text('Invitation links work normally.'), findsNothing);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Could not load'), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Nobody is banned.'), findsNothing);
+      expect(find.text('Off'), findsNothing);
+      expect(find.text('Invitation links work normally.'), findsNothing);
+      expect(find.text('Nothing yet.'), findsNothing);
+
+      api.failModeration = false;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load'), findsNothing);
+      expect(find.text('Invitation links work normally.'), findsOneWidget);
+      expect(find.text('@owner banned @bob'), findsOneWidget);
+    });
+
+    testWidgets('a failed activity log is not "Nothing yet." for an admin',
+        (tester) async {
+      final api = _Api()..failEvents = true;
+      final state = _state(api);
+      await tester.pumpWidget(_app(ModerationScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+        canManageInvites: true,
+      )));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load'), findsOneWidget);
+      expect(find.text('Nothing yet.'), findsNothing);
+      expect(find.text('Nobody is banned.'), findsNothing);
+    });
+
     testWidgets(
         'an owner bans from the member menu and times out with a length',
         (tester) async {
@@ -438,6 +486,8 @@ class _Api extends ApiClient {
   bool alreadyMember = false;
   String me = 'acct_owner';
   final Set<String> gone = <String>{};
+  bool failModeration = false;
+  bool failEvents = false;
 
   @override
   Future<MembershipInvite> createMembershipInvite(
@@ -606,25 +656,29 @@ class _Api extends ApiClient {
 
   @override
   Future<ModerationState> moderationState(
-          String token, String communityId) async =>
-      const ModerationState(
-        invitesPausedUntil: null,
-        slowModeSeconds: <String, int>{'chan_1': 30},
-      );
+      String token, String communityId) async {
+    if (failModeration) throw ApiException(500, '{"error":"internal"}');
+    return const ModerationState(
+      invitesPausedUntil: null,
+      slowModeSeconds: <String, int>{'chan_1': 30},
+    );
+  }
 
   @override
   Future<List<ModerationEvent>> moderationEvents(
-          String token, String communityId) async =>
-      <ModerationEvent>[
-        ModerationEvent(
-          id: 'mod_1',
-          actor: 'acct_owner',
-          target: 'acct_bob',
-          channelId: null,
-          action: 'ban',
-          createdAt: DateTime.utc(2026, 11, 7),
-        ),
-      ];
+      String token, String communityId) async {
+    if (failEvents) throw ApiException(500, '{"error":"internal"}');
+    return <ModerationEvent>[
+      ModerationEvent(
+        id: 'mod_1',
+        actor: 'acct_owner',
+        target: 'acct_bob',
+        channelId: null,
+        action: 'ban',
+        createdAt: DateTime.utc(2026, 11, 7),
+      ),
+    ];
+  }
 
   @override
   Future<CommunityRemoval> removeCommunityMember(

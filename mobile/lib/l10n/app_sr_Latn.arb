@@ -979,6 +979,7 @@
   },
   "moderationTitle": "Moderacija",
   "moderationDetail": "Zabrane, utišavanje članova, spori režim, pauziranje pozivnica i dnevnik aktivnosti",
+  "moderationLoadFailed": "Nije moguće učitati",
   "memberModerateTooltip": "Moderiraj {username}",
   "memberBanAction": "Zabrani…",
   "memberTimeoutAction": "Privremeno utišaj…",
