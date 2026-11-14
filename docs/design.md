@@ -176,11 +176,15 @@ That alone was most of why the app looked generic.
 | --- | --- | --- |
 | `display` | 27 / 700 / -0.03em | Screen titles ("Chats") |
 | `title` | 17 / 650 / -0.02em | Section and dialog headings |
-| `body` | 14.5 / 400 / -0.01em | Default reading text |
-| `label` | 13.5 / 600 | Row titles, buttons |
-| `caption` | 11.5 / 400 | Row subtitles |
-| `micro` | 11 / 700 / 0.11em / uppercase | Group headers, field labels, chips |
+| `body` | 16 / 400 / -0.01em | Default reading text |
+| `label` | 16 / 600 | Row titles, buttons |
+| `caption` | 13.5 / 400 | Row subtitles |
+| `micro` | 12.5 / 700 / 0.09em / uppercase | Group headers, field labels, chips |
 | `mono` | 13 / 400 | IDs, invite codes, fingerprints |
+
+No text is smaller than 12 (U10): `micro` is the smallest style and a test
+checks every text on the golden fixtures. `micro` keeps its 1.1 px tracking,
+which is 0.09em at the new size.
 
 `micro` is what makes group headers and field labels read as designed rather
 than as leftover `Text` widgets.
