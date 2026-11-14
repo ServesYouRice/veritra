@@ -391,7 +391,6 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 }
 
-
 /// One person's page (U34): who they are and, for an account the signed-in
 /// one outranks, Suspend or Reactivate.
 class _AdminAccountPage extends StatelessWidget {

@@ -327,7 +327,9 @@ class _NavItem extends StatelessWidget {
                     children: <Widget>[
                       ExcludeSemantics(
                         child: Icon(
-                          selected ? destination.selectedIcon : destination.icon,
+                          selected
+                              ? destination.selectedIcon
+                              : destination.icon,
                           size: 20,
                           color: foreground,
                         ),
@@ -353,7 +355,9 @@ class _NavItem extends StatelessWidget {
                     children: <Widget>[
                       ExcludeSemantics(
                         child: Icon(
-                          selected ? destination.selectedIcon : destination.icon,
+                          selected
+                              ? destination.selectedIcon
+                              : destination.icon,
                           size: 20,
                           color: foreground,
                         ),

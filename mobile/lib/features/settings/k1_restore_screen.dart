@@ -107,7 +107,8 @@ class _K1RestoreScreenState extends State<K1RestoreScreen> {
                     subtitle: entry.deviceRevoked || entry.superseded
                         ? Text(<String>[
                             if (entry.superseded) l10n.k1RestoreOlderCopy,
-                            if (entry.deviceRevoked) l10n.k1RestoreDeviceRevoked,
+                            if (entry.deviceRevoked)
+                              l10n.k1RestoreDeviceRevoked,
                           ].join(' · '))
                         : null,
                     trailing: const Icon(Icons.chevron_right),

@@ -220,8 +220,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('an admin can suspend a member but not an owner',
-      (tester) async {
+  testWidgets('an admin can suspend a member but not an owner', (tester) async {
     // Rows: alice (owner) and bob (member).
     await openAs(tester, _AdminApi(), accountId: 'acct_admin', role: 'admin');
     await openPerson(tester, '@bob');

@@ -376,10 +376,11 @@ void main() {
       expect(find.byTooltip('Moderate @alice'), findsOneWidget);
       await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(PopupMenuItem<VoidCallback>, 'Remove'));
+      await tester
+          .tap(find.widgetWithText(PopupMenuItem<VoidCallback>, 'Remove'));
       await tester.pumpAndSettle();
-      final confirm = tester.widget<FilledButton>(
-          find.widgetWithText(FilledButton, 'Remove'));
+      final confirm = tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, 'Remove'));
       expect(confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
           Theme.of(tester.element(find.byType(AlertDialog))).colorScheme.error);
       await tester.tap(find.widgetWithText(FilledButton, 'Remove'));

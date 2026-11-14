@@ -167,8 +167,7 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('archived chats open as a page with Back',
-      (tester) async {
+  testWidgets('archived chats open as a page with Back', (tester) async {
     final state = _state();
     await state.setConversationArchived('conv', true);
     await tester.pumpWidget(MaterialApp(home: ChatListScreen(state: state)));

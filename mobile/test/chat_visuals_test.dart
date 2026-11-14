@@ -136,8 +136,7 @@ void main() {
             expect(
               _oklabDistance(fill, state),
               greaterThanOrEqualTo(floor),
-              reason:
-                  '$theme ${fill.toARGB32().toRadixString(16)} vs '
+              reason: '$theme ${fill.toARGB32().toRadixString(16)} vs '
                   '${state.toARGB32().toRadixString(16)}',
             );
           }

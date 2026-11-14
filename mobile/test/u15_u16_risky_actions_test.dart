@@ -69,7 +69,8 @@ Future<void> _show(WidgetTester tester, AppState state,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
     builder: (context, child) => MediaQuery(
-      data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
+      data:
+          MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
       child: child!,
     ),
     home: Scaffold(body: SettingsScreen(state: state)),
@@ -82,33 +83,42 @@ void main() {
   final l10n = englishL10n;
 
   group('U15 devices', () {
-    testWidgets('sign-out is a labelled button with a red confirmation naming '
+    testWidgets(
+        'sign-out is a labelled button with a red confirmation naming '
         'the device', (tester) async {
       await _show(tester, _stateWithDevices());
 
-      final button = find.byKey(const ValueKey<String>('device-sign-out-dev_old'));
+      final button =
+          find.byKey(const ValueKey<String>('device-sign-out-dev_old'));
       expect(button, findsOneWidget);
-      expect(find.descendant(of: button, matching: find.text(l10n.settingsSignOutDeviceButton)),
+      expect(
+          find.descendant(
+              of: button,
+              matching: find.text(l10n.settingsSignOutDeviceButton)),
           findsOneWidget);
 
       await tester.tap(button);
       await tester.pumpAndSettle();
       final dialog = find.byType(AlertDialog);
-      expect(find.descendant(of: dialog, matching: find.text('Sign out "Old tablet"?')),
+      expect(
+          find.descendant(
+              of: dialog, matching: find.text('Sign out "Old tablet"?')),
           findsOneWidget);
-      final confirm = tester.widget<FilledButton>(find.descendant(
-          of: dialog, matching: find.byType(FilledButton)));
+      final confirm = tester.widget<FilledButton>(
+          find.descendant(of: dialog, matching: find.byType(FilledButton)));
       expect(confirm.style?.backgroundColor?.resolve(<WidgetState>{}),
           Theme.of(tester.element(dialog)).colorScheme.error);
     });
 
-    testWidgets('at 200% text the button drops under the name, which keeps '
+    testWidgets(
+        'at 200% text the button drops under the name, which keeps '
         '120 dp', (tester) async {
       await _show(tester, _stateWithDevices(), scale: 2.0);
       expect(tester.takeException(), isNull);
       final name = tester.getSize(find.text('Old tablet'));
       expect(name.width, greaterThanOrEqualTo(120));
-      final button = find.byKey(const ValueKey<String>('device-sign-out-dev_old'));
+      final button =
+          find.byKey(const ValueKey<String>('device-sign-out-dev_old'));
       expect(tester.getTopLeft(button).dy,
           greaterThan(tester.getBottomLeft(find.text('Old tablet')).dy));
     });

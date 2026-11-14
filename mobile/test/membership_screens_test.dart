@@ -287,9 +287,11 @@ void main() {
       // U16: labelled buttons, not bare icons.
       expect(find.text('Approve'), findsNWidgets(2));
       expect(find.text('Decline'), findsNWidgets(2));
-      await tester.tap(find.byKey(const ValueKey<String>('join-approve-jreq_1')));
+      await tester
+          .tap(find.byKey(const ValueKey<String>('join-approve-jreq_1')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey<String>('join-decline-jreq_2')));
+      await tester
+          .tap(find.byKey(const ValueKey<String>('join-decline-jreq_2')));
       await tester.pumpAndSettle();
 
       expect(api.decisions, <String>['jreq_1:approve', 'jreq_2:reject']);
@@ -577,7 +579,8 @@ void main() {
       api.failWrites = true;
       await tester.tap(find.text('Requests'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey<String>('join-decline-jreq_1')));
+      await tester
+          .tap(find.byKey(const ValueKey<String>('join-decline-jreq_1')));
       await expectStays(tester);
       expect(find.text('@bob'), findsOneWidget,
           reason: 'the request is still waiting');
@@ -745,7 +748,6 @@ class _Api extends ApiClient {
   bool failWrites = false;
   bool failEvents = false;
   final List<String> revokedInvites = <String>[];
-
 
   @override
   Future<MembershipInvite> createMembershipInvite(

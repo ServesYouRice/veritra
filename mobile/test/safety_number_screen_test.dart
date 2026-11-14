@@ -111,7 +111,8 @@ void main() {
     await tester.pumpAndSettle();
     await _choose(tester, 'We are on a call');
     expect(_shownNumber(tester), _shown);
-    expect(find.textContaining('Compare this number with the other members'), findsOneWidget);
+    expect(find.textContaining('Compare this number with the other members'),
+        findsOneWidget);
     expect(find.text('Mark as verified'), findsNothing);
     expect(find.text('NOT VERIFIED'), findsNothing);
   });

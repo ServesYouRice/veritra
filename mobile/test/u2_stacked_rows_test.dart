@@ -7,21 +7,22 @@ import 'package:private_messenger/features/settings/link_preview_tile.dart';
 import 'package:private_messenger/l10n/app_localizations.dart';
 
 Widget _app(double scale) => MaterialApp(
-  localizationsDelegates: AppLocalizations.localizationsDelegates,
-  supportedLocales: AppLocalizations.supportedLocales,
-  builder: (context, child) => MediaQuery(
-    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(scale)),
-    child: child!,
-  ),
-  home: Scaffold(
-    body: SingleChildScrollView(
-      child: LinkPreviewTile(
-        mode: LinkPreviewMode.allowListed,
-        onChanged: (_) {},
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context)
+            .copyWith(textScaler: TextScaler.linear(scale)),
+        child: child!,
       ),
-    ),
-  ),
-);
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: LinkPreviewTile(
+            mode: LinkPreviewMode.allowListed,
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
 
 void main() {
   const sizes = <Size>[

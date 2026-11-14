@@ -155,8 +155,7 @@ class _ModerationScreenState extends State<ModerationScreen> {
       context,
       title: l10n.moderationSlowTitle(_channelName(channel)),
       choices: slowModeChoices,
-      label: (s) =>
-          s == 0 ? l10n.moderationSlowOff : durationWords(l10n, s),
+      label: (s) => s == 0 ? l10n.moderationSlowOff : durationWords(l10n, s),
     );
     if (seconds == null || !mounted) return;
     if (await state.setChannelSlowMode(_communityId, channel.id, seconds)) {
