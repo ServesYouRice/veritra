@@ -766,6 +766,7 @@
   "errorPasswordLoginNeedsLink": "Za prijavu lozinkom ovaj uređaj prvo mora biti povezan.",
   "attachmentSendFailedState": "Prilog nije mogao da se pošalje.",
   "errorRelinkRequired": "Ovaj uređaj mora ponovo da se poveže.",
+  "recoveryKeyStepMovedBack": "Vratili ste se na korak vraćanja, pa ovaj ključ za oporavak nije sačuvan. Završite ili preskočite vraćanje, pa postavite ključ.",
   "pushTestSent": "Proba je poslata. Obaveštenje bi trebalo da stigne u roku od jednog minuta.",
   "pushTestGone": "Push dobavljač više ne prihvata ovaj uređaj. Registracija se ponavlja.",
   "pushTestRejected": "Push dobavljač nije prihvatio probu. Pokušajte ponovo kasnije.",

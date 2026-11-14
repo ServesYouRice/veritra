@@ -203,6 +203,12 @@ extension AccountRecoveryActions on AppState {
       if (current == null || client == null || draft._disposed) {
         throw UserFacingException(l10n.errorRelinkRequired);
       }
+      // U23: Back ran first (it was queued before this save) and the
+      // follow-up is on the restore step again. The save must not replace
+      // the key behind a screen that no longer shows it.
+      if (recoveryFollowUp == RecoveryFollowUpStep.restore) {
+        throw UserFacingException(l10n.recoveryKeyStepMovedBack);
+      }
       final values = await _recoveryCrypto.deriveRecoveryKey(draft._entropy);
       try {
         final status =

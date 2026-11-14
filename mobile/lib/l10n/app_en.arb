@@ -1012,6 +1012,8 @@
   "errorPasswordLoginNeedsLink": "Password login requires this device to be linked first.",
   "attachmentSendFailedState": "The attachment could not be sent.",
   "errorRelinkRequired": "This device must be linked again.",
+  "recoveryKeyStepMovedBack": "You went back to the restore step, so this recovery key was not saved. Finish or skip the restore, then set a key.",
+  "@recoveryKeyStepMovedBack": {"description": "Shown when saving a new recovery key is refused because the recovery follow-up went back to its restore step first (Back was tapped while the save waited)."},
   "pushTestSent": "Test sent. A notification should arrive within a minute.",
   "pushTestGone": "The push provider no longer accepts this device. Registering again.",
   "pushTestRejected": "The push provider did not accept the test. Try again later.",

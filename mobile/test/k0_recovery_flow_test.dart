@@ -557,6 +557,28 @@ void main() {
       expect(server.puts, hasLength(1));
     });
 
+    test('a key save queued behind Back is refused: nothing is replaced',
+        () async {
+      await recovered(restore: true);
+      await state.finishRecoveryRestoreStep();
+      server.requireRecentAuth = false;
+      final draft = await state.createRecoveryKeyDraft();
+      final back = state.backToRecoveryRestoreStep();
+      final saving = state.saveRecoveryKey(draft);
+      expect(await back, isTrue);
+      expect(await saving, RecoveryActionResult.failed);
+      draft.dispose();
+      expect(
+          state.errorFor(Ops.recoveryKey), state.l10n.recoveryKeyStepMovedBack);
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.restore);
+      expect(server.puts, isEmpty);
+      // Forward again: the key can be saved then.
+      await state.finishRecoveryRestoreStep();
+      await saveKey();
+      expect(server.puts, hasLength(1));
+      expect(state.recoveryFollowUp, RecoveryFollowUpStep.password);
+    });
+
     test('without the restore there is no Back, and two steps', () async {
       await recovered(restore: false);
       expect(state.recoveryFollowUp, RecoveryFollowUpStep.recoveryKey);
