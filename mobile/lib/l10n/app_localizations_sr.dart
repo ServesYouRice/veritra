@@ -754,6 +754,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get commonRetry => 'Покушај поново';
 
   @override
+  String get commonUndo => 'Опозови';
+
+  @override
   String get accountPickerHelper =>
       'Унесите тачно корисничко име или налепите ИД налога (acct_…).';
 
@@ -1056,6 +1059,12 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get communityNew => 'Нова заједница';
+
+  @override
+  String get communityJoinAction => 'Придружи';
+
+  @override
+  String get communityNewAction => 'Нова';
 
   @override
   String get communityEmptyTitle => 'Још нема заједница';
@@ -1691,6 +1700,12 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get detailsSectionMembers => 'Чланови';
+
+  @override
+  String get communityTabInvites => 'Позивнице';
+
+  @override
+  String get communityTabRequests => 'Захтеви';
 
   @override
   String get detailsLoadingMembers => 'Учитавање чланова…';
@@ -3512,6 +3527,11 @@ class AppLocalizationsSr extends AppLocalizations {
 
   @override
   String get memberTimeoutLift => 'Укини утишавање';
+
+  @override
+  String memberTimedOutUntil(String time) {
+    return 'Утишан/а до $time';
+  }
 
   @override
   String banTitle(String username) {
@@ -5432,6 +5452,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
   String get commonRetry => 'Pokušaj ponovo';
 
   @override
+  String get commonUndo => 'Opozovi';
+
+  @override
   String get accountPickerHelper =>
       'Unesite tačno korisničko ime ili nalepite ID naloga (acct_…).';
 
@@ -5734,6 +5757,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get communityNew => 'Nova zajednica';
+
+  @override
+  String get communityJoinAction => 'Pridruži';
+
+  @override
+  String get communityNewAction => 'Nova';
 
   @override
   String get communityEmptyTitle => 'Još nema zajednica';
@@ -6369,6 +6398,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get detailsSectionMembers => 'Članovi';
+
+  @override
+  String get communityTabInvites => 'Pozivnice';
+
+  @override
+  String get communityTabRequests => 'Zahtevi';
 
   @override
   String get detailsLoadingMembers => 'Učitavanje članova…';
@@ -8194,6 +8229,11 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get memberTimeoutLift => 'Ukini utišavanje';
+
+  @override
+  String memberTimedOutUntil(String time) {
+    return 'Utišan/a do $time';
+  }
 
   @override
   String banTitle(String username) {

@@ -749,6 +749,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get commonRetry => 'Retry';
 
   @override
+  String get commonUndo => 'Undo';
+
+  @override
   String get accountPickerHelper =>
       'Exact username, or paste an account ID (acct_…).';
 
@@ -1048,6 +1051,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get communityNew => 'New community';
+
+  @override
+  String get communityJoinAction => 'Join';
+
+  @override
+  String get communityNewAction => 'New';
 
   @override
   String get communityEmptyTitle => 'No communities yet';
@@ -1677,6 +1686,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get detailsSectionMembers => 'Members';
+
+  @override
+  String get communityTabInvites => 'Invites';
+
+  @override
+  String get communityTabRequests => 'Requests';
 
   @override
   String get detailsLoadingMembers => 'Loading members…';
@@ -3497,6 +3512,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get memberTimeoutLift => 'Lift timeout';
+
+  @override
+  String memberTimedOutUntil(String time) {
+    return 'Timed out until $time';
+  }
 
   @override
   String banTitle(String username) {

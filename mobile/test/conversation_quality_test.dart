@@ -214,7 +214,7 @@ void main() {
       (tester) async {
     final state = _connectedState(_FakeApi());
     await tester.pumpWidget(_app(CommunityScreen(state: state)));
-    await tester.tap(find.text('New community'));
+    await tester.tap(find.byTooltip('New community'));
     // The screen behind may show a spinner, so settle on the dialog only.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));

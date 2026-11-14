@@ -345,6 +345,40 @@ void main() {
           ?.forEach((m) => expect(m.accountId, isNot('acct_alice')));
     });
 
+    testWidgets('a timeout offers Undo, which lifts it; a ban offers none',
+        (tester) async {
+      final api = _Api();
+      final state = _state(api);
+      await tester.pumpWidget(_app(CommunityDetailsScreen(
+        state: state,
+        community: Community(id: 'comm_1', name: 'Club'),
+      )));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Time out…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('1 h'));
+      await tester.pumpAndSettle();
+      expect(find.text('Timeout set.'), findsOneWidget);
+      await tester.tap(find.text('Undo'));
+      await tester.pumpAndSettle();
+      expect(api.moderation, <String>[
+        'timeout:comm_1:acct_alice:3600',
+        'timeout:comm_1:acct_alice:0',
+      ]);
+
+      // Banning ends access; nothing offers to take that back.
+      await tester.tap(find.byTooltip('Moderate @alice'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ban…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Ban'));
+      await tester.pumpAndSettle();
+      expect(find.text('Undo'), findsNothing);
+    });
+
     testWidgets('a moderator can ban but not lift bans or pause invitations',
         (tester) async {
       final api = _Api();
@@ -472,9 +506,16 @@ void main() {
             expiresAt: DateTime.utc(2026, 11, 14)));
       await openOwnerPage(tester, api);
       api.failWrites = true;
-      await tester.scrollUntilVisible(find.byTooltip('Revoke link'), 200);
+      await tester.tap(find.text('Invites'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Revoke link'));
       await expectStays(tester);
+      // Leaving the tab and coming back keeps the message: the page is kept.
+      await tester.tap(find.text('Members'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Invites'));
+      await tester.pumpAndSettle();
+      expect(find.text(failure), findsOneWidget);
     });
 
     testWidgets('a failed decline', (tester) async {
@@ -492,7 +533,8 @@ void main() {
         ];
       await openOwnerPage(tester, api);
       api.failWrites = true;
-      await tester.scrollUntilVisible(find.byTooltip('Decline @bob'), 200);
+      await tester.tap(find.text('Requests'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Decline @bob'));
       await expectStays(tester);
       expect(find.text('@bob'), findsOneWidget,
@@ -560,11 +602,28 @@ void main() {
       expect(find.text('@alice'), findsOneWidget);
       expect(find.byTooltip('Moderate @alice'), findsOneWidget);
       expect(find.byTooltip('Moderate @owner'), findsNothing);
+      // U31: Members, Invites and Requests are tabs of the community page.
+      expect(find.widgetWithText(Tab, 'Members'), findsOneWidget);
+      expect(find.widgetWithText(Tab, 'Invites'), findsOneWidget);
+      expect(find.widgetWithText(Tab, 'Requests'), findsOneWidget);
+      expect(find.text('INVITATION LINKS'), findsNothing);
+      await tester.tap(find.text('Invites'));
+      await tester.pumpAndSettle();
       expect(find.text('INVITATION LINKS'), findsOneWidget);
+      await tester.tap(find.text('Requests'));
+      await tester.pumpAndSettle();
       expect(find.text('JOIN REQUESTS'), findsOneWidget);
-      await tester.scrollUntilVisible(find.text('Leave community'), 200);
+      await tester.tap(find.text('Members'));
+      await tester.pumpAndSettle();
+      // The tab pages scroll up and down; the pager itself sideways.
+      final page = find
+          .byWidgetPredicate((w) => w is Scrollable && w.axis == Axis.vertical)
+          .first;
+      await tester.scrollUntilVisible(find.text('Leave community'), 200,
+          scrollable: page);
       expect(find.text('Leave community'), findsOneWidget);
-      await tester.scrollUntilVisible(find.byTooltip('Moderate @alice'), -200);
+      await tester.scrollUntilVisible(find.byTooltip('Moderate @alice'), -200,
+          scrollable: page);
 
       await tester.tap(find.byTooltip('Moderate @alice'));
       await tester.pumpAndSettle();
@@ -594,6 +653,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byTooltip('Moderate @owner'), findsNothing);
+      expect(find.byType(TabBar), findsNothing);
       expect(find.text('INVITATION LINKS'), findsNothing);
       expect(find.text('JOIN REQUESTS'), findsNothing);
       expect(find.text('Leave community'), findsOneWidget);

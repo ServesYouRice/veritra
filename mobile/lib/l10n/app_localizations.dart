@@ -1407,6 +1407,12 @@ abstract class AppLocalizations {
   /// **'Retry'**
   String get commonRetry;
 
+  /// No description provided for @commonUndo.
+  ///
+  /// In en, this message translates to:
+  /// **'Undo'**
+  String get commonUndo;
+
   /// No description provided for @accountPickerHelper.
   ///
   /// In en, this message translates to:
@@ -1880,6 +1886,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'New community'**
   String get communityNew;
+
+  /// Short label of the Join action in the Communities top bar. Its tooltip and screen-reader name is the longer "Join with a link".
+  ///
+  /// In en, this message translates to:
+  /// **'Join'**
+  String get communityJoinAction;
+
+  /// Short label of the New action in the Communities top bar. Its tooltip and screen-reader name is "New community".
+  ///
+  /// In en, this message translates to:
+  /// **'New'**
+  String get communityNewAction;
 
   /// No description provided for @communityEmptyTitle.
   ///
@@ -2792,6 +2810,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Members'**
   String get detailsSectionMembers;
+
+  /// Tab on a community page (admins): invitation links.
+  ///
+  /// In en, this message translates to:
+  /// **'Invites'**
+  String get communityTabInvites;
+
+  /// Tab on a community page (admins): requests to join.
+  ///
+  /// In en, this message translates to:
+  /// **'Requests'**
+  String get communityTabRequests;
 
   /// No description provided for @detailsLoadingMembers.
   ///
@@ -5768,6 +5798,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Lift timeout'**
   String get memberTimeoutLift;
+
+  /// Under a community member's name while the verified role record holds a timeout for them.
+  ///
+  /// In en, this message translates to:
+  /// **'Timed out until {time}'**
+  String memberTimedOutUntil(String time);
 
   /// No description provided for @banTitle.
   ///

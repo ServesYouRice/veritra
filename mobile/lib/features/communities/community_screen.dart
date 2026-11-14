@@ -46,27 +46,26 @@ class CommunityScreen extends StatelessWidget {
         state.conversations.where((c) => c.isChannel).toList();
     final hasContent =
         state.communities.isNotEmpty || channelConversations.isNotEmpty;
-    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
+      // Join and New are words in the top bar, not an icon and a floating
+      // button that covers the last card (UI audit U31).
       appBar: LargeTitleBar(
         title: context.l10n.navCommunities,
         actions: <Widget>[
-          IconButton(
+          _BarAction(
+            icon: Icons.link,
+            label: context.l10n.communityJoinAction,
             tooltip: context.l10n.joinTitle,
-            icon: const Icon(Icons.link),
-            onPressed: () => Navigator.of(context).push(
-              sharedAxisRoute<void>((_) => JoinByLinkScreen(state: state)),
-            ),
+            onPressed: () => _join(context),
+          ),
+          _BarAction(
+            icon: Icons.group_add_outlined,
+            label: context.l10n.communityNewAction,
+            tooltip: context.l10n.communityNew,
+            onPressed: state.busy ? null : () => _createCommunity(context),
           ),
           RefreshAction(onRefresh: state.refreshCommunities),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: state.busy ? null : () => _createCommunity(context),
-        backgroundColor: scheme.primary,
-        foregroundColor: scheme.onPrimary,
-        icon: const Icon(Icons.group_add_outlined),
-        label: Text(context.l10n.communityNew),
       ),
       body: RefreshIndicator(
         onRefresh: state.refreshCommunities,
@@ -84,6 +83,26 @@ class CommunityScreen extends StatelessWidget {
                       icon: Icons.groups_outlined,
                       title: context.l10n.communityEmptyTitle,
                       message: context.l10n.communityEmptyMessage,
+                      // Both ways in: make one, or join one with a link.
+                      action: Wrap(
+                        alignment: WrapAlignment.center,
+                        spacing: BoneSpacing.md,
+                        runSpacing: BoneSpacing.sm,
+                        children: <Widget>[
+                          FilledButton.icon(
+                            onPressed: state.busy
+                                ? null
+                                : () => _createCommunity(context),
+                            icon: const Icon(Icons.group_add_outlined),
+                            label: Text(context.l10n.communityNew),
+                          ),
+                          OutlinedButton.icon(
+                            onPressed: () => _join(context),
+                            icon: const Icon(Icons.link),
+                            label: Text(context.l10n.joinTitle),
+                          ),
+                        ],
+                      ),
                     ),
                 ],
               )
@@ -135,6 +154,10 @@ class CommunityScreen extends StatelessWidget {
       ),
     );
   }
+
+  void _join(BuildContext context) => Navigator.of(context).push(
+        sharedAxisRoute<void>((_) => JoinByLinkScreen(state: state)),
+      );
 
   /// [channelId] is set for a channel inside a community's shared group,
   /// which holds every open channel: the chat then shows and posts to that
@@ -543,7 +566,15 @@ class _ChannelTile extends StatelessWidget {
     return ListTile(
       dense: true,
       enabled: id != null,
-      leading: const SizedBox(width: 40, child: Icon(Icons.tag)),
+      // A padlock marks a private channel of a shared-layout community; a
+      // legacy community's channels hold every member, so none shows one.
+      leading: SizedBox(
+        width: 40,
+        child: channel.isRouted && channel.kind == 'private'
+            ? Icon(Icons.lock_outline,
+                semanticLabel: context.l10n.channelPrivate)
+            : const Icon(Icons.tag),
+      ),
       title: Text(title),
       subtitle: id == null
           ? Text(context.l10n.communityNotMember)
@@ -567,6 +598,57 @@ class _ChannelTile extends StatelessWidget {
                     ? channel.id
                     : null,
               ),
+    );
+  }
+}
+
+/// A top-bar action with a short visible label. [tooltip] is its full name
+/// for long-press and screen readers. At large text sizes the words no longer
+/// fit beside the title, so it falls back to its icon (still named).
+class _BarAction extends StatelessWidget {
+  const _BarAction({
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final String tooltip;
+  final VoidCallback? onPressed;
+
+  /// Words stay up to this text scale.
+  static const double _wordsUntilScale = 1.3;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.textScalerOf(context).scale(14) / 14 > _wordsUntilScale) {
+      return IconButton(
+        tooltip: tooltip,
+        onPressed: onPressed,
+        icon: Icon(icon),
+      );
+    }
+    return Tooltip(
+      message: tooltip,
+      excludeFromSemantics: true,
+      child: Semantics(
+        button: true,
+        enabled: onPressed != null,
+        label: tooltip,
+        excludeSemantics: true,
+        onTap: onPressed,
+        child: TextButton(
+          onPressed: onPressed,
+          style: TextButton.styleFrom(
+            // Tight, so the title keeps its width at 320 dp.
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            minimumSize: const Size(48, 48),
+          ),
+          child: Text(label),
+        ),
+      ),
     );
   }
 }
