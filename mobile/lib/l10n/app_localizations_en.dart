@@ -3236,6 +3236,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get w8DeleteForMe => 'Delete for me on this device';
 
   @override
+  String get w8DeletedForMe => 'Deleted on this device';
+
+  @override
+  String get w8DeleteForMeUndoFailed =>
+      'This message could not be brought back.';
+
+  @override
   String get w8Archive => 'Archive on this device';
 
   @override

@@ -868,6 +868,8 @@
   "w8Star": "Označi zvezdicom na ovom uređaju",
   "w8Unstar": "Ukloni zvezdicu",
   "w8DeleteForMe": "Izbriši za mene na ovom uređaju",
+  "w8DeletedForMe": "Izbrisano na ovom uređaju",
+  "w8DeleteForMeUndoFailed": "Ova poruka ne može da se vrati.",
   "w8Archive": "Arhiviraj na ovom uređaju",
   "w8Unarchive": "Vrati iz arhive",
   "w8PinChat": "Zakači ćaskanje na ovom uređaju",

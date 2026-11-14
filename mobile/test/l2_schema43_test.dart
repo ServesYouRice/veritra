@@ -57,7 +57,8 @@ void main() {
   test('a new database has the tables and columns', () async {
     final db = EncryptedLocalDatabase(NativeDatabase.memory());
     addTearDown(db.close);
-    expect(EncryptedLocalDatabase.currentSchemaVersion, 43);
+    expect(
+        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(43));
     expect(await tables(db), containsAll(SealedSenderSql.tables));
     expect(await revealColumns(db),
         containsAll(<String>['designation', 'sender_account_id']));
@@ -139,7 +140,7 @@ void main() {
     db = EncryptedLocalDatabase(NativeDatabase(file));
     final version = (await db.customSelect('PRAGMA user_version').getSingle())
         .read<int>('user_version');
-    expect(version, 43);
+    expect(version, EncryptedLocalDatabase.currentSchemaVersion);
     expect(await tables(db), containsAll(SealedSenderSql.tables));
     expect(await revealColumns(db),
         containsAll(<String>['designation', 'sender_account_id']));
@@ -182,7 +183,7 @@ void main() {
     expect(
         (await db.customSelect('PRAGMA user_version').getSingle())
             .read<int>('user_version'),
-        43);
+        EncryptedLocalDatabase.currentSchemaVersion);
     expect(await revealColumns(db),
         isNot(anyOf(contains('signature'), contains('signing_key'))));
     expect(await revealColumns(db), contains('designation'));
@@ -224,10 +225,8 @@ void main() {
         ]);
     expect(await revealColumns(db),
         containsAll(<String>['signature', 'signing_key']));
-    expect(
-        (await db.customSelect('PRAGMA user_version').getSingle())
-            .read<int>('user_version'),
-        43);
+    // A draft 43 device (U16's schema 44 came later).
+    await db.customStatement('PRAGMA user_version = 43');
     await db.close();
 
     db = EncryptedLocalDatabase(NativeDatabase(file));

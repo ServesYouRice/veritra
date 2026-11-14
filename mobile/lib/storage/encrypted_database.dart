@@ -39,6 +39,7 @@ part 'invite_anchor_sql.dart';
 part 'profile_sql.dart';
 part 'governance_observation_sql.dart';
 part 'sealed_sender_sql.dart';
+part 'hide_undo_sql.dart';
 
 enum MlsCommitStage {
   afterValidation,
@@ -725,7 +726,7 @@ class LocalConversationMutes extends Table {
 class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
   EncryptedLocalDatabase(super.executor, {this.requireExistingSchema = false});
 
-  static const currentSchemaVersion = 43;
+  static const currentSchemaVersion = 44;
   final bool requireExistingSchema;
 
   static const outboxDraftPrefix = 'outbox.draft.';
@@ -948,6 +949,8 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             await _createInviteAnchors();
             await _createProfiles();
             await _createGovernanceObservations();
+            // After the schema 19 trigger it replaces.
+            await _createHideUndo();
             await _createSearchIndex();
             await into(localSyncStates).insert(
               LocalSyncStatesCompanion.insert(singleton: const Value(1)),
@@ -1131,6 +1134,11 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
             // franking key beside a device-list pair. Idempotent and last, after the schema 19 and
             // 26 steps that create the tables it adds columns to.
             if (from < 43) await _createSealedSender();
+            // U16 (schema 44): what a "Delete for me" keeps aside for Undo,
+            // and the reveal trigger that keeps a reveal while it is there.
+            // Idempotent and after the schema 19 step whose trigger it
+            // replaces. A new table only; no existing row changes.
+            if (from < 44) await _createHideUndo();
             // Drift writes the version again after this returns, outside the
             // transaction; writing it here too closes that gap.
             await customStatement('PRAGMA user_version = $to');
@@ -1150,6 +1158,14 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               await _addC7GenColumn();
               await _addC7FormerColumn();
             });
+          }
+          // U16 (44): a store another branch numbered 44 or later without
+          // this table gets it here. A table lookup; a no-op once it exists.
+          if (details.versionNow >= 44 &&
+              !details.wasCreated &&
+              !await _hasHideUndo()) {
+            _upgradeStarted = true;
+            await transaction(_createHideUndo);
           }
         },
       );
@@ -2658,7 +2674,10 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     final accountId = sessionJson == null
         ? null
         : (jsonDecode(sessionJson) as Map)['account_id'] as String?;
+    // U16: a change to a message whose hide can be undone makes it final.
+    final hideKept = await _anyHideKept();
     for (final effect in effects) {
+      if (hideKept) await _finishHideNamedBy(effect);
       switch (effect) {
         case InsertMessageEffect():
           final expiresAt = effect.expiresAt;
@@ -2913,28 +2932,33 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
               pinnedAt: effect.at,
               appliedOrder: Value((order ?? 0) + 1),
               expiresAt: expiry));
-          final scoped = await (select(localPins)
-                ..where((t) =>
-                    t.conversationId.equals(effect.conversationId) &
-                    (effect.channelId == null
-                        ? t.channelId.isNull()
-                        : t.channelId.equals(effect.channelId!)))
-                ..orderBy([
-                  (t) => OrderingTerm.desc(t.pinnedAt),
-                  (t) => OrderingTerm.desc(t.appliedOrder)
-                ]))
-              .get();
-          for (final old in scoped.skip(pinLimitPerChat)) {
-            await (delete(localPins)
-                  ..where((t) =>
-                      t.conversationId.equals(old.conversationId) &
-                      t.targetKey.equals(old.targetKey)))
-                .go();
-          }
+          await _trimPins(effect.conversationId, effect.channelId);
       }
     }
     if (historyNamespace != null)
       await writeHistoryNamespace(historyNamespace!);
+  }
+
+  /// Keeps the newest [pinLimitPerChat] pins of one chat or channel.
+  Future<void> _trimPins(String conversationId, String? channelId) async {
+    final scoped = await (select(localPins)
+          ..where((t) =>
+              t.conversationId.equals(conversationId) &
+              (channelId == null
+                  ? t.channelId.isNull()
+                  : t.channelId.equals(channelId)))
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.pinnedAt),
+            (t) => OrderingTerm.desc(t.appliedOrder)
+          ]))
+        .get();
+    for (final old in scoped.skip(pinLimitPerChat)) {
+      await (delete(localPins)
+            ..where((t) =>
+                t.conversationId.equals(old.conversationId) &
+                t.targetKey.equals(old.targetKey)))
+          .go();
+    }
   }
 
   Future<void> _removeMessageExtras(String key) async {
@@ -2943,23 +2967,6 @@ class EncryptedLocalDatabase extends _$EncryptedLocalDatabase {
     await (delete(localPins)..where((t) => t.targetKey.equals(key))).go();
     await (delete(localStarred)..where((t) => t.messageKey.equals(key))).go();
   }
-
-  Future<void> hideMessage(String conversationId, String key, int at) =>
-      transaction(() async {
-        final changed = await (update(localMessages)
-              ..where((t) =>
-                  t.key.equals(key) & t.conversationId.equals(conversationId)))
-            .write(LocalMessagesCompanion(
-                hiddenAt: Value(at),
-                body: const Value(null),
-                formatJson: const Value(null),
-                replyTo: const Value(null)));
-        if (changed == 0) return;
-        await (delete(localMessageReactions)
-              ..where((t) => t.targetKey.equals(key)))
-            .go();
-        await _removeMessageExtras(key);
-      });
 
   Future<List<LocalPin>> readPins(String conversationId) async {
     await (delete(localPins)

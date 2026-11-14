@@ -84,7 +84,8 @@ void main() {
 
   Future<void> expectMerged(EncryptedLocalDatabase db) async {
     expect(await userVersion(db), EncryptedLocalDatabase.currentSchemaVersion);
-    expect(EncryptedLocalDatabase.currentSchemaVersion, 43);
+    expect(
+        EncryptedLocalDatabase.currentSchemaVersion, greaterThanOrEqualTo(43));
     expect(await columnsOf(db, 'local_messages'),
         containsAll(<String>['c7_gen', 'c7_former', 'sender_removed']));
     expect(await columnsOf(db, 'local_frank_reveals'),

@@ -1224,6 +1224,8 @@
     "w8Star":  "Star on this device",
     "w8Unstar":  "Remove star",
     "w8DeleteForMe":  "Delete for me on this device",
+    "w8DeletedForMe": "Deleted on this device",
+    "w8DeleteForMeUndoFailed": "This message could not be brought back.",
     "w8Archive":  "Archive on this device",
     "w8Unarchive":  "Unarchive",
     "w8PinChat":  "Pin chat on this device",

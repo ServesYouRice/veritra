@@ -869,9 +869,74 @@ class AppState extends ChangeNotifier
     notifyListeners();
   }
 
-  Future<void> deleteMessageForMe(LocalMessage message) async {
-    await localStore.hideMessage(message.conversationId, message.key);
+  /// How long the chat offers Undo after "Delete for me" (U16, D133).
+  static const deleteForMeUndoShown = Duration(seconds: 8);
+
+  /// When a hide becomes final if the chat's Undo snackbar never reported
+  /// closing. Normally its closing makes the hide final first.
+  @visibleForTesting
+  Duration deleteForMeUndoWindow = const Duration(seconds: 10);
+
+  /// Hides whose Undo is still offered, by message key, each with the timer
+  /// that makes it final.
+  final Map<String, Timer> _undoableHides = <String, Timer>{};
+
+  /// "Delete for me" (U16, D133): the message leaves every view at once and
+  /// is deleted for good when the Undo window closes ([finishDeleteForMe]),
+  /// or on the next start if the app is stopped first. Returns whether it
+  /// was hidden.
+  Future<bool> deleteMessageForMe(LocalMessage message) async {
+    final hidden =
+        await localStore.hideMessage(message.conversationId, message.key);
+    if (hidden) {
+      final key = message.key;
+      _undoableHides.remove(key)?.cancel();
+      _undoableHides[key] =
+          Timer(deleteForMeUndoWindow, () => unawaited(finishDeleteForMe(key)));
+    }
     await refreshHistory(message.conversationId);
+    return hidden;
+  }
+
+  /// Undo for [deleteMessageForMe] while its window is open. Returns false
+  /// when the window has closed or the message changed in the meantime (an
+  /// edit, a delete for everyone, an expiry): it then stays deleted.
+  Future<bool> undoDeleteForMe(LocalMessage message) async {
+    final timer = _undoableHides.remove(message.key);
+    if (timer == null) return false;
+    timer.cancel();
+    var restored = false;
+    try {
+      restored = await localStore.unhideMessage(message.key);
+    } catch (_) {
+      // It stays hidden; the next start makes the hide final.
+    }
+    _previewMemo.remove(message.conversationId);
+    await refreshHistory(message.conversationId);
+    return restored;
+  }
+
+  /// Closes the Undo window of [key]: the hide becomes final now.
+  Future<void> finishDeleteForMe(String key) async {
+    _undoableHides.remove(key)?.cancel();
+    try {
+      await localStore.finishHiddenMessages(only: {key});
+    } catch (_) {
+      // The message stays hidden; the next start finishes it.
+    }
+  }
+
+  /// Makes every open Undo window final (a session ends or the app closes).
+  /// Best effort: the next start finishes whatever this misses.
+  void _finishUndoableHides() {
+    if (_undoableHides.isEmpty) return;
+    final keys = _undoableHides.keys.toSet();
+    for (final timer in _undoableHides.values) {
+      timer.cancel();
+    }
+    _undoableHides.clear();
+    unawaited(
+        localStore.finishHiddenMessages(only: keys).catchError((Object _) {}));
   }
 
   Future<void> _ensureConversationAuthority(String id,
@@ -2041,6 +2106,17 @@ class AppState extends ChangeNotifier
         // Best effort: expired text is hidden on read even if this delete
         // failed, and the timer retries. Never a reason for recovery mode.
         _expiryBackoff = _nextExpiryBackoff(_expiryBackoff);
+      }
+      // U16: a "Delete for me" whose Undo window was open when the app
+      // stopped is final now. Its row has been hidden and scrubbed since the
+      // tap; this deletes what was kept aside for Undo. A window still open
+      // in this run is left alone.
+      try {
+        await localStore.finishHiddenMessages(
+            except: _undoableHides.keys.toSet());
+      } catch (_) {
+        // Best effort: nothing kept aside is ever shown, and the next start
+        // tries again.
       }
       if (!_lifecycleGenerationActive(transitionGeneration)) return;
       if (stored == null) {
@@ -9096,6 +9172,8 @@ class AppState extends ChangeNotifier
       capture.noticeCaptureEnabled = false;
     }
     _cancelDraftTimers();
+    // U16: an open Undo window closes with the session it belongs to.
+    _finishUndoableHides();
     _activeChatViews = 0;
     _updateScreenGuard();
     conversations = <Conversation>[];
@@ -11307,6 +11385,7 @@ class AppState extends ChangeNotifier
   void dispose() {
     _disposed = true;
     _cancelOwnerCancelTimers();
+    _finishUndoableHides();
     _infoRotationTimer?.cancel();
     _infoRotationTimer = null;
     unawaited(screenGuard.setSecure(false));

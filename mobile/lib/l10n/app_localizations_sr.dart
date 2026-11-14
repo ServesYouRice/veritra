@@ -3258,6 +3258,12 @@ class AppLocalizationsSr extends AppLocalizations {
   String get w8DeleteForMe => 'Избриши за мене на овом уређају';
 
   @override
+  String get w8DeletedForMe => 'Избрисано на овом уређају';
+
+  @override
+  String get w8DeleteForMeUndoFailed => 'Ова порука не може да се врати.';
+
+  @override
   String get w8Archive => 'Архивирај на овом уређају';
 
   @override
@@ -8594,6 +8600,12 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get w8DeleteForMe => 'Izbriši za mene na ovom uređaju';
+
+  @override
+  String get w8DeletedForMe => 'Izbrisano na ovom uređaju';
+
+  @override
+  String get w8DeleteForMeUndoFailed => 'Ova poruka ne može da se vrati.';
 
   @override
   String get w8Archive => 'Arhiviraj na ovom uređaju';
