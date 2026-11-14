@@ -1847,6 +1847,9 @@ class AppLocalizationsSr extends AppLocalizations {
   String get chatCopyText => 'Копирај текст';
 
   @override
+  String get chatSelectText => 'Изабери текст';
+
+  @override
   String get chatEdit => 'Измени';
 
   @override
@@ -6491,6 +6494,9 @@ class AppLocalizationsSrLatn extends AppLocalizationsSr {
 
   @override
   String get chatCopyText => 'Kopiraj tekst';
+
+  @override
+  String get chatSelectText => 'Izaberi tekst';
 
   @override
   String get chatEdit => 'Izmeni';

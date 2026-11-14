@@ -642,6 +642,7 @@
   "@chatReact": {"placeholders": {"reaction": {"type": "String"}}},
   "chatReply": "Reply",
   "chatCopyText": "Copy text",
+  "chatSelectText": "Select text",
   "chatEdit": "Edit",
   "chatDeleteForEveryone": "Delete for everyone",
   "chatDeleteTitle": "Delete for everyone?",

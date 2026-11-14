@@ -526,6 +526,7 @@
   "chatReact": "Реагуј: {reaction}",
   "chatReply": "Одговори",
   "chatCopyText": "Копирај текст",
+  "chatSelectText": "Изабери текст",
   "chatEdit": "Измени",
   "chatDeleteForEveryone": "Избриши за све",
   "chatDeleteTitle": "Избрисати за све?",

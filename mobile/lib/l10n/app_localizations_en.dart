@@ -1833,6 +1833,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatCopyText => 'Copy text';
 
   @override
+  String get chatSelectText => 'Select text';
+
+  @override
   String get chatEdit => 'Edit';
 
   @override

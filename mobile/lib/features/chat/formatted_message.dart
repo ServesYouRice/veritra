@@ -9,11 +9,16 @@ class FormattedMessage extends StatefulWidget {
       required this.formatJson,
       this.style,
       this.onMention,
+      this.selectable = false,
       super.key});
   final String text;
   final String? formatJson;
   final TextStyle? style;
   final void Function(String accountId)? onMention;
+
+  /// A bubble is plain text, so a long-press anywhere on it opens the
+  /// message menu (U7). Only the "Select text" view turns this on.
+  final bool selectable;
   @override
   State<FormattedMessage> createState() => _FormattedMessageState();
 }
@@ -100,6 +105,7 @@ class _FormattedMessageState extends State<FormattedMessage> {
           style: style,
           recognizer: recognizer));
     }
-    return SelectableText.rich(TextSpan(children: spans));
+    final span = TextSpan(children: spans);
+    return widget.selectable ? SelectableText.rich(span) : Text.rich(span);
   }
 }

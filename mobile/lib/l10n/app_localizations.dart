@@ -3051,6 +3051,12 @@ abstract class AppLocalizations {
   /// **'Copy text'**
   String get chatCopyText;
 
+  /// No description provided for @chatSelectText.
+  ///
+  /// In en, this message translates to:
+  /// **'Select text'**
+  String get chatSelectText;
+
   /// No description provided for @chatEdit.
   ///
   /// In en, this message translates to:

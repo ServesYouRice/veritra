@@ -911,6 +911,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 title: Text(context.l10n.chatCopyText),
                 onTap: () => Navigator.of(sheetContext).pop('copy'),
               ),
+            if (actionable && message.kind == LocalMessageKind.text)
+              ListTile(
+                leading: const Icon(Icons.text_fields),
+                title: Text(context.l10n.chatSelectText),
+                onTap: () => Navigator.of(sheetContext).pop('select'),
+              ),
             if (actionable)
               ListTile(
                   leading: const Icon(Icons.forward_outlined),
@@ -1006,6 +1012,27 @@ class _ChatScreenState extends State<ChatScreen> {
       _setReplyTarget(message.key);
     } else if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.body ?? ''));
+    } else if (action == 'select') {
+      // U7: the bubble itself is not selectable, so a long-press anywhere on
+      // it opens this menu; selecting words happens here.
+      await showModalBottomSheet<void>(
+        context: context,
+        showDragHandle: true,
+        isScrollControlled: true,
+        builder: (sheetContext) => SafeArea(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(BoneSpacing.gutter, 0,
+                BoneSpacing.gutter, BoneSpacing.lg),
+            child: FormattedMessage(
+              key: const Key('select-text'),
+              selectable: true,
+              text: message.body ?? '',
+              formatJson: message.formatJson,
+              style: Theme.of(sheetContext).textTheme.bodyLarge,
+            ),
+          ),
+        ),
+      );
     } else if (action == 'star') {
       await state.toggleMessageStar(message);
     } else if (action == 'hide') {

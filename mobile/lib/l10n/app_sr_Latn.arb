@@ -493,6 +493,7 @@
   "chatReact": "Reaguj: {reaction}",
   "chatReply": "Odgovori",
   "chatCopyText": "Kopiraj tekst",
+  "chatSelectText": "Izaberi tekst",
   "chatEdit": "Izmeni",
   "chatDeleteForEveryone": "Izbriši za sve",
   "chatDeleteTitle": "Izbrisati za sve?",
